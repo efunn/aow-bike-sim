@@ -131,12 +131,17 @@ control:
     q_yvel: 0.2
     q_roll: 60.0
     q_roll_rate: 6.0
-    q_yaw: 3.0          # LIGHT: heading swings are intrinsic to crawl recovery;
-    q_yaw_rate: 8.0     #   damp rotation (rate), don't fight where it points.
-    q_steer: 0.5        #   Heavy q_yaw makes the loop ring against the clamp.
+    q_yaw: 8.0          # LIGHT-ish: heading swings are intrinsic to crawl recovery;
+    q_yaw_rate: 12.0    #   damp rotation (rate) over position. Heavy q_yaw (>~15)
+    q_steer: 0.5        #   rings against the steer clamp; 8/12 also tracks pivots.
     r_drive: 0.05       # balance of authority vs. saturation margin on pushes
     r_steer: 6.0
     steer_limit_deg: 15.0   # keep steering inside the identified linear region
+  pivot:                # crawl pivot about the front contact
+    yaw_rate: 1.5       # rad/s cruise (crawl ceiling ~4 rad/s; balance-limited)
+    yaw_accel: 4.0      # rad/s^2 profile ramp
+    lean_ff: 1.0        # centripetal lean feedforward gain (0 disables)
+    ff_gain: 1.0        # crawl feedforward scale (vs. kinematic)
 
 testbed:
   # Wheel-only system-ID rig: AOW + input shafts on a stand fixed to the world.

@@ -131,9 +131,34 @@ to rear-crawl station-keeping (yaw ≈ crawl distance / wheelbase, since the
 bike pivots about the front contact) — heavily weighting yaw *position* makes
 the loop fight unavoidable swings, ride the steer clamp (~40% engagement), and
 ring for many oscillations. The fix that matched the toy's 1–2-oscillation
-settling: **light `q_yaw` (3), heavy `q_yaw_rate` (8)** — damp rotation,
+settling: **light `q_yaw`, heavy `q_yaw_rate`** — damp rotation,
 accept where it ends up pointing. Settling went from 6 oscillations / 7 s to
 1 oscillation / 3.2 s at unchanged push robustness. Also tried and rejected:
 10-state model with common-mode input (ID quality drops, wanders) and loose
 `q_ypos` (slower, more oscillation). PD cascade is legacy — tuning effort
-targets the LQR only.
+targets the LQR only. (Weights later nudged to `q_yaw` 8 / `q_yaw_rate` 12 for
+pivot tracking accuracy; push settling stays at ~2 oscillations. `q_yaw` ≳ 15
+is where ringing returns.)
+
+## Crawl pivot (`control/pivot.py`, 2026-07-17)
+
+Heading control is **reference tracking on the balance LQR**, not new feedback:
+a trapezoidal yaw profile (`control.pivot.yaw_rate/yaw_accel`) generates a
+feasible moving reference — yaw ramp, rear-contact position on the arc around
+the front contact, matching crawl velocity — plus differential feedforward
+(`d_ff = v_lat_ref / lat_gain`). The balance gain matrix only corrects
+residuals, which is what preserves the anti-ringing weight design. Between
+pivots the references are constant, so `PivotController` *is* the stationary
+balance controller.
+
+Physics note: for a pivot about the front contact, the CoM's *centripetal*
+acceleration points along body-X (longitudinal — no lean needed); only the
+*tangential* acceleration `psi_ddot · r_com` is lateral, so the lean
+feedforward (`lean_ff`) acts during profile ramps and is zero at cruise.
+
+Measured envelope (placeholder chassis): ±90° in 1.4 s, 180° in 2.5 s;
+heading error < 1° after settle, front-contact wander **< 1 cm** at every rate
+up to the ~4 rad/s crawl ceiling; max lean ~4°. `tests/test_pivot.py` guards
+profile correctness and closed-loop pivots. Recorded follow-ups: steer-90°
+pivot about the rear contact (minimum-diameter mode, needs large-steer
+modeling), teleop-style continuous heading commands, pivot + forward drive.

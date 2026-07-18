@@ -20,9 +20,14 @@ python -m aow_sim.view --variant testbed        # wheel-only system-ID rig
 python -m aow_sim.build_model -o model.xml      # dump MJCF
 
 python -m aow_sim.run_balance                   # balance metrics (LQR baseline)
-python -m aow_sim.run_balance --controller pd   # PD cascade reference
+python -m aow_sim.run_balance --controller pd   # PD cascade reference (legacy)
 python -m aow_sim.run_balance --view            # watch it balance; shove it with
                                                 #   double-click + Ctrl+right-drag
+
+python -m aow_sim.run_pivot                     # crawl-pivot metrics + rate sweep
+python -m aow_sim.run_pivot --view              # +180° / −180° pivot demo
+mjpython -m aow_sim.run_pivot --teleop          # drive the heading with the keyboard
+                                                #   (←/→ ±30°, J/L ±90°, U/O ±180°)
 ```
 
 In the open-loop viewer's Control panel: equal `drive_a`/`drive_b` rolls the
