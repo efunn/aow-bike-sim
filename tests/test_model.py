@@ -121,7 +121,9 @@ def test_lateral_crawl(params):
     d.ctrl[m.actuator("drive_b").id] = -4.0
     _step_for(m, d, 2.0)
     assert abs(d.qpos[1]) > 0.05, "no lateral crawl (AOW signature behavior missing)"
-    assert abs(d.qpos[0]) < 0.5 * abs(d.qpos[1]), "opposed drive should mostly crawl, not roll"
+    # Trail makes the front end self-steer slightly during crawl, so some
+    # forward arc is physical; it must just not dominate the lateral motion.
+    assert abs(d.qpos[0]) < 0.7 * abs(d.qpos[1]), "opposed drive should mostly crawl, not roll"
 
 
 def test_sensors_present(full_model):

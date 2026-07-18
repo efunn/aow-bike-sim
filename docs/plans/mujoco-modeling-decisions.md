@@ -83,3 +83,57 @@ Equal drive → straight roll near rigid-rolling speed; differential drive →
 lateral rear-wheel crawl (the AOW signature); no support → falls like a bike;
 at rest with training wheels → no jitter/drift; all 8 rollers phase-locked at
 exactly `k_roller` × ring angle.
+
+## Balance controller (baseline, 2026-07-17)
+
+Two stationary balance controllers in `src/aow_sim/control/`, both at 200 Hz
+with zero-order hold (`control.rate_hz`), ground-truth state (sensor-only
+estimation is a later phase), saturating to actuator ctrlranges:
+
+- **PD cascade** (`PDCascade`): roll PD → rear-crawl velocity, slow outer loop
+  on lateral drift → roll setpoint, weak longitudinal P → common mode, steer
+  held straight. Key structural lesson: a velocity-source base cannot stabilize
+  the pendulum from roll feedback alone — the crawl command must be
+  **relative to the current base velocity** (acceleration-style law,
+  `v_cmd = v_lat + PD(roll)`).
+- **LQR** (`LQRBalance`): DLQR on an **identified** reduced lateral model
+  (`[e_lat, roll, yaw, steer]` + rates; inputs `[differential, steer]`),
+  fit by least squares over one-control-period rollouts at finite amplitude
+  (R² > 0.997 on all states). It uses steering for balance on its own — the
+  steer/rear-crawl coordination observed in the toy emerges from the optimum.
+
+**Why not `mjd_transitionFD`**: the infinitesimal FD Jacobian at standstill
+linearizes the friction cone in its *sticking* regime and underestimates the
+drive→lateral-velocity response by ~2× at real crawl amplitudes; LQR gains
+designed on it are unstable on the true plant. Finite-amplitude system ID is
+the standing approach for contact-dominated linearizations in this project.
+
+Baseline metrics (placeholder chassis params, `run_balance.py`): from a 3°
+lean both controllers settle to <0.1° RMS wobble with <10 cm total drift and
+recover a ~3–4 N × 0.1 s lateral push. Regression-tested in
+`tests/test_balance.py`, including "LQR actually uses steering".
+
+**Geometry-change lesson (2026-07-17, rake 24°→15° / fork offset →0, i.e.
+trail 5.9→13.4 mm)**: the LQR redesigns itself automatically, but with more
+trail its closed loop drifted out of the identified region (47° steer, 64° yaw
+excursions) and limit-cycled. Two structural fixes, now defaults: a hard steer
+clamp (`control.lqr.steer_limit_deg`, keeps the loop inside the region where
+the linear model is valid) and a real yaw weight (`q_yaw` — crawl-induced yaw
+must be regulated, not left to wander; it spirals with the lateral loop).
+Multi-period/finite-state system ID was tried and is *worse* (R² collapses on
+velocity states — dynamic contact regimes don't fit one linear model). After a
+significant geometry change, re-run `run_balance.py` for both controllers and
+re-check the effort weights (`r_drive` trades authority vs. saturation margin;
+its optimum moved with the geometry).
+
+**Oscillatory-settling lesson (2026-07-17)**: heading swings are *intrinsic*
+to rear-crawl station-keeping (yaw ≈ crawl distance / wheelbase, since the
+bike pivots about the front contact) — heavily weighting yaw *position* makes
+the loop fight unavoidable swings, ride the steer clamp (~40% engagement), and
+ring for many oscillations. The fix that matched the toy's 1–2-oscillation
+settling: **light `q_yaw` (3), heavy `q_yaw_rate` (8)** — damp rotation,
+accept where it ends up pointing. Settling went from 6 oscillations / 7 s to
+1 oscillation / 3.2 s at unchanged push robustness. Also tried and rejected:
+10-state model with common-mode input (ID quality drops, wanders) and loose
+`q_ypos` (slower, more oscillation). PD cascade is legacy — tuning effort
+targets the LQR only.

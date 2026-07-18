@@ -76,9 +76,9 @@ drivetrain:
   roller_joint_frictionloss: {value: 1.0e-5, source: GUESS}
 
 bike:
-  wheelbase: {value: 0.220, source: design}
-  rake_deg: {value: 24.0, source: design}      # steering axis tilt back from vertical
-  fork_offset: {value: 0.015, source: design}  # perpendicular distance steer axis -> front axle
+  wheelbase: {value: 0.20, source: design}
+  rake_deg: {value: 15.0, source: design}      # steering axis tilt back from vertical
+  fork_offset: {value: 0.0, source: design}  # perpendicular distance steer axis -> front axle
   chassis:
     mass: {value: 0.45, source: GUESS}   # frame + electronics + wiring, excluding servos/wheels/AHRS
     box_size: [0.16, 0.04, 0.05]         # inertia primitive (full extents)
@@ -115,6 +115,28 @@ actuators:
   drive_kv: 0.5        # velocity-servo gain at the input shafts (placeholder for Dynamixel velocity PI)
   steer_kp: 2.0        # position-servo gains at the steer joint
   steer_kv: 0.05
+
+control:
+  # Balance controller settings (tuning knobs, not measurements).
+  rate_hz: 200          # controller update rate; zero-order hold between updates
+  pd:                   # PD cascade (rear crawl only, steer held straight)
+    roll_kp: 6.0        # lateral contact velocity [m/s] per rad of roll
+    roll_kd: 1.2        # ... per rad/s of roll rate
+    y_kp: 0.35          # roll setpoint [rad] per meter of lateral drift
+    y_kd: 0.12          # ... per m/s of lateral velocity
+    max_roll_setpoint_deg: 3.0
+    x_kp: 8.0           # common-mode input [rad/s] per meter of fore/aft drift
+  lqr:                  # weights for the DLQR on the identified lateral model
+    q_ypos: 3.0
+    q_yvel: 0.2
+    q_roll: 60.0
+    q_roll_rate: 6.0
+    q_yaw: 3.0          # LIGHT: heading swings are intrinsic to crawl recovery;
+    q_yaw_rate: 8.0     #   damp rotation (rate), don't fight where it points.
+    q_steer: 0.5        #   Heavy q_yaw makes the loop ring against the clamp.
+    r_drive: 0.05       # balance of authority vs. saturation margin on pushes
+    r_steer: 6.0
+    steer_limit_deg: 15.0   # keep steering inside the identified linear region
 
 testbed:
   # Wheel-only system-ID rig: AOW + input shafts on a stand fixed to the world.

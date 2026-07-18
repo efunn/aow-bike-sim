@@ -15,13 +15,23 @@ conda create -n aow-sim python=3.12 -y && conda activate aow-sim
 pip install -e '.[dev]'
 
 pytest                                          # model correctness tests
-python -m aow_sim.view --training-wheels        # interactive viewer
+python -m aow_sim.view --training-wheels        # interactive viewer (open loop)
 python -m aow_sim.view --variant testbed        # wheel-only system-ID rig
 python -m aow_sim.build_model -o model.xml      # dump MJCF
+
+python -m aow_sim.run_balance                   # balance metrics (LQR baseline)
+python -m aow_sim.run_balance --controller pd   # PD cascade reference
+python -m aow_sim.run_balance --view            # watch it balance; shove it with
+                                                #   double-click + Ctrl+right-drag
 ```
 
-In the viewer's Control panel: equal `drive_a`/`drive_b` rolls the bike,
-differential input crawls the rear wheel sideways, `steer` is continuous.
+In the open-loop viewer's Control panel: equal `drive_a`/`drive_b` rolls the
+bike, differential input crawls the rear wheel sideways, `steer` is continuous.
+
+Balance baseline (placeholder chassis params): both controllers hold the bike
+indefinitely from a 3° lean with <0.1° RMS wobble, <10 cm drift, and recover a
+4 N × 0.1 s lateral shove. Gains/weights live in `config/bike_params.yaml`
+under `control:`.
 
 ## Layout
 
