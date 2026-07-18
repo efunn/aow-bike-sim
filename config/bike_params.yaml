@@ -1,0 +1,128 @@
+# AOW bike model parameters — single source of truth for the MJCF builder.
+#
+# Units: meters, kilograms, degrees (suffix _deg), N·m, rpm. Coordinates:
+# +X forward, +Y left, +Z up; wheel axles along Y.
+#
+# Measurable leaves are written as {value: ..., source: ...} where source is one of:
+#   measured    — caliper/scale measurement of the physical part
+#   tooth-count — exact ratio from counting gear/pulley teeth
+#   datasheet   — from ROBOTIS / SYD Dynamics documentation
+#   design      — a choice we make for the custom chassis (record intent, verify as-built)
+#   GUESS       — placeholder to be replaced; plausible for a 1:6-scale bike
+# Plain scalars are simulation/tuning knobs, not physical quantities.
+
+sim:
+  timestep: 2.0e-4
+  integrator: implicitfast
+  cone: elliptic          # elliptic friction cones + Newton solver (MuJoCo default solver)
+  impratio: 10.0
+  mesh_segments: 32       # tessellation of revolved contact meshes (rollers, tire)
+  condim: 4               # 3 = sliding only; 4 adds torsional friction at the contact patch
+  friction_sliding: {value: 0.9, source: GUESS}      # TPU on hard floor -> incline slide test
+  friction_torsional: {value: 0.005, source: GUESS}  # scales with contact patch size -> validation
+  floor_size: 3.0
+
+omni_wheel:
+  outer_radius: {value: 0.0512, source: measured}   # ridge Ø102.35; envelope ripples ~0.3 mm below
+  width: {value: 0.033, source: measured}
+  n_axles: {value: 8, source: measured}         # 8 axles x 2 truncated cones = 16 rollers
+  axle_mount_radius: {value: 0.040, source: measured}  # wheel axis -> roller axle axis
+  axle_cant_deg: {value: 0.0, source: measured}    # axles are purely tangential
+  roller:
+    big_diameter: {value: 0.022, source: measured}   # large end of one truncated cone
+    small_diameter: {value: 0.019, source: measured}
+    length: {value: 0.0075, source: measured}        # one cone, along its axis
+    pair_gap: {value: 0.010, source: measured}       # big end to big end; floats 8.5-10 mm (axial play)
+    big_end_inward: true    # confirmed: big ends face each other across the gap
+    pair_mass: {value: 0.004372, source: measured}   # 2 cones + roller axle w/ 20t gear
+  hub:
+    # Carrier lump: frames 25.0 + casing 37.3 + 8 planet axles 8.0
+    #             + ring gear 2 (counter-spin inertia neglected) 4.57 + screws 0.76 [g]
+    mass: {value: 0.07563, source: measured}
+    body_radius: 0.038      # inertia/visual cylinder (non-contact)
+    body_width: 0.020
+  ring:
+    mass: {value: 0.00457, source: measured}      # ring gear 1 only (input-A side gear)
+    body_radius: 0.030
+    body_width: 0.008
+
+drivetrain:
+  # TEARDOWN: the wheel is a bevel DIFFERENTIAL. Two side ("ring") gears mesh all
+  # 8 planet axles mounted in the carrier (= hub). Input A/B = ring gear 1/2
+  # shafts, belt-driven directly (toy's motor pinions discarded). Hence:
+  #   hub (carrier) = (ring1_abs + ring2_abs)/2 ; model "ring" body = ring gear 1.
+  # Kinematics (rad per rad, signed):  [hub; ring_abs] = [[mix_hub_a, mix_hub_b],
+  #                                                       [mix_ring_a, mix_ring_b]] @ [input_a; input_b]
+  mix_hub_a: {value: 0.5, source: tooth-count}
+  mix_hub_b: {value: 0.5, source: tooth-count}
+  mix_ring_a: {value: 1.0, source: tooth-count}
+  mix_ring_b: {value: 0.0, source: tooth-count}
+  # Roller axle spin per radian of ring-vs-hub relative rotation:
+  # (ring 48 / planet bevel 12) * (planet bevel 12 / roller gear 20) = 2.4.
+  # Sign flips if the wheel is mounted flipped — confirm at final assembly.
+  k_roller: {value: 2.4, source: tooth-count}
+  # Input shaft speed / servo speed (pulley tooth counts; >1 = wheel side faster).
+  belt_ratio: {value: 3.0, source: design}
+  # Input shafts are the two ring-gear shafts, coaxial with the rear axle, one
+  # per side. Lateral offset of the visual pulley from the wheel centerline —
+  # placeholder until the mount/pulley design is done.
+  input_pulley_offset: {value: 0.025, source: design}
+  # Reflected rotor+gearbox inertia seen at each input shaft (XC430 rotor through
+  # 159.59:1 internal gearing, then /belt_ratio^2). -> spin-down / step-response tests.
+  input_armature: {value: 3.0e-4, source: GUESS}
+  hub_joint_damping: {value: 1.0e-4, source: GUESS}        # -> driven-wheel spin-down test
+  hub_joint_frictionloss: {value: 1.0e-3, source: GUESS}
+  roller_joint_damping: {value: 1.0e-6, source: GUESS}     # -> roller flick spin-down test
+  roller_joint_frictionloss: {value: 1.0e-5, source: GUESS}
+
+bike:
+  wheelbase: {value: 0.220, source: design}
+  rake_deg: {value: 24.0, source: design}      # steering axis tilt back from vertical
+  fork_offset: {value: 0.015, source: design}  # perpendicular distance steer axis -> front axle
+  chassis:
+    mass: {value: 0.45, source: GUESS}   # frame + electronics + wiring, excluding servos/wheels/AHRS
+    box_size: [0.16, 0.04, 0.05]         # inertia primitive (full extents)
+    com_pos: [0.09, 0.0, 0.10]           # chassis-frame position of that primitive (origin = rear axle)
+  fork_mass: {value: 0.025, source: GUESS}   # steerer + fork, excluding front wheel
+  front_wheel:
+    radius: {value: 0.050, source: design}
+    width: {value: 0.028, source: design}
+    crown_radius: {value: 0.014, source: design}  # tire cross-section crown
+    mass: {value: 0.060, source: GUESS}
+  steering:
+    gear_ratio: {value: 1.0, source: design}  # servo rotation per steer rotation; range is continuous 360°+
+  ahrs:                                       # SYD Dynamics TM151
+    pos: [0.05, 0.0, 0.13]
+    mass: {value: 0.012, source: GUESS}
+    box_size: [0.030, 0.030, 0.012]
+
+servos:
+  xc430_w150:   # 2x, AOW drive (values at 12 V per datasheet)
+    stall_torque: {value: 1.6, source: datasheet}
+    no_load_rpm: {value: 106.0, source: datasheet}
+    mass: {value: 0.065, source: datasheet}
+    box_size: [0.034, 0.0285, 0.0465]   # D x W x H, axis along Y
+    pos_left: [0.045, 0.030, 0.075]     # chassis-frame positions of the two drive servos
+    pos_right: [0.045, -0.030, 0.075]
+  xc330_t181:   # steering (values at 12 V per datasheet)
+    stall_torque: {value: 0.80, source: datasheet}
+    no_load_rpm: {value: 113.0, source: datasheet}
+    mass: {value: 0.023, source: datasheet}
+    box_size: [0.026, 0.020, 0.034]
+    pos: [0.16, 0.0, 0.11]
+
+actuators:
+  drive_kv: 0.5        # velocity-servo gain at the input shafts (placeholder for Dynamixel velocity PI)
+  steer_kp: 2.0        # position-servo gains at the steer joint
+  steer_kv: 0.05
+
+testbed:
+  # Wheel-only system-ID rig: AOW + input shafts on a stand fixed to the world.
+  stand_clearance: 0.02   # axle height = outer_radius + this; >0 spins freely in air, 0 touches floor
+
+training_wheels:
+  # Optional outriggers for development/tests (not a physical part).
+  half_span: 0.10       # lateral distance from chassis centerline
+  radius: 0.008
+  pos_x: 0.06           # forward of rear axle
+  clearance: 0.002      # gap above floor when upright, so they never carry standing load

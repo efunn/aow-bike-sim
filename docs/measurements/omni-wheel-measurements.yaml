@@ -1,0 +1,154 @@
+# Raw measurement capture sheet — tracks omni-wheel-protocol.md section by section.
+#
+# Enter values exactly as measured. Units are in each key's suffix:
+#   _mm = millimeters (float), _g = grams (float), _deg = degrees (float),
+#   _teeth = tooth count (int). 0 / 0.0 means "not yet measured".
+# This file is for raw data entry only. When a section is complete, convert and
+# derive into config/bike_params.yaml (meters / kg / ratios) and update that
+# entry's `source:` tag. Formulas for the derived values are in the protocol doc.
+
+section_1_envelope:
+  outer_diameter_big_end_tip_mm: 102.35  # float — one roller, large cone end in contact (max)
+  outer_diameter_mid_roller_mm: 102.05   # float — halfway along a roller
+  outer_diameter_two_roller_mm: 101.75   # float — exactly two rollers sharing contact (min)
+  overall_width_mm: 33.0                  # float
+  notes: >
+    Measured 2026-07-16 on assembled wheel, unloaded. ~0.6 mm diameter ripple
+    across roll phase is expected geometry (truncated cones can't produce a
+    constant-radius envelope). These are cross-check constraints, not model
+    inputs — see "Reconciling envelope vs. component measurements" in the
+    protocol doc; with cone dims they over-determine mount_radius_mm.
+
+section_2_roller_axles:
+  n_axles: 8                             # int — confirmed
+  mount_radius_mm: 40.0                   # float — wheel axis -> axle axis
+  axle_cant_deg: 0.0                     # float — 0 if purely tangential
+  axle_diameter_mm: 5.0                  # float — not used by sim; spare-part info
+  notes: ""
+
+section_3_truncated_cones:               # measure 2-3 cones, assume identical
+  # Main (primary) cone — the contact surface modeled so far:
+  big_end_diameter_mm: 22.0              # float — measured at teardown
+  small_end_diameter_mm: 19.0            # float — measured at teardown
+  cone_length_mm: 7.5                    # float — measured at teardown
+  # Secondary cone — tapers back down steeply from the main cone's big-end
+  # ridge; confirmed to NEVER touch the ground unloaded, so it is excluded from
+  # contact geometry (affects ridge compliance only, which stays unmodeled).
+  # Dimensions optional, teardown-time, for completeness:
+  second_cone_length_mm: 1.5             # float — optional
+  second_cone_end_diameter_mm: 12.0      # float — optional
+  ridge_sharpness: "near-sharp corner"   # str — observed: deflects most under load
+  pair_gap_mm: 10.0                      # float — big end to big end, same axle (min ~8.5mm, but floats)
+  adjacent_pair_gap_mm: 16.0             # float — little-end rim to little-end rim,
+                                         #   adjacent axles, at the outer surface (max ~18mm, but floats)
+  axial_play_mm: 0.7                     # float — roller slop along its axle; not modeled (probably 0.75mm based on above)
+                                         # note: slop appears to be in the rollers, not axle
+  big_end_inward: true                   # bool — confirmed: big ends face each other
+  pair_mass_g: 4.372                     # float — one axle + both cones
+  tpu_hardness_impression: "hard"        # str — soft/medium/hard, durometer if known (measure later)
+  notes: >
+    Teardown 2026-07-17: big Ø22.0, small Ø19.0, full length 7.5, r_m = 40.0.
+    Ridge cross-check sqrt((r_m + ρ_big)² + x_big²) with the floating pair gap
+    (8.5-10 mm -> x_big 4.25-5.0) gives Ø102.35-102.49 vs Ø102.35 measured —
+    closes within the rollers' axial play. The earlier intact-wheel fits
+    (r_m 38.9, cone length 9.4, little Ø 20.4) were artifacts of the rough
+    Ø~24 big-end estimate and are superseded by these direct measurements.
+
+section_4_gear_train:
+  # TEARDOWN FINDING: the wheel is a bevel DIFFERENTIAL. The two ring gears are
+  # side gears, one per side, each meshing all 8 planet ("double bevel") axles
+  # mounted in the carrier (= hub frame). Rings spinning together -> wheel rolls,
+  # rollers still; rings spinning differentially -> planets turn -> rollers spin.
+  # There is no input gear leg left inside the wheel: the toy's motor pinions
+  # lived outside it and are discarded. The belts drive the two ring-gear shafts
+  # directly, so the input legs ARE the belt pulleys below (input_leg_gears
+  # dropped as not-applicable).
+  ring_to_roller_leg:
+    ring_gear_teeth: 48                  # int
+    bevel_ring_side_teeth: 12            # int — planet bevel meshing the ring gear
+    bevel_roller_side_teeth: 12          # int — planet bevel meshing the roller gear
+    roller_gear_teeth: 20                # int
+    # -> k_roller = (48/12) * (12/20) = 2.4  roller rev per ring rev, both relative to hub
+    # note: spin direction changes if wheel is flipped (just put 1 here for now, will test more)
+    spin_direction_sign: 1               # int — +1 or -1, from the hand-turn observation
+    sign_observation: ""                 # str — what you held / turned / saw
+  differential:
+    hub_constraint: "hub (carrier) = (ring1_abs + ring2_abs) / 2"   # structural, no teeth involved
+    # -> config/bike_params.yaml drivetrain mixing (input A/B = ring gear 1/2 shafts, 1:1):
+    #    mix_hub_a = mix_hub_b = 0.5 ; mix_ring_a = 1.0 ; mix_ring_b = 0.0
+    #    (the model's "ring" body is ring gear 1, the input-A side)
+  # pulley design not done yet, rough guess
+  belt_pulleys:
+    servo_side_teeth: 48                 # int (rough guess)
+    wheel_side_teeth: 16                 # int (rough guess)
+  photo_refs: "./docs/measurements/wheel-*/*"        # str — filenames/links of teardown photos
+  notes: >
+    Differential topology BENCH-VERIFIED 2026-07-17: each 12t planet bevel
+    meshes both 48t crown gears, and holding one ring while turning the other
+    forces the carrier around at half speed (wheel crawls forward, i.e. rolls
+    while crawling). Confirms hub = (ring1 + ring2)/2 and the 0.5/0.5, 1.0/0.0
+    mixing matrix.
+
+section_5_masses:
+  # Per-piece measurements (count per wheel in the comment) — this per-part
+  # breakdown is better than the original assembly-level grouping; the model
+  # lumps are DERIVED below.
+  roller_g: 1.849                        # float — 16x: one cone
+  roller_axle_with_bevel_g: 0.674        # float — 8x: tangential roller axle incl. its 20t gear
+  double_bevel_axle_and_gears_g: 1.000   # float — 8x: radial planet axle, bevel each end
+  gear_holder_frame_half_g: 12.500       # float — 2x: carrier frame (averaged, slight asymmetry)
+  ring_gear_g: 4.570                     # float — 2x: differential side gears (averaged, slight asymmetry)
+  wheel_outer_frame_half_g: 18.650       # float — 2x: outer casing (averaged, slight asymmetry)
+  whole_wheel_g: 115.176                 # float — reference; parts sum 114.416, remainder
+                                         #   0.760 attributed to the 28 small screws
+  # Derived model-body lumps (transferred to config/bike_params.yaml):
+  #   roller pair assembly = 2 x 1.849 + 0.674              =  4.372 g -> roller.pair_mass  (x8 = 34.976)
+  #   ring body (= ring gear 1, input-A side)               =  4.570 g -> ring.mass
+  #   hub lump = carrier 25.0 + casing 37.3 + planets 8.0
+  #            + ring gear 2  4.570 + screws 0.760          = 75.630 g -> hub.mass
+  #   total check: 34.976 + 4.570 + 75.630 = 115.176 ✓
+  # Ring gear 2 counter-rotates relative to the hub; it is lumped into the hub
+  # because it translates with the wheel — its counter-spin inertia (~2e-6 kg·m²)
+  # is neglected (future refinement: second ring body if it ever matters).
+
+# BELOW HERE NOT FILLED OUT YET
+
+section_6_bike_as_built:                 # once the custom chassis exists
+  wheelbase_mm: 0.0                      # float
+  rake_deg: 0.0                          # float
+  fork_offset_mm: 0.0                    # float
+  steering_gear_ratio: 0.0               # float — servo rev per steer rev
+  front_wheel_diameter_mm: 0.0           # float
+  front_wheel_width_mm: 0.0              # float
+  front_wheel_crown_radius_mm: 0.0       # float
+  front_wheel_mass_g: 0.0                # float
+  components:                            # every part > ~5 g; chassis frame: origin at
+    - name: ""                           #   rear axle center, +X forward, +Z up
+      mass_g: 0.0                        # float — servos may use datasheet masses
+      pos_mm: [0.0, 0.0, 0.0]            # [float, float, float]
+  notes: ""
+
+section_7_calibration:                   # wheel-only testbed experiments, in protocol order
+  roller_spin_down:
+    decay_type: ""                       # str — "constant-decel" (frictionloss) or "exponential" (damping)
+    fitted_frictionloss_Nm: 0.0          # float
+    fitted_damping_Nm_per_rad_s: 0.0     # float
+  driven_wheel_spin_down:
+    fitted_hub_frictionloss_Nm: 0.0      # float
+    fitted_hub_damping_Nm_per_rad_s: 0.0 # float
+    reflected_inertia_kg_m2: 0.0         # float -> drivetrain.input_armature
+  servo_step_response:
+    fitted_drive_kv: 0.0                 # float
+    observed_max_speed_rad_s: 0.0        # float
+    observed_stall_torque_Nm: 0.0        # float
+  incline_slide:
+    floor_material: ""                   # str
+    slide_angle_deg: 0.0                 # float -> mu = tan(angle)
+  whole_bike_com:
+    method: ""                           # str — balance line / scale + moments
+    com_pos_mm: [0.0, 0.0, 0.0]          # [float, float, float] — chassis frame
+    total_mass_g: 0.0                    # float
+  loaded_rolling_radius:
+    applied_load_g: 0.0                  # float — weight on the wheel during the test
+    distance_per_hub_rev_mm: 0.0         # float -> effective radius = value / (2*pi)
+  notes: ""
