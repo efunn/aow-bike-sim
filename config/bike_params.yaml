@@ -147,8 +147,20 @@ control:
                         #   tire's contact shifts into the turn (ideal formula over-leans)
     ki_lat: 0.05        # slow integral lean-trim on cross-track error [rad/(m s)];
     int_limit_deg: 5.0  #   mops residual radius bias; higher values hunt
-    yaw_slew: 1.5       # rad/s heading-reference slew for command_heading turns
+    yaw_slew: 1.5       # rad/s heading slew for low-speed (arc-mode) turns
     yaw_accel: 4.0      # rad/s^2 slew ramp (trapezoid, like the pivot profile)
+    # At-speed sharp turns (feedforward-carried, circle-mode structure):
+    steer_ff_max_deg: 45.0   # feedforward steer ceiling; feedback stays +-steer_limit around it
+    turn_rate_margin: 0.7    # fraction of the kinematic ceiling v*tan(ff_max)/L used
+    yaw_slew_sharp: 3.0      # rad/s absolute ceiling for at-speed turns
+    reverse_turn_scale: 1.0  # extra cap factor for v < 0 (tune down if reverse validates worse)
+    # Reverse keep-out band: cruise diverges in [-0.88,-0.78] (slow caster/
+    # weave coalescence; no gain choice stabilizes it at our authority), and
+    # *turning* is unreliable across (-1.15,-0.72) — only the identified grid
+    # speeds outside it turn cleanly. Speed targets inside snap to the edges;
+    # transiting during ramps is fine. Location depends on steering stiffness
+    # -> recalibrate on hardware; stage-2 turning-equilibrium ID would shrink it.
+    reverse_avoid_band: [-1.2, -0.72]
   pivot:                # crawl pivot about the front contact
     yaw_rate: 1.5       # rad/s cruise (crawl ceiling ~4 rad/s; balance-limited)
     yaw_accel: 4.0      # rad/s^2 profile ramp

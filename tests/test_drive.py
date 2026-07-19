@@ -74,6 +74,20 @@ def test_circle_tracks(model, params, eq_qpos, direction):
     assert err < 0.12
 
 
+def test_reverse_circle_tracks(model, params, eq_qpos):
+    ok, err = circle_ok(model, params, eq_qpos, 0.8, +1, v=-0.5)
+    assert ok, f"reverse circle R=0.8 failed (mean radius err {err:.3f})"
+
+
+def test_reverse_pocket_speed_snapped(model, params):
+    """Speed targets inside the reverse instability pocket snap to its edge."""
+    c = DriveController(params, model)
+    c.set_speed(-0.8)
+    lo, hi = params["control"]["drive"]["reverse_avoid_band"]
+    assert c.profile.target in (lo, hi), (
+        f"target {c.profile.target} not snapped out of [{lo}, {hi}]")
+
+
 def test_stop_from_circle(model, params, eq_qpos):
     ok, _ = circle_ok(model, params, eq_qpos, 0.8, +1, v=0.5, stop_test=True)
     assert ok, "did not settle balanced after stopping from the circle"
@@ -90,8 +104,10 @@ def _fresh(model, eq_qpos):
 
 @pytest.mark.parametrize("v,delta_deg,tol", [
     (0.0, 90.0, 6.0),      # standstill: arc mode (pivot recipe)
-    (0.8, 90.0, 5.0),      # at speed: rotating carrot + lean/steer ff
-    (-0.5, 45.0, 5.0),     # reverse: opposite-signed steer ff
+    (0.8, 90.0, 5.0),      # at speed: ff-carried sharp turn (>15 deg steer)
+    (0.8, 180.0, 6.0),     # U-turn at speed
+    (-0.5, 90.0, 5.0),     # reverse: opposite-signed steer ff
+    (-1.2, 90.0, 6.0),     # fast reverse (above the instability pocket)
 ])
 def test_command_heading(model, params, eq_qpos, v, delta_deg, tol):
     """Teleop-style turns track and stay upright at any speed incl. reverse."""

@@ -119,7 +119,8 @@ def circle_ok(model, params, eq_qpos, radius, direction, v=0.5,
         roll(dd)
         radii.append(float(np.linalg.norm(dd.qpos[:2] - c._center)))
 
-    lap_t = v / params["control"]["drive"]["accel"] + 2 * np.pi * radius / v
+    lap_t = (abs(v) / params["control"]["drive"]["accel"]
+             + 2 * np.pi * radius / abs(v))
     run(model, data, c, lap_t, on_step=rec)
     tail = np.array(radii[len(radii) // 3:])
     err = float(np.mean(np.abs(tail - radius)))
@@ -127,27 +128,87 @@ def circle_ok(model, params, eq_qpos, radius, direction, v=0.5,
     if ok and stop_test:
         c.command_stop()
         roll2 = _Roll(c)
-        run(model, data, c, v / params["control"]["drive"]["accel"] + 3.0,
+        run(model, data, c,
+            abs(v) / params["control"]["drive"]["accel"] + 3.0,
             on_step=roll2)
         ok = roll2.ok and abs(roll2.deg[-1]) < 5.0
     return ok, err
 
 
 def tightest_search(model, params, eq_qpos, direction, stop_test=False,
-                    lo=0.2, hi=1.0, tol=0.02) -> float:
+                    lo=0.2, hi=1.0, tol=0.02, v=0.5) -> float:
     """Binary search the smallest radius that succeeds (assumes monotone)."""
-    ok, _ = circle_ok(model, params, eq_qpos, hi, direction, stop_test=stop_test)
+    ok, _ = circle_ok(model, params, eq_qpos, hi, direction, v=v,
+                      stop_test=stop_test)
     if not ok:
         return float("nan")
     while hi - lo > tol:
         mid = 0.5 * (lo + hi)
-        ok, _ = circle_ok(model, params, eq_qpos, mid, direction,
+        ok, _ = circle_ok(model, params, eq_qpos, mid, direction, v=v,
                           stop_test=stop_test)
         if ok:
             hi = mid
         else:
             lo = mid
     return hi
+
+
+def turn_ok(model, params, eq_qpos, v, rate, delta_deg=90.0) -> bool:
+    """command_heading turn at a forced slew rate: upright + tracks."""
+    p = copy.deepcopy(params)
+    p["control"]["drive"]["yaw_slew_sharp"] = rate
+    p["control"]["drive"]["turn_rate_margin"] = 10.0   # cap = rate, not margin
+    data = _fresh(model, eq_qpos)
+    c = DriveController(p, model)
+    c.reset(model, data)
+    run(model, data, c, 1.0)
+    c.set_speed(v)
+    run(model, data, c, 2.0)
+    psi0 = c._psi
+    c.command_heading(data, np.deg2rad(delta_deg))
+    roll = _Roll(c)
+    run(model, data, c, np.deg2rad(abs(delta_deg)) / rate + 3.0, on_step=roll)
+    err = abs(np.degrees(c._psi - psi0) - delta_deg)
+    return roll.ok and err < 10.0
+
+
+def turn_rate_envelope(model, params, eq_qpos,
+                       speeds=(0.4, 0.8, 1.2, -0.4, -0.6, -1.0, -1.2)):
+    """Binary-search the max clean 90-degree turn rate per speed."""
+    print("\nturn-rate envelope (90-degree command_heading, tol 0.1 rad/s):")
+    for v in speeds:
+        lo, hi = 0.3, 4.0
+        if not turn_ok(model, params, eq_qpos, v, lo):
+            print(f"  v={v:+.1f}: < {lo} rad/s (FAIL at floor)")
+            continue
+        while hi - lo > 0.1:
+            mid = 0.5 * (lo + hi)
+            if turn_ok(model, params, eq_qpos, v, mid):
+                lo = mid
+            else:
+                hi = mid
+        r_turn = abs(v) / lo
+        print(f"  v={v:+.1f}: max rate {lo:.2f} rad/s  (turn radius ~{r_turn:.2f} m)")
+
+
+def uturn_width(model, params, eq_qpos, v=0.8) -> float:
+    """180-degree turn at speed: swept lateral width (practical sharpness)."""
+    data = _fresh(model, eq_qpos)
+    c = DriveController(params, model)
+    c.reset(model, data)
+    run(model, data, c, 1.0)
+    c.set_speed(v)
+    run(model, data, c, 2.0)
+    c.command_heading(data, np.deg2rad(180))
+    roll = _Roll(c)
+    ys = []
+
+    def rec(dd):
+        roll(dd)
+        ys.append(dd.qpos[1])
+
+    run(model, data, c, 6.0, on_step=rec)
+    return float(np.ptp(ys)) if roll.ok else float("nan")
 
 
 def fastest_circle(model, params, eq_qpos, radius,
@@ -186,6 +247,10 @@ def main() -> None:
         print("  " + "  ".join(f"{k}={v}" for k, v in res.items()))
     max_acc = accel_sweep(model, params, eq.qpos)
 
+    turn_rate_envelope(model, params, eq.qpos)
+    w = uturn_width(model, params, eq.qpos)
+    print(f"\nU-turn at 0.8 m/s: swept width {w:.2f} m")
+
     print("\ncircle envelopes at 0.5 m/s (binary search, tol 2 cm):")
     for direction, tag in ((+1, "CCW"), (-1, "CW")):
         r_track = tightest_search(model, params, eq.qpos, direction)
@@ -193,6 +258,10 @@ def main() -> None:
                                  stop_test=True)
         print(f"  {tag}: tightest tracked R = {r_track:.2f} m; "
               f"tightest stop-from-circle R = {r_stop:.2f} m")
+    print("\nreverse circle envelopes at -0.5 m/s:")
+    for direction, tag in ((+1, "CCW"), (-1, "CW")):
+        r_track = tightest_search(model, params, eq.qpos, direction, v=-0.5)
+        print(f"  {tag}: tightest tracked R = {r_track:.2f} m")
     r_ref = 0.5 if np.isnan(r_track) else max(r_track + 0.1, 0.4)
     v_best = fastest_circle(model, params, eq.qpos, r_ref)
     print(f"\nfastest circle at R = {r_ref:.2f} m: {v_best:.2f} m/s")

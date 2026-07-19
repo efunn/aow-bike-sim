@@ -229,3 +229,37 @@ picks the mechanism by speed:
 Verified (tests + scenarios): standstill ±90° and chained 4×90° lap, ±90° at
 0.8 m/s, ±30° slalom, ±45° in reverse, accelerate-mid-turn, stop-mid-turn —
 all upright with ≤4° heading error.
+
+## Sharper turns beyond the linear range (stage 1, 2026-07-18)
+
+`command_heading` at speed is now **feedforward-carried** like circle mode:
+the kinematic steer `atan(ψ̇L/v)` may grow to `steer_ff_max_deg` (45°) — it
+moves the operating point; the ±15° feedback clamp bounds only the *deviation*
+from it, which is what the identified model's validity actually constrains.
+Lean reference in atan form; turn-rate ceiling = `turn_rate_margin ×
+v·tan(steer_ff_max)/L`.
+
+Measured envelope (placeholder chassis, `run_drive.py`): 90° turns at up to
+**3.9 rad/s** at 0.8–1.2 m/s (turn radius ≈ 0.2–0.3 m, matching the circle
+envelope — the production cap keeps ~30% margin under that); U-turn at
+0.8 m/s sweeps only **0.64 m**; reverse circles at −0.5 m/s track down to
+**R = 0.21 m** (tighter than forward!).
+
+**Reverse keep-out band** (the important finding): straight cruise diverges in
+[−0.88, −0.78] m/s — a slow, monotonic caster/weave coalescence pocket that
+*no* gain choice stabilizes at our steer/crawl authority (verified: K from
+other speeds, re-designs with different weights, stiffer steer servos — all
+fail; neighbors ±0.1 m/s are clean). Turning is unreliable across the wider
+(−1.15, −0.72); only identified grid speeds outside it (−0.6, −1.2) turn
+cleanly. `control.drive.reverse_avoid_band` snaps dwell targets past the band
+(transiting during ramps is fine). Expect the physical bike to have such a
+pocket too, elsewhere (it scales with steering stiffness — the real XC330 is
+much stiffer than the modeled servo); recalibrate on hardware.
+
+**Stage-2 triggers** (turning-equilibrium 2D identification): met *only inside
+the reverse band* — forward and outer-reverse turning matches the circle
+envelope, so stage 2 is deferred until the band matters in practice or
+hardware calibration moves it somewhere inconvenient. Sketch when needed:
+`settle_circling(v, κ)` projection settling, path-frame ID about the turning
+equilibrium, 2D gain + equilibrium-map interpolation replacing analytic
+feedforwards.

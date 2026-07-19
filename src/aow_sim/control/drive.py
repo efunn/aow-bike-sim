@@ -64,6 +64,11 @@ class DriveController(LQRBalance):
         self.int_limit = np.deg2rad(dc["int_limit_deg"])
         self.yaw_slew = dc["yaw_slew"]
         self.yaw_accel = dc["yaw_accel"]
+        self.steer_ff_max = np.deg2rad(dc["steer_ff_max_deg"])
+        self.turn_rate_margin = dc["turn_rate_margin"]
+        self.yaw_slew_sharp = dc["yaw_slew_sharp"]
+        self.reverse_turn_scale = dc["reverse_turn_scale"]
+        self.reverse_avoid_band = tuple(dc["reverse_avoid_band"])
         from .balance import lat_gain
         self.lat_per_d = lat_gain(params)
         self._psi_dot_ref = 0.0
@@ -146,6 +151,12 @@ class DriveController(LQRBalance):
             self._psi_path_target += delta
 
     def set_speed(self, v: float) -> None:
+        """Set the speed target; targets inside the reverse instability pocket
+        snap to the nearest band edge (dwelling there diverges — transiting
+        during ramps is fine)."""
+        lo, hi = self.reverse_avoid_band
+        if lo < v < hi:
+            v = hi if (v - lo) > (hi - v) else lo
         self.profile.set_target(v)
 
     def stop(self) -> None:
@@ -250,12 +261,17 @@ class DriveController(LQRBalance):
                 self._center = p + self.wheelbase * np.array([c_, s_])
                 return self._compute(model, data)
             # Rotating carrot (at speed): the line heading slews under the
-            # bike with lean feedforward; turn-rate ceiling from the steer
-            # clamp's kinematic arc rate v*tan(steer_limit)/L (with margin).
-            steer_rate_cap = (0.7 * abs(s.v_lon)
-                              * np.tan(self.steer_limit) / self.wheelbase)
+            # bike, feedforward-carried like circle mode — the steer ff moves
+            # the operating point (up to steer_ff_max) and feedback stays
+            # clamped around it, so the deviation from equilibrium remains in
+            # the identified model's validity. Turn-rate ceiling = margin x
+            # the kinematic arc rate at the ff ceiling.
+            steer_rate_cap = (self.turn_rate_margin * abs(s.v_lon)
+                              * np.tan(self.steer_ff_max) / self.wheelbase)
+            if s.v_lon < 0:
+                steer_rate_cap *= self.reverse_turn_scale
             crawl_frac = max(0.0, 1.0 - abs(s.v_lon) / 0.3)
-            slew_cap = min(self.yaw_slew,
+            slew_cap = min(self.yaw_slew_sharp,
                            crawl_frac * self.yaw_slew + steer_rate_cap)
             psi_dot_ref = self._advance_slew(slew_cap)
             if psi_dot_ref:
@@ -268,16 +284,19 @@ class DriveController(LQRBalance):
             e_psi = np.arctan2(np.sin(self._psi - self._psi_path),
                                np.cos(self._psi - self._psi_path))
             yaw_rate_ref = psi_dot_ref
-            roll_ref = -self.lean_ff * s.v_lon * psi_dot_ref / GRAVITY
+            roll_ref = -self.lean_ff * np.arctan(
+                s.v_lon * psi_dot_ref / GRAVITY)
             d_ff = crawl_frac * (-psi_dot_ref * self.wheelbase) / self.lat_per_d
             # Kinematic steer for the commanded arc rate; sign flips in
             # reverse (backing turns steer opposite) — without this bias the
-            # feedback fights the wrong way and reverse turns diverge.
+            # feedback fights the wrong way and reverse turns diverge. Allowed
+            # up to steer_ff_max (well past the feedback clamp): it carries
+            # the equilibrium, the clamp bounds only the correction around it.
             if abs(s.v_lon) > 0.25:
                 steer_ff = float(np.clip(
                     self.steer_ff_gain
                     * np.arctan(psi_dot_ref * self.wheelbase / s.v_lon),
-                    -self.steer_limit, self.steer_limit))
+                    -self.steer_ff_max, self.steer_ff_max))
             else:
                 steer_ff = 0.0
             e_lon = float(t_hat @ d_vec)
