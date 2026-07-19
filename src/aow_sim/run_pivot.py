@@ -16,7 +16,6 @@ Commands re-anchor immediately, so mashing keys mid-pivot is allowed.
 from __future__ import annotations
 
 import argparse
-import time
 
 import mujoco
 import numpy as np
@@ -98,6 +97,8 @@ KEY_DELTAS_DEG = {
 
 
 def teleop(model, params, eq_qpos) -> None:
+    from .interactive import teleop_loop
+
     data = _fresh(model, eq_qpos)
     c = PivotController(params, model)
     c.reset(model, data)
@@ -107,32 +108,14 @@ def teleop(model, params, eq_qpos) -> None:
         if keycode in KEY_DELTAS_DEG:
             pending.append(np.deg2rad(KEY_DELTAS_DEG[keycode]))
 
-    print("teleop: ←/→ ±30°   J/L ±90°   U/O ±180°   (Esc quits)")
-    try:
-        viewer = mujoco.viewer.launch_passive(model, data, key_callback=on_key)
-    except RuntimeError as e:
-        raise SystemExit(
-            f"could not start the interactive viewer ({e}).\n"
-            "On macOS the passive viewer must run under mjpython:\n"
-            "    mjpython -m aow_sim.run_pivot --teleop"
-        ) from e
-    sync_every = max(1, int(1 / 60 / model.opt.timestep))
-    with viewer as v:
-        t_wall = time.perf_counter()
-        while v.is_running():
-            if pending:
-                c.command_pivot(data, pending.pop(0))
-            for _ in range(sync_every):
-                c.step(model, data)
-                mujoco.mj_step(model, data)
-            v.sync()
-            # pace to real time
-            t_wall += sync_every * model.opt.timestep
-            lag = t_wall - time.perf_counter()
-            if lag > 0:
-                time.sleep(lag)
-            else:
-                t_wall = time.perf_counter()
+    def step(m, d):
+        if pending:
+            c.command_pivot(d, pending.pop(0))
+        c.step(m, d)
+
+    teleop_loop(model, data, step, on_key,
+                "teleop: ←/→ ±30°   J/L ±90°   U/O ±180°   (Esc quits)",
+                "aow_sim.run_pivot")
 
 
 def main() -> None:

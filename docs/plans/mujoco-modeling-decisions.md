@@ -162,3 +162,70 @@ up to the ~4 rad/s crawl ceiling; max lean ~4°. `tests/test_pivot.py` guards
 profile correctness and closed-loop pivots. Recorded follow-ups: steer-90°
 pivot about the rear contact (minimum-diameter mode, needs large-steer
 modeling), teleop-style continuous heading commands, pivot + forward drive.
+
+## Driving: gain-scheduled LQR (`control/drive.py`, 2026-07-18)
+
+Balance at speed is steering-dominated and speed-dependent, so the
+finite-amplitude identification runs at a mirrored grid of forward speeds
+(`control.drive.speed_grid`, ±1.2 m/s max ≈ 70% of the no-load ceiling) and
+gains are linearly interpolated by measured speed. v = 0 recovers the
+stationary controller; negative speeds capture the reversed-caster regime —
+the identified steer/roll gain flips sign backward, with zero hand-modeling.
+Line and circle path modes layer references + feedforward on top, pivot-style.
+
+Hard-won lessons, in the order they bit:
+
+1. **The model's lateral-velocity state is the cross-track *rate*** (world-
+   frame v_y in the ID frame, containing v·sin(heading error)) — not the
+   body-frame lateral slip velocity. They coincide at standstill (why balance
+   and pivot never noticed); feeding the body-frame value at 0.8 m/s loses
+   the dominant v·ψ term and destabilizes cruise. Symptom: slow (~0.7 s
+   doubling) roll divergence with steering pinned at the clamp.
+2. **Stopping must re-anchor where the bike halts** (`command_stop`), at the
+   moment v_ref reaches zero — anchoring at stop initiation pulls the bike
+   back by its braking distance; not re-anchoring at all sends it sprinting
+   back to the old anchor.
+3. **At balance, roll — not steering — sets the turning radius**
+   (R = v²/(g·tanφ), so 0.2° of roll residual ≈ 10% of radius at 0.5 m/s).
+   A steer-side integral proved this by doing nothing. Two-part fix:
+   `lean_ff = 0.85` (the ideal-bicycle lean formula over-leans because the
+   crowned tire's contact patch shifts into the turn) plus a slow integral
+   lean-trim on cross-track error (`ki_lat = 0.05`; larger values hunt).
+   Result: radius bias ≤ 1 cm at R ∈ {0.5, 0.8, 1.0}, both directions.
+4. Steer clamp in circle mode applies to the feedback correction *around*
+   the kinematic feedforward `atan(L/R)` — tight circles need large absolute
+   steer; model validity bounds the deviation from equilibrium.
+
+Baselines (placeholder chassis, `run_drive.py` / `tests/test_drive.py`):
+straight sprints to ±1.2 m/s with <6 cm cross-track and ~0.5 m braking
+distance; envelope numbers (tightest circle, tightest stop-from-circle, max
+accel, fastest circle) reported by the harness — see its output, they will
+move as the model gets calibrated. Teleop: `mjpython -m aow_sim.run_drive
+--teleop`.
+
+## Teleop turning: `command_heading` (2026-07-18)
+
+The first teleop mapped ←/→ to instantaneous ±15° heading-reference steps —
+unusable (jolts at speed, near-inert at standstill). `command_heading` now
+picks the mechanism by speed:
+
+- **|v| < 0.3 (arc mode)**: the pivot recipe — positional reference on the arc
+  around the front contact. The *position* feedback is what brakes yaw
+  momentum at the end of a turn; a heading-only reference lets the bike spin
+  20° past the stop and diverge (yaw–crawl positive feedback outside the
+  identified region). Tight lag governor (8°); handoff back to line mode only
+  once yaw momentum is spent.
+- **At speed (rotating carrot)**: the line heading slews under the bike
+  (trapezoid, `yaw_slew`/`yaw_accel`), re-anchoring each tick, with lean
+  feedforward `v·ψ̇/g` and **kinematic steer feedforward** `atan(ψ̇L/v)` —
+  whose sign flips in reverse; without it, backing turns diverge because weak
+  yaw feedback never finds the opposite-signed steer. Turn-rate ceiling =
+  what the steer clamp can kinematically deliver, `0.7·v·tan(steer_limit)/L`
+  (commanding more over-leans the bike relative to the achievable arc and it
+  falls inward).
+- A line-mode turn that decays below 0.25 m/s hands off to arc mode
+  mid-slew (stop-while-turning case).
+
+Verified (tests + scenarios): standstill ±90° and chained 4×90° lap, ±90° at
+0.8 m/s, ±30° slalom, ±45° in reverse, accelerate-mid-turn, stop-mid-turn —
+all upright with ≤4° heading error.

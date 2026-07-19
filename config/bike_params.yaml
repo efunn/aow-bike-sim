@@ -137,6 +137,18 @@ control:
     r_drive: 0.05       # balance of authority vs. saturation margin on pushes
     r_steer: 6.0
     steer_limit_deg: 15.0   # keep steering inside the identified linear region
+  drive:                # line/circle driving on the gain-scheduled LQR
+    v_max: 1.2          # m/s; ~70% of the 1.7 no-load ceiling (torque margin)
+    accel: 1.5          # m/s^2 speed-profile limit; harness sweep finds true max
+    speed_grid: [0.0, 0.25, 0.5, 0.8, 1.2]   # mirrored to negatives at design
+    speed_kp: 4.0       # common-mode speed loop gain [rad/s per m/s]
+    steer_ff_gain: 1.0  # kinematic steer feedforward scale (circle mode)
+    lean_ff: 0.85       # centripetal lean feedforward; <1 because the crowned
+                        #   tire's contact shifts into the turn (ideal formula over-leans)
+    ki_lat: 0.05        # slow integral lean-trim on cross-track error [rad/(m s)];
+    int_limit_deg: 5.0  #   mops residual radius bias; higher values hunt
+    yaw_slew: 1.5       # rad/s heading-reference slew for command_heading turns
+    yaw_accel: 4.0      # rad/s^2 slew ramp (trapezoid, like the pivot profile)
   pivot:                # crawl pivot about the front contact
     yaw_rate: 1.5       # rad/s cruise (crawl ceiling ~4 rad/s; balance-limited)
     yaw_accel: 4.0      # rad/s^2 profile ramp
