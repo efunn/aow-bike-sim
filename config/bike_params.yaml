@@ -119,6 +119,7 @@ actuators:
 control:
   # Balance controller settings (tuning knobs, not measurements).
   rate_hz: 200          # controller update rate; zero-order hold between updates
+  moves_dir: moves      # optimized maneuver files (moves/<name>.yaml); see optimize_flick.py
   pd:                   # PD cascade (rear crawl only, steer held straight)
     roll_kp: 6.0        # lateral contact velocity [m/s] per rad of roll
     roll_kd: 1.2        # ... per rad/s of roll rate

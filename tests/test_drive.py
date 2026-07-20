@@ -92,6 +92,49 @@ def test_flip_completes(model, params, eq_qpos, direction):
     assert res["settled RMS [deg]"] < 1.0, res
 
 
+def test_flick_trajectory_shape():
+    """Feedforward endpoints and monotonic steer sweep 0->pi."""
+    from aow_sim.control.flick import FlickTrajectory
+    fl = FlickTrajectory.from_params([2.5, 1.0, 2.0, 3.0, -0.4, 0.0, 0.4])
+    assert fl.steer(0.0) == pytest.approx(0.0)
+    assert fl.steer(2.5) == pytest.approx(np.pi)
+    ts = np.linspace(0, 2.5, 50)
+    steers = [fl.steer(t) for t in ts]
+    assert np.all(np.diff(steers) >= -1e-9), "steer not monotonic"
+    assert fl.hub(0.0) == pytest.approx(0.0)
+    assert fl.hub(2.5) == pytest.approx(0.0)
+
+
+def test_flick_replay(model, params, eq_qpos):
+    """Optimized two-arc flick replay in the as-authored direction: completes
+    180, upright, tight side-to-side envelope, settles. Skips if the move file
+    hasn't been generated yet."""
+    from aow_sim.control.flick import MOVES_DIR
+    if not (MOVES_DIR / "flick.yaml").exists():
+        pytest.skip("run `python -m aow_sim.optimize_flick` to generate moves/flick.yaml")
+    from aow_sim.run_drive import flick_scenario
+    res = flick_scenario(model, params, eq_qpos, +1)
+    assert res["survived"], f"fell during flick: {res}"
+    assert res["max |roll| [deg]"] < 20.0, res
+    assert abs(res["yaw err [deg]"]) < 10.0, res
+    assert res["lateral env [L]"] < 0.5, res
+    assert res["settled RMS [deg]"] < 1.0, res
+
+
+def test_flick_mirror_survives(model, params, eq_qpos):
+    """The left/right mirror (direction=-1) is approximate (the entry lean
+    breaks symmetry) but must still complete upright and settle."""
+    from aow_sim.control.flick import MOVES_DIR
+    if not (MOVES_DIR / "flick.yaml").exists():
+        pytest.skip("run `python -m aow_sim.optimize_flick` to generate moves/flick.yaml")
+    from aow_sim.run_drive import flick_scenario
+    res = flick_scenario(model, params, eq_qpos, -1)
+    assert res["survived"], f"fell during mirrored flick: {res}"
+    assert res["max |roll| [deg]"] < 25.0, res
+    assert abs(res["yaw err [deg]"]) < 20.0, res
+    assert res["settled RMS [deg]"] < 1.5, res
+
+
 def test_reverse_pocket_speed_snapped(model, params):
     """Speed targets inside the reverse instability pocket snap to its edge."""
     c = DriveController(params, model)

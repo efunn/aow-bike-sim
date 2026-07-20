@@ -28,10 +28,13 @@ python -m aow_sim.run_pivot                     # crawl-pivot metrics + rate swe
 python -m aow_sim.run_pivot --view              # +180° / −180° pivot demo
 mjpython -m aow_sim.run_pivot --teleop          # drive the heading with the keyboard
 
-python -m aow_sim.run_drive                     # sprints, accel sweep, circle envelopes
-python -m aow_sim.run_drive --view              # sprint + circle + stop demo
+python -m aow_sim.run_drive                     # sprints, accel sweep, circle+flip+flick envelopes
+python -m aow_sim.run_drive --view              # sprint + circle + stop + flip + flick demo
 mjpython -m aow_sim.run_drive --teleop          # RC-style driving: ↑/↓ speed (incl. reverse),
-                                                #   ←/→ heading, C/V circle, F flip, Space stop
+                                                #   ←/→ heading, C/V circle, F/R flick, G flip, Space stop
+
+python -m aow_sim.optimize_flick --reverse-first          # (offline) optimize the two-arc 180 flick
+python -m aow_sim.optimize_flick --name flick_fwd         #   -> moves/<name>.yaml; never touches config
                                                 #   (←/→ ±30°, J/L ±90°, U/O ±180°)
 ```
 

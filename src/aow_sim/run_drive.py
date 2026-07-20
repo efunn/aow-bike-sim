@@ -245,6 +245,44 @@ def flip_scenario(model, params, eq_qpos, direction=1) -> dict:
     }
 
 
+def flick_scenario(model, params, eq_qpos, direction=1, name="flick") -> dict:
+    """Optimized two-arc 180 flick from standstill. Reports upright, final yaw,
+    the side-to-side lateral envelope (the bounded axis; x is free), x-shift,
+    and settle. Requires moves/<name>.yaml (run optimize_flick.py first)."""
+    L = params["bike"]["wheelbase"]
+    data = _fresh(model, eq_qpos)
+    c = DriveController(params, model)
+    c.reset(model, data)
+    run(model, data, c, 1.0)
+    psi0 = c._psi
+    p0 = data.qpos[:2].copy()
+    yaw0 = psi0
+    T = c.command_flick(data, direction, name=name)
+    roll = _Roll(c)
+    lats = []
+
+    def rec(dd):
+        roll(dd)
+        d = dd.qpos[:2] - p0
+        lats.append(abs(-np.sin(yaw0) * d[0] + np.cos(yaw0) * d[1]))
+
+    run(model, data, c, T + 4.0, on_step=rec)
+    d = data.qpos[:2] - p0
+    x_shift = float(np.cos(yaw0) * d[0] + np.sin(yaw0) * d[1])
+    tail = np.abs(roll.deg)[-int(0.5 / model.opt.timestep):]
+    return {
+        "move": name,
+        "direction": direction,
+        "duration [s]": round(T, 2),
+        "yaw err [deg]": round(np.degrees(c._psi - psi0) - 180 * np.sign(direction), 1),
+        "lateral env [L]": round(max(lats) / L, 2),
+        "x shift [L]": round(x_shift / L, 2),
+        "max |roll| [deg]": round(float(np.max(np.abs(roll.deg))), 2),
+        "settled RMS [deg]": round(float(np.sqrt(np.mean(tail**2))), 2),
+        "survived": roll.ok,
+    }
+
+
 def fastest_circle(model, params, eq_qpos, radius,
                    vs=(0.5, 0.75, 1.0, 1.2)) -> float:
     best = 0.0
@@ -300,12 +338,23 @@ def main() -> None:
     v_best = fastest_circle(model, params, eq.qpos, r_ref)
     print(f"\nfastest circle at R = {r_ref:.2f} m: {v_best:.2f} m/s")
 
-    print("\n180-degree swap-ends flip (standstill):")
+    print("\n180-degree swap-ends flip (standstill, crawl front-pivot):")
     for direction in (+1, -1):
         res = flip_scenario(model, params, eq.qpos, direction)
         print("  " + "  ".join(f"{k}={v}" for k, v in res.items()))
     print("  (peak excursion ~1 L is intrinsic: exact center-spin is a delta=90"
-          " singularity; tight-throughout needs trajectory optimization)")
+          " singularity)")
+
+    from .control.flick import MOVES_DIR
+    print("\n180-degree two-arc flick (optimized; lateral bounded, x free):")
+    for move, label in (("flick", "reverse-first"), ("flick_fwd", "forward-first")):
+        if (MOVES_DIR / f"{move}.yaml").exists():
+            res = flick_scenario(model, params, eq.qpos, +1, name=move)
+            print(f"  [{label}] " + "  ".join(f"{k}={v}" for k, v in res.items()))
+        else:
+            print(f"  [{label}] no moves/{move}.yaml — run "
+                  f"`python -m aow_sim.optimize_flick"
+                  f"{' --reverse-first' if move == 'flick' else f' --name {move}'}`")
     print(f"\nsummary: v_max ±{v_max} m/s straight OK, max accel {max_acc:.1f} m/s^2")
 
 
@@ -314,12 +363,15 @@ def _view_demo(model, params, eq_qpos):
     c = DriveController(params, model)
     c.reset(model, data)
     stage = {"i": 0}
+    from .control.flick import MOVES_DIR
     plan = [
         (1.0, lambda d: c.set_speed(0.8)),
         (4.0, lambda d: c.command_circle(d, 0.8, +1)),
         (14.0, lambda d: c.command_stop()),
         (17.0, lambda d: c.command_flip(d, +1)),
     ]
+    if (MOVES_DIR / "flick.yaml").exists():
+        plan.append((22.0, lambda d: c.command_flick(d, +1)))
 
     def cb(m, d):
         c.step(m, d)
@@ -327,7 +379,7 @@ def _view_demo(model, params, eq_qpos):
             plan[stage["i"]][1](d)
             stage["i"] += 1
     mujoco.set_mjcb_control(cb)
-    print("viewer: sprint to 0.8 m/s, circle R=0.8 CCW, stop, 180 flip")
+    print("viewer: sprint 0.8 m/s, circle R=0.8, stop, flip (G), flick (F)")
     try:
         mujoco.viewer.launch(model, data)
     finally:
@@ -366,14 +418,22 @@ def _teleop(model, params, eq_qpos):
             elif k == ord(" "):
                 state["v"] = 0.0
                 c.command_stop()
-            elif k == ord("F"):     # 180 swap-ends flip (from ~standstill)
+            elif k in (ord("F"), ord("R")):   # two-arc 180 flick
+                state["v"] = 0.0              # F=reverse-first, R=forward-first
+                move = "flick" if k == ord("F") else "flick_fwd"
+                try:
+                    c.command_flick(d, +1, name=move)
+                except FileNotFoundError:
+                    print(f"no moves/{move}.yaml — run `python -m aow_sim.optimize_flick`")
+            elif k == ord("G"):     # crawl front-pivot 180 (in-place variant)
                 state["v"] = 0.0
                 c.command_flip(d, +1)
         c.step(m, d)
 
     teleop_loop(model, data, step, on_key,
                 "teleop: ↑/↓ speed ±0.25   ←/→ turn ±15°   J/L turn ±90°   "
-                "C/V circle L/R   F flip   Space stop   (Esc quits)",
+                "C/V circle L/R   F flick (rev-first)   R flick (fwd-first)   "
+                "G flip   Space stop   (Esc quits)",
                 "aow_sim.run_drive")
 
 

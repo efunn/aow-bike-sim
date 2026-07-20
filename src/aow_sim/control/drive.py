@@ -90,6 +90,7 @@ class DriveController(LQRBalance):
         self._psi_raw_prev = 0.0
         self._stop_pending = False
         self._int_lat = 0.0   # integral steer correction [rad], anti-windup clamped
+        self._steer_offset = 0.0   # steer origin (set to ~pi after a flick)
         # flip-maneuver state
         self._flip_profile: YawProfile | None = None
         self._flip_dir = 1
@@ -97,6 +98,13 @@ class DriveController(LQRBalance):
         self._flip_psi0 = 0.0
         self._flip_center = np.zeros(2)
         self._flip_steer = 0.0   # scripted steer, rate-limited integrator
+        # flick-maneuver (optimized two-arc 180) state
+        self._flick = None
+        self._flick_dir = 1
+        self._flick_t0 = 0.0
+        self._flick_p0 = np.zeros(2)
+        self._flick_yaw0 = 0.0
+        self._flick_steer = 0.0   # commanded steer, rate-limited on unwind
 
     # -- gain schedule -----------------------------------------------------
 
@@ -138,6 +146,7 @@ class DriveController(LQRBalance):
         c, s = np.cos(self._psi), np.sin(self._psi)
         self._center = data.qpos[:2] + self._dir * radius * np.array([-s, c])
         self._int_lat = 0.0
+        self._steer_offset = 0.0
 
     def command_heading(self, data, delta: float) -> None:
         """Turn by `delta` rad. At low speed this runs the pivot recipe ("arc"
@@ -149,6 +158,7 @@ class DriveController(LQRBalance):
         if self.mode == "arc":
             self._psi_path_target += delta          # extend the ongoing arc
             return
+        self._steer_offset = 0.0
         if abs(s.v_lon) < 0.3:
             self.mode = "arc"
             c_, s_ = np.cos(self._psi), np.sin(self._psi)
@@ -176,9 +186,26 @@ class DriveController(LQRBalance):
         c_, s_ = np.cos(self._psi), np.sin(self._psi)
         self._flip_center = data.qpos[:2] + (self.wheelbase / 2) * np.array([c_, s_])
         self._flip_steer = data.qpos[self._sj]
+        self._steer_offset = 0.0
         self.profile.v_ref = 0.0
         self.profile.target = 0.0
         return self.flip_cfg["pre_steer_time"] + self._flip_profile.duration
+
+    def command_flick(self, data, direction: int = 1, name: str = "flick") -> float:
+        """Two-arc 180 flick (front sweeps 0->180), from ~standstill. Replays
+        the offline-optimized `moves/<name>.yaml` feedforward with crawl balance
+        underneath. `name`: "flick" (reverse-first) or "flick_fwd" (forward-
+        first). Returns the horizon [s]."""
+        from .flick import load_move
+        self._flick = load_move(name)
+        self._flick_dir = 1 if direction >= 0 else -1
+        self._flick_t0 = data.time
+        self._flick_p0 = data.qpos[:2].copy()
+        self._flick_yaw0 = self._psi
+        self._flick_steer = data.qpos[self._sj]
+        self._steer_offset = 0.0   # new maneuver starts from the true origin
+        self.mode = "flick"
+        return self._flick.T
 
     def set_speed(self, v: float) -> None:
         """Set the speed target; targets inside the reverse instability pocket
@@ -280,6 +307,41 @@ class DriveController(LQRBalance):
             self.command_line(data, heading=psi_target)
         return u
 
+    def _flick_compute(self, data, s) -> np.ndarray:
+        """Replay the optimized two-arc flick: feedforward steer + hub from the
+        trajectory, rear differential = roll/lateral crawl balance (the same
+        law the optimizer's rollout used, so replay matches the optimization).
+        Hands back to line mode on completion + settle."""
+        fl = self._flick
+        tau = data.time - self._flick_t0
+        if tau < fl.T:                       # replay the trajectory feedforward
+            self._flick_steer = self._flick_dir * fl.steer(tau)
+            hub = fl.hub(tau)
+        else:                                # settle: hold the front where the
+            self._flick_steer = self._flick_dir * fl.steer(fl.T)  # sweep ended
+            hub = 0.0                        # (~180); no unwind — see below.
+        # crawl balance about the flick's start pose (bike-frame lateral), K0
+        # roll/lateral response only — steer committed, yaw is the maneuver.
+        sb = extract_state(data, self._flick_p0)
+        d_bal = float(-self._K0[0] @ np.array([
+            sb.e_lat, sb.roll, 0.0, 0.0, sb.v_lat, sb.roll_rate, 0.0, 0.0]))
+        a, b = mix(hub / self.r_wheel, d_bal)
+        u = np.zeros(len(self._u))
+        u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
+        u[self.aid["steer"]] = self._flick_steer
+
+        psi_target = self._flick_yaw0 + self._flick_dir * np.pi
+        if (tau > fl.T and abs(self._psi - psi_target) < np.deg2rad(20)
+                and abs(data.qvel[5]) < 0.4):
+            # Hand off to line-keeping. The front is at ~180 deg; rather than
+            # spinning the servo back to 0 (which drags the bike in yaw at
+            # standstill, and looks like a snap), adopt 180 as the steer origin
+            # — the wheel is front-back symmetric so it is longitudinally
+            # straight. A later maneuver resets the origin (command_* zero it).
+            self._steer_offset = round(self._flick_steer / np.pi) * np.pi
+            self.command_line(data, heading=psi_target)
+        return u
+
     def _compute(self, model, data):
         s = extract_state(data, self._ref_pos)
         dpsi = np.arctan2(np.sin(s.yaw - self._psi_raw_prev),
@@ -289,6 +351,8 @@ class DriveController(LQRBalance):
 
         if self.mode == "flip":
             return self._flip_compute(data, s)
+        if self.mode == "flick":
+            return self._flick_compute(data, s)
 
         v_ref = self.profile.step(self.dt)
         if self._stop_pending and v_ref == 0.0:
@@ -402,8 +466,14 @@ class DriveController(LQRBalance):
         roll_ref += self._int_lat
 
         sj, sd = self._sj, self._sd
+        # Steer origin offset: after a flick the front is physically at ~180 deg
+        # (front-back-symmetric wheel -> longitudinally "straight"). We treat
+        # that as the zero rather than spinning the servo back (which would drag
+        # the bike in yaw at standstill). offset is 0 in every mode except a
+        # post-flick park.
+        steer_meas = data.qpos[sj] - self._steer_offset
         x = np.array([
-            e_lat, s.roll - roll_ref, e_psi, data.qpos[sj] - steer_ff,
+            e_lat, s.roll - roll_ref, e_psi, steer_meas - steer_ff,
             e_lat_rate, s.roll_rate, data.qvel[5] - yaw_rate_ref,
             data.qvel[sd],
         ])
@@ -420,5 +490,5 @@ class DriveController(LQRBalance):
         a, b = mix(common, d_cmd)
         u = np.zeros(len(self._u))
         u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
-        u[self.aid["steer"]] = steer
+        u[self.aid["steer"]] = steer + self._steer_offset
         return u

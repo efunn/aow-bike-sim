@@ -1,0 +1,28 @@
+name: flick_fwd
+horizon: 2.8896
+steer_knots:
+- 0.7868
+- 1.7671
+- 2.0063
+hub_knots:
+- 0.2393
+- 0.1735
+- -0.2328
+optimized:
+  date: '2026-07-19'
+  cost_weights:
+    fell: 1000.0
+    roll: 3.0
+    yaw: 8.0
+    lat: 15.0
+    settle: 2.0
+    time: 0.5
+  metrics:
+    lateral_envelope_m: 0.0407
+    lateral_envelope_L: 0.204
+    final_yaw_deg: 180.25
+    max_roll_deg: 7.64
+    x_shift_m: 0.273
+    duration_s: 2.89
+note: forward-first then reverse; use when already moving forward and want to turn
+  around

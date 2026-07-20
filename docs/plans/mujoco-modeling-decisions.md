@@ -290,3 +290,66 @@ to actively drive the front around in sync — recorded as the escalation, not
 built. What ships is a genuinely useful fast in-place 180 that ends centered;
 `tests/test_drive.py::test_flip_completes` guards upright + completion + final
 centering (peak excursion intentionally not asserted).
+
+## Agility: two-arc 180 flick via trajectory optimization ("flick" mode, 2026-07-19)
+
+The concept doc's *actual* maneuver (vs the front-pivot `flip`): a **two-arc
+flick** — reverse-arc then forward-arc, front wheel sweeping continuously
+0->180 in one direction while the drive flips reverse->forward (so the same
+steer direction yields same-sign yaw across both arcs; a fixed-gear rider's
+180). Goal reframed by the user: bound the **side-to-side (lateral) envelope**;
+**x-translation is free** (carry momentum through the arcs). Entry/exit
+standstill->settled.
+
+**This removes the delta=90 singularity** that blocked the tight in-place flip:
+allowing x-motion means the flick *passes through* 90 deg instead of sitting on
+it. No fundamental 360-steering blocker — only the caster-torque sign flip at
+90 (rejected by the position servo within forcerange) and balance falling to
+rear-crawl at large steer (fine at flick speeds).
+
+Built by **trajectory optimization**, not hand-tuning (the coordination is too
+hard — every hand attempt at the flip taught this). Structure:
+- **Feedforward** `steer(t)`, `hub(t)` as piecewise-linear over 4 knots
+  (7 params: horizon + 3 steer + 3 hub); the optimizer shapes only these.
+- **Balance underneath** = a roll/lateral -> crawl law using the *standstill
+  LQR* K0's differential-output row (roll, roll-rate, **lateral-velocity**, and
+  lateral-position entries; steer & yaw excluded — steer committed, yaw is the
+  maneuver). Not optimized. Lesson re-confirmed: roll + roll-rate alone does
+  **not** hold it (velocity-source base); the lateral-velocity damping term is
+  what makes the crawl balance survive the arcs.
+- **Cost** = fell + roll + (|yaw|-180)^2 + lateral-envelope + settle + time,
+  minimized by `scipy.optimize.differential_evolution` (shooting, MuJoCo
+  rollouts) + Nelder-Mead polish. `|yaw|=180` target so either flick direction
+  is valid; replay mirrors by sign.
+
+Moves live in their own files (`moves/<name>.yaml`, self-documenting with
+provenance + achieved metrics); `bike_params.yaml` only carries a
+`control.moves_dir` pointer. The optimizer (`optimize_flick.py`) is an offline
+tool you run yourself — it writes `moves/flick.yaml` and never touches your
+config. `DriveController.command_flick` loads and replays it (feedforward +
+the same crawl balance, so replay matches the optimization); teleop key **F**
+(the old front-pivot is **G**). `tests/test_drive.py` guards the trajectory
+shape always, and the replay (upright/complete/lateral/settle) when a move file
+exists. Follow-ons: TVLQR around the trajectory (disturbance rejection),
+RL policy (generalization), moving-entry/exit flick.
+
+**Refinements from watching it (2026-07-19):**
+- The optimizer's *unconstrained* winner drives **forward-first then reverse**
+  (good for turning around while already rolling forward). The user also wanted
+  **reverse-first then forward** (stopped -> turn around and carry speed out).
+  Both are kept as separate move files: `flick.yaml` (reverse-first, primary,
+  `--reverse-first` constrains the first hub knot < 0; ~1.8 s, tighter x-shift
+  ~0.7 L) and `flick_fwd.yaml` (forward-first; ~2.9 s). Teleop **F** / **R**.
+- **Steer origin after the flick.** The front ends at ~180 deg. Spinning the
+  servo back to 0 (a) *looks* like a snap and (b) at standstill **drags the
+  bike ~30 deg in yaw** as the front rolls around — which broke replay vs the
+  optimizer (which held 180). Fix: adopt 180 as the steer origin
+  (`_steer_offset`) — the wheel is front-back symmetric, so it is
+  longitudinally straight; no rotation, no drag, no snap. A subsequent
+  `command_*` resets the origin. Verified: driving off afterward is stable
+  (the reverse-trail at the adopted origin is benign at these speeds).
+- **Roll during the move** is the maneuver *leaning* through the arcs
+  (~+3/-13/+8 deg for the fast reverse-first), not the balance oscillating; it
+  damps within ~0.2 s of completion. A `rollrate` cost term was added to prefer
+  smoother trajectories; the optimizer still trades some roll for speed, tunable
+  via the cost weights (recorded in each move file).
