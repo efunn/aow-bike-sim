@@ -184,7 +184,7 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         from .policy import load_policy_npz          # numpy-only
         pol = load_policy_npz(path.parent / d["policy_file"])
         pol.target = np.deg2rad(d.get("yaw_target_deg", 180.0))
-        pol.horizon = float(d.get("max_episode_s", 4.0))
+        pol.horizon = float(d.get("max_episode_s", 4.0))  # replay-safety timeout
         return pol
     return FlickTrajectory(float(d["horizon"]),
                            np.asarray(d["steer_knots"], float),

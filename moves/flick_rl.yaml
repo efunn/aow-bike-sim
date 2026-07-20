@@ -10,9 +10,9 @@ trained:
   net_arch:
   - 128
   - 128
-  export_max_diff: 4.67007123194918e-07
+  export_max_diff: 4.154244387377659e-07
   metrics:
-    success_rate: 0.0
-    final_yaw_err_deg: 275.1
-    lateral_env_L: 0.426
+    success_rate: 1.0
+    final_yaw_err_deg: 9.5
+    lateral_env_L: 0.313
     n_eval: 8

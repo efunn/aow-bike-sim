@@ -356,9 +356,20 @@ class DriveController(LQRBalance):
         u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
         u[self.aid["steer"]] = self._flick_steer
 
-        psi_target = self._flick_yaw0 + np.pi
-        if (tau > pol.horizon and abs(self._psi - psi_target) < np.deg2rad(20)
-                and abs(data.qvel[5]) < 0.4):
+        # Hand back to the balance controller as soon as the bike is roughly
+        # turned around AND upright — then the balance controller does the final
+        # settling. In training the episode ENDED at success, so the policy has
+        # no learned post-success behavior; querying it past the turn makes it
+        # flail (drive off, fall). We hand off *looser* than the training
+        # success (which needs the policy to fully stop): the balance controller
+        # only needs the bike near the target heading and upright to catch it.
+        # The ~90 deg midpoint is far from the target, so this never fires early.
+        # A timeout at the training horizon is the safety net.
+        psi_target = self._flick_yaw0 + self._flick_dir * np.pi
+        near_done = (abs(yaw_err) < np.deg2rad(20)      # heading ~ at target
+                     and abs(s.roll) < np.deg2rad(15)    # upright enough to catch
+                     and abs(data.qvel[5]) < 2.0)        # not still spinning fast
+        if near_done or tau > pol.horizon:
             self._steer_offset = round(self._flick_steer / np.pi) * np.pi
             self.command_line(data, heading=psi_target)
         return u
