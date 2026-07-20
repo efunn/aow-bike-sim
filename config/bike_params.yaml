@@ -161,6 +161,19 @@ control:
     # transiting during ramps is fine. Location depends on steering stiffness
     # -> recalibrate on hardware; stage-2 turning-equilibrium ID would shrink it.
     reverse_avoid_band: [-1.2, -0.72]
+  flip:                 # 180-degree swap-ends about the midline (standstill<->standstill)
+    # Realization: pre-steer the front to ~90 deg (frees it to roll laterally so
+    # the bike can rotate about the midline, not the front contact), hold while
+    # the rear crawls the spin, then unwind. See the decisions doc: exact
+    # center-spin is a delta=90 kinematic singularity, so this bulges out to
+    # ~1 wheelbase mid-spin and the hub loop reels the center back by the end.
+    # Tight-throughout (<=0.5 L) needs trajectory optimization (deferred).
+    yaw_accel: 4.0      # rad/s^2 yaw-rate trapezoid ramp
+    yaw_rate: 1.0       # rad/s cruise yaw rate (higher = faster, looser)
+    pre_steer_time: 0.7 # s to wind the front to hold_deg before spinning
+    hold_deg: 90.0      # front angle held during the spin (frees the front)
+    steer_rate: 8.0     # rad/s cap on the scripted steer slew
+    hub_kp: 12.0        # longitudinal center-error loop [rad/s per m] (re-centers)
   pivot:                # crawl pivot about the front contact
     yaw_rate: 1.5       # rad/s cruise (crawl ceiling ~4 rad/s; balance-limited)
     yaw_accel: 4.0      # rad/s^2 profile ramp

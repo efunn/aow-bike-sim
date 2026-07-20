@@ -31,7 +31,7 @@ mjpython -m aow_sim.run_pivot --teleop          # drive the heading with the key
 python -m aow_sim.run_drive                     # sprints, accel sweep, circle envelopes
 python -m aow_sim.run_drive --view              # sprint + circle + stop demo
 mjpython -m aow_sim.run_drive --teleop          # RC-style driving: ↑/↓ speed (incl. reverse),
-                                                #   ←/→ heading, C/V circle, Space stop
+                                                #   ←/→ heading, C/V circle, F flip, Space stop
                                                 #   (←/→ ±30°, J/L ±90°, U/O ±180°)
 ```
 

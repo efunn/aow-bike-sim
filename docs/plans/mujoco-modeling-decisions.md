@@ -263,3 +263,30 @@ hardware calibration moves it somewhere inconvenient. Sketch when needed:
 `settle_circling(v, κ)` projection settling, path-frame ID about the turning
 equilibrium, 2D gain + equilibrium-map interpolation replacing analytic
 feedforwards.
+
+## Agility: 180-degree swap-ends flip ("flip" mode, 2026-07-19)
+
+Goal (`docs/plans/agility-turn-180-move.md`): rotate 180 about the *midline*,
+lateral deviation <= 0.5 L "at any point". Implemented as a `DriveController`
+mode: pre-steer the front to ~90 deg (frees it to roll laterally), hold while
+the rear crawl feedback tracks a radius-L/2 circle about the captured center
+and balances roll, hub closes a slow longitudinal center loop, then hand back
+to line mode. Result: stable (max roll ~2 deg), completes 180 (+/-1 deg), ends
+within ~0.3 L of the start, settles clean. Both directions; teleop key **F**.
+
+**Key finding — exact center-spin is a kinematic singularity.** A non-scrubbing
+front wheel forces the instantaneous center of rotation onto the front-axle
+line; that line passes through the midpoint *only at steer = 90 deg exactly*
+(at 45 deg the ICR is still 0.35 L from center, near the front). So for any
+steer < 90 the bike pivots near the **front contact**, and the passive front
+wheel's spin-up inertia collapses even the delta=90 case back to a front-pivot
+transient. Consequence: the flip **bulges out to ~1 L mid-spin** (front-pivot)
+and the hub loop only reels the center back by the end. This also kills the
+concept doc's *swept* reverse-flick (steer 0->180): sweeping through low steer
+angles is a front-pivot for most of the move. The peak-excursion goal (<=0.5 L
+throughout) is therefore **not reachable with feedback tracking**; it needs
+**trajectory optimization** (co-optimized steer/hub/crawl trajectory + TVLQR)
+to actively drive the front around in sync — recorded as the escalation, not
+built. What ships is a genuinely useful fast in-place 180 that ends centered;
+`tests/test_drive.py::test_flip_completes` guards upright + completion + final
+centering (peak excursion intentionally not asserted).

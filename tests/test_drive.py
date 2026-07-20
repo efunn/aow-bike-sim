@@ -7,7 +7,7 @@ import pytest
 from aow_sim.build_model import build_model, load_params
 from aow_sim.control import DriveController, SpeedProfile
 from aow_sim.control.linearize import settle_upright
-from aow_sim.run_drive import circle_ok, sprint_scenario
+from aow_sim.run_drive import circle_ok, flip_scenario, sprint_scenario
 
 
 @pytest.fixture(scope="module")
@@ -77,6 +77,19 @@ def test_circle_tracks(model, params, eq_qpos, direction):
 def test_reverse_circle_tracks(model, params, eq_qpos):
     ok, err = circle_ok(model, params, eq_qpos, 0.8, +1, v=-0.5)
     assert ok, f"reverse circle R=0.8 failed (mean radius err {err:.3f})"
+
+
+@pytest.mark.parametrize("direction", [+1, -1])
+def test_flip_completes(model, params, eq_qpos, direction):
+    """180-degree swap-ends: stays upright, completes the flip, ends near the
+    start, and settles. (Peak mid-spin excursion ~1 L is intrinsic and not
+    asserted — see the decisions doc.)"""
+    res = flip_scenario(model, params, eq_qpos, direction)
+    assert res["survived"], f"fell during flip: {res}"
+    assert res["max |roll| [deg]"] < 15.0, res
+    assert abs(res["yaw err [deg]"]) < 8.0, res
+    assert res["final excursion [L]"] < 0.5, res
+    assert res["settled RMS [deg]"] < 1.0, res
 
 
 def test_reverse_pocket_speed_snapped(model, params):

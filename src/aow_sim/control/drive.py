@@ -28,6 +28,7 @@ import numpy as np
 
 from .balance import LQRBalance, extract_state, mix
 from .linearize import design_gain_schedule
+from .pivot import YawProfile
 
 GRAVITY = 9.81
 
@@ -69,11 +70,15 @@ class DriveController(LQRBalance):
         self.yaw_slew_sharp = dc["yaw_slew_sharp"]
         self.reverse_turn_scale = dc["reverse_turn_scale"]
         self.reverse_avoid_band = tuple(dc["reverse_avoid_band"])
+        self.flip_cfg = params["control"]["flip"]
         from .balance import lat_gain
         self.lat_per_d = lat_gain(params)
         self._psi_dot_ref = 0.0
         self.profile = SpeedProfile(dc["accel"], dc["v_max"])
         self.speeds, self.Ks, self.fit_r2_grid = design_gain_schedule(params, model)
+        # Standstill gains: crawl-vs-roll response used as a self-consistent
+        # roll-PD for balance during scripted maneuvers (steer committed).
+        self._K0 = self.Ks[int(np.argmin(np.abs(self.speeds)))]
         # mode state
         self.mode = "line"
         self._anchor = np.zeros(2)
@@ -85,6 +90,13 @@ class DriveController(LQRBalance):
         self._psi_raw_prev = 0.0
         self._stop_pending = False
         self._int_lat = 0.0   # integral steer correction [rad], anti-windup clamped
+        # flip-maneuver state
+        self._flip_profile: YawProfile | None = None
+        self._flip_dir = 1
+        self._flip_t0 = 0.0
+        self._flip_psi0 = 0.0
+        self._flip_center = np.zeros(2)
+        self._flip_steer = 0.0   # scripted steer, rate-limited integrator
 
     # -- gain schedule -----------------------------------------------------
 
@@ -150,6 +162,24 @@ class DriveController(LQRBalance):
                 self.command_line(data)
             self._psi_path_target += delta
 
+    def command_flip(self, data, direction: int = 1) -> float:
+        """180-degree swap-ends about the midline, from ~standstill. Pre-steers
+        the front to ~90 deg (frees it to roll laterally), holds while the rear
+        crawls the 180 spin, then unwinds. Returns the total duration [s]."""
+        d = 1 if direction >= 0 else -1
+        self.mode = "flip"
+        self._flip_profile = YawProfile(
+            d * np.pi, self.flip_cfg["yaw_rate"], self.flip_cfg["yaw_accel"])
+        self._flip_dir = d
+        self._flip_t0 = data.time
+        self._flip_psi0 = self._psi
+        c_, s_ = np.cos(self._psi), np.sin(self._psi)
+        self._flip_center = data.qpos[:2] + (self.wheelbase / 2) * np.array([c_, s_])
+        self._flip_steer = data.qpos[self._sj]
+        self.profile.v_ref = 0.0
+        self.profile.target = 0.0
+        return self.flip_cfg["pre_steer_time"] + self._flip_profile.duration
+
     def set_speed(self, v: float) -> None:
         """Set the speed target; targets inside the reverse instability pocket
         snap to the nearest band edge (dwelling there diverges — transiting
@@ -192,12 +222,73 @@ class DriveController(LQRBalance):
         self._psi_path += step_
         return self._psi_dot_ref
 
+    def _flip_compute(self, data, s) -> np.ndarray:
+        """Swap-ends maneuver in three phases keyed off τ = time − t0:
+          pre-steer — wind the front to hold_deg (yaw held, station-keep);
+          spin      — front held, rear crawl tracks the radius-L/2 circle
+                      about the captured center + balances (yaw profile runs);
+          settle    — unwind the front to 0, station-keep, hand back to line.
+        The rear differential is crawl feedback that both tracks the circle and
+        balances roll (steer is committed, so its feedback entries are zeroed —
+        balance falls to crawl, the standstill regime). The hub closes a slow
+        longitudinal loop on the center error, re-centering the front-pivot
+        excursion. See the decisions doc for why the mid-spin bulge (~1 L) is
+        intrinsic without trajectory optimization."""
+        prof = self._flip_profile
+        cfg = self.flip_cfg
+        L = self.wheelbase
+        tau = data.time - self._flip_t0
+        hold = np.deg2rad(cfg["hold_deg"]) * self._flip_dir
+        t_pre = cfg["pre_steer_time"]
+
+        psi_target = self._flip_psi0 + self._flip_dir * np.pi
+        if tau < t_pre:                       # pre-steer (front freed to ~90)
+            steer_target = hold * min(1.0, tau / t_pre)
+            psi_off = psi_dot_ref = 0.0
+        else:                                 # spin (front held at 90)
+            psi_off, psi_dot_ref, _ = prof.eval(tau - t_pre)
+            steer_target = hold
+        dmax = cfg["steer_rate"] * self.dt
+        self._flip_steer += float(np.clip(steer_target - self._flip_steer,
+                                          -dmax, dmax))
+
+        psi_ref = self._flip_psi0 + psi_off
+        cr, sr = np.cos(psi_ref), np.sin(psi_ref)
+        p_ref = self._flip_center - (L / 2) * np.array([cr, sr])
+        cy, sy = np.cos(s.yaw), np.sin(s.yaw)
+        err_w = data.qpos[:2] - p_ref
+        e_lon = cy * err_w[0] + sy * err_w[1]
+        e_lat = -sy * err_w[0] + cy * err_w[1]
+        v_lat_ref = -(L / 2) * psi_dot_ref
+        x = np.array([
+            e_lat, s.roll, self._psi - psi_ref, 0.0,
+            s.v_lat - v_lat_ref, s.roll_rate, data.qvel[5] - psi_dot_ref, 0.0,
+        ])
+        d_cmd = float(-self._K0[0] @ x)
+        v_hub = -cfg["hub_kp"] * e_lon        # longitudinal center loop
+
+        a, b = mix(v_hub, d_cmd)
+        u = np.zeros(len(self._u))
+        u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
+        u[self.aid["steer"]] = self._flip_steer
+
+        # On yaw completion, hand back to line mode — its station-keeping
+        # brings the front (held at 90) back to straight and settles the stop.
+        if (tau > t_pre + prof.duration
+                and abs(self._psi - psi_target) < np.deg2rad(8)
+                and abs(data.qvel[5]) < 0.3):
+            self.command_line(data, heading=psi_target)
+        return u
+
     def _compute(self, model, data):
         s = extract_state(data, self._ref_pos)
         dpsi = np.arctan2(np.sin(s.yaw - self._psi_raw_prev),
                           np.cos(s.yaw - self._psi_raw_prev))
         self._psi += dpsi
         self._psi_raw_prev = s.yaw
+
+        if self.mode == "flip":
+            return self._flip_compute(data, s)
 
         v_ref = self.profile.step(self.dt)
         if self._stop_pending and v_ref == 0.0:

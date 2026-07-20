@@ -211,6 +211,40 @@ def uturn_width(model, params, eq_qpos, v=0.8) -> float:
     return float(np.ptp(ys)) if roll.ok else float("nan")
 
 
+def flip_scenario(model, params, eq_qpos, direction=1) -> dict:
+    """180-degree swap-ends flip from standstill. Reports upright, final yaw
+    error, the peak and final center excursion (in wheelbases), and settle."""
+    L = params["bike"]["wheelbase"]
+    data = _fresh(model, eq_qpos)
+    c = DriveController(params, model)
+    c.reset(model, data)
+    run(model, data, c, 1.0)
+    psi0 = c._psi
+    T = c.command_flip(data, direction)
+    C0 = c._flip_center.copy()
+    roll = _Roll(c)
+    devs = []
+
+    def rec(dd):
+        roll(dd)
+        cc, ss = np.cos(c._psi), np.sin(c._psi)
+        devs.append(float(np.linalg.norm(
+            dd.qpos[:2] + (L / 2) * np.array([cc, ss]) - C0)))
+
+    run(model, data, c, T + 5.0, on_step=rec)
+    tail = np.abs(roll.deg)[-int(0.5 / model.opt.timestep):]  # roll.deg already in deg
+    return {
+        "direction": direction,
+        "duration [s]": round(T, 2),
+        "yaw err [deg]": round(np.degrees(c._psi - psi0) - 180 * np.sign(direction), 1),
+        "peak excursion [L]": round(max(devs) / L, 2),
+        "final excursion [L]": round(devs[-1] / L, 2),
+        "max |roll| [deg]": round(float(np.max(np.abs(roll.deg))), 2),
+        "settled RMS [deg]": round(float(np.sqrt(np.mean(tail**2))), 2),
+        "survived": roll.ok,
+    }
+
+
 def fastest_circle(model, params, eq_qpos, radius,
                    vs=(0.5, 0.75, 1.0, 1.2)) -> float:
     best = 0.0
@@ -265,7 +299,14 @@ def main() -> None:
     r_ref = 0.5 if np.isnan(r_track) else max(r_track + 0.1, 0.4)
     v_best = fastest_circle(model, params, eq.qpos, r_ref)
     print(f"\nfastest circle at R = {r_ref:.2f} m: {v_best:.2f} m/s")
-    print(f"summary: v_max ±{v_max} m/s straight OK, max accel {max_acc:.1f} m/s^2")
+
+    print("\n180-degree swap-ends flip (standstill):")
+    for direction in (+1, -1):
+        res = flip_scenario(model, params, eq.qpos, direction)
+        print("  " + "  ".join(f"{k}={v}" for k, v in res.items()))
+    print("  (peak excursion ~1 L is intrinsic: exact center-spin is a delta=90"
+          " singularity; tight-throughout needs trajectory optimization)")
+    print(f"\nsummary: v_max ±{v_max} m/s straight OK, max accel {max_acc:.1f} m/s^2")
 
 
 def _view_demo(model, params, eq_qpos):
@@ -277,6 +318,7 @@ def _view_demo(model, params, eq_qpos):
         (1.0, lambda d: c.set_speed(0.8)),
         (4.0, lambda d: c.command_circle(d, 0.8, +1)),
         (14.0, lambda d: c.command_stop()),
+        (17.0, lambda d: c.command_flip(d, +1)),
     ]
 
     def cb(m, d):
@@ -285,7 +327,7 @@ def _view_demo(model, params, eq_qpos):
             plan[stage["i"]][1](d)
             stage["i"] += 1
     mujoco.set_mjcb_control(cb)
-    print("viewer: sprint to 0.8 m/s, circle R=0.8 CCW, stop")
+    print("viewer: sprint to 0.8 m/s, circle R=0.8 CCW, stop, 180 flip")
     try:
         mujoco.viewer.launch(model, data)
     finally:
@@ -324,11 +366,14 @@ def _teleop(model, params, eq_qpos):
             elif k == ord(" "):
                 state["v"] = 0.0
                 c.command_stop()
+            elif k == ord("F"):     # 180 swap-ends flip (from ~standstill)
+                state["v"] = 0.0
+                c.command_flip(d, +1)
         c.step(m, d)
 
     teleop_loop(model, data, step, on_key,
                 "teleop: ↑/↓ speed ±0.25   ←/→ turn ±15°   J/L turn ±90°   "
-                "C/V circle L/R   Space stop   (Esc quits)",
+                "C/V circle L/R   F flip   Space stop   (Esc quits)",
                 "aow_sim.run_drive")
 
 
