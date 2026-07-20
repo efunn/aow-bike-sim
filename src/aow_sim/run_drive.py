@@ -386,6 +386,41 @@ def _view_demo(model, params, eq_qpos):
         mujoco.set_mjcb_control(None)
 
 
+def _overlay(scn, model, data, c, on):
+    """Draw heading (cyan), velocity (yellow, length ∝ speed) and the
+    controller reference (green, heading + length ∝ target speed) as arrows
+    above the chassis, using MuJoCo user_scn geometry. Toggled by `on`."""
+    scn.ngeom = 0
+    if not on[0]:
+        return
+    base = data.body("chassis").xpos.copy()
+    base[2] += 0.12
+    vscale = 0.15   # meters of arrow per m/s
+
+    def arrow(heading, length, rgba):
+        if scn.ngeom >= scn.maxgeom:
+            return
+        tip = base + np.array([np.cos(heading) * length,
+                               np.sin(heading) * length, 0.0])
+        g = scn.geoms[scn.ngeom]
+        mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_ARROW,
+                            np.zeros(3), np.zeros(3), np.zeros(9),
+                            np.asarray(rgba, np.float32))
+        mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_ARROW, 0.006, base, tip)
+        scn.ngeom += 1
+
+    R = data.body("chassis").xmat.reshape(3, 3)
+    heading = float(np.arctan2(R[1, 0], R[0, 0]))
+    v = data.qvel[:2]
+    speed = float(np.linalg.norm(v))
+    arrow(heading, 0.15, [0.2, 0.8, 1.0, 1.0])                            # heading
+    if speed > 1e-3:
+        arrow(float(np.arctan2(v[1], v[0])), vscale * speed,
+              [1.0, 0.9, 0.1, 1.0])                                       # velocity
+    h_ref, s_ref = c.viz_reference(data)
+    arrow(h_ref, 0.10 + vscale * abs(s_ref), [0.2, 1.0, 0.3, 1.0])        # reference
+
+
 def _teleop(model, params, eq_qpos):
     from .interactive import teleop_loop
 
@@ -394,6 +429,7 @@ def _teleop(model, params, eq_qpos):
     c.reset(model, data)
     pending = []
     state = {"v": 0.0}
+    overlay_on = [True]
 
     def on_key(keycode):
         pending.append(keycode)
@@ -401,40 +437,42 @@ def _teleop(model, params, eq_qpos):
     def step(m, d):
         while pending:
             k = pending.pop(0)
-            if k == 265:      # up
+            if k == 265:      # up arrow
                 state["v"] = min(state["v"] + 0.25, c.profile.v_max)
                 c.set_speed(state["v"])
-            elif k == 264:    # down
+            elif k == 264:    # down arrow
                 state["v"] = max(state["v"] - 0.25, -c.profile.v_max)
                 c.set_speed(state["v"])
-            elif k in (263, 262):   # left / right: slewed turn (works at any speed)
+            elif k in (263, 262):   # left / right arrow: slewed turn (any speed)
                 c.command_heading(d, np.deg2rad(15.0 if k == 263 else -15.0))
-            elif k in (ord("J"), ord("L")):   # big turns, pivot-teleop style
-                c.command_heading(d, np.deg2rad(90.0 if k == ord("J") else -90.0))
-            elif k == ord("C"):
-                c.command_circle(d, 0.8, +1)
-            elif k == ord("V"):
-                c.command_circle(d, 0.8, -1)
-            elif k == ord(" "):
+            elif k in (ord("6"), ord("7")):   # circle left / right
+                c.command_circle(d, 0.8, +1 if k == ord("6") else -1)
+            elif k in (ord("8"), ord("9")):   # flick: 8 reverse-first, 9 forward-first
                 state["v"] = 0.0
-                c.command_stop()
-            elif k in (ord("F"), ord("R")):   # two-arc 180 flick
-                state["v"] = 0.0              # F=reverse-first, R=forward-first
-                move = "flick" if k == ord("F") else "flick_fwd"
+                move = "flick" if k == ord("8") else "flick_fwd"
                 try:
                     c.command_flick(d, +1, name=move)
                 except FileNotFoundError:
                     print(f"no moves/{move}.yaml — run `python -m aow_sim.optimize_flick`")
-            elif k == ord("G"):     # crawl front-pivot 180 (in-place variant)
+            elif k == ord("4"):     # crawl front-pivot 180 (in-place variant)
                 state["v"] = 0.0
                 c.command_flip(d, +1)
+            elif k == ord("5"):     # stop
+                state["v"] = 0.0
+                c.command_stop()
+            elif k == ord("2"):     # toggle reference overlay
+                overlay_on[0] = not overlay_on[0]
         c.step(m, d)
 
+    # Number keys + arrows: MuJoCo's viewer binds every letter A-Z (F=force
+    # display, etc.), so letters would double up. Number keys 6-9 are free; 4/5
+    # toggle (empty) geom groups harmlessly; arrows are free while unpaused.
     teleop_loop(model, data, step, on_key,
-                "teleop: ↑/↓ speed ±0.25   ←/→ turn ±15°   J/L turn ±90°   "
-                "C/V circle L/R   F flick (rev-first)   R flick (fwd-first)   "
-                "G flip   Space stop   (Esc quits)",
-                "aow_sim.run_drive")
+                "teleop (number keys — MuJoCo's viewer owns the letters):\n"
+                "  ↑/↓ speed ±0.25   ←/→ turn ±15°   6/7 circle L/R\n"
+                "  8/9 flick (rev/fwd-first)   4 flip   5 stop   2 toggle overlay",
+                "aow_sim.run_drive",
+                draw=lambda scn, m, d: _overlay(scn, m, d, c, overlay_on))
 
 
 if __name__ == "__main__":

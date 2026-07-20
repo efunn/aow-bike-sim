@@ -207,6 +207,26 @@ class DriveController(LQRBalance):
         self.mode = "flick"
         return self._flick.T
 
+    def viz_reference(self, data) -> tuple[float, float]:
+        """(reference heading [rad, world], reference speed [m/s]) for the
+        current mode — for the teleop overlay. Works during flicks (shows the
+        180 target heading and the commanded hub speed)."""
+        if self.mode == "flick" and self._flick is not None:
+            tau = data.time - self._flick_t0
+            hub = self._flick.hub(min(tau, self._flick.T)) if tau < self._flick.T else 0.0
+            return self._flick_yaw0 + self._flick_dir * np.pi, hub
+        if self.mode == "flip":
+            return self._flip_psi0 + self._flip_dir * np.pi, 0.0
+        if self.mode == "circle":
+            r_vec = data.qpos[:2] - self._center
+            rho = max(float(np.linalg.norm(r_vec)), 1e-6)
+            r_hat = r_vec / rho
+            tangent = self._dir * np.array([-r_hat[1], r_hat[0]])
+            return float(np.arctan2(tangent[1], tangent[0])), self.profile.v_ref
+        if self.mode == "arc":
+            return self._psi_path, 0.0
+        return self._psi_path, self.profile.v_ref   # line
+
     def set_speed(self, v: float) -> None:
         """Set the speed target; targets inside the reverse instability pocket
         snap to the nearest band edge (dwelling there diverges — transiting

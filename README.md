@@ -30,8 +30,9 @@ mjpython -m aow_sim.run_pivot --teleop          # drive the heading with the key
 
 python -m aow_sim.run_drive                     # sprints, accel sweep, circle+flip+flick envelopes
 python -m aow_sim.run_drive --view              # sprint + circle + stop + flip + flick demo
-mjpython -m aow_sim.run_drive --teleop          # RC-style driving: ↑/↓ speed (incl. reverse),
-                                                #   ←/→ heading, C/V circle, F/R flick, G flip, Space stop
+mjpython -m aow_sim.run_drive --teleop          # RC-style driving (number keys — MuJoCo's viewer
+                                                #   owns the letters): ↑/↓ speed, ←/→ heading,
+                                                #   6/7 circle, 8/9 flick, 4 flip, 5 stop, 2 overlay
 
 python -m aow_sim.optimize_flick --reverse-first          # (offline) optimize the two-arc 180 flick
 python -m aow_sim.optimize_flick --name flick_fwd         #   -> moves/<name>.yaml; never touches config

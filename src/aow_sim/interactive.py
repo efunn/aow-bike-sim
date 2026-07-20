@@ -11,9 +11,12 @@ import mujoco
 import mujoco.viewer
 
 
-def teleop_loop(model, data, step, on_key, intro: str, module: str) -> None:
+def teleop_loop(model, data, step, on_key, intro: str, module: str,
+                draw=None) -> None:
     """Run `step(model, data)` every physics step inside a real-time-paced
-    passive viewer with `on_key(keycode)` handling."""
+    passive viewer with `on_key(keycode)` handling. If `draw` is given, it is
+    called as `draw(viewer.user_scn, model, data)` each rendered frame to add
+    overlay geometry."""
     print(intro)
     try:
         viewer = mujoco.viewer.launch_passive(model, data, key_callback=on_key)
@@ -30,6 +33,8 @@ def teleop_loop(model, data, step, on_key, intro: str, module: str) -> None:
             for _ in range(sync_every):
                 step(model, data)
                 mujoco.mj_step(model, data)
+            if draw is not None:
+                draw(v.user_scn, model, data)
             v.sync()
             t_wall += sync_every * model.opt.timestep
             lag = t_wall - time.perf_counter()

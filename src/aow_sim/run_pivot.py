@@ -89,10 +89,12 @@ def rate_sweep(model, params, eq_qpos, rates=(0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0)
     print(f"  -> largest clean pivot rate: {best:.1f} rad/s")
 
 
+# Number keys + arrows: MuJoCo's viewer binds every letter, so letters double
+# up with its shortcuts (F=force display, etc.). 6-9 are free.
 KEY_DELTAS_DEG = {
     263: +30.0, 262: -30.0,            # GLFW left / right arrow
-    ord("J"): +90.0, ord("L"): -90.0,
-    ord("U"): +180.0, ord("O"): -180.0,
+    ord("6"): +90.0, ord("7"): -90.0,
+    ord("8"): +180.0, ord("9"): -180.0,
 }
 
 
@@ -114,7 +116,7 @@ def teleop(model, params, eq_qpos) -> None:
         c.step(m, d)
 
     teleop_loop(model, data, step, on_key,
-                "teleop: ←/→ ±30°   J/L ±90°   U/O ±180°   (Esc quits)",
+                "teleop: ←/→ ±30°   6/7 ±90°   8/9 ±180°   (Esc quits)",
                 "aow_sim.run_pivot")
 
 
