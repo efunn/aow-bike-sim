@@ -12,6 +12,15 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# RL training only (the base install replays a trained policy with numpy alone).
+rl = [
+    "gymnasium>=0.29",
+    "stable-baselines3>=2.2",
+    "torch>=2.1",
+    "tensorboard>=2.14",
+    "tqdm>=4.66",
+    "rich>=13.0",
+]
 
 [build-system]
 requires = ["hatchling"]

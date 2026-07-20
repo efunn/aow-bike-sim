@@ -346,15 +346,19 @@ def main() -> None:
           " singularity)")
 
     from .control.flick import MOVES_DIR
-    print("\n180-degree two-arc flick (optimized; lateral bounded, x free):")
-    for move, label in (("flick", "reverse-first"), ("flick_fwd", "forward-first")):
+    print("\n180-degree two-arc flick (lateral bounded, x free):")
+    variants = (("flick", "trajopt reverse-first"),
+                ("flick_fwd", "trajopt forward-first"),
+                ("flick_rl", "RL policy (closed-loop)"))
+    for move, label in variants:
         if (MOVES_DIR / f"{move}.yaml").exists():
             res = flick_scenario(model, params, eq.qpos, +1, name=move)
             print(f"  [{label}] " + "  ".join(f"{k}={v}" for k, v in res.items()))
         else:
-            print(f"  [{label}] no moves/{move}.yaml — run "
-                  f"`python -m aow_sim.optimize_flick"
-                  f"{' --reverse-first' if move == 'flick' else f' --name {move}'}`")
+            how = ("python -m aow_sim.train_flick_rl" if move == "flick_rl"
+                   else f"python -m aow_sim.optimize_flick"
+                        f"{' --reverse-first' if move == 'flick' else f' --name {move}'}")
+            print(f"  [{label}] no moves/{move}.yaml — run `{how}`")
     print(f"\nsummary: v_max ±{v_max} m/s straight OK, max accel {max_acc:.1f} m/s^2")
 
 
@@ -447,13 +451,15 @@ def _teleop(model, params, eq_qpos):
                 c.command_heading(d, np.deg2rad(15.0 if k == 263 else -15.0))
             elif k in (ord("6"), ord("7")):   # circle left / right
                 c.command_circle(d, 0.8, +1 if k == ord("6") else -1)
-            elif k in (ord("8"), ord("9")):   # flick: 8 reverse-first, 9 forward-first
+            elif k in (ord("8"), ord("9"), ord("3")):
+                # flick: 8 trajopt reverse-first, 9 trajopt forward-first, 3 RL
                 state["v"] = 0.0
-                move = "flick" if k == ord("8") else "flick_fwd"
+                move = {ord("8"): "flick", ord("9"): "flick_fwd",
+                        ord("3"): "flick_rl"}[k]
                 try:
                     c.command_flick(d, +1, name=move)
                 except FileNotFoundError:
-                    print(f"no moves/{move}.yaml — run `python -m aow_sim.optimize_flick`")
+                    print(f"no moves/{move}.yaml yet")
             elif k == ord("4"):     # crawl front-pivot 180 (in-place variant)
                 state["v"] = 0.0
                 c.command_flip(d, +1)
@@ -470,7 +476,8 @@ def _teleop(model, params, eq_qpos):
     teleop_loop(model, data, step, on_key,
                 "teleop (number keys — MuJoCo's viewer owns the letters):\n"
                 "  ↑/↓ speed ±0.25   ←/→ turn ±15°   6/7 circle L/R\n"
-                "  8/9 flick (rev/fwd-first)   4 flip   5 stop   2 toggle overlay",
+                "  8/9 flick (trajopt rev/fwd)   3 flick (RL)   4 flip   "
+                "5 stop   2 toggle overlay",
                 "aow_sim.run_drive",
                 draw=lambda scn, m, d: _overlay(scn, m, d, c, overlay_on))
 

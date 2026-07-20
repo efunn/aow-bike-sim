@@ -205,16 +205,20 @@ class DriveController(LQRBalance):
         self._flick_steer = data.qpos[self._sj]
         self._steer_offset = 0.0   # new maneuver starts from the true origin
         self.mode = "flick"
-        return self._flick.T
+        # trajectory moves expose .T; RL policy moves expose .horizon
+        return getattr(self._flick, "T", getattr(self._flick, "horizon", 4.0))
 
     def viz_reference(self, data) -> tuple[float, float]:
         """(reference heading [rad, world], reference speed [m/s]) for the
         current mode — for the teleop overlay. Works during flicks (shows the
         180 target heading and the commanded hub speed)."""
         if self.mode == "flick" and self._flick is not None:
+            heading = self._flick_yaw0 + self._flick_dir * np.pi
+            if getattr(self._flick, "kind", "trajectory") == "policy":
+                return heading, 0.0        # policy: target heading, hub not exposed
             tau = data.time - self._flick_t0
             hub = self._flick.hub(min(tau, self._flick.T)) if tau < self._flick.T else 0.0
-            return self._flick_yaw0 + self._flick_dir * np.pi, hub
+            return heading, hub
         if self.mode == "flip":
             return self._flip_psi0 + self._flip_dir * np.pi, 0.0
         if self.mode == "circle":
@@ -327,12 +331,46 @@ class DriveController(LQRBalance):
             self.command_line(data, heading=psi_target)
         return u
 
+    def _flick_policy_compute(self, data, s) -> np.ndarray:
+        """Replay an RL policy move (numpy MLPPolicy): build the shared
+        observation, query the policy for (steer_rate, hub, diff), integrate the
+        steer rate to the servo target, and apply. Full policies drive the
+        differential directly; feedforward (2-action) policies get the crawl
+        balance underneath. Same completion handoff as the trajectory replay."""
+        from .flick_spec import build_obs
+        pol = self._flick
+        tau = data.time - self._flick_t0
+        dd = data.qpos[:2] - self._flick_p0
+        e_lat = -np.sin(self._flick_yaw0) * dd[0] + np.cos(self._flick_yaw0) * dd[1]
+        yaw_err = pol.target - (self._psi - self._flick_yaw0)
+        obs = build_obs(s.roll, s.roll_rate, yaw_err, data.qvel[5],
+                        data.qpos[self._sj], s.v_lon, s.v_lat, e_lat,
+                        min(tau / pol.horizon, 1.0))
+        steer_rate, hub, diff = pol.action(obs)
+        self._flick_steer += steer_rate * self.dt
+        if pol.act_dim == 2:                 # feedforward policy: crawl balance
+            diff = float(-self._K0[0] @ np.array(
+                [e_lat, s.roll, 0.0, 0.0, s.v_lat, s.roll_rate, 0.0, 0.0]))
+        a, b = mix(hub / self.r_wheel, diff)
+        u = np.zeros(len(self._u))
+        u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
+        u[self.aid["steer"]] = self._flick_steer
+
+        psi_target = self._flick_yaw0 + np.pi
+        if (tau > pol.horizon and abs(self._psi - psi_target) < np.deg2rad(20)
+                and abs(data.qvel[5]) < 0.4):
+            self._steer_offset = round(self._flick_steer / np.pi) * np.pi
+            self.command_line(data, heading=psi_target)
+        return u
+
     def _flick_compute(self, data, s) -> np.ndarray:
         """Replay the optimized two-arc flick: feedforward steer + hub from the
         trajectory, rear differential = roll/lateral crawl balance (the same
         law the optimizer's rollout used, so replay matches the optimization).
         Hands back to line mode on completion + settle."""
         fl = self._flick
+        if getattr(fl, "kind", "trajectory") == "policy":
+            return self._flick_policy_compute(data, s)
         tau = data.time - self._flick_t0
         if tau < fl.T:                       # replay the trajectory feedforward
             self._flick_steer = self._flick_dir * fl.steer(tau)

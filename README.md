@@ -36,6 +36,11 @@ mjpython -m aow_sim.run_drive --teleop          # RC-style driving (number keys 
 
 python -m aow_sim.optimize_flick --reverse-first          # (offline) optimize the two-arc 180 flick
 python -m aow_sim.optimize_flick --name flick_fwd         #   -> moves/<name>.yaml; never touches config
+
+pip install -e '.[rl]' && python -m aow_sim.train_flick_rl   # (offline) RL policy for the flick,
+                                                             #   an alternative to the scipy optimizer
+                                                             #   -> moves/flick_rl.{yaml,npz}; replay is
+                                                             #   numpy-only (no torch needed to run it)
                                                 #   (←/→ ±30°, J/L ±90°, U/O ±180°)
 ```
 

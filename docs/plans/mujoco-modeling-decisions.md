@@ -353,3 +353,45 @@ RL policy (generalization), moving-entry/exit flick.
   damps within ~0.2 s of completion. A `rollrate` cost term was added to prefer
   smoother trajectories; the optimizer still trades some roll for speed, tunable
   via the cost weights (recorded in each move file).
+
+## Agility: RL flick — closed-loop policy vs the scipy trajectory (2026-07-20)
+
+An RL alternative to the scipy `optimize_flick`, to compare paradigms. The
+scipy path stays untouched. Where trajopt yields an **open-loop** `steer(t)/
+hub(t)` schedule, RL yields a **closed-loop policy** (state -> action) that can
+react — trained **full end-to-end** (drives steer + hub + rear differential, so
+it learns balance *and* the maneuver, no crawl-balance underneath) and **robust**
+(domain randomization: initial state + mass/friction + disturbance pushes), which
+is exactly what an open-loop trajectory can't be.
+
+Design choices:
+- **Same `moves/` structure, dependency-free replay.** Training (PPO via
+  stable-baselines3, `[rl]` extra: gymnasium/torch/tensorboard) exports the
+  deterministic policy MLP + VecNormalize obs stats to `moves/flick_rl.npz`,
+  with `moves/flick_rl.yaml` (`type: rl`, provenance, eval metrics) beside it.
+  `load_move` dispatches on `type` (`trajectory` -> `FlickTrajectory`,
+  unchanged; `rl` -> numpy `MLPPolicy`). Inference is a **pure-numpy forward
+  pass** — the sim/replay machine needs nothing beyond the base install; only
+  training needs the heavy deps. The export is verified against the trained net
+  (max action diff ~3e-8) so a long training run can't silently produce an
+  artifact that replays differently.
+- **Shared obs/action contract** (`control/flick_spec.py`, numpy-only) is imported
+  by the env, the replay policy, and `DriveController`, so training and replay
+  agree by construction. Obs is ground-truth state (roll/rates, yaw error as
+  sin/cos toward the 180 target, steer, v_lon/v_lat, lateral offset, phase); x is
+  excluded (free). Action is `[steer_rate, hub, diff]` in `[-1,1]`; steer as a
+  *rate* (integrated to the servo target) lets the policy sweep continuously
+  through 180.
+- **Reward** is the per-step analog of the trajopt cost (config `rl_flick.yaml`):
+  potential-shaped yaw progress, roll^2 (upright), lateral^2, effort + jerk,
+  time; completion bonus / fall penalty terminate. All RL parameters (PPO
+  hyperparameters, action bounds, reward weights, randomization ranges) live in
+  `config/rl_flick.yaml` — separate from `bike_params.yaml`, like moves.
+
+Replay reuses the flick machinery in `DriveController` (obs build -> policy ->
+integrate steer -> apply, then the same mod-180 steer-origin handoff). Single
+direction for now (the +180 policy); the left/right mirror is a recorded
+follow-on. `run_drive` prints trajopt vs RL side-by-side; teleop **3** = RL flick
+(**8/9** = trajopt). The user runs training (long, portable across machines);
+`tests/test_rl.py` covers the spec + numpy forward always, the env when
+gymnasium is present, and replay when a trained artifact exists.

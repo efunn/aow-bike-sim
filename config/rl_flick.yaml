@@ -1,0 +1,56 @@
+# RL parameters for the two-arc 180 flick (closed-loop policy alternative to the
+# scipy trajectory optimization). Separate from bike_params.yaml, like moves/.
+# Trained by `python -m aow_sim.train_flick_rl` (needs the [rl] extra); the
+# result is exported to moves/flick_rl.{yaml,npz} and replayed dependency-free.
+
+algo:                    # PPO hyperparameters (stable-baselines3)
+  algorithm: PPO
+  total_timesteps: 3000000
+  n_envs: 8              # parallel rollout workers (SubprocVecEnv)
+  learning_rate: 3.0e-4
+  n_steps: 2048          # rollout length per env before an update
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+  net_arch: [128, 128]   # policy/value MLP hidden sizes
+  seed: 0
+
+env:
+  action_space: full     # full = policy drives steer+hub+differential (learns
+                         #   balance); feedforward = steer+hub only, K0 crawl
+                         #   balance underneath (apples-to-apples with trajopt)
+  control_rate_hz: 200   # policy/action rate (physics steps in between, ZOH)
+  max_episode_s: 4.0
+  yaw_target_deg: 180
+  success_yaw_tol_deg: 12
+  success_roll_deg: 4    # settled: |roll| below this ...
+  success_rate: 0.4      #   ... and |roll_rate|,|yaw_rate|,|v| below this
+  action_bounds:         # normalized action [-1,1] scales to these
+    steer_rate_max: 8.0  # rad/s (integrated to the steer position target)
+    hub_max: 0.6         # m/s (kept below the reverse-instability band 0.72)
+    diff_max: 30.0       # rad/s rear differential
+
+reward:                  # per-step; the RL analog of the trajopt cost weights
+  w_yaw_progress: 1.0    # reward for closing the angle to the 180 target
+  w_upright: 2.0         # penalty on roll^2
+  w_lateral: 4.0         # penalty on lateral (side-to-side) offset^2
+  w_effort: 0.001        # penalty on |action|^2
+  w_smooth: 0.02         # penalty on |action - prev_action|^2
+  time_penalty: 0.01     # per step (encourages finishing)
+  bonus_complete: 100.0  # on success (yaw within tol AND settled)
+  penalty_fall: 100.0    # on fall (terminates)
+  fall_roll_deg: 45      # |roll| beyond this = fallen
+
+randomization:           # domain randomization -> a robust closed-loop policy
+  enabled: true
+  init_roll_deg: 2.0     # uniform +- on the starting lean
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05         # small random qvel kick (m/s, rad/s scale)
+  mass_frac: 0.1         # +-10% per-body mass
+  friction_frac: 0.2     # +-20% floor sliding friction
+  disturb_force_N: 2.0   # random lateral shove magnitude
+  disturb_prob: 0.01     # probability of a shove per control step

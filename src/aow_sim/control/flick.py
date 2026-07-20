@@ -45,6 +45,7 @@ class FlickTrajectory:
     steer_knots: np.ndarray   # 3 interior knots [rad]; profile is [0,*,*,*,pi]
     hub_knots: np.ndarray     # 3 interior knots [m/s]; profile is [0,*,*,*,0]
     direction: int = 1        # +1 as-authored; -1 mirrors steer & keeps hub
+    kind: str = "trajectory"  # vs "policy" (RL); DriveController branches on this
 
     @classmethod
     def from_params(cls, p, direction: int = 1) -> "FlickTrajectory":
@@ -171,10 +172,20 @@ def cost(m: dict, weights: dict = COST_WEIGHTS) -> float:
 
 # -- move file I/O ---------------------------------------------------------
 
-def load_move(name: str, moves_dir: Path | str | None = None) -> FlickTrajectory:
+def load_move(name: str, moves_dir: Path | str | None = None):
+    """Load a move by name. `type: trajectory` (default/absent) -> a
+    FlickTrajectory (scipy optimizer output); `type: rl` -> an MLPPolicy (RL
+    output, replayed with numpy). Both carry `.kind` so DriveController can
+    tell them apart."""
     path = Path(moves_dir or MOVES_DIR) / f"{name}.yaml"
     with open(path) as f:
         d = yaml.safe_load(f)
+    if d.get("type", "trajectory") == "rl":
+        from .policy import load_policy_npz          # numpy-only
+        pol = load_policy_npz(path.parent / d["policy_file"])
+        pol.target = np.deg2rad(d.get("yaw_target_deg", 180.0))
+        pol.horizon = float(d.get("max_episode_s", 4.0))
+        return pol
     return FlickTrajectory(float(d["horizon"]),
                            np.asarray(d["steer_knots"], float),
                            np.asarray(d["hub_knots"], float))
