@@ -191,3 +191,18 @@ training_wheels:
   radius: 0.008
   pos_x: 0.06           # forward of rear axle
   clearance: 0.002      # gap above floor when upright, so they never carry standing load
+
+hockey:
+  # Ball-shot move extras (build_model(..., hockey=True)); see
+  # docs/plans/ball-shot-move.md. Physical dims are GUESS placeholders to refine.
+  stick:                # thin translucent ABS panel, one per side of the chassis
+    length: 0.11        # x-extent (chassis frame): ~center-x back over the rear wheel
+    thickness: 0.004    # ABS panel
+    height: 0.03
+    pos: [0.04, 0.045, 0.00]   # per-side; y is mirrored L/R, z gives ground clearance
+    mass: 0.02
+  ball:                 # road (street) hockey ball
+    radius: {value: 0.0335, source: GUESS}   # street-hockey ball ~Ø67 mm
+    mass:   {value: 0.06,   source: GUESS}    # ~60 g no-bounce ball
+    start:  [0.50, -0.15]     # bike-frame start [x fwd, y]; front-right (y<0), mirrorable
+    friction_sliding: 0.4     # ball on floor

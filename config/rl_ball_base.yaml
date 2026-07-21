@@ -1,0 +1,70 @@
+# RL parameters for the ball-shot move (docs/plans/ball-shot-move.md): from a
+# standstill, accelerate and turn to strike a road-hockey ball with the side
+# 'stick' (not the wheels), launch it forward fast, then recover to the nominal
+# stationary roll controller — and don't fall when there is no ball.
+#
+# Separate from bike_params.yaml, like config/rl_flick.yaml. Trained by
+# `python -m aow_sim.train_ball_rl` (needs the [rl] extra); the result exports to
+# moves/ball_rl.{yaml,npz} and replays dependency-free.
+
+algo:                    # PPO hyperparameters (stable-baselines3)
+  algorithm: PPO
+  total_timesteps: 5000000
+  n_envs: 8              # parallel rollout workers (SubprocVecEnv)
+  learning_rate: 3.0e-4
+  n_steps: 2048          # rollout length per env before an update
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+  net_arch: [128, 128]   # policy/value MLP hidden sizes
+  seed: 0
+
+env:
+  action_space: full     # full = policy drives steer+hub+differential (learns
+                         #   balance); feedforward = steer+hub only, K0 crawl
+                         #   balance underneath
+  control_rate_hz: 200   # policy/action rate (physics steps in between, ZOH)
+  max_episode_s: 5.0
+  ball_start: [0.30, -0.20]   # bike-frame [x fwd, y] start of the ball (front-right,
+                              #   y<0); overrides hockey.ball.start in bike_params
+  ball_start_jitter: 0.03     # uniform +- on each of x,y at reset [m]
+  mirror_prob: 0.0       # fraction of episodes mirrored to a ball-left start (keep
+                         #   0 for a single-direction policy; raise to learn both)
+  no_ball_prob: 0.15     # fraction of episodes with no ball (parked far away):
+                         #   the catch/no-ball trials — same policy must not fall
+  launch_target_deg: 0   # desired ball launch direction (0 = straight +x)
+  hit_speed_min: 1.0     # ball speed [m/s] above which a shot counts as "taken"
+  success_roll_deg: 6    # settled after the shot: |roll| below this ...
+  success_rate: 0.6      #   ... and |roll_rate|,|yaw_rate|,|v| below this
+  action_bounds:         # normalized action [-1,1] scales to these
+    steer_rate_max: 8.0  # rad/s (integrated to the steer position target)
+    hub_max: 0.72        # m/s (forward drive toward the ball)
+    diff_max: 30.0       # rad/s rear differential
+
+reward:                  # per-step
+  w_approach: 8.0        # reward closing the bike->ball distance (pre-hit)
+  w_launch: 4.0          # reward on stick contact, x ball launch speed [m/s]
+  w_angle: 2.0           # reward launch-direction alignment with the target (+x)
+  w_wheel_hit: 20.0      # penalty when the ball is struck by a wheel, not the stick
+  w_upright: 0.5         # penalty on roll^2
+  w_lateral: 0.05        # penalty on lateral drift^2 (bike-frame, vs start)
+  w_effort: 0.001        # penalty on |action|^2
+  w_smooth: 0.001        # penalty on |action - prev_action|^2
+  time_penalty: 0.01     # per step (encourages finishing)
+  bonus_complete: 100.0  # shot taken AND bike settled (or no-ball trial survived)
+  penalty_fall: 50.0     # on fall (terminates)
+  fall_roll_deg: 60      # |roll| beyond this = fallen
+
+randomization:           # domain randomization -> a robust closed-loop policy
+  enabled: true
+  init_roll_deg: 2.0     # uniform +- on the starting lean
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05         # small random qvel kick (m/s, rad/s scale)
+  mass_frac: 0.1         # +-10% per-body mass
+  friction_frac: 0.2     # +-20% floor sliding friction
+  disturb_force_N: 2.0   # random lateral shove magnitude
+  disturb_prob: 0.01     # probability of a shove per control step

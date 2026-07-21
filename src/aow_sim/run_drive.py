@@ -300,16 +300,18 @@ def main() -> None:
     ap.add_argument("--params", default=None)
     ap.add_argument("--view", action="store_true")
     ap.add_argument("--teleop", action="store_true")
+    ap.add_argument("--hockey", action="store_true",
+                    help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
     args = ap.parse_args()
     params = load_params(args.params)
-    model = build_model(params, variant="full")
+    model = build_model(params, variant="full", hockey=args.hockey)
     eq = settle_upright(model)
 
     if args.teleop:
-        _teleop(model, params, eq.qpos)
+        _teleop(model, params, eq.qpos, hockey=args.hockey)
         return
     if args.view:
-        _view_demo(model, params, eq.qpos)
+        _view_demo(model, params, eq.qpos, hockey=args.hockey)
         return
 
     v_max = params["control"]["drive"]["v_max"]
@@ -362,32 +364,45 @@ def main() -> None:
     print(f"\nsummary: v_max ±{v_max} m/s straight OK, max accel {max_acc:.1f} m/s^2")
 
 
-def _view_demo(model, params, eq_qpos):
+def _view_demo(model, params, eq_qpos, hockey=False):
+    # Uses the passive viewer (launch_passive via teleop_loop), not the managed
+    # mujoco.viewer.launch app — the latter spins up its own _Simulate and is
+    # unreliable under mjpython on macOS ("_Simulate ... unknown exception").
+    from .interactive import teleop_loop
+    from .control.flick import MOVES_DIR
     data = _fresh(model, eq_qpos)
     c = DriveController(params, model)
     c.reset(model, data)
-    stage = {"i": 0}
-    from .control.flick import MOVES_DIR
-    plan = [
-        (1.0, lambda d: c.set_speed(0.8)),
-        (4.0, lambda d: c.command_circle(d, 0.8, +1)),
-        (14.0, lambda d: c.command_stop()),
-        (17.0, lambda d: c.command_flip(d, +1)),
-    ]
-    if (MOVES_DIR / "flick.yaml").exists():
-        plan.append((22.0, lambda d: c.command_flick(d, +1)))
+    if hockey:
+        if not (MOVES_DIR / "ball_rl.yaml").exists():
+            raise SystemExit("no moves/ball_rl.yaml — run "
+                             "`python -m aow_sim.train_ball_rl`")
+        # Ball-shot-only demo: fire the RL ball move from standstill.
+        plan = [(1.0, lambda d: (_reset_ball(model, d, params),
+                                 c.command_ball(d, name="ball_rl")))]
+        intro = "viewer demo: ball-shot (RL) from standstill"
+    else:
+        plan = [
+            (1.0, lambda d: c.set_speed(0.8)),
+            (4.0, lambda d: c.command_circle(d, 0.8, +1)),
+            (14.0, lambda d: c.command_stop()),
+            (17.0, lambda d: c.command_flip(d, +1)),
+        ]
+        if (MOVES_DIR / "flick.yaml").exists():
+            plan.append((22.0, lambda d: c.command_flick(d, +1)))
+        intro = "viewer demo: sprint 0.8 m/s, circle R=0.8, stop, flip, flick"
 
-    def cb(m, d):
-        c.step(m, d)
+    stage = {"i": 0}
+    overlay_on = [True]
+
+    def step(m, d):
         if stage["i"] < len(plan) and d.time >= plan[stage["i"]][0]:
             plan[stage["i"]][1](d)
             stage["i"] += 1
-    mujoco.set_mjcb_control(cb)
-    print("viewer: sprint 0.8 m/s, circle R=0.8, stop, flip (G), flick (F)")
-    try:
-        mujoco.viewer.launch(model, data)
-    finally:
-        mujoco.set_mjcb_control(None)
+        c.step(m, d)
+
+    teleop_loop(model, data, step, lambda k: None, intro, "aow_sim.run_drive",
+                draw=lambda scn, m, d: _overlay(scn, m, d, c, overlay_on))
 
 
 def _overlay(scn, model, data, c, on):
@@ -425,7 +440,22 @@ def _overlay(scn, model, data, c, on):
     arrow(h_ref, 0.10 + vscale * abs(s_ref), [0.2, 1.0, 0.3, 1.0])        # reference
 
 
-def _teleop(model, params, eq_qpos):
+def _reset_ball(model, data, params):
+    """Re-park the ball at its bike-frame start pose (hockey model only), so a
+    fresh shot can be attempted. No-op if the model has no ball."""
+    try:
+        jid = int(model.body("ball").jntadr[0])
+    except Exception:
+        return
+    q, v = int(model.jnt_qposadr[jid]), int(model.jnt_dofadr[jid])
+    ball = params["hockey"]["ball"]
+    data.qpos[q:q + 2] = ball["start"]
+    data.qpos[q + 2] = ball["radius"]
+    data.qpos[q + 3:q + 7] = [1, 0, 0, 0]
+    data.qvel[v:v + 6] = 0.0
+
+
+def _teleop(model, params, eq_qpos, hockey=False):
     from .interactive import teleop_loop
 
     data = _fresh(model, eq_qpos)
@@ -460,6 +490,16 @@ def _teleop(model, params, eq_qpos):
                     c.command_flick(d, +1, name=move)
                 except FileNotFoundError:
                     print(f"no moves/{move}.yaml yet")
+            elif k == ord("1"):     # ball-shot (RL): reset the ball, then fire
+                state["v"] = 0.0
+                _reset_ball(m, d, params)
+                try:
+                    c.command_ball(d, name="ball_rl")
+                except FileNotFoundError:
+                    print("no moves/ball_rl.yaml yet — run "
+                          "`python -m aow_sim.train_ball_rl`")
+            elif k == ord("0"):     # re-park the ball at its start pose
+                _reset_ball(m, d, params)
             elif k == ord("4"):     # crawl front-pivot 180 (in-place variant)
                 state["v"] = 0.0
                 c.command_flip(d, +1)
@@ -470,14 +510,15 @@ def _teleop(model, params, eq_qpos):
                 overlay_on[0] = not overlay_on[0]
         c.step(m, d)
 
+    ball_help = "\n  1 ball-shot (RL)   0 reset ball" if hockey else ""
     # Number keys + arrows: MuJoCo's viewer binds every letter A-Z (F=force
-    # display, etc.), so letters would double up. Number keys 6-9 are free; 4/5
+    # display, etc.), so letters would double up. Number keys 0-9 are free; 4/5
     # toggle (empty) geom groups harmlessly; arrows are free while unpaused.
     teleop_loop(model, data, step, on_key,
                 "teleop (number keys — MuJoCo's viewer owns the letters):\n"
                 "  ↑/↓ speed ±0.25   ←/→ turn ±15°   6/7 circle L/R\n"
                 "  8/9 flick (trajopt rev/fwd)   3 flick (RL)   4 flip   "
-                "5 stop   2 toggle overlay",
+                "5 stop   2 toggle overlay" + ball_help,
                 "aow_sim.run_drive",
                 draw=lambda scn, m, d: _overlay(scn, m, d, c, overlay_on))
 

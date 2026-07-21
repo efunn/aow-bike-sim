@@ -42,7 +42,10 @@ class MLPPolicy:
         self.bounds = bounds
         self.obs_clip = float(obs_clip)            # VecNormalize clip_obs
         self.act_dim = self.layers[-1][0].shape[0]   # 3 = full, 2 = feedforward
-        assert self.layers[0][0].shape[1] == OBS_DIM, "policy input != OBS_DIM"
+        self.obs_dim = self.layers[0][0].shape[1]    # flick=10, ball=14, etc.
+        # Consistency check against the normalization stats, not a fixed OBS_DIM,
+        # so the same replay serves any move's observation length.
+        assert self.obs_dim == self.obs_mean.shape[0], "policy input != obs stats"
         assert self.act_dim in (2, ACT_DIM), "policy output dim must be 2 or 3"
 
     def action(self, obs) -> tuple[float, float, float]:

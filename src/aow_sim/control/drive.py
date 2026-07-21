@@ -105,6 +105,14 @@ class DriveController(LQRBalance):
         self._flick_p0 = np.zeros(2)
         self._flick_yaw0 = 0.0
         self._flick_steer = 0.0   # commanded steer, rate-limited on unwind
+        # ball-shot (RL) maneuver state
+        self._ball = None
+        self._ball_mirror = False
+        self._ball_t0 = 0.0
+        self._ball_p0 = np.zeros(2)
+        self._ball_yaw0 = 0.0
+        self._ball_steer = 0.0
+        self._ball_addr = None    # (qpos_adr, qvel_adr) of the ball freejoint, lazy
 
     # -- gain schedule -----------------------------------------------------
 
@@ -207,6 +215,22 @@ class DriveController(LQRBalance):
         self.mode = "flick"
         # trajectory moves expose .T; RL policy moves expose .horizon
         return getattr(self._flick, "T", getattr(self._flick, "horizon", 4.0))
+
+    def command_ball(self, data, name: str = "ball_rl", mirror: bool = False) -> float:
+        """Ball-shot move (docs/plans/ball-shot-move.md): from ~standstill, replay
+        the trained `moves/<name>.yaml` RL policy to strike the ball with the side
+        stick, then hand back to balance. `mirror=True` reflects a ball-right
+        policy to a ball-left start. Returns the replay-safety horizon [s]."""
+        from .flick import load_move
+        self._ball = load_move(name)
+        self._ball_mirror = bool(mirror)
+        self._ball_t0 = data.time
+        self._ball_p0 = data.qpos[:2].copy()
+        self._ball_yaw0 = self._psi
+        self._ball_steer = data.qpos[self._sj]
+        self._steer_offset = 0.0
+        self.mode = "ball"
+        return getattr(self._ball, "horizon", 5.0)
 
     def viz_reference(self, data) -> tuple[float, float]:
         """(reference heading [rad, world], reference speed [m/s]) for the
@@ -374,6 +398,65 @@ class DriveController(LQRBalance):
             self.command_line(data, heading=psi_target)
         return u
 
+    def _ball_addr_lookup(self, model):
+        """Lazily resolve the ball freejoint's qpos/qvel addresses (hockey model).
+        Returns None if the model has no ball (then the shot degrades to balance)."""
+        if self._ball_addr is not None:
+            return self._ball_addr
+        try:
+            jid = int(model.body("ball").jntadr[0])
+        except Exception:
+            self._ball_addr = (None, None)
+            return self._ball_addr
+        self._ball_addr = (int(model.jnt_qposadr[jid]), int(model.jnt_dofadr[jid]))
+        return self._ball_addr
+
+    def _ball_compute(self, model, data, s) -> np.ndarray:
+        """Replay the ball-shot RL policy (numpy MLPPolicy): build the shared
+        ball observation, query the policy, integrate steer, mix, and hand back to
+        balance once the shot is done. Mirrors _flick_policy_compute."""
+        from .ball_spec import build_obs
+        pol = self._ball
+        tau = data.time - self._ball_t0
+        qadr, vadr = self._ball_addr_lookup(model)
+        c, sn = np.cos(self._psi), np.sin(self._psi)
+        if qadr is not None:
+            rel = data.qpos[qadr:qadr + 2] - data.qpos[:2]
+            bvel = data.qvel[vadr:vadr + 2]
+            bdx = c * rel[0] + sn * rel[1]
+            bdy = -sn * rel[0] + c * rel[1]
+            bvx = c * bvel[0] + sn * bvel[1]
+            bvy = -sn * bvel[0] + c * bvel[1]
+            present = 1.0
+        else:
+            bdx = bdy = bvx = bvy = 0.0
+            present = 0.0
+        heading = self._psi - self._ball_yaw0
+        m = -1.0 if self._ball_mirror else 1.0   # reflect lateral obs for ball-left
+        obs = build_obs(m * s.roll, m * s.roll_rate, m * heading, m * data.qvel[5],
+                        m * data.qpos[self._sj], s.v_lon, m * s.v_lat,
+                        bdx, m * bdy, bvx, m * bvy, present,
+                        min(tau / pol.horizon, 1.0))
+        steer_rate, hub, diff = pol.action(obs)
+        steer_rate, diff = m * steer_rate, m * diff   # reflect lateral action back
+        self._ball_steer += steer_rate * self.dt
+        if pol.act_dim == 2:                 # feedforward policy: crawl balance
+            diff = float(-self._K0[0] @ np.array(
+                [s.e_lat, s.roll, 0.0, 0.0, s.v_lat, s.roll_rate, 0.0, 0.0]))
+        a, b = mix(hub / self.r_wheel, diff)
+        u = np.zeros(len(self._u))
+        u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
+        u[self.aid["steer"]] = self._ball_steer
+
+        # Hand back to balance once the horizon elapses or the bike is nearly
+        # stopped and upright (the policy has no learned post-success behavior).
+        upright_stopped = (abs(s.roll) < np.deg2rad(15) and abs(s.v_lon) < 0.15
+                           and abs(data.qvel[5]) < 1.0 and tau > 0.5)
+        if tau > pol.horizon or upright_stopped:
+            self._steer_offset = round(self._ball_steer / np.pi) * np.pi
+            self.command_line(data, heading=self._psi)
+        return u
+
     def _flick_compute(self, data, s) -> np.ndarray:
         """Replay the optimized two-arc flick: feedforward steer + hub from the
         trajectory, rear differential = roll/lateral crawl balance (the same
@@ -422,6 +505,8 @@ class DriveController(LQRBalance):
             return self._flip_compute(data, s)
         if self.mode == "flick":
             return self._flick_compute(data, s)
+        if self.mode == "ball":
+            return self._ball_compute(model, data, s)
 
         v_ref = self.profile.step(self.dt)
         if self._stop_pending and v_ref == 0.0:

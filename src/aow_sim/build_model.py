@@ -30,6 +30,14 @@ DEFAULT_PARAMS = Path(__file__).resolve().parents[2] / "config" / "bike_params.y
 
 FLOOR_CONTYPE, FLOOR_CONAFF = 1, 2
 DYN_CONTYPE, DYN_CONAFF = 2, 1
+# Hockey extras (build_model(..., hockey=True)). The base 2-bit scheme lets
+# dynamic geoms touch only the floor; the ball needs to touch floor + stick +
+# wheels (a wheel strike is physical, so it can be detected and penalized) while
+# the bike's own dynamic geoms still never self-collide. Two more bits do it:
+#   ball  contype 4, conaff 1|2|8 = 11  -> sees floor(1), dyn wheels(2), stick(8)
+#   stick contype 8, conaff 1|4  =  5   -> sees floor(1), ball(4)
+BALL_CONTYPE, BALL_CONAFF = 4, FLOOR_CONTYPE | DYN_CONTYPE | 8   # = 11
+STICK_CONTYPE, STICK_CONAFF = 8, FLOOR_CONTYPE | BALL_CONTYPE     # = 5
 
 INTEGRATORS = {
     "euler": mujoco.mjtIntegrator.mjINT_EULER,
@@ -240,6 +248,50 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
             s.objname = f"input_{tag}_spin"
 
 
+def _add_hockey(spec: mujoco.MjSpec, chassis, p: dict) -> None:
+    """Add the ball-shot extras (see docs/plans/ball-shot-move.md): a translucent
+    'hockey stick' panel on each side of the chassis and a free road-hockey ball.
+
+    Stick — thin ABS-like box from ~center-x to the rear, partially over the rear
+    wheel, with ground clearance so leans don't scrape it (roll is limited in the
+    RL env rather than checked here). Ball — a world free body placed at rest; its
+    start pose is written at env reset, not baked in. Collision classes give
+    ball<->{floor,stick,wheels} and stick<->{floor,ball} while leaving the bike's
+    own dynamic geoms non-self-colliding (see the *_CONTYPE/_CONAFF constants)."""
+    hk, sim = p["hockey"], p["sim"]
+    st = hk["stick"]
+    for side, tag in ((1, "left"), (-1, "right")):
+        px, py, pz = st["pos"]
+        chassis.add_geom(
+            name=f"stick_{tag}",
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            size=[st["length"] / 2, st["thickness"] / 2, st["height"] / 2],
+            pos=[px, side * py, pz],
+            mass=st["mass"],
+            contype=STICK_CONTYPE,
+            conaffinity=STICK_CONAFF,
+            condim=sim["condim"],
+            friction=_contact_friction(sim),
+            rgba=[0.8, 0.5, 0.1, 0.35],   # translucent, for sim visibility
+        )
+
+    ball = hk["ball"]
+    body = spec.worldbody.add_body(name="ball", pos=[ball["start"][0],
+                                                     ball["start"][1], ball["radius"]])
+    body.add_freejoint()
+    body.add_geom(
+        name="ball",
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=[ball["radius"], 0, 0],
+        mass=ball["mass"],
+        contype=BALL_CONTYPE,
+        conaffinity=BALL_CONAFF,
+        condim=sim["condim"],
+        friction=[ball["friction_sliding"], sim["friction_torsional"], 0.0001],
+        rgba=[0.95, 0.45, 0.1, 1],
+    )
+
+
 def _add_world(spec: mujoco.MjSpec, p: dict) -> None:
     sim = p["sim"]
     spec.worldbody.add_geom(
@@ -267,6 +319,7 @@ def build_spec(
     params: dict | None = None,
     variant: str = "full",
     training_wheels: bool = False,
+    hockey: bool = False,
 ) -> mujoco.MjSpec:
     p = params or load_params()
     spec = mujoco.MjSpec()
@@ -420,13 +473,17 @@ def build_spec(
         s.objtype = mujoco.mjtObj.mjOBJ_JOINT
         s.objname = "steer_joint"
 
+    if hockey:
+        _add_hockey(spec, chassis, p)
+
     return spec
 
 
 def build_model(
-    params: dict | None = None, variant: str = "full", training_wheels: bool = False
+    params: dict | None = None, variant: str = "full", training_wheels: bool = False,
+    hockey: bool = False,
 ) -> mujoco.MjModel:
-    return build_spec(params, variant, training_wheels).compile()
+    return build_spec(params, variant, training_wheels, hockey).compile()
 
 
 def main() -> None:
@@ -434,9 +491,12 @@ def main() -> None:
     ap.add_argument("--variant", choices=["full", "testbed"], default="full")
     ap.add_argument("--params", default=None, help="path to bike_params.yaml")
     ap.add_argument("--training-wheels", action="store_true")
+    ap.add_argument("--hockey", action="store_true",
+                    help="add the ball-shot stick panels + road-hockey ball")
     ap.add_argument("-o", "--output", default=None, help="write MJCF XML here")
     args = ap.parse_args()
-    spec = build_spec(load_params(args.params), args.variant, args.training_wheels)
+    spec = build_spec(load_params(args.params), args.variant, args.training_wheels,
+                      args.hockey)
     spec.compile()  # validate
     xml = spec.to_xml()
     if args.output:
