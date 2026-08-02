@@ -17,7 +17,12 @@ def test_obs_and_action_spec():
     obs = build_obs(0.01, 0.1, np.pi / 2, 0.2, 3.0, 0.4, -0.1, 0.05, 0.5)
     assert obs.shape == (OBS_DIM,)
     assert np.all(np.isfinite(obs))
-    assert abs(obs[5]) <= np.pi + 1e-6          # steer wrapped
+    # steer is sin/cos encoded: on the unit circle, and smooth through pi —
+    # a multi-turn angle encodes identically to its wrapped equivalent
+    assert obs[5]**2 + obs[6]**2 == pytest.approx(1.0, abs=1e-6)
+    obs_wound = build_obs(0.01, 0.1, np.pi / 2, 0.2, 3.0 + 2 * np.pi,
+                          0.4, -0.1, 0.05, 0.5)
+    assert obs_wound == pytest.approx(obs, abs=1e-5)
     b = ActionBounds(8.0, 0.6, 30.0)
     sr, hub, diff = scale_action([2.0, -2.0, 0.5], b)   # clips to [-1,1]
     assert (sr, hub, diff) == pytest.approx((8.0, -0.6, 15.0))
@@ -65,9 +70,11 @@ def test_env_reset_step():
 
 def test_rl_move_replays():
     """If a trained RL policy exists, it loads and replays without blowing up."""
-    from aow_sim.control.flick import MOVES_DIR
+    from aow_sim.control.flick import MOVES_DIR, load_move
     if not (MOVES_DIR / "flick_rl.npz").exists():
         pytest.skip("run `python -m aow_sim.train_flick_rl` to produce moves/flick_rl")
+    if load_move("flick_rl").obs_dim != OBS_DIM:
+        pytest.skip("moves/flick_rl predates the current obs spec — retrain")
     import mujoco
     from aow_sim.build_model import build_model, load_params
     from aow_sim.control import DriveController, run

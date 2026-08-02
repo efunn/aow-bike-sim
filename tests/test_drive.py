@@ -158,6 +158,93 @@ def _fresh(model, eq_qpos):
     return data
 
 
+# -- 360-steering regression: post-flick parks must never snap the servo ----
+#
+# The servo command is ZOH at rate_hz with maneuver steer rate-limited to
+# steer_rate (8 rad/s) -> a legitimate per-physics-step ctrl change is
+# <= ~0.04 rad; the old bug snapped the wheel by pi in one tick. 0.5 rad
+# cleanly discriminates.
+SNAP = 0.5
+
+
+def _steer_recorder(c):
+    """(on_step, list) recording data.ctrl[steer] every physics step."""
+    log = []
+    aid = c.aid["steer"]
+    return (lambda dd: log.append(float(dd.ctrl[aid]))), log
+
+
+def _flick_and_settle(model, params, eq_qpos):
+    """Fresh sim -> settle -> one flick -> settle. Returns (data, c, log)."""
+    from aow_sim.control.balance import run
+    from aow_sim.control.flick import MOVES_DIR
+    if not (MOVES_DIR / "flick.yaml").exists():
+        pytest.skip("run `python -m aow_sim.optimize_flick` to generate moves/flick.yaml")
+    data = _fresh(model, eq_qpos)
+    c = DriveController(params, model)
+    c.reset(model, data)
+    rec, log = _steer_recorder(c)
+    run(model, data, c, 1.0, on_step=rec)
+    T = c.command_flick(data, +1)
+    run(model, data, c, T + 4.0, on_step=rec)
+    return data, c, log
+
+
+def test_double_flick(model, params, eq_qpos):
+    """A second consecutive flick starts from the pi park and sweeps
+    continuously to 2*pi — the old code snapped back through 0."""
+    from aow_sim.control.balance import extract_state, run
+
+    data, c, log = _flick_and_settle(model, params, eq_qpos)
+    psi0_total = c._psi  # after first flick: ~pi from start
+    rec, log2 = _steer_recorder(c)
+    T = c.command_flick(data, +1)
+    rolls = []
+    run(model, data, c, T + 4.0, on_step=lambda dd: (
+        rec(dd), rolls.append(extract_state(dd, c._ref_pos).roll)))
+    full = np.array(log + log2)
+    assert np.max(np.abs(np.diff(full))) < SNAP, "servo snapped"
+    assert np.degrees(np.max(np.abs(rolls))) < 25.0, "fell in second flick"
+    err = np.degrees(abs(c._psi - psi0_total)) - 180.0
+    assert abs(err) < 15.0, f"second flick yaw error {err:+.1f} deg"
+    # winding is bounded and explicit: two flicks park at ~2*pi, not beyond
+    assert abs(full[-1]) < 2 * np.pi + SNAP
+
+
+def test_heading_after_flick_no_snap(model, params, eq_qpos):
+    """command_heading right after a flick used to zero the steer origin and
+    snap the servo a half-turn; now it re-syncs to the pi park."""
+    from aow_sim.control.balance import extract_state, run
+
+    data, c, log = _flick_and_settle(model, params, eq_qpos)
+    psi0 = c._psi
+    rec, log2 = _steer_recorder(c)
+    c.command_heading(data, np.deg2rad(90.0))
+    rolls = []
+    run(model, data, c, 4.5, on_step=lambda dd: (
+        rec(dd), rolls.append(extract_state(dd, c._ref_pos).roll)))
+    full = np.array(log + log2)
+    assert np.max(np.abs(np.diff(full))) < SNAP, "servo snapped"
+    assert np.degrees(np.max(np.abs(rolls))) < 20.0, "fell during turn"
+    err = np.degrees(c._psi - psi0) - 90.0
+    assert abs(err) < 8.0, f"heading error {err:+.1f} deg"
+
+
+def test_reset_after_flick_no_snap(model, params, eq_qpos):
+    """Controller reset with the wheel parked at pi (e.g. viewer rewind) must
+    re-adopt the park as origin, not command the wheel back to 0."""
+    from aow_sim.control.balance import run
+
+    data, c, _ = _flick_and_settle(model, params, eq_qpos)
+    park = np.pi * np.round(float(data.qpos[c._sj]) / np.pi)
+    c.reset(model, data)
+    rec, log = _steer_recorder(c)
+    run(model, data, c, 2.0, on_step=rec)
+    log = np.array(log)
+    assert np.max(np.abs(np.diff(log))) < SNAP, "servo snapped"
+    assert np.all(np.abs(log - park) < SNAP), "wheel unwound"
+
+
 @pytest.mark.parametrize("v,delta_deg,tol", [
     (0.0, 90.0, 6.0),      # standstill: arc mode (pivot recipe)
     (0.8, 90.0, 5.0),      # at speed: ff-carried sharp turn (>15 deg steer)

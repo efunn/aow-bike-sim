@@ -44,6 +44,35 @@ def test_push_recovery(model, params, eq_qpos, name):
     )
 
 
+@pytest.mark.parametrize("wound", [np.pi, -np.pi, 2 * np.pi])
+def test_lqr_balances_with_wound_steer(model, params, eq_qpos, wound):
+    """With the steer joint wound past +-pi (post-flick park, or a real XC330
+    multi-turn encoder reading), the LQR must regulate about the nearest
+    pi-multiple origin — the old code fed raw multi-turn qpos into the state
+    and unwound the whole accumulated turn."""
+    import mujoco
+
+    from aow_sim.control.balance import extract_state, run
+
+    data = mujoco.MjData(model)
+    data.qpos[:] = eq_qpos
+    sj = model.joint("steer_joint").qposadr[0]
+    data.qpos[sj] += wound
+    mujoco.mj_forward(model, data)
+    c = make_controller("lqr", params, model)
+    c.reset(model, data)
+    aid = c.aid["steer"]
+    rolls, ctrls = [], []
+    run(model, data, c, 3.0, on_step=lambda dd: (
+        rolls.append(extract_state(dd, c._ref_pos).roll),
+        ctrls.append(float(dd.ctrl[aid]))))
+    assert np.degrees(np.max(np.abs(rolls))) < 10.0, "fell with wound steer"
+    tail = np.degrees(np.abs(rolls[-int(0.5 / model.opt.timestep):]))
+    assert np.sqrt(np.mean(tail**2)) < 2.0, "did not settle"
+    # regulates locally about the wound park — no long-way unwind
+    assert np.max(np.abs(np.array(ctrls) - wound)) < 0.5
+
+
 def test_lqr_model_fit_and_steering(model, params):
     """The identified lateral model fits well and the LQR actually uses the
     steering channel (the steer/crawl coordination seen in the toy)."""

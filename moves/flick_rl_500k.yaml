@@ -1,0 +1,19 @@
+name: flick_rl_500k
+type: rl
+policy_file: flick_rl_500k.npz
+yaw_target_deg: 180
+max_episode_s: 4.0
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 500000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 3.2688672579883615e-07
+  metrics:
+    success_rate: 0.0
+    final_yaw_err_deg: 138.4
+    lateral_env_L: 0.439
+    n_eval: 8
+  exported_from: ppo_500000_steps.zip

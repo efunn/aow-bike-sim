@@ -1,0 +1,21 @@
+name: pivot_rl
+type: rl
+policy_file: pivot_rl.npz
+yaw_target_deg: 180
+max_episode_s: 4.0
+v_max: 0.0
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 5000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 3.5953382199194195e-07
+  metrics:
+    success_rate: 0.0
+    hold_rms_deg: 1.7
+    final_yaw_err_deg: 23.2
+    final_v_err: 0.261
+    n_eval: 10
+  exported_from: best_model.zip

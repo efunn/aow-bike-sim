@@ -1,17 +1,21 @@
-"""Train an RL policy for the ball-shot move (docs/plans/ball-shot-move.md).
-Requires the `[rl]` extra (gymnasium, SB3, torch, tensorboard); the base install
-needs none of these to *replay* the result. Mirrors train_flick_rl.py.
+"""Train the RL pivot: 180-deg chassis yaw with the front wheel holding its
+global ground heading, from standstill or a glide (see pivot_env.py).
+Requires the `[rl]` extra; the base install replays the result with numpy.
 
   pip install -e '.[rl]'
-  python -m aow_sim.train_ball_rl                  # reads config/rl_ball.yaml
-  python -m aow_sim.train_ball_rl --timesteps 50000  # short smoke run
-  python -m aow_sim.train_ball_rl --resume         # continue from last checkpoint
-  tensorboard --logdir runs/ball_rl                # watch learning curves
+  python -m aow_sim.train_pivot_rl                 # reads config/rl_pivot.yaml
+  python -m aow_sim.train_pivot_rl --resume        # continue from last checkpoint
+  tensorboard --logdir runs/pivot_rl               # watch learning curves
 
-On finish it exports the deterministic policy (MLP weights + VecNormalize obs
-stats) to `moves/ball_rl.npz` and writes `moves/ball_rl.yaml` (provenance +
-metrics from a deterministic eval), which `DriveController.command_ball(
-"ball_rl")` replays with numpy alone. It never touches bike_params.yaml.
+Mid-run policies: CheckpointCallback snapshots every ~100k steps into
+runs/pivot_rl/checkpoints/. To find and inspect an interesting one:
+
+  python -m aow_sim.train_pivot_rl --scan-checkpoints
+  python -m aow_sim.train_pivot_rl --export-from 500000 \\
+      --export-name pivot_rl_500k --trace traces/
+
+On finish it exports the best-by-score snapshot to `moves/pivot_rl.npz` +
+`moves/pivot_rl.yaml`, replayed by `DriveController.command_pivot_rl`.
 """
 
 from __future__ import annotations
@@ -28,43 +32,96 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 
 from .build_model import load_params
-from .control.ball_env import BallEnv, _load_rl_config
-from .control.ball_spec import ActionBounds
 from .control.flick import MOVES_DIR
+from .control.pivot_env import PivotEnv, _load_rl_config
+from .control.pivot_spec import ActionBounds
 from .control.policy import save_policy_npz
 
-RUN_DIR = Path(__file__).resolve().parents[2] / "runs" / "ball_rl"
+RUN_DIR = Path(__file__).resolve().parents[2] / "runs" / "pivot_rl"
+
+# Deterministic (v_start, v_end) eval points as FRACTIONS of env.v_max:
+# stationary, spin-up, spin-down, and steady glides. Kept relative so the
+# eval only ever scores what the run actually trains — see eval_grid.
+_EVAL_FRACS = [(0.0, 0.0), (0.0, 0.5), (0.0, 1.0), (0.5, 0.0), (1.0, 0.0),
+               (0.5, 0.5), (1.0, 1.0), (1.0, 0.5), (0.5, 1.0), (0.75, 0.25)]
+HOLD_REF_DEG = 20.0   # hold-RMS of a sloppy-but-passing policy (score ref)
+
+
+def eval_grid(v_max: float) -> list[tuple[float, float]]:
+    """Deterministic (v_start, v_end) points for every eval path
+    (BestByScore, _eval, _scan_checkpoints), scaled to the configured
+    envelope and deduplicated.
+
+    Relative, not absolute: with `v_max: 0.0` (stationary-only training) an
+    absolute grid would score the policy at speeds it never sees, capping
+    success_rate at 1/len(grid) and handing snapshot selection to
+    out-of-distribution failures. Here v_max = 0 collapses to the single
+    stationary point, so the run is scored on exactly what it trains."""
+    seen: dict[tuple[float, float], None] = {}
+    for a, b in _EVAL_FRACS:
+        seen.setdefault((round(a * v_max, 4), round(b * v_max, 4)), None)
+    return list(seen)
+
+
+def _score(m: dict) -> float:
+    """Composite snapshot-selection score (higher is better).
+
+        success_rate + yaw progress + wheel-hold quality
+
+    Success alone saturates on deterministic eval (the ball_rl lesson: the
+    snapshot froze at 400k of a 5M run). Hold quality is the move's
+    signature, but it CANNOT stand alone as the tie-break: a policy that
+    never turns holds its heading perfectly, so do-nothing scores ~0.9
+    while a policy that nearly completes the turn scores ~0.5 and would
+    lose. The yaw-progress term restores the ordering, and success still
+    dominates both (any success beats any non-success)."""
+    prog = max(0.0, 1.0 - m["final_yaw_err_deg"] / 180.0)
+    hold = max(0.0, 1.0 - m["hold_rms_deg"] / HOLD_REF_DEG)
+    return m["success_rate"] + prog + hold
 
 
 def _make_vecenv(params, cfg, n_envs, seed):
-    # Monitor wraps each env so SB3 logs rollout/ep_rew_mean, ep_len_mean, and
-    # (from the env's is_success info) rollout/success_rate.
     return SubprocVecEnv([
-        (lambda i=i: Monitor(BallEnv(params, cfg, seed=seed + i)))
+        (lambda i=i: Monitor(PivotEnv(params, cfg, seed=seed + i)))
         for i in range(n_envs)
     ])
 
 
-class BestBySuccess(BaseCallback):
-    """Periodically run a deterministic eval and keep the best-scoring snapshot.
+def _eval_episodes(env, act_fn, grid):
+    """Run one episode per (v_start, v_end) point; aggregate metrics.
 
-    Selection is on a *composite* score, not mean reward and not success alone:
+    One episode per point, not a fixed count: the eval env has
+    randomization disabled, so two episodes at the same (v_start, v_end)
+    are bit-identical and would only pad the average."""
+    n = len(grid)
+    succ, holds, yerrs, verrs = 0, [], [], []
+    for k, (vs, ve) in enumerate(grid):
+        obs, _ = env.reset(seed=10_000 + k, options={"v_start": vs, "v_end": ve})
+        done, info = False, {}
+        while not done:
+            obs, _r, term, trunc, info = env.step(act_fn(obs))
+            done = term or trunc
+        succ += int(info.get("is_success", False))
+        holds.append(info.get("hold_rms_deg", 90.0))
+        yerrs.append(abs(info.get("yaw_err_deg", 180.0)))
+        verrs.append(abs(info.get("v_err_end", 1.0)))
+    return {"success_rate": succ / n,
+            "hold_rms_deg": round(float(np.mean(holds)), 1),
+            "final_yaw_err_deg": round(float(np.mean(yerrs)), 1),
+            "final_v_err": round(float(np.mean(verrs)), 3),
+            "n_eval": n}
 
-        score = success_rate + mean_ball_speed / speed_ref
 
-    Reward and success can diverge (a shaping exploit pays better than the task),
-    so reward is not a safe criterion. But success alone is worse: it saturates.
-    Deterministic eval episodes are near-identical, so success_rate is nearly a
-    single bit, and once it first reaches 1.0 a strict `>` test can never be beaten
-    again — the snapshot froze at 400k steps on a 5M run while launch speed went on
-    climbing 0.25 -> 0.61 m/s. The speed term breaks that tie and keeps tracking the
-    thing we actually want more of.
-    """
+class BestByScore(BaseCallback):
+    """Keep the best-scoring snapshot from a periodic deterministic eval
+    over the (v_start, v_end) grid. See `_score` for the criterion and why
+    neither success nor hold quality works alone."""
 
-    def __init__(self, params, cfg, eval_freq, n_episodes, save_path, verbose=0):
+    def __init__(self, params, cfg, eval_freq, save_path, verbose=0):
         super().__init__(verbose)
         self.params, self.cfg = params, cfg
-        self.eval_freq, self.n_episodes = eval_freq, n_episodes
+        self.eval_freq = eval_freq
+        self.grid = eval_grid(cfg["env"]["v_max"])
         self.save_path = Path(save_path)
         self.best = -1.0
         self.best_info = {}
@@ -73,47 +130,41 @@ class BestBySuccess(BaseCallback):
     def _on_step(self) -> bool:
         if self.eval_freq <= 0 or self.n_calls % self.eval_freq != 0:
             return True
-        if self._env is None:      # lazily built; randomization off for a clean signal
+        if self._env is None:      # lazily built; randomization off
             ecfg = {**self.cfg,
                     "randomization": {**self.cfg["randomization"], "enabled": False}}
-            self._env = BallEnv(self.params, ecfg)
+            self._env = PivotEnv(self.params, ecfg)
         vn = self.model.get_vec_normalize_env()
-        succ = speeds = 0
-        for k in range(self.n_episodes):
-            obs, _ = self._env.reset(seed=10_000 + k)
-            done, info = False, {}
-            while not done:
-                o = vn.normalize_obs(obs) if vn is not None else obs
-                act, _ = self.model.predict(o, deterministic=True)
-                obs, _r, term, trunc, info = self._env.step(act)
-                done = term or trunc
-            succ += int(info.get("is_success", False))
-            speeds += float(info.get("ball_speed", 0.0))
-        rate = succ / self.n_episodes
-        mean_speed = speeds / self.n_episodes
-        ref = max(1e-6, self.cfg["reward"].get("bonus_speed_ref", 0.6))
-        score = rate + mean_speed / ref
-        self.logger.record("eval/success_rate", rate)
-        self.logger.record("eval/mean_ball_speed", mean_speed)
+
+        def act(obs):
+            o = vn.normalize_obs(obs) if vn is not None else obs
+            return self.model.predict(o, deterministic=True)[0]
+
+        m = _eval_episodes(self._env, act, self.grid)
+        score = _score(m)
+        self.logger.record("eval/success_rate", m["success_rate"])
+        self.logger.record("eval/hold_rms_deg", m["hold_rms_deg"])
+        self.logger.record("eval/yaw_err_deg", m["final_yaw_err_deg"])
         self.logger.record("eval/score", score)
         if score > self.best:
             self.best = score
-            self.best_info = {"score": score, "success_rate": rate,
-                              "mean_ball_speed": mean_speed,
+            self.best_info = {"score": score, **m,
                               "steps": int(self.num_timesteps)}
             self.save_path.mkdir(parents=True, exist_ok=True)
             self.model.save(str(self.save_path / "best_model"))
             if vn is not None:
                 vn.save(str(self.save_path / "best_vecnormalize.pkl"))
             if self.verbose:
-                print(f"  new best score {score:.3f} (success {rate:.2f}, "
-                      f"ball {mean_speed:.3f} m/s) @ {self.num_timesteps} steps")
+                print(f"  new best score {score:.3f} (success "
+                      f"{m['success_rate']:.2f}, yaw err "
+                      f"{m['final_yaw_err_deg']:.0f} deg, hold "
+                      f"{m['hold_rms_deg']:.1f} deg) @ {self.num_timesteps} steps")
         return True
 
 
 def _export(model, vecnorm, cfg, path_npz: Path):
-    """Pull the deterministic policy MLP + VecNormalize obs stats out of SB3 and
-    save as a numpy .npz (see control/policy.py for the replay side)."""
+    """Pull the deterministic policy MLP + VecNormalize obs stats out of SB3
+    and save as a numpy .npz (see control/policy.py for the replay side)."""
     policy = model.policy
     layers = []
     for m in policy.mlp_extractor.policy_net:          # Linear/Tanh sequence
@@ -149,38 +200,24 @@ def _verify_export(model, vecnorm, npz_path):
     return worst
 
 
-def _eval(params, cfg, npz_path, n=8):
-    """Deterministic eval of the exported numpy policy in a no-randomization env
-    -> metrics for the move file."""
+def _eval(params, cfg, npz_path):
+    """Deterministic eval of the exported numpy policy over the (v_start,
+    v_end) grid -> metrics for the move file."""
     from .control.policy import load_policy_npz
     pol = load_policy_npz(npz_path)
     ecfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
-    env = BallEnv(params, ecfg)
-    speeds, aligns, succ, stick, wheel = [], [], 0, 0, 0
-    for k in range(n):
-        obs, _ = env.reset(seed=1000 + k)
-        done = False
-        info = {}
-        while not done:
-            a = pol.action(obs)
-            na = np.array([a[0] / pol.bounds.steer_rate_max,
-                           a[1] / pol.bounds.hub_max,
-                           a[2] / pol.bounds.diff_max])[:env.action_space.shape[0]]
-            obs, r, term, trunc, info = env.step(na)
-            done = term or trunc
-        speeds.append(info["ball_speed"])
-        aligns.append(info["launch_deg"])
-        succ += int(info["success"])
-        stick += int(info["hit_stick"])
-        wheel += int(info["hit_wheel"])
-    return {"success_rate": succ / n,
-            "mean_launch_speed": round(float(np.mean(speeds)), 3),
-            "mean_launch_deg": round(float(np.mean(aligns)), 1),
-            "stick_hit_rate": stick / n, "wheel_hit_rate": wheel / n,
-            "n_eval": n}
+    env = PivotEnv(params, ecfg)
+
+    def act(obs):
+        a = pol.action(obs)
+        return np.array([a[0] / pol.bounds.steer_rate_max,
+                         a[1] / pol.bounds.hub_max,
+                         a[2] / pol.bounds.diff_max])[:env.action_space.shape[0]]
+
+    return _eval_episodes(env, act, eval_grid(cfg["env"]["v_max"]))
 
 
-def _finish(model, vecnorm, params, cfg, total, source=None, name="ball_rl"):
+def _finish(model, vecnorm, params, cfg, total, source=None, name="pivot_rl"):
     """Export -> verify -> eval -> write the move file. Shared by a finished
     training run and by --export-from."""
     a = cfg["algo"]
@@ -198,9 +235,9 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="ball_rl"):
     if source:
         trained["exported_from"] = source
     doc = {"name": name, "type": "rl", "policy_file": f"{name}.npz",
+           "yaw_target_deg": cfg["env"]["yaw_target_deg"],
            "max_episode_s": cfg["env"]["max_episode_s"],
-           "ball_start": list(cfg["env"]["ball_start"]),
-           "launch_target_deg": cfg["env"]["launch_target_deg"],
+           "v_max": cfg["env"]["v_max"],
            "action_space": cfg["env"]["action_space"],
            "trained": trained}
     with open(MOVES_DIR / f"{name}.yaml", "w") as f:
@@ -208,20 +245,20 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="ball_rl"):
     print(f"wrote {MOVES_DIR / f'{name}.yaml'} and {npz}")
 
 
-def _scan_checkpoints(params, cfg, n_episodes=6, every=1):
-    """Evaluate every saved checkpoint and report success + launch speed, so a
-    good mid-run policy can be found and exported after the fact. Training
-    progress is not monotonic and the live selector only sees its own metric —
-    this shows the whole run so you can pick by eye."""
+def _scan_checkpoints(params, cfg, every=1):
+    """Evaluate every saved checkpoint over the (v_start, v_end) grid, so an
+    interesting mid-run policy can be found and exported after the fact."""
     import pickle
+    grid = eval_grid(cfg["env"]["v_max"])
     ckpt = RUN_DIR / "checkpoints"
     zips = sorted(ckpt.glob("ppo_*_steps.zip"),
                   key=lambda p: int(p.stem.split("_")[1]))[::every]
     if not zips:
         raise SystemExit(f"no checkpoints in {ckpt}")
     ecfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
-    env = BallEnv(params, ecfg)
-    print(f"{'steps':>9} {'success':>8} {'ball_v':>8} {'strike_v':>9} {'stick':>6}")
+    env = PivotEnv(params, ecfg)
+    print(f"{'steps':>9} {'success':>8} {'hold_rms':>9} {'yaw_err':>8} "
+          f"{'v_err':>6} {'score':>6}")
     rows = []
     for z in zips:
         vn_p = z.with_name(z.name.replace("ppo_", "ppo_vecnormalize_")
@@ -231,38 +268,32 @@ def _scan_checkpoints(params, cfg, n_episodes=6, every=1):
         with open(vn_p, "rb") as f:
             vn = pickle.load(f)
         model = PPO.load(str(z), device="cpu")
+        steps = int(z.stem.split("_")[1])
         if model.observation_space.shape != env.observation_space.shape:
-            steps = int(z.stem.split("_")[1])
             print(f"{steps:>9}  (stale obs spec — skipped; retrain)")
             continue
-        succ = spd = stv = stick = 0.0
-        for k in range(n_episodes):
-            obs, _ = env.reset(seed=10_000 + k)
-            done, info = False, {}
-            while not done:
-                act, _ = model.predict(vn.normalize_obs(obs), deterministic=True)
-                obs, _r, te, tr, info = env.step(act)
-                done = te or tr
-            succ += int(info.get("is_success", False))
-            spd += info.get("ball_speed", 0.0)
-            stv += info.get("strike_speed", 0.0)
-            stick += int(info.get("hit_stick", False))
-        n = n_episodes
-        steps = int(z.stem.split("_")[1])
-        rows.append((steps, succ / n, spd / n, stv / n, stick / n))
-        print(f"{steps:>9} {succ/n:>8.2f} {spd/n:>8.3f} {stv/n:>9.3f} {stick/n:>6.2f}")
+
+        def act(obs):
+            return model.predict(vn.normalize_obs(obs), deterministic=True)[0]
+
+        m = _eval_episodes(env, act, grid)
+        score = _score(m)
+        rows.append((steps, score, m))
+        print(f"{steps:>9} {m['success_rate']:>8.2f} {m['hold_rms_deg']:>9.1f} "
+              f"{m['final_yaw_err_deg']:>8.1f} {m['final_v_err']:>6.2f} "
+              f"{score:>6.3f}")
     if rows:
-        best = max(rows, key=lambda r: r[2])          # by launch speed
-        print(f"\nfastest launch: {best[2]:.3f} m/s at {best[0]} steps "
-              f"(success {best[1]:.2f})")
-        print(f"export it with:  python -m aow_sim.train_ball_rl "
+        best = max(rows, key=lambda r: r[1])
+        print(f"\nbest score {best[1]:.3f} at {best[0]} steps "
+              f"(success {best[2]['success_rate']:.2f}, hold "
+              f"{best[2]['hold_rms_deg']:.1f} deg)")
+        print(f"export it with:  python -m aow_sim.train_pivot_rl "
               f"--export-from {best[0]}")
 
 
-def _export_from(spec: str, params, cfg, name="ball_rl"):
-    """Export a saved checkpoint instead of training — e.g. to recover the best
-    policy when training later regressed. `spec` is a step count or a .zip path;
-    the matching ppo_vecnormalize_*.pkl is loaded alongside it."""
+def _export_from(spec: str, params, cfg, name="pivot_rl"):
+    """Export a saved checkpoint instead of training. `spec` is a step count
+    or a .zip path; the matching ppo_vecnormalize_*.pkl is loaded alongside."""
     import pickle
     src = Path(spec)
     if not src.exists():
@@ -276,7 +307,7 @@ def _export_from(spec: str, params, cfg, name="ball_rl"):
     with open(vn, "rb") as f:
         vecnorm = pickle.load(f)          # obs_rms/clip_obs only; no venv needed
     model = PPO.load(str(src), device="cpu")
-    from .control.ball_spec import OBS_DIM
+    from .control.pivot_spec import OBS_DIM
     got = int(model.observation_space.shape[0])
     if got != OBS_DIM:
         raise SystemExit(
@@ -294,16 +325,13 @@ def main():
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--timesteps", type=int, default=None, help="override total")
     ap.add_argument("--export-from", default=None, metavar="STEPS|PATH",
-                    help="export an existing checkpoint instead of training "
-                         "(e.g. --export-from 3000000)")
+                    help="export an existing checkpoint instead of training")
+    ap.add_argument("--export-name", default="pivot_rl", metavar="NAME",
+                    help="move name for --export-from (e.g. pivot_rl_500k)")
     ap.add_argument("--scan-checkpoints", action="store_true",
-                    help="evaluate every saved checkpoint (success + launch "
-                         "speed) to pick a good one post-hoc, then exit")
+                    help="evaluate every saved checkpoint, then exit")
     ap.add_argument("--scan-every", type=int, default=1,
                     help="with --scan-checkpoints, evaluate every Nth checkpoint")
-    ap.add_argument("--export-name", default="ball_rl", metavar="NAME",
-                    help="move name for --export-from (e.g. ball_rl_500k, so "
-                         "the primary moves/ball_rl is left alone)")
     ap.add_argument("--trace", type=Path, default=None, metavar="DIR",
                     help="after exporting, roll the move out and write "
                          "<name>_trace.csv/.png here (see rollout_move.py)")
@@ -348,16 +376,15 @@ def main():
     cb = [CheckpointCallback(save_freq=max(1, 100_000 // a["n_envs"]),
                              save_path=str(ckpt), name_prefix="ppo",
                              save_vecnormalize=True),
-          BestBySuccess(params, cfg,
-                        eval_freq=max(1, a.get("eval_every", 100_000) // a["n_envs"]),
-                        n_episodes=a.get("eval_episodes", 10),
-                        save_path=RUN_DIR, verbose=1)]
+          BestByScore(params, cfg,
+                      eval_freq=max(1, a.get("eval_every", 100_000) // a["n_envs"]),
+                      save_path=RUN_DIR, verbose=1)]
     total = args.timesteps or a["total_timesteps"]
     model.learn(total_timesteps=total, callback=cb, reset_num_timesteps=not args.resume,
                 progress_bar=True)
     venv.save(str(vn_path))
 
-    # Export the best-by-success snapshot, not whatever the last update produced.
+    # Export the best-by-score snapshot, not whatever the last update produced.
     best_zip = RUN_DIR / "best_model.zip"
     best_vn = RUN_DIR / "best_vecnormalize.pkl"
     if best_zip.exists() and best_vn.exists():
@@ -366,15 +393,16 @@ def main():
             best_norm = pickle.load(f)
         bi = cb[1].best_info
         print(f"exporting best snapshot: score {bi.get('score', 0):.3f} "
-              f"(success {bi.get('success_rate', 0):.2f}, "
-              f"ball {bi.get('mean_ball_speed', 0):.3f} m/s) "
+              f"(success {bi.get('success_rate', 0):.2f}, hold "
+              f"{bi.get('hold_rms_deg', 0):.1f} deg) "
               f"from {bi.get('steps', '?')} steps")
-        # Record the snapshot's OWN step count, not the run total — the best
-        # policy is usually from mid-run and mislabelling it hides that.
         _finish(PPO.load(str(best_zip), device="cpu"), best_norm, params, cfg,
                 bi.get("steps", total), source="best_model.zip")
     else:
         _finish(model, venv, params, cfg, total)
+    if args.trace:
+        from .train_flick_rl import _trace
+        _trace("pivot_rl", args.trace)
 
 
 if __name__ == "__main__":

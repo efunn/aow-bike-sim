@@ -52,7 +52,13 @@ class MLPPolicy:
         """obs (OBS_DIM,) -> (steer_rate, hub, diff). Mirrors VecNormalize +
         the SB3 policy: normalize+clip obs, MLP forward, deterministic mean,
         clip to the action box, then scale to physical units."""
-        x = (np.asarray(obs, np.float64) - self.obs_mean) / np.sqrt(self.obs_var + 1e-8)
+        obs = np.asarray(obs, np.float64)
+        if obs.shape[0] != self.obs_dim:
+            raise ValueError(
+                f"obs length {obs.shape[0]} != policy obs_dim {self.obs_dim}: "
+                "the observation spec changed since this move was trained — "
+                "retrain/re-export it")
+        x = (obs - self.obs_mean) / np.sqrt(self.obs_var + 1e-8)
         x = np.clip(x, -self.obs_clip, self.obs_clip)
         for W, b in self.layers[:-1]:
             x = self.activation(W @ x + b)

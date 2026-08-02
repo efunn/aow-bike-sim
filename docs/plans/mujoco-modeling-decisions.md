@@ -343,11 +343,19 @@ RL policy (generalization), moving-entry/exit flick.
 - **Steer origin after the flick.** The front ends at ~180 deg. Spinning the
   servo back to 0 (a) *looks* like a snap and (b) at standstill **drags the
   bike ~30 deg in yaw** as the front rolls around — which broke replay vs the
-  optimizer (which held 180). Fix: adopt 180 as the steer origin
-  (`_steer_offset`) — the wheel is front-back symmetric, so it is
-  longitudinally straight; no rotation, no drag, no snap. A subsequent
-  `command_*` resets the origin. Verified: driving off afterward is stable
-  (the reverse-trail at the adopted origin is benign at these speeds).
+  optimizer (which held 180). Fix: adopt 180 as the steer origin — the wheel
+  is front-back symmetric, so it is longitudinally straight; no rotation, no
+  drag, no snap. Verified: driving off afterward is stable (the reverse-trail
+  at the adopted origin is benign at these speeds).
+  *(2026-07-30)* Generalized from the original `DriveController._steer_offset`
+  hack (which `command_*`/`reset` discontinuously zeroed — the longstanding
+  "360 steering bug": a half-turn servo snap after any post-flick command) to
+  `control/steer.py`'s `SteerFrame`, shared by all LQR-family controllers: the
+  origin is always the nearest pi multiple of the *measured* multi-turn angle,
+  re-adopted only at discrete events, so re-adoption never commands motion.
+  Consecutive flicks wind the joint pi per flick by design; commands are
+  clamped to the XC330 extended-position range (+-256 turns), and a future
+  Dynamixel driver is a pure 4096-counts/rev unit conversion.
 - **Roll during the move** is the maneuver *leaning* through the arcs
   (~+3/-13/+8 deg for the fast reverse-first), not the balance oscillating; it
   damps within ~0.2 s of completion. A `rollrate` cost term was added to prefer

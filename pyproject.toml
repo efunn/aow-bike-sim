@@ -11,7 +11,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+# matplotlib is in `dev` (not just `viz`) because plotting is part of the
+# normal inspection loop: rollout_move --out and the trainers' --trace both
+# write a PNG beside the CSV, and silently getting only the CSV is a
+# confusing way to find out it is missing.
+dev = ["pytest>=8.0", "matplotlib>=3.7"]
+viz = ["matplotlib>=3.7"]
+# Hold-to-drive in teleop. MuJoCo's viewer reports a key going DOWN and
+# nothing else — no release, no auto-repeat — so holding the arrows can only
+# work if the OS supplies real key state. On macOS that means pyobjc:
+# AppKit for the (permission-free) NSEvent local monitor, Quartz for polling.
+# Without these, teleop still works — the arrows step the command per tap.
+teleop = [
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+]
 # RL training only (the base install replays a trained policy with numpy alone).
 rl = [
     "gymnasium>=0.29",

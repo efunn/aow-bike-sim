@@ -141,7 +141,8 @@ class PivotController(LQRBalance):
         roll_ref = self.lean_ff * acc * self.r_com / GRAVITY
 
         x = np.array([
-            e_lat, s.roll - roll_ref, self._psi - psi_ref, data.qpos[self._sj],
+            e_lat, s.roll - roll_ref, self._psi - psi_ref,
+            self.steer_frame.measured(data.qpos[self._sj]),
             s.v_lat - v_lat_ref, s.roll_rate, data.qvel[5] - rate,
             data.qvel[self._sd],
         ])
@@ -151,5 +152,5 @@ class PivotController(LQRBalance):
         a, b = mix(-self.x_kp * e_lon, d)
         u = np.zeros(len(self._u))
         u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
-        u[self.aid["steer"]] = steer
+        u[self.aid["steer"]] = self.steer_frame.command(steer)
         return u

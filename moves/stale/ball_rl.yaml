@@ -9,16 +9,16 @@ launch_target_deg: 0
 action_space: full
 trained:
   algo: PPO
-  timesteps: 4500000
+  timesteps: 4600000
   net_arch:
   - 128
   - 128
-  export_max_diff: 7.679339469879309e-07
+  export_max_diff: 4.0110779964130927e-07
   metrics:
     success_rate: 1.0
-    mean_launch_speed: 0.378
-    mean_launch_deg: -1.3
+    mean_launch_speed: 0.533
+    mean_launch_deg: -35.4
     stick_hit_rate: 1.0
     wheel_hit_rate: 0.0
     n_eval: 8
-  exported_from: best_model.zip
+  exported_from: ppo_4600000_steps.zip

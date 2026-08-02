@@ -24,6 +24,8 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from .steer import SteerFrame
+
 
 def mix(common: float, diff: float) -> tuple[float, float]:
     """(common, differential) -> (drive_a, drive_b) input-shaft commands."""
@@ -159,18 +161,21 @@ class LQRBalance(_Base):
         self._sj = model.joint("steer_joint").qposadr[0]
         self._sd = model.joint("steer_joint").dofadr[0]
         self._ref_yaw = 0.0
+        self.steer_frame = SteerFrame()
 
     def reset(self, model, data):
         super().reset(model, data)
         s = extract_state(data, self._ref_pos)
         self._ref_yaw = s.yaw
+        self.steer_frame.sync(float(data.qpos[self._sj]))
 
     def _compute(self, model, data):
         s = extract_state(data, self._ref_pos)
         yaw_err = np.arctan2(np.sin(s.yaw - self._ref_yaw),
                              np.cos(s.yaw - self._ref_yaw))
         x = np.array([
-            s.e_lat, s.roll, yaw_err, data.qpos[self._sj],
+            s.e_lat, s.roll, yaw_err,
+            self.steer_frame.measured(data.qpos[self._sj]),
             s.v_lat, s.roll_rate, data.qvel[5], data.qvel[self._sd],
         ])
         d, steer = -self.K @ x
@@ -178,7 +183,7 @@ class LQRBalance(_Base):
         a, b = mix(-self.x_kp * s.e_lon, d)
         u = np.zeros(len(self._u))
         u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
-        u[self.aid["steer"]] = steer
+        u[self.aid["steer"]] = self.steer_frame.command(steer)
         return u
 
 

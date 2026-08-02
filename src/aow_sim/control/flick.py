@@ -184,7 +184,19 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         from .policy import load_policy_npz          # numpy-only
         pol = load_policy_npz(path.parent / d["policy_file"])
         pol.target = np.deg2rad(d.get("yaw_target_deg", 180.0))
+        # Ball moves aim at a WORLD-frame launch direction instead of a yaw
+        # target; carried through so replay builds the same observation training
+        # did (ball_spec heading is measured against this, not the start pose).
+        pol.launch_target = np.deg2rad(d.get("launch_target_deg", 0.0))
         pol.horizon = float(d.get("max_episode_s", 4.0))  # replay-safety timeout
+        # Pivot moves: the velocity envelope the policy was trained for
+        # (command_pivot_rl clamps its v_end argument to this).
+        pol.v_max = float(d.get("v_max", 0.6))
+        # The general (always-on) policy trains at its own control rate, which
+        # need not be the controller's; replay must query it at that rate or
+        # the effective action scale and closed-loop timing both shift.
+        # 0.0 means "unspecified" -> replay falls back to the controller rate.
+        pol.control_rate_hz = float(d.get("control_rate_hz", 0.0))
         return pol
     return FlickTrajectory(float(d["horizon"]),
                            np.asarray(d["steer_knots"], float),

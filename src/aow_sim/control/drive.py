@@ -29,6 +29,7 @@ import numpy as np
 from .balance import LQRBalance, extract_state, mix
 from .linearize import design_gain_schedule
 from .pivot import YawProfile
+from .steer import clamp_extended, nearest_multiple, wheel_heading
 
 GRAVITY = 9.81
 
@@ -90,7 +91,6 @@ class DriveController(LQRBalance):
         self._psi_raw_prev = 0.0
         self._stop_pending = False
         self._int_lat = 0.0   # integral steer correction [rad], anti-windup clamped
-        self._steer_offset = 0.0   # steer origin (set to ~pi after a flick)
         # flip-maneuver state
         self._flip_profile: YawProfile | None = None
         self._flip_dir = 1
@@ -98,6 +98,7 @@ class DriveController(LQRBalance):
         self._flip_psi0 = 0.0
         self._flip_center = np.zeros(2)
         self._flip_steer = 0.0   # scripted steer, rate-limited integrator
+        self._flip_base = 0.0    # pi-multiple steer park at maneuver start
         # flick-maneuver (optimized two-arc 180) state
         self._flick = None
         self._flick_dir = 1
@@ -105,14 +106,39 @@ class DriveController(LQRBalance):
         self._flick_p0 = np.zeros(2)
         self._flick_yaw0 = 0.0
         self._flick_steer = 0.0   # commanded steer, rate-limited on unwind
+        self._flick_base = 0.0    # pi-multiple steer park at maneuver start
         # ball-shot (RL) maneuver state
         self._ball = None
         self._ball_mirror = False
         self._ball_t0 = 0.0
         self._ball_p0 = np.zeros(2)
-        self._ball_yaw0 = 0.0
         self._ball_steer = 0.0
+        self._ball_base = 0.0     # pi-multiple steer park at maneuver start
         self._ball_addr = None    # (qpos_adr, qvel_adr) of the ball freejoint, lazy
+        # pivot (RL) maneuver state: front wheel holds its global heading
+        self.rake = np.deg2rad(params["bike"]["rake_deg"])
+        self._pivot = None
+        self._pivot_dir = 1
+        self._pivot_t0 = 0.0
+        self._pivot_yaw0 = 0.0
+        self._pivot_theta0 = 0.0  # held global wheel heading (mod pi)
+        self._pivot_u0 = np.zeros(2)
+        self._pivot_n0 = np.zeros(2)
+        self._pivot_pf0 = np.zeros(2)
+        self._pivot_v0 = 0.0      # measured entry speed along the line
+        self._pivot_vend = 0.0
+        self._pivot_steer = 0.0
+        self._pivot_base = 0.0    # pi-multiple steer park at maneuver start
+        # general (RL) always-on policy state — NOT a maneuver: no horizon,
+        # no start-pose capture, no hand-back. Just a live command.
+        self._gen = None
+        self._gen_v_cmd = np.zeros(2)   # world-frame velocity command [m/s]
+        self._gen_psi_cmd = 0.0         # world heading command [rad, unwrapped]
+        self._gen_steer = 0.0           # integrated steer target
+        self._gen_prev_a = np.zeros(3)
+        self._gen_hold = 0              # ticks left before the next policy query
+        self._gen_every = 1             # controller ticks per policy query
+        self._gen_u = None              # held action between queries
 
     # -- gain schedule -----------------------------------------------------
 
@@ -154,7 +180,7 @@ class DriveController(LQRBalance):
         c, s = np.cos(self._psi), np.sin(self._psi)
         self._center = data.qpos[:2] + self._dir * radius * np.array([-s, c])
         self._int_lat = 0.0
-        self._steer_offset = 0.0
+        self.steer_frame.sync(data.qpos[self._sj])
 
     def command_heading(self, data, delta: float) -> None:
         """Turn by `delta` rad. At low speed this runs the pivot recipe ("arc"
@@ -166,7 +192,7 @@ class DriveController(LQRBalance):
         if self.mode == "arc":
             self._psi_path_target += delta          # extend the ongoing arc
             return
-        self._steer_offset = 0.0
+        self.steer_frame.sync(data.qpos[self._sj])
         if abs(s.v_lon) < 0.3:
             self.mode = "arc"
             c_, s_ = np.cos(self._psi), np.sin(self._psi)
@@ -194,7 +220,7 @@ class DriveController(LQRBalance):
         c_, s_ = np.cos(self._psi), np.sin(self._psi)
         self._flip_center = data.qpos[:2] + (self.wheelbase / 2) * np.array([c_, s_])
         self._flip_steer = data.qpos[self._sj]
-        self._steer_offset = 0.0
+        self._flip_base = nearest_multiple(data.qpos[self._sj])
         self.profile.v_ref = 0.0
         self.profile.target = 0.0
         return self.flip_cfg["pre_steer_time"] + self._flip_profile.duration
@@ -206,12 +232,19 @@ class DriveController(LQRBalance):
         first). Returns the horizon [s]."""
         from .flick import load_move
         self._flick = load_move(name)
+        if getattr(self._flick, "kind", "trajectory") == "policy":
+            from .flick_spec import OBS_DIM
+            if self._flick.obs_dim != OBS_DIM:
+                raise ValueError(
+                    f"moves/{name} was trained with obs_dim "
+                    f"{self._flick.obs_dim} but the current spec is {OBS_DIM}"
+                    " — retrain (`python -m aow_sim.train_flick_rl`)")
         self._flick_dir = 1 if direction >= 0 else -1
         self._flick_t0 = data.time
         self._flick_p0 = data.qpos[:2].copy()
         self._flick_yaw0 = self._psi
         self._flick_steer = data.qpos[self._sj]
-        self._steer_offset = 0.0   # new maneuver starts from the true origin
+        self._flick_base = nearest_multiple(data.qpos[self._sj])
         self.mode = "flick"
         # trajectory moves expose .T; RL policy moves expose .horizon
         return getattr(self._flick, "T", getattr(self._flick, "horizon", 4.0))
@@ -223,14 +256,156 @@ class DriveController(LQRBalance):
         policy to a ball-left start. Returns the replay-safety horizon [s]."""
         from .flick import load_move
         self._ball = load_move(name)
+        from .ball_spec import OBS_DIM
+        if self._ball.obs_dim != OBS_DIM:
+            raise ValueError(
+                f"moves/{name} was trained with obs_dim {self._ball.obs_dim}"
+                f" but the current spec is {OBS_DIM}"
+                " — retrain (`python -m aow_sim.train_ball_rl`)")
         self._ball_mirror = bool(mirror)
         self._ball_t0 = data.time
         self._ball_p0 = data.qpos[:2].copy()
-        self._ball_yaw0 = self._psi
         self._ball_steer = data.qpos[self._sj]
-        self._steer_offset = 0.0
+        self._ball_base = nearest_multiple(data.qpos[self._sj])
         self.mode = "ball"
         return getattr(self._ball, "horizon", 5.0)
+
+    def command_pivot_rl(self, data, direction: int = 1, name: str = "pivot_rl",
+                         v_end: float = 0.0) -> float:
+        """180-deg chassis yaw with the front wheel holding its global ground
+        heading (mod pi) — from standstill or a glide. `v_end` [m/s] is the
+        target glide speed along the ORIGINAL travel line after the turn (the
+        bike then moves backward along its NEW heading). Replays the trained
+        `moves/<name>.yaml` RL policy. Returns the horizon [s]."""
+        from .flick import load_move
+        self._pivot = load_move(name)
+        from .pivot_spec import OBS_DIM
+        if self._pivot.obs_dim != OBS_DIM:
+            raise ValueError(
+                f"moves/{name} was trained with obs_dim {self._pivot.obs_dim}"
+                f" but the current spec is {OBS_DIM}"
+                " — retrain (`python -m aow_sim.train_pivot_rl`)")
+        self._pivot_dir = 1 if direction >= 0 else -1
+        self._pivot_t0 = data.time
+        self._pivot_yaw0 = self._psi
+        self._pivot_steer = data.qpos[self._sj]
+        self._pivot_base = nearest_multiple(data.qpos[self._sj])
+        # Hold target = the wheel's CURRENT global ground heading, base-
+        # relative (training starts near steer 0; a pi park must not shift
+        # the target — the wheel is pi-symmetric).
+        s = extract_state(data, self._ref_pos)
+        self._pivot_theta0 = self._psi + wheel_heading(
+            float(data.qpos[self._sj]) - self._pivot_base, self.rake)
+        self._pivot_u0 = np.array([np.cos(self._pivot_theta0),
+                                   np.sin(self._pivot_theta0)])
+        self._pivot_n0 = np.array([-np.sin(self._pivot_theta0),
+                                   np.cos(self._pivot_theta0)])
+        self._pivot_pf0 = data.qpos[:2] + self.wheelbase * np.array(
+            [np.cos(s.yaw), np.sin(s.yaw)])
+        vf = data.qvel[:2] + self.wheelbase * data.qvel[5] * np.array(
+            [-np.sin(s.yaw), np.cos(s.yaw)])
+        self._pivot_v0 = float(self._pivot_u0 @ vf)
+        self._pivot_vend = float(np.clip(v_end, 0.0,
+                                         getattr(self._pivot, "v_max", 0.6)))
+        # NOTE: the speed profile is deliberately NOT zeroed — the move may
+        # start mid-glide; the profile is re-seeded at handoff.
+        self.mode = "pivot_rl"
+        return self._pivot.horizon
+
+    # -- general (always-on) policy ----------------------------------------
+
+    def engage_general(self, data, name: str = "general_rl") -> None:
+        """Hand the actuators to the general command-conditioned policy and
+        leave them there. Unlike every command_* above this is NOT a
+        maneuver: there is no horizon and no hand-back, so the only way out
+        is another command_* (which re-anchors the analytic controller).
+
+        The initial command is "hold what you are doing now" — current
+        heading, current velocity — so engaging never jolts the bike."""
+        from .flick import load_move
+        self._gen = load_move(name)
+        from .general_spec import OBS_DIM
+        if self._gen.obs_dim != OBS_DIM:
+            raise ValueError(
+                f"moves/{name} was trained with obs_dim {self._gen.obs_dim}"
+                f" but the current spec is {OBS_DIM}"
+                " — retrain (`python -m aow_sim.train_general_rl`)")
+        # The policy was trained at its own control rate; querying it at the
+        # controller's rate would silently change the effective action scale
+        # (the steer integrator is rate * dt) and the closed-loop timing.
+        # Hold each action for the matching number of controller ticks.
+        pol_hz = float(getattr(self._gen, "control_rate_hz", 0.0)
+                       or 1.0 / self.dt)
+        self._gen_every = max(1, int(round((1.0 / self.dt) / pol_hz)))
+        self._gen_dt = self._gen_every * self.dt
+        self._gen_hold = 0
+        self._gen_u = None
+        self._gen_steer = float(data.qpos[self._sj])
+        self._gen_prev_a = np.zeros(3)
+        s = extract_state(data, self._ref_pos)
+        self._gen_psi_cmd = self._psi
+        self._gen_v_cmd = data.qvel[:2].copy()
+        self.mode = "general"
+
+    def set_command(self, v_cmd_world=None, psi_cmd: float | None = None,
+                    dpsi: float | None = None) -> None:
+        """Update the live command for the general policy. `v_cmd_world` is a
+        world-frame velocity vector [m/s] (stop = (0,0), reverse = the
+        opposite vector — both ordinary points, which is why the command is
+        a vector and not (course, speed)). `psi_cmd` sets the absolute
+        heading; `dpsi` nudges it. Safe to call every tick."""
+        if v_cmd_world is not None:
+            self._gen_v_cmd = np.asarray(v_cmd_world, dtype=float)[:2].copy()
+        if psi_cmd is not None:
+            self._gen_psi_cmd = float(psi_cmd)
+        if dpsi:
+            self._gen_psi_cmd += float(dpsi)
+
+    def set_command_polar(self, speed: float, course_rel: float = 0.0,
+                          psi_cmd: float | None = None) -> None:
+        """Convenience for teleop: drive at `speed` along `course_rel` radians
+        off the commanded heading. Resolved to a vector immediately, so a
+        zero speed still leaves a well-defined command."""
+        psi = self._gen_psi_cmd if psi_cmd is None else float(psi_cmd)
+        th = psi + course_rel
+        self.set_command(v_cmd_world=(speed * np.cos(th), speed * np.sin(th)),
+                         psi_cmd=psi)
+
+    def _general_compute(self, data, s) -> np.ndarray:
+        """Query the general policy and apply. No horizon, no hand-back, no
+        start-pose frame: every error is measured against the live command.
+        Steer is passed raw (multi-turn) — sin/cos(2*delta) is already
+        winding-invariant, so no pi-park rebasing is needed here."""
+        from .general_spec import build_obs, command_to_body
+        pol = self._gen
+        if self._gen_u is None or self._gen_hold <= 0:
+            v_cl, v_ct, psi_err = command_to_body(
+                self._gen_v_cmd, self._gen_psi_cmd, self._psi)
+            obs = build_obs(s.roll, s.roll_rate, data.qvel[5],
+                            float(data.qpos[self._sj]),
+                            float(data.qvel[self._sd]),
+                            s.v_lon, s.v_lat, v_cl, v_ct, psi_err,
+                            self._gen_prev_a)
+            steer_rate, hub, diff = pol.action(obs)
+            self._gen_prev_a = np.array([
+                steer_rate / pol.bounds.steer_rate_max,
+                hub / pol.bounds.hub_max,
+                diff / pol.bounds.diff_max])
+            self._gen_u = (steer_rate, hub, diff)
+            self._gen_hold = self._gen_every
+        steer_rate, hub, diff = self._gen_u
+        self._gen_hold -= 1
+        # Integrate at the CONTROLLER rate so the commanded steer traces the
+        # same ramp the training env produced in one of its longer steps.
+        self._gen_steer += steer_rate * self.dt
+        if pol.act_dim == 2:                 # feedforward policy: crawl balance
+            diff = float(-self._K0[0] @ np.array(
+                [s.e_lat, s.roll, 0.0, 0.0, s.v_lat, s.roll_rate, 0.0, 0.0]))
+        a, b = mix(hub / self.r_wheel, diff)
+        u = np.zeros(len(self._u))
+        u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
+        u[self.aid["steer"]] = clamp_extended(self._gen_steer)
+        return u
 
     def viz_reference(self, data) -> tuple[float, float]:
         """(reference heading [rad, world], reference speed [m/s]) for the
@@ -245,6 +420,13 @@ class DriveController(LQRBalance):
             return heading, hub
         if self.mode == "flip":
             return self._flip_psi0 + self._flip_dir * np.pi, 0.0
+        if self.mode == "pivot_rl":
+            return self._pivot_yaw0 + self._pivot_dir * np.pi, -self._pivot_vend
+        if self.mode == "general":
+            # The command IS the reference: heading plus the speed along it.
+            c, sn = np.cos(self._gen_psi_cmd), np.sin(self._gen_psi_cmd)
+            return self._gen_psi_cmd, float(c * self._gen_v_cmd[0]
+                                            + sn * self._gen_v_cmd[1])
         if self.mode == "circle":
             r_vec = data.qpos[:2] - self._center
             rho = max(float(np.linalg.norm(r_vec)), 1e-6)
@@ -318,11 +500,11 @@ class DriveController(LQRBalance):
 
         psi_target = self._flip_psi0 + self._flip_dir * np.pi
         if tau < t_pre:                       # pre-steer (front freed to ~90)
-            steer_target = hold * min(1.0, tau / t_pre)
+            steer_target = self._flip_base + hold * min(1.0, tau / t_pre)
             psi_off = psi_dot_ref = 0.0
         else:                                 # spin (front held at 90)
             psi_off, psi_dot_ref, _ = prof.eval(tau - t_pre)
-            steer_target = hold
+            steer_target = self._flip_base + hold
         dmax = cfg["steer_rate"] * self.dt
         self._flip_steer += float(np.clip(steer_target - self._flip_steer,
                                           -dmax, dmax))
@@ -345,13 +527,16 @@ class DriveController(LQRBalance):
         a, b = mix(v_hub, d_cmd)
         u = np.zeros(len(self._u))
         u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
-        u[self.aid["steer"]] = self._flip_steer
+        u[self.aid["steer"]] = clamp_extended(self._flip_steer)
 
         # On yaw completion, hand back to line mode — its station-keeping
         # brings the front (held at 90) back to straight and settles the stop.
         if (tau > t_pre + prof.duration
                 and abs(self._psi - psi_target) < np.deg2rad(8)
                 and abs(data.qvel[5]) < 0.3):
+            # The wheel sits at base +- 90, where nearest-pi rounding is
+            # ambiguous — keep the maneuver's base as the origin explicitly.
+            self.steer_frame.origin = self._flip_base
             self.command_line(data, heading=psi_target)
         return u
 
@@ -367,8 +552,12 @@ class DriveController(LQRBalance):
         dd = data.qpos[:2] - self._flick_p0
         e_lat = -np.sin(self._flick_yaw0) * dd[0] + np.cos(self._flick_yaw0) * dd[1]
         yaw_err = pol.target - (self._psi - self._flick_yaw0)
+        # Steer obs is relative to the pi-multiple park the maneuver started
+        # from: training always starts the wheel near 0, so a post-flick park
+        # at pi must not leak into the policy's observation.
         obs = build_obs(s.roll, s.roll_rate, yaw_err, data.qvel[5],
-                        data.qpos[self._sj], s.v_lon, s.v_lat, e_lat,
+                        data.qpos[self._sj] - self._flick_base,
+                        s.v_lon, s.v_lat, e_lat,
                         min(tau / pol.horizon, 1.0))
         steer_rate, hub, diff = pol.action(obs)
         self._flick_steer += steer_rate * self.dt
@@ -378,7 +567,7 @@ class DriveController(LQRBalance):
         a, b = mix(hub / self.r_wheel, diff)
         u = np.zeros(len(self._u))
         u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
-        u[self.aid["steer"]] = self._flick_steer
+        u[self.aid["steer"]] = clamp_extended(self._flick_steer)
 
         # Hand back to the balance controller as soon as the bike is roughly
         # turned around AND upright — then the balance controller does the final
@@ -394,7 +583,7 @@ class DriveController(LQRBalance):
                      and abs(s.roll) < np.deg2rad(15)    # upright enough to catch
                      and abs(data.qvel[5]) < 2.0)        # not still spinning fast
         if near_done or tau > pol.horizon:
-            self._steer_offset = round(self._flick_steer / np.pi) * np.pi
+            self.steer_frame.sync(data.qpos[self._sj])
             self.command_line(data, heading=psi_target)
         return u
 
@@ -431,10 +620,14 @@ class DriveController(LQRBalance):
         else:
             bdx = bdy = bvx = bvy = 0.0
             present = 0.0
-        heading = self._psi - self._ball_yaw0
+        # Heading is measured against the WORLD launch target, matching training
+        # (ball_spec.build_obs). Using the start heading here instead would make
+        # replay silently disagree with the policy's observation contract.
+        heading = self._psi - getattr(pol, "launch_target", 0.0)
         m = -1.0 if self._ball_mirror else 1.0   # reflect lateral obs for ball-left
         obs = build_obs(m * s.roll, m * s.roll_rate, m * heading, m * data.qvel[5],
-                        m * data.qpos[self._sj], s.v_lon, m * s.v_lat,
+                        m * (data.qpos[self._sj] - self._ball_base),
+                        s.v_lon, m * s.v_lat,
                         bdx, m * bdy, bvx, m * bvy, present,
                         min(tau / pol.horizon, 1.0))
         steer_rate, hub, diff = pol.action(obs)
@@ -446,14 +639,14 @@ class DriveController(LQRBalance):
         a, b = mix(hub / self.r_wheel, diff)
         u = np.zeros(len(self._u))
         u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
-        u[self.aid["steer"]] = self._ball_steer
+        u[self.aid["steer"]] = clamp_extended(self._ball_steer)
 
         # Hand back to balance once the horizon elapses or the bike is nearly
         # stopped and upright (the policy has no learned post-success behavior).
         upright_stopped = (abs(s.roll) < np.deg2rad(15) and abs(s.v_lon) < 0.15
                            and abs(data.qvel[5]) < 1.0 and tau > 0.5)
         if tau > pol.horizon or upright_stopped:
-            self._steer_offset = round(self._ball_steer / np.pi) * np.pi
+            self.steer_frame.sync(data.qpos[self._sj])
             self.command_line(data, heading=self._psi)
         return u
 
@@ -466,12 +659,16 @@ class DriveController(LQRBalance):
         if getattr(fl, "kind", "trajectory") == "policy":
             return self._flick_policy_compute(data, s)
         tau = data.time - self._flick_t0
+        # Feedforward is authored from a straight start; rebase it onto the
+        # pi-multiple park the maneuver began at, so a second flick sweeps
+        # base -> base + pi continuously instead of snapping back through 0.
         if tau < fl.T:                       # replay the trajectory feedforward
-            self._flick_steer = self._flick_dir * fl.steer(tau)
+            self._flick_steer = self._flick_base + self._flick_dir * fl.steer(tau)
             hub = fl.hub(tau)
         else:                                # settle: hold the front where the
-            self._flick_steer = self._flick_dir * fl.steer(fl.T)  # sweep ended
-            hub = 0.0                        # (~180); no unwind — see below.
+            self._flick_steer = (self._flick_base
+                                 + self._flick_dir * fl.steer(fl.T))  # ~180
+            hub = 0.0                        # no unwind — see below.
         # crawl balance about the flick's start pose (bike-frame lateral), K0
         # roll/lateral response only — steer committed, yaw is the maneuver.
         sb = extract_state(data, self._flick_p0)
@@ -480,18 +677,74 @@ class DriveController(LQRBalance):
         a, b = mix(hub / self.r_wheel, d_bal)
         u = np.zeros(len(self._u))
         u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
-        u[self.aid["steer"]] = self._flick_steer
+        u[self.aid["steer"]] = clamp_extended(self._flick_steer)
 
         psi_target = self._flick_yaw0 + self._flick_dir * np.pi
         if (tau > fl.T and abs(self._psi - psi_target) < np.deg2rad(20)
                 and abs(data.qvel[5]) < 0.4):
             # Hand off to line-keeping. The front is at ~180 deg; rather than
-            # spinning the servo back to 0 (which drags the bike in yaw at
-            # standstill, and looks like a snap), adopt 180 as the steer origin
-            # — the wheel is front-back symmetric so it is longitudinally
-            # straight. A later maneuver resets the origin (command_* zero it).
-            self._steer_offset = round(self._flick_steer / np.pi) * np.pi
+            # spinning the servo back (which drags the bike in yaw at
+            # standstill, and looks like a snap), adopt the nearest pi
+            # multiple of the *measured* angle as the steer origin — the
+            # wheel is front-back symmetric so it is longitudinally straight
+            # (see steer.py).
+            self.steer_frame.sync(data.qpos[self._sj])
             self.command_line(data, heading=psi_target)
+        return u
+
+    def _pivot_rl_compute(self, data, s) -> np.ndarray:
+        """Replay the pivot policy. The observation must EXACTLY mirror
+        pivot_env._obs: same hold/line frames, same v_ref ramp (v0 measured
+        at command time -> commanded v_end over the horizon), steer passed
+        base-relative. Training is single-direction (+180); direction=-1
+        replays via the ball-style m-reflection (odd quantities: roll,
+        roll_rate, yaw_rate, steer, hold_raw, v_lat, e_line, and the
+        steer_rate/diff actions; wheel_heading is odd, so exact)."""
+        from .pivot_spec import build_obs
+        pol = self._pivot
+        m = float(self._pivot_dir)
+        tau = data.time - self._pivot_t0
+        phase = min(tau / pol.horizon, 1.0)
+        delta = data.qpos[self._sj] - self._pivot_base
+        hold_raw = ((self._psi - self._pivot_yaw0)
+                    + wheel_heading(float(delta), self.rake)
+                    + (self._pivot_yaw0 - self._pivot_theta0))
+        yaw_err = pol.target - m * (self._psi - self._pivot_yaw0)
+        pf = data.qpos[:2] + self.wheelbase * np.array(
+            [np.cos(s.yaw), np.sin(s.yaw)])
+        vf = data.qvel[:2] + self.wheelbase * data.qvel[5] * np.array(
+            [-np.sin(s.yaw), np.cos(s.yaw)])
+        e_line = float(self._pivot_n0 @ (pf - self._pivot_pf0))
+        v_along = float(self._pivot_u0 @ vf)
+        v_ref = self._pivot_v0 + (self._pivot_vend - self._pivot_v0) * phase
+        obs = build_obs(m * s.roll, m * s.roll_rate, yaw_err, m * data.qvel[5],
+                        m * delta, m * hold_raw, s.v_lon, m * s.v_lat,
+                        v_along - v_ref, self._pivot_vend, m * e_line, phase)
+        steer_rate, hub, diff = pol.action(obs)
+        steer_rate, diff = m * steer_rate, m * diff   # reflect back
+        self._pivot_steer += steer_rate * self.dt
+        if pol.act_dim == 2:                 # feedforward policy: crawl balance
+            diff = float(-self._K0[0] @ np.array(
+                [s.e_lat, s.roll, 0.0, 0.0, s.v_lat, s.roll_rate, 0.0, 0.0]))
+        a, b = mix(hub / self.r_wheel, diff)
+        u = np.zeros(len(self._u))
+        u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
+        u[self.aid["steer"]] = clamp_extended(self._pivot_steer)
+
+        # Hand back once roughly turned + upright (the policy has no learned
+        # post-success behavior); the horizon is the safety net. The wheel
+        # parks at ~ -pi relative to the chassis -> sync the steer frame.
+        psi_target = self._pivot_yaw0 + self._pivot_dir * np.pi
+        near_done = (abs(yaw_err) < np.deg2rad(20) and abs(s.roll) < np.deg2rad(15)
+                     and abs(data.qvel[5]) < 2.0 and tau > 0.5)
+        if near_done or tau > pol.horizon:
+            self.steer_frame.sync(data.qpos[self._sj])
+            self.command_line(data, heading=psi_target)
+            # Same global glide, reversed heading: the bike now travels
+            # BACKWARD along its own axis. Seed the profile from measured
+            # speed so set_speed doesn't slam from a stale reference.
+            self.profile.v_ref = s.v_lon
+            self.set_speed(-self._pivot_vend)
         return u
 
     def _compute(self, model, data):
@@ -507,6 +760,10 @@ class DriveController(LQRBalance):
             return self._flick_compute(data, s)
         if self.mode == "ball":
             return self._ball_compute(model, data, s)
+        if self.mode == "pivot_rl":
+            return self._pivot_rl_compute(data, s)
+        if self.mode == "general":
+            return self._general_compute(data, s)
 
         v_ref = self.profile.step(self.dt)
         if self._stop_pending and v_ref == 0.0:
@@ -590,6 +847,10 @@ class DriveController(LQRBalance):
             d_vec = p - self._anchor
             e_lat = float(n_hat @ d_vec)
             e_lat_rate = float(n_hat @ vw) - crawl_frac * (-psi_dot_ref * self.wheelbase)
+            # Wrapped on purpose (unlike arc mode): multi-turn heading
+            # commands reach the bike through the slewed reference, so e_psi
+            # stays small in normal operation, and wrapping makes a bike far
+            # off its line heading recover the short way around.
             e_psi = np.arctan2(np.sin(self._psi - self._psi_path),
                                np.cos(self._psi - self._psi_path))
             yaw_rate_ref = psi_dot_ref
@@ -620,12 +881,12 @@ class DriveController(LQRBalance):
         roll_ref += self._int_lat
 
         sj, sd = self._sj, self._sd
-        # Steer origin offset: after a flick the front is physically at ~180 deg
-        # (front-back-symmetric wheel -> longitudinally "straight"). We treat
-        # that as the zero rather than spinning the servo back (which would drag
-        # the bike in yaw at standstill). offset is 0 in every mode except a
-        # post-flick park.
-        steer_meas = data.qpos[sj] - self._steer_offset
+        # Small-signal steer about the frame's pi-multiple origin (steer.py):
+        # after a flick the front parks at ~180 deg (front-back-symmetric
+        # wheel -> longitudinally "straight") and the frame treats that as
+        # zero rather than spinning the servo back, which would drag the bike
+        # in yaw at standstill.
+        steer_meas = self.steer_frame.measured(data.qpos[sj])
         x = np.array([
             e_lat, s.roll - roll_ref, e_psi, steer_meas - steer_ff,
             e_lat_rate, s.roll_rate, data.qvel[5] - yaw_rate_ref,
@@ -644,5 +905,5 @@ class DriveController(LQRBalance):
         a, b = mix(common, d_cmd)
         u = np.zeros(len(self._u))
         u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
-        u[self.aid["steer"]] = steer + self._steer_offset
+        u[self.aid["steer"]] = self.steer_frame.command(steer)
         return u

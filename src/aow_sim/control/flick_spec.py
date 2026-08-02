@@ -6,9 +6,12 @@ This is the single definition of what the policy sees and does, imported by:
   - control/drive.py       (replaying the policy in the controller)
 
 Keeping it here guarantees training and replay agree exactly. Observation is
-ground-truth state (matching the analytic controllers); yaw error is carried as
-sin/cos so the policy tracks the 180 deg target without wrap discontinuities;
-the fore/aft position x is intentionally excluded (the flick may translate in x).
+ground-truth state (matching the analytic controllers); yaw error AND steer are
+carried as sin/cos so the policy tracks the 180 deg target and can sweep the
+front wheel through any angle — multi-turn included — without wrap
+discontinuities (a wrapped steer scalar sawtooths every time the wheel crosses
+pi); the fore/aft position x is intentionally excluded (the flick may
+translate in x).
 
 Action is 3-dim in [-1, 1]: steer *rate*, hub speed, rear differential. Steer as
 a rate (integrated to the position-servo target) lets the policy sweep the front
@@ -21,7 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-OBS_DIM = 10
+OBS_DIM = 11
 ACT_DIM = 3   # [steer_rate, hub, diff]; feedforward mode uses only [0:2]
 
 
@@ -44,15 +47,17 @@ def build_obs(roll, roll_rate, yaw_err, yaw_rate, steer, v_lon, v_lat,
     """Assemble the observation vector (length OBS_DIM).
 
     yaw_err  : target_yaw - psi (rad, unwrapped) -> encoded as sin/cos.
-    steer    : front steer angle wrapped to (-pi, pi].
+    steer    : front steer angle (rad, any winding) -> encoded as sin/cos, so
+               the encoding is smooth through pi and multi-turn sweeps never
+               see a wrap discontinuity.
     e_lat    : lateral offset from the start pose, bike frame [m].
     phase    : elapsed / max_episode in [0, 1].
     """
-    sw = np.arctan2(np.sin(steer), np.cos(steer))
     return np.array([
         roll, roll_rate,
         np.sin(yaw_err), np.cos(yaw_err), yaw_rate,
-        sw, v_lon, v_lat, e_lat, phase,
+        # np.sin(steer), np.cos(steer), v_lon, v_lat, e_lat, phase,
+        np.sin(2*steer), np.cos(2*steer), v_lon, v_lat, e_lat, phase,
     ], dtype=np.float32)
 
 

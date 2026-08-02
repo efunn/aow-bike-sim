@@ -6,13 +6,14 @@ max_episode_s: 4.0
 action_space: full
 trained:
   algo: PPO
-  timesteps: 3000000
+  timesteps: 700000
   net_arch:
   - 128
   - 128
-  export_max_diff: 5.811322326687574e-07
+  export_max_diff: 1.9086183367100773e-07
   metrics:
     success_rate: 1.0
-    final_yaw_err_deg: 9.4
-    lateral_env_L: 0.145
+    final_yaw_err_deg: 2.9
+    lateral_env_L: 0.059
     n_eval: 8
+  exported_from: ppo_700000_steps.zip

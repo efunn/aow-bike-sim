@@ -18,8 +18,7 @@ algo:                    # PPO hyperparameters (stable-baselines3)
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.005        # >0: keep exploring; at 0.0 std collapsed to 0.24 and
-                         #   the policy locked into the first good-enough tap
+  ent_coef: 0.0
   net_arch: [128, 128]   # policy/value MLP hidden sizes
   seed: 0
   eval_every: 100000     # timesteps between deterministic best-by-success evals
@@ -31,25 +30,18 @@ env:
                          #   balance underneath
   control_rate_hz: 200   # policy/action rate (physics steps in between, ZOH)
   max_episode_s: 4.0
-  ball_start: [0.40, -0.15]   # WORLD-frame [x, y] start of the ball (front-right of
-                              #   the bike's nominal start pose, y<0). World, not bike
-                              #   frame: otherwise init_yaw/init_pos rotate the ball
-                              #   with the bike and cancel out instead of disturbing.
+  ball_start: [0.40, -0.15]   # bike-frame [x fwd, y] start of the ball (front-right,
+                              #   y<0); overrides hockey.ball.start in bike_params
   ball_start_jitter: 0.00     # uniform +- on each of x,y at reset [m]
   mirror_prob: 0.0       # fraction of episodes mirrored to a ball-left start (keep
                          #   0 for a single-direction policy; raise to learn both)
   no_ball_prob: 0.00     # fraction of episodes with no ball (parked far away):
                          #   the catch/no-ball trials — same policy must not fall
-  launch_target_deg: 0   # desired ball launch direction in the WORLD frame
-                         #   (0 = world +x), NOT relative to the bike's start heading
-  hit_speed_min: 0.25    # PROJECTED ball speed [m/s] above which a shot counts as
-                         #   "taken" — a real launch toward the target, so a fast
-                         #   sideways squirt no longer registers as a shot at all
+  launch_target_deg: 0   # desired ball launch direction (0 = straight +x)
+  hit_speed_min: 0.25    # ball speed [m/s] above which a shot counts as "taken";
+                         #   a real launch, not a nudge (was 0.1 = any contact)
   success_roll_deg: 6    # settled after the shot: |roll| below this ...
   success_rate: 0.6      #   ... and |roll_rate|,|yaw_rate|,|v| below this
-  pitch_free_deg: 10     # |pitch| allowed free; beyond this w_pitch bites. A
-                         #   deadband so normal pitch under hard acceleration
-                         #   costs nothing and only a real wheelie is charged.
   action_bounds:         # normalized action [-1,1] scales to these
     steer_rate_max: 8.0  # rad/s (integrated to the steer position target)
     hub_max: 0.72        # m/s (forward drive toward the ball)
@@ -63,48 +55,23 @@ reward:                  # per-step unless noted
   # with the rear wheel (which is exactly what it learned to do).
   w_approach: 500.0      # x distance [m] strike-point -> ball; total ~180 over
                          #   the ~0.37 m approach, comparable to a decent shot
-  w_perp: 0.0            # x cos(angle: striking side's outward normal vs direction
-                         #   to the ball). OFF: it constrains pose only, and a
-                         #   straight drive-by past the ball satisfies it perfectly
-                         #   (the ball is alongside, so the normal does point at it)
-                         #   — it was endorsing the very trajectory it was meant to
-                         #   stop. w_approach still guides the stick to the ball.
-  perp_range: 0.5       # [m] e-folding range over which being broadside starts
+  w_perp: 150.0          # x cos(angle between the striking side's outward normal
+                         #   and the direction to the ball): broadside = +1
+  perp_range: 0.25       # [m] e-folding range over which being broadside starts
                          #   to matter (alignment counts most near contact)
-  # w_perp constrains POSE only, and a sideswipe satisfies it completely: broadside
-  # the whole way past the ball while carrying almost no velocity into it. w_strike
-  # pays for the normal component of the panel's velocity at first contact — the
-  # quantity momentum transfer actually depends on — so a glancing pass earns
-  # nothing from it. Physically this rewards pivoting to swing the tail (and the
-  # stick with it) into the ball, rather than sliding past it.
-  w_strike: 500.0        # x stick normal approach speed [m/s], once, at contact
   # Launch terms are paid ONCE per episode, on the falling edge of stick contact
   # (see ball_env.step): `speed` is then the ball's true departure speed. Scaled
   # so a strong ~3 m/s launch (~900) is worth about one bonus_complete — and so
   # a fall can never be bought with shot reward.
-  w_launch: 800.0        # x ball speed ALONG THE TARGET DIRECTION [m/s], once, on
-                         #   release (see _projected_speed) — the dominant term.
-                         #   Projected, not raw: raw speed paid for a fast ball in
-                         #   any direction, so a front-edge scrape squirting it out
-                         #   at -98 deg outscored a real shot. Direction is now
-                         #   intrinsic, which retires the old w_angle add-on (a
-                         #   weak term the speed reward simply outbid).
+  w_launch: 300.0        # x ball launch speed [m/s], once, on release
+  w_angle: 100.0         # x cos(launch-direction error vs target), once
   w_wheel_hit: 200.0     # once: ball struck by a wheel instead of the stick
-  w_pitch: 200.0         # penalty on (|pitch| - pitch_free)^2 — nothing else in
-                         #   the reward sees pitch, so a wheelie was free (and it
-                         #   unloads the steering, easing the yaw into the strike)
   w_upright: 0.5         # penalty on roll^2
   w_lateral: 0.00        # penalty on lateral drift^2 (bike-frame, vs start)
   w_effort: 0.001        # penalty on |action|^2
   w_smooth: 0.001        # penalty on |action - prev_action|^2
   time_penalty: 0.01     # per step (encourages finishing)
-  bonus_complete: 1000.0 # shot taken AND bike settled (or no-ball trial survived);
-                         #   RAMPED by launch speed / bonus_speed_ref (see _bonus):
-                         #   flat, it made a gentle tap that reliably completes the
-                         #   optimal play — 87% of reward for merely arriving.
-  bonus_speed_ref: 0.6   # [m/s] PROJECTED launch speed earning the full bonus. A crude
-                         #   scripted drive+pivot already reaches ~0.50 m/s, so this
-                         #   sits just above the hand-built baseline, not below it.
+  bonus_complete: 1000.0 # shot taken AND bike settled (or no-ball trial survived)
   penalty_fall: 800.0    # on fall (terminates) — must outweigh any single shot
   fall_roll_deg: 60      # |roll| beyond this = fallen
 

@@ -7,6 +7,14 @@ torch, tensorboard); the base install needs none of these to *replay* the result
   python -m aow_sim.train_flick_rl --resume        # continue from last checkpoint
   tensorboard --logdir runs/flick_rl               # watch learning curves
 
+Mid-run policies: CheckpointCallback snapshots every ~100k steps into
+runs/flick_rl/checkpoints/. To find and inspect an interesting one (e.g. a
+peak on the learning curve) without retraining:
+
+  python -m aow_sim.train_flick_rl --scan-checkpoints
+  python -m aow_sim.train_flick_rl --export-from 500000 \\
+      --export-name flick_rl_500k --trace traces/
+
 On finish it exports the deterministic policy (MLP weights + VecNormalize obs
 stats) to `moves/flick_rl.npz` and writes `moves/flick_rl.yaml` (provenance +
 metrics from a deterministic eval), which `DriveController.command_flick(
@@ -120,11 +128,150 @@ def _eval(params, cfg, npz_path, n=8):
             "n_eval": n}
 
 
+def _finish(model, vecnorm, params, cfg, total, source=None, name="flick_rl"):
+    """Export -> verify -> eval -> write the move file. Shared by a finished
+    training run and by --export-from."""
+    a = cfg["algo"]
+    npz = MOVES_DIR / f"{name}.npz"
+    _export(model, vecnorm, cfg, npz)
+    err = _verify_export(model, vecnorm, npz)
+    print(f"numpy-export vs trained net: max action diff {err:.2e} "
+          f"({'OK' if err < 1e-4 else 'WARNING — export mismatch'})")
+    metrics = _eval(params, cfg, npz)
+    print("deterministic eval:", metrics)
+
+    trained = {"algo": a["algorithm"], "timesteps": int(total),
+               "net_arch": list(a["net_arch"]),
+               "export_max_diff": float(err), "metrics": metrics}
+    if source:
+        trained["exported_from"] = source
+    doc = {"name": name, "type": "rl", "policy_file": f"{name}.npz",
+           "yaw_target_deg": cfg["env"]["yaw_target_deg"],
+           "max_episode_s": cfg["env"]["max_episode_s"],
+           "action_space": cfg["env"]["action_space"],
+           "trained": trained}
+    with open(MOVES_DIR / f"{name}.yaml", "w") as f:
+        yaml.safe_dump(doc, f, sort_keys=False)
+    print(f"wrote {MOVES_DIR / f'{name}.yaml'} and {npz}")
+
+
+def _scan_checkpoints(params, cfg, n_episodes=6, every=1):
+    """Evaluate every saved checkpoint (deterministic, no randomization) and
+    report success / yaw error / lateral envelope, so an interesting mid-run
+    policy — training progress is not monotonic — can be found and exported
+    after the fact with --export-from."""
+    import pickle
+    ckpt = RUN_DIR / "checkpoints"
+    zips = sorted(ckpt.glob("ppo_*_steps.zip"),
+                  key=lambda p: int(p.stem.split("_")[1]))[::every]
+    if not zips:
+        raise SystemExit(f"no checkpoints in {ckpt}")
+    ecfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
+    env = FlickEnv(params, ecfg)
+    L = params["bike"]["wheelbase"]
+    print(f"{'steps':>9} {'success':>8} {'yaw_err':>8} {'lat[L]':>7}")
+    rows = []
+    for z in zips:
+        vn_p = z.with_name(z.name.replace("ppo_", "ppo_vecnormalize_")
+                           .replace(".zip", ".pkl"))
+        if not vn_p.exists():
+            continue
+        with open(vn_p, "rb") as f:
+            vn = pickle.load(f)
+        model = PPO.load(str(z), device="cpu")
+        steps = int(z.stem.split("_")[1])
+        if model.observation_space.shape != env.observation_space.shape:
+            print(f"{steps:>9}  (stale obs spec — skipped; retrain)")
+            continue
+        succ, yerr, lat = 0, 0.0, 0.0
+        for k in range(n_episodes):
+            obs, _ = env.reset(seed=10_000 + k)
+            done, info = False, {}
+            while not done:
+                act, _ = model.predict(vn.normalize_obs(obs), deterministic=True)
+                obs, _r, te, tr, info = env.step(act)
+                done = te or tr
+            succ += int(info.get("is_success", False))
+            yerr += abs(info.get("yaw_err_deg", 180.0))
+            lat = max(lat, abs(info.get("e_lat", 0.0)) / L)
+        n = n_episodes
+        rows.append((steps, succ / n, yerr / n, lat))
+        print(f"{steps:>9} {succ/n:>8.2f} {yerr/n:>8.1f} {lat:>7.2f}")
+    if rows:
+        best = max(rows, key=lambda r: (r[1], -r[2]))   # success, then yaw err
+        print(f"\nbest: success {best[1]:.2f}, yaw err {best[2]:.1f} deg at "
+              f"{best[0]} steps")
+        print(f"export it with:  python -m aow_sim.train_flick_rl "
+              f"--export-from {best[0]}")
+
+
+def _export_from(spec: str, params, cfg, name="flick_rl"):
+    """Export a saved checkpoint instead of training — e.g. to grab an
+    interesting mid-run policy. `spec` is a step count or a .zip path; the
+    matching ppo_vecnormalize_*.pkl is loaded alongside it."""
+    import pickle
+    src = Path(spec)
+    if not src.exists():
+        src = RUN_DIR / "checkpoints" / f"ppo_{int(spec)}_steps.zip"
+    if not src.exists():
+        raise SystemExit(f"no such checkpoint: {src}")
+    vn = src.with_name(src.name.replace("ppo_", "ppo_vecnormalize_")
+                       .replace(".zip", ".pkl"))
+    if not vn.exists():
+        raise SystemExit(f"no VecNormalize stats beside the checkpoint: {vn}")
+    with open(vn, "rb") as f:
+        vecnorm = pickle.load(f)          # obs_rms/clip_obs only; no venv needed
+    model = PPO.load(str(src), device="cpu")
+    from .control.flick_spec import OBS_DIM
+    got = int(model.observation_space.shape[0])
+    if got != OBS_DIM:
+        raise SystemExit(
+            f"{src.name} was trained with obs_dim {got}; the current spec is "
+            f"{OBS_DIM} — this checkpoint predates the observation-spec change "
+            "and cannot replay. Retrain first.")
+    steps = int(src.stem.split("_")[1])
+    print(f"exporting {src.name} (+ {vn.name}) without training")
+    _finish(model, vecnorm, params, cfg, steps, source=src.name, name=name)
+
+
+def _trace(name: str, out_dir: Path) -> None:
+    """Roll the freshly exported move out headless and write CSV + plot
+    (see rollout_move.py)."""
+    from .rollout_move import (_no_plot_hint, plot, rollout, rollout_general,
+                               summarize, write_csv)
+    # An always-on policy has no horizon to replay; it gets a command script.
+    tr = rollout_general(name) if name.startswith("general") else rollout(name)
+    print(summarize(tr))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    csv = out_dir / f"{name}_trace.csv"
+    write_csv(tr, csv)
+    print(f"  wrote {csv}")
+    png = out_dir / f"{name}_trace.png"
+    if plot(tr, png):
+        print(f"  wrote {png}")
+    else:
+        print(_no_plot_hint())
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default=None)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--timesteps", type=int, default=None, help="override total")
+    ap.add_argument("--export-from", default=None, metavar="STEPS|PATH",
+                    help="export an existing checkpoint instead of training "
+                         "(e.g. --export-from 500000)")
+    ap.add_argument("--export-name", default="flick_rl", metavar="NAME",
+                    help="move name for --export-from (e.g. flick_rl_500k, so "
+                         "the primary moves/flick_rl is left alone)")
+    ap.add_argument("--scan-checkpoints", action="store_true",
+                    help="evaluate every saved checkpoint (success/yaw err) "
+                         "to pick a good one post-hoc, then exit")
+    ap.add_argument("--scan-every", type=int, default=1,
+                    help="with --scan-checkpoints, evaluate every Nth checkpoint")
+    ap.add_argument("--trace", type=Path, default=None, metavar="DIR",
+                    help="after exporting, roll the move out and write "
+                         "<name>_trace.csv/.png here (see rollout_move.py)")
     args = ap.parse_args()
 
     params = load_params()
@@ -132,6 +279,15 @@ def main():
     a = cfg["algo"]
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     ckpt = RUN_DIR / "checkpoints"
+
+    if args.scan_checkpoints:
+        _scan_checkpoints(params, cfg, every=max(1, args.scan_every))
+        return
+    if args.export_from:
+        _export_from(args.export_from, params, cfg, name=args.export_name)
+        if args.trace:
+            _trace(args.export_name, args.trace)
+        return
 
     venv = _make_vecenv(params, cfg, a["n_envs"], a["seed"])
     vn_path = RUN_DIR / "vecnormalize.pkl"
@@ -161,24 +317,9 @@ def main():
                 progress_bar=True)
     venv.save(str(vn_path))
 
-    npz = MOVES_DIR / "flick_rl.npz"
-    _export(model, venv, cfg, npz)
-    err = _verify_export(model, venv, npz)
-    print(f"numpy-export vs trained net: max action diff {err:.2e} "
-          f"({'OK' if err < 1e-4 else 'WARNING — export mismatch'})")
-    metrics = _eval(params, cfg, npz)
-    print("deterministic eval:", metrics)
-
-    doc = {"name": "flick_rl", "type": "rl", "policy_file": "flick_rl.npz",
-           "yaw_target_deg": cfg["env"]["yaw_target_deg"],
-           "max_episode_s": cfg["env"]["max_episode_s"],
-           "action_space": cfg["env"]["action_space"],
-           "trained": {"algo": a["algorithm"], "timesteps": int(total),
-                       "net_arch": list(a["net_arch"]),
-                       "export_max_diff": float(err), "metrics": metrics}}
-    with open(MOVES_DIR / "flick_rl.yaml", "w") as f:
-        yaml.safe_dump(doc, f, sort_keys=False)
-    print(f"wrote {MOVES_DIR / 'flick_rl.yaml'} and {npz}")
+    _finish(model, venv, params, cfg, total)
+    if args.trace:
+        _trace("flick_rl", args.trace)
 
 
 if __name__ == "__main__":

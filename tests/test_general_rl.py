@@ -1,0 +1,261 @@
+"""General command-conditioned policy tests.
+
+The spec tests are dependency-free and always run; env tests need gymnasium;
+the trainer test needs stable-baselines3; the replay test skips until a
+policy has been trained.
+"""
+
+import numpy as np
+import pytest
+
+from aow_sim.control.general_spec import (ACT_DIM, OBS_DIM, ActionBounds,
+                                          build_obs, command_to_body,
+                                          scale_action)
+
+
+def _obs(**kw):
+    """build_obs with a nominal argument set; override by keyword."""
+    a = dict(roll=0.02, roll_rate=-0.1, yaw_rate=0.3, steer=0.4,
+             steer_rate=0.5, v_lon=0.8, v_lat=-0.05,
+             v_cmd_lon=1.0, v_cmd_lat=0.0, psi_err=0.25,
+             prev_action=[0.1, -0.2, 0.3])
+    a.update(kw)
+    return build_obs(**a)
+
+
+def test_obs_spec_shape_and_encodings():
+    obs = _obs()
+    assert obs.shape == (OBS_DIM,)
+    assert np.all(np.isfinite(obs))
+    assert ACT_DIM == 3
+    # sin/cos pairs live on the unit circle: 2*steer at (3,4), psi_err at (10,11)
+    for i, j in ((3, 4), (10, 11)):
+        assert obs[i]**2 + obs[j]**2 == pytest.approx(1.0, abs=1e-6)
+    # prev_action is fed back (the last ACT_DIM slots)
+    assert obs[-3:] == pytest.approx([0.1, -0.2, 0.3], abs=1e-6)
+
+
+def test_obs_is_stationary():
+    """The defining property of a general policy: the observation carries no
+    notion of elapsed time or of when the policy was engaged. Identical state
+    + identical command must give an identical obs, always.
+
+    This is what `phase` (present in every finite-horizon move spec) breaks,
+    and why those specs cannot be reused for an always-on controller."""
+    import inspect
+    from aow_sim.control import general_spec
+
+    src = inspect.getsource(general_spec.build_obs)
+    assert "phase" not in src, "general obs must not carry an episode clock"
+    # calling twice with the same arguments is identical by construction;
+    # the real content of this test is that build_obs takes no time/step
+    # argument at all
+    sig = inspect.signature(general_spec.build_obs).parameters
+    for banned in ("phase", "t", "tau", "step", "elapsed", "horizon"):
+        assert banned not in sig, f"build_obs must not take `{banned}`"
+    assert _obs() == pytest.approx(_obs(), abs=0.0)
+
+
+def test_steer_encoding_is_winding_invariant():
+    """sin/cos(2*steer): the wheel is front-back symmetric, so a pi shift and
+    any multi-turn winding must encode identically — this is what lets the
+    general policy read raw multi-turn qpos with no pi-park rebasing."""
+    base = _obs(steer=0.4)
+    for shift in (np.pi, -np.pi, 2 * np.pi, 6 * np.pi):
+        assert _obs(steer=0.4 + shift)[3:5] == pytest.approx(base[3:5], abs=1e-4)
+
+
+def test_heading_is_mod_two_pi():
+    """Unlike steer, the chassis has a front: heading must NOT be pi-symmetric
+    (facing backward is not the same as facing forward)."""
+    fwd, back = _obs(psi_err=0.0), _obs(psi_err=np.pi)
+    assert not np.allclose(fwd[10:12], back[10:12], atol=1e-3)
+    assert _obs(psi_err=2 * np.pi)[10:12] == pytest.approx(fwd[10:12], abs=1e-5)
+
+
+def test_command_to_body_frame():
+    """The command is a velocity VECTOR in the body frame, so stop and
+    reverse are continuous rather than singular (a polar course/speed command
+    is undefined at zero speed and flips discontinuously on reverse)."""
+    # facing +x, commanded +x at 1 m/s -> pure longitudinal
+    v_lon, v_lat, err = command_to_body((1.0, 0.0), 0.0, 0.0)
+    assert (v_lon, v_lat) == pytest.approx((1.0, 0.0), abs=1e-9)
+    assert err == pytest.approx(0.0)
+    # facing +x, commanded +y -> pure lateral (+Y is left)
+    v_lon, v_lat, _ = command_to_body((0.0, 1.0), 0.0, 0.0)
+    assert (v_lon, v_lat) == pytest.approx((0.0, 1.0), abs=1e-9)
+    # yaw-equivariance: rotate bike and command together -> same body command
+    for psi in (0.3, 1.9, -2.7):
+        c, s = np.cos(psi), np.sin(psi)
+        got = command_to_body((c * 0.7 - s * 0.2, s * 0.7 + c * 0.2), psi, psi)
+        assert got[:2] == pytest.approx((0.7, 0.2), abs=1e-9)
+    # stop and reverse are ordinary points, not singularities
+    assert command_to_body((0.0, 0.0), 0.0, 0.0)[:2] == pytest.approx((0.0, 0.0))
+    assert command_to_body((-0.6, 0.0), 0.0, 0.0)[:2] == pytest.approx((-0.6, 0.0))
+    # heading error wraps to (-pi, pi]
+    assert command_to_body((0, 0), 3.0 * np.pi, 0.0)[2] == pytest.approx(np.pi)
+    assert abs(command_to_body((0, 0), 0.0, 3.0)[2]) <= np.pi + 1e-9
+
+
+def test_action_contract_shared_with_moves():
+    b = ActionBounds(8.0, 1.4, 40.0)
+    sr, hub, diff = scale_action([2.0, -2.0, 0.5], b)      # clips to [-1, 1]
+    assert (sr, hub, diff) == pytest.approx((8.0, -1.4, 20.0))
+    assert scale_action([0.5, 0.5], b)[2] == 0.0           # feedforward form
+
+
+# -- env ------------------------------------------------------------------
+
+def _env(**env_over):
+    pytest.importorskip("gymnasium")
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    cfg = _load_rl_config()
+    cfg = {**cfg, "env": {**cfg["env"], "ball_prob": 0.0, **env_over}}
+    return GeneralEnv(rl_cfg=cfg, seed=0)
+
+
+def test_env_reset_step():
+    env = _env()
+    assert env.observation_space.shape == (OBS_DIM,)
+    obs, _ = env.reset(seed=0)
+    assert obs.shape == (OBS_DIM,) and np.all(np.isfinite(obs))
+    rng = np.random.default_rng(1)
+    term = trunc = False
+    steps = 0
+    while not (term or trunc) and steps < env.max_steps + 1:
+        obs, r, term, trunc, info = env.step(rng.uniform(-1, 1, 3))
+        assert np.all(np.isfinite(obs)) and np.isfinite(r)
+        steps += 1
+    assert term or trunc
+    # determinism
+    o1, _ = _env().reset(seed=5)
+    o2, _ = _env().reset(seed=5)
+    assert np.allclose(o1, o2)
+
+
+def test_terminates_only_on_fall():
+    """An always-on controller has no success state to stop at — the only
+    early exit is falling over."""
+    env = _env()
+    env.reset(seed=0)
+    term = trunc = False
+    info = {}
+    for _ in range(env.max_steps + 1):
+        _o, _r, term, trunc, info = env.step(np.zeros(3))
+        if term or trunc:
+            break
+    assert not (term and not info["fell"]), "terminated without falling"
+    if term:
+        assert info["fell"]
+
+
+def test_command_resamples_mid_episode_as_step_change():
+    """The operator can stop or reverse instantly, so commands are redrawn as
+    step changes mid-episode — not ramped.
+
+    Resampling is forced fast here (the shipped 1.5-4.0 s is longer than an
+    untrained policy survives) so the mechanism is exercised on the real
+    step() path rather than by poking internals."""
+    env = _env(resample_s=[0.06, 0.08])
+    env.reset(seed=3)
+    env.set_difficulty(1.0)
+    jumps, sizes = 0, []
+    prev = env._v_cmd_w.copy()
+    for _ in range(env.max_steps):
+        _o, _r, term, trunc, _i = env.step(np.zeros(3))
+        if not np.allclose(env._v_cmd_w, prev):
+            jumps += 1
+            sizes.append(float(np.linalg.norm(env._v_cmd_w - prev)))
+            prev = env._v_cmd_w.copy()
+        if term or trunc:
+            break
+    assert jumps >= 1, "command never resampled"
+    # a step change, not a ramp: each jump is a finite discontinuity
+    assert max(sizes) > 1e-2
+
+
+def test_eval_options_hold_a_fixed_command():
+    """The deterministic eval grid pins one command for a whole episode."""
+    env = _env()
+    env.reset(seed=0, options={"v_cmd": (0.5, 0.0), "psi_cmd_rel": np.pi / 2,
+                               "difficulty": 1.0})
+    v0, psi0 = env._v_cmd_w.copy(), env._psi_cmd
+    for _ in range(40):
+        _o, _r, term, trunc, _i = env.step(np.zeros(3))
+        if term or trunc:
+            break
+    assert np.allclose(env._v_cmd_w, v0) and env._psi_cmd == pytest.approx(psi0)
+
+
+def test_curriculum_widens_command_range():
+    """Difficulty scales the sampled command envelope: gentle at 0, full at 1."""
+    env = _env()
+    env.reset(seed=0)
+    rng = np.random.default_rng(0)
+
+    def spread(diff, n=200):
+        env.set_difficulty(diff)
+        env._psi = 0.0
+        env._step = 0
+        speeds, heads = [], []
+        for _ in range(n):
+            env._sample_command(rng)
+            speeds.append(np.linalg.norm(env._v_cmd_w))
+            heads.append(abs(env._psi_cmd))
+        return max(speeds), max(heads)
+
+    v_lo, h_lo = spread(0.0)
+    v_hi, h_hi = spread(1.0)
+    assert v_hi > v_lo and h_hi > h_lo
+    assert v_hi <= env.v_max * 1.5 + 1e-6      # within the configured envelope
+    assert h_lo <= np.deg2rad(30.0) + 1e-6     # gentle heading steps at diff 0
+
+
+# -- trainer / replay -----------------------------------------------------
+
+def test_eval_cmds_scale_with_v_max():
+    pytest.importorskip("stable_baselines3")
+    from aow_sim.train_general_rl import eval_cmds
+
+    cmds = eval_cmds(1.2)
+    assert len(cmds) >= 8
+    assert max(abs(v) for v, _, _ in cmds) == pytest.approx(1.2)
+    assert max(abs(d) for _, _, d in cmds) == pytest.approx(np.pi)
+    # scales rather than being pinned
+    assert max(abs(v) for v, _, _ in eval_cmds(0.6)) == pytest.approx(0.6)
+
+
+def test_plot_command_branch_is_non_directional():
+    """A heading command is only meaningful mod 2*pi (the policy sees
+    sin/cos of the error), so a 180 deg snap is deliberately non-directional.
+    The trace plot must resolve the command onto the turn the bike actually
+    made instead of inventing a 360 deg tracking error."""
+    from aow_sim.rollout_move import _cmd_branch
+
+    # commanded +90 then +270; the bike satisfies the second the short way
+    cmd = np.concatenate([np.full(50, np.pi / 2), np.full(50, 3 * np.pi / 2)])
+    act = np.concatenate([np.full(50, np.pi / 2),
+                          np.linspace(np.pi / 2, -np.pi / 2, 50)])
+    out = _cmd_branch(cmd, act)
+    assert out[:50] == pytest.approx(np.pi / 2)
+    assert out[-1] == pytest.approx(-np.pi / 2), "should show -90, not +270"
+    # one branch per held command (no mid-turn jump), and still the same
+    # command modulo a whole turn
+    assert np.allclose(out[50:], out[50])
+    assert np.allclose(np.remainder(out - cmd, 2 * np.pi), 0.0, atol=1e-9)
+    # a command already on the nearest branch is untouched
+    same = _cmd_branch(np.full(10, 0.3), np.full(10, 0.25))
+    assert same == pytest.approx(0.3)
+
+
+def test_general_move_replays():
+    """If a trained general policy exists, it loads and replays without NaN."""
+    from aow_sim.control.flick import MOVES_DIR
+    if not (MOVES_DIR / "general_rl.npz").exists():
+        pytest.skip("run `python -m aow_sim.train_general_rl` first")
+    from aow_sim.control.policy import load_policy_npz
+    pol = load_policy_npz(MOVES_DIR / "general_rl.npz")
+    if pol.obs_dim != OBS_DIM:
+        pytest.skip("moves/general_rl predates the current obs spec — retrain")
+    act = pol.action(_obs())
+    assert len(act) == 3 and np.all(np.isfinite(act))

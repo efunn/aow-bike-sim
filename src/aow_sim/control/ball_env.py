@@ -64,6 +64,7 @@ class BallEnv(gym.Env):
         self.hit_speed_min = env["hit_speed_min"]
         self.roll_ok = np.deg2rad(env["success_roll_deg"])
         self.rate_ok = env["success_rate"]
+        self.pitch_free = np.deg2rad(env["pitch_free_deg"])
         self.rw = self.cfg["reward"]
         self.rand = self.cfg["randomization"]
         self.fall = np.deg2rad(self.rw["fall_roll_deg"])
@@ -115,7 +116,7 @@ class BallEnv(gym.Env):
         else:
             bdx = bdy = bvx = bvy = 0.0
             present = 0.0
-        obs = build_obs(st.roll, st.roll_rate, self._psi - self._yaw0,
+        obs = build_obs(st.roll, st.roll_rate, self._psi - self._target_yaw,
                         self.data.qvel[5], self.data.qpos[self._sj],
                         st.v_lon, st.v_lat, bdx, bdy, bvx, bvy, present,
                         self._step / self.max_steps)
@@ -151,6 +152,53 @@ class BallEnv(gym.Env):
         outward = np.array([-s, c]) * side          # body +Y (left), signed
         return float(outward @ (to_ball / dist))
 
+    def _pitch(self):
+        """Chassis pitch [rad], nose-up positive.
+
+        Not part of BikeState — the balance controllers only track roll — but
+        the ball task needs it: nothing else in the reward looks at pitch, so
+        flooring the drive to reach the ball earns a wheelie for free, and a
+        lifted front wheel also unloads the steering constraint and lets the
+        bike yaw more freely into the strike.
+        """
+        R = np.zeros(9)
+        mujoco.mju_quat2Mat(R, self.data.qpos[3:7])
+        return float(np.arcsin(np.clip(R.reshape(3, 3)[2, 0], -1.0, 1.0)))
+
+    def _bonus(self):
+        """Completion bonus, ramped by achieved launch speed.
+
+        A *flat* bonus makes a gentle tap that reliably completes the optimal
+        play: measured on the first good run, ~87% of episode reward came from
+        merely arriving and finishing, so hitting harder bought almost nothing
+        at the margin while risking the bonus outright. Ramping puts a gradient
+        under launch speed instead of a cliff at hit_speed_min — which stays low,
+        as a floor for "a shot happened", never as the performance target.
+        """
+        rw = self.rw
+        if not self.has_ball:
+            return rw["bonus_complete"]      # no-ball trial: surviving is the task
+        ref = max(1e-6, rw["bonus_speed_ref"])
+        return rw["bonus_complete"] * float(np.clip(self._peak_proj / ref, 0.0, 1.0))
+
+    def _strike_normal_speed(self):
+        """Speed of the stick panel *into* the ball, along the panel's outward
+        normal [m/s]. Negative means retreating.
+
+        This is what separates a strike from a sideswipe. `perp_align` only
+        constrains the bike's *pose*: a glancing pass is broadside (perp ~ +1)
+        the whole way through while carrying almost no normal velocity, so it
+        transfers almost no momentum. Momentum transfer goes with the normal
+        component of the panel's velocity, so that is what has to be paid for.
+        """
+        c, s = np.cos(self._psi), np.sin(self._psi)
+        side = 1.0 if self._mirror else -1.0
+        outward = np.array([-s, c]) * side
+        r = self._strike_point() - self.data.qpos[:2]      # lever arm, world
+        omega = float(self.data.qvel[5])                   # yaw rate
+        v = self.data.qvel[:2] + omega * np.array([-r[1], r[0]])
+        return float(v @ outward)
+
     def _approach_potential(self):
         """Shaping potential Phi: closer is better, and being broadside matters
         more the nearer we get. Applied as the difference Phi' - Phi
@@ -180,6 +228,19 @@ class BallEnv(gym.Env):
     def _ball_speed(self):
         return float(np.linalg.norm(self.data.qvel[self._ball_v:self._ball_v + 2]))
 
+    def _projected_speed(self):
+        """Ball speed along the world-frame target direction [m/s]. Negative if
+        the ball is going backwards relative to the target.
+
+        This, not |v|, is the objective. Rewarding raw speed pays for a fast ball
+        in *any* direction, which is how a front-edge scrape that squirted the
+        ball out at -98 deg outscored a real shot; direction was left to a weak
+        w_angle add-on that a big speed term simply outbid. Projecting makes
+        direction intrinsic: a sideways squirt is worth ~0 no matter how fast.
+        """
+        v = self.data.qvel[self._ball_v:self._ball_v + 2]
+        return float(self._target_dir() @ v)
+
     def _apply_randomization(self):
         r, rng = self.rand, self._np_random
         if not r["enabled"]:
@@ -193,8 +254,15 @@ class BallEnv(gym.Env):
             1 + rng.uniform(-r["friction_frac"], r["friction_frac"]))
 
     def _place_ball(self):
-        """Place the ball at its bike-frame start (with jitter/mirror), rotated to
-        world about the bike start pose. With no_ball_prob, park it far away."""
+        """Place the ball at a WORLD-frame position (with jitter/mirror). With
+        no_ball_prob, park it far away.
+
+        Deliberately not rotated by the bike's start heading: placing it in the
+        start frame pinned the ball, the bike and the launch target rigidly
+        together, so init_yaw/init_pos rotated the whole scene and cancelled out
+        rather than perturbing anything. World placement makes them real
+        disturbances the policy has to correct for.
+        """
         rng = self._np_random
         self.has_ball = rng.random() >= self.no_ball_prob
         if not self.has_ball:
@@ -208,10 +276,7 @@ class BallEnv(gym.Env):
             bxy[1] = -bxy[1]                       # mirror to a ball-left start
             self._mirror = True
         bxy += rng.uniform(-1, 1, 2) * self.ball_jitter
-        c, s = np.cos(self._yaw0), np.sin(self._yaw0)
-        world = self._p0 + np.array([c * bxy[0] - s * bxy[1],
-                                     s * bxy[0] + c * bxy[1]])
-        self.data.qpos[self._ball_q:self._ball_q + 2] = world
+        self.data.qpos[self._ball_q:self._ball_q + 2] = bxy
         self.data.qpos[self._ball_q + 2] = self._ball_r
         self.data.qpos[self._ball_q + 3:self._ball_q + 7] = [1, 0, 0, 0]
         self.data.qvel[self._ball_v:self._ball_v + 6] = 0.0
@@ -247,15 +312,24 @@ class BallEnv(gym.Env):
         self._yaw0 = self._psi = extract_state(self.data, self._p0).yaw
         self._raw_prev = self._yaw0
         self._place_ball()
+        # World-frame launch target (0 = world +x), set after _place_ball since
+        # mirroring flips it. NOT relative to _yaw0: the goal direction is fixed
+        # in the world and the bike's start heading is a disturbance, not a
+        # redefinition of where the ball is supposed to go.
+        self._target_yaw = -self.launch_target if self._mirror else self.launch_target
         mujoco.mj_forward(self.model, self.data)
         self._steer = float(self.data.qpos[self._sj])
         self._prev_a = np.zeros(self.action_space.shape[0])
         self._step = 0
         self._hit_stick = self._hit_wheel = False
         self._peak_speed = 0.0
+        self._peak_proj = 0.0    # peak speed ALONG the target dir — the objective
         self._in_stick_contact = False   # for rising/falling-edge strike detection
         self._launch_paid = False        # launch reward is once per episode
         self._wheel_paid = False         # ... and so is the wheel-hit penalty
+        self._strike_paid = False        # ... and the strike (normal-speed) reward
+        self._strike_speed = 0.0         # normal approach speed at first contact
+        self._peak_pitch = 0.0           # max |pitch| seen (wheelie diagnostic)
         self._prev_phi = self._approach_potential() if self.has_ball else 0.0
         obs, _, _ = self._obs()
         return obs, {}
@@ -279,6 +353,11 @@ class BallEnv(gym.Env):
             self.data.xfrc_applied[chassis, 1] = (
                 self._np_random.uniform(-1, 1) * self.rand["disturb_force_N"])
 
+        # Sampled before the physics substeps: once contact is detected the ball
+        # is already being pushed, so the approach velocity has to be read from
+        # the instant *before* the strike.
+        vn_pre = self._strike_normal_speed() if self.has_ball else 0.0
+
         hit_stick = hit_wheel = False
         for _ in range(self.substeps):
             mujoco.mj_step(self.model, self.data)
@@ -295,13 +374,21 @@ class BallEnv(gym.Env):
 
         obs, st, e_lat = self._obs()
         rw = self.rw
-        reward = (-rw["w_upright"] * st.roll**2
+        # Deadband so ordinary pitch under acceleration is free and only an
+        # actual wheelie is charged for.
+        pitch = self._pitch()
+        self._peak_pitch = max(self._peak_pitch, abs(pitch))
+        pitch_excess = max(0.0, abs(pitch) - self.pitch_free)
+
+        reward = (-rw["w_pitch"] * pitch_excess**2
+                  - rw["w_upright"] * st.roll**2
                   - rw["w_lateral"] * e_lat**2
                   - rw["w_effort"] * float(action @ action)
                   - rw["w_smooth"] * float((action - self._prev_a) @ (action - self._prev_a))
                   - rw["time_penalty"])
 
         speed = self._ball_speed() if self.has_ball else 0.0
+        proj = self._projected_speed() if self.has_ball else 0.0
         if self.has_ball:
             phi = self._approach_potential()
             if not (self._hit_stick or self._hit_wheel):          # pre-hit approach
@@ -313,10 +400,17 @@ class BallEnv(gym.Env):
             # Paying it per contact step instead makes a *sustained shove* score
             # far better than a clean strike (contact duration x speed), which is
             # exactly the degenerate carry-the-ball behaviour it used to learn.
+            # Rising edge: pay for actually driving the panel into the ball.
+            # Without this, a broadside glancing pass scores the full approach
+            # shaping while transferring almost no momentum — a sideswipe.
+            if hit_stick and not self._in_stick_contact and not self._strike_paid:
+                reward += rw["w_strike"] * max(0.0, vn_pre)
+                self._strike_paid = True
+                self._strike_speed = vn_pre
+
             released = self._in_stick_contact and not hit_stick
             if released and not self._launch_paid:
-                reward += (rw["w_launch"] * speed
-                           + rw["w_angle"] * self._launch_align())
+                reward += rw["w_launch"] * max(0.0, proj)
                 self._launch_paid = True
             self._in_stick_contact = hit_stick
             if hit_wheel and not self._wheel_paid:   # once, for the same reason
@@ -325,6 +419,7 @@ class BallEnv(gym.Env):
             self._hit_stick |= hit_stick
             self._hit_wheel |= hit_wheel
             self._peak_speed = max(self._peak_speed, speed)
+            self._peak_proj = max(self._peak_proj, proj)
 
         self._prev_a = action
 
@@ -333,7 +428,7 @@ class BallEnv(gym.Env):
                    and abs(st.roll_rate) < self.rate_ok
                    and abs(self.data.qvel[5]) < self.rate_ok
                    and abs(st.v_lon) < self.rate_ok)
-        shot_taken = self._hit_stick and self._peak_speed > self.hit_speed_min
+        shot_taken = self._hit_stick and self._peak_proj > self.hit_speed_min
 
         terminated = False
         success = False
@@ -341,7 +436,7 @@ class BallEnv(gym.Env):
             reward -= rw["penalty_fall"]
             terminated = True
         elif self.has_ball and shot_taken and settled:
-            reward += rw["bonus_complete"]
+            reward += self._bonus()
             terminated = True
             success = True
         truncated = self._step >= self.max_steps
@@ -349,11 +444,11 @@ class BallEnv(gym.Env):
             # no-ball trial survived, or ball trial that took its shot in time
             success = (not self.has_ball) or shot_taken
             if success:
-                reward += rw["bonus_complete"]
+                reward += self._bonus()
         # Episode ended mid-contact: settle the unpaid launch reward so ending
         # while still touching the ball is never a way to dodge the accounting.
         if (terminated or truncated) and self._in_stick_contact and not self._launch_paid:
-            reward += (rw["w_launch"] * speed + rw["w_angle"] * self._launch_align())
+            reward += rw["w_launch"] * max(0.0, proj)
             self._launch_paid = True
 
         if self.has_ball:                       # approach diagnostics
@@ -363,10 +458,13 @@ class BallEnv(gym.Env):
             strike_dist, perp = 0.0, 0.0
         return obs, float(reward), terminated, truncated, {
             "ball_speed": float(self._peak_speed),
+            "proj_speed": float(self._peak_proj),
             "launch_deg": float(np.degrees(self._launch_dir())) if self.has_ball else 0.0,
             "hit_stick": bool(self._hit_stick), "hit_wheel": bool(self._hit_wheel),
             "has_ball": bool(self.has_ball),
             "strike_dist": float(strike_dist), "perp_align": float(perp),
+            "strike_speed": float(self._strike_speed),
+            "peak_pitch_deg": float(np.degrees(self._peak_pitch)),
             "success": bool(success), "is_success": bool(success)}
 
     # -- launch geometry ---------------------------------------------------
@@ -376,17 +474,9 @@ class BallEnv(gym.Env):
         v = self.data.qvel[self._ball_v:self._ball_v + 2]
         return float(np.arctan2(v[1], v[0]))
 
-    def _launch_align(self):
-        """cos of the error between the ball's launch heading and the target
-        direction (launch_target, measured from the bike-start +x), in [-1, 1]."""
-        target_world = self._yaw0 + (-self.launch_target if self._mirror
-                                     else self.launch_target)
-        v = self.data.qvel[self._ball_v:self._ball_v + 2]
-        n = np.linalg.norm(v)
-        if n < 1e-6:
-            return 0.0
-        return float((np.cos(target_world) * v[0] + np.sin(target_world) * v[1]) / n)
-
+    def _target_dir(self):
+        """Unit vector of the world-frame launch target direction."""
+        return np.array([np.cos(self._target_yaw), np.sin(self._target_yaw)])
 
 def make_env(params=None, rl_cfg=None, seed=None):
     """Thunk for SB3 vectorized env constructors."""

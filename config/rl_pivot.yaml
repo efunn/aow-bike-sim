@@ -1,0 +1,78 @@
+# RL pivot training config (train_pivot_rl.py / control/pivot_env.py).
+# The move: chassis yaws 180 deg while the front wheel holds its global
+# ground heading (mod pi), from standstill or a glide (v_start/v_end
+# sampled per episode along the original line), robust to a ball-hit-scale
+# impulse at the yaw-halfway point.
+
+algo:
+  algorithm: PPO
+  total_timesteps: 5000000
+  n_envs: 8
+  learning_rate: 3.0e-4
+  n_steps: 2048
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005        # ball_rl's lesson: 0.0 collapsed exploration
+  net_arch: [128, 128]
+  seed: 0
+  eval_every: 100000     # BestByScore cadence [timesteps]. The episode count
+                         #   is the (v_start, v_end) grid size, which scales
+                         #   with env.v_max (train_pivot_rl.eval_grid).
+
+env:
+  action_space: full
+  control_rate_hz: 200
+  max_episode_s: 4.0     # analytic pivot ~2.5 s + glide/settle margin
+  yaw_target_deg: 180    # fixed for now; obs carries it as sin/cos so a
+                         #   sampled target later changes no OBS_DIM
+  v_max: 0.0             # v_start, v_end ~ U(0, v_max) per episode.
+                         #   0.0 = stationary-only training; the eval grid
+                         #   collapses to the single (0, 0) point with it,
+                         #   so the run is scored on what it trains.
+  p_v_zero: 0.25         # per-endpoint chance of exactly 0 (stationary
+                         #   pivot / full stop are canonical cases)
+  success_yaw_tol_deg: 12
+  success_roll_deg: 4
+  success_rate: 0.4      # |roll_rate|, |yaw_rate| gate [rad/s]
+  success_v_tol: 0.10    # |v_along - v_end| gate [m/s]
+  success_hold_tol_deg: 10   # wheel global-heading hold gate (mod pi)
+  success_line_tol_m: 0.08   # front-contact offset from the original line
+  success_hold_s: 0.3    # condition must persist (a moving "success" is
+                         #   not self-evidently stable like a stop)
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 0.72        # 0.6 m/s glide + correction margin
+    diff_max: 40.0       # mid-pivot the crawl must carry ~v + L*psidot
+                         #   laterally; 30 caps it too low for moving pivots
+  hit_impulse:           # the "ball hit": once per episode at yaw halfway
+    prob: 0.2            # fraction of episodes with a scheduled hit
+    force_N: 8.0         # magnitude ~ U(0, force_N): 0..graze..full
+    window_s: 0.05       # 10 control steps; 8 N x 50 ms ~ 0.4 N*s
+
+reward:
+  w_yaw_progress: 20.0   # the primary drive (flick's value)
+  w_wheel_hold: 2.0      # x e_hold^2 [rad^2], e_hold mod pi
+  w_vel: 2.0             # x phase x (v_along - v_ref)^2 — endpoint-weighted:
+                         #   mid-pivot speed sag (crawl-ceiling limited) is legal
+  w_line: 5.0            # x e_line^2 (FRONT CONTACT, not chassis)
+  w_upright: 0.5
+  w_effort: 0.001
+  w_smooth: 0.001
+  time_penalty: 0.01
+  bonus_complete: 100.0
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+
+randomization:
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.1
+  friction_frac: 0.2
+  disturb_force_N: 2.0   # flick-style per-step shove (kept alongside the hit)
+  disturb_prob: 0.01
