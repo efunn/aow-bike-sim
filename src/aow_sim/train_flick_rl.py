@@ -297,7 +297,12 @@ def main():
         venv = VecNormalize(venv, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
     policy_kwargs = dict(net_arch=list(a["net_arch"]), activation_fn=torch.nn.Tanh)
-    last_ckpt = sorted(ckpt.glob("*.zip")) if ckpt.exists() else []
+    # Numeric key, as in _scan_checkpoints: a plain sorted() is lexicographic,
+    # which puts ppo_900000_steps last and silently resumes millions of steps
+    # back. Globbing ppo_*_steps.zip also skips any stray zip in the dir.
+    last_ckpt = (sorted(ckpt.glob("ppo_*_steps.zip"),
+                        key=lambda p: int(p.stem.split("_")[1]))
+                 if ckpt.exists() else [])
     if args.resume and last_ckpt:
         model = PPO.load(str(last_ckpt[-1]), env=venv)
         print(f"resumed from {last_ckpt[-1].name}")

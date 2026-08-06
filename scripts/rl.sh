@@ -7,6 +7,7 @@
 #   ./scripts/rl.sh board general           # dashboard only (outlives training)
 #   ./scripts/rl.sh train general --resume  # extra args go straight to the trainer
 #   ./scripts/rl.sh status                  # what is up, and on which port
+#   ./scripts/rl.sh eta general             # cpu/gpu, fps, % done, time left
 #   ./scripts/rl.sh logs general            # tail -f the live training log
 #   ./scripts/rl.sh stop general            # cancel training, leave the board up
 #   ./scripts/rl.sh stop-board general      # kill the board, leave training up
@@ -103,11 +104,13 @@ start() {
     die "$kind for '$move' already running (pid $(pid_of "$move" "$kind")); stop it first"
   fi
 
+  # Record the argv, so `eta` can see a --timesteps override after the fact.
+  echo "# launched $(date '+%Y-%m-%d %H:%M:%S') :: $*" > "$log"
   if command -v setsid >/dev/null 2>&1; then
-    setsid nohup "$@" >"$log" 2>&1 < /dev/null &
+    setsid nohup "$@" >>"$log" 2>&1 < /dev/null &
     mode=group
   else
-    nohup "$@" >"$log" 2>&1 < /dev/null &
+    nohup "$@" >>"$log" 2>&1 < /dev/null &
     mode=tree
   fi
   pid=$!
@@ -153,7 +156,7 @@ cmd_train() {
   log="$(start "$move" train train -- python -u -m "aow_sim.train_${move}_rl" "$@")"
   echo "training     -> aow_sim.train_${move}_rl ${*:-(config defaults)}, pid $(pid_of "$move" train)"
   echo "                log: $log"
-  echo "                tail: ./scripts/rl.sh logs $move    cancel: ./scripts/rl.sh stop $move"
+  echo "                eta: ./scripts/rl.sh eta $move     cancel: ./scripts/rl.sh stop $move"
 }
 
 cmd_up() {
@@ -183,6 +186,77 @@ stop() {
   echo "stopped $kind for '$move' (pid $pid)"
 }
 
+# Pull "<key> <value>" out of the last block SB3's verbose=1 logger printed:
+#   | time/              |          |
+#   |    fps             | 1077     |
+# The `|| true` matters: under `set -o pipefail` a no-match grep would otherwise
+# fail the assignment and `set -e` would kill the script before it can say that
+# the first rollout simply hasn't landed yet.
+last_metric() {   # last_metric <log> <key>
+  tr -d ' ' < "$1" | grep "^|$2|" | tail -1 | cut -d'|' -f3 || true
+}
+first_metric() {
+  tr -d ' ' < "$1" | grep "^|$2|" | head -1 | cut -d'|' -f3 || true
+}
+yaml_num() {      # yaml_num <file> <key> -- first scalar, comments/underscores stripped
+  # [0-9][0-9]* rather than [0-9]\+ -- BSD sed's BRE has no \+
+  sed -n "s/^[[:space:]]*$2:[[:space:]]*\([0-9_][0-9_]*\).*/\1/p" "$1" | head -1 | tr -d _ || true
+}
+
+cmd_eta() {
+  local move=$1 log dev fps steps first budget hdr cfg rollout
+  log="$(run_dir "$move")/logs/train-latest.log"
+  [[ -f "$log" ]] || die "no training log for '$move' yet -- has it been started?"
+  cfg="$REPO/config/rl_$move.yaml"
+
+  dev="$(grep -m1 -o 'Using [^ ]* device' "$log" || true)"
+  echo "device       ${dev:-unknown (no SB3 banner yet)}"
+  if grep -q 'primarily intended to run on the CPU' "$log"; then
+    echo "             ^ SB3 warns: PPO + MlpPolicy is CPU work; the GPU buys little here"
+  fi
+
+  fps="$(last_metric "$log" fps)"
+  steps="$(last_metric "$log" total_timesteps)"
+  if [[ -z "$fps" || -z "$steps" ]]; then
+    echo "progress     no rollout table logged yet (first one lands after n_steps x n_envs steps)"
+    return 0
+  fi
+
+  # Budget: an explicit --timesteps beats the config. On --resume SB3 adds the
+  # already-done steps to the budget (base_class._setup_learn), so the target
+  # sits that much higher; approximate the offset with the first logged count.
+  hdr="$(head -1 "$log")"
+  budget="$(sed -n 's/.*--timesteps[= ][= ]*\([0-9][0-9]*\).*/\1/p' <<< "$hdr")"
+  [[ -n "$budget" ]] || budget="$(yaml_num "$cfg" total_timesteps)"
+  [[ -n "$budget" ]] || die "no total_timesteps in $cfg and no --timesteps in the launch line"
+  if grep -q -- '--resume' <<< "$hdr"; then
+    first="$(first_metric "$log" total_timesteps)"
+    rollout=$(( $(yaml_num "$cfg" n_steps) * $(yaml_num "$cfg" n_envs) ))
+    budget=$(( budget + first - rollout ))
+    echo "note         resumed run: target is config total + steps already done"
+  fi
+
+  local left
+  left="$(awk -v f="$fps" -v s="$steps" -v b="$budget" 'BEGIN {printf "%d", (b - s) / f}')"
+
+  awk -v fps="$fps" -v steps="$steps" -v budget="$budget" -v left="$left" \
+      -v elapsed="$(last_metric "$log" time_elapsed)" 'BEGIN {
+    fmt = "%dh%02dm";
+    printf "throughput   %.0f steps/s\n", fps;
+    printf "progress     %s / %s  (%.1f%%)\n", steps, budget, 100 * steps / budget;
+    if (elapsed != "") printf "elapsed      " fmt "\n", elapsed / 3600, (elapsed % 3600) / 60;
+    if (left > 0)      printf "remaining    " fmt "  at the current rate\n", left / 3600, (left % 3600) / 60;
+    else               printf "remaining    budget reached (export/eval may still be running)\n";
+  }'
+
+  if [[ "$left" -gt 0 ]]; then
+    local finish
+    finish="$(date -d "+$left seconds" '+%a %H:%M' 2>/dev/null \
+              || date -v"+${left}S" '+%a %H:%M' 2>/dev/null || true)"
+    [[ -n "$finish" ]] && echo "finishes     ~$finish"
+  fi
+}
+
 cmd_status() {
   local move kind job pid detail any=0
   printf '%-9s %-6s %-8s %s\n' MOVE WHAT PID DETAIL
@@ -210,6 +284,7 @@ case "$SUB" in
   board)      check_move "${1:-}"; cmd_board "$1" ;;
   stop)       check_move "${1:-}"; stop "$1" train ;;
   stop-board) check_move "${1:-}"; stop "$1" board ;;
+  eta)        check_move "${1:-}"; cmd_eta "$1" ;;
   logs)       check_move "${1:-}"; tail -f "$(run_dir "$1")/logs/train-latest.log" ;;
   status)     cmd_status ;;
   *)          awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0" >&2; exit 1 ;;

@@ -6,9 +6,9 @@ algo:
   algorithm: PPO
   total_timesteps: 10000000   # a general controller is a bigger task than a
                               #   single move; expect to need the full budget
-  n_envs: 8
+  n_envs: 32    # was 8
   learning_rate: 3.0e-4
-  n_steps: 2048
+  n_steps: 512 # was 2048  -> 32 x 512 = 16384, unchanged
   batch_size: 256
   n_epochs: 10
   # gamma at 50 Hz: 1/(1-g) = 100 steps = 2.0 s of lookahead, which matches
