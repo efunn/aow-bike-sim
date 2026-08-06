@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import mujoco
 import numpy as np
 
 from .steer import SteerFrame
@@ -54,11 +53,24 @@ class BikeState:
     v_lat: float
 
 
-def extract_state(data: mujoco.MjData, ref_pos: np.ndarray) -> BikeState:
+def quat_to_mat(q) -> np.ndarray:
+    """(w,x,y,z) -> 3x3 rotation matrix, identical to mujoco.mju_quat2Mat.
+
+    Written out rather than called so this module — and therefore the whole
+    controller stack — imports without MuJoCo. The bike runs the controllers,
+    not the simulator; see params.py and tests/test_hw_no_mujoco.py.
+    """
+    w, x, y, z = np.asarray(q, dtype=float) / np.linalg.norm(q)
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ])
+
+
+def extract_state(data, ref_pos: np.ndarray) -> BikeState:
     """Ground-truth state of the chassis freejoint (qpos[0:7], qvel[0:6])."""
-    R = np.zeros(9)
-    mujoco.mju_quat2Mat(R, data.qpos[3:7])
-    R = R.reshape(3, 3)
+    R = quat_to_mat(data.qpos[3:7])
     roll = np.arctan2(R[2, 1], R[2, 2])
     yaw = np.arctan2(R[1, 0], R[0, 0])
     roll_rate = data.qvel[3]  # freejoint angular velocity is body-frame
@@ -72,7 +84,7 @@ def extract_state(data: mujoco.MjData, ref_pos: np.ndarray) -> BikeState:
 class _Base:
     """Shared ZOH scheduling, actuator lookup, and saturation."""
 
-    def __init__(self, params: dict, model: mujoco.MjModel):
+    def __init__(self, params: dict, model):
         self.params = params
         self.dt = 1.0 / params["control"]["rate_hz"]
         self.aid = {n: model.actuator(n).id for n in ("drive_a", "drive_b", "steer")}
@@ -84,12 +96,12 @@ class _Base:
         self._next_t = 0.0
         self._u = np.zeros(model.nu)
 
-    def reset(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+    def reset(self, model, data) -> None:
         self._ref_pos = data.qpos[:3].copy()
         self._next_t = data.time
         self._u = np.zeros(model.nu)
 
-    def step(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray:
+    def step(self, model, data) -> np.ndarray:
         """Call every physics step; writes data.ctrl with ZOH at rate_hz."""
         if self._ref_pos is None or data.time < self._next_t - 2 * self.dt:
             self.reset(model, data)  # first call, or viewer was reset
@@ -148,11 +160,18 @@ class LQRBalance(_Base):
     [d, steer] = -K x_lat; a separate longitudinal P loop supplies the common
     mode (decoupled from lateral balance)."""
 
-    def __init__(self, params, model):
+    def __init__(self, params, model, design=None):
         super().__init__(params, model)
-        from .linearize import design_lqr  # deferred: pulls in scipy
-
-        self.K, self.qpos_eq, self.fit_r2 = design_lqr(params, model)
+        # `design` short-circuits the linearization (scipy + MuJoCo rollouts,
+        # minutes of work). Passed by the onboard deployment path, which loads
+        # a precomputed LQRDesign from deploy/bundle.npz and never imports
+        # linearize at all. See docs/plans/untethered-setup.md.
+        if design is None:
+            from .linearize import design_lqr  # deferred: pulls in scipy
+            self.K, self.qpos_eq, self.fit_r2 = design_lqr(params, model)
+        else:
+            self.K, self.qpos_eq, self.fit_r2 = (
+                design.K, design.qpos_eq, design.fit_r2)
         self.x_kp = params["control"]["pd"]["x_kp"]
         # Hard steer clamp: the lateral model is identified at small steer
         # angles; letting the loop command large ones leaves the region where
@@ -187,7 +206,7 @@ class LQRBalance(_Base):
         return u
 
 
-def make_controller(name: str, params: dict, model: mujoco.MjModel):
+def make_controller(name: str, params: dict, model):
     if name == "pd":
         return PDCascade(params, model)
     if name == "lqr":
@@ -199,6 +218,7 @@ def run(model, data, controller, duration: float, on_step=None) -> None:
     """Advance the sim `duration` seconds with the controller in the loop."""
     for _ in range(int(round(duration / model.opt.timestep))):
         controller.step(model, data)
+        import mujoco       # sim-only helper; not needed on the bike
         mujoco.mj_step(model, data)
         if on_step is not None:
             on_step(data)

@@ -23,6 +23,7 @@ from .ball_spec import ACT_DIM, OBS_DIM, ActionBounds, build_obs, scale_action
 from .balance import extract_state, mix
 from .drive import DriveController
 from .linearize import settle_upright
+from .randomize import DomainRandomizer
 
 _PARKED = np.array([100.0, 100.0])   # world xy where a no-ball trial hides the ball
 
@@ -44,8 +45,6 @@ class BallEnv(gym.Env):
         self.cfg = rl_cfg or _load_rl_config()
         self.model = build_model(self.p, variant="full", hockey=True)
         self._eq = settle_upright(self.model).qpos.copy()
-        self._mass0 = self.model.body_mass.copy()
-        self._friction0 = self.model.geom_friction.copy()
         self.data = mujoco.MjData(self.model)
         # K0 crawl-balance gain from the clean (ball-free) bike, exactly as replay.
         self._K0 = DriveController(self.p, build_model(self.p, variant="full"))._K0
@@ -67,6 +66,7 @@ class BallEnv(gym.Env):
         self.pitch_free = np.deg2rad(env["pitch_free_deg"])
         self.rw = self.cfg["reward"]
         self.rand = self.cfg["randomization"]
+        self._rand = DomainRandomizer(self.model, self.rand)
         self.fall = np.deg2rad(self.rw["fall_roll_deg"])
 
         act_dim = ACT_DIM if self.full else 2
@@ -242,16 +242,7 @@ class BallEnv(gym.Env):
         return float(self._target_dir() @ v)
 
     def _apply_randomization(self):
-        r, rng = self.rand, self._np_random
-        if not r["enabled"]:
-            self.model.body_mass[:] = self._mass0
-            self.model.geom_friction[:] = self._friction0
-            return
-        self.model.body_mass[:] = self._mass0 * (
-            1 + rng.uniform(-r["mass_frac"], r["mass_frac"], self._mass0.shape))
-        self.model.geom_friction[:] = self._friction0
-        self.model.geom_friction[:, 0] *= (
-            1 + rng.uniform(-r["friction_frac"], r["friction_frac"]))
+        self._rand.apply(self._np_random)
 
     def _place_ball(self):
         """Place the ball at a WORLD-frame position (with jitter/mirror). With

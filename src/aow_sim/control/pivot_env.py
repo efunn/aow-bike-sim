@@ -28,6 +28,7 @@ from .drive import DriveController
 from .linearize import settle_upright
 from .pivot_spec import (ACT_DIM, OBS_DIM, ActionBounds, build_obs,
                          scale_action, wheel_heading, wrap_pi)
+from .randomize import DomainRandomizer
 
 
 def _load_rl_config(path=None) -> dict:
@@ -47,8 +48,6 @@ class PivotEnv(gym.Env):
         self.cfg = rl_cfg or _load_rl_config()
         self.model = build_model(self.p, variant="full")
         self._eq = settle_upright(self.model).qpos.copy()
-        self._mass0 = self.model.body_mass.copy()
-        self._friction0 = self.model.geom_friction.copy()
         self.data = mujoco.MjData(self.model)
         self._K0 = DriveController(self.p, self.model)._K0
 
@@ -71,6 +70,7 @@ class PivotEnv(gym.Env):
         self.hit_cfg = env["hit_impulse"]
         self.rw = self.cfg["reward"]
         self.rand = self.cfg["randomization"]
+        self._rand = DomainRandomizer(self.model, self.rand)
         self.fall = np.deg2rad(self.rw["fall_roll_deg"])
         self._rake = np.deg2rad(self.p["bike"]["rake_deg"])
         self.L = self.p["bike"]["wheelbase"]
@@ -118,16 +118,7 @@ class PivotEnv(gym.Env):
         return obs, s, e_line, yaw_err, v_along, hold_raw
 
     def _apply_randomization(self):
-        r, rng = self.rand, self._np_random
-        if not r["enabled"]:
-            self.model.body_mass[:] = self._mass0
-            self.model.geom_friction[:] = self._friction0
-            return
-        self.model.body_mass[:] = self._mass0 * (
-            1 + rng.uniform(-r["mass_frac"], r["mass_frac"], self._mass0.shape))
-        self.model.geom_friction[:] = self._friction0
-        self.model.geom_friction[:, 0] *= (
-            1 + rng.uniform(-r["friction_frac"], r["friction_frac"]))
+        self._rand.apply(self._np_random)
 
     def _sample_v(self, rng) -> float:
         if rng.random() < self.p_v_zero:

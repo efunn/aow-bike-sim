@@ -19,7 +19,6 @@ profile's accel/decel ramps and is zero during cruise.
 
 from __future__ import annotations
 
-import mujoco
 import numpy as np
 
 from .balance import LQRBalance, extract_state, lat_gain, mix
@@ -88,7 +87,12 @@ class PivotController(LQRBalance):
 
     def reset(self, model, data):
         super().reset(model, data)
-        mujoco.mj_forward(model, data)
+        # Lazy: this recomputes derived quantities after the sim state is set,
+        # which only matters when `data` really is an mjData. The hardware
+        # shim populates them directly, and the Pi has no MuJoCo installed.
+        if type(data).__module__.startswith("mujoco"):
+            import mujoco
+            mujoco.mj_forward(model, data)
         s = extract_state(data, self._ref_pos)
         self._psi = self._psi_raw_prev = s.yaw
         # Whole-model CoM in the body frame -> distance from the front contact.

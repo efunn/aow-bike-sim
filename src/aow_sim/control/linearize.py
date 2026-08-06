@@ -21,9 +21,18 @@ with weights from the YAML control.lqr block.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import mujoco
 import numpy as np
-import scipy.linalg
+
+# The artifact lives in a MuJoCo-free module so the bike can load it.
+from .lqr_design import LQRDesign  # noqa: F401
+
+# scipy is imported lazily inside _dlqr_checked, not here: hw/state.py imports
+# LQRDesign from this module, and the whole point of the deployment bundle is
+# that the bike needs neither scipy nor a Riccati solve. A module-level import
+# would drag scipy onto the Pi for a dataclass.
 
 N_STATE = 8
 IDX_POS = slice(0, 4)   # e_lat, roll, yaw, steer
@@ -169,6 +178,8 @@ def _weights(cfg) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _dlqr_checked(A, B, Q, R, label: str):
+    import scipy.linalg
+
     X = scipy.linalg.solve_discrete_are(A, B, Q, R)
     K = np.linalg.solve(R + B.T @ X @ B, B.T @ X @ A)
     specrad = np.max(np.abs(np.linalg.eigvals(A - B @ K)))
@@ -201,3 +212,10 @@ def design_gain_schedule(params: dict, model: mujoco.MjModel):
         Ks.append(_dlqr_checked(A, B, Q, R, f"v={v:.2f}"))
         r2s.append(r2)
     return np.array(speeds), np.stack(Ks), np.stack(r2s)
+
+
+def design_all(params: dict, model: mujoco.MjModel) -> LQRDesign:
+    """Both designs in one object. The expensive call — minutes, not seconds."""
+    K, qpos_eq, fit_r2 = design_lqr(params, model)
+    speeds, Ks, r2s = design_gain_schedule(params, model)
+    return LQRDesign(K, qpos_eq, fit_r2, speeds, Ks, r2s)

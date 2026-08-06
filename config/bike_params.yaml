@@ -95,8 +95,39 @@ bike:
     pos: [0.05, 0.0, 0.13]
     mass: {value: 0.012, source: GUESS}
     box_size: [0.030, 0.030, 0.012]
+  payload:
+    # Untethered running gear — see docs/plans/untethered-setup.md. Kept
+    # SEPARATE from chassis.mass (which is frame + wiring only) so the two are
+    # independently identifiable: the payload is a known, weighable set of
+    # parts, while the chassis mass stays a GUESS until the frame is built.
+    # Omitted by build_model(payload=False) to recover the tethered bike.
+    #
+    # ~190 g on an 825 g bike (+23%). Placement is NOT critical for balance:
+    # across the plausible mounting envelope the CoM height only moves
+    # 0.117-0.131 m and the fall time constant 1/sqrt(g/h) only 0.109-0.116 s.
+    # What matters is (a) staying on the centerline — a lateral offset is a
+    # standing roll bias the controller must trim out continuously, and (b)
+    # staying near the rear axle, since yaw inertia is what the pivot and
+    # flick moves fight. Positions below are a plausible layout, not a design.
+    battery:                                  # 3S 1300 mAh LiPo, slung under
+      pos: [0.09, 0.0, 0.055]                 #   the frame between the wheels
+      mass: {value: 0.115, source: GUESS}     # -> weigh the actual pack
+      box_size: [0.072, 0.035, 0.026]
+    electronics:                              # Pi Zero 2 W + U2D2 + buck + wiring
+      pos: [0.09, 0.0, 0.105]
+      mass: {value: 0.076, source: GUESS}     # -> weigh the actual stack
+      box_size: [0.065, 0.030, 0.025]
 
 servos:
+  # NOTE: the values below are the 12 V datasheet column, i.e. the TETHERED
+  # bike on its 12 V brick. Untethered on 3S the pack averages 11.1 V and sags
+  # to 9.9 V at cutoff, so the real numbers are the 11.1 V column or worse:
+  #   XC430-W150   1.4 N.m /  99 rpm   (vs 1.6 / 106 here)
+  #   XC330-T181   0.76 N.m / 104 rpm  (vs 0.80 / 113 here)
+  # That is ~12% less torque, compounding with the +23% payload mass for a
+  # ~30% authority reduction. Do not "fix" it by editing these values — the
+  # sim is a 12 V bike by definition; instead let randomization.actuator_frac
+  # cover the range during training. See docs/plans/untethered-setup.md.
   xc430_w150:   # 2x, AOW drive (values at 12 V per datasheet)
     stall_torque: {value: 1.6, source: datasheet}
     no_load_rpm: {value: 106.0, source: datasheet}

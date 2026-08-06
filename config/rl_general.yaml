@@ -77,7 +77,16 @@ randomization:           # as rl_flick/rl_pivot
   init_yaw_deg: 5.0
   init_pos_m: 0.02
   init_vel: 0.05
-  mass_frac: 0.1
+  mass_frac: 0.15        # was 0.1. The as-built payload mass (battery + Pi +
+                         #   U2D2 + buck, ~190 g of a 1.02 kg bike) is a GUESS
+                         #   until the thing is weighed, and it is a bigger
+                         #   share of the total than anything else unmeasured.
   friction_frac: 0.2
+  # Supply voltage. The model's servo numbers are the 12 V datasheet column,
+  # but a 3S pack spans 12.6 V (full) to 9.9 V (cutoff) -> ~0.83-1.05x nominal
+  # strength. 0.15 covers that window with margin. Scales ctrlrange AND
+  # forcerange from a single draw (speed and torque both go with voltage) --
+  # see control/randomize.py. Untethered transfer depends on this.
+  actuator_frac: 0.15
   disturb_force_N: 2.0
   disturb_prob: 0.01

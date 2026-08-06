@@ -25,8 +25,9 @@ import numpy as np
 import yaml
 
 from . import geometry
+# Re-exported: params loading is MuJoCo-free so the Pi can use it (params.py).
+from .params import DEFAULT_PARAMS, _normalize, load_params  # noqa: F401
 
-DEFAULT_PARAMS = Path(__file__).resolve().parents[2] / "config" / "bike_params.yaml"
 
 FLOOR_CONTYPE, FLOOR_CONAFF = 1, 2
 DYN_CONTYPE, DYN_CONAFF = 2, 1
@@ -49,20 +50,6 @@ CONES = {
     "pyramidal": mujoco.mjtCone.mjCONE_PYRAMIDAL,
     "elliptic": mujoco.mjtCone.mjCONE_ELLIPTIC,
 }
-
-
-def _normalize(node):
-    """Strip {value:, source:} wrappers, leaving plain values."""
-    if isinstance(node, dict):
-        if "value" in node and "source" in node:
-            return node["value"]
-        return {k: _normalize(v) for k, v in node.items()}
-    return node
-
-
-def load_params(path: str | Path | None = None) -> dict:
-    with open(path or DEFAULT_PARAMS) as f:
-        return _normalize(yaml.safe_load(f))
 
 
 def _quat_z_to(v) -> np.ndarray:
@@ -320,6 +307,7 @@ def build_spec(
     variant: str = "full",
     training_wheels: bool = False,
     hockey: bool = False,
+    payload: bool = True,
 ) -> mujoco.MjSpec:
     p = params or load_params()
     spec = mujoco.MjSpec()
@@ -364,21 +352,30 @@ def build_spec(
         conaffinity=0,
         rgba=[0.2, 0.4, 0.7, 0.6],
     )
-    for name, servo, pos in (
+    lumps = [
         ("servo_drive_left", p["servos"]["xc430_w150"], p["servos"]["xc430_w150"]["pos_left"]),
         ("servo_drive_right", p["servos"]["xc430_w150"], p["servos"]["xc430_w150"]["pos_right"]),
         ("servo_steer", p["servos"]["xc330_t181"], p["servos"]["xc330_t181"]["pos"]),
         ("ahrs", bike["ahrs"], bike["ahrs"]["pos"]),
-    ):
+    ]
+    # Untethered running gear (~190 g, +23%). On by default: the bike we are
+    # actually building carries it, and a policy trained without it is
+    # optimistic about a bike that does not exist. payload=False recovers the
+    # tethered bike for comparison. See docs/plans/untethered-setup.md.
+    if payload:
+        lumps += [(f"payload_{k}", v, v["pos"]) for k, v in bike["payload"].items()]
+    rgba = {"ahrs": [0.7, 0.1, 0.1, 1], "payload_battery": [0.9, 0.5, 0.1, 1],
+            "payload_electronics": [0.2, 0.7, 0.3, 1]}
+    for name, part, pos in lumps:
         chassis.add_geom(
             name=name,
             type=mujoco.mjtGeom.mjGEOM_BOX,
-            size=np.array(servo["box_size"]) / 2,
+            size=np.array(part["box_size"]) / 2,
             pos=pos,
-            mass=servo["mass"],
+            mass=part["mass"],
             contype=0,
             conaffinity=0,
-            rgba=[0.1, 0.1, 0.1, 1] if name != "ahrs" else [0.7, 0.1, 0.1, 1],
+            rgba=rgba.get(name, [0.1, 0.1, 0.1, 1]),
         )
     chassis.add_site(name="ahrs_site", pos=bike["ahrs"]["pos"])
 
@@ -481,9 +478,9 @@ def build_spec(
 
 def build_model(
     params: dict | None = None, variant: str = "full", training_wheels: bool = False,
-    hockey: bool = False,
+    hockey: bool = False, payload: bool = True,
 ) -> mujoco.MjModel:
-    return build_spec(params, variant, training_wheels, hockey).compile()
+    return build_spec(params, variant, training_wheels, hockey, payload).compile()
 
 
 def main() -> None:
@@ -493,10 +490,12 @@ def main() -> None:
     ap.add_argument("--training-wheels", action="store_true")
     ap.add_argument("--hockey", action="store_true",
                     help="add the ball-shot stick panels + road-hockey ball")
+    ap.add_argument("--no-payload", action="store_true",
+                    help="omit the untethered running gear (battery + electronics)")
     ap.add_argument("-o", "--output", default=None, help="write MJCF XML here")
     args = ap.parse_args()
     spec = build_spec(load_params(args.params), args.variant, args.training_wheels,
-                      args.hockey)
+                      args.hockey, not args.no_payload)
     spec.compile()  # validate
     xml = spec.to_xml()
     if args.output:

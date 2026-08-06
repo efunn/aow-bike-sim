@@ -158,6 +158,11 @@ and marks each command change on the plot.
   multi-turn steering frame (`steer.py`, incl. the XC330 extended-position
   contract), and one `*_spec.py` + `*_env.py` per RL move — the spec is the
   single observation/action contract shared by training and replay.
+- `src/aow_sim/hw/` — the physical bike. A `HardwareData` shim that quacks like
+  `mjData`, so `DriveController` runs on the robot **unmodified**; the
+  Dynamixel bus, the TM151 reader, the velocity estimator, and the onboard
+  loop. `export_deploy.py` ships the LQR gain schedule to it so the Pi needs
+  no MuJoCo model and no scipy. See `docs/plans/untethered-setup.md`.
 - `moves/` — authored maneuvers (`*.yaml`, plus `*.npz` policy weights for RL).
 - `runs/` — training checkpoints and tensorboard logs (gitignored).
 - `docs/measurements/omni-wheel-protocol.md` — what to measure and how,

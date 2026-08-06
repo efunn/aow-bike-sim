@@ -23,11 +23,9 @@ bike's left and requires roll_ref < 0 (lean left) and steer_ff > 0.
 
 from __future__ import annotations
 
-import mujoco
 import numpy as np
 
 from .balance import LQRBalance, extract_state, mix
-from .linearize import design_gain_schedule
 from .pivot import YawProfile
 from .steer import clamp_extended, nearest_multiple, wheel_heading
 
@@ -54,8 +52,8 @@ class SpeedProfile:
 class DriveController(LQRBalance):
     """Line/circle driving on the interpolated gain schedule."""
 
-    def __init__(self, params, model):
-        super().__init__(params, model)   # shared machinery; parent K unused
+    def __init__(self, params, model, design=None):
+        super().__init__(params, model, design)   # shared machinery; parent K unused
         dc = params["control"]["drive"]
         self.wheelbase = params["bike"]["wheelbase"]
         self.r_wheel = params["omni_wheel"]["outer_radius"]
@@ -76,7 +74,12 @@ class DriveController(LQRBalance):
         self.lat_per_d = lat_gain(params)
         self._psi_dot_ref = 0.0
         self.profile = SpeedProfile(dc["accel"], dc["v_max"])
-        self.speeds, self.Ks, self.fit_r2_grid = design_gain_schedule(params, model)
+        if design is None:
+            from .linearize import design_gain_schedule  # deferred: pulls in scipy
+            self.speeds, self.Ks, self.fit_r2_grid = design_gain_schedule(params, model)
+        else:
+            self.speeds, self.Ks, self.fit_r2_grid = (
+                design.speeds, design.Ks, design.fit_r2_grid)
         # Standstill gains: crawl-vs-roll response used as a self-consistent
         # roll-PD for balance during scripted maneuvers (steer committed).
         self._K0 = self.Ks[int(np.argmin(np.abs(self.speeds)))]

@@ -22,6 +22,7 @@ from .balance import extract_state, mix
 from .drive import DriveController
 from .flick_spec import ACT_DIM, OBS_DIM, ActionBounds, build_obs, scale_action
 from .linearize import settle_upright
+from .randomize import DomainRandomizer
 
 
 def _load_rl_config(path=None) -> dict:
@@ -41,8 +42,6 @@ class FlickEnv(gym.Env):
         self.cfg = rl_cfg or _load_rl_config()
         self.model = build_model(self.p, variant="full")
         self._eq = settle_upright(self.model).qpos.copy()
-        self._mass0 = self.model.body_mass.copy()
-        self._friction0 = self.model.geom_friction.copy()
         self.data = mujoco.MjData(self.model)
         self._K0 = DriveController(self.p, self.model)._K0
 
@@ -58,6 +57,7 @@ class FlickEnv(gym.Env):
         self.rate_ok = env["success_rate"]
         self.rw = self.cfg["reward"]
         self.rand = self.cfg["randomization"]
+        self._rand = DomainRandomizer(self.model, self.rand)
         self.fall = np.deg2rad(self.rw["fall_roll_deg"])
 
         act_dim = ACT_DIM if self.full else 2
@@ -80,16 +80,7 @@ class FlickEnv(gym.Env):
                          self._step / self.max_steps), s, e_lat, yaw_err
 
     def _apply_randomization(self):
-        r, rng = self.rand, self._np_random
-        if not r["enabled"]:
-            self.model.body_mass[:] = self._mass0
-            self.model.geom_friction[:] = self._friction0
-            return
-        self.model.body_mass[:] = self._mass0 * (
-            1 + rng.uniform(-r["mass_frac"], r["mass_frac"], self._mass0.shape))
-        self.model.geom_friction[:] = self._friction0
-        self.model.geom_friction[:, 0] *= (
-            1 + rng.uniform(-r["friction_frac"], r["friction_frac"]))
+        self._rand.apply(self._np_random)
 
     # -- gym API -----------------------------------------------------------
 

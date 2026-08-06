@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-import mujoco
 import numpy as np
 import yaml
 
@@ -70,6 +69,10 @@ class FlickTrajectory:
 
 
 def _fresh(model, eq_qpos):
+    # Lazy: _fresh and the scoring rollout below are OFFLINE trajectory-
+    # optimization helpers. The bike only ever calls load_move/FlickTrajectory
+    # to replay an authored move, and has no MuJoCo installed.
+    import mujoco
     data = mujoco.MjData(model)
     data.qpos[:] = eq_qpos
     a = np.deg2rad(0.5)                      # tiny lean so balance is exercised
@@ -82,6 +85,7 @@ def rollout(model, params, eq_qpos, K0, flick: FlickTrajectory,
             settle: float = 2.0) -> dict:
     """Simulate one flick with feedforward steer+hub and roll->crawl balance.
     Returns metrics: max roll, max lateral |y|, final yaw/rates, x shift, fell."""
+    import mujoco       # offline scoring only; see _fresh
     aid = {n: model.actuator(n).id for n in ("drive_a", "drive_b", "steer")}
     rate_hz = params["control"]["rate_hz"]
     ctrl_dt = 1.0 / rate_hz

@@ -38,6 +38,7 @@ from .drive import DriveController
 from .general_spec import (ACT_DIM, OBS_DIM, ActionBounds, build_obs,
                            command_to_body, scale_action, wrap_pi)
 from .linearize import settle_upright
+from .randomize import DomainRandomizer
 
 _PARKED = np.array([100.0, 100.0])   # off-scene ball position (as ball_env)
 
@@ -61,8 +62,6 @@ class GeneralEnv(gym.Env):
         self.hockey = bool(env.get("ball_prob", 0.0) > 0.0)
         self.model = build_model(self.p, variant="full", hockey=self.hockey)
         self._eq = settle_upright(self.model).qpos.copy()
-        self._mass0 = self.model.body_mass.copy()
-        self._friction0 = self.model.geom_friction.copy()
         self.data = mujoco.MjData(self.model)
         # Crawl-balance fallback gain from the ball-free model, as ball_env.
         self._K0 = DriveController(
@@ -81,6 +80,7 @@ class GeneralEnv(gym.Env):
         self.ball_radius = float(env.get("ball_place_radius", 0.5))
         self.rw = self.cfg["reward"]
         self.rand = self.cfg["randomization"]
+        self._rand = DomainRandomizer(self.model, self.rand)
         self.fall = np.deg2rad(self.rw["fall_roll_deg"])
         self.sigma_v = float(self.rw["sigma_v"])
         self.sigma_psi = np.deg2rad(self.rw["sigma_psi_deg"])
@@ -111,16 +111,7 @@ class GeneralEnv(gym.Env):
     # -- helpers -----------------------------------------------------------
 
     def _apply_randomization(self):
-        r, rng = self.rand, self._np_random
-        if not r["enabled"]:
-            self.model.body_mass[:] = self._mass0
-            self.model.geom_friction[:] = self._friction0
-            return
-        self.model.body_mass[:] = self._mass0 * (
-            1 + rng.uniform(-r["mass_frac"], r["mass_frac"], self._mass0.shape))
-        self.model.geom_friction[:] = self._friction0
-        self.model.geom_friction[:, 0] *= (
-            1 + rng.uniform(-r["friction_frac"], r["friction_frac"]))
+        self._rand.apply(self._np_random)
 
     def _sample_command(self, rng, first=False):
         """Draw a fresh (world velocity, heading) command as a STEP change.
