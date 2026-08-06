@@ -33,6 +33,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 
 from .build_model import load_params
+from .control.balance import extract_state
 from .control.flick import MOVES_DIR
 from .control.general_env import GeneralEnv, _load_rl_config
 from .control.general_spec import ActionBounds
@@ -57,14 +58,57 @@ _EVAL_CMDS = [
     (0.0, 0.33, 0.0),     # pure lateral crab (rear omni)
     (0.5, 0.0, 45.0),
     (0.5, 0.33, 180.0),   # glide + about-face = the pivot move
+    # Directional large turns. The +-180 rows above CANNOT measure handedness:
+    # command_to_body uses wrap_pi(psi_cmd - psi), so +180 and -180 are the
+    # same observation and which way the bike spins is decided by yaw noise.
+    # 170 is far enough round to be an about-face and still unambiguous.
+    (0.0, 0.0, 170.0),
+    (0.0, 0.0, -170.0),
 ]
+
+
+def _mirror(c: tuple[float, float, float]) -> tuple[float, float, float]:
+    """Left-right reflection of a command: flip lateral velocity and heading
+    step. The plant is mirror-symmetric (axle_cant_deg 0, cone pairs mirrored
+    about the wheel mid-plane), so the reflected command is exactly as
+    achievable as the original -- any difference in score is the policy's own
+    handedness."""
+    v_lon, v_lat, dpsi = c
+    # `+ 0.0` normalizes the -0.0 that negating 0.0 produces, and a mirrored
+    # +-180 stays +180 (it wraps to the same target either way) so the command
+    # labels don't imply a direction the observation cannot express.
+    dpsi = 180.0 if abs(dpsi) == 180.0 else -dpsi + 0.0
+    return (v_lon, -v_lat + 0.0, dpsi)
+
+
+def _is_self_mirror(c: tuple[float, float, float]) -> bool:
+    """True when reflecting `c` yields the same commanded behaviour, so adding
+    the mirror would only duplicate an episode. Straight-ahead commands
+    (v_lat 0, dpsi 0) are self-mirror, and so is a pure +-180 heading step --
+    psi_err wraps, making +180 and -180 identical."""
+    _, v_lat, dpsi = c
+    return v_lat == 0.0 and (dpsi == 0.0 or abs(dpsi) == 180.0)
+
+
+def _mirrored_grid() -> list[tuple[float, float, float]]:
+    """`_EVAL_CMDS` plus the reflection of every command that has a distinct
+    one. Without this the grid only ever turns right and only ever crabs left,
+    so a one-handed policy scores flawlessly and snapshot selection cannot see
+    it."""
+    out = list(_EVAL_CMDS)
+    for c in _EVAL_CMDS:
+        if not _is_self_mirror(c):
+            m = _mirror(c)
+            if m not in out:
+                out.append(m)
+    return out
 
 
 def eval_cmds(v_max: float) -> list[tuple[float, float, float]]:
     """Absolute (v_lon, v_lat, heading-step rad) commands for the eval grid,
     scaled to the configured envelope."""
     return [(round(a * v_max, 3), round(b * v_max, 3), np.deg2rad(d))
-            for a, b, d in _EVAL_CMDS]
+            for a, b, d in _mirrored_grid()]
 
 
 def _score(m: dict) -> float:
@@ -74,8 +118,16 @@ def _score(m: dict) -> float:
     fraction of eval episodes that did not fall, and the tracking term is
     the env's own bounded [0,1] reward average. Multiplying rather than
     adding is deliberate: a policy that tracks beautifully for 2 s and then
-    falls must not outrank one that survives the whole episode."""
-    return m["survive_rate"] * m["track"]
+    falls must not outrank one that survives the whole episode.
+
+    The tracking term is the GEOMETRIC mean over commands, not the arithmetic
+    one: identical when every command scores alike, but a command the policy
+    has given up on (track -> 0) drags the whole score down instead of being
+    averaged away. The arithmetic mean is what let a policy that refuses to
+    reverse outrank one that reverses -- it abandoned 2 of 12 commands and
+    banked the survival it bought. Falls back to `track` for metrics dicts
+    written before track_geo existed."""
+    return m["survive_rate"] * m.get("track_geo", m["track"])
 
 
 def _make_vecenv(params, cfg, n_envs, seed):
@@ -116,27 +168,137 @@ def _resume_vecnormalize(venv, resume: bool, ckpts: list[Path], vn_path: Path):
     return VecNormalize(venv, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
 
+_TAIL_S = 2.0        # steady-state window at the end of an episode [s]
+_HEAD_TOL_DEG = 10.0  # "the turn is done" threshold for turn timing
+
+
 def _eval_episodes(env, act_fn, cmds):
-    """One episode per command point; aggregate metrics. The eval env has
-    randomization disabled, so repeating a command adds nothing."""
+    """One episode per command point; per-command rows plus aggregates. The
+    eval env has randomization disabled, so repeating a command adds nothing.
+
+    Behavioural quantities (drift, steer-at-rest, achieved speed, time to
+    heading) are read straight off the env rather than the info dict, so this
+    stays a pure measurement change -- general_env.py is untouched and no
+    trained policy can be affected by it. Each eval episode holds ONE command
+    for its whole duration (reset sets `_next_resample` to infinity), so
+    per-episode aggregates are well defined.
+    """
     n = len(cmds)
-    survived, tracks, verrs, herrs = 0, [], [], []
+    tail = max(1, int(_TAIL_S / env.ctrl_dt))
+    rows = []
     for k, (v_lon, v_lat, dpsi) in enumerate(cmds):
         obs, _ = env.reset(seed=10_000 + k, options={
             "v_cmd": (v_lon, v_lat), "psi_cmd_rel": dpsi, "difficulty": 1.0})
         done, info = False, {}
+        steps = 0
+        t_head = None                      # first step inside _HEAD_TOL_DEG
+        v_lons, steers = [], []            # tail windows, refilled as we go
         while not done:
             obs, _r, term, trunc, info = env.step(act_fn(obs))
             done = term or trunc
-        survived += int(not info.get("fell", True))
-        tracks.append(info.get("track", 0.0))
-        verrs.append(info.get("vel_err", 9.9))
-        herrs.append(info.get("head_err_deg", 180.0))
-    return {"survive_rate": survived / n,
-            "track": round(float(np.mean(tracks)), 3),
-            "vel_err": round(float(np.mean(verrs)), 3),
-            "head_err_deg": round(float(np.mean(herrs)), 1),
-            "n_eval": n}
+            steps += 1
+            if t_head is None and info.get("head_err_deg", 180.0) < _HEAD_TOL_DEG:
+                t_head = steps
+            s = extract_state(env.data, env._p0)
+            v_lons.append(float(s.v_lon))
+            steers.append(abs(float(env.data.qpos[env._sj])))
+            del v_lons[:-tail], steers[:-tail]
+        s = extract_state(env.data, env._p0)
+        fell = bool(info.get("fell", True))
+        rows.append({
+            "cmd": (round(v_lon, 3), round(v_lat, 3), round(np.degrees(dpsi))),
+            "track": float(info.get("track", 0.0)),
+            "fell": fell,
+            "vel_err": float(info.get("vel_err", 9.9)),
+            "head_err_deg": float(info.get("head_err_deg", 180.0)),
+            "drift_m": float(np.hypot(s.e_lon, s.e_lat)),
+            "steer_deg": float(np.degrees(np.mean(steers))) if steers else 0.0,
+            "v_ach": float(np.mean(v_lons)) if v_lons else 0.0,
+            # A turn that never got inside tolerance is censored at the episode
+            # length, not dropped -- "never finished" must cost more than slow.
+            "t_head_s": (t_head if t_head is not None else steps) * env.ctrl_dt,
+            "steps": steps,
+        })
+
+    tracks = [r["track"] for r in rows]
+    m = {"survive_rate": sum(not r["fell"] for r in rows) / n,
+         "track": round(float(np.mean(tracks)), 3),
+         # Geometric mean: equals the arithmetic mean when commands score
+         # alike, but any ABANDONED command (track -> 0) drags it down. The
+         # arithmetic mean let a policy that refuses to reverse hide behind
+         # ten other commands it does well.
+         "track_geo": round(float(np.exp(np.mean(np.log(
+             np.clip(tracks, 1e-3, 1.0))))), 3),
+         "vel_err": round(float(np.mean([r["vel_err"] for r in rows])), 3),
+         "head_err_deg": round(float(np.mean([r["head_err_deg"] for r in rows])), 1),
+         "n_eval": n}
+    m.update(_behaviour_metrics(rows))
+    return m, rows
+
+
+def _behaviour_metrics(rows: list[dict]) -> dict:
+    """Diagnostic behaviour summary -- reported and logged, deliberately NOT
+    in `_score`. Drift and steer-at-rest are free in the *reward* (the action
+    is steer rate, so a cocked wheel costs nothing to hold), so making
+    selection chase them without fixing the reward would just relocate the
+    underdetermination rather than remove it."""
+    def by(pred):
+        return [r for r in rows if pred(r["cmd"])]
+
+    hold = by(lambda c: c[0] == 0 and c[1] == 0 and c[2] == 0)
+    fwd = by(lambda c: c[0] > 0.1)
+    rev = by(lambda c: c[0] < -0.1)
+
+    def ratio(sel):     # achieved / commanded longitudinal speed
+        if not sel:
+            return float("nan")
+        return float(np.mean([np.clip(r["v_ach"] / r["cmd"][0], 0.0, 1.5)
+                              for r in sel]))
+
+    # Handedness: pair each turning command with its reflection and compare
+    # how long each took to arrive. Symmetric plant => a symmetric policy
+    # scores 0 here; 1.0 means one side never arrived at all.
+    times = {r["cmd"]: r["t_head_s"] for r in rows}
+    asyms, seen = [], set()
+    for c, t in times.items():
+        # Only commands that actually demand a heading change, and only
+        # those with a distinct mirror. A `c[2] > 0` filter looks like it
+        # counts each pair once but does not: -180 normalizes to +180, so
+        # BOTH members of a 180 pair pass it (double-counted) and a
+        # self-mirror 180 pairs with itself, contributing a spurious 0 that
+        # dilutes the average.
+        mc = _mirror(c)
+        key = frozenset((c, mc))
+        if _is_self_mirror(c) or abs(c[2]) < 1e-9 or mc not in times or key in seen:
+            continue
+        seen.add(key)
+        t2 = times[mc]
+        if max(t, t2) > 0:
+            asyms.append(abs(t - t2) / max(t, t2))
+    return {
+        "drift_m": round(float(np.mean([r["drift_m"] for r in hold])), 3)
+                   if hold else float("nan"),
+        "steer_rest_deg": round(float(np.mean([r["steer_deg"] for r in hold])), 1)
+                          if hold else float("nan"),
+        "speed_ratio_fwd": round(ratio(fwd), 3),
+        "speed_ratio_rev": round(ratio(rev), 3),
+        "turn_asym": round(float(np.mean(asyms)), 3) if asyms else float("nan"),
+    }
+
+
+def _print_rows(rows: list[dict]) -> None:
+    """Per-command table. The whole point: two abandoned commands are
+    invisible in a mean, and obvious here."""
+    # `dist` is displacement from the start pose: it is only "drift" on the
+    # hold-station row (which is the only row the drift_m aggregate uses);
+    # on a sprint row it is just how far the bike went.
+    print(f"    {'v_lon':>6} {'v_lat':>6} {'dpsi':>5} | {'track':>6} {'v_ach':>6} "
+          f"{'t_head':>6} {'dist':>6} {'steer':>6}  fell")
+    for r in rows:
+        v_lon, v_lat, dpsi = r["cmd"]
+        print(f"    {v_lon:>6.2f} {v_lat:>6.2f} {dpsi:>5.0f} | {r['track']:>6.3f} "
+              f"{r['v_ach']:>6.2f} {r['t_head_s']:>6.2f} {r['drift_m']:>6.2f} "
+              f"{r['steer_deg']:>6.1f}  {'X' if r['fell'] else ''}")
 
 
 class BestByScore(BaseCallback):
@@ -166,12 +328,12 @@ class BestByScore(BaseCallback):
             o = vn.normalize_obs(obs) if vn is not None else obs
             return self.model.predict(o, deterministic=True)[0]
 
-        m = _eval_episodes(self._env, act, self.cmds)
+        m, rows = _eval_episodes(self._env, act, self.cmds)
         score = _score(m)
-        self.logger.record("eval/survive_rate", m["survive_rate"])
-        self.logger.record("eval/track", m["track"])
-        self.logger.record("eval/vel_err", m["vel_err"])
-        self.logger.record("eval/head_err_deg", m["head_err_deg"])
+        for k in ("survive_rate", "track", "track_geo", "vel_err",
+                  "head_err_deg", "drift_m", "steer_rest_deg",
+                  "speed_ratio_fwd", "speed_ratio_rev", "turn_asym"):
+            self.logger.record(f"eval/{k}", m[k])
         self.logger.record("eval/score", score)
         if score > self.best:
             self.best = score
@@ -183,9 +345,11 @@ class BestByScore(BaseCallback):
                 vn.save(str(self.save_path / "best_vecnormalize.pkl"))
             if self.verbose:
                 print(f"  new best score {score:.3f} (survive "
-                      f"{m['survive_rate']:.2f}, track {m['track']:.2f}, "
-                      f"head err {m['head_err_deg']:.0f} deg) @ "
+                      f"{m['survive_rate']:.2f}, track_geo {m['track_geo']:.2f}, "
+                      f"fwd/rev {m['speed_ratio_fwd']:.2f}/"
+                      f"{m['speed_ratio_rev']:.2f}, asym {m['turn_asym']:.2f}) @ "
                       f"{self.num_timesteps} steps")
+                _print_rows(rows)
         return True
 
 
@@ -263,7 +427,9 @@ def _eval(params, cfg, npz_path):
                          a[1] / pol.bounds.hub_max,
                          a[2] / pol.bounds.diff_max])[:env.action_space.shape[0]]
 
-    return _eval_episodes(env, act, eval_cmds(cfg["env"]["v_max"]))
+    m, rows = _eval_episodes(env, act, eval_cmds(cfg["env"]["v_max"]))
+    _print_rows(rows)
+    return m
 
 
 def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
@@ -307,8 +473,11 @@ def _scan_checkpoints(params, cfg, every=1):
         raise SystemExit(f"no checkpoints in {ckpt}")
     ecfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     env = GeneralEnv(params, ecfg)
-    print(f"{'steps':>9} {'survive':>8} {'track':>7} {'v_err':>7} "
-          f"{'head_err':>9} {'score':>6}")
+    # track_geo / fwd / rev / asym are the columns that separate checkpoints the
+    # blended `track` ranked equally: a policy that abandons reverse or turns
+    # one-handed shows up here and nowhere else.
+    print(f"{'steps':>9} {'survive':>8} {'track':>7} {'geo':>7} {'fwd':>5} "
+          f"{'rev':>5} {'asym':>5} {'drift':>6} {'steer':>6} {'score':>6}")
     rows = []
     for z in zips:
         vn_p = z.with_name(z.name.replace("ppo_", "ppo_vecnormalize_")
@@ -326,11 +495,13 @@ def _scan_checkpoints(params, cfg, every=1):
         def act(obs):
             return model.predict(vn.normalize_obs(obs), deterministic=True)[0]
 
-        m = _eval_episodes(env, act, cmds)
+        m, _ = _eval_episodes(env, act, cmds)
         score = _score(m)
         rows.append((steps, score, m))
         print(f"{steps:>9} {m['survive_rate']:>8.2f} {m['track']:>7.3f} "
-              f"{m['vel_err']:>7.3f} {m['head_err_deg']:>9.1f} {score:>6.3f}")
+              f"{m['track_geo']:>7.3f} {m['speed_ratio_fwd']:>5.2f} "
+              f"{m['speed_ratio_rev']:>5.2f} {m['turn_asym']:>5.2f} "
+              f"{m['drift_m']:>6.2f} {m['steer_rest_deg']:>6.1f} {score:>6.3f}")
     if rows:
         best = max(rows, key=lambda r: r[1])
         print(f"\nbest score {best[1]:.3f} at {best[0]} steps "
@@ -381,7 +552,18 @@ def main():
                     help="evaluate every saved checkpoint, then exit")
     ap.add_argument("--scan-every", type=int, default=1,
                     help="with --scan-checkpoints, evaluate every Nth checkpoint")
+    ap.add_argument("--run-dir", default=None, metavar="PATH",
+                    help="read/write this run directory instead of runs/general_rl "
+                         "(e.g. re-score an archived run without moving it)")
     args = ap.parse_args()
+
+    # Rebound before anything reads it: _scan_checkpoints and _export_from
+    # resolve the module global, so this redirects checkpoints, tensorboard
+    # logs and best_model together rather than half of them.
+    global RUN_DIR
+    if args.run_dir:
+        RUN_DIR = Path(args.run_dir).resolve()
+        print(f"run dir: {RUN_DIR}")
 
     params = load_params()
     cfg = _load_rl_config(args.config)

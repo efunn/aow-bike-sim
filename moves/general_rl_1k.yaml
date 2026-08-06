@@ -1,0 +1,21 @@
+name: general_rl
+type: rl
+kind: general
+policy_file: general_rl_1k.npz
+control_rate_hz: 50
+v_max: 1.2
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 6000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 7.036736378029929e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.816
+    vel_err: 0.163
+    head_err_deg: 3.1
+    n_eval: 12
+  exported_from: best_model.zip

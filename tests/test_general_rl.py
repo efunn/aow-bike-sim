@@ -225,6 +225,76 @@ def test_eval_cmds_scale_with_v_max():
     assert max(abs(v) for v, _, _ in eval_cmds(0.6)) == pytest.approx(0.6)
 
 
+def test_eval_grid_is_mirrored():
+    """The grid must exercise both turn directions and both crab directions.
+    It used to only ever turn right and crab left, so a one-handed policy
+    scored flawlessly and snapshot selection could not see the asymmetry."""
+    pytest.importorskip("stable_baselines3")
+    from aow_sim.train_general_rl import _is_self_mirror, _mirror, _mirrored_grid
+
+    grid = _mirrored_grid()
+    assert len(grid) == len(set(grid)), "duplicate commands in the eval grid"
+    for c in grid:
+        if not _is_self_mirror(c):
+            assert _mirror(c) in grid, f"{c} has no mirror in the grid"
+    # both signs actually present, not just self-mirror rows
+    assert any(d < 0 for _, _, d in grid) and any(d > 0 for _, _, d in grid)
+    assert any(b < 0 for _, b, _ in grid) and any(b > 0 for _, b, _ in grid)
+    # +-180 wraps to the same psi_err, so it cannot measure handedness; the
+    # directional large turn does.
+    assert (0.0, 0.0, 170.0) in grid and (0.0, 0.0, -170.0) in grid
+    assert _is_self_mirror((0.0, 0.0, 180.0))
+
+
+def test_score_penalises_an_abandoned_command():
+    """Geometric mean, not arithmetic: a policy that gives up on one command
+    (e.g. refuses to reverse) must not hide behind the ones it does well."""
+    pytest.importorskip("stable_baselines3")
+    from aow_sim.train_general_rl import _score
+
+    uniform = {"survive_rate": 1.0, "track": 0.8, "track_geo": 0.8}
+    assert _score(uniform) == pytest.approx(0.8)
+
+    # Ten commands done well, two abandoned. The arithmetic mean barely
+    # notices (0.8 -> 0.67); the geometric mean collapses (0.8 -> 0.26).
+    import numpy as np
+    abandoned = [0.8] * 10 + [0.0, 0.0]
+    geo = lambda t: float(np.exp(np.mean(np.log(np.clip(t, 1e-3, 1.0)))))
+    arith, g = float(np.mean(abandoned)), geo(abandoned)
+    assert arith > 0.65, "arithmetic mean is what let this hide"
+    assert g < 0.5 * arith, "geometric mean must not let it hide"
+    assert _score({"survive_rate": 1.0, "track": arith, "track_geo": g}) < 0.3
+
+    # metrics dicts written before track_geo existed still score
+    assert _score({"survive_rate": 0.5, "track": 0.6}) == pytest.approx(0.3)
+
+
+def test_behaviour_metrics_report_both_speed_directions():
+    """A policy good at reverse but sluggish forward must be as visible as the
+    reverse-refusing one -- a single 'reverse speed' number would reward
+    exactly the failure mode being hunted."""
+    pytest.importorskip("stable_baselines3")
+    from aow_sim.train_general_rl import _behaviour_metrics
+
+    def row(cmd, v_ach, t_head=1.0, drift=0.0, steer=0.0):
+        return {"cmd": cmd, "v_ach": v_ach, "t_head_s": t_head, "drift_m": drift,
+                "steer_deg": steer, "track": 0.5, "fell": False,
+                "vel_err": 0.0, "head_err_deg": 0.0, "steps": 750}
+
+    m = _behaviour_metrics([
+        row((0.0, 0.0, 0), 0.0, drift=1.4, steer=12.0),   # hold station
+        row((0.8, 0.0, 0), 0.2),                          # forward: sluggish
+        row((-0.5, 0.0, 0), -0.5),                        # reverse: on target
+        row((0.0, 0.0, 90), 0.0, t_head=2.0),             # right turn: quick
+        row((0.0, 0.0, -90), 0.0, t_head=6.0),            # left turn: slow
+    ])
+    assert m["speed_ratio_fwd"] == pytest.approx(0.25)
+    assert m["speed_ratio_rev"] == pytest.approx(1.0)
+    assert m["drift_m"] == pytest.approx(1.4)
+    assert m["steer_rest_deg"] == pytest.approx(12.0)
+    assert m["turn_asym"] == pytest.approx((6.0 - 2.0) / 6.0, abs=1e-3)  # 3dp
+
+
 def test_plot_command_branch_is_non_directional():
     """A heading command is only meaningful mod 2*pi (the policy sees
     sin/cos of the error), so a 180 deg snap is deliberately non-directional.

@@ -58,7 +58,7 @@ flips. A policy that avoids reverse has learned something true about the plant.
 
 ### Candidate fixes, cheapest first
 
-1. **Per-command eval breakdown** (see §2) — before changing any reward,
+1. **Per-command eval breakdown** (see §3) — before changing any reward,
    find out whether the whole run refuses reverse or only the 6M snapshot.
 2. **Score per-command competence**, not a blended mean: e.g. `min` over
    commands, or `survive × track × (worst-command track / mean track)`. Stops
@@ -74,7 +74,172 @@ flips. A policy that avoids reverse has learned something true about the plant.
    already exists (`,` toggles). **[speculative]** but a legitimate answer if
    reverse balance turns out to be genuinely marginal in this plant.
 
-## 2. Eval and snapshot selection
+## 2. Behaviour the objective does not pin down
+
+Three policies, identical reward and curriculum, differing only in parallelism
+and batch size, scored the same and drive visibly differently:
+
+| | (1) `general_rl_og` 8x2048 | (2) `general_rl` 32x512 | (3) `general_rl_1k` +batch 1024 |
+|---|---|---|---|
+| steer at rest | offset to one side | offset to one side | ~straight |
+| zero command | drifts toward the front wheel | drifts toward the front wheel | drifts backwards |
+| turn handedness | fast both ways | strongly prefers one | — |
+| reverse | ok | refuses | good |
+| 180 deg | fast | fast | slower |
+
+**Attribution caveat**: n = 1 per config, and `n_envs` changes the per-env
+seeds (`seed + i`), so the hyperparameter and the random seed are confounded —
+these differences are as consistent with run-to-run variance as with batch
+size. Any claim that a hyperparameter caused a behaviour needs 2-3 seeds per
+arm. What the comparison *does* establish is that **metric variance is low
+while behaviour variance is high**: the score does not span what the operator
+cares about. Four concrete gaps.
+
+### 2.1 The eval never turns left **[measured]**
+
+`_EVAL_CMDS` has 12 commands whose heading steps are `{0, +45, +90, +180}` and
+whose lateral commands are `{0, +0.33}` — **not one negative heading step and
+not one left crab**. A policy that turns beautifully one way and badly the
+other scores a flawless eval, which is exactly observation (2). Snapshot
+selection cannot see handedness, so it never selects against it.
+
+Fix: mirror the grid — add the sign-flipped twin of every asymmetric command
+(~20 commands total). Cheap, and it makes handedness both visible and
+selectable-against. Note `+180` is its own mirror in heading terms but not in
+*execution*, so the direction the policy chooses to rotate is still worth
+recording.
+
+### 2.2 Steer angle at rest is free **[measured]**
+
+The action is steer *rate*, and the only action costs are `w_effort: 0.001`
+and `w_smooth: 0.005` — both on the action, not the state. Once the wheel is
+cocked, holding it there costs exactly zero. Nothing in the reward prefers a
+centred wheel, so "wheel offset at rest" is an entire family of equally
+optimal policies. Fix: a small penalty on `|steer|` (or on `|steer|` gated to
+near-zero velocity commands), and report steer-at-rest as an eval metric.
+
+### 2.3 Slow drift is nearly free **[measured]**
+
+`sigma_v: 0.35` is generous near zero: drifting at 0.15 m/s against a
+"hold station" command still collects `exp(-(0.15/0.35)^2) = 83%` of the
+velocity reward, while wandering >2 m over a 15 s episode. To a rider that is
+a broken stationary hold; to the objective it is a rounding error. And because
+the command is a *velocity* vector there is no position term anywhere — drift
+is only ever penalised through its (small) velocity error.
+
+Fix options: a station-keeping term on displacement when `|v_cmd| ~ 0`; or
+scale `sigma_v` with `|v_cmd|` so tolerance is relative rather than absolute;
+or at minimum measure drift in the eval.
+
+### 2.4 The plant is mirror-symmetric, so handedness is an artifact **[measured]**
+
+`axle_cant_deg: 0.0` ("axles are purely tangential") and each axle carries two
+truncated cones mirrored about the wheel mid-plane, so the AOW as modelled has
+no chirality; the randomization draws are symmetric too. There is therefore no
+physical reason for a left/right preference in sim — it is learned symmetry
+breaking, and mirror augmentation (reflect obs and action about the sagittal
+plane) is a *valid* structural fix rather than a bias. Worth confirming the
+real wheel has no handedness the model omits before relying on it.
+
+### 2.5 Behavioural metrics worth adding to the eval
+
+The four things the operator noticed are all measurable, and none are
+currently measured:
+
+- zero-command drift [m over 15 s]
+- mean `|steer|` at rest [deg]
+- left-vs-right completion time for the same turn [ratio]
+- achieved-vs-commanded speed in reverse [m/s]
+
+Turning teleop impressions into eval columns is what would let snapshot
+selection choose the bike you actually want, instead of the one with the best
+blended mean.
+
+**SHIPPED 2026-08-06** — grid mirrored (12 → 20 commands, plus directional
+`±170` since `±180` wraps and cannot express handedness), per-command table,
+all four behavioural metrics, and a geometric-mean score. Measurement only:
+`general_env.py` untouched. Measured on the two exported policies:
+
+| | `general_rl` (2) | `general_rl_og` (1) |
+|---|---|---|
+| `speed_ratio_fwd` | 1.04 | 1.18 |
+| `speed_ratio_rev` | **0.00** | 1.18 |
+| `turn_asym` | 0.316 | 0.337 |
+| `drift_m` | 1.34 | 2.30 |
+| `steer_rest_deg` | **53.5** | 21.9 |
+
+Every teleop impression is now a number: the reverse refusal reads 0.00
+(commanded −0.5 m/s, achieved +0.03), and the cocked wheel reads 53.5°.
+
+### 2.6 The geometric mean does NOT fix reverse **[measured]**
+
+The plan assumed a geometric mean would penalise the reverse refusal. It does
+not, and the reason matters: `track = ½(r_vel + r_head)`, so a policy that
+ignores a velocity command while holding heading perfectly still scores
+**~0.5**, not ~0. The geometric mean only bites when a command approaches
+zero, which needs *both* terms to fail.
+
+Measured: refusing both reverse commands moved the score 0.765 → 0.754.
+Meanwhile `general_rl_og`, which reverses correctly, **fell** on the
+turn-at-speed command (track 0.001) and dropped 0.694 → 0.522. So the new
+score works exactly as designed for falls and hard failures — and under it the
+reverse-refusing policy still wins, 0.754 to 0.522.
+
+The mechanism is sound; the assumption that `track` bottoms out for an ignored
+command was wrong. To make *selection* prefer a reversing policy, one of:
+
+1. score the velocity component per command (geometric mean of `r_vel`), so an
+   ignored velocity command really does approach zero — keeps behavioural
+   metrics out of the score, smallest change;
+2. admit `speed_ratio_fwd`/`speed_ratio_rev` into the score, reversing the
+   diagnostic-only decision;
+3. fix the reward instead (§1), and let the eval keep score honestly.
+
+### 2.7 The last 4M steps make the policy worse **[measured]**
+
+Scanning all 20 checkpoints of `general_rl_1k` against the new eval, alongside
+`train/std` and `curriculum/difficulty` from its tensorboard log:
+
+| step | difficulty | `train/std` | fwd | steer_rest | score |
+|---|---|---|---|---|---|
+| 1.6M | 0.71 | 0.561 | 0.64 | 9.7° | 0.618 |
+| 3.1M | 1.00 | **0.551** | 0.89 | 7.7° | 0.772 |
+| 4.6M | 1.00 | 0.565 | **0.93** | 5.3° | 0.793 |
+| 6.1M | 1.00 | 0.644 | 0.90 | **4.6°** | **0.798** |
+| 7.6M | 1.00 | 0.680 | 0.74 | 16.1° | 0.747 |
+| 9.6M | 1.00 | 0.731 | 0.67 | **24.1°** | 0.717 |
+
+The curriculum saturates at **3.21M** (all 32 envs at 1.0). Action `std`
+bottoms out right there at 0.551 — and then *inflates* to 0.731, a 33% rise,
+with entropy climbing to match. That is entropy **expansion**, not collapse:
+`ent_coef: 0.005` keeps pushing exploration up, and once difficulty stops
+rising at 3.2M nothing pushes back.
+
+Everything downstream tracks it. Forward speed falls 0.93 → 0.67 and the
+resting steer offset explodes 4.6° → 24.1° over the same span. Causation is not
+proven, but the mechanism is plausible and specific: PPO optimises expected
+return *under its own action noise*, so an inflating `std` moves the optimal
+mean — and the parameters that drift furthest are the ones with no gradient
+holding them, which is exactly the free steer angle of §2.2.
+
+Practical consequences:
+
+- **`total_timesteps: 10000000` is ~4M too long for this config.** The run
+  peaks at 4.6-6.1M. Stopping there is both a better policy and ~35 minutes off
+  a 90-minute run.
+- Snapshot selection earned its keep: the export came from `best_model.zip` at
+  **6.0M**, the peak. The final-weights policy would have scored 0.717 vs 0.798.
+- If longer runs are wanted, decay the exploration pressure rather than
+  extending it — SB3 takes `learning_rate` and `clip_range` as callables (a
+  linear decay is a one-liner); `ent_coef` is a plain float and would need a
+  small callback to anneal after the curriculum saturates.
+
+Also visible across all 20 checkpoints: `turn_asym` sits at 0.21-0.39 with no
+trend for the whole run. Handedness never improves because nothing ever
+penalises it (§2.4), and `speed_ratio_rev` is healthy (0.88-1.21) from 1.1M
+onward — this run never had run (2)'s reverse pathology.
+
+## 3. Eval and snapshot selection
 
 - **Per-command breakdown in `_eval_episodes`** **[measured gap]**. It
   aggregates 12 commands into four means, so two totally failed commands hide
@@ -98,7 +263,7 @@ flips. A policy that avoids reverse has learned something true about the plant.
   any hyperparameter change helped, run 2-3 seeds — the reverse/heading trade
   above could plausibly be seed noise rather than a systematic effect.
 
-## 3. Curriculum
+## 4. Curriculum
 
 - **It is per-env, not global** **[measured]**. Each `SubprocVecEnv` worker
   holds its own `_diff` and advances it on its own episode outcomes, so 32
@@ -115,7 +280,7 @@ flips. A policy that avoids reverse has learned something true about the plant.
   outcomes rather than a single episode); allow regression; drive difficulty
   from the periodic eval score instead of per-episode score. **[speculative]**
 
-## 4. Resume correctness
+## 5. Resume correctness
 
 *(Both known resume bugs are now fixed — the lexicographic checkpoint sort that
 picked `ppo_900000` over `ppo_5000000`, and the `VecNormalize` pairing below.
@@ -143,7 +308,7 @@ Resuming a 1.2M-step run with the config's 10M targets 11.2M.
 *(The lexicographic checkpoint sort that made `--resume` pick `ppo_900000`
 over `ppo_5000000` is fixed as of `c958ba4`.)*
 
-## 5. Throughput — mostly closed
+## 6. Throughput — mostly closed
 
 Measured on the remote box (Threadripper 2950X, 16C/32T, no CPU quota):
 
@@ -193,7 +358,7 @@ Tools: `scripts/bench_collect.py` (env scaling sweep) and
 `scripts/bench_update.py` (gradient-phase timing). `scripts/rl.sh eta` reports
 device, throughput, and projected finish from a live run's log.
 
-## 6. Measurement hygiene (learned the hard way)
+## 7. Measurement hygiene (learned the hard way)
 
 - **Benchmark on an idle box.** Both bench scripts write nothing, so they
   can't corrupt a run — but a run corrupts *them*. Timings taken beside live
@@ -215,7 +380,7 @@ device, throughput, and projected finish from a live run's log.
   or archive the dir (~25 MB). Tensorboard logs are safe — one `PPO_<n>/` per
   run. A `--run-dir` flag would remove the hazard entirely. **[speculative]**
 
-## 7. Not investigated
+## 8. Not investigated
 
 - **`gamma: 0.99` at 50 Hz = 2.0 s lookahead vs `resample_s: [1.5, 4.0]`**
   — the discount horizon and the command hold time are the same order, so the
