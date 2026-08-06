@@ -9,7 +9,7 @@ algo:
   n_envs: 32    # was 8
   learning_rate: 3.0e-4
   n_steps: 512 # was 2048  -> 32 x 512 = 16384, unchanged
-  batch_size: 256
+  batch_size: 1024
   n_epochs: 10
   # gamma at 50 Hz: 1/(1-g) = 100 steps = 2.0 s of lookahead, which matches
   # the timescale of a heading change. THE MOVES' 0.99 AT 200 Hz IS ONLY
@@ -22,7 +22,7 @@ algo:
   ent_coef: 0.005        # ball_rl's lesson: 0.0 collapsed exploration
   net_arch: [128, 128]
   seed: 0
-  eval_every: 200000     # BestByScore cadence [timesteps]
+  eval_every: 1000000     # BestByScore cadence [timesteps]
 
 env:
   action_space: full

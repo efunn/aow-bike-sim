@@ -302,13 +302,16 @@ def main() -> None:
     ap.add_argument("--teleop", action="store_true")
     ap.add_argument("--hockey", action="store_true",
                     help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
+    ap.add_argument("--general", default=None, metavar="NAME",
+                    help="always-on policy to drive with (moves/NAME.{yaml,npz}); "
+                         "overrides control.general_move for this session")
     args = ap.parse_args()
     params = load_params(args.params)
     model = build_model(params, variant="full", hockey=args.hockey)
     eq = settle_upright(model)
 
     if args.teleop:
-        _teleop(model, params, eq.qpos, hockey=args.hockey)
+        _teleop(model, params, eq.qpos, hockey=args.hockey, general=args.general)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey)
@@ -727,9 +730,12 @@ def _reset_ball(model, data, params):
     data.qvel[v:v + 6] = 0.0
 
 
-def _teleop(model, params, eq_qpos, hockey=False):
+def _teleop(model, params, eq_qpos, hockey=False, general=None):
     from .interactive import teleop_loop
 
+    # Which always-on policy to drive with: --general wins, else the config's
+    # control.general_move, else the trainer's default export name.
+    gen_name = general or params["control"].get("general_move", "general_rl")
     data = _fresh(model, eq_qpos)
     c = DriveController(params, model)
     c.reset(model, data)
@@ -768,11 +774,11 @@ def _teleop(model, params, eq_qpos, hockey=False):
         intent) if there is no usable policy, so the caller falls back to the
         analytic controller instead of retrying every step."""
         try:
-            c.engage_general(d, name="general_rl")
+            c.engage_general(d, name=gen_name)
         except FileNotFoundError:
             state["want_general"] = False
             if not quiet:
-                print("no moves/general_rl.yaml — using the analytic "
+                print(f"no moves/{gen_name}.yaml — using the analytic "
                       "controller (train with `python -m "
                       "aow_sim.train_general_rl`)")
             return False

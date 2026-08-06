@@ -151,6 +151,11 @@ control:
   # Balance controller settings (tuning knobs, not measurements).
   rate_hz: 200          # controller update rate; zero-order hold between updates
   moves_dir: moves      # optimized maneuver files (moves/<name>.yaml); see optimize_flick.py
+  general_move: general_rl   # which always-on policy teleop drives with, as
+                        #   moves/<name>.{yaml,npz}. Point it at a second
+                        #   export (e.g. general_rl_prev) to A/B two trained
+                        #   policies without renaming files; `run_drive
+                        #   --general NAME` overrides it for one session.
   pd:                   # PD cascade (rear crawl only, steer held straight)
     roll_kp: 6.0        # lateral contact velocity [m/s] per rad of roll
     roll_kd: 1.2        # ... per rad/s of roll rate
