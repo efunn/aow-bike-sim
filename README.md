@@ -113,6 +113,12 @@ step-change commands and a command curriculum; replay automatically holds each
 action for the right number of controller ticks. See
 [general_spec.py](src/aow_sim/control/general_spec.py) for the contract.
 
+Which policy teleop drives with is `control.general_move` in
+`config/bike_params.yaml` (default `general_rl`), overridden per session by
+`run_drive --general NAME`. The name selects `moves/NAME.yaml`, whose
+`policy_file:` field points at the weights — so two move files can share one
+`.npz`, and comparing exports never means renaming anything.
+
 All three trainers share a CLI. Training is not monotonic, so each keeps the
 best-scoring snapshot from a periodic deterministic eval and exports *that*
 rather than whatever the last update produced:
@@ -128,6 +134,26 @@ rather than whatever the last update produced:
 
 Watch learning curves with `tensorboard --logdir runs/<move>`. Hyperparameters,
 reward weights, and domain randomization live in `config/rl_<move>.yaml`.
+
+Banking a mid-run policy — score the checkpoints, export the one you want under
+its own name, then compare them headless or side by side in teleop:
+
+```sh
+python -m aow_sim.train_general_rl --scan-checkpoints              # score them all
+python -m aow_sim.train_general_rl --export-from 8000000 \
+    --export-name general_rl_8m                                    # -> moves/general_rl_8m.{yaml,npz}
+python -m aow_sim.rollout_move general_rl_8m --out traces/         # CSV + PNG
+mjpython -m aow_sim.run_drive --teleop --general general_rl_8m     # drive it
+```
+
+**Checkpoints do not survive the next run.** A fresh run restarts the step
+counter, so it overwrites `runs/<move>/checkpoints/ppo_<steps>_steps.zip` as it
+passes each mark, and `best_model.zip` is replaced at its first eval. Only
+checkpoints *beyond* where the new run reaches survive — mixed in with the new
+ones, which makes `--scan-checkpoints` compare two different lineages. Export
+what you want to `moves/` first (as above), or archive the whole run:
+`cp -a runs/general_rl runs/general_rl.$(date +%F)`. Tensorboard logs are safe:
+each run gets its own `PPO_<n>/` subdirectory.
 
 ## Inspecting a move
 

@@ -85,6 +85,37 @@ def _make_vecenv(params, cfg, n_envs, seed):
     ])
 
 
+def _resume_vecnormalize(venv, resume: bool, ckpts: list[Path], vn_path: Path):
+    """Wrap `venv` in VecNormalize, restoring stats that MATCH the checkpoint
+    being resumed from.
+
+    CheckpointCallback(save_vecnormalize=True) writes a paired
+    ppo_vecnormalize_<steps>.pkl beside every checkpoint. The top-level
+    vecnormalize.pkl is only written once learn() returns, so it is missing
+    after a killed run and stale after an earlier, longer one -- either way
+    the wrong file to pair with the newest checkpoint. Stats that disagree
+    with the weights mean the policy is fed a different observation
+    distribution than it trained on until the running stats recover.
+    """
+    src = None
+    if resume:
+        if ckpts:
+            p = ckpts[-1].with_name(ckpts[-1].name
+                                    .replace("ppo_", "ppo_vecnormalize_")
+                                    .replace(".zip", ".pkl"))
+            src = p if p.exists() else None
+        if src is None and vn_path.exists():
+            src = vn_path                  # end-of-run stats: better than none
+    if src is not None:
+        print(f"resumed obs/reward stats from {src.name}")
+        return VecNormalize.load(str(src), venv)
+    if resume:
+        print("WARNING: no VecNormalize stats to resume from — trained weights "
+              "will run on unnormalized observations until the running stats "
+              "recover")
+    return VecNormalize(venv, norm_obs=True, norm_reward=True, clip_obs=10.0)
+
+
 def _eval_episodes(env, act_fn, cmds):
     """One episode per command point; aggregate metrics. The eval env has
     randomization disabled, so repeating a command adds nothing."""
@@ -366,19 +397,17 @@ def main():
         return
 
     venv = _make_vecenv(params, cfg, a["n_envs"], a["seed"])
-    vn_path = RUN_DIR / "vecnormalize.pkl"
-    if args.resume and vn_path.exists():
-        venv = VecNormalize.load(str(vn_path), venv)
-    else:
-        venv = VecNormalize(venv, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
-    policy_kwargs = dict(net_arch=list(a["net_arch"]), activation_fn=torch.nn.Tanh)
     # Numeric key, as in _scan_checkpoints: a plain sorted() is lexicographic,
     # which puts ppo_900000_steps last and silently resumes millions of steps
     # back. Globbing ppo_*_steps.zip also skips any stray zip in the dir.
     last_ckpt = (sorted(ckpt.glob("ppo_*_steps.zip"),
                         key=lambda p: int(p.stem.split("_")[1]))
                  if ckpt.exists() else [])
+    vn_path = RUN_DIR / "vecnormalize.pkl"       # save target, written at the end
+    venv = _resume_vecnormalize(venv, args.resume, last_ckpt, vn_path)
+
+    policy_kwargs = dict(net_arch=list(a["net_arch"]), activation_fn=torch.nn.Tanh)
     if args.resume and last_ckpt:
         model = PPO.load(str(last_ckpt[-1]), env=venv)
         print(f"resumed from {last_ckpt[-1].name}")
