@@ -6,9 +6,12 @@ this box" from the update and eval phases that also sit in a training rollout.
   python scripts/bench_collect.py --envs 8,16,32 --steps 32768
 
 Writes nothing: it builds envs the same way train_general_rl._make_vecenv does,
-steps them with random actions, and reports steps/s. Safe to run alongside a
-training run, though the two will compete for cores -- read it as a comparison
-between rows, not as an absolute.
+steps them with random actions, and reports steps/s.
+
+RUN THIS ON AN IDLE BOX. It cannot corrupt a training run -- but a training
+run will corrupt it. Every row here is a claim about how many cores N workers
+can keep busy, which is meaningless while n_envs other workers are already
+holding those cores; the numbers come back low, noisy, and non-monotonic.
 """
 
 from __future__ import annotations

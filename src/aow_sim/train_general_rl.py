@@ -158,6 +158,28 @@ class BestByScore(BaseCallback):
         return True
 
 
+class DifficultyLog(BaseCallback):
+    """Log the curriculum level, so a dip in ep_len_mean can be read as either
+    'the policy got worse' or 'the task got harder' -- opposite conclusions
+    from the same curve.
+
+    Each SubprocVecEnv worker owns its own `_diff` counter and advances it on
+    its own episode outcomes (GeneralEnv._advance_curriculum), so there is no
+    single global level; min/max show how far the 32 envs have drifted apart.
+    Difficulty moves by at most 0.02 per episode end, so recording the value
+    seen at dump time rather than a running mean loses nothing.
+    """
+
+    def _on_step(self) -> bool:
+        d = [i["difficulty"] for i in self.locals.get("infos", ())
+             if "difficulty" in i]
+        if d:
+            self.logger.record("curriculum/difficulty", float(np.mean(d)))
+            self.logger.record("curriculum/difficulty_min", float(np.min(d)))
+            self.logger.record("curriculum/difficulty_max", float(np.max(d)))
+        return True
+
+
 def _export(model, vecnorm, cfg, path_npz: Path):
     """Pull the deterministic policy MLP + VecNormalize obs stats out of SB3
     and save as a numpy .npz (see control/policy.py for the replay side)."""
@@ -373,7 +395,8 @@ def main():
                              save_vecnormalize=True),
           BestByScore(params, cfg,
                       eval_freq=max(1, a.get("eval_every", 200_000) // a["n_envs"]),
-                      save_path=RUN_DIR, verbose=1)]
+                      save_path=RUN_DIR, verbose=1),
+          DifficultyLog()]
     total = args.timesteps or a["total_timesteps"]
     model.learn(total_timesteps=total, callback=cb,
                 reset_num_timesteps=not args.resume, progress_bar=True)

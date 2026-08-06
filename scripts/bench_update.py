@@ -6,8 +6,14 @@ collection, single-process, while all n_envs workers sit idle.
 
 Two [128,128] nets (pi + vf) and Adam over an n_steps x n_envs buffer, which
 is the shape of what SB3 does; it is not SB3's actual loss, so read it as an
-upper bound on how fast that phase could possibly go on this box. Touches no
-files and no env, so it is safe to run beside a training run.
+upper bound on how fast that phase could possibly go on this box.
+
+RUN THIS ON AN IDLE BOX. It writes nothing, so it cannot corrupt a training
+run -- but a training run will corrupt IT. This is single-threaded-ish work
+competing against n_envs MuJoCo workers, and measuring it beside a live run
+yields numbers that are 2-8x too slow and noisy enough to be non-monotonic
+across a thread sweep. (In situ the real update phase does NOT suffer this:
+the workers are all blocked at the barrier while it runs.)
 """
 
 from __future__ import annotations
