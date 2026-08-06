@@ -11,6 +11,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Everything the BIKE needs and nothing else. The base `dependencies` above
+# include mujoco and scipy for the simulator; the Pi runs the controllers, not
+# the simulator, and must not install either (see docs/plans/untethered-setup.md
+# and tests/test_hw_no_mujoco.py, which enforces the import boundary).
+#
+# Because `dependencies` is unconditional, installing this on the Pi is a
+# two-step -- `pip install --no-deps -e .` for the package itself, then this
+# extra for the runtime. Recorded here so the list lives in one place.
+onboard = [
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+    "pyserial>=3.5",        # TM151 UART
+    "dynamixel-sdk>=3.8",   # needs >=3.8 for GroupSyncRead.fastSyncRead()
+]
 # matplotlib is in `dev` (not just `viz`) because plotting is part of the
 # normal inspection loop: rollout_move --out and the trainers' --trace both
 # write a PNG beside the CSV, and silently getting only the CSV is a

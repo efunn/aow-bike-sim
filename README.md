@@ -154,6 +154,9 @@ and marks each command change on the plot.
 - `config/rl_*.yaml` — per-move RL training configs (algo/env/reward/randomization).
 - `src/aow_sim/` — parametric model builder (`mjSpec`), procedural contact
   meshes, viewer, runners, offline optimizers/trainers.
+- `src/aow_sim/hw/` — the onboard stack for the physical bike (servo bus, AHRS,
+  velocity estimation, control loop). Imports **without MuJoCo, scipy or
+  torch** — see `docs/plans/untethered-setup.md`.
 - `src/aow_sim/control/` — controllers (`balance`, `pivot`, `drive`), the
   multi-turn steering frame (`steer.py`, incl. the XC330 extended-position
   contract), and one `*_spec.py` + `*_env.py` per RL move — the spec is the
@@ -168,5 +171,7 @@ and marks each command change on the plot.
 - `docs/measurements/omni-wheel-protocol.md` — what to measure and how,
   including the testbed calibration experiments.
 - `docs/plans/mujoco-modeling-decisions.md` — why the model is built this way.
+- `docs/plans/untethered-setup.md` — the physical bike: parts, power, onboard
+  architecture, Pi setup and deployment, bring-up order.
 - `tests/` — compilation, coupling-ratio, envelope, and behavior tests.
 - `traces/` — diagnostics and plots for RL policies (gitignored).

@@ -599,6 +599,139 @@ a fresh anchor.
 - **Servo IDs** — `hw/dynamixel.py` assumes drive_a=1, drive_b=2, steer=3. Set
   them with ROBOTIS Wizard before first run.
 
+## Pi setup and deployment
+
+**Never develop on the Pi.** It has no MuJoCo, so most of the test suite cannot
+run there by design. The split:
+
+| laptop | Pi |
+|---|---|
+| edit, train, `pytest`, `export_deploy` | run `hw.run_bike`, nothing else |
+| MuJoCo + scipy + torch | numpy + pyyaml + pyserial + dynamixel-sdk |
+
+### 1. Image the card headless — no monitor, no keyboard
+
+Raspberry Pi Imager, **Raspberry Pi OS Lite (64-bit)** — Lite because there is
+no display and the desktop only costs RAM. Before writing, open the gear /
+"Edit settings" pane and set hostname (`aowbike`), your SSH **public key**
+(not a password), WiFi SSID/password, and locale. These are baked into the
+image, so first boot comes up on the network with SSH already listening:
+
+```sh
+ssh pi@aowbike.local
+```
+
+64-bit matters: `dynamixel-sdk` and numpy both ship aarch64 wheels, so nothing
+has to compile on a 1 GHz A53.
+
+### 2. OS configuration — three things, each a silent failure if skipped
+
+**a. Free the GPIO UART.** Linux claims it for a serial console, which is
+exactly the port the TM151 needs. In `/boot/firmware/config.txt`:
+
+```
+enable_uart=1
+dtoverlay=disable-bt
+```
+
+`disable-bt` moves the capable PL011 UART to the GPIO pins (the Pi's
+`/dev/serial0` is otherwise the weaker mini-UART, whose baud is tied to the
+core clock and drifts). Then remove `console=serial0,115200` from
+`/boot/firmware/cmdline.txt`, and:
+
+```sh
+sudo systemctl disable --now serial-getty@ttyAMA0.service
+```
+
+**b. `latency_timer=1` for the U2D2.** The `ftdi_sio` default is 16 ms, which
+caps the control loop at ~30 Hz no matter the baud. As a udev rule so it
+survives reboots and re-plugs:
+
+```sh
+echo 'ACTION=="add", SUBSYSTEM=="usb-serial", DRIVER=="ftdi_sio", ATTR{latency_timer}="1"' | sudo tee /etc/udev/rules.d/99-u2d2-latency.rules
+```
+
+`assert_low_latency()` checks this at startup and names the fix rather than
+letting the loop silently run slow.
+
+**c. Let the control thread go real-time** without running the whole program
+as root:
+
+```sh
+sudo setcap cap_sys_nice+ep $(readlink -f $(which python3))
+```
+
+Without it `_try_realtime()` warns and continues at normal priority.
+
+### 3. One-time device configuration (done from the laptop, before mounting)
+
+- **Dynamixels**, via DYNAMIXEL Wizard 2.0 over the U2D2: set IDs to 1/2/3
+  (drive A, drive B, steer) and baud to **3 Mbps** on all three. Everything
+  else — operating mode, Return Delay Time, indirect blocks — `ServoBus.open()`
+  sets on every startup, so it is not part of this step.
+- **TM151**, via ImuAssistant: output **230400 baud** (115200 cannot carry
+  200 Hz Combo frames — see `hw/ahrs.py`), output rate 200 Hz, and enable the
+  `Ep_Combo` message.
+
+### 4. Sync the code
+
+`rsync`, not `git` — during bring-up you want the working tree, not commits:
+
+```sh
+rsync -av --delete --exclude .git --exclude runs --exclude traces --exclude '__pycache__' ./ pi@aowbike.local:~/aow-bike-sim/
+```
+
+### 5. Install — `--no-deps` is load-bearing
+
+`pyproject.toml`'s base `dependencies` list mujoco and scipy for the simulator,
+so a plain `pip install -e .` drags both onto the Pi and undoes the whole
+point. On the bike:
+
+```sh
+python3 -m venv ~/venv && source ~/venv/bin/activate
+pip install numpy pyyaml pyserial dynamixel-sdk
+pip install --no-deps -e ~/aow-bike-sim
+```
+
+The runtime list is recorded as the `onboard` extra in `pyproject.toml` so it
+lives in one place. Sanity check that the boundary held:
+
+```sh
+python3 -c "import aow_sim.hw.run_bike; import sys; assert 'mujoco' not in sys.modules; print('clean')"
+```
+
+### 6. Export the bundle (laptop) and ship it
+
+```sh
+python -m aow_sim.export_deploy          # -> deploy/bundle.npz
+rsync -av deploy/ moves/ pi@aowbike.local:~/aow-bike-sim/
+```
+
+Re-run this whenever gains, `bike_params.yaml`, or a policy changes — the
+bundle carries a digest of the params it was built from and `load_bundle`
+refuses a mismatch rather than flying stale gains.
+
+### 7. Run
+
+```sh
+python -m aow_sim.hw.run_bike --bundle deploy/bundle.npz
+```
+
+Bike **on a stand with the wheels clear** until the Verification steps below
+pass. Add `--rate` to try other loop rates; watch `jitter_ms` and `dt_ms` in
+the telemetry.
+
+### 8. Once it works: autostart and a self-hosted network
+
+A `systemd` unit (`Restart=on-failure`, `After=network.target`) makes the bike
+come up balancing on power-on with no laptop. Do this **only after** the
+failsafes are verified — an autostarting balance loop on a bench is a bike
+that throws itself off the bench.
+
+Run `hostapd`/`dnsmasq` so the Pi is its own AP: the command link then never
+depends on house WiFi, and the failsafe never fires because someone's router
+rebooted.
+
 ## Verification
 
 Bench-first. The bike should not attempt to balance untethered until 1–3 pass.
