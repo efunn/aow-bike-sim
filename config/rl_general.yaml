@@ -4,7 +4,7 @@
 
 algo:
   algorithm: PPO
-  total_timesteps: 10000000   # a general controller is a bigger task than a
+  total_timesteps: 6000000    # a general controller is a bigger task than a
                               #   single move; expect to need the full budget
   n_envs: 32    # was 8
   learning_rate: 3.0e-4
