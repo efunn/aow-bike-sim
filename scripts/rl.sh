@@ -138,6 +138,25 @@ start() {
   echo "$log"
 }
 
+# Where the trainer is ACTUALLY writing tensorboard events. `--run-dir`
+# redirects that, and this script passes it straight through to the trainer,
+# so deriving the logdir from the move name alone points the board at an empty
+# directory ("No dashboards are active for the current data set"). The launch
+# argv recorded in the train log is the source of truth. LOGDIR overrides.
+board_logdir() {
+  local move=$1 log rd
+  if [[ -n "${LOGDIR:-}" ]]; then echo "$LOGDIR"; return; fi
+  log="$(run_dir "$move")/logs/train-latest.log"
+  if [[ -f "$log" ]]; then
+    rd="$(sed -n 's/.*--run-dir[= ]\{1,\}\([^ ]*\).*/\1/p' "$log" | head -1)"
+    if [[ -n "$rd" ]]; then
+      [[ "$rd" = /* ]] || rd="$REPO/$rd"
+      echo "$rd"; return
+    fi
+  fi
+  run_dir "$move"
+}
+
 board_url() {
   local ip
   ip="$(hostname -I 2>/dev/null | awk '{print $1}')" || true
@@ -166,9 +185,14 @@ cmd_board() {
     return 0
   fi
   activate_env
+  local dir; dir="$(board_logdir "$move")"
   log="$(start "$move" board tensorboard -- \
-    tensorboard --logdir "$(run_dir "$move")" --bind_all --port "$port")"
+    tensorboard --logdir "$dir" --bind_all --port "$port")"
   echo "tensorboard  -> $(board_url "$port")        <-- port $port"
+  echo "                logdir: $dir"
+  compgen -G "$dir/*/events.out.tfevents.*" >/dev/null 2>&1 ||
+    echo "                NOTE: no event files there yet -- the board will show" \
+         "'No dashboards are active' until the first rollout finishes"
   echo "                or tunnel it: ssh -N -L $port:localhost:$port <this-host>"
   echo "                log: $log     stop: ./scripts/rl.sh stop-board $move"
 }
