@@ -37,6 +37,17 @@ port_for() {
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# Who is listening on a TCP port, if anyone. lsof works on both macOS and
+# Linux; ss is the Linux fallback for containers without lsof.
+port_pids() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti :"$1" -sTCP:LISTEN 2>/dev/null || true
+  elif command -v ss >/dev/null 2>&1; then
+    ss -lptnH "sport = :$1" 2>/dev/null |
+      grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true
+  fi
+}
+
 check_move() {
   [[ -n "${1:-}" ]] || die "usage: $0 $SUB <${MOVES// /|}> [args...]"
   [[ -n "$(port_for "$1")" ]] || die "unknown move '$1' (want: $MOVES)"
@@ -141,6 +152,19 @@ cmd_board() {
     echo "tensorboard  -> already up at $(board_url "$port")  (port $port)"
     return 0
   fi
+  # Someone is on the port but this script has no pidfile for it -- usually a
+  # board that outlived its pidfile (the file is removed as soon as a liveness
+  # check fails, and never restored). Starting a second one just dies with
+  # "could not bind", which reads like a script bug rather than success.
+  local held; held="$(port_pids "$port" | tr "\n" " ")"
+  if [[ -n "${held// /}" ]]; then
+    echo "tensorboard  -> ALREADY SERVING on port $port (pid ${held% })"
+    echo "                $(board_url "$port")  -- try that first; it is probably fine"
+    echo "                untracked by this script, so 'stop-board' cannot see it."
+    echo "                take the port back:  kill ${held% }"
+    echo "                or use another:      PORT=$((port + 1)) $0 board $move"
+    return 0
+  fi
   activate_env
   log="$(start "$move" board tensorboard -- \
     tensorboard --logdir "$(run_dir "$move")" --bind_all --port "$port")"
@@ -169,7 +193,18 @@ cmd_up() {
 stop() {
   local move=$1 kind=$2 mode pid job i
   if ! job="$(running "$move" "$kind")"; then
-    echo "no $kind running for '$move'"; return 0
+    echo "no $kind running for '$move'"
+    # A board can outlive its pidfile (removed the moment a liveness check
+    # fails), and then it is invisible here while still holding the port --
+    # which shows up later as tensorboard "could not bind".
+    if [[ "$kind" == board ]]; then
+      local p held
+      p="${PORT:-$(port_for "$move")}"
+      held="$(port_pids "$p" | tr '\n' ' ')"
+      [[ -n "${held// /}" ]] && echo "  ...but port $p is held by pid ${held% }" \
+        "(untracked) -- kill ${held% } to free it"
+    fi
+    return 0
   fi
   read -r mode pid <<< "$job"
   signal_job TERM "$mode" "$pid"
