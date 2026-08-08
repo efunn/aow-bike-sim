@@ -228,6 +228,76 @@ training_wheels:
   pos_x: 0.06           # forward of rear axle
   clearance: 0.002      # gap above floor when upright, so they never carry standing load
 
+righting:
+  # Self-righting study (build_model(..., righting=True)); see
+  # docs/plans/self-righting.md. NOTHING HERE IS BUILT YET -- this block exists
+  # so that falls can be simulated and candidate geometry compared. Every
+  # dimension is `design` in the "record the intent" sense, not the "we chose
+  # this" sense.
+  #
+  # righting=True does two things regardless of the sub-blocks:
+  #   1. makes the chassis lumps (frame box, servos, AHRS, payload) COLLIDABLE,
+  #      so a fall comes to rest on the parts that would really touch the floor
+  #      instead of sinking through them, and
+  #   2. adds whatever of `bumper` / `arm` is present below.
+  #
+  # Frame for z: metres above the REAR AXLE, like every other chassis-frame
+  # position in this file (the axle sits 51.2 mm off the floor when upright).
+  bumper:
+    # Side geometry that sets the resting attitude: a short capsule pad per
+    # side, sitting just proud of the drive servo it protects.
+    #
+    # The counter-intuitive result from `self_righting.py profile --sweep` and
+    # `rest`: the bare bike ALREADY settles on its side at 90.2 deg roll /
+    # 10.3 deg pitch with zero spread over every fall tried, and every wide or
+    # tall outrigger made that WORSE, not better. Rails at 60-75 mm half-span
+    # and 100-130 mm height give the inverted bike a stable stance and it ends
+    # up on its back roughly a quarter of the time (rest spread 65-115 deg).
+    # A tall narrow rail is a fulcrum, not a stop.
+    #
+    # So the pad is deliberately minimal: barely outboard of the drive servo
+    # (whose outer face is at y = 44.25 mm) and only as long as the servo, so
+    # it takes the load the servo case is currently taking without changing
+    # the energy landscape that already works. Measured spread over the same
+    # eight falls: 0.0 deg, resting at 99.6 deg roll / 10.2 deg pitch, and
+    # independent of the steer angle at the moment of the fall.
+    half_span: {value: 0.046, source: design}   # pad axis; servo face is at 0.04425
+    height: {value: 0.050, source: design}      # pad axis height above the rear axle
+    x_start: {value: 0.026, source: design}     # spans the drive servos (x = 0.045)
+    x_end: {value: 0.064, source: design}
+    radius: {value: 0.006, source: design}
+    mass: {value: 0.010, source: design}        # per side
+  arm:
+    # The righting arm: ONE extra XC330-T181 swinging a single arm through
+    # +-180 deg about a fore/aft axis, so the same arm reaches the floor on
+    # either side (that is what makes one servo enough for a symmetric
+    # mechanism). Angle convention: 0 = stowed pointing straight up; the hinge
+    # axis is body +X, so POSITIVE rotates the arm toward -Y (the bike's
+    # right) -- the same handedness as roll, which is why the arm swings with
+    # sign(roll) to reach the floor the bike is lying on.
+    pivot: {value: [0.09, 0.0, 0.030], source: design}   # chassis-frame hinge
+    length: {value: 0.080, source: design}      # pivot -> foot centre
+    radius: {value: 0.005, source: design}
+    foot_radius: {value: 0.010, source: design}
+    mass: {value: 0.020, source: design}        # arm + foot
+    servo_mass: {value: 0.023, source: datasheet}   # the extra XC330-T181
+    stow_deg: {value: 0.0, source: design}
+    # Reduction between servo and arm. `self_righting.py lift --sweep` says the
+    # stroke needs 0.65-0.75 N.m AT THE ARM for every geometry that gets all
+    # the way up, against an XC330-T181 that is 0.80 N.m at 12 V, 0.76 at the
+    # 3S nominal 11.1 V and ~0.66 at the 9.9 V cutoff. Direct drive is
+    # therefore a coin flip on a half-empty pack. Nothing about the stroke
+    # wants speed -- two seconds is fine -- so the fix is a reduction, and 3:1
+    # is the same ratio the drive belts already use. Set to 1.0 to price
+    # direct drive.
+    gear_ratio: {value: 3.0, source: design}
+    # Position-servo gains for the arm (tuning knobs, not measurements). Much
+    # stiffer than the steer actuator's 2.0 on purpose: the whole point of the
+    # torque study is to see the actuator hit its 0.80 N.m forcerange, and a
+    # soft gain would report "not enough gain" as "not enough torque".
+    servo_kp: 30.0
+    servo_kv: 1.0
+
 hockey:
   # Ball-shot move extras (build_model(..., hockey=True)); see
   # docs/plans/ball-shot-move.md. Physical dims are GUESS placeholders to refine.

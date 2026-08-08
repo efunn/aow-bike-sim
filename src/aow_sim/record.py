@@ -253,7 +253,12 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
     # is rendered yet, because the camera cannot be framed until the path is
     # known, and a fixed camera the bike drives out of is useless.
     marks, fired, states, fell = [], 0, [], False
-    psi_cmd, seg_i, seg_end, pen = psi0, -1, 0.0, "up"
+    # Pen defaults DOWN for the diagnostic scripts. Only a drawing program has
+    # pen choreography; a `crab` or `drive` run wants the trail throughout,
+    # and starting it "up" silently produced no trail at all -- which is the
+    # one thing those recordings exist to show.
+    psi_cmd, seg_i, seg_end = psi0, -1, 0.0
+    pen = "up" if drawing else "down"
     crab_max = float(getattr(c._gen, "v_lat_frac", 0.4)) * v_max if not analytic else 0.0
     while data.time < duration:
         if drawing:

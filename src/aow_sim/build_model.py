@@ -279,6 +279,102 @@ def _add_hockey(spec: mujoco.MjSpec, chassis, p: dict) -> None:
     )
 
 
+def _add_righting(spec: mujoco.MjSpec, chassis, p: dict) -> None:
+    """Self-righting study extras (build_model(..., righting=True)); see
+    docs/plans/self-righting.md and the `righting` block in bike_params.yaml.
+
+    Two side rails that decide what the bike comes to rest on, and one arm on
+    an extra XC330 that swings through +-180 deg so a single servo can push
+    from either side. Both are optional: omit the sub-block to leave it out.
+
+    Note the CALLER is responsible for making the chassis lumps collidable —
+    that is done in build_spec while the lumps are being added, because a fall
+    that sinks through the servos rests on nothing."""
+    rg, sim = p["righting"], p["sim"]
+
+    if "bumper" in rg:
+        b = rg["bumper"]
+        for side, tag in ((1, "left"), (-1, "right")):
+            chassis.add_geom(
+                name=f"bumper_{tag}",
+                type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+                size=[b["radius"], 0, 0],
+                fromto=[b["x_start"], side * b["half_span"], b["height"],
+                        b["x_end"], side * b["half_span"], b["height"]],
+                mass=b["mass"],
+                contype=DYN_CONTYPE,
+                conaffinity=DYN_CONAFF,
+                condim=sim["condim"],
+                friction=_contact_friction(sim),
+                rgba=[0.9, 0.75, 0.2, 1],
+            )
+
+    if "arm" not in rg:
+        return
+    a = rg["arm"]
+    pivot = np.asarray(a["pivot"], dtype=float)
+    # The servo body itself rides on the chassis; only its mass matters here.
+    chassis.add_geom(
+        name="servo_righting",
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=np.array(p["servos"]["xc330_t181"]["box_size"]) / 2,
+        pos=pivot,
+        mass=a["servo_mass"],
+        contype=0,
+        conaffinity=0,
+        rgba=[0.1, 0.1, 0.1, 1],
+    )
+    arm = chassis.add_body(name="righting_arm", pos=pivot)
+    arm.add_joint(  # fore/aft axis: the arm swings in the roll plane
+        name="righting_joint", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[1, 0, 0]
+    )
+    # Stowed at 0 = straight up, so the arm is out of the way of the ground and
+    # of the hockey stick panels; +-1 rad reaches down to either side.
+    arm.add_geom(
+        name="righting_arm",
+        type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+        size=[a["radius"], 0, 0],
+        fromto=[0, 0, 0, 0, 0, a["length"]],
+        mass=a["mass"] * 0.5,
+        contype=DYN_CONTYPE,
+        conaffinity=DYN_CONAFF,
+        condim=sim["condim"],
+        friction=_contact_friction(sim),
+        rgba=[0.85, 0.2, 0.2, 1],
+    )
+    arm.add_geom(
+        name="righting_foot",
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=[a["foot_radius"], 0, 0],
+        pos=[0, 0, a["length"]],
+        mass=a["mass"] * 0.5,
+        contype=DYN_CONTYPE,
+        conaffinity=DYN_CONAFF,
+        condim=sim["condim"],
+        friction=_contact_friction(sim),
+        rgba=[0.85, 0.2, 0.2, 1],
+    )
+    # Torque at the ARM = servo stall x the reduction; the study reports it
+    # back divided by the same ratio, so a sweep can be read against the
+    # servo's datasheet number whatever the gearing.
+    tau = p["servos"]["xc330_t181"]["stall_torque"] * a["gear_ratio"]
+    act = spec.add_actuator(name="righting")
+    act.set_to_position(kp=a["servo_kp"] * a["gear_ratio"],
+                        kv=a["servo_kv"] * a["gear_ratio"])
+    act.trntype = mujoco.mjtTrn.mjTRN_JOINT
+    act.target = "righting_joint"
+    act.forcerange = [-tau, tau]
+
+    for stype, suffix in (
+        (mujoco.mjtSensor.mjSENS_JOINTPOS, "pos"),
+        (mujoco.mjtSensor.mjSENS_JOINTVEL, "vel"),
+    ):
+        s = spec.add_sensor(name=f"righting_{suffix}")
+        s.type = stype
+        s.objtype = mujoco.mjtObj.mjOBJ_JOINT
+        s.objname = "righting_joint"
+
+
 def _add_world(spec: mujoco.MjSpec, p: dict) -> None:
     sim = p["sim"]
     spec.worldbody.add_geom(
@@ -308,6 +404,7 @@ def build_spec(
     training_wheels: bool = False,
     hockey: bool = False,
     payload: bool = True,
+    righting: bool = False,
 ) -> mujoco.MjSpec:
     p = params or load_params()
     spec = mujoco.MjSpec()
@@ -341,6 +438,11 @@ def build_spec(
     # Chassis frame: origin at the rear axle center, +X toward the front wheel.
     chassis = spec.worldbody.add_body(name="chassis", pos=[0, 0, r_rear])
     chassis.add_freejoint()
+    # The chassis lumps are inertia primitives, not contact shapes — normally
+    # nothing above the wheels can touch anything, which is exactly right for a
+    # bike that stays upright. A FALLEN bike lands on them, so the righting
+    # study turns them into the outer shell they physically are.
+    shell = ((DYN_CONTYPE, DYN_CONAFF) if righting else (0, 0))
     ch = bike["chassis"]
     chassis.add_geom(
         name="chassis_box",
@@ -348,8 +450,10 @@ def build_spec(
         size=np.array(ch["box_size"]) / 2,
         pos=ch["com_pos"],
         mass=ch["mass"],
-        contype=0,
-        conaffinity=0,
+        contype=shell[0],
+        conaffinity=shell[1],
+        condim=p["sim"]["condim"],
+        friction=_contact_friction(p["sim"]),
         rgba=[0.2, 0.4, 0.7, 0.6],
     )
     lumps = [
@@ -373,8 +477,10 @@ def build_spec(
             size=np.array(part["box_size"]) / 2,
             pos=pos,
             mass=part["mass"],
-            contype=0,
-            conaffinity=0,
+            contype=shell[0],
+            conaffinity=shell[1],
+            condim=p["sim"]["condim"],
+            friction=_contact_friction(p["sim"]),
             rgba=rgba.get(name, [0.1, 0.1, 0.1, 1]),
         )
     chassis.add_site(name="ahrs_site", pos=bike["ahrs"]["pos"])
@@ -472,15 +578,18 @@ def build_spec(
 
     if hockey:
         _add_hockey(spec, chassis, p)
+    if righting:
+        _add_righting(spec, chassis, p)
 
     return spec
 
 
 def build_model(
     params: dict | None = None, variant: str = "full", training_wheels: bool = False,
-    hockey: bool = False, payload: bool = True,
+    hockey: bool = False, payload: bool = True, righting: bool = False,
 ) -> mujoco.MjModel:
-    return build_spec(params, variant, training_wheels, hockey, payload).compile()
+    return build_spec(params, variant, training_wheels, hockey, payload,
+                      righting).compile()
 
 
 def main() -> None:
@@ -492,10 +601,12 @@ def main() -> None:
                     help="add the ball-shot stick panels + road-hockey ball")
     ap.add_argument("--no-payload", action="store_true",
                     help="omit the untethered running gear (battery + electronics)")
+    ap.add_argument("--righting", action="store_true",
+                    help="collidable chassis shell + the self-righting bumpers/arm")
     ap.add_argument("-o", "--output", default=None, help="write MJCF XML here")
     args = ap.parse_args()
     spec = build_spec(load_params(args.params), args.variant, args.training_wheels,
-                      args.hockey, not args.no_payload)
+                      args.hockey, not args.no_payload, args.righting)
     spec.compile()  # validate
     xml = spec.to_xml()
     if args.output:

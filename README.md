@@ -80,6 +80,9 @@ python -m aow_sim.record --script s   # two mirrored arcs; needs a symmetric pol
 python -m aow_sim.record --script t   # crossbar, pen up, reposition, pen down, stem
 ```
 
+(The recorder itself — flags, outputs, why the camera is fixed by default — is
+documented under [Recording a run](#recording-a-run).)
+
 Those drawings are driven through `control/gamepad.py`, a **virtual gamepad**:
 axes in, a velocity vector plus a heading rate out. The keyboard and a future
 controller are two front-ends onto the same mapping, so any shape a script can
@@ -123,6 +126,30 @@ can't wind up and leave the bike spinning after release — heading snaps
 deliberately bypass that clamp. For **velocity**, an arrow is shown in the inner gauge whose full scale is
 `v_max` (orange = commanded, yellow = actual). To control velocity, a fresh press steps the command by
  0.25 m/s, a held command continuously increases/decreases velocity, and the target coasts to zero once you release all buttons. 
+
+## Falling over
+
+Two studies of what happens when balance is lost, and of a possible fourth
+servo to stand the bike back up — see
+[self-righting.md](docs/plans/self-righting.md) for the numbers and the
+recommendation. Nothing is decided; the tools exist to re-sweep the geometry.
+
+```sh
+python analysis/no_return.py                 # the recoverable set in (roll, roll rate)
+python analysis/no_return.py --controller lqr
+python analysis/self_righting.py profile --sweep   # side geometry -> resting attitude
+python analysis/self_righting.py rest              # ...checked against real falls
+python analysis/self_righting.py lift --sweep      # arm length/pivot -> servo torque
+python analysis/self_righting.py sequence          # fall -> right -> hand off -> retract
+```
+
+The headline: there is no tipping *angle* — the boundary is a curve in
+(roll, roll rate) that moves with speed — and from the moment a fall is
+visible the bike is flat in ~0.3 s. Nothing catches that, so the mechanism is
+a righting mechanism, not a catch. `build_model(..., righting=True)` makes the
+chassis lumps collidable and adds the study's bumper pads and arm; it is off
+everywhere else, so training, teleop and deployment see the model they always
+did.
 
 ## Moves
 
@@ -221,6 +248,42 @@ For `general_rl` there is no horizon to replay, so the tool drives a scripted
 sequence of step commands (drive off, turn at speed, stop, reverse, about-face)
 and marks each command change on the plot.
 
+### Recording a run
+
+`rollout_move` gives you numbers; `aow_sim.record` gives you something to look
+at. It renders **offscreen** — no viewer, no `mjpython` — so it runs over ssh
+or on the training box, and writes two artifacts per run: an `.mp4`, and a
+contact-sheet `.png` with one captioned tile per scripted event, so the whole
+run reads as a single still.
+
+```sh
+python -m aow_sim.record --script crab --general general_rl_1k  # crab, or curve?
+python -m aow_sim.record --script drive --analytic              # the LQR instead
+python -m aow_sim.record --script o --camera chase --fps 60
+```
+
+| flag | what it does |
+|---|---|
+| `--script` | `crab` / `drive` diagnose a controller; `o` / `s` / `t` draw letters (see teleop above) |
+| `--general NAME` / `--analytic` | which controller drives |
+| `--camera top\|chase` | fixed world view (default) or locked to the bike |
+| `--distance/--elevation/--azimuth` | framing; `top` auto-fits the distance to the path actually taken |
+| `--out`, `--width/--height/--fps`, `--hockey` | output path, resolution, frame rate, ball scene |
+
+Every frame carries the ground dial (teleop's `2` overlay) plus a **world-frame
+red trail** of where the bike has actually been. The trail is the point: the
+dial is drawn under the bike and travels with it, so it cannot show
+displacement — it was the trail that revealed a commanded "crab" was really a
+long curved drive. The camera defaults to fixed for the same reason, since a
+chase cam pins the bike to the centre of frame and hides exactly what you came
+to see.
+
+The drawing scripts additionally burn in the gamepad input overlay; `crab` and
+`drive` don't, because they are scripted as controller calls rather than pad
+axes, so there are no stick positions to draw.
+
+Needs the `[viz]` extra (`imageio` + `imageio-ffmpeg`) — `[dev]` includes it.
+
 ## Layout
 
 - `config/bike_params.yaml` — physical bike parameters: every measurement,
@@ -229,6 +292,9 @@ and marks each command change on the plot.
 - `config/rl_*.yaml` — per-move RL training configs (algo/env/reward/randomization).
 - `src/aow_sim/` — parametric model builder (`mjSpec`), procedural contact
   meshes, viewer, runners, offline optimizers/trainers.
+- `src/aow_sim/record.py` — offscreen recorder: drives a scripted run and
+  renders it to MP4 + a contact sheet, with the ground dial and a world-frame
+  trail. Needs no viewer, so it works headless — see *Recording a run*.
 - `src/aow_sim/hw/` — the onboard stack for the physical bike (servo bus, AHRS,
   velocity estimation, control loop). Imports **without MuJoCo, scipy or
   torch** — see `docs/plans/untethered-setup.md`.
@@ -241,6 +307,9 @@ and marks each command change on the plot.
   Dynamixel bus, the TM151 reader, the velocity estimator, and the onboard
   loop. `export_deploy.py` ships the LQR gain schedule to it so the Pi needs
   no MuJoCo model and no scipy. See `docs/plans/untethered-setup.md`.
+- `analysis/` — one-off studies that ask a question of the trained artifacts
+  rather than producing one. Each writes a PNG next to itself and changes
+  nothing.
 - `moves/` — authored maneuvers (`*.yaml`, plus `*.npz` policy weights for RL).
 - `runs/` — training checkpoints and tensorboard logs (gitignored).
 - `docs/measurements/omni-wheel-protocol.md` — what to measure and how,
@@ -248,5 +317,8 @@ and marks each command change on the plot.
 - `docs/plans/mujoco-modeling-decisions.md` — why the model is built this way.
 - `docs/plans/untethered-setup.md` — the physical bike: parts, power, onboard
   architecture, Pi setup and deployment, bring-up order.
+- `docs/plans/self-righting.md` — where recovery stops being possible, what a
+  fallen bike rests on, and what a fourth servo would have to be to stand it
+  back up.
 - `tests/` — compilation, coupling-ratio, envelope, and behavior tests.
 - `traces/` — diagnostics and plots for RL policies (gitignored).
