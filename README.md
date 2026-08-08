@@ -56,17 +56,66 @@ is a setpoint, so it stays where you leave it.
 | ← / → | hold to turn | 3 | flick 180° (RL policy) |
 | 6 / 7 | circle left / right | `.` | pivot 180°, front wheel holds its line (RL) |
 | 4 | crawl front-pivot 180° | 1 / 0 | ball shot (RL) / re-park ball (`--hockey`) |
-| 5 | stop now | `,` | general RL policy on / off |
+| 5 | stop now (incl. crab) | `,` | general RL policy on / off |
 | `/` | re-zero the command | 2 | toggle the ground dial |
+| 1 / 3 | crab left / right (general mode only) | F5 | fullscreen (Backspace resets) |
+| `[` / `]` | trail: pen-up / 2s / 4s / 10s / inf | `` ` `` | camera: free → follow → overhead |
 
 The general RL policy drives by default (whenever `moves/general_rl` exists
 and matches the current spec). It is a modal layer: the arrows command it,
-the maneuver keys in the right-hand column are shadowed, and `6`/`7`/`8` snap
-the heading 90°L / 90°R / 180°. `,` switches to the analytic controller and
+the maneuver keys in the right-hand column are shadowed, `6`/`7`/`8` snap
+the heading 90°L / 90°R / 180°, and **`1`/`3` crab left / right** — sideways
+travel with the heading held, which the rear omni makes physical. Crab is
+general-mode only (the analytic controller has no lateral command, and there
+`1`/`3` keep firing the ball shot and the RL flick). It behaves like the
+throttle — tap to step, hold to build, release to coast back to zero — and is
+clamped to the lateral envelope the policy trained on (`v_lat_frac` in its
+move file, 0.4 × `v_max` ≈ 0.48 m/s). `,` switches to the analytic controller and
 back; either way the command is zeroed on the switch, so nothing inherits a
-stale setpoint. The controller choice survives a viewer reset, rewinding time makes the
+stale setpoint.
+
+```sh
+python -m aow_sim.record --script o --general general_rl_1k --camera top
+python -m aow_sim.record --script s   # two mirrored arcs; needs a symmetric policy
+python -m aow_sim.record --script t   # crossbar, pen up, reposition, pen down, stem
+```
+
+Those drawings are driven through `control/gamepad.py`, a **virtual gamepad**:
+axes in, a velocity vector plus a heading rate out. The keyboard and a future
+controller are two front-ends onto the same mapping, so any shape a script can
+draw is reachable by hand.
+
+| stick / key | command |
+|---|---|
+| LEFT stick Y — `↑`/`↓` | longitudinal velocity (± `v_max`) |
+| LEFT stick X — `1`/`3` | lateral velocity (± `v_lat_frac · v_max`) |
+| RIGHT stick X — `←`/`→` | heading **rate** (integrates, so releasing holds the heading) |
+| A / B / X / Y — `5` `/` `7` `6` | stop · re-zero · snap 90° L/R |
+| LB / RB — `]` / `[` | trail longer / shorter |
+
+`aow_sim.record` burns a **gamepad input overlay** into every video frame —
+stick gates, pen state and the snap button — so a recording shows what was
+commanded, not just what happened. The live viewer does **not** have it yet,
+and deliberately so: the keyboard path has no continuous axes to display (a
+held key is a ramp, not a deflection), so the gates would read as a square
+wave. It becomes worth porting once `control/gamepad.py` is fed by a real
+controller — the drawing function `_hud` in `record.py` already takes a `Pad`
+and would move across as-is.
+
+The controller choice survives a viewer reset, rewinding time makes the
 controller fall back to line mode internally, and teleop re-engages the policy
 unless you turned it off.
+
+Pressing `` ` `` cycles the camera: **free** (mouse-driven, the viewer's own),
+**follow** (chase, azimuth tracking the bike's heading) and **overhead** (plan
+view). Both tracked modes hold the bike still in frame, so they also switch on
+a 0.5 m **floor grid** — without a world-fixed reference a follow camera makes
+a moving bike look parked. A **red trail** marks where the bike has actually
+been: the last 2 s solid, then fading to clear over 0.5 s. `[` and `]` step
+that history through **pen-up / 2s / 4s / 10s / inf**. Pen-up keeps what is
+already drawn and stops adding, so the bike can be repositioned invisibly and a
+disconnected shape drawn — that is how the `t` drawing puts a stem under a
+crossbar without retracing it.
 
 A ground dial under the bike shows **heading** as a tick on the rim (green = commanded, cyan =
 actual). Turns can be tapped or held. A *held* turn is clamped to 35° of lead over the actual heading, so it

@@ -1,0 +1,123 @@
+# Smoothed variant of rl_general.yaml. IDENTICAL except for w_smooth, so the
+# two are a clean A/B -- rl_general.yaml is untouched and stays the baseline.
+#
+# WHY. Measured on the three policies trained from the baseline config, under a
+# pure hold command (analysis/hold_spectrum.py):
+#
+#   * every action channel chatters bang-bang between its bounds, with AC RMS
+#     of 0.72-0.89 of full scale against a mean of ~0.00;
+#   * the spectra are broadband, not a limit cycle -- general_rl_1k peaks at
+#     23.8 Hz against a 25 Hz Nyquist, i.e. it alternates tick to tick;
+#   * the rear wheel is AIRBORNE 28-48% of the time, touching down at ~1.14x
+#     body weight, so the bike buzzes on its contacts rather than standing;
+#   * the rear wheel net-rotates ~6 turns backward per 10 s while the chassis
+#     goes nowhere near what rolling predicts -- two of the three end up
+#     travelling FORWARD while the wheel turns backward.
+#
+# At w_smooth 0.005 the penalty is ~2% of the per-step reward at full chatter,
+# which is no constraint at all. 0.05 makes it ~22%: enough to price chatter
+# without forbidding it, which matters because the real HC-802 toy does chatter
+# to stay up and the behaviour may be partly load-bearing.
+#
+# The concern to watch is that hold quality gets WORSE, not better -- if the
+# chatter is doing real balance work, smoothing it costs survival. Compare with
+# analysis/hold_spectrum.py and the hold_quality block of
+# analysis/move_confusion.py, not with eval/score alone.
+#
+#   python -m aow_sim.train_general_rl --config config/rl_general_smooth.yaml \
+#       --run-dir runs/general_rl_smooth --export-name general_rl_smooth
+#
+# General command-conditioned policy: one always-on controller tracking a
+# live (velocity vector, heading) command. See control/general_spec.py for
+# the observation contract and control/general_env.py for the episode design.
+
+algo:
+  algorithm: PPO
+  total_timesteps: 6000000    # a general controller is a bigger task than a
+                              #   single move; expect to need the full budget
+  n_envs: 32    # was 8
+  learning_rate: 3.0e-4
+  n_steps: 512 # was 2048  -> 32 x 512 = 16384, unchanged
+  batch_size: 1024
+  n_epochs: 10
+  # gamma at 50 Hz: 1/(1-g) = 100 steps = 2.0 s of lookahead, which matches
+  # the timescale of a heading change. THE MOVES' 0.99 AT 200 Hz IS ONLY
+  # 0.5 s — far too myopic here; they get away with it because their reward
+  # is a dense per-step yaw-progress term rather than setpoint tracking.
+  # If control_rate_hz is raised back to 200, gamma must go to ~0.998.
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005        # ball_rl's lesson: 0.0 collapsed exploration
+  net_arch: [128, 128]
+  seed: 0
+  eval_every: 1000000     # BestByScore cadence [timesteps]
+
+env:
+  action_space: full
+  # 50 Hz, not the moves' 200 Hz: standard for locomotion RL, and it makes a
+  # 2.5 s maneuver 125 steps instead of 500 — far better credit assignment.
+  # Replay is ZOH at this rate, so the controller holds each action 4 physics
+  # ticks longer than a move does.
+  control_rate_hz: 50
+  max_episode_s: 15.0    # long: the policy must hold a command, not finish one
+  v_max: 1.2             # matches control.drive.v_max in bike_params.yaml
+  v_lat_frac: 0.4        # lateral command as a fraction of the speed limit
+                         #   (the rear omni makes crabbing physical); only
+                         #   opens up with curriculum difficulty
+  p_v_zero: 0.2          # chance the speed command is exactly 0 (stop is a
+                         #   first-class command, not an edge case)
+  resample_s: [1.5, 4.0] # command re-drawn as a STEP change this often
+  ball_prob: 0.25        # fraction of episodes with a ball parked nearby --
+                         #   contact robustness only, NO ball reward. Set to
+                         #   0.0 to train on the ball-free model.
+  ball_place_radius: 0.5 # ball dropped within this radius of the start pose
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4         # v_max 1.2 + margin (moves cap at 0.6-0.72 because
+                         #   they are standstill maneuvers)
+    diff_max: 40.0
+
+curriculum:              # the repo's first; a single scalar scaling the
+  enabled: true          #   command sampling ranges in _sample_command
+  start: 0.15            # gentle: low speed, +-30 deg heading steps, no crab
+  step: 0.02             # advance per episode that clears advance_score
+  advance_score: 0.6     # mean of (vel + heading) tracking rewards, in [0,1]
+
+reward:
+  # Bounded-POSITIVE tracking + alive bonus. Over a 15 s episode a
+  # penalty-only reward (the moves' form) makes falling early strictly
+  # rational; this removes that incentive.
+  w_vel: 1.5             # x exp(-|v_cmd - v|^2 / sigma_v^2)
+  w_head: 1.0            # x exp(-(psi_err/sigma_psi)^2)
+  w_alive: 0.5
+  sigma_v: 0.35          # [m/s] tracking tolerance scale
+  sigma_psi_deg: 25.0    # heading tolerance scale
+  w_upright: 0.5
+  w_effort: 0.001
+  w_smooth: 0.05         # 10x the baseline's 0.005 -- see the header. Chatter
+                         #   costs ~22% of the per-step reward here instead of
+                         #   ~2%. prev_action is in the observation, so the
+                         #   penalty is well-posed either way.
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+
+randomization:           # as rl_flick/rl_pivot
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15        # was 0.1. The as-built payload mass (battery + Pi +
+                         #   U2D2 + buck, ~190 g of a 1.02 kg bike) is a GUESS
+                         #   until the thing is weighed, and it is a bigger
+                         #   share of the total than anything else unmeasured.
+  friction_frac: 0.2
+  # Supply voltage. The model's servo numbers are the 12 V datasheet column,
+  # but a 3S pack spans 12.6 V (full) to 9.9 V (cutoff) -> ~0.83-1.05x nominal
+  # strength. 0.15 covers that window with margin. Scales ctrlrange AND
+  # forcerange from a single draw (speed and torque both go with voltage) --
+  # see control/randomize.py. Untethered transfer depends on this.
+  actuator_frac: 0.15
+  disturb_force_N: 2.0
+  disturb_prob: 0.01

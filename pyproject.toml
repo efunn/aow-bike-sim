@@ -29,8 +29,12 @@ onboard = [
 # normal inspection loop: rollout_move --out and the trainers' --trace both
 # write a PNG beside the CSV, and silently getting only the CSV is a
 # confusing way to find out it is missing.
-dev = ["pytest>=8.0", "matplotlib>=3.7"]
-viz = ["matplotlib>=3.7"]
+dev = ["pytest>=8.0", "matplotlib>=3.7", "imageio>=2.31", "imageio-ffmpeg>=0.4"]
+# imageio/-ffmpeg are for `aow_sim.record`, which renders a scripted run
+# offscreen to MP4 + a contact sheet. Same argument as matplotlib being in
+# `dev`: looking at what the bike actually did is part of the normal loop, and
+# a missing encoder should be an install problem, not a traceback mid-render.
+viz = ["matplotlib>=3.7", "imageio>=2.31", "imageio-ffmpeg>=0.4"]
 # Hold-to-drive in teleop. MuJoCo's viewer reports a key going DOWN and
 # nothing else — no release, no auto-repeat — so holding the arrows can only
 # work if the OS supplies real key state. On macOS that means pyobjc:

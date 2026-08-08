@@ -115,8 +115,19 @@ The action is steer *rate*, and the only action costs are `w_effort: 0.001`
 and `w_smooth: 0.005` — both on the action, not the state. Once the wheel is
 cocked, holding it there costs exactly zero. Nothing in the reward prefers a
 centred wheel, so "wheel offset at rest" is an entire family of equally
-optimal policies. Fix: a small penalty on `|steer|` (or on `|steer|` gated to
-near-zero velocity commands), and report steer-at-rest as an eval metric.
+optimal policies.
+
+**Observe it; do not pin it.** A cocked front wheel at standstill is how a
+trackstand works on a real bicycle — a legitimate strategy, not a defect — and
+a `|steer|` penalty would forbid a technique the bike may genuinely need. So
+`steer_rest_deg` is an eval diagnostic for comparing what different policies
+settle on, and nothing more. (Earlier drafts of this section proposed a reward
+penalty; that was wrong.)
+
+The one case worth acting on is §2.7, where the offset grows to 24° late in
+training — but the cause there is exploration pressure outlasting the
+curriculum, so the fix is the training budget (already applied), not a reward
+term.
 
 ### 2.3 Slow drift is nearly free **[measured]**
 
@@ -127,9 +138,39 @@ a broken stationary hold; to the objective it is a rounding error. And because
 the command is a *velocity* vector there is no position term anywhere — drift
 is only ever penalised through its (small) velocity error.
 
-Fix options: a station-keeping term on displacement when `|v_cmd| ~ 0`; or
-scale `sigma_v` with `|v_cmd|` so tolerance is relative rather than absolute;
-or at minimum measure drift in the eval.
+**And the policy cannot see it.** `build_obs` (`control/general_spec.py:60`)
+carries no position or integrated error — only velocities. The bike has no way
+to know it has drifted 2 m, so a reward term on displacement would ask it to
+minimise something invisible, the exact error the spec docstring calls out for
+`prev_action` ("the policy is asked to minimize something it cannot see").
+
+That makes drift the most expensive item in this document to fix properly:
+
+- a station-keeping reward alone would not work — it needs position, or an
+  integrated velocity error, added to the observation;
+- that changes `OBS_DIM`, which **invalidates every existing policy** (replay
+  checks `obs_dim` against the spec and refuses to load) and forces a retrain
+  of all three;
+- the cheap alternative is to make the velocity tolerance **relative instead of
+  absolute** — replace the constant `sigma_v: 0.35` with something like
+  `sigma = 0.1 + 0.25 * abs(v_cmd) / v_max`, so a "stop" command demands
+  near-zero velocity (0.15 m/s of drift drops from 83% of the reward to ~11%)
+  while a full-speed command keeps today's slack. No new state, no obs change.
+
+  Be clear about what that buys: it attacks the drift *rate*, not accumulated
+  displacement. The bike gets stiller; it still cannot return to where it
+  started, because it cannot tell that it left.
+
+**Why the LQR does hold station.** The analytic controller regulates position
+explicitly — `linearize.py:12` has `x = [e_lat, roll, yaw, steer, v_lat,
+roll_rate, yaw_rate, steer_rate]`, with `q_ypos: 3.0` weighting that first
+term. Lateral drift is a state it can see and is penalised for. (Only lateral;
+there is no `e_lon`, which is fine — fore/aft is the benign direction.) That
+is the whole difference: the LQR was given the one signal `build_obs`
+structurally lacks.
+
+Measure first: `drift_m` is in the eval now, so the size of the problem across
+checkpoints is knowable before paying for an obs change.
 
 ### 2.4 The plant is mirror-symmetric, so handedness is an artifact **[measured]**
 

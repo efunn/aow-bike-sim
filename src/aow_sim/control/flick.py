@@ -196,6 +196,11 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         # Pivot moves: the velocity envelope the policy was trained for
         # (command_pivot_rl clamps its v_end argument to this).
         pol.v_max = float(d.get("v_max", 0.6))
+        # General policy: the LATERAL (crab) envelope, as a fraction of v_max.
+        # Teleop clamps its crab command to this so the operator cannot ask
+        # for a sideways speed the policy never saw. The 0.4 default matches
+        # every general_rl exported before the field existed.
+        pol.v_lat_frac = float(d.get("v_lat_frac", 0.4))
         # The general (always-on) policy trains at its own control rate, which
         # need not be the controller's; replay must query it at that rate or
         # the effective action scale and closed-loop timing both shift.

@@ -305,16 +305,21 @@ def main() -> None:
     ap.add_argument("--general", default=None, metavar="NAME",
                     help="always-on policy to drive with (moves/NAME.{yaml,npz}); "
                          "overrides control.general_move for this session")
+    ap.add_argument("--ui", action="store_true",
+                    help="restore the viewer's side panels (off by default: "
+                         "teleop is keyboard-driven and Reset is Backspace)")
     args = ap.parse_args()
     params = load_params(args.params)
     model = build_model(params, variant="full", hockey=args.hockey)
     eq = settle_upright(model)
 
     if args.teleop:
-        _teleop(model, params, eq.qpos, hockey=args.hockey, general=args.general)
+        _teleop(model, params, eq.qpos, hockey=args.hockey,
+                general=args.general, show_ui=args.ui)
         return
     if args.view:
-        _view_demo(model, params, eq.qpos, hockey=args.hockey)
+        _view_demo(model, params, eq.qpos, hockey=args.hockey,
+                   show_ui=args.ui)
         return
 
     v_max = params["control"]["drive"]["v_max"]
@@ -371,7 +376,7 @@ def main() -> None:
     print(f"\nsummary: v_max ±{v_max} m/s straight OK, max accel {max_acc:.1f} m/s^2")
 
 
-def _view_demo(model, params, eq_qpos, hockey=False):
+def _view_demo(model, params, eq_qpos, hockey=False, show_ui=False):
     # Uses the passive viewer (launch_passive via teleop_loop), not the managed
     # mujoco.viewer.launch app — the latter spins up its own _Simulate and is
     # unreliable under mjpython on macOS ("_Simulate ... unknown exception").
@@ -409,7 +414,8 @@ def _view_demo(model, params, eq_qpos, hockey=False):
         c.step(m, d)
 
     teleop_loop(model, data, step, lambda k: None, intro, "aow_sim.run_drive",
-                draw=lambda scn, m, d: _overlay(scn, m, d, c, overlay_on))
+                draw=lambda scn, m, d: _overlay(scn, m, d, c, overlay_on),
+                show_ui=show_ui)
 
 
 _DIAL_R = 0.30      # m, ground-dial radius — the rim carries heading ticks
@@ -424,6 +430,12 @@ _CMD_V = (1.0, 0.55, 0.1, 1.0)     # orange — commanded velocity
 _ACT = (0.2, 0.8, 1.0, 1.0)        # cyan   — actual heading
 _ACT_V = (1.0, 0.92, 0.35, 1.0)    # yellow — actual velocity
 _RING = (0.65, 0.65, 0.62, 0.35)   # grey   — dial rim
+_TRAIL = (0.90, 0.10, 0.10)        # red    — where the bike has actually been
+_TRAIL_SOLID_S = 2.0               # s of history drawn at full opacity
+_TRAIL_FADE_S = 0.5                # s of older history fading to clear
+_GRID_PITCH = 0.5                  # m between floor grid lines
+_GRID_HALF = 3.0                   # m, grid extent either side of the bike
+_GRID_RGBA = (0.55, 0.55, 0.55, 0.28)
 
 
 def _command_ref(c, data):
@@ -437,7 +449,8 @@ def _command_ref(c, data):
     return float(h), float(s) * np.array([np.cos(h), np.sin(h)])
 
 
-def _overlay(scn, model, data, c, on, v_max=1.2):
+def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
+             command=None, trail=None, grid=False, trail_level=None):
     """Ground dial under the bike showing the teleop command against reality.
 
     Headings live ON the rim as radial ticks; velocities are arrows from the
@@ -449,7 +462,11 @@ def _overlay(scn, model, data, c, on, v_max=1.2):
       green tick  = commanded heading      cyan tick   = actual heading
       orange ray  = commanded velocity     yellow ray  = actual velocity
     """
-    scn.ngeom = 0
+    # reset=True for the viewer's user_scn (ours alone, cleared each frame);
+    # reset=False to append onto an mjvScene that already holds the model
+    # geoms, as the offscreen recorder does.
+    if reset:
+        scn.ngeom = 0
     if not on[0]:
         return
     p = data.body("chassis").xpos
@@ -481,11 +498,68 @@ def _overlay(scn, model, data, c, on, v_max=1.2):
         seg(at(a0, _DIAL_R), at(a1, _DIAL_R),
             mujoco.mjtGeom.mjGEOM_LINE, 4.0, _RING)
 
+    # Floor grid: a world-FIXED reference. Without it a follow camera keeps the
+    # bike centred and stationary-looking, so translation is invisible -- the
+    # same trap the recorder hit. Snapped to the pitch so it reads as fixed
+    # ground while only ever spanning the area around the bike.
+    if grid:
+        cx = round(float(p[0]) / _GRID_PITCH) * _GRID_PITCH
+        cy = round(float(p[1]) / _GRID_PITCH) * _GRID_PITCH
+        n = int(_GRID_HALF / _GRID_PITCH)
+        for i in range(-n, n + 1):
+            u = i * _GRID_PITCH
+            seg(np.array([cx + u, cy - _GRID_HALF, 0.001]),
+                np.array([cx + u, cy + _GRID_HALF, 0.001]),
+                mujoco.mjtGeom.mjGEOM_LINE, 1.5, _GRID_RGBA)
+            seg(np.array([cx - _GRID_HALF, cy + u, 0.001]),
+                np.array([cx + _GRID_HALF, cy + u, 0.001]),
+                mujoco.mjtGeom.mjGEOM_LINE, 1.5, _GRID_RGBA)
+
+    # Path history: solid red for the recent _TRAIL_SOLID_S, then fading to
+    # clear over _TRAIL_FADE_S. The dial travels with the bike and so cannot
+    # show displacement; this can.
+    if trail is not None:
+        now = float(data.time)
+        solid = _TRAIL_SOLID_S if trail_level is None else float(trail_level)
+        if trail and now < trail[-1][0]:
+            trail.clear()          # viewer reset rewound the clock
+        # level 0 is PEN UP, not erase: stop laying down new points but keep
+        # (and keep drawing) everything already drawn. That is what lets a
+        # disconnected shape -- the crossbar and stem of a T -- be drawn
+        # without retracing.
+        if solid > 0.0:
+            trail.append((now, float(p[0]), float(p[1])))
+        horizon = solid + _TRAIL_FADE_S
+        if np.isfinite(solid) and solid > 0.0:
+            while trail and now - trail[0][0] > horizon:
+                trail.pop(0)
+        # An unbounded (or merely long) trail would exhaust scn.maxgeom and
+        # silently truncate whatever is drawn after it -- including the dial.
+        # Stride down to a budget instead, keeping both endpoints.
+        pts = list(trail)
+        budget = max(64, (scn.maxgeom - scn.ngeom) - 64)
+        if len(pts) > budget:
+            idx = np.linspace(0, len(pts) - 1, budget).astype(int)
+            pts = [pts[i] for i in idx]
+        for (t0, x0, y0), (t1, x1, y1) in zip(pts, pts[1:]):
+            age = now - t0
+            if not np.isfinite(solid) or solid == 0.0:
+                a = 1.0                      # inf / pen-up: never fades
+            else:
+                a = 1.0 if age <= solid else max(
+                    0.0, (horizon - age) / _TRAIL_FADE_S)
+            if a > 0.01:
+                seg(np.array([x0, y0, 0.002]), np.array([x1, y1, 0.002]),
+                    mujoco.mjtGeom.mjGEOM_LINE, 5.0, (*_TRAIL, a))
+
     R = data.body("chassis").xmat.reshape(3, 3)
     yaw = float(np.arctan2(R[1, 0], R[0, 0]))
     v = np.asarray(data.qvel[:2], float)
     vscale = _VEL_R / max(v_max, 1e-6)      # inner gauge full scale == v_max
-    h_cmd, v_cmd = _command_ref(c, data)
+    # `command` lets a recorder replay the (heading, velocity) that was
+    # live at each stored frame; without it the dial would show the
+    # controller's FINAL command on every frame of the playback.
+    h_cmd, v_cmd = _command_ref(c, data) if command is None else command
 
     # velocities: centre-out arrows inside the gauge, actual under commanded
     speed = float(np.linalg.norm(v))
@@ -546,7 +620,14 @@ _LEAD_MAX = np.deg2rad(35.0)
 
 
 # macOS virtual keycodes for the arrows (Carbon kVK_* constants).
-_MAC_ARROWS = {"left": 123, "right": 124, "down": 125, "up": 126}
+# macOS virtual keycodes for the keys hold-detection tracks. These are
+# POSITIONAL, not character codes: 18/20 are the ANSI-1 and ANSI-3 key
+# positions, so on a non-US layout the keys printing "1"/"3" may sit
+# elsewhere and disagree with the GLFW side (ord("1")). Harmless if so --
+# the crab axis just falls back to auto-repeat inference, the same path used
+# when Input Monitoring is denied.
+_MAC_KEYS = {"left": 123, "right": 124, "down": 125, "up": 126,
+             "crab_left": 18, "crab_right": 20}
 
 
 class _KeyState:
@@ -597,7 +678,7 @@ class _KeyState:
                 NSEventTypeKeyDown)
         except Exception:
             return
-        codes = {kc: name for name, kc in _MAC_ARROWS.items()}
+        codes = {kc: name for name, kc in _MAC_KEYS.items()}
 
         def handler(event):
             try:
@@ -650,7 +731,7 @@ class _KeyState:
         if (now - self._t) < 1.0 / self.POLL_HZ:
             return
         self._t = now
-        for name, kc in _MAC_ARROWS.items():
+        for name, kc in _MAC_KEYS.items():
             try:
                 v = self._quartz(kc)
             except Exception:        # never let input polling kill the sim
@@ -730,7 +811,8 @@ def _reset_ball(model, data, params):
     data.qvel[v:v + 6] = 0.0
 
 
-def _teleop(model, params, eq_qpos, hockey=False, general=None):
+def _teleop(model, params, eq_qpos, hockey=False, general=None,
+            show_ui=False):
     from .interactive import teleop_loop
 
     # Which always-on policy to drive with: --general wins, else the config's
@@ -746,12 +828,32 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None):
     # the viewer's reset (and any auto-reset on time rewind) drops
     # DriveController back to line mode, so the intent has to live out here
     # to be re-applied. See `ensure_mode`.
-    state = {"v": 0.0, "psi": c._psi, "psi_sent": c._psi, "want_general": True}
+    # `v` is the operator's longitudinal speed INTENT, `v_lat` the sideways
+    # (crab) one -- the rear omni decouples travel direction from heading, and
+    # the general policy takes a velocity VECTOR, so crab is a first-class
+    # command rather than a maneuver.
+    state = {"v": 0.0, "v_lat": 0.0, "psi": c._psi, "psi_sent": c._psi,
+             "want_general": True}
     overlay_on = [True]
-    ax_v, ax_psi = _Axis(), _Axis()
+    trail = []                 # (t, x, y) history for the red path trace
+    # Seconds of SOLID history; 0 = pen up (stop drawing, keep what is drawn),
+    # inf = never expires. [ and ] step through it.
+    trail_levels = [0.0, 2.0, 4.0, 10.0, float("inf")]
+    trail_level = [1]          # index; default 2 s
+    # free = the viewer's own mouse camera; follow = chase from behind;
+    # overhead = plan view. Both tracked modes need the floor grid to be
+    # legible, since a tracked camera holds the bike still in frame.
+    cam_mode = ["free"]
+    view = [None]              # the viewer handle, once teleop_loop hands it over
+    chassis_id = model.body("chassis").id
+    ax_v, ax_psi, ax_lat = _Axis(), _Axis(), _Axis()
     keys = _KeyState()
     announced = [False]
     v_max = c.profile.v_max
+    # Crab is clamped to the envelope THIS policy trained on (moves/<name>.yaml
+    # carries v_lat_frac); asking for more is off-distribution. Resolved lazily
+    # in apply() because the policy is not loaded until engage().
+    crab_max = [0.4 * v_max]
 
     def on_key(keycode):
         pending.append(keycode)
@@ -761,9 +863,11 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None):
         heading command re-aimed at where the bike actually points. Runs on
         every mode change so a policy never inherits a stale setpoint."""
         state["v"] = 0.0
+        state["v_lat"] = 0.0
         state["psi"] = state["psi_sent"] = c._psi
         ax_v.clear()
         ax_psi.clear()
+        ax_lat.clear()
         if c.mode == "general":
             c.set_command_polar(0.0, psi_cmd=c._psi)
         else:
@@ -839,11 +943,16 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None):
             ramp_v = ax_v.physical_hold(keys.down("up"), keys.down("down"))
             ramp_psi = ax_psi.physical_hold(keys.down("left"),
                                             keys.down("right"))
+            ramp_lat = ax_lat.physical_hold(keys.down("crab_left"),
+                                            keys.down("crab_right"))
             coasting = ramp_v == 0
+            coasting_lat = ramp_lat == 0
         else:
             ramp_v = ax_v.dir if ax_v.ramping(now) else 0
             ramp_psi = ax_psi.dir if ax_psi.ramping(now) else 0
+            ramp_lat = ax_lat.dir if ax_lat.ramping(now) else 0
             coasting = ramp_v == 0 and ax_v.released(now)
+            coasting_lat = ramp_lat == 0 and ax_lat.released(now)
 
         # Longitudinal: throttle builds, the opposite key brakes hard through
         # zero into reverse, and releasing coasts the target back to zero.
@@ -858,12 +967,33 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None):
             v = state["v"]
             state["v"] = float(v - np.sign(v) * min(abs(v), _DECAY * dt))
 
+        # Lateral: same shape as the throttle (build / brake through zero /
+        # coast back to zero), but symmetric — left and right are the same
+        # maneuver, so there is no _ACCEL_REV equivalent here.
+        if ramp_lat:
+            vl = state["v_lat"]
+            rate = _BRAKE if vl * ramp_lat < -1e-9 else _ACCEL
+            state["v_lat"] = float(np.clip(vl + ramp_lat * rate * dt,
+                                           -crab_max[0], crab_max[0]))
+        elif coasting_lat:
+            vl = state["v_lat"]
+            state["v_lat"] = float(vl - np.sign(vl) * min(abs(vl), _DECAY * dt))
+
         # Heading: continuous slew while held. No decay — it is a setpoint.
         if ramp_psi:
             turn(ramp_psi * _TURN_RATE * dt)
 
         if c.mode == "general":
-            c.set_command_polar(state["v"], psi_cmd=state["psi"])
+            # Clamp to the envelope the loaded policy declares (yaml
+            # v_lat_frac), now that it is definitely loaded.
+            crab_max[0] = float(getattr(c._gen, "v_lat_frac", 0.4)) * v_max
+            # One velocity VECTOR: magnitude plus course off the commanded
+            # heading. Both components zero resolves to (0, 0) -- an ordinary
+            # point of command space, not a singularity, which is exactly why
+            # the command is a vector and not (course, speed).
+            c.set_command_polar(float(np.hypot(state["v"], state["v_lat"])),
+                                float(np.arctan2(state["v_lat"], state["v"])),
+                                psi_cmd=state["psi"])
         else:
             # command_heading takes a delta, so send only what is new.
             delta = state["psi"] - state["psi_sent"]
@@ -875,7 +1005,28 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None):
             # honest about an unsafe speed, not the teleop stuttering.
             c.set_speed(state["v"])
 
+    def apply_camera(d):
+        """Point the viewer camera. Runs on the sim/render thread (step), not
+        in the key callback, which the viewer services on its own thread."""
+        v = view[0]
+        if v is None or cam_mode[0] == "free":
+            return
+        R = d.body("chassis").xmat.reshape(3, 3)
+        yaw = float(np.degrees(np.arctan2(R[1, 0], R[0, 0])))
+        with v.lock():
+            v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+            v.cam.trackbodyid = chassis_id
+            if cam_mode[0] == "follow":
+                # Azimuth chases the bike's heading, so the camera sits behind
+                # it rather than swinging around as the bike turns.
+                v.cam.azimuth, v.cam.elevation, v.cam.distance = (
+                    yaw + 180.0, -18.0, 1.6)
+            else:                       # overhead
+                v.cam.azimuth, v.cam.elevation, v.cam.distance = (
+                    yaw + 180.0, -89.0, 2.6)
+
     def step(m, d):
+        apply_camera(d)
         ensure_mode(d)          # survive viewer resets before reading keys
         while pending:
             k = pending.pop(0)
@@ -907,16 +1058,30 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None):
                 dirn = 1 if k == 263 else -1
                 if ax_psi.press(d.time, dirn):
                     turn(dirn * _STEP_PSI)
+            elif k in (ord("["), ord("]")):   # trail history length
+                trail_level[0] = int(np.clip(
+                    trail_level[0] + (1 if k == ord("]") else -1),
+                    0, len(trail_levels) - 1))
+                lv = trail_levels[trail_level[0]]
+                print("trail: " + ("PEN UP (keeps what is drawn)" if lv == 0
+                                   else "infinite" if not np.isfinite(lv)
+                                   else f"{lv:.0f} s"))
             elif k == ord("/"):     # re-zero the command in either mode
                 zero_command(d)
                 print("command zeroed")
             elif k == ord("5"):     # stop now (not a coast-down)
                 state["v"] = 0.0
-                ax_v.clear()
+                state["v_lat"] = 0.0      # "stop" means all motion, not just
+                ax_v.clear()              #   the longitudinal component
+                ax_lat.clear()
                 if not general:
                     c.command_stop()
             elif k == ord("2"):     # toggle reference overlay
                 overlay_on[0] = not overlay_on[0]
+            elif k == ord("`"):     # cycle camera: free -> follow -> overhead
+                order = ("free", "follow", "overhead")
+                cam_mode[0] = order[(order.index(cam_mode[0]) + 1) % 3]
+                print(f"camera: {cam_mode[0]}")
             elif general:
                 # -- general-mode layer: heading snaps replace the moves ----
                 if k == ord("6"):
@@ -925,6 +1090,15 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None):
                     turn(-np.pi / 2, clamp=False)
                 elif k == ord("8"):
                     turn(np.pi, clamp=False)
+                elif k in (ord("1"), ord("3")):
+                    # Crab left / right. General mode only: the analytic
+                    # controller has no lateral command at all, and 1/3 stay
+                    # bound to the ball shot and flick there.
+                    dirn = 1 if k == ord("1") else -1
+                    if ax_lat.press(d.time, dirn):   # fresh press -> a step
+                        vl = state["v_lat"]
+                        state["v_lat"] = float(np.clip(
+                            vl + dirn * _STEP_V, -crab_max[0], crab_max[0]))
                 elif k == ord("0"):
                     _reset_ball(m, d, params)
             else:
@@ -1011,8 +1185,12 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None):
                 "holds its line)"
                 + mode_help + ball_help + hold_help,
                 "aow_sim.run_drive",
-                draw=lambda scn, m, d: _overlay(scn, m, d, c, overlay_on,
-                                                v_max))
+                draw=lambda scn, m, d: _overlay(
+                    scn, m, d, c, overlay_on, v_max, trail=trail,
+                    grid=cam_mode[0] != "free",
+                    trail_level=trail_levels[trail_level[0]]),
+                show_ui=show_ui,
+                on_start=lambda v: view.__setitem__(0, v))
     return c      # returned so the input model can be driven headlessly
 
 

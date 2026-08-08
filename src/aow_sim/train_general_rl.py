@@ -192,7 +192,7 @@ def _eval_episodes(env, act_fn, cmds):
         done, info = False, {}
         steps = 0
         t_head = None                      # first step inside _HEAD_TOL_DEG
-        v_lons, steers = [], []            # tail windows, refilled as we go
+        v_lons, v_lats, steers = [], [], []  # tail windows, refilled as we go
         while not done:
             obs, _r, term, trunc, info = env.step(act_fn(obs))
             done = term or trunc
@@ -201,8 +201,9 @@ def _eval_episodes(env, act_fn, cmds):
                 t_head = steps
             s = extract_state(env.data, env._p0)
             v_lons.append(float(s.v_lon))
+            v_lats.append(float(s.v_lat))
             steers.append(abs(float(env.data.qpos[env._sj])))
-            del v_lons[:-tail], steers[:-tail]
+            del v_lons[:-tail], v_lats[:-tail], steers[:-tail]
         s = extract_state(env.data, env._p0)
         fell = bool(info.get("fell", True))
         rows.append({
@@ -214,6 +215,10 @@ def _eval_episodes(env, act_fn, cmds):
             "drift_m": float(np.hypot(s.e_lon, s.e_lat)),
             "steer_deg": float(np.degrees(np.mean(steers))) if steers else 0.0,
             "v_ach": float(np.mean(v_lons)) if v_lons else 0.0,
+            # Achieved LATERAL speed. Without it a crab command is scored only
+            # through v_ach (longitudinal), which reads ~0 whether the bike
+            # crabbed properly, yawed away and slid, or simply sat there.
+            "v_lat_ach": float(np.mean(v_lats)) if v_lats else 0.0,
             # A turn that never got inside tolerance is censored at the episode
             # length, not dropped -- "never finished" must cost more than slow.
             "t_head_s": (t_head if t_head is not None else steps) * env.ctrl_dt,
@@ -248,11 +253,20 @@ def _behaviour_metrics(rows: list[dict]) -> dict:
     hold = by(lambda c: c[0] == 0 and c[1] == 0 and c[2] == 0)
     fwd = by(lambda c: c[0] > 0.1)
     rev = by(lambda c: c[0] < -0.1)
+    crab_l = by(lambda c: c[1] > 0.1)
+    crab_r = by(lambda c: c[1] < -0.1)
+    crab = crab_l + crab_r
 
     def ratio(sel):     # achieved / commanded longitudinal speed
         if not sel:
             return float("nan")
         return float(np.mean([np.clip(r["v_ach"] / r["cmd"][0], 0.0, 1.5)
+                              for r in sel]))
+
+    def crab_ratio(sel):  # achieved / commanded LATERAL speed, per side
+        if not sel:
+            return float("nan")
+        return float(np.mean([np.clip(r["v_lat_ach"] / r["cmd"][1], 0.0, 1.5)
                               for r in sel]))
 
     # Handedness: pair each turning command with its reflection and compare
@@ -282,6 +296,16 @@ def _behaviour_metrics(rows: list[dict]) -> dict:
                           if hold else float("nan"),
         "speed_ratio_fwd": round(ratio(fwd), 3),
         "speed_ratio_rev": round(ratio(rev), 3),
+        # Crab, per side: a policy that only crabs toward its preferred
+        # steering direction shows one good ratio and one near zero.
+        "crab_ratio_left": round(crab_ratio(crab_l), 3),
+        "crab_ratio_right": round(crab_ratio(crab_r), 3),
+        # Heading held DURING a crab. A crab is the one command where holding
+        # heading and reaching the commanded velocity are simultaneously
+        # demanding, and sigma_psi_deg 25 is loose enough that yawing ~15 deg
+        # toward the travel direction is a cheap substitute for crabbing.
+        "crab_head_err": round(float(np.mean([r["head_err_deg"] for r in crab])), 1)
+                         if crab else float("nan"),
         "turn_asym": round(float(np.mean(asyms)), 3) if asyms else float("nan"),
     }
 
@@ -297,8 +321,10 @@ def _print_rows(rows: list[dict]) -> None:
     for r in rows:
         v_lon, v_lat, dpsi = r["cmd"]
         print(f"    {v_lon:>6.2f} {v_lat:>6.2f} {dpsi:>5.0f} | {r['track']:>6.3f} "
-              f"{r['v_ach']:>6.2f} {r['t_head_s']:>6.2f} {r['drift_m']:>6.2f} "
-              f"{r['steer_deg']:>6.1f}  {'X' if r['fell'] else ''}")
+              f"{r['v_ach']:>6.2f} {r['v_lat_ach']:>7.2f} "
+              f"{r['head_err_deg']:>5.1f} {r['t_head_s']:>6.2f} "
+              f"{r['drift_m']:>6.2f} {r['steer_deg']:>6.1f}  "
+              f"{'X' if r['fell'] else ''}")
 
 
 class BestByScore(BaseCallback):
@@ -454,6 +480,10 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # policy at the rate it was trained at, not the controller rate.
            "control_rate_hz": cfg["env"]["control_rate_hz"],
            "v_max": cfg["env"]["v_max"],
+           # Lateral (crab) envelope as a fraction of v_max -- teleop clamps
+           # its crab command to it, so the operator cannot command a sideways
+           # speed outside what this policy trained on.
+           "v_lat_frac": cfg["env"]["v_lat_frac"],
            "action_space": cfg["env"]["action_space"],
            "trained": trained}
     with open(MOVES_DIR / f"{name}.yaml", "w") as f:
@@ -477,7 +507,8 @@ def _scan_checkpoints(params, cfg, every=1):
     # blended `track` ranked equally: a policy that abandons reverse or turns
     # one-handed shows up here and nowhere else.
     print(f"{'steps':>9} {'survive':>8} {'track':>7} {'geo':>7} {'fwd':>5} "
-          f"{'rev':>5} {'asym':>5} {'drift':>6} {'steer':>6} {'score':>6}")
+          f"{'rev':>5} {'crabL':>6} {'crabR':>6} {'cHerr':>6} {'asym':>5} "
+          f"{'drift':>6} {'steer':>6} {'score':>6}")
     rows = []
     for z in zips:
         vn_p = z.with_name(z.name.replace("ppo_", "ppo_vecnormalize_")
@@ -500,7 +531,9 @@ def _scan_checkpoints(params, cfg, every=1):
         rows.append((steps, score, m))
         print(f"{steps:>9} {m['survive_rate']:>8.2f} {m['track']:>7.3f} "
               f"{m['track_geo']:>7.3f} {m['speed_ratio_fwd']:>5.2f} "
-              f"{m['speed_ratio_rev']:>5.2f} {m['turn_asym']:>5.2f} "
+              f"{m['speed_ratio_rev']:>5.2f} {m['crab_ratio_left']:>6.2f} "
+              f"{m['crab_ratio_right']:>6.2f} {m['crab_head_err']:>6.1f} "
+              f"{m['turn_asym']:>5.2f} "
               f"{m['drift_m']:>6.2f} {m['steer_rest_deg']:>6.1f} {score:>6.3f}")
     if rows:
         best = max(rows, key=lambda r: r[1])
@@ -547,7 +580,10 @@ def main():
     ap.add_argument("--export-from", default=None, metavar="STEPS|PATH",
                     help="export an existing checkpoint instead of training")
     ap.add_argument("--export-name", default="general_rl", metavar="NAME",
-                    help="move name for --export-from (e.g. general_rl_2m)")
+                    help="move file to write, for BOTH --export-from and the "
+                         "export at the end of training (e.g. general_rl_2m). "
+                         "Set it when training a variant, or the run will "
+                         "overwrite moves/general_rl on completion.")
     ap.add_argument("--scan-checkpoints", action="store_true",
                     help="evaluate every saved checkpoint, then exit")
     ap.add_argument("--scan-every", type=int, default=1,
@@ -625,9 +661,9 @@ def main():
         with open(best_vn, "rb") as f:
             bvn = pickle.load(f)
         _finish(best, bvn, params, cfg, bi["steps"],
-                source="best_model.zip", name="general_rl")
+                source="best_model.zip", name=args.export_name)
     else:
-        _finish(model, venv, params, cfg, total, name="general_rl")
+        _finish(model, venv, params, cfg, total, name=args.export_name)
 
 
 if __name__ == "__main__":

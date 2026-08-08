@@ -329,3 +329,64 @@ def test_general_move_replays():
         pytest.skip("moves/general_rl predates the current obs spec — retrain")
     act = pol.action(_obs())
     assert len(act) == 3 and np.all(np.isfinite(act))
+
+
+def test_move_file_carries_the_lateral_envelope(tmp_path):
+    """v_lat_frac rides in the move yaml so teleop clamps the crab command to
+    what THIS policy trained on; files written before the field default to
+    0.4, which is what every existing general_rl was trained with."""
+    import yaml
+    from aow_sim.control.flick import MOVES_DIR, load_move
+    if not (MOVES_DIR / "general_rl.npz").exists():
+        pytest.skip("run `python -m aow_sim.train_general_rl` first")
+
+    doc = yaml.safe_load((MOVES_DIR / "general_rl.yaml").read_text())
+    for frac, expect in ((None, 0.4), (0.25, 0.25)):
+        d = dict(doc, policy_file=str(MOVES_DIR / "general_rl.npz"))
+        d.pop("v_lat_frac", None)
+        if frac is not None:
+            d["v_lat_frac"] = frac
+        p = tmp_path / "m.yaml"
+        p.write_text(yaml.safe_dump(d))
+        assert load_move("m", moves_dir=tmp_path).v_lat_frac == expect
+
+
+def test_crab_command_is_perpendicular_to_heading():
+    """A course_rel of +-pi/2 is a pure crab: the commanded world velocity is
+    perpendicular to the commanded heading, and the heading itself is
+    untouched. This is the whole basis of the teleop crab keys."""
+    mujoco = pytest.importorskip("mujoco")  # noqa: F841
+    from aow_sim.build_model import build_model, load_params
+    from aow_sim.control import DriveController
+    from aow_sim.control.flick import MOVES_DIR
+    from aow_sim.control.linearize import settle_upright
+    from aow_sim.run_drive import _command_ref, _fresh
+    if not (MOVES_DIR / "general_rl.npz").exists():
+        pytest.skip("run `python -m aow_sim.train_general_rl` first")
+
+    params = load_params()
+    model = build_model(params, variant="full")
+    data = _fresh(model, settle_upright(model).qpos)
+    c = DriveController(params, model)
+    c.reset(model, data)
+    try:
+        c.engage_general(data, name="general_rl")
+    except ValueError:
+        pytest.skip("moves/general_rl predates the current obs spec — retrain")
+
+    for psi, course, want in (
+            (0.0, np.pi / 2, (0.0, 0.3)),        # facing +X, crab left -> +Y
+            (0.0, -np.pi / 2, (0.0, -0.3)),      # ... crab right      -> -Y
+            (np.pi / 2, np.pi / 2, (-0.3, 0.0)),  # facing +Y, left     -> -X
+    ):
+        c.set_command_polar(0.3, course, psi_cmd=psi)
+        h, v = _command_ref(c, data)
+        assert np.allclose(v, want, atol=1e-9), (psi, course, v)
+        assert h == pytest.approx(psi)
+
+    # Combined: teleop sends one vector as (hypot, atan2) off the heading.
+    v_lon, v_lat = 0.5, 0.3
+    c.set_command_polar(float(np.hypot(v_lon, v_lat)),
+                        float(np.arctan2(v_lat, v_lon)), psi_cmd=0.0)
+    _, v = _command_ref(c, data)
+    assert np.allclose(v, (v_lon, v_lat), atol=1e-9)

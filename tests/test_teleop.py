@@ -102,7 +102,9 @@ def _capture(monkeypatch, model, params, eq_qpos, hockey=False, analytic=False):
     tests that exercise the analytic controller ask for `analytic=True`."""
     g = {}
 
-    def fake_loop(m, d, step, on_key, intro, module, draw=None):
+    def fake_loop(m, d, step, on_key, intro, module, draw=None, **kw):
+        # **kw so viewer-presentation options (show_ui, ...) can be added
+        # without every teleop test failing on the signature.
         g.update(model=m, data=d, step=step, on_key=on_key, draw=draw)
 
     monkeypatch.setattr("aow_sim.interactive.teleop_loop", fake_loop)
@@ -167,7 +169,10 @@ class _FakeKeys:
         self.confirmed = True
         self.source = "fake"
         self.routes = ["fake"]
-        self.state = dict.fromkeys(("up", "down", "left", "right"), False)
+        # Derived from the real map, so a key added there (crab_left/right)
+        # cannot silently KeyError this stub.
+        from aow_sim.run_drive import _MAC_KEYS
+        self.state = dict.fromkeys(_MAC_KEYS, False)
 
     def poll(self, now):
         pass
@@ -406,3 +411,123 @@ def test_general_mode_reports_a_missing_policy(monkeypatch, model, params,
     _idle(g, 3 * model.opt.timestep)
     assert "train_general_rl" in capsys.readouterr().out
     assert g["c"].mode != "general"
+
+
+# --- virtual gamepad + trail ------------------------------------------------
+
+def test_gamepad_axes_map_to_the_command_vector():
+    """LEFT stick is the velocity vector, RIGHT stick X is a heading RATE.
+    Centred sticks must be the (0,0) command -- an ordinary point, not a
+    singularity -- which is why the command is a vector, not (course, speed)."""
+    from aow_sim.control import gamepad as gp
+    v_max, crab_max, turn = 1.2, 0.48, 1.2
+
+    v_lon, v_lat, psi = gp.apply(gp.Pad(ly=1.0), 0.0, 0.1, v_max, crab_max, turn)
+    assert (v_lon, v_lat, psi) == pytest.approx((v_max, 0.0, 0.0))
+    v_lon, v_lat, _ = gp.apply(gp.Pad(lx=1.0), 0.0, 0.1, v_max, crab_max, turn)
+    assert (v_lon, v_lat) == pytest.approx((0.0, crab_max))
+    v_lon, v_lat, _ = gp.apply(gp.Pad(ly=-1.0), 0.0, 0.1, v_max, crab_max, turn)
+    assert v_lon == pytest.approx(-v_max)          # reverse is an ordinary point
+
+    # rx INTEGRATES: releasing the stick holds the heading you turned to,
+    # where an absolute mapping would snap it back to zero.
+    psi = 0.0
+    for _ in range(10):
+        _, _, psi = gp.apply(gp.Pad(rx=1.0), psi, 0.1, v_max, crab_max, turn)
+    assert psi == pytest.approx(turn * 1.0)
+    _, _, held = gp.apply(gp.Pad(), psi, 0.1, v_max, crab_max, turn)
+    assert held == pytest.approx(psi)
+
+    # centred -> exactly zero, and the deadzone swallows stick bias
+    assert gp.apply(gp.Pad(), 0.3, 0.1, v_max, crab_max, turn) == (0.0, 0.0, 0.3)
+    drift = gp.apply(gp.Pad(ly=0.05, rx=0.05), 0.0, 0.1, v_max, crab_max, turn)
+    assert drift == (0.0, 0.0, 0.0)
+    assert gp.to_polar(0.0, 0.0) == (0.0, 0.0)
+
+
+def _trail_after(model, params, eq_qpos, level, seeded, t_now):
+    """Run one _overlay pass at data.time = t_now over a seeded trail."""
+    import mujoco
+    from aow_sim.control import DriveController
+    from aow_sim.run_drive import _fresh, _overlay
+    data = _fresh(model, eq_qpos)
+    c = DriveController(params, model)
+    c.reset(model, data)
+    data.time = t_now
+    scn = mujoco.MjvScene(model, maxgeom=2000)
+    trail = list(seeded)
+    _overlay(scn, model, data, c, [True], trail=trail, trail_level=level)
+    return trail
+
+
+def test_trail_level_zero_is_pen_up_not_erase(model, params, eq_qpos):
+    """Level 0 must stop ADDING while keeping what is drawn -- that is what
+    makes a disconnected shape (a T) drawable without retracing."""
+    seeded = [(0.0, 0.0, 0.0), (0.1, 0.1, 0.0)]
+    kept = _trail_after(model, params, eq_qpos, 0.0, seeded, 9.0)
+    assert kept == seeded, "pen up must neither append nor expire"
+
+
+def test_trail_expires_at_the_level_but_infinity_never_does(model, params,
+                                                            eq_qpos):
+    old = [(0.0, 0.0, 0.0), (0.05, 0.1, 0.0)]        # ancient points
+    finite = _trail_after(model, params, eq_qpos, 2.0, old, 9.0)
+    assert all(t > 2.0 for t, _, _ in finite), "2 s window kept stale points"
+
+    infinite = _trail_after(model, params, eq_qpos, float("inf"), old, 9.0)
+    assert infinite[:2] == old, "inf must never expire history"
+    assert len(infinite) == 3, "inf must still append the current point"
+
+
+def _overlay_scene(model, params, eq_qpos, level, seeded, t_now, maxgeom=2000):
+    """One _overlay pass over a seeded trail; returns (trail, scene)."""
+    import mujoco
+    from aow_sim.control import DriveController
+    from aow_sim.run_drive import _fresh, _overlay
+    data = _fresh(model, eq_qpos)
+    c = DriveController(params, model)
+    c.reset(model, data)
+    data.time = t_now
+    scn = mujoco.MjvScene(model, maxgeom=maxgeom)
+    trail = list(seeded)
+    _overlay(scn, model, data, c, [True], trail=trail, trail_level=level)
+    return trail, scn
+
+
+def test_trail_thins_to_the_geom_budget_without_starving_the_dial(
+        model, params, eq_qpos):
+    """A long `inf` trail must not exhaust scn.maxgeom. Overflowing it drops
+    whatever is drawn AFTER the trail -- which is the dial, the one overlay
+    you cannot afford to lose."""
+    import mujoco
+    seeded = [(i * 0.01, i * 0.01, 0.0) for i in range(5000)]
+    trail, scn = _overlay_scene(model, params, eq_qpos, float("inf"), seeded,
+                                500.0, maxgeom=400)
+    assert scn.ngeom < scn.maxgeom, "trail filled the scene to the brim"
+    # inf keeps every point in the buffer; only the DRAWING is strided down.
+    assert len(trail) == len(seeded) + 1
+    arrows = sum(scn.geoms[i].type == mujoco.mjtGeom.mjGEOM_ARROW
+                 for i in range(scn.ngeom))
+    assert arrows > 0, "dial ticks/rays were starved by the trail"
+
+
+def test_trail_is_solid_inside_the_window_then_ramps_to_clear(
+        model, params, eq_qpos):
+    """Alpha is 1.0 within `level` and ramps linearly to 0 across the
+    following _TRAIL_FADE_S -- the '2 s solid then 0.5 s fade' look."""
+    import mujoco
+    from aow_sim.run_drive import _TRAIL, _TRAIL_FADE_S
+    now, solid = 10.0, 2.0
+    # ages 2.4 and 2.25 sit inside the fade; 0.5 is solid.
+    seeded = [(now - 2.4, 0.0, 0.0), (now - 2.25, 0.1, 0.0),
+              (now - 0.5, 0.2, 0.0)]
+    _, scn = _overlay_scene(model, params, eq_qpos, solid, seeded, now)
+    alphas = [round(float(scn.geoms[i].rgba[3]), 3)
+              for i in range(scn.ngeom)
+              if scn.geoms[i].type == mujoco.mjtGeom.mjGEOM_LINE
+              and np.allclose(scn.geoms[i].rgba[:3], _TRAIL, atol=1e-3)]
+    assert len(alphas) == 3, f"expected 3 trail segments, got {len(alphas)}"
+    horizon = solid + _TRAIL_FADE_S
+    assert alphas[0] == pytest.approx((horizon - 2.4) / _TRAIL_FADE_S, abs=1e-3)
+    assert alphas[1] == pytest.approx((horizon - 2.25) / _TRAIL_FADE_S, abs=1e-3)
+    assert alphas[2] == 1.0, "a point inside the solid window must not fade"
