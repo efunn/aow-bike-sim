@@ -57,7 +57,7 @@
 
 algo:
   algorithm: PPO
-  total_timesteps: 6000000    # a general controller is a bigger task than a
+  total_timesteps: 12000000   # a general controller is a bigger task than a
                               #   single move; expect to need the full budget
   n_envs: 32    # was 8
   learning_rate: 3.0e-4
@@ -86,7 +86,7 @@ env:
   control_rate_hz: 50
   max_episode_s: 15.0    # long: the policy must hold a command, not finish one
   v_max: 1.2             # matches control.drive.v_max in bike_params.yaml
-  v_lat_frac: 0.12       # lateral command as a fraction of the speed limit
+  v_lat_frac: 0.4        # lateral command as a fraction of the speed limit
                          #   (the rear omni makes crabbing physical); only
                          #   opens up with curriculum difficulty
   p_v_zero: 0.2          # chance the speed command is exactly 0 (stop is a
