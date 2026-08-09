@@ -18,6 +18,12 @@ sim:
   impratio: 10.0
   mesh_segments: 32       # tessellation of revolved contact meshes (rollers, tire)
   condim: 4               # 3 = sliding only; 4 adds torsional friction at the contact patch
+  # Contact [time constant s, damping ratio]. Was MuJoCo's default [0.02, 1]
+  # by omission, which let the rollers sink ~2.2 mm (a fifth of the roller
+  # radius) into the floor while holding station. Penetration scales with the
+  # square of the time constant, so this is ~16x stiffer. Raise it back toward
+  # 0.02 if the solver starts complaining rather than to soften a contact.
+  contact_solref: [0.005, 1.0]
   friction_sliding: {value: 0.9, source: GUESS}      # TPU on hard floor -> incline slide test
   friction_torsional: {value: 0.005, source: GUESS}  # scales with contact patch size -> validation
   floor_size: 3.0

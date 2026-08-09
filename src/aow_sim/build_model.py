@@ -644,6 +644,16 @@ def _apply_options(spec: mujoco.MjSpec, p: dict) -> None:
     spec.option.integrator = INTEGRATORS[sim["integrator"]]
     spec.option.cone = CONES[sim["cone"]]
     spec.option.impratio = sim["impratio"]
+    # Contact stiffness, on the main default so every geom inherits it. This
+    # ran on MuJoCo's stock [0.02, 1] until it was measured: at a 20 ms
+    # contact time constant the rollers sank 2.1-2.8 mm into the floor under a
+    # hold command -- a fifth of the 11 mm roller radius, and near-identical
+    # across five different policies, which is the signature of the contact
+    # model rather than the controller setting the behaviour. Penetration goes
+    # with the square of the time constant, so 5 ms is ~16x stiffer.
+    # NOTE the equality solrefs elsewhere in this file are also 0.005 but are
+    # a different constraint class (gear couplings), and never governed this.
+    spec.default.geom.solref = list(sim["contact_solref"])
 
 
 def build_spec(

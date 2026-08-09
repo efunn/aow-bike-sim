@@ -47,7 +47,7 @@ from aow_sim.control.policy import load_policy_npz
 # mistaken for a different export.
 POLICIES = {n: n for n in ("general_rl_og", "general_rl", "general_rl_1k",
                            "general_rl_smooth_og",
-                           "general_rl_smooth_diff")}
+                           "general_rl_smooth_diff_og")}
 REPO = Path(__file__).resolve().parents[1]
 
 
