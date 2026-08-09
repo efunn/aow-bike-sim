@@ -7,7 +7,8 @@ Run on the laptop:
     python -m aow_sim.export_deploy --no-payload    # the tethered bike
 
 Building a DriveController normally costs two numerical linearizations of the
-MuJoCo model (design_lqr + design_gain_schedule) — minutes of rollouts, and
+MuJoCo model (design_lqr + design_gain_schedule) — a couple of seconds of
+rollouts, but it needs scipy and MuJoCo, and
 scipy for the Riccati solve. That is the wrong thing to ask of a Pi Zero 2 W
 at every boot, and scipy on ARM is a nuisance to install besides.
 
@@ -29,8 +30,6 @@ robot is a fall, not a warning.
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 from pathlib import Path
 
 import numpy as np
@@ -38,16 +37,15 @@ import numpy as np
 from .build_model import build_model, load_params
 from .control.drive import DriveController
 from .control.linearize import design_all
+# Re-exported: params_digest moved to params.py (MuJoCo-free) so that the
+# onboard bundle check and the move-file check can both reach it without
+# importing a physics engine. Kept importable from here — it is the module
+# people associate with the digest, and hw/state.py used to import it here.
+from .params import params_digest  # noqa: F401
 
 # Actuators and joints the controllers look up by name.
 ACTUATORS = ("drive_a", "drive_b", "steer")
 STEER_JOINT = "steer_joint"
-
-
-def params_digest(params: dict) -> str:
-    """Stable hash of the parameter set a bundle was designed for."""
-    blob = json.dumps(params, sort_keys=True, default=float).encode()
-    return hashlib.sha256(blob).hexdigest()[:16]
 
 
 def build_bundle(params: dict, payload: bool = True) -> dict:
@@ -87,7 +85,7 @@ def main() -> None:
     args = ap.parse_args()
 
     params = load_params(args.params)
-    print(f"designing (payload={not args.no_payload}) — this takes a few minutes...")
+    print(f"designing (payload={not args.no_payload})...")
     bundle = build_bundle(params, payload=not args.no_payload)
 
     out = Path(args.output)

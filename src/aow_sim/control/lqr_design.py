@@ -2,7 +2,7 @@
 
 Deliberately a module of its own, importing nothing but numpy. Producing an
 LQRDesign means numerically linearizing the MuJoCo model at every grid speed
-(control/linearize.py, minutes of compute); *consuming* one is a matrix
+(control/linearize.py, ~2 s of rollouts + scipy); *consuming* one is a matrix
 lookup. The bike only ever consumes, so the type it consumes must not drag a
 physics engine onto the Pi.
 

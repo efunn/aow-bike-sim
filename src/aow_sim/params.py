@@ -11,6 +11,8 @@ balance. See tests/test_hw_no_mujoco.py, which enforces it.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from pathlib import Path
 
@@ -90,3 +92,17 @@ def derive_righting(p: dict) -> dict:
 def load_params(path: str | Path | None = None) -> dict:
     with open(path or DEFAULT_PARAMS) as f:
         return derive_righting(_normalize(yaml.safe_load(f)))
+
+
+def params_digest(params: dict) -> str:
+    """Stable hash of the parameter set an artifact was designed or trained for.
+
+    Lives HERE, not in export_deploy, for the reason in this module's
+    docstring: `hw/state.py` checks a deploy bundle's digest on load, and
+    importing it from export_deploy would drag build_model -> MuJoCo onto the
+    Pi to do it. Same argument now applies twice over, because trained moves
+    carry the digest too and `control/flick.py::load_move` is on the
+    numpy-only replay path.
+    """
+    blob = json.dumps(params, sort_keys=True, default=float).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]

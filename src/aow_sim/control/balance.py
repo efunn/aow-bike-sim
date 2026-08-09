@@ -162,10 +162,18 @@ class LQRBalance(_Base):
 
     def __init__(self, params, model, design=None):
         super().__init__(params, model)
-        # `design` short-circuits the linearization (scipy + MuJoCo rollouts,
-        # minutes of work). Passed by the onboard deployment path, which loads
-        # a precomputed LQRDesign from deploy/bundle.npz and never imports
-        # linearize at all. See docs/plans/untethered-setup.md.
+        # Re-identified from `params` on EVERY construction, so the design can
+        # never go stale relative to the model -- change a mass or a contact
+        # parameter and the next run re-derives against it. Measured cost is
+        # 0.39 s (design_lqr) / 2.0 s (design_all), not the "minutes" an
+        # earlier comment here claimed, so there is no reason to cache it.
+        #
+        # `design` short-circuits it anyway for the ONE case that cannot run
+        # it: the onboard path loads a precomputed LQRDesign from
+        # deploy/bundle.npz because the Pi has neither scipy nor MuJoCo. That
+        # copy IS cacheable and therefore IS staleness-prone, which is exactly
+        # why export_deploy stamps a params_digest and hw.state refuses a
+        # bundle that does not match. See docs/plans/untethered-setup.md.
         if design is None:
             from .linearize import design_lqr  # deferred: pulls in scipy
             self.K, self.qpos_eq, self.fit_r2 = design_lqr(params, model)

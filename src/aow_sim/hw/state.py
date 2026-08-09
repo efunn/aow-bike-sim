@@ -117,7 +117,9 @@ def load_bundle(path: str | Path, params: dict | None = None
     d = np.load(path, allow_pickle=False)
 
     if params is not None:
-        from ..export_deploy import params_digest
+        # params, not export_deploy: that module imports build_model and
+        # linearize, i.e. MuJoCo and scipy, neither of which exists on the Pi.
+        from ..params import params_digest
         want, got = params_digest(params), str(d["params_digest"])
         if want != got:
             raise ValueError(
