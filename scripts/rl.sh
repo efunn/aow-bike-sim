@@ -266,7 +266,21 @@ cmd_eta() {
   local move=$1 log dev fps steps first budget hdr cfg rollout
   log="$(run_dir "$move")/logs/train-latest.log"
   [[ -f "$log" ]] || die "no training log for '$move' yet -- has it been started?"
-  cfg="$REPO/config/rl_$move.yaml"
+
+  # The config the run was LAUNCHED with, not the one this move is NAMED
+  # after. `train general --config config/rl_general_smooth_diff.yaml` is an
+  # ordinary thing to do -- that is how the smooth/diff variants are trained --
+  # and reading config/rl_general.yaml instead silently reports a DIFFERENT
+  # run's budget. It is a quiet failure: you get a percentage and an ETA that
+  # look fine and are computed against the wrong denominator (observed
+  # 2026-08-09, a 12M run reported as 6M because rl_general.yaml still said
+  # 6M). Fall back to the by-name config for logs written before the launch
+  # line was recorded.
+  hdr="$(head -1 "$log")"
+  cfg="$(sed -n 's/.*--config[= ][= ]*\([^ ]*\).*/\1/p' <<< "$hdr")"
+  [[ -n "$cfg" && "$cfg" != /* ]] && cfg="$REPO/$cfg"
+  [[ -n "$cfg" && -f "$cfg" ]] || cfg="$REPO/config/rl_$move.yaml"
+  echo "config       ${cfg#$REPO/}"
 
   dev="$(grep -m1 -o 'Using [^ ]* device' "$log" || true)"
   echo "device       ${dev:-unknown (no SB3 banner yet)}"
@@ -284,7 +298,7 @@ cmd_eta() {
   # Budget: an explicit --timesteps beats the config. On --resume SB3 adds the
   # already-done steps to the budget (base_class._setup_learn), so the target
   # sits that much higher; approximate the offset with the first logged count.
-  hdr="$(head -1 "$log")"
+  # (`hdr` is read at the top, where it also resolves --config.)
   budget="$(sed -n 's/.*--timesteps[= ][= ]*\([0-9][0-9]*\).*/\1/p' <<< "$hdr")"
   [[ -n "$budget" ]] || budget="$(yaml_num "$cfg" total_timesteps)"
   [[ -n "$budget" ]] || die "no total_timesteps in $cfg and no --timesteps in the launch line"
