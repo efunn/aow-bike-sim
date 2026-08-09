@@ -33,7 +33,7 @@ env:
   control_rate_hz: 50
   max_episode_s: 15.0    # long: the policy must hold a command, not finish one
   v_max: 1.2             # matches control.drive.v_max in bike_params.yaml
-  v_lat_frac: 0.4        # lateral command as a fraction of the speed limit
+  v_lat_frac: 0.12       # lateral command as a fraction of the speed limit
                          #   (the rear omni makes crabbing physical); only
                          #   opens up with curriculum difficulty
   p_v_zero: 0.2          # chance the speed command is exactly 0 (stop is a
