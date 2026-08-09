@@ -738,6 +738,80 @@ def _plot_sequence(out: Path, log, t_hand) -> None:
     print(f"wrote {out}")
 
 
+
+# --------------------------------------------------------------------------
+# invert: can it stay on its back, and can the mechanism recover from there?
+
+
+def _drop_inverted(params: dict, roll_deg: float, pitch_deg: float,
+                   wings: bool, settle: float = 4.0, drop: float = 0.02):
+    """Place the bike upside down at (roll, pitch) and let it fall.
+
+    This is the test the roll-plane landscape cannot do: `profile` holds pitch
+    and yaw fixed, so it can only say whether an inverted BASIN exists, not
+    whether a bike dropped near 180 deg finds its way out of one."""
+    model = build_model(params, righting=True, wings=wings)
+    data = mujoco.MjData(model)
+    data.qpos[:] = settle_upright(model).qpos
+    # Roll first, then pitch, both about body axes -- so "upside down and
+    # nose-down a bit" is what it sounds like.
+    qr = np.array([np.cos(np.deg2rad(roll_deg) / 2),
+                   np.sin(np.deg2rad(roll_deg) / 2), 0.0, 0.0])
+    qp = np.array([np.cos(np.deg2rad(pitch_deg) / 2), 0.0,
+                   np.sin(np.deg2rad(pitch_deg) / 2), 0.0])
+    q = np.empty(4)
+    mujoco.mju_mulQuat(q, qr, qp)
+    data.qpos[3:7] = q
+    data.qpos[2] = 0.30
+    mujoco.mj_forward(model, data)
+    # Settle it down to a real clearance first, so this is a DROP and not the
+    # solver exploding a deep interpenetration.
+    floor = model.geom("floor").id
+    d_min = min(mujoco.mj_geomDistance(model, data, floor, g, 2.0, None)
+                for g in _dynamic_geoms(model))
+    data.qpos[2] += drop - d_min
+    mujoco.mj_forward(model, data)
+    for _ in range(int(round(settle / model.opt.timestep))):
+        mujoco.mj_step(model, data)
+    roll, pitch = roll_pitch(data.qpos[3:7])
+    return {"roll": roll, "pitch": pitch, "qpos": data.qpos.copy(),
+            "on": sorted(_contact_names(model, data))}
+
+
+def cmd_invert(args) -> None:
+    """Drop it upside down at a spread of angles; report where it ends up and
+    whether the mechanism can then get it back on its wheels."""
+    wings = args.wings
+    configs = [("with roof", variant_params(bumper=True, arm=not wings))]
+    if args.compare:
+        bare = variant_params(bumper=True, arm=not wings)
+        bare["righting"].pop("roof", None)
+        configs.append(("NO roof", bare))
+
+    for name, p in configs:
+        print(f"\n{name} -- dropped inverted, then the "
+              f"{'wing pair' if wings else 'single arm'} tries to right it")
+        print(f"  {'start':>13} | {'settles at':>17} | {'righting':>22}")
+        print(f"  {'roll':>6} {'pitch':>6} | {'roll':>7} {'pitch':>9} | "
+              f"{'best roll':>10} {'verdict':>11}")
+        stuck = 0
+        for roll0 in args.rolls:
+            for pitch0 in args.pitches:
+                r = _drop_inverted(p, roll0, pitch0, wings, args.settle)
+                if abs(r["roll"]) > 135.0:     # still on its back
+                    stuck += 1
+                    verdict, best = "ON ITS BACK", float("nan")
+                else:
+                    # Only worth running the mechanism from where it actually
+                    # stopped -- on its back the arm has nothing to push on.
+                    best = _lift(p, rest_qpos=r["qpos"], wings=wings)["best_roll"]
+                    verdict = "UP" if best < RECOVER_DEG else "no"
+                print(f"  {roll0:>6.0f} {pitch0:>6.0f} | {r['roll']:>7.1f} "
+                      f"{r['pitch']:>9.1f} | {best:>10.1f} {verdict:>11}")
+        n = len(args.rolls) * len(args.pitches)
+        print(f"  -> stayed inverted in {stuck}/{n} drops")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -791,6 +865,16 @@ def main() -> None:
                     default=Path(__file__).parent / "righting_sequence.png")
     wings_flag(p4, "run the sequence on the wing pair instead of the arm")
     p4.set_defaults(func=cmd_sequence)
+
+    p5 = sub.add_parser("invert", help="drop it upside down -> does it stay there?")
+    p5.add_argument("--compare", action="store_true",
+                    help="also run without the roof, for the before/after")
+    p5.add_argument("--rolls", type=float, nargs="+",
+                    default=[160.0, 170.0, 180.0, 190.0, 200.0])
+    p5.add_argument("--pitches", type=float, nargs="+", default=[0.0, 15.0])
+    p5.add_argument("--settle", type=float, default=4.0)
+    wings_flag(p5, "use the wing pair instead of the arm")
+    p5.set_defaults(func=cmd_invert)
 
     args = ap.parse_args()
     if args.cmd == "lift":

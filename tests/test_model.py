@@ -267,31 +267,35 @@ def test_stowed_wings_park_outboard_of_the_drive_servos(wing_model, params):
 
 
 def test_wing_gear_train_fits(params):
-    """One central pinion meshing both wing gears fixes the centre distance at
-    the pivot half-span, so the ratio alone pins both radii. Check the algebra
-    and that the configured ratio is actually buildable."""
+    """The two wing gears MESH EACH OTHER and the servo drives one of them, so
+    each disc is half the pivot spacing and the ratio only sizes the pinion.
+
+    The property worth pinning is the DECOUPLING: with a central pinion the
+    disc grew with the ratio, so buying torque widened the bike. Here the
+    envelope is ratio-independent."""
     from aow_sim.build_model import wing_fit
 
     w = params["righting"]["wings"]
     f = wing_fit(params)
-    # Mesh closes on the pivot half-span, and the radii are in ratio.
-    assert f["pinion_radius"] + f["disc_radius"] == pytest.approx(w["pivot"][1])
+    # Equal discs on pivots 2*half_span apart -> each radius IS the half-span.
+    assert f["disc_radius"] == pytest.approx(w["pivot"][1])
     assert f["disc_radius"] / f["pinion_radius"] == pytest.approx(w["gear_ratio"])
     assert not f["pinion_too_small"], "configured ratio needs an unprintable pinion"
     assert not f["grounds_out"], "the driven disc is bigger than the pivot height"
     assert w["gear_ratio"] <= f["max_ratio"]
 
-    # The counter-intuitive direction: MORE reduction means a SMALLER pinion,
-    # which is what puts a ceiling on the ratio rather than the disc size.
+    # More reduction still means a smaller pinion, and that is now the ONLY
+    # ceiling on the ratio...
     lo, hi = copy.deepcopy(params), copy.deepcopy(params)
     lo["righting"]["wings"]["gear_ratio"] = 2.0
-    hi["righting"]["wings"]["gear_ratio"] = 6.0
+    hi["righting"]["wings"]["gear_ratio"] = 8.0
     assert wing_fit(hi)["pinion_radius"] < wing_fit(lo)["pinion_radius"]
     assert wing_fit(hi)["pinion_too_small"]
-    # ...and a bigger disc pushes the leg further outboard, so the ratio and
-    # the stance are coupled: the crank has to clear the rim of the disc the
-    # wing is bolted to, or the mechanism lands on its own gear.
-    assert wing_fit(hi)["disc_radius"] > wing_fit(lo)["disc_radius"]
+    # ...while the disc, and therefore the whole envelope, does not move at all.
+    assert wing_fit(hi)["disc_radius"] == pytest.approx(wing_fit(lo)["disc_radius"])
+    assert wing_fit(hi)["min_bike_width"] == pytest.approx(wing_fit(lo)["min_bike_width"])
+    # The envelope is wide enough for the crank to clear its own disc.
+    assert params["righting"]["bike_width"] >= f["min_bike_width"] - 1e-9
 
 
 def test_wing_crank_clears_the_driven_disc(params):
@@ -314,3 +318,40 @@ def test_wing_crank_clears_the_driven_disc(params):
     tilted["righting"]["wings"]["crank_deg"] = 30.0
     assert wing_fit(tilted)["crank_reach"] < wing_fit(long)["crank_reach"]
     assert wing_fit(tilted)["leg_stands_on_gear"]
+
+
+def test_righting_envelope_is_derived_and_tangent(params):
+    """The roof and the stowed wings are ONE envelope: the roof is the circle
+    circumscribing the stowed wing tips, so the tips lie exactly on it.
+
+    That tangency is the whole point -- upside down, tips ON the rolling
+    surface cannot prop the bike up, while tips OUTSIDE it become outriggers
+    and catch the bike part-way over (it stuck at 154 deg before the two were
+    coupled). It is a geometric identity, so it is pinned here rather than
+    left to a sweep to rediscover."""
+    from aow_sim.params import derive_righting
+
+    rg = params["righting"]
+    w, roof = rg["wings"], rg["roof"]
+    tip_y = w["pivot"][1] + w["crank_length"] * np.sin(np.deg2rad(w["crank_deg"]))
+    tip_z = (w["pivot"][2] + w["crank_length"] * np.cos(np.deg2rad(w["crank_deg"]))
+             + w["length"])
+    assert tip_y == pytest.approx(rg["bike_width"] / 2)
+    assert tip_z + roof["radius"] == pytest.approx(rg["bike_height"])
+    assert np.hypot(tip_y, tip_z - roof["height"]) == pytest.approx(roof["radius"])
+
+    # Driving the envelope moves all four derived dimensions together.
+    wider = copy.deepcopy(params)
+    for k in ("radius", "height"):
+        wider["righting"]["roof"].pop(k)
+    for k in ("crank_length", "length"):
+        wider["righting"]["wings"].pop(k)
+    wider["righting"]["bike_width"] = 0.150
+    derive_righting(wider)
+    w2, r2 = wider["righting"]["wings"], wider["righting"]["roof"]
+    assert r2["radius"] == pytest.approx(0.075)
+    assert w2["crank_length"] > w["crank_length"]      # tip pushed outboard
+    tip2_y = w2["pivot"][1] + w2["crank_length"] * np.sin(np.deg2rad(w2["crank_deg"]))
+    tip2_z = (w2["pivot"][2] + w2["crank_length"] * np.cos(np.deg2rad(w2["crank_deg"]))
+              + w2["length"])
+    assert np.hypot(tip2_y, tip2_z - r2["height"]) == pytest.approx(r2["radius"])

@@ -23,7 +23,8 @@ sim:
   # radius) into the floor while holding station. Penetration scales with the
   # square of the time constant, so this is ~16x stiffer. Raise it back toward
   # 0.02 if the solver starts complaining rather than to soften a contact.
-  contact_solref: [0.005, 1.0]
+  # contact_solref: [0.005, 1.0]
+  contact_solref: [0.005, 0.5]
   friction_sliding: {value: 0.9, source: GUESS}      # TPU on hard floor -> incline slide test
   friction_torsional: {value: 0.005, source: GUESS}  # scales with contact patch size -> validation
   floor_size: 3.0
@@ -252,7 +253,7 @@ righting:
   #   1. makes the chassis lumps (frame box, servos, AHRS, payload) COLLIDABLE,
   #      so a fall comes to rest on the parts that would really touch the floor
   #      instead of sinking through them, and
-  #   2. adds whatever of `bumper` / `arm` is present below.
+  #   2. adds whatever of `roof` / `bumper` / `arm` is present below.
   #
   # TWO ALTERNATIVE MECHANISMS live here, `arm` and `wings`, and they are never
   # built into the same model: build_model(righting=True) gives the single arm,
@@ -264,6 +265,72 @@ righting:
   #
   # Frame for z: metres above the REAR AXLE, like every other chassis-frame
   # position in this file (the axle sits 51.2 mm off the floor when upright).
+  #
+  # ------------------------------------------------------------------
+  # THE TWO DRIVERS. The roof and the stowed wings are one envelope, not two
+  # parts that happen to clear each other: the roof is the circle that
+  # circumscribes the stowed wing tips. Set the envelope here and
+  # params.derive_righting() computes the four dimensions that follow --
+  #     roof.radius, roof.height, wings.crank_length, wings.length
+  # -- so the tips sit exactly ON the roof surface. Upside down they are then
+  # tangent to the rolling envelope and cannot prop the bike up, which is the
+  # failure that left it stuck at 154 deg before (part 5 of self-righting.md).
+  # Enforced by construction, not rediscovered by sweeping.
+  #
+  # Both are a metre-stick measurement of the finished bike, which is the
+  # point: they are the numbers to hand a CAD model or check on the bench.
+  bike_width: {value: 0.120, source: design}   # wing tip to wing tip, stowed
+                                               #   = the roof DIAMETER
+  bike_height: {value: 0.165, source: design}  # top of the roof above the rear
+                                               #   axle (216 mm off the floor)
+  roof:
+    # A ridge over the top of the bike, so it cannot come to rest INVERTED.
+    #
+    # Why it is needed even though the bare bike already "passes": statically
+    # the inverted shelf past 150 deg is only 2.69 mm of CoM height, which at
+    # 1016 g is ~27 mJ -- and falls arrive at the floor with 75-300 mJ. So the
+    # bare bike drains back onto its side in the roll-plane landscape and still
+    # ends up on its back in real falls once any side geometry gives it a
+    # fulcrum (measured: 2 of 8 falls at 147 and 180 deg with an early wing).
+    # It is also reachable on purpose -- reverse at speed, then a 180 flip.
+    #
+    # Right now the thing defining the top of the bike is the AHRS: a flat-
+    # topped 30x30x12 box at z = 0.136, the highest lump on the vehicle and
+    # what actually touches at 180 deg. The roof replaces that plateau with a
+    # surface that has no facet to sit on.
+    #
+    # Shape: a CAPSULE along +X. Round in the roll plane (so an inverted bike
+    # rolls off it rather than balancing), with hemispherical ends supplying
+    # the fore/aft doming for free. "Mostly ridge, a bit of egg" without
+    # needing a mesh -- upgrade to a revolved mesh only if the sweep says the
+    # cross-section matters.
+    #
+    # Mass is a SHELL, not a lump: 30 g at the top of the bike raises the CoM
+    # from 124.3 to 126.2 mm (+1.9 mm), which is the price of admission. Do not
+    # let it become somewhere to mount things -- every gram here is at the
+    # worst possible height (see the CoG breakdown in self-righting.md).
+    x_start: {value: 0.020, source: design}
+    x_end: {value: 0.165, source: design}   # spans ahrs (x=0.05) to steer (0.16)
+    # 40 mm, not 30, and the cliff between them is sharp. At 30 mm an inverted
+    # bike rolls off 180 deg and is then CAUGHT AT 154 deg by a stowed wing
+    # foot -- the wings are 60 mm outboard when folded, so upside down they are
+    # outriggers, which is part 2's "a rail high on the chassis becomes a foot
+    # when the bike is inverted" caused by the mechanism itself. The wing tip
+    # sits 60.4 mm from the roof axis; the roof has to be big enough that the
+    # bike rolls decisively before the tip can reach the floor. 40 mm does it
+    # (settles at 88 deg, i.e. on its side); 30 mm does not, and from 154 deg
+    # the wings only reach 123 deg and stall -- on REACH, not torque (0.23 N.m).
+    # radius and height are DERIVED from bike_width / bike_height above.
+    # For the record, what the sweep found before they were coupled: at a
+    # 30 mm radius the bike rolls off 180 deg and is then CAUGHT AT 154 deg by
+    # a stowed wing foot, and from there the wings reach only 123 deg and stall
+    # -- on REACH, not torque (0.23 N.m). The response is also NOT MONOTONIC in
+    # the radius (50 mm was worse than either 45 or 60), which is exactly why
+    # this is now derived rather than tuned. Re-run both tests after any change
+    # to the envelope:
+    #     python analysis/self_righting.py invert --wings
+    #     python analysis/self_righting.py rest   --wings
+    mass: {value: 0.045, source: design}    # shell only -- see the CoG note above
   bumper:
     # Side geometry that sets the resting attitude: a short capsule pad per
     # side, sitting just proud of the drive servo it protects.
@@ -311,7 +378,7 @@ righting:
     # wants speed -- two seconds is fine -- so the fix is a reduction, and 3:1
     # is the same ratio the drive belts already use. Set to 1.0 to price
     # direct drive.
-    gear_ratio: {value: 3.0, source: design}
+    gear_ratio: {value: 4.0, source: design}
     # Position-servo gains for the arm (tuning knobs, not measurements). Much
     # stiffer than the steer actuator's 2.0 on purpose: the whole point of the
     # torque study is to see the actuator hit its 0.80 N.m forcerange, and a
@@ -343,7 +410,7 @@ righting:
     #   - ...or it may plant EARLY and wedge the bike short of upright, outside
     #     the +-12 deg hand-off window. That is what `lift --wings --sweep` and
     #     `sequence --wings` exist to answer.
-    pivot: {value: [0.075, 0.035, 0.0], source: design}  # [x, |y|, z]; mirrored in y
+    pivot: {value: [0.075, 0.030, 0.0], source: design}  # [x, |y|, z]; mirrored in y
     # pivot HEIGHT is the parameter this design turns on, and -0.020 (20 mm
     # below the rear axle = 31 mm off the floor) is what `lift --wings --sweep`
     # settles on. Three things fight over it, and the third is the one that
@@ -400,18 +467,17 @@ righting:
     # bigger reduction demands a longer crank, which widens the stance, which
     # is what part 2's rest sweep punishes. Reduction and landing behaviour are
     # not independent.
-    crank_length: {value: 0.025, source: design}   # pivot -> elbow
     crank_deg: {value: 90.0, source: design}       # from +Z, positive = OUTBOARD
-    # Leg length is what buys BOTH reach and a graceful landing. Too short and
-    # the stroke stalls around 90 deg of roll -- and it is REACH that fails,
-    # not torque (those rows peak at ~0.35 N.m, half the budget), so adding
-    # servo would not have fixed it. Too short ALSO lands badly: at 95 mm with
-    # this 90 deg crank the bike ended on its back in 2 of 8 falls, because the
-    # stowed wing became a fulcrum. 105 mm fixes both (spread 0.6 deg).
-    #
+    # crank_length and length are DERIVED from bike_width / bike_height.
+    # What they have to satisfy, and what the derivation therefore guarantees:
+    #   crank_length  carries the leg clear of its own gear disc (see
+    #                 crank_deg above) and puts the tip at bike_width/2;
+    #   length        reaches from the elbow up to the roof axis, which is
+    #                 also what gives the deployed wing enough REACH -- too
+    #                 short and the stroke stalls near 90 deg of roll on reach
+    #                 rather than torque, and lands badly besides.
     # The real wing will be wider and curved so it rolls onto its side
     # gracefully; this straight capsule is the rough-physics stand-in.
-    length: {value: 0.105, source: design}         # elbow -> foot
     radius: {value: 0.005, source: design}
     foot_radius: {value: 0.010, source: design}
     mass: {value: 0.020, source: design}           # PER WING
@@ -435,7 +501,7 @@ righting:
     # how small its teeth can be. `min_pinion_radius` is that floor, and the
     # disc separately cannot exceed the pivot's height above the floor without
     # grounding out. `lift --wings --sweep` reports both ceilings.
-    gear_ratio: {value: 3.0, source: design}
+    gear_ratio: {value: 4.0, source: design}
     min_pinion_radius: {value: 0.006, source: GUESS}  # smallest printable pitch
                                                       #   radius on the XC330
                                                       #   side -> print a test

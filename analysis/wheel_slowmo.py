@@ -11,8 +11,9 @@ on, so the motion can be judged against a real wheel that has to survive it.
   python analysis/wheel_slowmo.py --policies general_rl_smooth_diff_og
   python analysis/wheel_slowmo.py --seconds 0.5 --slowmo 83 --width 900
 
-Writes analysis/wheel_slowmo_<policy>.mp4. Read-only otherwise: it loads
-moves/*.npz and touches nothing else.
+Writes traces/wheel_slowmo/<policy><tag>.mp4 -- traces/ is gitignored, and at
+~7 MB a clip these do not belong beside the committed PNGs in analysis/.
+Read-only otherwise: it loads moves/*.npz and touches nothing else.
 
 THE WATERLINE. MuJoCo's contacts are soft, so the rollers really do sink
 below z=0 -- that penetration is not a rendering artefact, it IS the contact
@@ -120,7 +121,23 @@ def _apply_control(env, action):
     env.data.xfrc_applied[env._chassis, :] = 0.0
 
 
-def _verify_replication(params, cfg, pol, n_ctrl=5):
+def override_solref(model, timeconst, dampratio):
+    """Retune the contact on an already-compiled model.
+
+    Sweeping `dampratio` is the whole point of this knob: the shipped 1.0 is
+    CRITICAL damping and cannot bounce, while the physical wheel audibly
+    bounces two or three times, so the clips at 1.0 are showing a floor that
+    absorbs every impact. Overriding here rather than editing
+    config/bike_params.yaml keeps the sweep from disturbing a training run
+    that is reading the config.
+    """
+    if timeconst is not None:
+        model.geom_solref[:, 0] = timeconst
+    if dampratio is not None:
+        model.geom_solref[:, 1] = dampratio
+
+
+def _verify_replication(params, cfg, pol, solref=(None, None), n_ctrl=5):
     """Assert the hand-rolled substep loop equals GeneralEnv.step().
 
     Cheap insurance against the duplication in `_apply_control` rotting: if
@@ -128,6 +145,8 @@ def _verify_replication(params, cfg, pol, n_ctrl=5):
     video would quietly stop being of the same policy.
     """
     ref, mine = GeneralEnv(params, cfg), GeneralEnv(params, cfg)
+    for e in (ref, mine):                 # validate under the physics in use
+        override_solref(e.model, *solref)
     o_r, _ = ref.reset(seed=7, options=_HOLD)
     o_m, _ = mine.reset(seed=7, options=_HOLD)
     for _ in range(n_ctrl):
@@ -621,14 +640,31 @@ def main():
     ap.add_argument("--width", type=int, default=1500, help="output width [px]")
     ap.add_argument("--no-video", action="store_true",
                     help="rollouts and the viability table only, no rendering")
-    ap.add_argument("--out-dir", type=Path, default=Path(__file__).parent)
+    ap.add_argument("--timeconst", type=float, default=None,
+                    help="override contact solref timeconst [s] for this "
+                         "render only; config/bike_params.yaml is untouched")
+    ap.add_argument("--dampratio", type=float, default=None,
+                    help="override contact solref dampratio; 1.0 cannot "
+                         "bounce, the physical wheel does -- see "
+                         "analysis/contact_calibration.py")
+    ap.add_argument("--tag", default="",
+                    help="suffix for the output filename, to keep a sweep's "
+                         "clips apart")
+    ap.add_argument("--out-dir", type=Path, default=REPO / "traces" / "wheel_slowmo",
+                    help="videos land in traces/ (gitignored, as "
+                         "aow_sim.record already does) rather than "
+                         "in analysis/ beside the committed PNGs")
     args = ap.parse_args()
 
     params = load_params()
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     env = GeneralEnv(params, cfg)
+    solref = (args.timeconst, args.dampratio)
+    override_solref(env.model, *solref)
     model = env.model
+    print(f"contact solref {np.round(model.geom_solref[0], 5).tolist()}"
+          + ("  (overridden)" if any(v is not None for v in solref) else ""))
 
     dt_frame = 1.0 / (FPS * args.slowmo)
     stride = max(1, int(round(dt_frame / model.opt.timestep)))
@@ -676,12 +712,16 @@ def main():
             print(f"  skip {key}: no {npz.name}")
             continue
         pol = load_policy_npz(npz)
-        err = _verify_replication(params, cfg, pol)
+        err = _verify_replication(params, cfg, pol, solref)
         frames = rollout(pol, env, args.seconds, stride, rear, floor)
-        pen_all = [f["pen_mm"] for f in frames]
+        # SIGNED clearance, not pen_mm: pen_mm is >= 0 by
+        # construction, so feeding it here drew the lift half of
+        # every cycle as a flat line on the axis.
+        clear_all = [f["clear_mm"] for f in frames]
         rows[key] = viability(frames, args.seconds, roller_r_mm)
         if not args.no_video:
-            out = args.out_dir / f"wheel_slowmo_{key}.mp4"
+            out = args.out_dir / f"wheel_slowmo_{key}{args.tag}.mp4"
+            out.parent.mkdir(parents=True, exist_ok=True)
             writer = imageio.get_writer(out, fps=FPS, macro_block_size=1,
                                         quality=8)
             for n, fr in enumerate(frames):
@@ -692,7 +732,7 @@ def main():
                                        frames_geom, framings, font_sm)
                           for v in args.views]
                 writer.append_data(compose(panels, fr, key, eff,
-                                           pen_all[:n + 1], font, font_sm,
+                                           clear_all[:n + 1], font, font_sm,
                                            args.width))
             writer.close()
             print(f"  wrote {out}  ({len(frames)} frames, "

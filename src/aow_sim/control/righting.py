@@ -82,6 +82,34 @@ def settle_fallen(params: dict, roll_deg: float = 100.0, settle: float = 2.0,
     return data.qpos.copy()
 
 
+def settle_inverted(params: dict, roll_deg: float = 180.0, wings: bool = False,
+                    settle: float = 4.0, drop: float = 0.02):
+    """Drop the bike UPSIDE DOWN and let it find its own rest; returns the qpos.
+
+    Not the same question as `settle_fallen`. On its side the bike is already
+    where the mechanism can work; on its back it is not, and whether it gets
+    there is a property of the roof ridge, not of the mechanism. Starting a run
+    here exercises that first stage. See `self_righting.py invert`."""
+    model = build_model(params, righting=True, wings=wings)
+    data = mujoco.MjData(model)
+    data.qpos[:] = settle_upright(model).qpos
+    a = np.deg2rad(roll_deg) / 2
+    data.qpos[3:7] = [np.cos(a), np.sin(a), 0.0, 0.0]
+    data.qpos[2] = 0.30
+    mujoco.mj_forward(model, data)
+    # Lower it to a real clearance first, so this is a drop and not the solver
+    # recovering from a deep interpenetration.
+    floor = model.geom("floor").id
+    gap = min(mujoco.mj_geomDistance(model, data, floor, g, 2.0, None)
+              for g in range(model.ngeom)
+              if model.geom_contype[g] and g != floor)
+    data.qpos[2] += drop - gap
+    mujoco.mj_forward(model, data)
+    for _ in range(int(round(settle / model.opt.timestep))):
+        mujoco.mj_step(model, data)
+    return data.qpos.copy()
+
+
 class RightingSequencer:
     """Drives one righting mechanism through lift -> balance -> retract.
 

@@ -91,5 +91,15 @@ randomization:           # as rl_flick/rl_pivot
   # forcerange from a single draw (speed and torque both go with voltage) --
   # see control/randomize.py. Untethered transfer depends on this.
   actuator_frac: 0.15
+  # Contact. UNCOMMENT FOR THE NEXT RUN -- left off so this config still
+  # reproduces the policies trained before it existed. sim.contact_solref is
+  # the least-measured parameter in the model (the bench tests that would pin
+  # it are specified in docs/measurements/contact-protocol.md but not yet
+  # done), and it is the one the policies are most brittle to: holding
+  # timeconst and sweeping dampratio, eval survival is 1.00 from 1.0 down to
+  # 0.5 and then drops to 0.9 at 0.3 and 0.7 at 0.2. The drop test puts the
+  # true value near 0.3, i.e. right on the cliff edge.
+  # solref_frac: 0.4          # scales contact_solref[0], the time constant
+  # dampratio_range: [0.3, 0.8]   # absolute draw, not a fraction of nominal
   disturb_force_N: 2.0
   disturb_prob: 0.01

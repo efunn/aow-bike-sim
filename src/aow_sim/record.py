@@ -47,7 +47,8 @@ from .build_model import build_model, load_params
 from .control import DriveController
 from .control import gamepad as gp
 from .control.linearize import design_all, settle_upright
-from .control.righting import RightingSequencer, roll_pitch, settle_fallen
+from .control.righting import (RightingSequencer, roll_pitch,
+                               settle_fallen, settle_inverted)
 from .run_drive import (_LEAD_MAX, _TRAIL, _TURN_RATE, _command_ref,
                         _fresh, _overlay)
 
@@ -234,8 +235,11 @@ def _camera(model, mode: str, distance: float, elevation: float,
     return cam
 
 
-_PHASE_LABEL = {"lift": "DEPLOY", "balance": "HAND-OFF", "retract": "RETRACT"}
-_PHASE_RGB = {"fallen": (200, 60, 50), "lift": (230, 150, 40),
+_INVERT_SETTLE_S = 3.0     # let it roll off the roof before deploying
+_PHASE_LABEL = {"lift": "DEPLOY", "balance": "HAND-OFF", "retract": "RETRACT",
+                "inverted": "ON ITS BACK", "fallen": "FALLEN"}
+_PHASE_RGB = {"fallen": (200, 60, 50), "inverted": (150, 40, 130),
+              "lift": (230, 150, 40),
               "balance": (40, 150, 70), "retract": (60, 110, 200)}
 
 
@@ -287,7 +291,8 @@ def _trail(scn, pts, rgba=(*_TRAIL, 1.0)):
 
 
 def _record_righting(params, general: str | None, wings: bool, fps: int,
-                     seconds: float, retract_after: float):
+                     seconds: float, retract_after: float,
+                     inverted: bool = False):
     """PASS 1 for `--script right`: start fallen, run the mechanism through
     deploy -> hand-off -> retract, and keep one snapshot per output frame.
 
@@ -296,7 +301,15 @@ def _record_righting(params, general: str | None, wings: bool, fps: int,
     model = build_model(params, variant="full", righting=True, wings=wings)
     design = design_all(params, build_model(params))
     data = mujoco.MjData(model)
-    data.qpos[:] = settle_fallen(params, wings=wings)
+    # `inverted` starts the run UPSIDE DOWN instead of on its side, so the
+    # recording covers the part no still frame shows: the bike rolling off the
+    # roof ridge onto its side before the mechanism has anything to push on.
+    # settle=0 for the inverted start: the ROLL-OFF is the thing worth
+    # filming, so the run has to begin at the drop rather than after it. The
+    # mechanism is held at stow for `_INVERT_SETTLE_S` below so the bike gets
+    # to find its own rest first, the way it would on the floor.
+    data.qpos[:] = (settle_inverted(params, wings=wings, settle=0.0) if inverted
+                    else settle_fallen(params, wings=wings))
     mujoco.mj_forward(model, data)
     move = general or params["control"].get("general_move", "general_rl")
     seq = RightingSequencer(params, model, wings=wings,
@@ -308,12 +321,23 @@ def _record_righting(params, general: str | None, wings: bool, fps: int,
     seq.reset(model, data)
 
     every = max(1, int(round(1.0 / fps / model.opt.timestep)))
-    states, marks, phase = [], [], "fallen"
+    states, marks, phase = [], [], "inverted" if inverted else "fallen"
+    if inverted:
+        marks.append((0, _PHASE_LABEL.get(phase, phase)))
+    hold = int(round((_INVERT_SETTLE_S if inverted else 0.0)
+                     / model.opt.timestep))
     for i in range(int(round(seconds / model.opt.timestep))):
         roll, _ = roll_pitch(data.qpos[3:7])
-        seq.step(model, data)
+        if i < hold:
+            # Stowed and passive: let the roof do its half of the job before
+            # the mechanism is allowed to do its own.
+            data.ctrl[seq.aid] = seq.cmd
+        else:
+            seq.step(model, data)
         mujoco.mj_step(model, data)
-        if seq.phase != phase:
+        # During the hold the sequencer is not stepping, so its phase is still
+        # its constructed one -- don't let that register as a transition.
+        if i >= hold and seq.phase != phase:
             phase = seq.phase
             marks.append((len(states), _PHASE_LABEL.get(phase, phase)))
             print(f"  t={data.time:5.2f}s  {_PHASE_LABEL.get(phase, phase)}"
@@ -331,12 +355,12 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
            width: int, height: int, fps: int, distance: float,
            elevation: float, azimuth: float, hockey: bool,
            camera: str = 'top', wings: bool = True, seconds: float = 12.0,
-           retract_after: float = 1.0) -> dict:
+           retract_after: float = 1.0, inverted: bool = False) -> dict:
     params = load_params()
     righting = script in _SEQUENCES
     if righting:
         model, data, c, states, marks = _record_righting(
-            params, general, wings, fps, seconds, retract_after)
+            params, general, wings, fps, seconds, retract_after, inverted)
         mode = ("wings" if wings else "arm") + ":" + (
             general or params["control"].get("general_move", "general_rl"))
         fell, v_max, crab_max, drawing = False, 1.2, 0.0, None
@@ -541,6 +565,10 @@ def main() -> None:
                          "mirrored wing pair")
     ap.add_argument("--seconds", type=float, default=12.0,
                     help="right: run length")
+    ap.add_argument("--inverted", action="store_true",
+                    help="start the `right` script UPSIDE DOWN, so the "
+                         "recording covers the roof rolling it onto its side "
+                         "first (see self_righting.py invert)")
     ap.add_argument("--retract-after", type=float, default=1.0,
                     help="right: seconds the policy must hold it before the "
                          "mechanism is pulled back to stow")
@@ -556,7 +584,8 @@ def main() -> None:
     print(f"recording {a.script} ({tag})")
     print(record(a.script, a.general, a.analytic, out, a.width, a.height,
                  a.fps, distance, a.elevation, a.azimuth, a.hockey,
-                 camera, not a.arm, a.seconds, a.retract_after))
+                 camera, not a.arm, a.seconds, a.retract_after,
+                 a.inverted))
 
 
 if __name__ == "__main__":

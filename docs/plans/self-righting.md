@@ -572,6 +572,147 @@ and a much tighter torque margin.
 
 ---
 
+---
+
+## 5. The roof: not landing on its back
+
+Part 2 measured that the bare bike has no stable inverted attitude and left it
+there. That was too generous a reading. The inverted "shelf" past 150° is
+**2.69 mm of CoM height — about 27 mJ — and falls arrive at the floor with
+75–300 mJ.** It is a rounding error, not a barrier. It also turns out to be
+reachable on purpose: reverse at speed, then command a 180° flip, and the bike
+lands on its back every time.
+
+What defines the top of the bike today is the **AHRS**: a flat-topped
+30 × 30 × 12 box at z = 136 mm, the highest lump on the vehicle, and exactly
+what carries the load at 180°. `righting.roof` replaces that plateau with a
+capsule along +X — round in the roll plane so an inverted bike rolls off it,
+hemispherical ends supplying the fore/aft doming for free. A ridge, not a dome,
+which is the right call: it makes **roll** unstable while leaving **pitch**
+neutral, and the measurements confirm it (starting pitch of 0° vs 15° gives
+bit-identical outcomes — the bike just rocks along the ridge and settles back).
+
+New tool:
+
+```sh
+python analysis/self_righting.py invert --wings           # drop it upside down
+python analysis/self_righting.py invert --wings --compare # ...with/without the roof
+python -m aow_sim.record --script right --inverted        # and on video
+```
+
+### The mechanism defeats its own roof, and that sets the size
+
+The first surprise: a 30 mm roof works fine on the **single arm** (180° → 99.5°,
+onto its side) and fails completely with the **wing pair**. Stowed, the wings
+sit 60 mm outboard — so upside down they are *outriggers*, and the bike settles
+at 154° propped on the roof crest and one wing foot. Deploying from there
+reaches 123° and stalls, at **0.23 N·m**, i.e. on reach, not torque.
+
+This is part 2's rule biting a third time: *a rail high on the chassis becomes a
+foot when the bike is inverted* — except this time the rail is the righting
+mechanism itself.
+
+### The fix: derive the roof from the wings, do not tune it
+
+The sweep below was how this was found, but it is not how it should be *set*.
+The roof and the stowed wings are **one envelope**: make the roof radius the
+stow half-span and put its axis at the wing-tip height, and the tips sit
+exactly ON the roof surface — tangent to the rolling envelope, so they cannot
+prop the bike up no matter which way it lands. Tips *outside* that circle are
+outriggers; tips *on* it are part of the roll.
+
+That is a geometric identity, so `params.derive_righting()` enforces it by
+construction from two drivers, both a metre-stick measurement of the finished
+bike:
+
+| driver | value | drives |
+|---|---|---|
+| `bike_width` | 120 mm | wing tip to tip, stowed = the roof **diameter** |
+| `bike_height` | 165 mm above the axle (216 off the floor) | top of the roof |
+
+...and `bike_width` is itself pinned by the gear train — see below.
+
+from which `roof.radius`, `roof.height`, `wings.crank_length` and
+`wings.length` all follow. Four numbers that used to be four independent
+guesses are now consequences of two you can measure, and
+`test_righting_envelope_is_derived_and_tangent` pins the identity.
+
+The sweep that motivated it, for the record — the roof radius is set by the
+stowed wing stance, not by the chassis:
+
+| roof radius | inverted drops stuck | side-fall rest spread |
+|---|---|---|
+| 30 mm | **5/5** | 66.4° |
+| 40 mm | 2/5 | 0.4° |
+| **45 mm** | **0/5** | **0.4°** |
+| 50 mm | 0/5 | **43.9°** |
+| 60 mm | 0/5 | 0.5° |
+
+**Read the 50 mm row.** The response is *not monotonic*: at 50 mm one ordinary
+side fall perches at 131° on roof + wing foot, which neither neighbour does.
+A hand-tuned radius sitting next to that hole is exactly the kind of number
+that quietly breaks when something upstream moves — which is the argument for
+deriving it. The derived value is 60 mm (= `bike_width`/2), on the far side of
+the hole and structurally guaranteed rather than empirically lucky.
+
+### Result
+
+With the derived envelope, every inverted drop across 160–200° of roll and
+0–15° of pitch rolls down onto its side at ~88° and is then righted by the
+wings to **0.0°** — 10/10, against 10/10 stuck before. Ordinary side falls are
+untouched (spread 0.5°, the same as with no roof at all) and the normal
+righting sequence is unchanged.
+
+Mass cost is 45 g at the highest point on the bike, which sounds worse than it
+is: the **whole** righting kit (roof + pads + wings + servo + gears, 143 g)
+moves the CoM *down*, from 124.3 mm to 122.8 mm, because the wings are heavy and
+low. The roof alone is worth about +1.9 mm. Keep it a shell — every gram there
+is at the worst possible height, so it must not become a mounting surface.
+
+
+### The gear train sets the width, and the reduction no longer does
+
+Final topology: **the two wing gears mesh each other directly, and the XC330
+drives one of them.** Two things fall out, and the second is the one that
+matters:
+
+* **The mesh is the reversal.** Two meshed gears counter-rotate, so the
+  mirror-symmetric deployment comes from the gear train itself. The separate
+  reversal idler the original sketch worried about is gone.
+* **The reduction is decoupled from the envelope.** Equal discs on pivots
+  `2·pivot_y` apart means `r_disc = pivot_y` *whatever the ratio*, and the
+  crank must clear its own disc, so
+
+      bike_width >= 4 * pivot_y        — independent of the reduction
+
+  With a central pinion the disc grew with the ratio, so buying torque widened
+  the bike and worsened the landing. Now the ratio only sizes the pinion.
+
+Width is therefore bought with **pivot spacing**, and narrow wins:
+
+| `pivot_y` | `bike_width` | pinion @4:1 | inverted stuck | side-fall spread | torque (frac of 9.9 V stall) |
+|---|---|---|---|---|---|
+| 26 mm | 104 mm | 6.50 mm | 0/5 | 0.5° | 0.507 N·m (0.77) |
+| **30 mm** | **120 mm** | **7.50 mm** | **0/5** | **0.5°** | **0.516 N·m (0.78)** |
+| 35 mm | 140 mm | 8.75 mm | 0/5 | **86.4°** | 0.566 N·m (0.86) |
+
+At 140 mm the roof (70 mm radius) becomes the widest thing on the bike and side
+falls perch on it. 30 mm keeps the envelope at the 120 mm it already was.
+
+### What 4:1 finally buys, and what it costs
+
+Torque was the last open problem: at 3:1 the stroke needed 0.653 N·m, right at
+the 0.66 N·m the XC330 makes at the 9.9 V cutoff. At **4:1 it is 0.516 N·m —
+0.78 of that stall**, a real margin at last, and only 0.57 A / 0.20 mAh per
+attempt.
+
+The price is the one flagged earlier: `deploy_deg × gear_ratio` crosses 360°,
+so the stroke is **1.08 turns and extended-position mode is required again**.
+Single-turn was a nicety; torque margin at the bottom of the pack is not.
+Ceiling on the reduction is now **5:1**, set by the 6 mm minimum printable
+pinion against the 30 mm disc.
+
+
 ## Consequences for the rest of the repo
 
 * `config/bike_params.yaml` gained a `righting` block, which changes the

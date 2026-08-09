@@ -296,6 +296,27 @@ def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True) -> No
     that sinks through the servos rests on nothing."""
     rg, sim = p["righting"], p["sim"]
 
+    if "roof" in rg:
+        # A capsule along +X: round in the ROLL plane, so an inverted bike
+        # rolls off it instead of balancing on it, with hemispherical ends
+        # giving the fore/aft doming for free. The flat-topped AHRS is what
+        # currently defines the top of the bike and what touches at 180 deg;
+        # this has to sit proud of it to take over that job.
+        r = rg["roof"]
+        chassis.add_geom(
+            name="roof",
+            type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+            size=[r["radius"], 0, 0],
+            fromto=[r["x_start"], 0.0, r["height"],
+                    r["x_end"], 0.0, r["height"]],
+            mass=r["mass"],
+            contype=DYN_CONTYPE,
+            conaffinity=DYN_CONAFF,
+            condim=sim["condim"],
+            friction=_contact_friction(sim),
+            rgba=[0.35, 0.6, 0.85, 0.55],
+        )
+
     if "bumper" in rg:
         b = rg["bumper"]
         for side, tag in ((1, "left"), (-1, "right")):
@@ -382,61 +403,60 @@ def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True) -> No
 def wing_fit(p: dict) -> dict:
     """Gear-train geometry for the wing pair, and what it costs to fit.
 
-    The mechanism is one central pinion on the centreline meshing both wing
-    gears, so the mesh is not free geometry — the centre distance is FIXED by
-    where the pivots are:
+    Topology: the two WING GEARS MESH EACH OTHER DIRECTLY, and the XC330 drives
+    only one of them through a pinion. Two consequences, and both are the point
+    of doing it this way:
 
-        r_pinion + r_disc = half_span      (the pivot's |y|)
-        r_disc / r_pinion = gear_ratio
+      * The mesh IS the reversal. Two meshed gears counter-rotate, so the
+        mirror-symmetric deployment falls out of the gear train itself and the
+        separate idler the sketch worried about disappears.
+      * The reduction no longer touches the stance. The discs are on pivots
+        2*half_span apart and are equal, so each one is exactly
 
-    which pins both radii from the ratio alone:
+            r_disc = half_span                    (INDEPENDENT of the ratio)
 
-        r_pinion = half_span / (1 + ratio)
-        r_disc   = half_span * ratio / (1 + ratio)
+        and the ratio only sets the pinion that drives one of them:
 
-    That is the coupling worth knowing before choosing a reduction, and it runs
-    the wrong way: a BIGGER reduction makes the PINION smaller, not the disc
-    bigger without limit. Two hard limits follow, and they are what
-    `min_pinion_radius` and the pivot height are for:
+            r_pinion = r_disc / gear_ratio
 
-      pinion  3D-printed teeth have a minimum workable pitch radius. Below it
-              the reduction is simply not manufacturable at this centre
-              distance.
+    That is a real decoupling. With a central pinion meshing both wings,
+    r_disc grew with the ratio, so buying torque widened the bike; here the
+    reduction is free of the envelope and only has to stay manufacturable.
+
+    Two hard limits remain:
+
+      pinion  3D-printed teeth have a minimum workable pitch radius; below it
+              the reduction is not manufacturable at this disc size.
       floor   the disc is centred on the pivot, so it cannot be larger than
-              the pivot's height above the floor without grounding out.
+              the pivot's height above the floor without grounding out. With
+              a direct mesh this is a constraint on the PIVOT SPACING, not on
+              the ratio -- it no longer moves when the reduction does.
 
     Everything here is derived, so a swept `gear_ratio` re-reports it for free.
     """
     w = p["righting"]["wings"]
     half_span, ratio = w["pivot"][1], w["gear_ratio"]
-    r_pinion = half_span / (1.0 + ratio)
-    r_disc = half_span - r_pinion
+    r_disc = half_span                      # direct wing-to-wing mesh
+    r_pinion = r_disc / ratio
     ride_h = p["omni_wheel"]["outer_radius"] + w["pivot"][2]
-    # Ceilings on the ratio from each constraint, inverting the two formulas.
-    by_pinion = half_span / w["min_pinion_radius"] - 1.0
-    by_floor = ride_h / max(half_span - ride_h, 1e-9)
-    # The crank has to carry the leg CLEAR OF THE DRIVEN DISC, which is what
-    # pins it near 90 deg: the leg has to land on the floor, not on the gear it
-    # is bolted to. So the crank is really "how far outboard of the disc rim
-    # does the leg sit", and cranking it inboard is not a free trade against
-    # torque -- below the disc radius the mechanism lands on its own gear.
-    # This also couples the ratio to the stance: a bigger reduction is a bigger
-    # disc, which pushes the leg further outboard and widens where it lands.
+    # Only the pinion still puts a ceiling on the ratio; the floor limit is now
+    # a property of the pivot alone, so it is pass/fail rather than a ceiling.
+    by_pinion = r_disc / w["min_pinion_radius"]
+    # The crank has to carry the leg CLEAR OF THE DRIVEN DISC: the leg lands on
+    # the floor, not on the gear it is bolted to. With a direct mesh the disc
+    # is half_span, so this is a constraint on the ENVELOPE --
+    #     bike_width >= 2 * (half_span + r_disc) = 4 * half_span
+    # -- and, unlike before, it does not move with the reduction.
     crank_reach = w["crank_length"] * np.sin(np.deg2rad(w["crank_deg"]))
     return {"disc_radius": r_disc, "pinion_radius": r_pinion,
             "pivot_height": ride_h,
             "crank_reach": crank_reach,
+            "min_bike_width": 2.0 * (half_span + r_disc),
             "leg_stands_on_gear": crank_reach < r_disc,
             "grounds_out": r_disc > ride_h,
             "pinion_too_small": r_pinion < w["min_pinion_radius"],
-            # The two discs are on opposite pivots, 2*half_span apart, so they
-            # touch when r_disc > half_span -- unreachable through a central
-            # pinion (r_disc < half_span always), but a DIRECT wing-to-wing
-            # mesh is exactly the r_disc = half_span case, so it is worth
-            # naming rather than assuming.
-            "discs_clash": r_disc > half_span,
-            "max_ratio": min(by_pinion, by_floor),
-            "max_ratio_by": "pinion" if by_pinion < by_floor else "floor"}
+            "max_ratio": by_pinion,
+            "max_ratio_by": "pinion"}
 
 
 def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
@@ -494,25 +514,35 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
     deploy, stow = w["deploy_deg"], w["stow_deg"]
 
     # Servo + gear train ride on the chassis; only their mass matters here.
+    # ON THE CENTRELINE, and lifted clear of where the two wing discs mesh:
+    # they touch at y = 0, so a servo sitting at the pivot height would be
+    # inside the mesh. Raising it by the disc radius puts its shaft above the
+    # meshing point, where a pinion can reach one disc. The actual routing
+    # (which disc it drives, and the fore/aft offset that lets the pinion clear
+    # the other one) is a design detail -- what the model needs right is the
+    # MASS on the centreline and at a plausible height, not the tooth geometry.
+    fit = wing_fit(p)
+    servo_z = pz + fit["disc_radius"]
     chassis.add_geom(
         name="servo_wings",
         type=mujoco.mjtGeom.mjGEOM_BOX,
         size=np.array(p["servos"]["xc330_t181"]["box_size"]) / 2,
-        pos=[px, 0.0, pz],
+        pos=[px, 0.0, servo_z],
         mass=w["servo_mass"] + w["gearbox_mass"],
         contype=0,
         conaffinity=0,
         rgba=[0.1, 0.1, 0.1, 1],
     )
-    # The driving pinion, on the centreline between the two wing gears. Drawn
-    # only, like the discs -- see `wing_fit` for why its size is the thing that
-    # actually limits the reduction.
+    # The driving pinion, at the servo. Drawn only, like the discs -- see
+    # `wing_fit` for why its size is what limits the reduction. It drives ONE
+    # disc; the other is carried by the direct wing-to-wing mesh, which is also
+    # what reverses it.
     chassis.add_geom(
         name="wing_pinion",
         type=mujoco.mjtGeom.mjGEOM_CYLINDER,
-        size=[wing_fit(p)["pinion_radius"], w["gear_width"] / 2, 0],
+        size=[fit["pinion_radius"], w["gear_width"] / 2, 0],
         quat=_quat_z_to([1, 0, 0]),
-        pos=[px, 0.0, pz],
+        pos=[px, 0.0, servo_z],
         mass=0.0,
         contype=0,
         conaffinity=0,
@@ -525,7 +555,6 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
     m_foot = w["mass"] * 0.4
     m_span = w["mass"] * 0.6
 
-    fit = wing_fit(p)
     for side, tag in ((1, "left"), (-1, "right")):
         # Outboard is +side * Y: +Y for the left wing, -Y for the right. The
         # crank leans the stowed leg AWAY from the centreline so it parks

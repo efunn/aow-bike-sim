@@ -1,0 +1,67 @@
+# Raw measurement capture sheet — tracks contact-protocol.md section by section.
+#
+# Enter values exactly as measured. Units are in each key's suffix:
+#   _mm = millimeters (float), _n = newtons (float), _kg = kilograms (float),
+#   _fps = frames per second (int). 0 / 0.0 means "not yet measured".
+# This file is for raw data entry only. When a section is complete, read the
+# matching solref entry off the tables in contact-protocol.md (or re-run
+# analysis/contact_calibration.py with your numbers) and update
+# `sim.contact_solref` in config/bike_params.yaml.
+
+surface:
+  material: "wood — smooth cutting board"   # what the tests below were run on
+  notes: >
+    The target floor. If this changes, both sections need redoing; see §P3 of
+    the protocol for why a per-geom split does NOT do what it looks like it
+    does (MuJoCo averages the pair).
+
+p0_static_deflection:
+  # Load through the axle, measure axle drop vs unloaded on the same spot and
+  # the same roll phase. Three loads minimum — the contact is not linear.
+  roll_phase: ""              # str — "single roller" / "two adjacent" / "two bridging"
+  unloaded_reference_mm: 0.0  # float — axle height, no load
+  points:
+    - load_kg: 0.0            # float
+      deflection_mm: 0.0      # float — drop from the unloaded reference
+    - load_kg: 0.0
+      deflection_mm: 0.0
+    - load_kg: 0.0
+      deflection_mm: 0.0
+  notes: >
+    2026-08-08 first pass, hand-guided, ~4.5 kg: "in the mm range, say 1 mm,
+    maybe more". Not recorded as a data point because the reference and roll
+    phase were not controlled. Enough to rule out timeconst 0.020 (3.6 mm
+    under the bike's own weight); not enough to separate 0.005 from 0.0035.
+
+p1_drop_rebound:
+  # Release (do not throw) from a measured height; film; read the first apex.
+  # e = sqrt(h1/h0). Rebound HEIGHT is the number — bounce count is unreliable.
+  camera_fps: 0               # int — 240 is plenty for a ~7 mm rebound
+  drops:
+    - drop_height_mm: 0.0     # float — h0, wheel bottom to floor at release
+      rebound_1_mm: 0.0       # float — h1, first apex
+      rebound_2_mm: 0.0       # float — h2, second apex (0 if none)
+      audible_bounces: 0      # int
+    - drop_height_mm: 0.0
+      rebound_1_mm: 0.0
+      rebound_2_mm: 0.0
+      audible_bounces: 0
+  notes: >
+    2026-08-08 first pass, 3-4 cm onto the cutting board, hands guiding only:
+    first rebound clearly visible, second barely, 2-3 audible. Consistent with
+    dampratio ~0.30 (predicted apexes 7.5 then 1.9 mm from 35 mm). The shipped
+    dampratio of 1.0 is critical damping and produces NO bounce at all, so
+    this observation alone falsifies the current value.
+
+p2_roll_phase:
+  # Deferred — see protocol. A check on the mesh/layout, not on solref.
+  single_roller_deflection_mm: 0.0     # float, at the p0 reference load
+  two_adjacent_deflection_mm: 0.0      # float
+  two_bridging_deflection_mm: 0.0      # float
+  reference_load_kg: 0.0               # float
+
+derived:
+  # Fill in once the sections above are complete.
+  contact_solref_timeconst_s: 0.0   # float — from p0, via the protocol table
+  contact_solref_dampratio: 0.0     # float — from p1
+  date: ""                          # str — YYYY-MM-DD the values were adopted

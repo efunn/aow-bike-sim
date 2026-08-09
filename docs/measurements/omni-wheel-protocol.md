@@ -208,3 +208,8 @@ so results are compared like-for-like. Do them in this order:
    §1 envelope calipering is unloaded; TPU squish makes the effective radius
    under load slightly smaller. Compare against the sim's rolled distance to
    tune contact softness (`solref`/`solimp`) if the gap matters.
+7. **Contact stiffness and restitution** — the gap in item 6 turned out to
+   matter: at MuJoCo's stock `solref` the rollers sank 2.1–2.8 mm under a
+   hold command. Worked out separately in `contact-protocol.md` (data sheet
+   `contact-measurements.yaml`), which splits it into a static load-deflection
+   test for stiffness and a drop test for restitution.

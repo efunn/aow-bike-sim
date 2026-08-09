@@ -11,6 +11,7 @@ balance. See tests/test_hw_no_mujoco.py, which enforces it.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import yaml
@@ -27,6 +28,65 @@ def _normalize(node):
     return node
 
 
+def derive_righting(p: dict) -> dict:
+    """Fill in the righting dimensions that are consequences, not choices.
+
+    The roof and the stowed wings are ONE envelope, not two parts that happen
+    to fit: the roof is the circle circumscribing the stowed wing tips. Make
+    the roof radius the stow half-span and put its axis at the wing-tip height
+    and the tips sit exactly ON the roof surface -- so upside down they are
+    tangent to the rolling envelope and can never prop the bike up. Getting
+    that wrong is what left it stuck at 154 deg (see part 5 of
+    docs/plans/self-righting.md); it is a geometric identity, so it should be
+    enforced by construction rather than rediscovered by sweeping.
+
+    Two drivers, both a metre-stick measurement of the finished bike:
+
+        bike_width   wing tip to wing tip, stowed  = the roof DIAMETER
+        bike_height  top of the roof, above the rear axle
+
+    from which:
+
+        roof.radius   = bike_width / 2
+        roof.height   = bike_height - roof.radius      (axis = the wing tips)
+        crank_length  = (bike_width / 2 - pivot_y) / sin(crank_deg)
+        wings.length  = roof.height - pivot_z - crank_length * cos(crank_deg)
+
+    Mutates and returns `p`. A missing `righting` block, missing drivers, or a
+    pre-set value all leave things alone, so a sweep can still override any
+    single dimension after loading.
+    """
+    rg = p.get("righting")
+    if not isinstance(rg, dict):
+        return p
+    width, height = rg.get("bike_width"), rg.get("bike_height")
+    if width is None or height is None:
+        return p
+    half = width / 2.0
+
+    roof = rg.get("roof")
+    if isinstance(roof, dict):
+        roof.setdefault("radius", half)
+        roof.setdefault("height", height - half)
+
+    w = rg.get("wings")
+    if isinstance(w, dict):
+        # The crank sets how far outboard the leg sits; the leg then reaches
+        # from there up to the roof axis. Both fall out of the envelope.
+        sin = math.sin(math.radians(w["crank_deg"]))
+        if abs(sin) < 1e-9:
+            raise ValueError(
+                "righting.wings.crank_deg near 0 cranks the leg straight up, "
+                "so bike_width cannot set the crank length; give crank_length "
+                "explicitly or crank the wing outboard")
+        w.setdefault("crank_length", (half - w["pivot"][1]) / sin)
+        w.setdefault(
+            "length",
+            (height - half) - w["pivot"][2]
+            - w["crank_length"] * math.cos(math.radians(w["crank_deg"])))
+    return p
+
+
 def load_params(path: str | Path | None = None) -> dict:
     with open(path or DEFAULT_PARAMS) as f:
-        return _normalize(yaml.safe_load(f))
+        return derive_righting(_normalize(yaml.safe_load(f)))
