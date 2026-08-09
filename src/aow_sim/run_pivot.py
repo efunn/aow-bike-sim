@@ -9,8 +9,9 @@ yaw-rate sweep to find the achievable envelope. Metrics per scenario:
                     the "pivot in place" measure
 --view: scripted demo (+180°, hold, −180°) with the controller in the loop.
 --teleop: interactive heading control (macOS: run under `mjpython`):
-    left/right arrows  ±30°      J / L  ±90°      U / O  ±180°
-Commands re-anchor immediately, so mashing keys mid-pivot is allowed.
+    left/right arrows  ±30°      6 / 7  ±90°      8 / 9  ±180°
+Digits, not letters: MuJoCo's viewer claims every key A-Z before this module
+sees it. Commands re-anchor immediately, so mashing keys mid-pivot is allowed.
 """
 
 from __future__ import annotations
@@ -116,7 +117,7 @@ def teleop(model, params, eq_qpos) -> None:
         c.step(m, d)
 
     teleop_loop(model, data, step, on_key,
-                "teleop: ←/→ ±30°   6/7 ±90°   8/9 ±180°   (Esc quits)",
+                "teleop: ←/→ ±30°   6/7 ±90°   8/9 ±180°   (close the window to quit)",
                 "aow_sim.run_pivot")
 
 

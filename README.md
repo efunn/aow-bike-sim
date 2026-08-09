@@ -59,7 +59,7 @@ is a setpoint, so it stays where you leave it.
 | 5 | stop now (incl. crab) | `,` | general RL policy on / off |
 | `/` | re-zero the command | 2 | toggle the ground dial |
 | 1 / 3 | crab left / right (general mode only) | F5 | fullscreen (Backspace resets) |
-| `[` / `]` | trail: pen-up / 2s / 4s / 10s / inf | `` ` `` | camera: free → follow → overhead |
+| `;` / `'` | trail: pen-up / 2s / 4s / 10s / inf | `\` | camera: free → follow → overhead |
 
 The general RL policy drives by default (whenever `moves/general_rl` exists
 and matches the current spec). It is a modal layer: the arrows command it,
@@ -94,7 +94,7 @@ draw is reachable by hand.
 | LEFT stick X — `1`/`3` | lateral velocity (± `v_lat_frac · v_max`) |
 | RIGHT stick X — `←`/`→` | heading **rate** (integrates, so releasing holds the heading) |
 | A / B / X / Y — `5` `/` `7` `6` | stop · re-zero · snap 90° L/R |
-| LB / RB — `]` / `[` | trail longer / shorter |
+| LB / RB — `'` / `;` | trail longer / shorter |
 
 `aow_sim.record` burns a **gamepad input overlay** into every video frame —
 stick gates, pen state and the snap button — so a recording shows what was
@@ -109,12 +109,15 @@ The controller choice survives a viewer reset, rewinding time makes the
 controller fall back to line mode internally, and teleop re-engages the policy
 unless you turned it off.
 
-Pressing `` ` `` cycles the camera: **free** (mouse-driven, the viewer's own),
+Pressing `\` cycles the camera: **free** (mouse-driven, the viewer's own),
 **follow** (chase, azimuth tracking the bike's heading) and **overhead** (plan
-view). Both tracked modes hold the bike still in frame, so they also switch on
-a 0.5 m **floor grid** — without a world-fixed reference a follow camera makes
-a moving bike look parked. A **red trail** marks where the bike has actually
-been: the last 2 s solid, then fading to clear over 0.5 s. `[` and `]` step
+view). A 0.5 m **floor grid** is drawn in every mode — the tracked ones hold the bike
+still in frame, so without a world-fixed reference a moving bike looks parked,
+and the free view is easier to judge distances in with it than without.
+Switching back to **free** re-frames once to the viewer's opening 3/4 view,
+centred on the bike, rather than inheriting overhead's straight-down elevation;
+after that handoff the mouse owns the camera again. A **red trail** marks where the bike has actually
+been: the last 2 s solid, then fading to clear over 0.5 s. `;` and `'` step
 that history through **pen-up / 2s / 4s / 10s / inf**. Pen-up keeps what is
 already drawn and stops adding, so the bike can be repositioned invisibly and a
 disconnected shape drawn — that is how the `t` drawing puts a stem under a

@@ -1,16 +1,31 @@
 """Drive harness: python -m aow_sim.run_drive [--view | --teleop].
 
-Headless (default):
+Headless (default) -- the envelope report:
   1. Straight sprints (fwd/back, config accel): cruise quality, braking
      distance, cross-track, survival.
   2. Accel sweep at v_max until failure -> max clean accel/decel.
-  3. Binary-search envelopes (per the target baselines): tightest tracked
-     circle and tightest stop-from-circle, both directions, at 0.5 m/s.
-  4. Fastest-circle sweep at the tightest radius (+ margin).
+  3. Turn-rate envelope: max clean 90-degree command_heading rate per speed,
+     forward and reverse, with the equivalent turn radius.
+  4. U-turn swept width at 0.8 m/s (the practical sharpness number).
+  5. Binary-search circle envelopes: tightest tracked circle and tightest
+     stop-from-circle, both directions, at +-0.5 m/s.
+  6. Fastest-circle sweep at the tightest radius (+ margin).
+  7. 180-degree flip (crawl front-pivot) and two-arc flick scenarios.
 
---view: scripted demo (sprint, one circle lap, stop).
---teleop (macOS: mjpython): ↑/↓ speed ±0.25 m/s (through zero into reverse),
-  ←/→ heading nudge ±15°, C / V circle left/right (R=0.8 m), Space stop.
+--view: scripted demo (sprint, circle lap, stop, flip, flick).
+--teleop (macOS: mjpython): RC-style driving. The general RL policy drives by
+  default when moves/<control.general_move> exists and matches the current
+  obs spec; `,` toggles down to the analytic controller, which owns the
+  one-shot maneuvers instead.
+
+  Arrows throttle and steer; 1/3 crab (general mode only); 5 stop; 2 dial;
+  / re-zero; ; ' trail history; \\ camera. The banner printed at startup is
+  the authoritative list, and the README teleop table explains the modes.
+  Keys avoid A-Z, [ ], `, Space, Tab, Esc and F1-F5 -- all owned by MuJoCo's
+  viewer, which sees every keypress before this module does.
+
+--general NAME picks the policy; --ui restores the viewer's side panels.
+Use `python -m aow_sim.record` for a headless video of any of this.
 """
 
 from __future__ import annotations
@@ -844,6 +859,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # overhead = plan view. Both tracked modes need the floor grid to be
     # legible, since a tracked camera holds the bike still in frame.
     cam_mode = ["free"]
+    cam_free_pending = [False]   # re-frame free view on the switch INTO it
     view = [None]              # the viewer handle, once teleop_loop hands it over
     chassis_id = model.body("chassis").id
     ax_v, ax_psi, ax_lat = _Axis(), _Axis(), _Axis()
@@ -1009,21 +1025,40 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         """Point the viewer camera. Runs on the sim/render thread (step), not
         in the key callback, which the viewer services on its own thread."""
         v = view[0]
-        if v is None or cam_mode[0] == "free":
+        if v is None:
+            return
+        if cam_mode[0] == "free":
+            # Hand the camera back ONCE per switch, re-framed to the 3/4 view
+            # the viewer opens with and centred on the bike -- otherwise free
+            # mode inherits whatever overhead left behind (elevation -89, i.e.
+            # staring straight down) and reads as a broken toggle. After the
+            # handoff it is the user's camera again: mouse orbit/pan/zoom are
+            # not fought for, which is the whole point of free mode.
+            if cam_free_pending[0]:
+                cam_free_pending[0] = False
+                with v.lock():
+                    v.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                    v.cam.trackbodyid = -1
+                    v.cam.lookat[:] = d.body("chassis").xpos
+                    v.cam.azimuth, v.cam.elevation, v.cam.distance = (
+                        135.0, -25.0, 2.4)
             return
         R = d.body("chassis").xmat.reshape(3, 3)
         yaw = float(np.degrees(np.arctan2(R[1, 0], R[0, 0])))
         with v.lock():
             v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
             v.cam.trackbodyid = chassis_id
+            # azimuth == yaw puts the camera BEHIND the bike looking along
+            # its heading -- verified by reading scn.camera[0].pos back out:
+            # at azimuth yaw the offset dots -1.44 with forward, at yaw+180
+            # it dots +1.60. yaw+180 therefore filmed the bike head-on, and
+            # in plan view pointed it down the screen.
             if cam_mode[0] == "follow":
-                # Azimuth chases the bike's heading, so the camera sits behind
-                # it rather than swinging around as the bike turns.
                 v.cam.azimuth, v.cam.elevation, v.cam.distance = (
-                    yaw + 180.0, -18.0, 1.6)
-            else:                       # overhead
+                    yaw, -18.0, 1.6)
+            else:                       # overhead: heading points up-screen
                 v.cam.azimuth, v.cam.elevation, v.cam.distance = (
-                    yaw + 180.0, -89.0, 2.6)
+                    yaw, -89.0, 2.6)
 
     def step(m, d):
         apply_camera(d)
@@ -1058,9 +1093,14 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 dirn = 1 if k == 263 else -1
                 if ax_psi.press(d.time, dirn):
                     turn(dirn * _STEP_PSI)
-            elif k in (ord("["), ord("]")):   # trail history length
+            # ; ' and \\ specifically: the viewer's own bindings take [ and ]
+            # (Cycle cameras), ` (bounding boxes), Esc (free camera), Space,
+            # Tab, +/-, F1-F5 and every letter A-Z. These three are what is
+            # left. Do not "tidy" them back to brackets -- the keypress lands
+            # in both places and the viewer's camera cycles underneath you.
+            elif k in (ord(";"), ord("'")):   # trail history length
                 trail_level[0] = int(np.clip(
-                    trail_level[0] + (1 if k == ord("]") else -1),
+                    trail_level[0] + (1 if k == ord("'") else -1),
                     0, len(trail_levels) - 1))
                 lv = trail_levels[trail_level[0]]
                 print("trail: " + ("PEN UP (keeps what is drawn)" if lv == 0
@@ -1078,9 +1118,10 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                     c.command_stop()
             elif k == ord("2"):     # toggle reference overlay
                 overlay_on[0] = not overlay_on[0]
-            elif k == ord("`"):     # cycle camera: free -> follow -> overhead
+            elif k == ord("\\"):    # cycle camera: free -> follow -> overhead
                 order = ("free", "follow", "overhead")
                 cam_mode[0] = order[(order.index(cam_mode[0]) + 1) % 3]
+                cam_free_pending[0] = cam_mode[0] == "free"
                 print(f"camera: {cam_mode[0]}")
             elif general:
                 # -- general-mode layer: heading snaps replace the moves ----
@@ -1179,6 +1220,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "  ↑/↓ throttle / brake-reverse (release to coast down)\n"
                 "  ←/→ hold to turn continuously   / re-zero command   "
                 "5 stop   2 overlay\n"
+                "  ; / \' trail shorter/longer (pen-up 2s 4s 10s inf)   "
+                "\\ camera (free/follow/overhead)\n"
                 "  analytic-only keys: 6/7 circle L/R   8/9 flick (trajopt "
                 "rev/fwd)   3 flick (RL)\n"
                 "                      4 flip   . pivot (RL, front wheel "
@@ -1187,7 +1230,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "aow_sim.run_drive",
                 draw=lambda scn, m, d: _overlay(
                     scn, m, d, c, overlay_on, v_max, trail=trail,
-                    grid=cam_mode[0] != "free",
+                    grid=True,
                     trail_level=trail_levels[trail_level[0]]),
                 show_ui=show_ui,
                 on_start=lambda v: view.__setitem__(0, v))
