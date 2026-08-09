@@ -279,13 +279,17 @@ def _add_hockey(spec: mujoco.MjSpec, chassis, p: dict) -> None:
     )
 
 
-def _add_righting(spec: mujoco.MjSpec, chassis, p: dict) -> None:
+def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True) -> None:
     """Self-righting study extras (build_model(..., righting=True)); see
     docs/plans/self-righting.md and the `righting` block in bike_params.yaml.
 
     Two side rails that decide what the bike comes to rest on, and one arm on
     an extra XC330 that swings through +-180 deg so a single servo can push
     from either side. Both are optional: omit the sub-block to leave it out.
+
+    `arm=False` keeps the rails and drops the arm, which is how the wing
+    variant gets the bumper geometry without the arm's mass — the two
+    mechanisms are alternatives and are never built into the same model.
 
     Note the CALLER is responsible for making the chassis lumps collidable —
     that is done in build_spec while the lumps are being added, because a fall
@@ -309,7 +313,7 @@ def _add_righting(spec: mujoco.MjSpec, chassis, p: dict) -> None:
                 rgba=[0.9, 0.75, 0.2, 1],
             )
 
-    if "arm" not in rg:
+    if not arm or "arm" not in rg:
         return
     a = rg["arm"]
     pivot = np.asarray(a["pivot"], dtype=float)
@@ -375,6 +379,250 @@ def _add_righting(spec: mujoco.MjSpec, chassis, p: dict) -> None:
         s.objname = "righting_joint"
 
 
+def wing_fit(p: dict) -> dict:
+    """Gear-train geometry for the wing pair, and what it costs to fit.
+
+    The mechanism is one central pinion on the centreline meshing both wing
+    gears, so the mesh is not free geometry — the centre distance is FIXED by
+    where the pivots are:
+
+        r_pinion + r_disc = half_span      (the pivot's |y|)
+        r_disc / r_pinion = gear_ratio
+
+    which pins both radii from the ratio alone:
+
+        r_pinion = half_span / (1 + ratio)
+        r_disc   = half_span * ratio / (1 + ratio)
+
+    That is the coupling worth knowing before choosing a reduction, and it runs
+    the wrong way: a BIGGER reduction makes the PINION smaller, not the disc
+    bigger without limit. Two hard limits follow, and they are what
+    `min_pinion_radius` and the pivot height are for:
+
+      pinion  3D-printed teeth have a minimum workable pitch radius. Below it
+              the reduction is simply not manufacturable at this centre
+              distance.
+      floor   the disc is centred on the pivot, so it cannot be larger than
+              the pivot's height above the floor without grounding out.
+
+    Everything here is derived, so a swept `gear_ratio` re-reports it for free.
+    """
+    w = p["righting"]["wings"]
+    half_span, ratio = w["pivot"][1], w["gear_ratio"]
+    r_pinion = half_span / (1.0 + ratio)
+    r_disc = half_span - r_pinion
+    ride_h = p["omni_wheel"]["outer_radius"] + w["pivot"][2]
+    # Ceilings on the ratio from each constraint, inverting the two formulas.
+    by_pinion = half_span / w["min_pinion_radius"] - 1.0
+    by_floor = ride_h / max(half_span - ride_h, 1e-9)
+    # The crank has to carry the leg CLEAR OF THE DRIVEN DISC, which is what
+    # pins it near 90 deg: the leg has to land on the floor, not on the gear it
+    # is bolted to. So the crank is really "how far outboard of the disc rim
+    # does the leg sit", and cranking it inboard is not a free trade against
+    # torque -- below the disc radius the mechanism lands on its own gear.
+    # This also couples the ratio to the stance: a bigger reduction is a bigger
+    # disc, which pushes the leg further outboard and widens where it lands.
+    crank_reach = w["crank_length"] * np.sin(np.deg2rad(w["crank_deg"]))
+    return {"disc_radius": r_disc, "pinion_radius": r_pinion,
+            "pivot_height": ride_h,
+            "crank_reach": crank_reach,
+            "leg_stands_on_gear": crank_reach < r_disc,
+            "grounds_out": r_disc > ride_h,
+            "pinion_too_small": r_pinion < w["min_pinion_radius"],
+            # The two discs are on opposite pivots, 2*half_span apart, so they
+            # touch when r_disc > half_span -- unreachable through a central
+            # pinion (r_disc < half_span always), but a DIRECT wing-to-wing
+            # mesh is exactly the r_disc = half_span case, so it is worth
+            # naming rather than assuming.
+            "discs_clash": r_disc > half_span,
+            "max_ratio": min(by_pinion, by_floor),
+            "max_ratio_by": "pinion" if by_pinion < by_floor else "floor"}
+
+
+def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
+    """The wing-pair righting mechanism (build_model(..., wings=True)); the
+    alternative to `_add_righting`'s single arm. See docs/plans/self-righting.md
+    and the `righting.wings` block in bike_params.yaml.
+
+    A mirrored wing per side, both driven by ONE servo through a gear train
+    (meshed gears at the two pivots with a reversal on one side). The gear
+    train is deliberately NOT modelled; all it contributes to the dynamics is
+
+      inversion — a joint equality theta_left = mirror * theta_right, which IS
+                  the reversal gear, and
+      reduction — `gear_ratio`, folded into the actuator's forcerange and gains
+                  exactly as the arm and the steering do.
+
+    So the mechanism is one actuator on `wing_right_joint` and a constraint,
+    and the servo's own datasheet torque is recovered by dividing the reported
+    actuator force by the same ratio.
+
+    Geometry. Each wing is a rigid dogleg: a short crank off the pivot, then
+    the long leg to a foot. The two wings are MIRROR IMAGES through the XZ
+    plane, which takes both halves — the geoms are mirrored in y here AND the
+    joint angles carry opposite signs via the equality. Hinge axis is body +X
+    and positive rotates toward -Y (the bike's right), the same convention the
+    arm uses, so the right wing deploys at +d and the left at -d and the pair
+    swings outboard and down together.
+
+    `crank_deg` is measured from body +Z and cranks OUTBOARD, so the stowed leg
+    lies alongside the bike rather than converging on the centreline. That is a
+    packaging requirement the simulation cannot enforce and will not complain
+    about — see the collision note below — because an inboard crank puts the
+    stowed leg straight through the drive servos.
+
+    The gear discs are drawn but weightless and non-colliding: they exist so a
+    reduction can be judged on FIT, since the XC330 pinion has a minimum
+    printable size and the disc it drives grows with the ratio. See
+    `wing_fit` for the constraints that come out of that.
+
+    Joint ranges are the mechanism's hard stops: [0, +deploy] on the right,
+    [-deploy, 0] on the left, so the pair cannot be commanded backwards into
+    the chassis. `deploy_deg` is set well past floor contact on purpose — if a
+    stop rather than the floor takes the load, the actuator force reads low and
+    a torque sweep would silently report the stroke as cheap.
+
+    KNOWN MODELLING LIMIT: the wings carry the same DYN_CONTYPE/DYN_CONAFF as
+    every other dynamic geom, so they collide with the floor and never with the
+    bike's own geoms. Stowed-wing interference with the chassis is a geometric
+    check, not something this simulation will catch.
+
+    As with `_add_righting`, the CALLER makes the chassis lumps collidable."""
+    w, sim = p["righting"]["wings"], p["sim"]
+    px, py, pz = w["pivot"]
+    crank = np.deg2rad(w["crank_deg"])
+    deploy, stow = w["deploy_deg"], w["stow_deg"]
+
+    # Servo + gear train ride on the chassis; only their mass matters here.
+    chassis.add_geom(
+        name="servo_wings",
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=np.array(p["servos"]["xc330_t181"]["box_size"]) / 2,
+        pos=[px, 0.0, pz],
+        mass=w["servo_mass"] + w["gearbox_mass"],
+        contype=0,
+        conaffinity=0,
+        rgba=[0.1, 0.1, 0.1, 1],
+    )
+    # The driving pinion, on the centreline between the two wing gears. Drawn
+    # only, like the discs -- see `wing_fit` for why its size is the thing that
+    # actually limits the reduction.
+    chassis.add_geom(
+        name="wing_pinion",
+        type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+        size=[wing_fit(p)["pinion_radius"], w["gear_width"] / 2, 0],
+        quat=_quat_z_to([1, 0, 0]),
+        pos=[px, 0.0, pz],
+        mass=0.0,
+        contype=0,
+        conaffinity=0,
+        rgba=[0.4, 0.4, 0.45, 0.5],
+    )
+
+    # Split the per-wing mass: the foot is the heavy end, the two capsules
+    # share the rest in proportion to their length.
+    span = w["crank_length"] + w["length"]
+    m_foot = w["mass"] * 0.4
+    m_span = w["mass"] * 0.6
+
+    fit = wing_fit(p)
+    for side, tag in ((1, "left"), (-1, "right")):
+        # Outboard is +side * Y: +Y for the left wing, -Y for the right. The
+        # crank leans the stowed leg AWAY from the centreline so it parks
+        # alongside the bike instead of through the drive servos.
+        elbow = np.array([0.0,
+                          side * np.sin(crank) * w["crank_length"],
+                          np.cos(crank) * w["crank_length"]])
+        foot = elbow + np.array([0.0, 0.0, w["length"]])
+        wing = chassis.add_body(name=f"wing_{tag}", pos=[px, side * py, pz])
+        lo, hi = sorted((stow, -side * deploy))
+        wing.add_joint(
+            name=f"wing_{tag}_joint",
+            type=mujoco.mjtJoint.mjJNT_HINGE,
+            axis=[1, 0, 0],
+            # DEGREES: spec.compiler.degree defaults to 1, so a joint range is
+            # read in degrees and converted at compile time. Passing radians
+            # here does not error — it silently builds a +-2.4 deg stop.
+            range=[lo, hi],
+            limited=mujoco.mjtLimited.mjLIMITED_TRUE,
+        )
+        for name, a, b, mass in (
+            (f"wing_{tag}_crank", np.zeros(3), elbow, m_span * w["crank_length"] / span),
+            (f"wing_{tag}_leg", elbow, foot, m_span * w["length"] / span),
+        ):
+            wing.add_geom(
+                name=name,
+                type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+                size=[w["radius"], 0, 0],
+                fromto=np.concatenate([a, b]),
+                mass=mass,
+                contype=DYN_CONTYPE,
+                conaffinity=DYN_CONAFF,
+                condim=sim["condim"],
+                friction=_contact_friction(sim),
+                rgba=[0.85, 0.2, 0.2, 1],
+            )
+        wing.add_geom(
+            name=f"wing_{tag}_foot",
+            type=mujoco.mjtGeom.mjGEOM_SPHERE,
+            size=[w["foot_radius"], 0, 0],
+            pos=foot,
+            mass=m_foot,
+            contype=DYN_CONTYPE,
+            conaffinity=DYN_CONAFF,
+            condim=sim["condim"],
+            friction=_contact_friction(sim),
+            rgba=[0.85, 0.2, 0.2, 1],
+        )
+        # The driven gear, fixed to the wing and centred on its pivot. Drawn
+        # only: weightless (the mass is already in `mass`/`gearbox_mass`) and
+        # non-colliding, because what it is here for is judging whether the
+        # thing FITS -- against the floor, against its opposite number, and
+        # against the chassis -- not what it weighs.
+        wing.add_geom(
+            name=f"wing_{tag}_gear",
+            type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+            size=[fit["disc_radius"], w["gear_width"] / 2, 0],
+            quat=_quat_z_to([1, 0, 0]),        # disc axis = the hinge axis
+            mass=0.0,
+            contype=0,
+            conaffinity=0,
+            rgba=[0.9, 0.3, 0.3, 0.35],
+        )
+
+    # THE REVERSAL GEAR: theta_left = mirror * theta_right. Same joint-equality
+    # pattern as the roller couplings above, and the only thing that makes one
+    # servo drive two wings.
+    eq = spec.add_equality()
+    eq.type = mujoco.mjtEq.mjEQ_JOINT
+    eq.name1, eq.name2 = "wing_left_joint", "wing_right_joint"
+    eq.data[:5] = [0.0, w["mirror"], 0.0, 0.0, 0.0]
+    eq.solref = [0.005, 1.0]
+
+    # One actuator for the pair, on the driven (right) wing. Torque at the
+    # MECHANISM = servo stall x the reduction; the study divides by the same
+    # ratio so a swept number reads against the XC330 datasheet directly.
+    tau = p["servos"]["xc330_t181"]["stall_torque"] * w["gear_ratio"]
+    act = spec.add_actuator(name="wings")
+    act.set_to_position(kp=w["servo_kp"] * w["gear_ratio"],
+                        kv=w["servo_kv"] * w["gear_ratio"])
+    act.trntype = mujoco.mjtTrn.mjTRN_JOINT
+    act.target = "wing_right_joint"
+    act.forcerange = [-tau, tau]
+    # No ctrlrange: the stroke is 135 deg at the wing, which is 405 deg at the
+    # servo through the 3:1 — this needs EXTENDED POSITION (multi-turn) mode on
+    # the real XC330, same as the steering actuator.
+
+    for stype, suffix in (
+        (mujoco.mjtSensor.mjSENS_JOINTPOS, "pos"),
+        (mujoco.mjtSensor.mjSENS_JOINTVEL, "vel"),
+    ):
+        s = spec.add_sensor(name=f"wings_{suffix}")
+        s.type = stype
+        s.objtype = mujoco.mjtObj.mjOBJ_JOINT
+        s.objname = "wing_right_joint"
+
+
 def _add_world(spec: mujoco.MjSpec, p: dict) -> None:
     sim = p["sim"]
     spec.worldbody.add_geom(
@@ -405,6 +653,7 @@ def build_spec(
     hockey: bool = False,
     payload: bool = True,
     righting: bool = False,
+    wings: bool = False,
 ) -> mujoco.MjSpec:
     p = params or load_params()
     spec = mujoco.MjSpec()
@@ -442,7 +691,7 @@ def build_spec(
     # nothing above the wheels can touch anything, which is exactly right for a
     # bike that stays upright. A FALLEN bike lands on them, so the righting
     # study turns them into the outer shell they physically are.
-    shell = ((DYN_CONTYPE, DYN_CONAFF) if righting else (0, 0))
+    shell = ((DYN_CONTYPE, DYN_CONAFF) if (righting or wings) else (0, 0))
     ch = bike["chassis"]
     chassis.add_geom(
         name="chassis_box",
@@ -578,8 +827,12 @@ def build_spec(
 
     if hockey:
         _add_hockey(spec, chassis, p)
-    if righting:
-        _add_righting(spec, chassis, p)
+    # `wings` implies the righting shell, and swaps the single arm for the wing
+    # pair — the bumper rails are shared, the two mechanisms never coexist.
+    if righting or wings:
+        _add_righting(spec, chassis, p, arm=not wings)
+    if wings:
+        _add_wings(spec, chassis, p)
 
     return spec
 
@@ -587,9 +840,10 @@ def build_spec(
 def build_model(
     params: dict | None = None, variant: str = "full", training_wheels: bool = False,
     hockey: bool = False, payload: bool = True, righting: bool = False,
+    wings: bool = False,
 ) -> mujoco.MjModel:
     return build_spec(params, variant, training_wheels, hockey, payload,
-                      righting).compile()
+                      righting, wings).compile()
 
 
 def main() -> None:
@@ -603,10 +857,13 @@ def main() -> None:
                     help="omit the untethered running gear (battery + electronics)")
     ap.add_argument("--righting", action="store_true",
                     help="collidable chassis shell + the self-righting bumpers/arm")
+    ap.add_argument("--wings", action="store_true",
+                    help="the mirrored wing pair instead of the single righting "
+                         "arm (implies --righting)")
     ap.add_argument("-o", "--output", default=None, help="write MJCF XML here")
     args = ap.parse_args()
     spec = build_spec(load_params(args.params), args.variant, args.training_wheels,
-                      args.hockey, not args.no_payload, args.righting)
+                      args.hockey, not args.no_payload, args.righting, args.wings)
     spec.compile()  # validate
     xml = spec.to_xml()
     if args.output:

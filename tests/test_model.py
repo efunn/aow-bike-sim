@@ -1,5 +1,7 @@
 """Model correctness tests: compilation, couplings, geometry, and behavior."""
 
+import copy
+
 import mujoco
 import numpy as np
 import pytest
@@ -131,3 +133,184 @@ def test_sensors_present(full_model):
                  "steer_pos", "steer_vel",
                  "input_a_pos", "input_a_vel", "input_b_pos", "input_b_vel"):
         assert full_model.sensor(name) is not None
+
+
+# --------------------------------------------------------------------------
+# The self-righting mechanisms (docs/plans/self-righting.md). Both are opt-in
+# and mutually exclusive; neither may touch the bike every other test uses.
+
+
+@pytest.fixture(scope="module")
+def wing_model(params):
+    return build_model(params, variant="full", righting=True, wings=True)
+
+
+def test_righting_mechanisms_are_exclusive(params):
+    """`righting=True` is the single arm, `wings=True` swaps it for the pair,
+    and neither leaks into the default bike. The arm's mass would otherwise
+    land in every wing torque reading and make the two studies incomparable."""
+    from aow_sim.build_model import build_spec
+
+    plain = build_spec(params).to_xml()
+    arm = build_spec(params, righting=True).to_xml()
+    wings = build_spec(params, righting=True, wings=True).to_xml()
+    assert "wing" not in plain and "righting" not in plain
+    assert "wing" not in arm and "righting_arm" in arm
+    assert "righting_arm" not in wings and "wing_left_joint" in wings
+    # Both mechanisms share the bumper pads that set the resting attitude.
+    assert "bumper_left" in arm and "bumper_left" in wings
+
+
+def test_wings_build(wing_model, params):
+    w = params["righting"]["wings"]
+    for name in ("wing_left_joint", "wing_right_joint"):
+        assert wing_model.joint(name) is not None
+    for name in ("wings_pos", "wings_vel"):
+        assert wing_model.sensor(name) is not None
+    # One actuator for the PAIR: the gear train is what makes a single servo
+    # enough, so a second actuator here would be modelling a second servo.
+    act = wing_model.actuator("wings")
+    tau = params["servos"]["xc330_t181"]["stall_torque"] * w["gear_ratio"]
+    assert act.forcerange == pytest.approx([-tau, tau])
+    assert wing_model.joint(act.trnid[0]).name == "wing_right_joint"
+    # Mechanical stops, per side: the pair can never be driven backwards
+    # through stow into the chassis.
+    assert np.degrees(wing_model.joint("wing_right_joint").range) == \
+        pytest.approx([w["stow_deg"], w["deploy_deg"]])
+    assert np.degrees(wing_model.joint("wing_left_joint").range) == \
+        pytest.approx([-w["deploy_deg"], w["stow_deg"]])
+
+
+def test_wings_mirror_through_the_reversal_gear(wing_model, params):
+    """The equality constraint IS the reversal gear: driving the right wing
+    must carry the left one through an equal and opposite angle.
+
+    Run on a chassis pinned in place, so what is measured is the coupling and
+    not a bike toppling out from under it. Free-flying, the pair still mirrors
+    to ~0.7 deg once one wing is loaded against the floor and the other is in
+    the air -- soft-constraint compliance, which is roughly what real gear
+    backlash would look like anyway.
+    """
+    w = params["righting"]["wings"]
+    d = mujoco.MjData(wing_model)
+    mujoco.mj_forward(wing_model, d)
+    pose, vel = d.qpos[:7].copy(), np.zeros(6)
+    aid = wing_model.actuator("wings").id
+    right = wing_model.joint("wing_right_joint").qposadr[0]
+    left = wing_model.joint("wing_left_joint").qposadr[0]
+    cmd, worst = 0.0, 0.0
+    for _ in range(int(2.0 / wing_model.opt.timestep)):
+        cmd = min(cmd + 0.7 * wing_model.opt.timestep, np.deg2rad(w["deploy_deg"]))
+        d.ctrl[aid] = cmd
+        mujoco.mj_step(wing_model, d)
+        d.qpos[:7], d.qvel[:6] = pose, vel      # pin the chassis
+        worst = max(worst, abs(d.qpos[left] - w["mirror"] * d.qpos[right]))
+    assert np.degrees(d.qpos[right]) > 60, "the pair never deployed"
+    # Loose on purpose: this catches a coupling that is MISSING or has the
+    # wrong sign/coefficient, which is wrong by tens of degrees. Tightening it
+    # to fractions of a degree only makes it brittle to geometry sweeps -- a
+    # longer crank swings more inertia and loads the soft equality harder.
+    assert np.degrees(worst) < 0.5, \
+        f"wings drifted apart by {np.degrees(worst):.3f} deg"
+
+
+def test_stowed_wings_clear_the_recoverable_set(params, wing_model):
+    """Stowed, the wings are the lowest outboard thing on the bike, so they
+    decide the lean at which something other than a tyre touches down. That
+    has to stay outside the policy's recoverable set (up to 30.9 deg, see
+    analysis/no_return.py) or a savable lean turns into a scrape.
+
+    Same construction as analysis/self_righting.py's `landscape`: hold the bike
+    clear of the floor at each roll angle and ask which geom is nearest it,
+    rather than rotating about a fixed axle and hoping the wheel stays put."""
+    d = mujoco.MjData(wing_model)
+    floor = wing_model.geom("floor").id
+    dyn = [i for i in range(wing_model.ngeom)
+           if wing_model.geom_contype[i] and i != floor]
+    wheels = {"front_tire"} | {f"roller_{i}_{s}" for i in range(8) for s in "ab"}
+    touch = None
+    for deg in range(0, 61):
+        a = np.deg2rad(deg) / 2
+        d.qpos[:] = 0.0
+        d.qpos[2] = 0.5                          # clear of the floor
+        d.qpos[3:7] = [np.cos(a), np.sin(a), 0.0, 0.0]
+        mujoco.mj_forward(wing_model, d)
+        gaps = [mujoco.mj_geomDistance(wing_model, d, floor, g, 2.0, None)
+                for g in dyn]
+        nearest = mujoco.mj_id2name(wing_model, mujoco.mjtObj.mjOBJ_GEOM,
+                                    dyn[int(np.argmin(gaps))])
+        if nearest not in wheels:
+            touch = (deg, nearest)
+            break
+    assert touch is not None and touch[0] > 35, \
+        f"stowed mechanism touches down at {touch} of roll"
+
+
+def test_stowed_wings_park_outboard_of_the_drive_servos(wing_model, params):
+    """The dogleg must crank OUTBOARD, so the stowed leg parks alongside the
+    bike rather than converging on the centreline.
+
+    This is the one wing constraint the physics cannot enforce: the wings
+    collide with the floor and with nothing else, so an inboard crank puts the
+    stowed leg straight through the drive servos (|y| = 15.75..44.25 mm) and
+    the simulation runs perfectly happily."""
+    d = mujoco.MjData(wing_model)
+    mujoco.mj_forward(wing_model, d)
+    servo = params["servos"]["xc430_w150"]
+    face = abs(servo["pos_right"][1]) + servo["box_size"][1] / 2
+    for tag in ("left", "right"):
+        for part in ("leg", "foot"):
+            y = abs(float(d.geom_xpos[wing_model.geom(f"wing_{tag}_{part}").id][1]))
+            assert y >= face, \
+                f"stowed wing_{tag}_{part} at |y|={y * 1000:.1f} mm is inboard " \
+                f"of the drive servo face at {face * 1000:.1f} mm"
+
+
+def test_wing_gear_train_fits(params):
+    """One central pinion meshing both wing gears fixes the centre distance at
+    the pivot half-span, so the ratio alone pins both radii. Check the algebra
+    and that the configured ratio is actually buildable."""
+    from aow_sim.build_model import wing_fit
+
+    w = params["righting"]["wings"]
+    f = wing_fit(params)
+    # Mesh closes on the pivot half-span, and the radii are in ratio.
+    assert f["pinion_radius"] + f["disc_radius"] == pytest.approx(w["pivot"][1])
+    assert f["disc_radius"] / f["pinion_radius"] == pytest.approx(w["gear_ratio"])
+    assert not f["pinion_too_small"], "configured ratio needs an unprintable pinion"
+    assert not f["grounds_out"], "the driven disc is bigger than the pivot height"
+    assert w["gear_ratio"] <= f["max_ratio"]
+
+    # The counter-intuitive direction: MORE reduction means a SMALLER pinion,
+    # which is what puts a ceiling on the ratio rather than the disc size.
+    lo, hi = copy.deepcopy(params), copy.deepcopy(params)
+    lo["righting"]["wings"]["gear_ratio"] = 2.0
+    hi["righting"]["wings"]["gear_ratio"] = 6.0
+    assert wing_fit(hi)["pinion_radius"] < wing_fit(lo)["pinion_radius"]
+    assert wing_fit(hi)["pinion_too_small"]
+    # ...and a bigger disc pushes the leg further outboard, so the ratio and
+    # the stance are coupled: the crank has to clear the rim of the disc the
+    # wing is bolted to, or the mechanism lands on its own gear.
+    assert wing_fit(hi)["disc_radius"] > wing_fit(lo)["disc_radius"]
+
+
+def test_wing_crank_clears_the_driven_disc(params):
+    """The crank exists to carry the leg past the rim of its own gear. Below
+    the disc radius the wing stands on the gear instead of on the floor --
+    which the physics will not catch, since the discs are non-colliding."""
+    from aow_sim.build_model import wing_fit
+
+    short, long = copy.deepcopy(params), copy.deepcopy(params)
+    disc = wing_fit(params)["disc_radius"]
+    # Crank reach is the OUTBOARD component, so it depends on angle as well as
+    # length -- swinging the crank inboard of 90 deg shortens the reach.
+    short["righting"]["wings"].update(crank_length=disc * 0.5, crank_deg=90.0)
+    long["righting"]["wings"].update(crank_length=disc * 1.5, crank_deg=90.0)
+    assert wing_fit(short)["leg_stands_on_gear"]
+    assert not wing_fit(long)["leg_stands_on_gear"]
+    # Same length, cranked inboard -> reach shrinks by sin, and it can fail
+    # even when the length alone would have cleared.
+    tilted = copy.deepcopy(long)
+    tilted["righting"]["wings"]["crank_deg"] = 30.0
+    assert wing_fit(tilted)["crank_reach"] < wing_fit(long)["crank_reach"]
+    assert wing_fit(tilted)["leg_stands_on_gear"]

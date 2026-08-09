@@ -21,6 +21,8 @@ _EXPORTS = {
     "load_move": ".flick",
     "PivotController": ".pivot",
     "YawProfile": ".pivot",
+    "RightingSequencer": ".righting",
+    "settle_fallen": ".righting",
 }
 
 __all__ = list(_EXPORTS)

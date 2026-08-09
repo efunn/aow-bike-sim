@@ -130,6 +130,7 @@ servos:
   # cover the range during training. See docs/plans/untethered-setup.md.
   xc430_w150:   # 2x, AOW drive (values at 12 V per datasheet)
     stall_torque: {value: 1.6, source: datasheet}
+    stall_current: {value: 1.4, source: datasheet}
     no_load_rpm: {value: 106.0, source: datasheet}
     mass: {value: 0.065, source: datasheet}
     box_size: [0.034, 0.0285, 0.0465]   # D x W x H, axis along Y
@@ -137,6 +138,12 @@ servos:
     pos_right: [0.045, -0.030, 0.075]
   xc330_t181:   # steering (values at 12 V per datasheet)
     stall_torque: {value: 0.80, source: datasheet}
+    # Torque constant kt = stall_torque / stall_current is what actually sets
+    # the current a given LOAD draws, and kt does not depend on pack voltage --
+    # so a torque number from the sim converts to amps directly. See the power
+    # budget in docs/plans/untethered-setup.md, and `self_righting.py lift`,
+    # which uses it to price the righting stroke against the pack.
+    stall_current: {value: 0.88, source: datasheet}
     no_load_rpm: {value: 113.0, source: datasheet}
     mass: {value: 0.023, source: datasheet}
     box_size: [0.026, 0.020, 0.034]
@@ -241,6 +248,14 @@ righting:
   #      instead of sinking through them, and
   #   2. adds whatever of `bumper` / `arm` is present below.
   #
+  # TWO ALTERNATIVE MECHANISMS live here, `arm` and `wings`, and they are never
+  # built into the same model: build_model(righting=True) gives the single arm,
+  # build_model(righting=True, wings=True) swaps it for the wing pair. Keeping
+  # them exclusive is not tidiness -- the arm's mass and geometry would pollute
+  # every wing torque and rest-attitude reading, and the whole point of the
+  # tools in analysis/self_righting.py is that the two sets of numbers are
+  # comparable. `bumper` is shared by both.
+  #
   # Frame for z: metres above the REAR AXLE, like every other chassis-frame
   # position in this file (the axle sits 51.2 mm off the floor when upright).
   bumper:
@@ -295,6 +310,133 @@ righting:
     # stiffer than the steer actuator's 2.0 on purpose: the whole point of the
     # torque study is to see the actuator hit its 0.80 N.m forcerange, and a
     # soft gain would report "not enough gain" as "not enough torque".
+    servo_kp: 30.0
+    servo_kv: 1.0
+  wings:
+    # The ALTERNATIVE to `arm`: a mirrored pair of wings, one per side, driven
+    # by ONE servo through a gear train (meshed gears at the two pivots with a
+    # reversal on one side, so the pair counter-rotates and deploys
+    # symmetrically). Both wings swing down-and-outward together; whichever one
+    # is on the fallen side plants and levers the bike up.
+    #
+    # The gear train is NOT modelled. All it contributes to the dynamics is
+    # (a) the inversion, as a joint equality theta_left = mirror * theta_right,
+    # and (b) the reduction, as gear_ratio. See docs/plans/self-righting.md.
+    #
+    # Angle convention, same as `arm`: hinge axis is body +X, so POSITIVE
+    # rotates toward -Y (the bike's right). The right wing deploys at +d and
+    # the left at -d, i.e. both swing outboard and down. 0 = stowed, folded up
+    # alongside the chassis.
+    #
+    # Three things this buys over the single arm, and one risk:
+    #   + the stroke is ONE fixed direction, so the mechanism never has to know
+    #     which side it fell on (the arm swings with sign(roll));
+    #   + it folds flat inside the chassis instead of standing through it;
+    #   + the far wing may catch the overshoot the arm has to be stopped to
+    #     avoid (see the arm's "must stop at hand-off" note above);
+    #   - ...or it may plant EARLY and wedge the bike short of upright, outside
+    #     the +-12 deg hand-off window. That is what `lift --wings --sweep` and
+    #     `sequence --wings` exist to answer.
+    pivot: {value: [0.075, 0.035, 0.0], source: design}  # [x, |y|, z]; mirrored in y
+    # pivot HEIGHT is the parameter this design turns on, and -0.020 (20 mm
+    # below the rear axle = 31 mm off the floor) is what `lift --wings --sweep`
+    # settles on. Three things fight over it, and the third is the one that
+    # actually decides:
+    #
+    #   packaging  A low pivot ought to stow lower. It does NOT, because a low
+    #     pivot also needs a LONGER leg to reach the floor, and the extra length
+    #     eats the gain exactly: z = -30/105 mm and z = -20/95 mm both stow at
+    #     153 mm. Below that the wing has to grow faster than the pivot drops
+    #     and the stowed height starts climbing again.
+    #   torque  Also flat across the working band (0.57 N.m at both), because
+    #     the same trade runs backwards: a lower pivot shortens the moment arm
+    #     it pushes on, and the longer leg needed to fix that costs it back.
+    #   riding-lean clearance  THE BINDING CONSTRAINT. The stowed wing is the
+    #     lowest outboard thing on the bike after the wheels, so it decides the
+    #     roll angle at which something other than a tyre touches down. At
+    #     z = -30 that is 27 deg -- INSIDE the recoverable set (up to 30.9 deg,
+    #     analysis/no_return.py), so a lean the policy could still save would
+    #     drag a wing on the floor. z = -20 puts it at 40 deg, clear of both the
+    #     recoverable set and any riding lean.
+    #
+    # So the floor on pivot height is set by lean clearance, not by torque or
+    # packaging -- `profile --wings` reports it as `first non-wheel contact`.
+    #
+    # x = 0.045 is the drive-servo station (same as the bumper pads);
+    # |y| = 0.035 is INBOARD of the servo outer face at 44.25 mm, so the stowed
+    # pair is narrower than the side geometry that is already known to give a
+    # 0.0 deg rest spread.
+    #
+    # Each wing is a dogleg, as sketched: a short crank off the pivot, then the
+    # long leg to the foot. Rigid -- one body, no second joint. The crank is
+    # what lets the leg fold flat ALONGSIDE the chassis at stow while still
+    # clearing the gear.
+    #
+    # crank_deg is measured from +Z and cranks OUTBOARD. It is NOT a free knob
+    # to trade against torque, for two reasons, and ~90 deg is close to forced:
+    #
+    #   1. The crank exists to carry the leg past the RIM OF ITS OWN GEAR. The
+    #      leg has to land on the floor, not on the disc it is bolted to, so
+    #      the outboard reach (crank_length * sin(crank_deg)) must exceed
+    #      disc_radius. Cranking inboard shortens that reach by sin and the
+    #      mechanism starts standing on its gear. build_model.wing_fit()
+    #      reports it as `leg_stands_on_gear`; the physics will NOT catch it,
+    #      because the discs are drawn non-colliding.
+    #   2. The drive servos occupy |y| = 15.75..44.25 mm, so an INBOARD crank
+    #      parks the stowed leg straight through them -- also invisible to the
+    #      simulation, since the wings collide only with the floor.
+    #
+    # The angle is somewhat notional anyway: the real part will integrate the
+    # crank into the gear itself, so what this parameter actually encodes is
+    # WHERE THE LEG LANDS relative to the pivot, not a physical bend.
+    #
+    # Note the coupling this creates: disc_radius grows with gear_ratio, so a
+    # bigger reduction demands a longer crank, which widens the stance, which
+    # is what part 2's rest sweep punishes. Reduction and landing behaviour are
+    # not independent.
+    crank_length: {value: 0.025, source: design}   # pivot -> elbow
+    crank_deg: {value: 90.0, source: design}       # from +Z, positive = OUTBOARD
+    # Leg length is what buys BOTH reach and a graceful landing. Too short and
+    # the stroke stalls around 90 deg of roll -- and it is REACH that fails,
+    # not torque (those rows peak at ~0.35 N.m, half the budget), so adding
+    # servo would not have fixed it. Too short ALSO lands badly: at 95 mm with
+    # this 90 deg crank the bike ended on its back in 2 of 8 falls, because the
+    # stowed wing became a fulcrum. 105 mm fixes both (spread 0.6 deg).
+    #
+    # The real wing will be wider and curved so it rolls onto its side
+    # gracefully; this straight capsule is the rough-physics stand-in.
+    length: {value: 0.105, source: design}         # elbow -> foot
+    radius: {value: 0.005, source: design}
+    foot_radius: {value: 0.010, source: design}
+    mass: {value: 0.020, source: design}           # PER WING
+    servo_mass: {value: 0.023, source: datasheet}  # the extra XC330-T181
+    gearbox_mass: {value: 0.015, source: design}   # the gear train itself
+    stow_deg: {value: 0.0, source: design}
+    deploy_deg: {value: 105.0, source: design}     # hard stop; joint range is +-this
+    # Reduction between servo and wing. 3:1 is the arm's number and the drive
+    # belts'. NOTE the consequence the sketch already anticipated: a stow ->
+    # deploy stroke of 135 deg at 3:1 is 405 deg AT THE SERVO, so this needs
+    # EXTENDED POSITION (multi-turn) mode, not the 0-360 single-turn mode. The
+    # analysis reports servo turns explicitly rather than assuming it.
+    #
+    # The ratio is ALSO a fit constraint, and that is the surprising part --
+    # see build_model.wing_fit(). One central pinion meshing both wing gears
+    # fixes the centre distance at the pivot half-span, so
+    #     r_pinion = half_span / (1 + ratio),  r_disc = half_span - r_pinion
+    # and both radii follow from the ratio alone. It runs the wrong way from
+    # intuition: a BIGGER reduction shrinks the PINION rather than growing the
+    # disc without limit, and the pinion is the 3D-printed part with a floor on
+    # how small its teeth can be. `min_pinion_radius` is that floor, and the
+    # disc separately cannot exceed the pivot's height above the floor without
+    # grounding out. `lift --wings --sweep` reports both ceilings.
+    gear_ratio: {value: 3.0, source: design}
+    min_pinion_radius: {value: 0.006, source: GUESS}  # smallest printable pitch
+                                                      #   radius on the XC330
+                                                      #   side -> print a test
+    gear_width: {value: 0.006, source: design}        # face width; visual only
+    mirror: {value: -1.0, source: design}          # theta_left = mirror * theta_right
+    # Position-servo gains, same reasoning as the arm's: stiff on purpose, so
+    # the torque study reads a forcerange limit and not a gain limit.
     servo_kp: 30.0
     servo_kv: 1.0
 

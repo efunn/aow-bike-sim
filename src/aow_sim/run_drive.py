@@ -19,8 +19,10 @@ Headless (default) -- the envelope report:
   one-shot maneuvers instead.
 
   Arrows throttle and steer; 1/3 crab (general mode only); 5 stop; 2 dial;
-  / re-zero; ; ' trail history; \\ camera. The banner printed at startup is
-  the authoritative list, and the README teleop table explains the modes.
+  / re-zero; ; ' trail history; \\ camera. With --wings: 9 extends the
+  righting pair, 4 retracts it, . shoves the bike over. The banner printed at
+  startup is the authoritative list, and the README teleop table explains the
+  modes.
   Keys avoid A-Z, [ ], `, Space, Tab, Esc and F1-F5 -- all owned by MuJoCo's
   viewer, which sees every keypress before this module does.
 
@@ -323,14 +325,19 @@ def main() -> None:
     ap.add_argument("--ui", action="store_true",
                     help="restore the viewer's side panels (off by default: "
                          "teleop is keyboard-driven and Reset is Backspace)")
+    ap.add_argument("--wings", action="store_true",
+                    help="add the self-righting wing pair (teleop: 9 extends, "
+                         "0 retracts). Nothing deploys on its own — the fallen "
+                         "state is worth watching")
     args = ap.parse_args()
     params = load_params(args.params)
-    model = build_model(params, variant="full", hockey=args.hockey)
+    model = build_model(params, variant="full", hockey=args.hockey,
+                        righting=args.wings, wings=args.wings)
     eq = settle_upright(model)
 
     if args.teleop:
         _teleop(model, params, eq.qpos, hockey=args.hockey,
-                general=args.general, show_ui=args.ui)
+                general=args.general, show_ui=args.ui, wings=args.wings)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -827,7 +834,7 @@ def _reset_ball(model, data, params):
 
 
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
-            show_ui=False):
+            show_ui=False, wings=False):
     from .interactive import teleop_loop
 
     # Which always-on policy to drive with: --general wins, else the config's
@@ -870,6 +877,50 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # carries v_lat_frac); asking for more is off-distribution. Resolved lazily
     # in apply() because the policy is not loaded until engage().
     crab_max = [0.4 * v_max]
+
+    # -- the righting wings, when --wings built them ------------------------
+    # Deliberately MANUAL and one-shot: 9 latches a target of full deploy, 0 a
+    # target of stow, and the pair slews there. No auto-deploy and no auto
+    # hand-off, because the whole point of driving this by hand is to watch
+    # what a fallen bike actually does before deciding what should trigger.
+    # The viewer only ever reports a key going DOWN, so latch-a-target is the
+    # only thing that can work here -- hold-to-move would need key-up.
+    wing = None
+    if wings:
+        wcfg = params["righting"]["wings"]
+        wing = {"aid": model.actuator("wings").id,
+                "jadr": model.joint("wing_right_joint").qposadr[0],
+                "stow": np.deg2rad(wcfg["stow_deg"]),
+                "deploy": np.deg2rad(wcfg["deploy_deg"]),
+                "rate": 0.7,                      # rad/s at the wing
+                "gear": wcfg["gear_ratio"],
+                "cmd": np.deg2rad(wcfg["stow_deg"]),
+                "target": np.deg2rad(wcfg["stow_deg"]),
+                # A repeatable shove, so knocking the bike over is one key
+                # rather than a mouse gesture. Same lateral force pulse
+                # analysis/self_righting.py falls the bike with; 8 N for 0.35 s
+                # is comfortably past the recoverable set at any speed.
+                "push_n": 0, "push_dir": 1.0, "push_force": 8.0,
+                "push_s": 0.35, "body": model.body("chassis").id}
+
+    def wing_step(m, d):
+        """Slew the pair toward its latched target and hold it there.
+
+        MUST run after `c.step`: the balance controllers write the WHOLE ctrl
+        vector (`data.ctrl[:] = self._u`), so anything written before them is
+        overwritten every step."""
+        if wing is None:
+            return
+        t, cmd = wing["target"], wing["cmd"]
+        step = wing["rate"] * m.opt.timestep
+        wing["cmd"] = (min(cmd + step, t) if t > cmd else max(cmd - step, t))
+        d.ctrl[wing["aid"]] = wing["cmd"]
+        # The shove, if one is running. xfrc_applied PERSISTS, so it has to be
+        # cleared on the step the pulse ends or the bike gets pushed forever.
+        if wing["push_n"] > 0:
+            wing["push_n"] -= 1
+            d.xfrc_applied[wing["body"], 1] = (
+                wing["push_dir"] * wing["push_force"] if wing["push_n"] else 0.0)
 
     def on_key(keycode):
         pending.append(keycode)
@@ -1123,6 +1174,31 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 cam_mode[0] = order[(order.index(cam_mode[0]) + 1) % 3]
                 cam_free_pending[0] = cam_mode[0] == "free"
                 print(f"camera: {cam_mode[0]}")
+            # Wing keys sit ABOVE the mode split so they work in both analytic
+            # and general mode -- the mechanism is orthogonal to who is
+            # balancing. With --wings they shadow 9 (flick_fwd) and 4 (flip),
+            # both analytic-only bindings.
+            #
+            # 9 and 4, NOT 0: the viewer binds 0-9 to geom-group visibility as
+            # well, and every geom in this model is group 0, so `0` ghosts the
+            # floor and the whole bike out from under you. Groups 4 and 9 are
+            # empty here, so toggling them does nothing visible.
+            elif wing is not None and k == ord("."):
+                # Shove it over, alternating sides so both get tested -- the
+                # policy is measurably worse to the left (see
+                # docs/plans/self-righting.md part 1).
+                wing["push_dir"] = -wing["push_dir"]
+                wing["push_n"] = int(wing["push_s"] / m.opt.timestep)
+                print(f"SHOVE {'left' if wing['push_dir'] > 0 else 'right'} "
+                      f"({wing['push_force']:.0f} N for {wing['push_s']:.2f} s)")
+            elif wing is not None and k in (ord("9"), ord("4")):
+                wing["target"] = wing["deploy"] if k == ord("9") else wing["stow"]
+                turns = abs(np.degrees(wing["target"] - wing["stow"])) \
+                    * wing["gear"] / 360.0
+                print(f"wings {'EXTEND' if k == ord('9') else 'RETRACT'} -> "
+                      f"{np.degrees(wing['target']):.0f}° at the wing, "
+                      f"{turns:.2f} turns at the servo"
+                      + ("  (multi-turn)" if turns > 1.0 else ""))
             elif general:
                 # -- general-mode layer: heading snaps replace the moves ----
                 if k == ord("6"):
@@ -1185,6 +1261,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                         print(e)
         apply(m, d)
         c.step(m, d)
+        wing_step(m, d)         # after c.step: it rewrites the whole ctrl vector
 
     # The viewer only ever reports a key going down, so how well "hold" works
     # depends on whether real key state is readable — say which one is live.
@@ -1212,6 +1289,12 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         hold_help = ("\n  (TAP the arrows to step the command — hold-to-drive "
                      f"needs pyobjc;\n   {why})")
     ball_help = "\n  1 ball-shot (RL)   0 reset ball" if hockey else ""
+    wing_help = (
+        "\n  WINGS: 9 extend   4 retract   . shove it over (alternates sides)"
+        "\n         Manual only — nothing deploys or hands off by itself. "
+        "9/4/. shadow the\n         analytic-mode flick_fwd/flip/pivot for "
+        "this session. You can also push\n         by hand: double-click the "
+        "bike, then Ctrl + right-drag." if wings else "")
     # Number keys + arrows: MuJoCo's viewer binds every letter A-Z (F=force
     # display, etc.), so letters would double up. Number keys 0-9 are free; 4/5
     # toggle (empty) geom groups harmlessly; arrows are free while unpaused.
@@ -1226,7 +1309,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "rev/fwd)   3 flick (RL)\n"
                 "                      4 flip   . pivot (RL, front wheel "
                 "holds its line)"
-                + mode_help + ball_help + hold_help,
+                + mode_help + ball_help + wing_help + hold_help,
                 "aow_sim.run_drive",
                 draw=lambda scn, m, d: _overlay(
                     scn, m, d, c, overlay_on, v_max, trail=trail,

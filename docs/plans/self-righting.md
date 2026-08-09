@@ -22,6 +22,16 @@ touch the floor rather than sinking through them) and adds whatever of
 `righting.bumper` / `righting.arm` is present. It is off everywhere else, so
 none of this touches training, teleop or deployment.
 
+Part 4 adds a second, better mechanism — a mirrored **wing pair** on one servo
+— selected by `wings=True` and by `--wings` on every subcommand above:
+
+```sh
+python analysis/self_righting.py lift --wings --sweep   # pivot height + gear fit
+python analysis/self_righting.py sequence --wings
+python -m aow_sim.record --script right                 # video, rear view
+python -m aow_sim.run_drive --teleop --wings            # 9 extend, 4 retract, . shove
+```
+
 ## Summary
 
 | question | answer |
@@ -33,6 +43,8 @@ none of this touches training, teleop or deployment.
 | Does the bike rest consistently? | **Yes, already.** 90.2° roll / 10.3° pitch on every fall tried, independent of steer angle |
 | What should the side geometry be? | A short pad per side just proud of the drive servos. **Not** a wide outrigger — every wide or tall rail tried made it worse |
 | Can one XC330 lift it? | **Only through a reduction.** 0.65–0.75 N·m at the arm; direct drive is a coin flip on a half-empty 3S pack. At 3:1 it is 0.25 N·m at the servo |
+| One arm or a mirrored pair? | **The pair, on these numbers.** It stops itself at upright instead of falling over the far side, hands off in 2.09 s instead of 3.53 s, and never has to know which side it fell on — for 35 g and a much tighter torque margin. See part 4 |
+| Will righting flatten the battery? | **No, by a wide margin.** 0.74 A peak and 0.26 mAh per attempt, against 1.2–2.0 A just to drive. The servo's own overload cutout is the thing to bench-test, not the pack |
 
 ---
 
@@ -318,15 +330,262 @@ seconds is fine" budget.
 
 ---
 
+## 4. The wing pair
+
+A second mechanism, and on the numbers below a better one. Instead of one arm
+reaching for whichever floor the bike is lying on, a **mirrored pair of wings,
+one per side, on a single servo through a gear train** — meshed gears at the
+two pivots with a reversal on one side, so the pair counter-rotates and both
+wings deploy outboard and down together. Whichever one is on the fallen side
+plants and levers; the other swings out into the air.
+
+`build_model(..., righting=True, wings=True)` builds it, and `--wings` selects
+it on every `self_righting.py` subcommand. The two mechanisms are never in the
+same model — the arm's 43 g would land in every wing torque reading — but they
+share the bumper pads from part 2.
+
+The gear train is not modelled. All it contributes to the dynamics is the
+inversion, as a joint equality `θ_left = −θ_right`, and the reduction, as
+`gear_ratio` folded into the actuator's forcerange. Mirroring holds to
+**0.02°** on a pinned chassis and opens to ~0.7° once one wing is loaded
+against the floor and the other is in the air — soft-constraint compliance,
+which is about what real gear backlash would look like anyway.
+
+### It stops itself at upright
+
+This is the result that decides it. Run the stroke to completion with **no
+controller at all**:
+
+| | arm | wing pair |
+|---|---|---|
+| passes through upright at | 3.8 s | 2.6 s |
+| ...and then | overshoots to −133°, **falls over the other side**, rest −99.5° | **stops at −0.1° and stays there** |
+| final state, no controller | fallen, other side | dead still, on front tyre + both wing feet |
+
+The single arm has to be *stopped* at hand-off, and part 3 says so explicitly.
+The pair does not: as the bike comes up, the far wing reaches the floor on the
+other side and the two feet plus the front tyre become a tripod. Fully
+deployed, the bike sits at roll −0.06° / pitch +20.2° with `|qvel| = 0`.
+
+That was the design's main risk inverted. The worry was that the far wing
+plants *early* and wedges the bike short of the ±12° hand-off window. It does
+not — it plants late, and the mechanism is a deployable **stand**. If a
+hand-off fails, the bike parks upright instead of falling over, and can retry.
+
+### The dogleg cranks OUTBOARD, and the angle is close to forced
+
+Two constraints, neither of which the simulation will ever complain about,
+because the wings collide with the floor and with **nothing else** and the gear
+discs are drawn non-colliding.
+
+**It must clear the rim of its own gear.** The crank is not a bend so much as an
+offset: it carries the leg far enough outboard that the leg lands on the
+*floor* rather than on the disc it is bolted to. So the outboard reach,
+`crank_length · sin(crank_deg)`, has to exceed `disc_radius`, and cranking
+inboard shortens that reach by the sine. That is what pins the angle near 90°
+— it is not a free knob to trade against torque. `wing_fit()` reports it as
+`leg_stands_on_gear`.
+
+**It must not park through the drive servos.** They occupy |y| = 15.75–44.25 mm,
+so an inboard-cranked leg stows straight through them and the model runs
+perfectly happily. `test_stowed_wings_park_outboard_of_the_drive_servos` fails
+if it ever goes back inboard.
+
+Note the coupling the first constraint creates: `disc_radius` **grows with the
+gear ratio**, so a bigger reduction demands a longer crank, which widens the
+stance, which is exactly what the rest sweep in part 2 punishes. Reduction and
+landing behaviour are not independent.
+
+The angle is somewhat notional in any case — the real part will integrate the
+crank into the gear itself, so what the parameter encodes is *where the leg
+lands relative to the pivot*, not a physical bend.
+
+### Sizing
+
+`lift --wings --sweep` ladders the pivot height, which is what this design
+turns on. Torques are at the servo through the 3:1:
+
+| pivot z [mm] | leg [mm] | peak τ [N·m] | frac of 9.9 V | best roll | stow [mm] | clear [mm] | touch | max ratio |
+|---|---|---|---|---|---|---|---|---|
+| −30 | 95 | 0.380 | 0.58 | 94.3° | 143 | 14 | 27° | 1.54 |
+| −30 | 115 | 0.613 | 0.93 | 0.0° | 163 | 14 | **27°** | **1.54** |
+| −20 | 100 | 0.588 | 0.89 | 0.0° | 158 | 24 | 40° | 4.83 |
+| **−15** | **95** | **0.582** | **0.88** | **0.0°** | **158** | **29** | **45°** | **4.83** |
+| 0 | 95 | 0.618 | 0.94 | 0.0° | 173 | 44 | 57° | 4.83 |
+
+Four things fall out, and the low pivot loses on three of them.
+
+**Packaging does not reward a low pivot the way it looks like it should.** A
+lower pivot ought to stow lower, and it does not, because it also needs a
+longer leg to reach the floor and the extra length eats the gain exactly:
+−20/100 and −15/95 both stow at 158 mm, and −30 stows *higher* at 163 mm
+because of the 115 mm leg it needs.
+
+**Neither does torque.** Flat at 0.58–0.61 N·m across the whole working band,
+for the same reason running backwards: a lower pivot shortens the moment arm
+the wing pushes on, and the longer leg needed to fix that costs it back.
+
+**Riding-lean clearance goes the wrong way.** Stowed, the wings are the lowest
+outboard thing on the bike after the wheels, so they set the roll angle at
+which something other than a tyre touches down. At z = −30 that is **27°** —
+*inside* the recoverable set of part 1 (up to 30.9°), so a lean the policy
+could still save would drag a wing. z = −15 puts it at **45°**.
+
+**And the gear train does not fit.** See below: at z = −30 the driven disc is
+larger than the pivot is tall, capping the reduction at **1.54:1**. The
+configured 3:1 is not buildable there at all. This is the hardest of the four
+constraints and it is the one that actually decides.
+
+Note what fails when the leg is too short: the 95 mm/−30 mm row peaks at
+0.380 N·m, well inside budget, and still stalls at 94°. **It is reach that runs
+out, not torque** — the wing cannot get far enough outboard of the contact line
+to have any leverage. Adding torque would not have fixed it.
+
+At the configured geometry the stroke needs **0.88 of the 9.9 V cutoff stall**,
+tighter than the arm's 0.38 and the one number here that wants a larger
+reduction before this is a design. Which runs straight into:
+
+### The gear train is a fit problem, and it runs backwards
+
+One central pinion meshing both wing gears means the centre distance is not
+free — it is fixed by where the pivots are. So the ratio alone pins both radii:
+
+```
+r_pinion + r_disc = half_span      ->   r_pinion = half_span / (1 + ratio)
+r_disc / r_pinion = ratio               r_disc   = half_span - r_pinion
+```
+
+The counter-intuitive part: **a bigger reduction shrinks the pinion**, it does
+not grow the disc without limit. And the pinion is the 3D-printed part with a
+floor on how fine its teeth can be. At the 35 mm pivot half-span, with a 6 mm
+minimum printable pitch radius (a GUESS — print one):
+
+| ratio | pinion [mm] | disc [mm] | |
+|---|---|---|---|
+| 2:1 | 11.7 | 23.3 | ok |
+| **3:1** | **8.8** | **26.3** | **configured** |
+| 4:1 | 7.0 | 28.0 | ok |
+| 5:1 | 5.8 | 29.2 | pinion unprintable |
+| 6:1 | 5.0 | 30.0 | pinion unprintable |
+
+**Ceiling: 4.83:1.** So the obvious fix for the 0.88 torque margin — go to 4:1
+or 5:1 — is available only just, and 5:1 is already past it. Widening the pivot
+half-span is the lever that buys more, since every radius here scales with it.
+
+The second limit binds at low pivots: the disc is centred on the pivot, so it
+cannot be taller than the pivot is off the floor. That is what collapses the
+ceiling to 1.54:1 at z = −30 and 2.98:1 at z = −25, and it is the strongest
+argument against dropping the pivot further. The discs are drawn in the model —
+weightless, non-colliding — precisely so this can be looked at rather than
+computed: `build_model.wing_fit()` reports all of it, and `lift --wings` prints
+the ladder.
+
+### Multi-turn — actually not required, once the stroke is sized honestly
+
+The sketch anticipated needing it, and at a 135° deploy it does: 405° at the
+servo through the 3:1, or 1.12 turns. But 135° was never the requirement — it
+was a **super-kickstand**, far past what righting needs. At a 105° deploy the
+full stroke is **315° at the servo, 0.88 turns**, and hand-off happens earlier
+still, so the whole mechanism fits inside a single turn.
+
+That is a real simplification and it is worth protecting: `deploy_deg` and
+`gear_ratio` multiply, so `deploy_deg × gear_ratio < 360` is the condition, and
+raising the reduction for torque headroom spends it. At 4:1 even 105° is
+420° (1.17 turns) and extended-position mode comes back.
+
+`lift --wings` prints the turns and flags the crossing either way.
+
+### Current: the pack is not the constraint
+
+The case that matters is the one where the bike is already down — the fall
+detector has cut the drive policy, so the righting servo is the **only** motor
+load on the pack. Priced off the torque trace through the motor constant
+`kt = stall_torque / stall_current` (0.80 N·m / 0.88 A, and kt does not move
+with pack voltage, so a sim torque converts to amps directly):
+
+| | |
+|---|---|
+| peak current | **0.74 A** at the XC330 (its own stall is 0.88 A) |
+| charge per righting attempt | **0.26 mAh** over a ~4 s stroke |
+| normal driving, for comparison | 1.2–2.0 A average, ~4 A peak |
+| a 1300 mAh pack | ~5000 attempts, if it did nothing else |
+
+So righting is the **lowest-current thing the bike ever does** — roughly a
+third of the average draw of simply driving, and about a fifth of the peak.
+Nothing here threatens the pack, and the bulk capacitance already specified in
+`untethered-setup.md` for drive transients covers a load this small trivially.
+
+What is *not* ruled out by this is the servo's own limits: 0.7 A for four
+seconds is near-stall operation for a motor that small, and Dynamixels shut
+down on their own overload/thermal protection rather than on pack voltage. That
+is the failure mode to watch, and it is a bench test, not a simulation.
+
+### End to end
+
+`sequence --wings`, and `python -m aow_sim.record --script right` for the
+video (`traces/right_wings.mp4`, rear view):
+
+```
+fell to 94 deg; handed over at t = 2.09 s; final roll 0.4 deg, wings at 0 deg
+upright and balancing
+```
+
+**2.09 s to hand-off against the arm's 3.53 s**, on the same fall, same policy,
+same slew rate. The pair is faster because it starts pushing immediately —
+there is no ~0.5 s of swinging the arm around to find the floor first.
+
+Falls stay repeatable. `rest --wings` over the same eight falls gives **94.4°
+roll / 13.9° pitch, spread 0.1°**, and the static barrier onward triples
+(33 → 104 mJ). The outboard-cranked wings do now take part in the landing —
+support is bumper + chassis + front tyre + wing foot rather than bumper +
+chassis + drive servo — which moves the rest attitude from 99.6° to 94.4° and
+brings touchdown forward (contact at ~45° of roll instead of ~67°, so touchdown
+KE drops to 96–343 mJ). No fall ended on its back and the spread is still
+essentially zero, so the landscape that works is preserved; but the wing feet
+are now impact-loaded parts, which the arm's feet never were.
+
+### The cost
+
+98 g on a 1016 g bike (**+9.6%**) against the arm's 63 g (+6.2%): two wings
+40 g, servo 23 g, gear train 15 g, pads 20 g. So the pair buys the self-limiting
+stroke, the faster stroke, the side-agnostic stroke and the flat stow for 35 g
+and a much tighter torque margin.
+
+### Still open
+
+* **Torque margin, and it is now boxed in.** 0.88 of the 9.9 V stall is not
+  enough headroom, and the gear-fit ceiling of 4.83:1 means the usual fix has
+  almost no room left. Widening the pivot half-span past 35 mm is the lever
+  that actually buys margin, and it has not been swept.
+* **`min_pinion_radius` is a GUESS.** The whole fit ceiling hangs off it, so it
+  is the single most valuable thing to replace with a measurement — print a
+  test pinion.
+* **Impact loading on the wing feet.** They are now part of the landing, and
+  nothing here says what survives a 12–16 rad/s arrival.
+* **The stow angle.** `crank_deg` is now pinned by the outboard-clearance
+  requirement above, but `stow_deg` was set from the sketch and never swept.
+* **Wing-on-chassis interference is not simulated.** The wings collide with the
+  floor and with nothing else, so the stowed pose has to be checked
+  geometrically. See `_add_wings`.
+* **Nothing here is trained.** The hand-off is still a hard switch into
+  `general_rl` at 12°, and the policy has never seen a wing.
+
+---
+
 ## Consequences for the rest of the repo
 
 * `config/bike_params.yaml` gained a `righting` block, which changes the
   parameter digest. **The deployment bundle had to be re-exported**
   (`python -m aow_sim.export_deploy`) and any bundle already on the Pi is now
-  stale — `hw/state.py` will refuse it, by design.
-* `build_model(..., righting=True)` is opt-in and off everywhere else. The
-  chassis lumps stay `contype=0` in every other configuration, so training,
-  teleop and deployment see exactly the model they saw before.
+  stale — `hw/state.py` will refuse it, by design. **This applies again to the
+  `righting.wings` block**: until the bundle is re-exported,
+  `tests/test_hw_replay.py::test_bundle_controller_matches_mujoco_controller`
+  fails on the digest, which is the mechanism working, not a regression.
+* `build_model(..., righting=True)` and `wings=True` are opt-in and off
+  everywhere else. The chassis lumps stay `contype=0` in every other
+  configuration, so training, teleop and deployment see exactly the model they
+  saw before — the emitted MJCF for both the plain and the arm bike is
+  byte-identical to before the wings existed.
 * The single biggest improvement available here is not a mechanism at all:
   **`general_rl` recovers 30–50% less lean to the left than to the right.**
   Fixing that widens the recoverable set, raises the safe hand-off threshold,

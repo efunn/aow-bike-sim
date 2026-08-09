@@ -60,6 +60,13 @@ is a setpoint, so it stays where you leave it.
 | `/` | re-zero the command | 2 | toggle the ground dial |
 | 1 / 3 | crab left / right (general mode only) | F5 | fullscreen (Backspace resets) |
 | `;` / `'` | trail: pen-up / 2s / 4s / 10s / inf | `\` | camera: free → follow → overhead |
+| 9 / 4 | righting wings extend / retract (`--wings`) | `.` | shove it over (`--wings`) |
+
+With `--wings`, `9`/`4`/`.` shadow the analytic-mode `flick_fwd`/`flip`/`pivot`
+for that session. They are **not** `0`: the viewer binds `0`–`9` to geom-group
+visibility as well, every geom in this model is group 0, and `0` therefore
+ghosts the floor and the bike out of view. Groups 4 and 9 are empty, so those
+two toggle nothing.
 
 The general RL policy drives by default (whenever `moves/general_rl` exists
 and matches the current spec). It is a modal layer: the arrows command it,
@@ -153,6 +160,27 @@ a righting mechanism, not a catch. `build_model(..., righting=True)` makes the
 chassis lumps collidable and adds the study's bumper pads and arm; it is off
 everywhere else, so training, teleop and deployment see the model they always
 did.
+
+Two candidate mechanisms, and `--wings` picks between them on every subcommand
+above. The default is one arm swinging through ±180° with `sign(roll)`;
+`build_model(..., righting=True, wings=True)` swaps it for a **mirrored wing
+pair on a single servo** — both wings deploy together, so the stroke never has
+to know which side it fell on, and the pair folds inside the chassis at stow.
+They are alternatives and are never built into the same model.
+
+```sh
+python analysis/self_righting.py lift --wings --sweep   # pivot height + gear fit
+python analysis/self_righting.py sequence --wings
+python -m aow_sim.record --script right                 # -> traces/right_wings.mp4
+python -m aow_sim.run_drive --teleop --wings            # 9 extend, 4 retract, . shove
+```
+
+`--script right` starts the bike already fallen and films the whole stroke from
+behind, which is the only view a roll-plane mechanism reads in. Teleop's wing
+keys are deliberately manual — nothing deploys or hands off by itself, so you
+can push the bike over and watch what it actually does before deciding what
+should trigger. `.` shoves it over with a repeatable 8 N pulse, alternating
+sides; by hand, double-click the bike and Ctrl + right-drag.
 
 ## Moves
 

@@ -7,6 +7,7 @@ box) and, unlike teleop, the result is a file you can look at afterwards.
   python -m aow_sim.record --script crab            # -> traces/crab.mp4 + .png
   python -m aow_sim.record --script drive --general general_rl_1k
   python -m aow_sim.record --script crab --analytic # the LQR path instead
+  python -m aow_sim.record --script right           # self-righting, rear view
 
 The dial is the same `run_drive._overlay` teleop draws (key `2`), rendered
 onto the offscreen scene rather than the viewer's, so what you see here is
@@ -18,6 +19,12 @@ what you would see driving:
 The rear wheel's roller detail is deliberately not worth watching here — the
 AOW spins too fast to read at video rates. Body pose, steer angle and the dial
 carry the information.
+
+`--script right` is a different animal: it starts the bike ALREADY FALLEN and
+runs the self-righting mechanism (see docs/plans/self-righting.md) through
+deploy → hand-off → retract, so there is no gamepad, no trail worth drawing,
+and the default plan view is exactly the wrong camera. It defaults to `rear`
+and draws the phase instead of the stick gates.
 """
 
 from __future__ import annotations
@@ -39,9 +46,14 @@ except ImportError as e:            # fail at import, not 15 s into a render
 from .build_model import build_model, load_params
 from .control import DriveController
 from .control import gamepad as gp
-from .control.linearize import settle_upright
+from .control.linearize import design_all, settle_upright
+from .control.righting import RightingSequencer, roll_pitch, settle_fallen
 from .run_drive import (_LEAD_MAX, _TRAIL, _TURN_RATE, _command_ref,
                         _fresh, _overlay)
+
+# Scripts that own their own controller and start from a non-upright pose, so
+# the gamepad/command machinery below does not apply to them.
+_SEQUENCES = {"right"}
 
 # (t [s], label, fn(controller, psi0)) -- applied once when the clock passes t.
 _SCRIPTS = {
@@ -191,23 +203,72 @@ def _hud(frame, seg, pen_down, v_max, crab_max):
     return frame
 
 
+# Tracking camera presets: (elevation, azimuth). `rear` looks up the bike's own
+# +X from behind, which is the roll plane -- the only view a righting stroke
+# reads in at all. -22 rather than level: a near-level camera spends the top
+# third of the frame on empty sky, and this all happens near the floor.
+_CAM_PRESETS = {"rear": (-22.0, 180.0), "front": (-22.0, 0.0)}
+
+
 def _camera(model, mode: str, distance: float, elevation: float,
             azimuth: float, lookat):
-    """`chase` tracks the chassis; `top` is a FIXED world view.
+    """`chase`/`rear`/`front` track the chassis; `top` is a FIXED world view.
 
     Default to fixed: a tracking camera pins the bike to the centre of frame,
     which is exactly what hides translation -- and translation is the whole
     question when judging a crab. Fixed + the world trail makes "moved
-    sideways" and "spun on the spot" impossible to confuse."""
+    sideways" and "spun on the spot" impossible to confuse.
+
+    A righting stroke is the opposite case: it is all attitude and no
+    translation, and a plan view of it shows nothing at all."""
     cam = mujoco.MjvCamera()
-    if mode == "chase":
-        cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-        cam.trackbodyid = model.body("chassis").id
-    else:
+    if mode == "top":
         cam.type = mujoco.mjtCamera.mjCAMERA_FREE
         cam.lookat[:] = lookat
+    else:
+        cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        cam.trackbodyid = model.body("chassis").id
+    if mode in _CAM_PRESETS:
+        elevation, azimuth = _CAM_PRESETS[mode]
     cam.distance, cam.elevation, cam.azimuth = distance, elevation, azimuth
     return cam
+
+
+_PHASE_LABEL = {"lift": "DEPLOY", "balance": "HAND-OFF", "retract": "RETRACT"}
+_PHASE_RGB = {"fallen": (200, 60, 50), "lift": (230, 150, 40),
+              "balance": (40, 150, 70), "retract": (60, 110, 200)}
+
+
+def _phase_hud(frame, info):
+    """Righting-run overlay: which phase, how far the mechanism has swung, and
+    how many turns that is at the servo.
+
+    The stick gates `_hud` draws are meaningless here -- there is no gamepad in
+    this run -- and the servo-turns readout is the point: past 1.00 the real
+    XC330 has to be in extended-position (multi-turn) mode."""
+    if info is None:
+        return frame
+    phase, roll, mech_deg, turns = info
+    h = frame.shape[0]
+    r = max(14, h // 16)
+    cx, cy = r + 12, h - r - 30
+    _disc(frame, cx, cy, r, _PHASE_RGB.get(phase, (120, 120, 120)))
+    _disc(frame, cx, cy, r, (35, 35, 40), width=2)
+    try:                                  # text is a bonus, never a dependency
+        from PIL import Image, ImageDraw
+        im = Image.fromarray(frame)
+        dr = ImageDraw.Draw(im)
+        ink = (20, 20, 20)
+        dr.text((cx + r + 12, cy - 14),
+                _PHASE_LABEL.get(phase, phase.upper()), fill=ink)
+        dr.text((cx + r + 12, cy - 1), f"roll {roll:+6.1f}°", fill=ink)
+        dr.text((cx + r + 12, cy + 12),
+                f"mech {mech_deg:+6.1f}°   servo {turns:4.2f} turns"
+                + ("  MULTI-TURN" if turns > 1.0 else ""), fill=ink)
+        frame = np.asarray(im)
+    except Exception:
+        pass
+    return frame
 
 
 def _trail(scn, pts, rgba=(*_TRAIL, 1.0)):
@@ -225,11 +286,64 @@ def _trail(scn, pts, rgba=(*_TRAIL, 1.0)):
         scn.ngeom += 1
 
 
+def _record_righting(params, general: str | None, wings: bool, fps: int,
+                     seconds: float, retract_after: float):
+    """PASS 1 for `--script right`: start fallen, run the mechanism through
+    deploy -> hand-off -> retract, and keep one snapshot per output frame.
+
+    Returns (model, data, controller, states, marks) in the same shape the
+    drive scripts produce, so PASS 2 renders both without branching."""
+    model = build_model(params, variant="full", righting=True, wings=wings)
+    design = design_all(params, build_model(params))
+    data = mujoco.MjData(model)
+    data.qpos[:] = settle_fallen(params, wings=wings)
+    mujoco.mj_forward(model, data)
+    move = general or params["control"].get("general_move", "general_rl")
+    seq = RightingSequencer(params, model, wings=wings,
+                            # The wing pair deploys the same way whichever side
+                            # it fell on; the single arm has to reach for it.
+                            direction=1.0 if wings else None,
+                            retract_after=retract_after, move=move,
+                            design=design)
+    seq.reset(model, data)
+
+    every = max(1, int(round(1.0 / fps / model.opt.timestep)))
+    states, marks, phase = [], [], "fallen"
+    for i in range(int(round(seconds / model.opt.timestep))):
+        roll, _ = roll_pitch(data.qpos[3:7])
+        seq.step(model, data)
+        mujoco.mj_step(model, data)
+        if seq.phase != phase:
+            phase = seq.phase
+            marks.append((len(states), _PHASE_LABEL.get(phase, phase)))
+            print(f"  t={data.time:5.2f}s  {_PHASE_LABEL.get(phase, phase)}"
+                  f"  roll {roll:+.1f} deg  servo {seq.servo_turns:.2f} turns")
+        if len(states) * every <= int(data.time / model.opt.timestep):
+            # The mechanism has no drive command until hand-off, so the ground
+            # dial is suppressed (cmd=None) until there is one to draw.
+            cmd = _command_ref(seq.ctrl, data) if seq.ctrl is not None else None
+            states.append((data.qpos.copy(), data.qvel.copy(), cmd, False,
+                           (phase, roll, np.degrees(seq.cmd), seq.servo_turns)))
+    return model, data, seq.ctrl, states, marks
+
+
 def record(script: str, general: str | None, analytic: bool, out: Path,
            width: int, height: int, fps: int, distance: float,
            elevation: float, azimuth: float, hockey: bool,
-           camera: str = 'top') -> dict:
+           camera: str = 'top', wings: bool = True, seconds: float = 12.0,
+           retract_after: float = 1.0) -> dict:
     params = load_params()
+    righting = script in _SEQUENCES
+    if righting:
+        model, data, c, states, marks = _record_righting(
+            params, general, wings, fps, seconds, retract_after)
+        mode = ("wings" if wings else "arm") + ":" + (
+            general or params["control"].get("general_move", "general_rl"))
+        fell, v_max, crab_max, drawing = False, 1.2, 0.0, None
+        return _render(model, data, c, states, marks, out, width, height, fps,
+                       distance, elevation, azimuth, camera, v_max, crab_max,
+                       {"mode": mode, "script": script, "fell": fell})
+
     model = build_model(params, variant="full", hockey=hockey)
     data = _fresh(model, settle_upright(model).qpos)
     c = DriveController(params, model)
@@ -301,13 +415,21 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
             print(f"  t={data.time:5.2f}s  FELL")
             break
 
-    # PASS 2 -- frame the camera to the path actually taken, then render the
-    # stored states. Replaying snapshots keeps this exact: no re-simulation,
-    # so the video cannot drift from the run that produced the numbers.
+    return _render(model, data, c, states, marks, out, width, height, fps,
+                   distance, elevation, azimuth, camera, v_max, crab_max,
+                   {"mode": mode, "script": script, "fell": fell})
+
+
+def _render(model, data, c, states, marks, out: Path, width: int, height: int,
+            fps: int, distance: float, elevation: float, azimuth: float,
+            camera: str, v_max: float, crab_max: float, meta: dict) -> dict:
+    """PASS 2 -- frame the camera to the path actually taken, then render the
+    stored states. Replaying snapshots keeps this exact: no re-simulation,
+    so the video cannot drift from the run that produced the numbers."""
     xy = np.array([q[:2] for q, *_ in states])
     lookat = np.array([xy[:, 0].mean(), xy[:, 1].mean(), 0.0])
     span = float(max(np.ptp(xy[:, 0]), np.ptp(xy[:, 1]), 0.6))
-    if camera != "chase":
+    if camera == "top":
         distance = span * 1.35 + 0.9      # bike + trail + margin, always in frame
     # Modest lift only: the earlier +0.6/+0.7 washed the floor to pure white.
     model.vis.headlight.ambient[:] = 0.45
@@ -334,16 +456,20 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
         renderer.update_scene(data, camera=cam)
         # reset=False: append the dial onto the model geoms already in the
         # scene instead of clearing them (the viewer owns a private scene;
-        # this one does not).
-        _overlay(renderer.scene, model, data, c, [True], v_max, reset=False,
-                 command=cmd)
+        # this one does not). `cmd is None` before a righting run hands off:
+        # there is no drive command yet, so there is no dial to draw.
+        if cmd is not None:
+            _overlay(renderer.scene, model, data, c, [True], v_max, reset=False,
+                     command=cmd)
         # Only points laid down with the pen DOWN. Spheres, not a
         # polyline, so a pen-up gap is simply absent rather than
         # bridged by a stroke that was never driven.
         drawn = np.array([q[:2] for q, _, _, pen, _ in states[:i + 1] if pen])
         if len(drawn):
             _trail(renderer.scene, drawn)
-        frame = _hud(renderer.render(), seg, pen_down, v_max, crab_max)
+        frame = (_phase_hud(renderer.render(), seg)
+                 if meta["script"] in _SEQUENCES
+                 else _hud(renderer.render(), seg, pen_down, v_max, crab_max))
         writer.append_data(frame)
         if i in picks:
             tiles[i] = frame.copy()
@@ -379,16 +505,17 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
             pass
         imageio.imwrite(sheet, grid)
 
-    return {"mode": mode, "script": script, "frames": len(states),
-            "seconds": round(float(data.time), 2), "fell": fell,
+    return {**meta, "frames": len(states),
+            "seconds": round(float(data.time), 2),
             "video": str(out), "sheet": str(sheet)}
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--script", default="crab",
-                    choices=sorted(set(_SCRIPTS) | set(_DRAWINGS)),
-                    help="crab/drive = diagnostics; o/s/t = pen drawings")
+                    choices=sorted(set(_SCRIPTS) | set(_DRAWINGS) | _SEQUENCES),
+                    help="crab/drive = diagnostics; o/s/t = pen drawings; "
+                         "right = self-righting from a fallen start")
     ap.add_argument("--general", default=None, metavar="NAME",
                     help="policy to drive with (moves/NAME.{yaml,npz})")
     ap.add_argument("--analytic", action="store_true",
@@ -397,22 +524,39 @@ def main() -> None:
     ap.add_argument("--width", type=int, default=640)
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--fps", type=int, default=30)
-    ap.add_argument("--camera", default="top", choices=("top", "chase"),
+    ap.add_argument("--camera", default=None,
+                    choices=("top", "chase", "rear", "front"),
                     help="top = fixed world view (shows translation); "
-                         "chase = locked to the bike (shows attitude)")
+                         "chase/rear/front = locked to the bike (shows "
+                         "attitude). Default: top, or rear for --script right")
     ap.add_argument("--distance", type=float, default=3.0)
     # -89, not -65: a true plan view makes image-up = world +Y, so "moved
     # sideways" can be read off the frame instead of inferred from a tilt.
     ap.add_argument("--elevation", type=float, default=-89.0)
     ap.add_argument("--azimuth", type=float, default=90.0)
     ap.add_argument("--hockey", action="store_true")
+    # --script right only
+    ap.add_argument("--arm", action="store_true",
+                    help="right: use the single righting arm instead of the "
+                         "mirrored wing pair")
+    ap.add_argument("--seconds", type=float, default=12.0,
+                    help="right: run length")
+    ap.add_argument("--retract-after", type=float, default=1.0,
+                    help="right: seconds the policy must hold it before the "
+                         "mechanism is pulled back to stow")
     a = ap.parse_args()
-    tag = a.general or ("analytic" if a.analytic else "general")
+    righting = a.script in _SEQUENCES
+    # A righting stroke is all attitude and no translation, so the plan view
+    # that the drive scripts want shows nothing at all here.
+    camera = a.camera or ("rear" if righting else "top")
+    distance = a.distance if a.camera or not righting else 0.9
+    tag = (("wings" if not a.arm else "arm") if righting else
+           a.general or ("analytic" if a.analytic else "general"))
     out = a.out or Path("traces") / f"{a.script}_{tag}.mp4"
     print(f"recording {a.script} ({tag})")
     print(record(a.script, a.general, a.analytic, out, a.width, a.height,
-                 a.fps, a.distance, a.elevation, a.azimuth, a.hockey,
-                 a.camera))
+                 a.fps, distance, a.elevation, a.azimuth, a.hockey,
+                 camera, not a.arm, a.seconds, a.retract_after))
 
 
 if __name__ == "__main__":
