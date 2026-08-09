@@ -13,3 +13,5 @@ analysis/*.mp4
 # digest that hw.state checks on load -- a stale one raises rather than
 # silently flying the wrong gains.
 deploy/
+# Personal working agreements for agents in this checkout; not a team document.
+CLAUDE.md
