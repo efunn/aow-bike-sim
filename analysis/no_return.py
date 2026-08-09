@@ -96,7 +96,8 @@ def _init(params, controller, move, speeds):
         _W["eq"][float(v)] = (eq.qpos.copy(), eq.qvel.copy(), eq.ctrl.copy())
 
 
-def _make_data(v0: float, roll: float, roll_rate: float) -> mujoco.MjData:
+def _make_data(v0: float, roll: float, roll_rate: float,
+               steer: float | None = None) -> mujoco.MjData:
     """Settled straight-rolling state at speed v0, tilted by `roll` about the
     body +X axis with body-frame roll rate `roll_rate`.
 
@@ -112,6 +113,13 @@ def _make_data(v0: float, roll: float, roll_rate: float) -> mujoco.MjData:
     data.ctrl[:] = ctrl
     data.qpos[3:7] = [np.cos(roll / 2), np.sin(roll / 2), 0.0, 0.0]
     data.qvel[3] = roll_rate      # freejoint angular velocity is body-frame
+    # Optional steer offset [rad], for asking whether the recoverable set
+    # depends on where the steer is parked. The settled snapshot above is a
+    # STRAIGHT-rolling equilibrium, so a non-zero steer here is deliberately
+    # off-equilibrium — same status as the roll tilt it sits alongside: "the
+    # bike arrives in this state, can it recover?" Not an equilibrium sweep.
+    if steer is not None:
+        data.qpos[model.joint("steer_joint").qposadr[0]] = steer
     mujoco.mj_forward(model, data)
     return data
 
@@ -169,7 +177,7 @@ class Trace:
 
 def _rollout(v0: float, roll: float = 0.0, roll_rate: float = 0.0,
              horizon: float = HORIZON_S, push: tuple[float, float] | None = None,
-             stop_deg: float = FALL_DEG):
+             stop_deg: float = FALL_DEG, steer: float | None = None):
     """Simulate one disturbance. Returns (recovered, Trace).
 
     `push` = (force_N, duration_s) applies a lateral force pulse at the chassis
@@ -177,7 +185,7 @@ def _rollout(v0: float, roll: float = 0.0, roll_rate: float = 0.0,
     trace is truncated there, so its sign is always the direction of the fall
     and never a post-tumble artefact."""
     model = _W["model"]
-    data = _make_data(v0, roll, roll_rate)
+    data = _make_data(v0, roll, roll_rate, steer)
     ctrl = _make_controller(data, v0)
     chassis = model.body("chassis").id
     dt = model.opt.timestep

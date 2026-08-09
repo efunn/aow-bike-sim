@@ -29,10 +29,14 @@ import numpy as np
 from aow_sim.control.flick import MOVES_DIR
 from aow_sim.control.policy import load_policy_npz
 
-# Labelled by the move file each one loads from.
+# Labelled by the move file each one loads from. Override with --policies;
+# the default list is append-only so old numbers stay comparable across runs
+# of this script.
 POLICIES = {n: n for n in ("general_rl_og", "general_rl", "general_rl_1k",
                            "general_rl_smooth_og",
-                           "general_rl_smooth_diff_og")}
+                           "general_rl_smooth_diff_og",
+                           "general_rl_smooth_stiff",
+                           "general_rl_smooth_bouncy_lat")}
 
 # build_obs order: 0 roll, 1 roll_rate, 2 yaw_rate, 3 sin2steer, 4 cos2steer,
 # 5 steer_rate, 6 v_lon, 7 v_lat, 8 v_cmd_lon, 9 v_cmd_lat, 10 sin psi_err,
@@ -84,15 +88,25 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--n", type=int, default=3000, help="states to average over")
     ap.add_argument("--nulls", type=int, default=5, help="random nets for the null")
+    ap.add_argument("--policies", nargs="+", metavar="NAME",
+                    help="move names to compare (default: the built-in list)")
     args = ap.parse_args()
+
+    policies = {n: n for n in args.policies} if args.policies else POLICIES
+    # Skip names with no .npz rather than dying: the default list is shared
+    # across machines that do not all hold every export.
+    policies = {k: v for k, v in policies.items()
+                if (MOVES_DIR / f"{k}.npz").exists()}
+    if not policies:
+        raise SystemExit("none of the requested policies exist in moves/")
 
     rng = np.random.default_rng(0)
     O = sample_states(args.n, rng)
-    pols = {k: load_policy_npz(MOVES_DIR / f"{k}.npz") for k in POLICIES}
+    pols = {k: load_policy_npz(MOVES_DIR / f"{k}.npz") for k in policies}
 
     print("mirror-equivariance error   (0% = perfectly symmetric)\n")
-    for k, name in POLICIES.items():
-        print(f"  trained  {name:18} {mirror_error(pols[k], O):5.0f}%")
+    for k, name in policies.items():
+        print(f"  trained  {name:26} {mirror_error(pols[k], O):5.0f}%")
     ref = next(iter(pols.values()))
     nulls = [mirror_error(random_like(ref, 100 + i), O) for i in range(args.nulls)]
     print(f"\n  UNTRAINED null  (n={args.nulls})      "

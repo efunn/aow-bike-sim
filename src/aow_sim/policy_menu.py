@@ -91,9 +91,17 @@ def summarize(entry: dict) -> str:
                             ("survive_rate", "survive", "{:.2f}")):
         if key in m:
             bits.append(f"{label} " + fmt.format(m[key]))
-    rev = m.get("speed_ratio_rev")
-    if rev is not None:
-        bits.append("reverse " + ("ok" if rev > 0.5 else f"REFUSES ({rev:.2f})"))
+    # BOTH directions, not just reverse. The original version reported only
+    # speed_ratio_rev, on the assumption that reverse refusal was THE failure
+    # (docs/plans/general-rl-improvements.md §1) — and then
+    # general_rl_smooth_bouncy_lat arrived refusing FORWARD instead
+    # (fwd 0.056, rev 0.946) and the menu called it "reverse ok". A direction
+    # the policy will not drive is the thing you most need to know before
+    # engaging it, whichever direction it is.
+    for key, label in (("speed_ratio_fwd", "fwd"), ("speed_ratio_rev", "rev")):
+        r = m.get(key)
+        if r is not None:
+            bits.append(f"{label} " + ("ok" if r > 0.5 else f"REFUSES ({r:.2f})"))
     return "  ".join(bits)
 
 

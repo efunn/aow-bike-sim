@@ -60,11 +60,48 @@ Two tracks. The sim track does not wait on the build.
 3. **Retrain** with randomization on, fixing the crab asymmetry in the same
    run.
 
-   *In flight (`df2592b`, 2026-08-09):* `rl_general_smooth_diff` set to 12M
-   steps with `v_lat_frac` back at 0.4, to see whether training still
-   converges under the new contact model or is merely slower for it. Note this
-   run does **not** have the contact randomization enabled, so it answers the
-   convergence question but not the transfer one.
+   *Result of the 12M run (`general_rl_smooth_bouncy_lat`, 2026-08-09):* it
+   converged, and converged onto a policy that **will not drive forward**.
+   `speed_ratio_fwd` decays to 0.05 by 4M steps and sits at 0.00–0.06 for the
+   remaining 8M, while `speed_ratio_rev` climbs past 1.0 (it overshoots in
+   reverse). Final export: track 0.657, head_err 26.3°, survive 1.00.
+
+   **Do not scan this run's checkpoints.** The eval history rules the whole
+   run out: forward drive is already gone at 4M, and the only snapshots that
+   still have it (1–3M) do not survive (survive_rate 0.00–0.45, head_err
+   73–121°). There is no good checkpoint to recover.
+
+   **The 90° steer park is not a stability discovery** (`analysis/
+   steer_stability.py`, 2026-08-09). The policy parks its steer at +86.5° and
+   spends 62% of a rollout within 30° of +90, so the obvious hypothesis was
+   that a rear omni turned across the travel direction balances better. It
+   does not: sweeping the recoverable set against steer offset, **±90° is
+   never the maximum** for either policy tested, the peak sits around ±30–60°,
+   and for `general_rl_smooth_stiff` ±90° is the *worst* region on one side
+   (7.7° / 8.8° vs 13.5° at +30°). Nor does the bouncy contact invite it —
+   dampratio 1.0 beats 0.5 on the left at all seven angles. The 90° park is
+   drift into a region the objective does not score, and it *costs*
+   recoverable set relative to ±30–60°.
+
+   Two controls worth keeping in mind for anyone re-running this: the sweep
+   initialises the steer and then lets the policy move it, so a policy is
+   measured partly on being dragged out of its own habit — `bouncy_lat` shows
+   a sharp minimum at steer 0 that `smooth_stiff` does not, and that
+   difference is the habit, not the bike. And the left/right gap **flips sign
+   between the two policies**, which is the cleanest available evidence that
+   handedness is spontaneous symmetry breaking rather than plant asymmetry
+   (`axle_cant_deg` is 0.0, measured).
+
+   **The real finding is that the eval score cannot see this.** `_score =
+   survive_rate × track` rose monotonically 0.34 → 0.63 across exactly the
+   span in which forward driving died, so `BestByScore` selected a policy that
+   refuses a direction and reported it as the best of the run. This is the
+   §2.6 pathology in `general-rl-improvements.md` generalized: the objective
+   does not pin down direction symmetry, so nothing penalises trading one
+   away. **Fix the score before spending another 12M steps** — either add a
+   directional term, or gate `BestByScore` on
+   `min(speed_ratio_fwd, speed_ratio_rev)` clearing a floor. Every future run
+   is exposed to this, not just this one.
 
 **Build track — starts Monday:**
 
