@@ -837,9 +837,16 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             show_ui=False, wings=False):
     from .interactive import teleop_loop
 
+    from . import policy_menu
+
     # Which always-on policy to drive with: --general wins, else the config's
-    # control.general_move, else the trainer's default export name.
-    gen_name = general or params["control"].get("general_move", "general_rl")
+    # control.general_move, else the trainer's default export name. A LIST
+    # because the TAB menu rebinds it live — this is the startup choice, not
+    # the session's.
+    gen_name = [general or params["control"].get("general_move", "general_rl")]
+    # cursor/entries are rebuilt on every open, so a policy exported from
+    # another terminal mid-session shows up without restarting teleop.
+    menu = {"open": False, "cursor": 0, "entries": []}
     data = _fresh(model, eq_qpos)
     c = DriveController(params, model)
     c.reset(model, data)
@@ -945,11 +952,11 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         intent) if there is no usable policy, so the caller falls back to the
         analytic controller instead of retrying every step."""
         try:
-            c.engage_general(d, name=gen_name)
+            c.engage_general(d, name=gen_name[0])
         except FileNotFoundError:
             state["want_general"] = False
             if not quiet:
-                print(f"no moves/{gen_name}.yaml — using the analytic "
+                print(f"no moves/{gen_name[0]}.yaml — using the analytic "
                       "controller (train with `python -m "
                       "aow_sim.train_general_rl`)")
             return False
@@ -958,8 +965,33 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             if not quiet:
                 print(e)
             return False
+        # The policy loaded. Say whether it was trained against the physics
+        # currently in bike_params.yaml — nothing else reports this, and a
+        # policy silently belonging to an older plant is the failure mode
+        # that put a stale export in control.general_move for three days.
+        from .control.flick import check_move_digest
+        check_move_digest(c._gen, params)
         zero_command(d)                  # never inherit a stale setpoint
         return True
+
+    def select(d, name: str) -> None:
+        """Act on a menu choice: the analytic sentinel, or a policy by name."""
+        if name == policy_menu.ANALYTIC:
+            state["want_general"] = False
+            c.command_line(d)
+            zero_command(d)
+            print("analytic controller (LQR) — maneuver keys live again")
+            return
+        prev = gen_name[0]
+        gen_name[0] = name
+        state["want_general"] = True
+        if engage(d):
+            entry = next((e for e in menu["entries"]
+                          if not isinstance(e, str) and e["name"] == name), None)
+            print(f"driving moves/{name}"
+                  + (f"\n  {policy_menu.summarize(entry)}" if entry else ""))
+        else:
+            gen_name[0] = prev          # keep driving what was working
 
     def ensure_mode(d):
         """Re-assert the operator's intent after anything resets the
@@ -1117,6 +1149,35 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         while pending:
             k = pending.pop(0)
             general = c.mode == "general"
+            # -- the policy menu owns the keyboard while it is open ---------
+            # Deliberately swallowing everything, not just the keys it uses:
+            # picking a controller and driving are different activities, and
+            # a stray throttle tap landing between opening the menu and
+            # choosing would be applied to whatever gets loaded next.
+            if menu["open"]:
+                if k == policy_menu.KEY_TAB:
+                    menu["open"] = False
+                elif k == policy_menu.KEY_UP:
+                    menu["cursor"] = max(0, menu["cursor"] - 1)
+                elif k == policy_menu.KEY_DOWN:
+                    menu["cursor"] = min(len(menu["entries"]) - 1,
+                                         menu["cursor"] + 1)
+                elif k == policy_menu.KEY_ENTER:
+                    e = menu["entries"][menu["cursor"]]
+                    menu["open"] = False
+                    select(d, e if isinstance(e, str) else e["name"])
+                continue
+            if k == policy_menu.KEY_TAB:
+                # Rebuilt on open so a policy trained in another terminal
+                # since teleop started is listed without a restart.
+                menu["entries"] = ([policy_menu.ANALYTIC]
+                                   + policy_menu.list_general_policies())
+                here = gen_name[0] if c.mode == "general" else policy_menu.ANALYTIC
+                menu["cursor"] = next(
+                    (i for i, e in enumerate(menu["entries"])
+                     if (e if isinstance(e, str) else e["name"]) == here), 0)
+                menu["open"] = True
+                continue
             if k == ord(","):
                 # Mode toggle. In general mode the maneuver keys are shadowed
                 # by teleop functions (the policy owns the actuators), so this
@@ -1263,6 +1324,19 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         c.step(m, d)
         wing_step(m, d)         # after c.step: it rewrites the whole ctrl vector
 
+    def draw_frame(scn, m, d):
+        """Dial + trail, then the policy menu on top.
+
+        Order matters: _overlay resets scn.ngeom, so anything drawn before it
+        is discarded. The menu needs the live camera, which only exists once
+        the viewer has handed the handle over (on_start), hence the guard."""
+        _overlay(scn, m, d, c, overlay_on, v_max, trail=trail, grid=True,
+                 trail_level=trail_levels[trail_level[0]])
+        if menu["open"] and view[0] is not None:
+            active = gen_name[0] if c.mode == "general" else policy_menu.ANALYTIC
+            policy_menu.draw(scn, view[0].cam, menu["entries"],
+                             menu["cursor"], active)
+
     # The viewer only ever reports a key going down, so how well "hold" works
     # depends on whether real key state is readable — say which one is live.
     # The general policy is the default driver; fall back to the analytic
@@ -1305,16 +1379,14 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "5 stop   2 overlay\n"
                 "  ; / \' trail shorter/longer (pen-up 2s 4s 10s inf)   "
                 "\\ camera (free/follow/overhead)\n"
+                "  " + policy_menu.label_help() + "\n"
                 "  analytic-only keys: 6/7 circle L/R   8/9 flick (trajopt "
                 "rev/fwd)   3 flick (RL)\n"
                 "                      4 flip   . pivot (RL, front wheel "
                 "holds its line)"
                 + mode_help + ball_help + wing_help + hold_help,
                 "aow_sim.run_drive",
-                draw=lambda scn, m, d: _overlay(
-                    scn, m, d, c, overlay_on, v_max, trail=trail,
-                    grid=True,
-                    trail_level=trail_levels[trail_level[0]]),
+                draw=draw_frame,
                 show_ui=show_ui,
                 on_start=lambda v: view.__setitem__(0, v))
     return c      # returned so the input model can be driven headlessly
