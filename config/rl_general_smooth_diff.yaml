@@ -1,3 +1,56 @@
+# Per-channel w_smooth: `diff` priced separately from steer and hub.
+#
+# WHY. rl_general_smooth.yaml raised w_smooth uniformly 0.005 -> 0.05 and
+# trained moves/general_rl_smooth_og. Measured over the 20-command eval grid
+# (analysis/chatter.py), mean squared per-step action change, against the
+# three policies trained at 0.005:
+#
+#   channel   0.005 (og / general_rl / 1k)   0.05        response
+#   steer     1.52 / 1.56 / 1.47             0.41        -73%
+#   hub       0.51 / 0.86 / 0.31             0.18        -65%
+#   diff      1.27 / 1.21 / 1.63             1.23        NONE
+#
+# Steer and hub came off their bounds; `diff` did not move at all. It is not
+# that the penalty was too small to notice -- at 0.05 the diff channel alone
+# pays 0.062 of reward per step, more than steer and hub together -- it is
+# that the policy PAID it rather than give the chatter up. That is the
+# signature of load-bearing activity: diff is the channel that crawls the
+# rear contact sideways, i.e. the one that catches roll.
+#
+# Nothing else got worse for the uniform smoothing: survival stayed 1.00,
+# track_geo went 0.798 -> 0.812, and hold drift fell 0.545 -> 0.030 m. So the
+# open question is specifically about diff, and a uniform weight cannot ask
+# it -- raising the scalar further would re-price steer and hub, which have
+# already responded, and confound the two effects.
+#
+# THIS RUN. steer and hub stay at 0.05, the value known to work; diff goes to
+# 0.25 (5x), which at the currently observed chatter would cost ~0.31 of
+# reward per step, ~11% of the ~2.8 a well-tracking step earns. That is
+# comparable to the total price that bought out steer and hub, and it is
+# deliberately a big step: the point is to find out whether diff chatter is
+# giveable-up AT ALL, not to tune the cheapest weight that works.
+#
+# WHAT TO LOOK FOR. Three outcomes, all informative:
+#   * diff smooths and survival/track hold -> the chatter was slack, and the
+#     next question is how low a diff weight buys it;
+#   * diff smooths and survival or track_geo drop -> it was load-bearing, and
+#     the price of a quiet differential is measurable in falls;
+#   * diff still does not move -> it is worth more than 11% of the reward,
+#     which is a stronger version of the result already in hand.
+#
+# Compare with analysis/chatter.py (per-channel, the table above),
+# analysis/hold_spectrum.py (spectra + the contact/airborne ground truth) and
+# analysis/move_confusion.py. Note that general_rl_smooth_og also came out
+# with the WORST cross-axis leakage of any policy (crab commands scoot
+# forward at 0.34 m/s, symmetry gap 0.52) -- watch whether that follows the
+# smoothing or was particular to that run.
+#
+# Setting all three entries to the same number reproduces the scalar form bit
+# for bit, so this file is a strict generalisation of rl_general_smooth.yaml.
+#
+#   python -m aow_sim.train_general_rl --config config/rl_general_smooth_diff.yaml \
+#       --run-dir runs/general_rl_smooth_diff --export-name general_rl_smooth_diff
+#
 # General command-conditioned policy: one always-on controller tracking a
 # live (velocity vector, heading) command. See control/general_spec.py for
 # the observation contract and control/general_env.py for the episode design.
@@ -66,11 +119,10 @@ reward:
   sigma_psi_deg: 25.0    # heading tolerance scale
   w_upright: 0.5
   w_effort: 0.001
-  w_smooth: 0.005        # higher than the moves': prev_action is observable
-                         #   here, so the penalty is actually well-posed.
-                         #   One number prices all three action channels
-                         #   alike; a 3-list prices [steer_rate, hub, diff]
-                         #   separately -- see rl_general_smooth_diff.yaml.
+  # [steer_rate, hub, diff]. One number here would price all three alike
+  # (the historical form); the list is what lets `diff` be asked a separate
+  # question -- see the header. All three equal == the scalar form exactly.
+  w_smooth: [0.05, 0.05, 0.25]
   penalty_fall: 50.0
   fall_roll_deg: 60
 

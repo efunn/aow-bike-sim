@@ -187,6 +187,60 @@ def test_eval_options_hold_a_fixed_command():
     assert np.allclose(env._v_cmd_w, v0) and env._psi_cmd == pytest.approx(psi0)
 
 
+def _rw_env(w_smooth, **env_over):
+    pytest.importorskip("gymnasium")
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    cfg = _load_rl_config()
+    cfg = {**cfg,
+           "env": {**cfg["env"], "ball_prob": 0.0, **env_over},
+           "reward": {**cfg["reward"], "w_smooth": w_smooth},
+           "randomization": {**cfg["randomization"], "enabled": False}}
+    return GeneralEnv(rl_cfg=cfg, seed=0)
+
+
+def test_per_channel_w_smooth_reduces_to_the_scalar():
+    """The three action channels are not interchangeable -- under a uniform
+    weight `steer` and `hub` gave up their chatter and `diff` did not -- so
+    w_smooth may be given per channel. The list form must be a strict
+    generalisation: all three entries equal has to reproduce the scalar
+    reward EXACTLY, or every config predating the change silently moves.
+    """
+    rng = np.random.default_rng(0)
+    acts = rng.uniform(-1, 1, (60, 3))
+
+    def rewards(w):
+        env = _rw_env(w)
+        env.reset(seed=11)
+        env.set_difficulty(1.0)
+        out = []
+        for a in acts:
+            _o, r, term, trunc, _i = env.step(a)
+            out.append(r)
+            if term or trunc:
+                break
+        return np.array(out)
+
+    scalar = rewards(0.05)
+    assert rewards([0.05, 0.05, 0.05]) == pytest.approx(scalar, abs=0.0)
+    # ... and pricing one channel differently actually changes the reward, in
+    # the direction of a bigger penalty on a channel that is moving.
+    diff_priced = rewards([0.05, 0.05, 0.25])
+    assert not np.allclose(diff_priced, scalar)
+    assert np.all(diff_priced <= scalar + 1e-12)
+
+
+def test_per_channel_w_smooth_rejects_a_short_list():
+    """A 2-list against 3 channels would quietly leave `diff` unpriced --
+    which is exactly the experiment being run, so it must never happen by
+    accident."""
+    from aow_sim.control.general_env import _per_channel
+
+    assert _per_channel(0.05, 3, "w") == pytest.approx([0.05] * 3)
+    assert _per_channel([0.05, 0.05, 0.25], 2, "w") == pytest.approx([0.05] * 2)
+    with pytest.raises(ValueError, match="action channels"):
+        _per_channel([0.05, 0.05], 3, "w")
+
+
 def test_curriculum_widens_command_range():
     """Difficulty scales the sampled command envelope: gentle at 0, full at 1."""
     env = _env()

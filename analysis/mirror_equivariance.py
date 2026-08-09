@@ -30,7 +30,9 @@ from aow_sim.control.flick import MOVES_DIR
 from aow_sim.control.policy import load_policy_npz
 
 # Labelled by the move file each one loads from.
-POLICIES = {n: n for n in ("general_rl_og", "general_rl", "general_rl_1k")}
+POLICIES = {n: n for n in ("general_rl_og", "general_rl", "general_rl_1k",
+                           "general_rl_smooth_og",
+                           "general_rl_smooth_diff")}
 
 # build_obs order: 0 roll, 1 roll_rate, 2 yaw_rate, 3 sin2steer, 4 cos2steer,
 # 5 steer_rate, 6 v_lon, 7 v_lat, 8 v_cmd_lon, 9 v_cmd_lat, 10 sin psi_err,

@@ -45,7 +45,9 @@ from aow_sim.control.policy import load_policy_npz
 
 # Label each policy by the move file it loads from, so a plot can never be
 # mistaken for a different export.
-POLICIES = {n: n for n in ("general_rl_og", "general_rl", "general_rl_1k")}
+POLICIES = {n: n for n in ("general_rl_og", "general_rl", "general_rl_1k",
+                           "general_rl_smooth_og",
+                           "general_rl_smooth_diff")}
 REPO = Path(__file__).resolve().parents[1]
 
 

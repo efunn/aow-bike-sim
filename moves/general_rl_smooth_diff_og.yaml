@@ -1,0 +1,31 @@
+name: general_rl_smooth_diff
+type: rl
+kind: general
+policy_file: general_rl_smooth_diff_og.npz
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.4
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 4000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 4.609191751048236e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.8
+    track_geo: 0.792
+    vel_err: 0.166
+    head_err_deg: 4.3
+    n_eval: 20
+    drift_m: 0.43
+    steer_rest_deg: 8.0
+    speed_ratio_fwd: 0.95
+    speed_ratio_rev: 0.983
+    crab_ratio_left: 0.213
+    crab_ratio_right: 0.277
+    crab_head_err: 8.7
+    turn_asym: 0.184
+  exported_from: best_model.zip

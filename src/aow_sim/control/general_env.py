@@ -51,6 +51,32 @@ def _load_rl_config(path=None) -> dict:
         return yaml.safe_load(f)
 
 
+def _per_channel(value, act_dim: int, name: str) -> np.ndarray:
+    """A reward weight that may be one number or one number per action channel.
+
+    A scalar broadcasts, so every config written before this existed keeps its
+    exact reward -- and setting a per-channel list to a single repeated value
+    reproduces the scalar bit for bit. The list form exists because the three
+    channels are not interchangeable: under a UNIFORM w_smooth of 0.05 the
+    steer and hub channels came off their bounds (mean squared step change
+    1.52 -> 0.41 and 0.51 -> 0.18) while `diff` did not move at all
+    (1.27 -> 1.23), which is the evidence that the differential is doing
+    balance work the other two are not. Pricing it separately is the only way
+    to ask how much of that chatter is load-bearing.
+
+    A wrong-length list is an error rather than a silent broadcast: a 2-list
+    against 3 channels would quietly leave `diff` unpriced, which is exactly
+    the experiment being run and must not happen by accident.
+    """
+    a = np.atleast_1d(np.asarray(value, float))
+    if a.size == 1:
+        return np.full(act_dim, float(a[0]))
+    if a.size < act_dim:
+        raise ValueError(f"{name} has {a.size} entries for {act_dim} action "
+                         f"channels; give one value or one per channel")
+    return a[:act_dim].copy()
+
+
 class GeneralEnv(gym.Env):
     metadata = {"render_modes": []}
 
@@ -84,6 +110,8 @@ class GeneralEnv(gym.Env):
         self.fall = np.deg2rad(self.rw["fall_roll_deg"])
         self.sigma_v = float(self.rw["sigma_v"])
         self.sigma_psi = np.deg2rad(self.rw["sigma_psi_deg"])
+        self.w_smooth = _per_channel(self.rw["w_smooth"],
+                                     ACT_DIM if self.full else 2, "w_smooth")
 
         cur = self.cfg["curriculum"]
         self.cur_on = bool(cur["enabled"])
@@ -254,6 +282,7 @@ class GeneralEnv(gym.Env):
         obs, s, v_cl, v_ct, psi_err = self._obs()
         rw = self.rw
         v_err2 = (v_cl - s.v_lon) ** 2 + (v_ct - s.v_lat) ** 2
+        da = action - self._prev_a
         r_vel = np.exp(-v_err2 / self.sigma_v ** 2)
         r_head = np.exp(-(psi_err / self.sigma_psi) ** 2)
         reward = (rw["w_vel"] * r_vel
@@ -261,8 +290,9 @@ class GeneralEnv(gym.Env):
                   + rw["w_alive"]
                   - rw["w_upright"] * s.roll ** 2
                   - rw["w_effort"] * float(action @ action)
-                  - rw["w_smooth"] * float((action - self._prev_a)
-                                           @ (action - self._prev_a)))
+                  # Per-channel: w_smooth may be one number (broadcast, the
+                  # historical behaviour) or one per action channel.
+                  - float(da @ (self.w_smooth * da)))
         self._prev_a = action
         self._track_sum += 0.5 * (r_vel + r_head)
 

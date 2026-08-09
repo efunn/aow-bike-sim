@@ -124,6 +124,13 @@ a `|steer|` penalty would forbid a technique the bike may genuinely need. So
 settle on, and nothing more. (Earlier drafts of this section proposed a reward
 penalty; that was wrong.)
 
+**Update, and it vindicates not pinning it.** Raising `w_smooth` 0.005 → 0.05
+(`config/rl_general_smooth.yaml`, `moves/general_rl_smooth_og`) collapsed
+steer-at-rest from 51.1° to 3.7° and hold drift from 0.545 m to 0.030 m — with
+no `|steer|` term anywhere. The cocked wheel was never the real degree of
+freedom; it was a symptom of the chatter that a rate-only cost did not price.
+Pinning the angle would have hidden that rather than fixed it.
+
 The one case worth acting on is §2.7, where the offset grows to 24° late in
 training — but the cause there is exploration pressure outlasting the
 curriculum, so the fix is the training budget (already applied), not a reward

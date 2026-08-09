@@ -13,6 +13,11 @@ noise ceiling. An off-diagonal cell can only be read against it: two moves are
 Off-diagonals are cross-validated the same way (half A of one move against
 half B of the other), so nothing on the plot is inflated by within-half noise.
 
+The scores at the bottom are therefore reported twice: corrected for that
+ceiling and raw. Two of the three have a target of ZERO, and noise shrinks
+off-diagonals toward zero, so an unreliable policy would otherwise score
+better than a clean one for being noisier -- see disattenuate().
+
 WHY ONLY FIVE MOVES. The default set is the teleop primitives whose command is
 SUSTAINED -- hold, fwd, rev, crabL, crabR. Those are stationary: the command is
 still being asked for at the end of the trace, so one mean pattern fairly
@@ -212,6 +217,34 @@ def ideal_matrix(labels):
     return M
 
 
+def disattenuate(C):
+    """Divide every off-diagonal by sqrt(rel_i * rel_j) -- the classical
+    correction for attenuation by measurement noise.
+
+    WHY IT MATTERS HERE, and not as a cosmetic adjustment. Two of the three
+    scores below have a target of ZERO, and an unreliable pattern shrinks
+    every off-diagonal toward zero. So a policy whose code is simply noisy
+    scores a BETTER symmetry gap and a better cross-axis leakage than one
+    whose code is clean, purely for being noisier. The reliabilities here
+    range from 0.40 to 0.99 across policies, which is more than enough spread
+    for that to reverse a ranking.
+
+    Applied, it settled the question it was written for: the smoothed policy's
+    symmetry gap (0.52 raw) is not an artefact of its unusually high
+    reliability -- correcting moves it to 0.54 while general_rl_1k stays at
+    0.17. The entanglement is real, not a de-attenuation effect. The raw
+    numbers are still printed beside these, because disattenuation divides by
+    a noisy estimate and can inflate wildly when reliability is near zero.
+
+    The diagonal is left alone: it IS the reliability, and dividing it by
+    itself would just print a column of ones.
+    """
+    r = np.clip(np.diag(C), 1e-3, None)
+    D = C / np.sqrt(np.outer(r, r))
+    np.fill_diagonal(D, np.diag(C))
+    return D
+
+
 def score_against_ideal(C, labels):
     """Three statistics, each tied to something the plant actually forces,
     instead of one correlation against a partly-invented target."""
@@ -267,18 +300,28 @@ def main():
         for i, l in enumerate(labels):
             print(f"{l:>6} " + "".join(f"{C[i, j]:>8.2f}" for j in range(len(labels))))
 
+    w = max(len(s) for s in mats) + 2
     print("\nagainst the ideal  (only cells the plant actually constrains)")
-    print(f"  {'policy':16} {'symmetry gap':>13} {'cross-axis':>11} "
-          f"{'crab axis':>10} {'min reliab':>11}")
-    print(f"  {'target':16} {0.0:>13.2f} {0.0:>11.2f} {-1.0:>10.2f} {1.0:>11.2f}")
+    print("  each score twice: corrected for the noise ceiling, then (raw). "
+          "A noisy code\n  scores an artificially GOOD symmetry gap and "
+          "cross-axis -- see disattenuate().")
+    print(f"  {'policy':{w}} {'symmetry gap':>17} {'cross-axis':>17} "
+          f"{'crab axis':>17} {'min reliab':>11}")
+    print(f"  {'target':{w}} {0.0:>17.2f} {0.0:>17.2f} {-1.0:>17.2f} "
+          f"{1.0:>11.2f}")
     for short, C in mats.items():
         if short == "IDEAL":
             continue
-        sc = score_against_ideal(C, labels)
-        print(f"  {short:16} {sc.get('symmetry_gap', float('nan')):>13.2f} "
-              f"{sc.get('cross_axis_rms', float('nan')):>11.2f} "
-              f"{sc.get('crab_axis', float('nan')):>10.2f} "
-              f"{sc['min_reliability']:>11.2f}")
+        raw = score_against_ideal(C, labels)
+        adj = score_against_ideal(disattenuate(C), labels)
+        nan = float("nan")
+
+        def pair(key):
+            return (f"{adj.get(key, nan):>9.2f} "
+                    f"{'(' + format(raw.get(key, nan), '.2f') + ')':>7}")
+
+        print(f"  {short:{w}} {pair('symmetry_gap')} {pair('cross_axis_rms')} "
+              f"{pair('crab_axis')} {raw['min_reliability']:>11.2f}")
 
     try:
         import matplotlib

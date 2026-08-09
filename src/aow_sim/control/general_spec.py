@@ -38,7 +38,10 @@ consume raw multi-turn qpos with no pi-park rebasing — see control/steer.py.
 `prev_action` is fed back deliberately: the reward penalizes
 w_smooth*|a - a_prev|^2, and in the move specs a_prev is NOT observable, so
 the policy is asked to minimize something it cannot see. Feeding it back
-makes that objective well-posed.
+makes that objective well-posed. w_smooth may be one weight or one per action
+channel (general_env._per_channel): the three channels are not
+interchangeable, since `diff` is the one that catches roll and it declines to
+smooth at a price the other two accept.
 
 Action is identical to every other move (steer rate, hub speed, rear
 differential), so ActionBounds/scale_action are reused from flick_spec
