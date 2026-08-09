@@ -23,6 +23,22 @@ sim:
   # radius) into the floor while holding station. Penetration scales with the
   # square of the time constant, so this is ~16x stiffer. Raise it back toward
   # 0.02 if the solver starts complaining rather than to soften a contact.
+  # Damping ratio 0.5 (underdamped) was picked from teleop feel plus the slowmo
+  # contact study, NOT from a physical measurement -- nail it down with real
+  # bounce/settle tests when the hardware exists.
+  #
+  # KNOWN CONSEQUENCE, accepted deliberately: at 0.5 the identified lateral
+  # model degrades (worst R^2 0.861 at -0.50 m/s, vs >=0.975 everywhere at 1.0),
+  # so the LQR gain schedule is designed against a plant its own linearity
+  # assumption is measurably violated on. That is fine for now -- the LQR is a
+  # REFERENCE baseline for "the standard modern control approach", not a
+  # controller we drive with, and the RL policy never touches it. It is left
+  # crappy on purpose until the mechanical design settles.
+  #
+  # Flagged in two places so it cannot be forgotten: a RuntimeWarning from
+  # control/linearize.py on every design, and an xfail on
+  # test_lqr_model_fit_and_steering. Pin this parameter down, re-tune the
+  # control.lqr weights, then drop both.
   # contact_solref: [0.005, 1.0]
   contact_solref: [0.005, 0.5]
   friction_sliding: {value: 0.9, source: GUESS}      # TPU on hard floor -> incline slide test
