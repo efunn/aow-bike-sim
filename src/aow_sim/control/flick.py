@@ -176,6 +176,66 @@ def cost(m: dict, weights: dict = COST_WEIGHTS) -> float:
 
 # -- move file I/O ---------------------------------------------------------
 
+def reserve_move_name(name: str, moves_dir: Path | str | None = None) -> str:
+    """Return `name`, or the first free `name_2`, `name_3`, ... if it is taken.
+
+    Every trainer's `_finish` wrote `moves/<name>.{npz,yaml}` unconditionally,
+    so re-using an --export-name silently destroyed a previous export — hours
+    of training, gone with no prompt and no copy. Suffixing rather than
+    refusing matters because the collision is only discovered at the END of a
+    run, after the export, verification and eval have already been computed:
+    refusing there would throw away the very thing it is trying to protect.
+
+    A name is taken if EITHER file exists; the pair must stay together, and a
+    half-existing name is exactly the state worth stepping over.
+    """
+    d = Path(moves_dir or MOVES_DIR)
+    free = lambda n: not ((d / f"{n}.yaml").exists() or (d / f"{n}.npz").exists())
+    if free(name):
+        return name
+    i = 2
+    while not free(f"{name}_{i}"):
+        i += 1
+    return f"{name}_{i}"
+
+
+def check_move_digest(move, params, warn=None) -> str:
+    """Warn — do NOT raise — if `move` was trained against different params.
+
+    The asymmetry with `hw/state.py`, which raises on a stale deploy bundle,
+    is deliberate and is about what the operator is doing. A bundle mismatch
+    means the bike is about to fly gains designed for a different machine,
+    with nobody watching a number. Loading an older policy in teleop is
+    something you do ON PURPOSE, to compare it against a newer one — refusing
+    would break the main way these get evaluated.
+
+    What it catches is the quiet case: a physical parameter moves, and every
+    policy in moves/ silently becomes an artifact of the old plant. Nothing
+    else says so. `params_digest` is empty for moves exported before the
+    field existed, which is not a mismatch — it is an unknown, and is
+    reported as one only once, on the first load.
+
+    Returns "" when there is nothing to say, else the message (also emitted
+    through `warn`, default `print`).
+    """
+    from ..params import params_digest        # numpy-free; see that module
+    stamped = getattr(move, "params_digest", "")
+    name = getattr(move, "name", "?")
+    if not stamped:
+        msg = (f"moves/{name} carries no params_digest (exported before the "
+               "field existed) — cannot tell whether it matches the current "
+               "bike_params.yaml")
+    elif stamped != params_digest(params):
+        msg = (f"moves/{name} was trained at params digest {stamped}, but "
+               f"bike_params.yaml now hashes to {params_digest(params)} — "
+               "this policy is an artifact of a DIFFERENT plant. Fine for a "
+               "comparison; retrain before trusting it.")
+    else:
+        return ""
+    (warn or print)(msg)
+    return msg
+
+
 def load_move(name: str, moves_dir: Path | str | None = None):
     """Load a move by name. `type: trajectory` (default/absent) -> a
     FlickTrajectory (scipy optimizer output); `type: rl` -> an MLPPolicy (RL
@@ -206,6 +266,10 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         # the effective action scale and closed-loop timing both shift.
         # 0.0 means "unspecified" -> replay falls back to the controller rate.
         pol.control_rate_hz = float(d.get("control_rate_hz", 0.0))
+        # The parameter set this policy was TRAINED against. "" for every move
+        # exported before the field existed. See check_move_digest.
+        pol.params_digest = str(d.get("params_digest", ""))
+        pol.name = name
         return pol
     return FlickTrajectory(float(d["horizon"]),
                            np.asarray(d["steer_knots"], float),

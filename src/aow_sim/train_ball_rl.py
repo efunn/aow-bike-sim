@@ -28,9 +28,10 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 
 from .build_model import load_params
+from .params import params_digest
 from .control.ball_env import BallEnv, _load_rl_config
 from .control.ball_spec import ActionBounds
-from .control.flick import MOVES_DIR
+from .control.flick import MOVES_DIR, reserve_move_name
 from .control.policy import save_policy_npz
 
 RUN_DIR = Path(__file__).resolve().parents[2] / "runs" / "ball_rl"
@@ -183,6 +184,12 @@ def _eval(params, cfg, npz_path, n=8):
 def _finish(model, vecnorm, params, cfg, total, source=None, name="ball_rl"):
     """Export -> verify -> eval -> write the move file. Shared by a finished
     training run and by --export-from."""
+    # Never clobber an existing export. See reserve_move_name.
+    chosen = reserve_move_name(name)
+    if chosen != name:
+        print(f"moves/{name} already exists — exporting as {chosen} "
+              "instead (nothing was overwritten)")
+        name = chosen
     a = cfg["algo"]
     npz = MOVES_DIR / f"{name}.npz"
     _export(model, vecnorm, cfg, npz)
@@ -198,6 +205,11 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="ball_rl"):
     if source:
         trained["exported_from"] = source
     doc = {"name": name, "type": "rl", "policy_file": f"{name}.npz",
+           # The parameter set this policy was TRAINED against.
+           # Replay warns on a mismatch (control/flick.py::
+           # check_move_digest) — a policy is an artifact of the
+           # plant it saw, and nothing else records which that was.
+           "params_digest": params_digest(params),
            "max_episode_s": cfg["env"]["max_episode_s"],
            "ball_start": list(cfg["env"]["ball_start"]),
            "launch_target_deg": cfg["env"]["launch_target_deg"],
