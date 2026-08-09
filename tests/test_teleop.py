@@ -111,12 +111,25 @@ def _capture(monkeypatch, model, params, eq_qpos, hockey=False, analytic=False):
     from aow_sim.run_drive import _teleop
     g["c"] = _teleop(model, params, eq_qpos, hockey=hockey)
     if analytic and g["c"].mode == "general":
-        g["on_key"](ord(","))
+        _toggle_controller(g)
         for _ in range(3):
             g["step"](g["model"], g["data"])
             mujoco.mj_step(g["model"], g["data"])
         assert g["c"].mode != "general"
     return g
+
+
+def _toggle_controller(g):
+    """Switch between the general policy and the analytic controller.
+
+    ',' used to do this in one keypress. It now opens the policy menu, whose
+    cursor starts on the controller you are NOT using — so ',' then ENTER is
+    the same toggle, and stays a drop-in here. Tests that care about PICKING a
+    specific policy walk the cursor themselves; these only care about which
+    KIND of controller is driving."""
+    from aow_sim import policy_menu
+    g["on_key"](policy_menu.KEY_MENU)
+    g["on_key"](policy_menu.KEY_ENTER)
 
 
 def _idle(g, seconds):
@@ -333,7 +346,7 @@ def test_general_policy_survives_a_viewer_reset(monkeypatch, model, params,
     assert c.mode == "general", "policy was dropped by the reset"
 
     # ...but only while it is wanted: after ',' a reset must stay analytic
-    g["on_key"](ord(","))
+    _toggle_controller(g)
     _idle(g, 0.05)
     assert c.mode != "general"
     mujoco.mj_resetData(model, d)
@@ -342,7 +355,7 @@ def test_general_policy_survives_a_viewer_reset(monkeypatch, model, params,
     _idle(g, 0.05)
     assert c.mode != "general", "reset re-engaged a policy that was turned off"
 
-    g["on_key"](ord(","))               # and it can be turned back on
+    _toggle_controller(g)               # and it can be turned back on
     _idle(g, 0.05)
     assert c.mode == "general"
 
@@ -358,7 +371,7 @@ def test_engaging_general_zeroes_a_stale_command(monkeypatch, model, params,
     _hold(g, 1.0, UP)
     _tap(g, LEFT, settle=0.1)
     assert c.profile.target > 0.3
-    g["on_key"](ord(","))
+    _toggle_controller(g)
     _idle(g, 3 * model.opt.timestep)
     assert c.mode == "general"
     h, v = _command_ref(c, g["data"])
@@ -392,7 +405,7 @@ def test_general_mode_tracks_a_speed_command(monkeypatch, model, params,
     from aow_sim.run_drive import _command_ref
     g = _capture(monkeypatch, model, params, eq_qpos)
     c = g["c"]
-    g["on_key"](ord(","))
+    _toggle_controller(g)
     _idle(g, 0.2)
     _hold(g, 2.5, UP)
     _h, v_cmd = _command_ref(c, g["data"])
@@ -407,7 +420,7 @@ def test_general_mode_reports_a_missing_policy(monkeypatch, model, params,
     if (MOVES_DIR / "general_rl.yaml").exists():
         pytest.skip("a general policy exists; this covers the missing case")
     g = _capture(monkeypatch, model, params, eq_qpos)
-    g["on_key"](ord(","))
+    _toggle_controller(g)
     _idle(g, 3 * model.opt.timestep)
     assert "train_general_rl" in capsys.readouterr().out
     assert g["c"].mode != "general"

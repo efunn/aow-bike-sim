@@ -1155,7 +1155,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             # a stray throttle tap landing between opening the menu and
             # choosing would be applied to whatever gets loaded next.
             if menu["open"]:
-                if k == policy_menu.KEY_TAB:
+                if k == policy_menu.KEY_MENU:
                     menu["open"] = False
                 elif k == policy_menu.KEY_UP:
                     menu["cursor"] = max(0, menu["cursor"] - 1)
@@ -1167,35 +1167,26 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                     menu["open"] = False
                     select(d, e if isinstance(e, str) else e["name"])
                 continue
-            if k == policy_menu.KEY_TAB:
+            if k == policy_menu.KEY_MENU:
                 # Rebuilt on open so a policy trained in another terminal
                 # since teleop started is listed without a restart.
                 menu["entries"] = ([policy_menu.ANALYTIC]
                                    + policy_menu.list_general_policies())
-                here = gen_name[0] if c.mode == "general" else policy_menu.ANALYTIC
-                menu["cursor"] = next(
-                    (i for i, e in enumerate(menu["entries"])
-                     if (e if isinstance(e, str) else e["name"]) == here), 0)
+                here = (gen_name[0] if c.mode == "general"
+                        else policy_menu.ANALYTIC)
+                menu["cursor"] = policy_menu.open_cursor(
+                    menu["entries"], here, gen_name[0])
                 menu["open"] = True
                 continue
-            if k == ord(","):
-                # Mode toggle. In general mode the maneuver keys are shadowed
-                # by teleop functions (the policy owns the actuators), so this
-                # is a real modal layer, not just an extra binding.
-                if general:
-                    state["want_general"] = False
-                    c.command_line(d)
-                    zero_command(d)
-                    print("general policy OFF — analytic controller "
-                          "(maneuver keys live again)")
-                else:
-                    state["want_general"] = True
-                    if engage(d):
-                        print("general policy ON (command zeroed):\n"
-                              "  ↑/↓ throttle/brake   ←/→ hold to turn\n"
-                              "  6/7 snap 90° L/R   8 snap 180°   5 stop   "
-                              "/ re-zero   , off")
-            elif k in (265, 264):   # throttle / brake-reverse
+            # ',' used to blind-toggle policy <-> analytic right here. The menu
+            # opened above replaces it and does strictly more: it names what it
+            # is switching to, lists every other policy, and opens the cursor
+            # on the OTHER controller so ', ENTER' is the old toggle in two
+            # keystrokes. Selecting the analytic entry runs the same
+            # command_line + zero_command this branch did — see `select`.
+            # In general mode the maneuver keys stay shadowed by teleop
+            # functions either way; that modal layer is unchanged.
+            if k in (265, 264):     # throttle / brake-reverse
                 dirn = 1 if k == 265 else -1
                 if ax_v.press(d.time, dirn):    # fresh press -> discrete step
                     v = state["v"]
@@ -1343,11 +1334,13 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # controller (with a reason) if there is no usable one.
     engage(data)
     mode_help = (
-        "\n  general RL policy is ON (default) — ',' switches to the analytic\n"
-        "  controller and back; in policy mode 6/7/8 snap the heading "
+        f"\n  driving moves/{gen_name[0]} — ',' opens the policy menu; the "
+        "analytic LQR is\n  its first entry and the cursor starts there, so "
+        "', ENTER' is the old\n  toggle. In policy mode 6/7/8 snap the heading "
         "90°L/90°R/180°"
         if c.mode == "general" else
-        "\n  , engage the general RL policy (unavailable — analytic control)")
+        "\n  , policy menu (no usable general policy — driving the analytic "
+        "controller)")
 
     routes = keys.routes
     if routes:

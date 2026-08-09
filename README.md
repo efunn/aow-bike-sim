@@ -56,7 +56,7 @@ is a setpoint, so it stays where you leave it.
 | ← / → | hold to turn | 3 | flick 180° (RL policy) |
 | 6 / 7 | circle left / right | `.` | pivot 180°, front wheel holds its line (RL) |
 | 4 | crawl front-pivot 180° | 1 / 0 | ball shot (RL) / re-park ball (`--hockey`) |
-| 5 | stop now (incl. crab) | `,` | general RL policy on / off |
+| 5 | stop now (incl. crab) | `,` | policy menu (↑/↓ choose, ENTER load) |
 | `/` | re-zero the command | 2 | toggle the ground dial |
 | 1 / 3 | crab left / right (general mode only) | F5 | fullscreen (Backspace resets) |
 | `;` / `'` | trail: pen-up / 2s / 4s / 10s / inf | `\` | camera: free → follow → overhead |
@@ -77,9 +77,25 @@ general-mode only (the analytic controller has no lateral command, and there
 `1`/`3` keep firing the ball shot and the RL flick). It behaves like the
 throttle — tap to step, hold to build, release to coast back to zero — and is
 clamped to the lateral envelope the policy trained on (`v_lat_frac` in its
-move file, 0.4 × `v_max` ≈ 0.48 m/s). `,` switches to the analytic controller and
-back; either way the command is zeroed on the switch, so nothing inherits a
-stale setpoint.
+move file, 0.4 × `v_max` ≈ 0.48 m/s).
+
+`,` opens a **policy menu** drawn in the top right: every `kind: general` move
+in `moves/`, newest first, plus the analytic LQR as its first entry. `↑`/`↓`
+move the cursor, `ENTER` loads, `,` closes, and `>` marks the cursor while `*`
+marks what is actually driving. Loading is live — the new policy inherits the
+heading and velocity you were already commanding, so a swap mid-drive does not
+jolt the bike, which is what makes two policies comparable back to back. The
+command is zeroed on any switch between controller *kinds*, so nothing
+inherits a stale setpoint, and the crab clamp follows whichever policy is
+loaded (each move file carries its own `v_lat_frac`).
+
+The cursor opens on the controller you are *not* using, so `,` then `ENTER` is
+the old one-key analytic/policy toggle in two keystrokes. The list is rebuilt
+every time the menu opens, so a policy exported from another terminal appears
+without restarting teleop. It is a menu of labels rather than a real dropdown
+because MuJoCo's passive viewer exposes no widget API and no 2D overlay —
+scene geometry is the only thing a script can draw. Note `TAB` is not
+available for this: it is the viewer's own left-panel toggle.
 
 ```sh
 python -m aow_sim.record --script o --general general_rl_1k --camera top

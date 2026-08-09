@@ -9,11 +9,20 @@ this process can put on screen is scene geometry. So the menu is drawn as
 mjvGeom LABELS anchored in front of the camera, which reads as a panel and
 tracks the view, but is driven by keys rather than the mouse.
 
-Keys are chosen around a hard constraint: MuJoCo's viewer owns every letter
-A-Z, and teleop already spends 0-9, the arrows, and most punctuation. The menu
-therefore takes ONE key (TAB) and, while it is open, borrows the arrows and
-Enter — which costs nothing, because throttle and steering are meaningless
-during a selection anyway.
+KEY CHOICE, THE HARD WAY. MuJoCo's viewer owns every letter A-Z, teleop spends
+all ten digits across its two modes, and the obvious free-looking keys are not
+free: TAB was tried first and turns out to be the viewer's own left-panel
+toggle, so it opened the menu AND the panel. The viewer's bindings cannot be
+enumerated from here, which makes any unused key a guess.
+
+So the menu does not take a new key. It takes ',' — already the "change who is
+driving" key, and already proven safe in this viewer — and supersedes it,
+because the menu is a strictly better version of the same action: the old ','
+blind-toggled between the policy and the LQR, and the menu shows what it is
+switching to and offers every other policy besides. The cursor opens on the
+OTHER controller, so ',' then ENTER reproduces the old toggle in two
+keystrokes. While open the menu borrows the arrows and ENTER, which costs
+nothing — throttle and steering are meaningless mid-selection.
 """
 
 from __future__ import annotations
@@ -25,7 +34,9 @@ import yaml
 
 from .control.flick import MOVES_DIR
 
-KEY_TAB, KEY_ENTER, KEY_UP, KEY_DOWN = 258, 257, 265, 264
+KEY_MENU, KEY_ENTER, KEY_UP, KEY_DOWN = ord(","), 257, 265, 264
+# NOT TAB (258): the viewer binds it to the left UI panel and handles it as
+# well as passing it on, so it opened the menu and the panel together.
 
 ANALYTIC = "[LQR - analytic]"
 """Sentinel entry. Not a move file: selecting it drops the general policy and
@@ -150,6 +161,20 @@ def draw(scn, cam, entries, cursor: int, active: str) -> None:
         scn.ngeom += 1
 
 
+def open_cursor(entries, active: str, last_policy: str) -> int:
+    """Where the cursor sits when the menu opens: on the controller you are
+    NOT currently using, so ',' + ENTER is the old blind toggle.
+
+    Falls back to the first policy in the list when the last one used is gone
+    (renamed, or never set because teleop started on the analytic controller).
+    """
+    want = last_policy if active == ANALYTIC else ANALYTIC
+    names = [e if isinstance(e, str) else e["name"] for e in entries]
+    if want in names:
+        return names.index(want)
+    return 1 if len(entries) > 1 else 0
+
+
 def label_help() -> str:
-    return ("TAB policy menu (↑/↓ choose, ENTER load, TAB close) — "
-            "* is driving now")
+    return (", policy menu (↑/↓ choose, ENTER load, , closes) — "
+            "* is driving now, > is the cursor")
