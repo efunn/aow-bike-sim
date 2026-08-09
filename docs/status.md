@@ -60,6 +60,12 @@ Two tracks. The sim track does not wait on the build.
 3. **Retrain** with randomization on, fixing the crab asymmetry in the same
    run.
 
+   *In flight (`df2592b`, 2026-08-09):* `rl_general_smooth_diff` set to 12M
+   steps with `v_lat_frac` back at 0.4, to see whether training still
+   converges under the new contact model or is merely slower for it. Note this
+   run does **not** have the contact randomization enabled, so it answers the
+   convergence question but not the transfer one.
+
 **Build track — starts Monday:**
 
 4. **Mechanical design and assembly of the full bike.** Carry the two
