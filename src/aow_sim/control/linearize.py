@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import warnings
+
 import mujoco
 import numpy as np
 
@@ -188,12 +190,57 @@ def _dlqr_checked(A, B, Q, R, label: str):
     return K
 
 
+MIN_FIT_R2 = 0.98
+"""Below this the identified LINEAR model stops describing the plant well.
+
+Worth being clear about what this catches, because it is NOT staleness: the
+design is re-identified from `params` on every construction, so it always
+matches the current model. A low R^2 means the model is genuinely less linear
+than the LQR assumes -- softer contacts, a heavier bike, a changed geometry --
+and re-running the identification will not improve it. What has to change is
+the plant, the operating point, or the expectation.
+
+Concretely: contact damping of 0.5 (vs 1.0) drops the worst channel to ~0.970.
+Nothing warns you at runtime unless this does, and the symptom downstream is
+just a slightly worse analytic controller, which is easy to misread as tuning.
+"""
+
+
+def _warn_fit(r2_grid, speeds=None) -> None:
+    """One warning per DESIGN, naming the worst operating point.
+
+    Deliberately not one per speed: the gain schedule identifies nine of them,
+    so per-speed warnings meant four lines of identical text on every teleop,
+    record and analysis startup. That is wallpaper, and wallpaper gets filtered
+    out — which is the opposite of what a fit check is for. Summarise instead,
+    and point at the speed that is actually the problem.
+    """
+    r2_grid = np.atleast_2d(r2_grid)
+    worst_per_row = r2_grid.min(axis=1)
+    if worst_per_row.min() >= MIN_FIT_R2:
+        return
+    i = int(np.argmin(worst_per_row))
+    where = (f"v={speeds[i]:+.2f} m/s" if speeds is not None
+             else "the standstill design")
+    n_bad = int((worst_per_row < MIN_FIT_R2).sum())
+    extra = (f" ({n_bad} of {len(worst_per_row)} scheduled speeds are under it)"
+             if len(worst_per_row) > 1 else "")
+    warnings.warn(
+        f"lateral model fits poorly — worst R^2 {worst_per_row.min():.3f} < "
+        f"{MIN_FIT_R2} at {where}{extra}. The design is CURRENT (re-identified "
+        "every run); this is the PLANT being less linear than the LQR assumes, "
+        "so the fix is sim.contact_*/mass/geometry or a narrower operating "
+        "envelope — not re-running the design.",
+        RuntimeWarning, stacklevel=3)
+
+
 def design_lqr(params: dict, model: mujoco.MjModel, v: float = 0.0):
     """Returns (K over the reduced state, equilibrium qpos, fit R^2 per state)."""
     Q, R = _weights(params["control"]["lqr"])
     eq = settle_rolling(model, params, v)
     A, B, r2 = identify_lateral_model(params, model, eq)
     K = _dlqr_checked(A, B, Q, R, f"v={v:.2f}")
+    _warn_fit(r2)
     return K, eq.qpos.copy(), r2
 
 
@@ -211,11 +258,14 @@ def design_gain_schedule(params: dict, model: mujoco.MjModel):
         A, B, r2 = identify_lateral_model(params, model, eq)
         Ks.append(_dlqr_checked(A, B, Q, R, f"v={v:.2f}"))
         r2s.append(r2)
+    _warn_fit(np.stack(r2s), np.array(speeds))
     return np.array(speeds), np.stack(Ks), np.stack(r2s)
 
 
 def design_all(params: dict, model: mujoco.MjModel) -> LQRDesign:
-    """Both designs in one object. The expensive call — minutes, not seconds."""
+    """Both designs in one object. ~2 s: the single-point design plus one
+    identification per speed in `control.drive.speed_grid`. Cheap enough to
+    run at startup, which is what every in-sim path does."""
     K, qpos_eq, fit_r2 = design_lqr(params, model)
     speeds, Ks, r2s = design_gain_schedule(params, model)
     return LQRDesign(K, qpos_eq, fit_r2, speeds, Ks, r2s)
