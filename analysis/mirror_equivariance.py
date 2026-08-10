@@ -27,6 +27,8 @@ import copy
 import numpy as np
 
 from aow_sim.control.flick import MOVES_DIR
+from aow_sim.control.general_spec import (OBS_DIM, OBS_DIM_WINDOWED,
+                                          OBS_MIRROR_PARITY)
 from aow_sim.control.policy import load_policy_npz
 
 # Labelled by the move file each one loads from. Override with --policies;
@@ -38,19 +40,22 @@ POLICIES = {n: n for n in ("general_rl_og", "general_rl", "general_rl_1k",
                            "general_rl_smooth_stiff",
                            "general_rl_smooth_bouncy_lat")}
 
-# build_obs order: 0 roll, 1 roll_rate, 2 yaw_rate, 3 sin2steer, 4 cos2steer,
-# 5 steer_rate, 6 v_lon, 7 v_lat, 8 v_cmd_lon, 9 v_cmd_lat, 10 sin psi_err,
-# 11 cos psi_err, 12..14 prev_action [steer_rate, hub, diff].
-FLIP_OBS = np.ones(15)
-FLIP_OBS[[0, 1, 2, 3, 5, 7, 9, 10, 12, 14]] = -1
+# Parity comes from the spec, not from an index literal repeated here. The old
+# hardcoded list was the silent-failure hazard in this file: adding an entry to
+# build_obs would leave these numbers looking perfectly plausible and wrong,
+# with nothing to raise. OBS_MIRROR_PARITY is asserted against OBS_NAMES at
+# import, so a layout change fails there instead.
+FLIP_OBS = OBS_MIRROR_PARITY
 FLIP_ACT = np.array([-1.0, 1.0, -1.0])          # [steer_rate, hub, diff]
 
 
-def sample_states(n, rng):
+def sample_states(n, rng, obs_dim=None):
     """Plausible states with a spread of commands. NOT the on-policy
     distribution -- but mirror error is a PAIRED comparison (the same states,
-    reflected), so a distribution mismatch hits both sides equally."""
-    o = np.zeros((n, 15))
+    reflected), so a distribution mismatch hits both sides equally.
+
+    Width follows the policy: 15 without a velocity window, 17 with one."""
+    o = np.zeros((n, obs_dim or OBS_DIM))
     o[:, 0] = rng.normal(0, 0.05, n)
     o[:, 1] = rng.normal(0, 0.3, n)
     o[:, 2] = rng.normal(0, 0.3, n)
@@ -64,6 +69,11 @@ def sample_states(n, rng):
     pe = rng.uniform(-np.pi, np.pi, n)
     o[:, 10], o[:, 11] = np.sin(pe), np.cos(pe)
     o[:, 12:15] = rng.normal(0, 0.3, (n, 3))
+    if o.shape[1] >= OBS_DIM_WINDOWED:
+        # v_bar is a low-pass of v_lon/v_lat, so it lives near them rather
+        # than being independent noise.
+        o[:, 15] = o[:, 6] + rng.normal(0, 0.10, n)
+        o[:, 16] = o[:, 7] + rng.normal(0, 0.05, n)
     return o
 
 
@@ -72,7 +82,9 @@ def mirror_error(pol, O) -> float:
     and diff contribute comparably despite their different units."""
     act = lambda X: np.array([pol.action(x) for x in X])
     base = act(O)
-    err = np.abs(act(O * FLIP_OBS) - base * FLIP_ACT).mean(0)
+    # Slicing is safe precisely because the un-windowed layout is a strict
+    # PREFIX of the windowed one -- see control/general_spec.py.
+    err = np.abs(act(O * FLIP_OBS[:O.shape[1]]) - base * FLIP_ACT).mean(0)
     return float((err / (np.abs(base).mean(0) + 1e-9)).mean() * 100)
 
 
@@ -100,15 +112,20 @@ def main():
     if not policies:
         raise SystemExit("none of the requested policies exist in moves/")
 
-    rng = np.random.default_rng(0)
-    O = sample_states(args.n, rng)
     pols = {k: load_policy_npz(MOVES_DIR / f"{k}.npz") for k in policies}
+    # Policies need not share a width: one trained with a velocity window
+    # carries two extra entries. Same seed per width, so the comparison stays
+    # paired within a width and the numbers stay comparable across runs.
+    O = {d: sample_states(args.n, np.random.default_rng(0), d)
+         for d in sorted({p.obs_dim for p in pols.values()})}
 
     print("mirror-equivariance error   (0% = perfectly symmetric)\n")
     for k, name in policies.items():
-        print(f"  trained  {name:26} {mirror_error(pols[k], O):5.0f}%")
+        p = pols[k]
+        print(f"  trained  {name:26} {mirror_error(p, O[p.obs_dim]):5.0f}%")
     ref = next(iter(pols.values()))
-    nulls = [mirror_error(random_like(ref, 100 + i), O) for i in range(args.nulls)]
+    nulls = [mirror_error(random_like(ref, 100 + i), O[ref.obs_dim])
+             for i in range(args.nulls)]
     print(f"\n  UNTRAINED null  (n={args.nulls})      "
           f"{np.mean(nulls):5.0f}%   [{min(nulls):.0f}, {max(nulls):.0f}]")
     print("\nTraining moves the policies well below the untrained null, so some"

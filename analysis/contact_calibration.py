@@ -1,17 +1,42 @@
 """What the two bench tests you can already do would pin down in `solref`.
 
-`sim.contact_solref` is a PAIR, and the two numbers are separately
-identifiable by two separate experiments:
+`sim.contact_solref` is a PAIR, and the two numbers are NOT separately
+identifiable. An earlier version of this file claimed they were, one
+experiment each; that was wrong, and the tables it printed were wrong with it.
 
-  timeconst  sets contact STIFFNESS -> a static load-deflection test.
-             Put a known weight on the wheel, measure how far it sinks.
-  dampratio  sets contact DAMPING, i.e. restitution -> a drop test.
-             Drop the wheel, count the bounces / measure rebound height.
+What MuJoCo actually does with a POSITIVE solref = (timeconst, dampratio)
+(see the solver-parameter section of its modeling docs):
 
-That separation is the useful part: a drop-test rig is the fiddlier of the
-two, and it is only needed for `dampratio`. Stiffness -- the number that
-produced the 2 mm of sink this whole thread started with -- comes from a
-weight and a caliper.
+    b = 2 / (d_width * timeconst)                      <- damping
+    k = d(r) / (d_width^2 * timeconst^2 * dampratio^2) <- stiffness
+
+Read those carefully, because the names mislead:
+
+  timeconst  enters BOTH. It is the only thing that sets damping, and it
+             also sets stiffness (as 1/timeconst^2).
+  dampratio  sets STIFFNESS ONLY, as 1/dampratio^2. It does not appear in
+             `b` at all.
+
+So `dampratio` is not a damping coefficient — it is the ratio of the actual
+damping to the critical damping FOR THE RESULTING STIFFNESS. Lowering it from
+1.0 to 0.5 at fixed timeconst leaves damping untouched and makes the contact
+FOUR TIMES STIFFER, which is what makes it underdamped and bouncy. Verified
+against this model: static penetration falls 3.85x going 1.0 -> 0.5 and 10.7x
+going 1.0 -> 0.3, against the 4x and 11.1x the formula predicts.
+
+CONSEQUENCE FOR THE BENCH TESTS. A static load-deflection reading constrains
+the PRODUCT `timeconst * dampratio`, not timeconst alone, so it cannot fix
+either number by itself. The static and drop tests have to be solved jointly.
+Concretely, a 4.5 kg reading of "about 1 mm" implies timeconst ~0.0035 if you
+assume dampratio 1.0, and ~0.0075-0.010 at the 0.5 this config actually ships
+-- a factor of two to three in the answer, from an assumption rather than a
+measurement.
+
+If you want the two decoupled, use the NEGATIVE convention: MuJoCo reads a
+negative solref as (-stiffness, -damping) directly, and its own docs
+recommend that form for system identification. Then a static test gives
+stiffness, a drop test gives damping, and neither contaminates the other.
+That is probably the right move before Monday's measurements.
 
   python analysis/contact_calibration.py
   python analysis/contact_calibration.py --load-kg 4.5 --drop-mm 35
@@ -171,8 +196,14 @@ def main():
     print(f"{'timeconst':>10}{'sink @ bike wt':>16}{'sink @ 2x':>11}"
           f"{'sink @ bench':>14}{'k at bench':>12}")
     print(f"{'[s]':>10}{'[mm]':>16}{'[mm]':>11}{'[mm]':>14}{'[N/mm]':>12}")
+    # At the CONFIG's dampratio, not a hardcoded 1.0. The old literal is the
+    # bug this file's header now documents: it printed a table for a contact
+    # 4x softer than the one the model actually runs, and the "timeconst 0.020
+    # sinks 3.6 mm under the bike's own weight, so 0.020 is ruled out"
+    # conclusion came straight off it. At dampratio 0.5 that same case sinks
+    # 1.04 mm and is NOT ruled out.
     for tc in args.timeconsts:
-        c = static_curve(tc, 1.0, depths)
+        c = static_curve(tc, cur[1], depths)
         d1 = deflection_at(c, bike_n)
         d2 = deflection_at(c, 2 * bike_n)
         db = deflection_at(c, load_n)
@@ -191,10 +222,13 @@ def main():
         print(f"{dr:>10.2f}{len(ap_h):>9}{hs:>34}"
               f"{(f'{e[0]:.2f}' if e else '-'):>13}{star}")
 
-    print("\nHOW TO USE THIS. Match the static column to a weight-on-wheel\n"
-          "measurement to fix `timeconst`, then match the bounce count and\n"
-          "first rebound height to a drop to fix `dampratio`. They are\n"
-          "independent, so the static test alone is already worth doing.")
+    print("\nHOW TO USE THIS. The static column is printed at the CONFIG's\n"
+          f"dampratio ({cur[1]}), because stiffness goes as 1/dampratio^2 --\n"
+          "the two are NOT independent and a static reading alone fixes only\n"
+          "the product. Match the static column AND the drop column together,\n"
+          "or switch to a negative solref (-stiffness, -damping), which is\n"
+          "what MuJoCo recommends for system ID and does decouple them.\n"
+          "See this file's header for the formulas and the measured check.")
 
 
 if __name__ == "__main__":
