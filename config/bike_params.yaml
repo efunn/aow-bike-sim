@@ -39,8 +39,7 @@ sim:
   # control/linearize.py on every design, and an xfail on
   # test_lqr_model_fit_and_steering. Pin this parameter down, re-tune the
   # control.lqr weights, then drop both.
-  # contact_solref: [0.005, 1.0]
-  contact_solref: [0.005, 0.5]
+  contact_solref: [0.005, 1.0]
   friction_sliding: {value: 0.9, source: GUESS}      # TPU on hard floor -> incline slide test
   friction_torsional: {value: 0.005, source: GUESS}  # scales with contact patch size -> validation
   floor_size: 3.0
