@@ -32,7 +32,10 @@ def test_obs_spec_shape_and_encodings():
     for i, j in ((3, 4), (10, 11)):
         assert obs[i]**2 + obs[j]**2 == pytest.approx(1.0, abs=1e-6)
     # prev_action is fed back (the last ACT_DIM slots)
-    assert obs[-3:] == pytest.approx([0.1, -0.2, 0.3], abs=1e-6)
+    # prev_action occupies 12..14. It is NOT `obs[-3:]` any more: a policy
+    # trained with a velocity window appends v_bar after it, deliberately, so
+    # that the un-windowed layout stays a strict PREFIX of the windowed one.
+    assert obs[12:15] == pytest.approx([0.1, -0.2, 0.3], abs=1e-6)
 
 
 def test_obs_is_stationary():
@@ -444,3 +447,128 @@ def test_crab_command_is_perpendicular_to_heading():
                         float(np.arctan2(v_lat, v_lon)), psi_cmd=0.0)
     _, v = _command_ref(c, data)
     assert np.allclose(v, (v_lon, v_lat), atol=1e-9)
+
+
+# -- velocity window (windowed velocity tracking) --------------------------
+
+def test_vel_filter_alpha_is_rate_independent():
+    """The env filters at 50 Hz and drive.py at the controller rate, so alpha
+    must encode a CONTINUOUS time constant. `1 - exp(-dt/tau)` does; the naive
+    `dt/tau` does not, and the two paths would then disagree about what the
+    policy was trained on."""
+    from aow_sim.control.general_spec import vel_filter_alpha, vel_filter_step
+
+    for hz in (50, 200, 1000):
+        v = np.zeros(2)
+        a = vel_filter_alpha(1.0 / hz, 1.0)
+        for _ in range(hz):                    # exactly one time constant
+            v = vel_filter_step(v, [1.0, 0.0], a)
+        assert v[0] == pytest.approx(1 - 1 / np.e, abs=1e-4)
+    # a non-positive window is EXACTLY 1.0, not approximately: that is what
+    # makes the un-windowed path bit-for-bit identical
+    assert vel_filter_alpha(0.02, 0.0) == 1.0
+    assert vel_filter_alpha(0.02, -1.0) == 1.0
+
+
+def test_unwindowed_layout_is_a_prefix_of_the_windowed_one():
+    """Every positional index into an observation stays valid across both
+    widths. analysis/mirror_equivariance.py slices FLIP_OBS on exactly this."""
+    from aow_sim.control.general_spec import (OBS_DIM_WINDOWED,
+                                              OBS_MIRROR_PARITY, OBS_NAMES)
+    a = _obs()
+    b = _obs(v_bar=(0.7, -0.04))
+    assert a.shape == (OBS_DIM,) and b.shape == (OBS_DIM_WINDOWED,)
+    assert b[:OBS_DIM] == pytest.approx(a, abs=0.0)
+    assert len(OBS_NAMES) == len(OBS_MIRROR_PARITY) == OBS_DIM_WINDOWED
+    # A filter is linear and time-invariant, so a filtered quantity mirrors
+    # exactly like its source. Getting this wrong does not raise -- it
+    # silently corrupts every handedness number.
+    i = OBS_NAMES.index
+    assert OBS_MIRROR_PARITY[i("v_bar_lon")] == OBS_MIRROR_PARITY[i("v_lon")]
+    assert OBS_MIRROR_PARITY[i("v_bar_lat")] == OBS_MIRROR_PARITY[i("v_lat")]
+
+
+def test_vel_window_zero_reproduces_the_instantaneous_reward():
+    """The back-compat contract: a config without the field, or with 0.0, is
+    the pre-window env exactly -- same width, same reward argument."""
+    env = _env(vel_window_s=0.0)
+    assert env.obs_dim == OBS_DIM
+    obs, _ = env.reset(seed=1)
+    rng = np.random.default_rng(0)
+    for _ in range(40):
+        obs, _r, term, trunc, info = env.step(rng.uniform(-1, 1, 3))
+        # v_bar IS v, so the windowed and instantaneous errors coincide
+        assert info["vel_err_win"] == pytest.approx(info["vel_err"], abs=0.0)
+        if term or trunc:
+            break
+
+
+def test_windowed_reward_admits_an_oscillating_gait():
+    """THE point of the whole change.
+
+    A wriggle produces net lateral motion by oscillating fore/aft, so its
+    instantaneous speed is much larger than the commanded speed. Scored
+    instant by instant it loses to standing still; scored on its time average
+    it does not. Pure arithmetic on the filter so it cannot go flaky."""
+    from aow_sim.control.general_spec import vel_filter_alpha, vel_filter_step
+
+    dt, sigma, cmd_lat = 0.02, 0.35, 0.144
+    t = np.arange(0, 8.0, dt)
+    # net lateral drift at exactly the commanded speed, carried by a 2 Hz
+    # fore/aft oscillation of +-0.45 m/s
+    v = np.stack([0.45 * np.sin(2 * np.pi * 2.0 * t),
+                  np.full_like(t, cmd_lat)], axis=1)
+
+    def mean_r(window):
+        a = vel_filter_alpha(dt, window)
+        vb = v[0].copy()
+        out = []
+        for k in range(len(t)):
+            vb = vel_filter_step(vb, v[k], a)
+            e2 = (0.0 - vb[0]) ** 2 + (cmd_lat - vb[1]) ** 2
+            out.append(np.exp(-e2 / sigma ** 2))
+        return float(np.mean(out[len(t) // 2:]))       # after the flush
+
+    idle = np.exp(-(cmd_lat ** 2) / sigma ** 2)        # ignore the command
+    assert mean_r(0.0) < idle, "instantaneous reward should punish the gait"
+    assert mean_r(1.0) > idle, "windowed reward should admit it"
+    assert mean_r(1.0) > 0.9
+
+
+def test_velocity_filter_survives_a_command_resample():
+    """The filter is a property of the bike's motion, not of the command.
+    Resetting it on resample would be a hidden state jump the policy cannot
+    see, and hardware has no resample event to match."""
+    env = _env(vel_window_s=1.0, resample_s=[0.06, 0.08])
+    env.reset(seed=3)
+    env.set_difficulty(1.0)
+    prev_cmd = env._v_cmd_w.copy()
+    jumped = False
+    for _ in range(env.max_steps):
+        before = env._v_bar_w.copy()
+        _o, _r, term, trunc, _i = env.step(np.zeros(3))
+        if not np.allclose(env._v_cmd_w, prev_cmd):
+            jumped = True
+            # one filter tick of movement, not a reset to zero or to v
+            assert np.linalg.norm(env._v_bar_w - before) < 0.05
+            prev_cmd = env._v_cmd_w.copy()
+        if term or trunc:
+            break
+    assert jumped, "command never resampled"
+
+
+def test_shipped_general_policy_matches_its_declared_width():
+    """Fails rather than skips. Every other general-policy test skips on an
+    obs-dim mismatch, so after a spec change the whole suite would go green by
+    absence -- this is the one that goes red instead."""
+    from aow_sim.control.flick import MOVES_DIR, load_move
+    from aow_sim.control.general_spec import obs_dim_for
+    names = sorted(p.stem for p in MOVES_DIR.glob("general_*.yaml"))
+    if not names:
+        pytest.skip("no general policies exported yet")
+    for name in names:
+        pol = load_move(name)
+        want = obs_dim_for(getattr(pol, "vel_window_s", 0.0))
+        assert pol.obs_dim == want, (
+            f"moves/{name}: obs_dim {pol.obs_dim} but vel_window_s "
+            f"{pol.vel_window_s} implies {want}")

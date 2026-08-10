@@ -142,6 +142,9 @@ class DriveController(LQRBalance):
         self._gen_hold = 0              # ticks left before the next policy query
         self._gen_every = 1             # controller ticks per policy query
         self._gen_u = None              # held action between queries
+        self._gen_window_s = 0.0        # policy's velocity-window time constant
+        self._gen_vbar_alpha = 1.0      # 1.0 => v_bar is the instantaneous v
+        self._gen_v_bar_w = np.zeros(2)  # low-passed WORLD velocity
 
     # -- gain schedule -----------------------------------------------------
 
@@ -327,11 +330,16 @@ class DriveController(LQRBalance):
         heading, current velocity — so engaging never jolts the bike."""
         from .flick import load_move
         self._gen = load_move(name)
-        from .general_spec import OBS_DIM
-        if self._gen.obs_dim != OBS_DIM:
+        from .general_spec import obs_dim_for, vel_filter_alpha
+        # The observation WIDTH is a property of the policy, carried in its
+        # move yaml: a policy trained without a velocity window is 15-wide and
+        # still loads here unchanged, one trained with a window is 17-wide.
+        self._gen_window_s = float(getattr(self._gen, "vel_window_s", 0.0))
+        want = obs_dim_for(self._gen_window_s)
+        if self._gen.obs_dim != want:
             raise ValueError(
                 f"moves/{name} was trained with obs_dim {self._gen.obs_dim}"
-                f" but the current spec is {OBS_DIM}"
+                f" but its vel_window_s={self._gen_window_s} implies {want}"
                 " — retrain (`python -m aow_sim.train_general_rl`)")
         # The policy was trained at its own control rate; querying it at the
         # controller's rate would silently change the effective action scale
@@ -345,6 +353,11 @@ class DriveController(LQRBalance):
         self._gen_u = None
         self._gen_steer = float(data.qpos[self._sj])
         self._gen_prev_a = np.zeros(3)
+        # Seed the low-pass from the measured velocity, matching
+        # GeneralEnv.reset — engaging must not inject a startup transient the
+        # policy never saw in training.
+        self._gen_vbar_alpha = vel_filter_alpha(self.dt, self._gen_window_s)
+        self._gen_v_bar_w = np.asarray(data.qvel[:2], float).copy()
         s = extract_state(data, self._ref_pos)
         self._gen_psi_cmd = self._psi
         self._gen_v_cmd = data.qvel[:2].copy()
@@ -379,16 +392,30 @@ class DriveController(LQRBalance):
         start-pose frame: every error is measured against the live command.
         Steer is passed raw (multi-turn) — sin/cos(2*delta) is already
         winding-invariant, so no pi-park rebasing is needed here."""
-        from .general_spec import build_obs, command_to_body
+        from .general_spec import (build_obs, command_to_body, rotate_to_body,
+                                   vel_filter_step)
         pol = self._gen
+        # Advance the velocity low-pass every CONTROLLER tick, for the same
+        # reason the steer integrator below runs at controller rate. alpha was
+        # built from `1 - exp(-dt/tau)`, so the continuous time constant is
+        # the one the policy trained with regardless of the rate mismatch;
+        # this is a finer sampling of the same filter. On hardware qvel[:2] is
+        # the odometry's WORLD velocity (hw/state.set_velocity), so no new
+        # signal is needed.
+        self._gen_v_bar_w = vel_filter_step(self._gen_v_bar_w, data.qvel[:2],
+                                            self._gen_vbar_alpha)
         if self._gen_u is None or self._gen_hold <= 0:
             v_cl, v_ct, psi_err = command_to_body(
                 self._gen_v_cmd, self._gen_psi_cmd, self._psi)
+            vb = None
+            if self._gen_window_s > 0.0:
+                vb = rotate_to_body(self._gen_v_bar_w[0],
+                                    self._gen_v_bar_w[1], self._psi)
             obs = build_obs(s.roll, s.roll_rate, data.qvel[5],
                             float(data.qpos[self._sj]),
                             float(data.qvel[self._sd]),
                             s.v_lon, s.v_lat, v_cl, v_ct, psi_err,
-                            self._gen_prev_a)
+                            self._gen_prev_a, v_bar=vb)
             steer_rate, hub, diff = pol.action(obs)
             self._gen_prev_a = np.array([
                 steer_rate / pol.bounds.steer_rate_max,

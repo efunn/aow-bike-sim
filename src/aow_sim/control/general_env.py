@@ -35,8 +35,9 @@ from gymnasium import spaces
 from ..build_model import build_model, load_params
 from .balance import extract_state, mix
 from .drive import DriveController
-from .general_spec import (ACT_DIM, OBS_DIM, ActionBounds, build_obs,
-                           command_to_body, scale_action, wrap_pi)
+from .general_spec import (ACT_DIM, ActionBounds, build_obs, command_to_body,
+                           obs_dim_for, rotate_to_body, scale_action,
+                           vel_filter_alpha, vel_filter_step, wrap_pi)
 from .linearize import settle_upright
 from .randomize import DomainRandomizer
 
@@ -112,6 +113,13 @@ class GeneralEnv(gym.Env):
         self.sigma_psi = np.deg2rad(self.rw["sigma_psi_deg"])
         self.w_smooth = _per_channel(self.rw["w_smooth"],
                                      ACT_DIM if self.full else 2, "w_smooth")
+        # Velocity window. Lives under `env:` rather than `reward:` because it
+        # changes the OBSERVATION CONTRACT, not just a weight -- and `env:` is
+        # where the fields that get exported into the move yaml live. Absent
+        # or 0.0 reproduces the instantaneous reward bit for bit.
+        self.vel_window_s = float(env.get("vel_window_s", 0.0))
+        self._vbar_alpha = vel_filter_alpha(self.ctrl_dt, self.vel_window_s)
+        self._settle_steps = int(round(self.vel_window_s / self.ctrl_dt))
 
         cur = self.cfg["curriculum"]
         self.cur_on = bool(cur["enabled"])
@@ -122,7 +130,9 @@ class GeneralEnv(gym.Env):
 
         act_dim = ACT_DIM if self.full else 2
         self.action_space = spaces.Box(-1.0, 1.0, (act_dim,), np.float32)
-        self.observation_space = spaces.Box(-np.inf, np.inf, (OBS_DIM,), np.float32)
+        self.obs_dim = obs_dim_for(self.vel_window_s)
+        self.observation_space = spaces.Box(-np.inf, np.inf, (self.obs_dim,),
+                                            np.float32)
         self._aid = {n: self.model.actuator(n).id
                      for n in ("drive_a", "drive_b", "steer")}
         self._sj = self.model.joint("steer_joint").qposadr[0]
@@ -168,6 +178,13 @@ class GeneralEnv(gym.Env):
         self._psi_cmd = psi_cmd
         self._next_resample = self._step + max(
             1, round(float(rng.uniform(*self.resample_s)) / self.ctrl_dt))
+        # Marks the start of the velocity filter's flush window (see step()).
+        # NOTE the filter state itself is deliberately NOT reset here: it is a
+        # property of the bike's motion, not of the command. Resetting it
+        # would be a hidden state jump the policy cannot see in its own
+        # observation, and there is no "resample" event on hardware at all
+        # (the operator just moves a stick), so drive.py could never match it.
+        self._resample_step = self._step
 
     def _place_ball(self, rng):
         if not self.hockey:
@@ -184,15 +201,34 @@ class GeneralEnv(gym.Env):
         self.data.qpos[q + 3:q + 7] = [1.0, 0.0, 0.0, 0.0]
         self.data.qvel[self._ball_v:self._ball_v + 6] = 0.0
 
+    def _advance_vel_filter(self):
+        """One tick of the low-pass on measured WORLD velocity.
+
+        Called explicitly from step() rather than from _obs(), which is called
+        both at reset and once per step: burying the update in there works
+        today but would silently run the filter at double rate the moment
+        anyone calls _obs() twice in a tick.
+        """
+        self._v_bar_w = vel_filter_step(self._v_bar_w, self.data.qvel[:2],
+                                        self._vbar_alpha)
+
     def _obs(self):
         s = extract_state(self.data, self._p0)
         v_cl, v_ct, psi_err = command_to_body(self._v_cmd_w, self._psi_cmd,
                                               self._psi)
+        vb = None
+        if self.vel_window_s > 0.0:
+            vb = rotate_to_body(self._v_bar_w[0], self._v_bar_w[1], self._psi)
+        else:                          # alpha is exactly 1, so v_bar IS v
+            vb_lon, vb_lat = s.v_lon, s.v_lat
+        if vb is not None:
+            vb_lon, vb_lat = vb
         obs = build_obs(s.roll, s.roll_rate, self.data.qvel[5],
                         float(self.data.qpos[self._sj]),
                         float(self.data.qvel[self._sd]),
-                        s.v_lon, s.v_lat, v_cl, v_ct, psi_err, self._prev_a)
-        return obs, s, v_cl, v_ct, psi_err
+                        s.v_lon, s.v_lat, v_cl, v_ct, psi_err, self._prev_a,
+                        v_bar=vb)
+        return obs, s, v_cl, v_ct, psi_err, vb_lon, vb_lat
 
     # -- curriculum --------------------------------------------------------
 
@@ -238,6 +274,13 @@ class GeneralEnv(gym.Env):
         self._prev_a = np.zeros(self.action_space.shape[0])
         self._step = 0
         self._track_sum = 0.0
+        self._track_n = 0
+        self._resample_step = 0
+        # Seed from the MEASURED velocity, not zeros: engage_general has to do
+        # the same ("hold what you are doing now"), and the two paths must
+        # agree or a policy sees a startup transient in replay it never saw in
+        # training.
+        self._v_bar_w = self.data.qvel[:2].copy()
         opts = options or {}
         if "difficulty" in opts:
             self.set_difficulty(opts["difficulty"])
@@ -279,9 +322,15 @@ class GeneralEnv(gym.Env):
         self._raw_prev = cur
         self._step += 1
 
-        obs, s, v_cl, v_ct, psi_err = self._obs()
+        self._advance_vel_filter()
+        obs, s, v_cl, v_ct, psi_err, vb_lon, vb_lat = self._obs()
         rw = self.rw
-        v_err2 = (v_cl - s.v_lon) ** 2 + (v_ct - s.v_lat) ** 2
+        # Tracked against the WINDOWED velocity, so an oscillatory gait is
+        # scored on its time average rather than punished at every instant of
+        # the oscillation. At vel_window_s = 0, vb_* IS s.v_* and this is the
+        # instantaneous form bit for bit.
+        v_err2 = (v_cl - vb_lon) ** 2 + (v_ct - vb_lat) ** 2
+        v_err2_inst = (v_cl - s.v_lon) ** 2 + (v_ct - s.v_lat) ** 2
         da = action - self._prev_a
         r_vel = np.exp(-v_err2 / self.sigma_v ** 2)
         r_head = np.exp(-(psi_err / self.sigma_psi) ** 2)
@@ -294,7 +343,19 @@ class GeneralEnv(gym.Env):
                   # historical behaviour) or one per action channel.
                   - float(da @ (self.w_smooth * da)))
         self._prev_a = action
-        self._track_sum += 0.5 * (r_vel + r_head)
+        # Curriculum score, NOT the reward. After a command step change the
+        # filter takes ~vel_window_s to flush, so r_vel is depressed for that
+        # long no matter what the policy does. `track` gates
+        # _advance_curriculum, and the lateral command envelope scales with
+        # difficulty -- so charging the policy for the flush would stall the
+        # curriculum, keep the crab command shut, and make the whole windowed
+        # experiment quietly do nothing. Exclude the transient here only; the
+        # reward above still pays it, because it is real tracking error.
+        # settle_steps is 0 when the window is off, so this is exactly the
+        # old `_track_sum / _step`.
+        if self._step - self._resample_step >= self._settle_steps:
+            self._track_sum += 0.5 * (r_vel + r_head)
+            self._track_n += 1
 
         fell = abs(s.roll) > self.fall or not np.all(np.isfinite(self.data.qpos))
         terminated = False
@@ -307,12 +368,18 @@ class GeneralEnv(gym.Env):
         if not (terminated or truncated) and self._step >= self._next_resample:
             self._sample_command(self._np_random)
 
-        track = self._track_sum / self._step
+        track = self._track_sum / max(1, self._track_n)
         if terminated or truncated:
             self._advance_curriculum(0.0 if fell else track)
         return obs, float(reward), terminated, truncated, {
             "track": float(track),
-            "vel_err": float(np.sqrt(v_err2)),
+            # `vel_err` stays the INSTANTANEOUS error so the metrics blocks in
+            # existing moves/*.yaml remain comparable; `vel_err_win` is the
+            # one the reward actually argues over. Identical when the window
+            # is off.
+            "vel_err": float(np.sqrt(v_err2_inst)),
+            "vel_err_win": float(np.sqrt(v_err2)),
+            "v_bar_lon": float(vb_lon), "v_bar_lat": float(vb_lat),
             "head_err_deg": float(np.degrees(abs(psi_err))),
             "difficulty": float(self._diff),
             "fell": bool(fell),

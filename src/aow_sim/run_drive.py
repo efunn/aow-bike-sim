@@ -962,7 +962,14 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             return False
         except ValueError as e:          # stale policy (obs spec changed)
             state["want_general"] = False
-            if not quiet:
+            # NOT gated on `quiet`. An obs-dim mismatch is a configuration
+            # error, not a transient: `ensure_mode` calls this with
+            # quiet=True after a viewer reset, so gating it meant a stale
+            # policy dropped to the analytic controller with no message at
+            # all and the operator just wondered why the bike felt different.
+            # Printed once so a per-step retry cannot spam the console.
+            if not state.get("gen_obs_warned"):
+                state["gen_obs_warned"] = True
                 print(e)
             return False
         # The policy loaded. Say whether it was trained against the physics

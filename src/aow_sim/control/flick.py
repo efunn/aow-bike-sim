@@ -266,6 +266,13 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         # the effective action scale and closed-loop timing both shift.
         # 0.0 means "unspecified" -> replay falls back to the controller rate.
         pol.control_rate_hz = float(d.get("control_rate_hz", 0.0))
+        # General policy: velocity-window time constant [s]. Part of the
+        # OBSERVATION CONTRACT, not a preference — it decides whether the
+        # policy expects 15 or 17 entries, and replay must low-pass with the
+        # same constant or it feeds the net an input it never trained on.
+        # 0.0 = no window, which is what every general_rl exported before the
+        # field existed was trained with.
+        pol.vel_window_s = float(d.get("vel_window_s", 0.0))
         # The parameter set this policy was TRAINED against. "" for every move
         # exported before the field existed. See check_move_digest.
         pol.params_digest = str(d.get("params_digest", ""))

@@ -194,6 +194,10 @@ def _eval_episodes(env, act_fn, cmds):
         steps = 0
         t_head = None                      # first step inside _HEAD_TOL_DEG
         v_lons, v_lats, steers = [], [], []  # tail windows, refilled as we go
+        xys, oscs = [], []
+        # World-frame axis the LATERAL command points along, fixed for the
+        # episode because psi_cmd is.
+        lat_axis = np.array([-np.sin(env._psi_cmd), np.cos(env._psi_cmd)])
         while not done:
             obs, _r, term, trunc, info = env.step(act_fn(obs))
             done = term or trunc
@@ -204,8 +208,24 @@ def _eval_episodes(env, act_fn, cmds):
             v_lons.append(float(s.v_lon))
             v_lats.append(float(s.v_lat))
             steers.append(abs(float(env.data.qpos[env._sj])))
+            xys.append(env.data.qpos[:2].copy())
+            # How much of the motion is oscillation the window averages away.
+            # Distinguishes a real wriggle from a smooth crab; 0 when the
+            # policy has no velocity window.
+            oscs.append(float(np.hypot(s.v_lon - info.get("v_bar_lon", s.v_lon),
+                                       s.v_lat - info.get("v_bar_lat", s.v_lat))))
             del v_lons[:-tail], v_lats[:-tail], steers[:-tail]
+            del xys[:-tail], oscs[:-tail]
         s = extract_state(env.data, env._p0)
+        # NET lateral speed: world displacement over the tail projected on the
+        # commanded lateral axis. NOT the mean of body-frame v_lat -- under a
+        # wriggle the body frame rotates within the window, so that mean is
+        # not a displacement rate and reads ~0 for a gait that is crabbing
+        # correctly. This is what crab_ratio_* is scored from.
+        v_lat_net = 0.0
+        if len(xys) >= 2:
+            v_lat_net = float((xys[-1] - xys[0]) @ lat_axis
+                              / ((len(xys) - 1) * env.ctrl_dt))
         fell = bool(info.get("fell", True))
         rows.append({
             "cmd": (round(v_lon, 3), round(v_lat, 3), round(np.degrees(dpsi))),
@@ -220,6 +240,9 @@ def _eval_episodes(env, act_fn, cmds):
             # through v_ach (longitudinal), which reads ~0 whether the bike
             # crabbed properly, yawed away and slid, or simply sat there.
             "v_lat_ach": float(np.mean(v_lats)) if v_lats else 0.0,
+            # ...and the displacement-based version that crab_ratio_* uses.
+            "v_lat_net": v_lat_net,
+            "v_osc_rms": float(np.sqrt(np.mean(np.square(oscs)))) if oscs else 0.0,
             # A turn that never got inside tolerance is censored at the episode
             # length, not dropped -- "never finished" must cost more than slow.
             "t_head_s": (t_head if t_head is not None else steps) * env.ctrl_dt,
@@ -265,9 +288,16 @@ def _behaviour_metrics(rows: list[dict]) -> dict:
                               for r in sel]))
 
     def crab_ratio(sel):  # achieved / commanded LATERAL speed, per side
+        """Scored from `v_lat_net` (displacement), NOT `v_lat_ach` (the mean
+        of instantaneous body-frame v_lat). The two agree while the bike holds
+        heading, and diverge exactly where it matters: a wriggle gait rotates
+        the body frame within the averaging window, so the mean of body-frame
+        v_lat is not a displacement rate and reads ~0 for a policy that is in
+        fact crabbing. `v_lat_ach` stays in the rows so older numbers remain
+        readable."""
         if not sel:
             return float("nan")
-        return float(np.mean([np.clip(r["v_lat_ach"] / r["cmd"][1], 0.0, 1.5)
+        return float(np.mean([np.clip(r["v_lat_net"] / r["cmd"][1], 0.0, 1.5)
                               for r in sel]))
 
     # Handedness: pair each turning command with its reflection and compare
@@ -307,6 +337,13 @@ def _behaviour_metrics(rows: list[dict]) -> dict:
         # toward the travel direction is a cheap substitute for crabbing.
         "crab_head_err": round(float(np.mean([r["head_err_deg"] for r in crab])), 1)
                          if crab else float("nan"),
+        # RMS of the motion the velocity window averages away, on crab rows.
+        # This is what separates the two ways a crab_ratio can rise: a genuine
+        # wriggle gait (high crab_osc AND high crab_ratio) from a smooth crab
+        # that got easier for some unrelated reason (crab_osc near zero).
+        # Diagnostic only, deliberately not in _score.
+        "crab_osc": round(float(np.mean([r["v_osc_rms"] for r in crab])), 3)
+                    if crab else float("nan"),
         "turn_asym": round(float(np.mean(asyms)), 3) if asyms else float("nan"),
     }
 
@@ -496,6 +533,10 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # its crab command to it, so the operator cannot command a sideways
            # speed outside what this policy trained on.
            "v_lat_frac": cfg["env"]["v_lat_frac"],
+           # Velocity-window time constant [s]. Part of the OBSERVATION
+           # CONTRACT, not a preference: it decides whether this policy is 15
+           # or 17 wide, and replay must low-pass with the same constant.
+           "vel_window_s": cfg["env"].get("vel_window_s", 0.0),
            "action_space": cfg["env"]["action_space"],
            "trained": trained}
     with open(MOVES_DIR / f"{name}.yaml", "w") as f:

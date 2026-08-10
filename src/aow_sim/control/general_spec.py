@@ -16,8 +16,39 @@ controller, and that forces three differences:
   2. NO episode-start frame. The moves measure e_lat/e_line/hold against a
      snapshot taken when the move was commanded (_p0, _yaw0, theta0, _pf0).
      Here every error is measured against the LIVE command, so there is no
-     drifting reference and no maneuver boundary.
+     drifting reference and no maneuver boundary. This survives `v_bar`
+     below: nothing integrates the COMMAND into a setpoint. What is filtered
+     is the bike's own measured velocity.
   3. The command is part of the observation and changes mid-episode.
+
+OPTIONAL WINDOWED VELOCITY (`v_bar`, obs entries 15-16). The differential is
+the only actuator for both roll balance and lateral crawl, and under a pure
+hold command it is already p95-saturated by balance alone -- so a sustained
+pure crab is not physically available at standstill. The only manoeuvre that
+produces net lateral motion is an oscillatory wriggle (fore/aft oscillation
+against a steering pattern), and instantaneous velocity tracking scores every
+instant of that oscillation as error: measured, a perfect wriggle above
+0.21 m/s of fore/aft amplitude scores WORSE than standing still. The reward
+therefore forbids the one manoeuvre that can satisfy a lateral command.
+
+`v_bar` is a first-order low-pass of the bike's world-frame ground velocity,
+rotated into the body frame, which makes the gait's TIME AVERAGE the tracked
+quantity. It is in the OBSERVATION and not merely the reward because a reward
+may not depend on state the policy cannot see -- the same argument that put
+`prev_action` here.
+
+The heading term is deliberately NOT filtered. Heading is position-like, and
+an averaged heading error would license the bike to spin as long as it
+averaged out.
+
+WIDTH IS A PROPERTY OF THE POLICY, not of this module. `vel_window_s` rides
+in the move yaml beside `v_lat_frac` (control/flick.py), so a policy trained
+without it still loads and replays unchanged:
+  window <= 0  -> OBS_DIM (15), and the reward is the instantaneous one
+                  bit for bit -- alpha is exactly 1.0, so v_bar IS v.
+  window >  0  -> OBS_DIM_WINDOWED (17), v_bar appended.
+The 15-entry layout is a strict PREFIX of the 17-entry one, so every
+positional index into an observation stays valid across both.
 
 Command parameterization — a velocity VECTOR, not (course, speed) polar.
 Course is undefined at zero speed and flips discontinuously on reverse, so a
@@ -56,13 +87,77 @@ import numpy as np
 from .flick_spec import ActionBounds, scale_action  # noqa: F401
 from .steer import wrap_pi  # noqa: F401
 
-OBS_DIM = 15
+OBS_DIM = 15            # no velocity window (the original spec)
+OBS_DIM_WINDOWED = 17   # ...plus v_bar_lon, v_bar_lat
 ACT_DIM = 3   # [steer_rate, hub, diff]; feedforward mode uses only [0:2]
+
+# One home for the layout, so nothing has to re-derive it from index
+# literals. The first OBS_DIM entries are the un-windowed observation.
+OBS_NAMES = (
+    "roll", "roll_rate", "yaw_rate",
+    "sin2steer", "cos2steer", "steer_rate",
+    "v_lon", "v_lat",
+    "v_cmd_lon", "v_cmd_lat",
+    "sin_psi_err", "cos_psi_err",
+    "prev_steer_rate", "prev_hub", "prev_diff",
+    "v_bar_lon", "v_bar_lat",
+)
+# Sign under the sagittal mirror. A filter is linear and time-invariant, so a
+# filtered quantity mirrors exactly like its source: v_bar_lon follows v_lon
+# (+1), v_bar_lat follows v_lat (-1). Getting these wrong does not raise --
+# it silently corrupts every handedness number in
+# analysis/mirror_equivariance.py, which is why they live here and not there.
+OBS_MIRROR_PARITY = np.array([
+    -1, -1, -1,        # roll, roll_rate, yaw_rate
+    -1, +1, -1,        # sin2steer, cos2steer, steer_rate
+    +1, -1,            # v_lon, v_lat
+    +1, -1,            # v_cmd_lon, v_cmd_lat
+    -1, +1,            # sin psi_err, cos psi_err
+    -1, +1, -1,        # prev_action [steer_rate, hub, diff]
+    +1, -1,            # v_bar_lon, v_bar_lat
+], dtype=float)
+assert len(OBS_NAMES) == OBS_DIM_WINDOWED == len(OBS_MIRROR_PARITY)
+
+
+def obs_dim_for(vel_window_s: float) -> int:
+    """Observation width implied by a policy's velocity window."""
+    return OBS_DIM_WINDOWED if float(vel_window_s) > 0.0 else OBS_DIM
+
+
+def vel_filter_alpha(dt: float, window_s: float) -> float:
+    """Per-tick blend factor of the first-order low-pass on measured velocity.
+
+    `1 - exp(-dt/tau)` rather than `dt/tau` so the CONTINUOUS time constant is
+    identical whether the filter is stepped at the env's 50 Hz or the
+    controller's rate -- the 200 Hz version is then a finer sampling of the
+    same filter, not a different one.
+
+    Returns exactly 1.0 for a non-positive window, which is what makes the
+    un-windowed path bit-for-bit identical: v_bar <- v_bar + 1.0*(v - v_bar)
+    is v, with no epsilon anywhere.
+    """
+    w = float(window_s)
+    if w <= 0.0:
+        return 1.0
+    return float(1.0 - np.exp(-float(dt) / w))
+
+
+def vel_filter_step(v_bar_w, v_w, alpha: float) -> np.ndarray:
+    """Advance the low-pass one tick. Both arguments are WORLD frame.
+
+    Filtering in world and rotating at read time is deliberate: an EMA of the
+    body-frame components would let a gait that yaws +-15 deg corrupt its own
+    average, since the frame the average is taken in would itself be swinging.
+    """
+    v_bar_w = np.asarray(v_bar_w, dtype=float)
+    return v_bar_w + alpha * (np.asarray(v_w, dtype=float)[:2] - v_bar_w)
 
 
 def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
-              v_cmd_lon, v_cmd_lat, psi_err, prev_action) -> np.ndarray:
-    """Assemble the observation vector (length OBS_DIM).
+              v_cmd_lon, v_cmd_lat, psi_err, prev_action,
+              v_bar=None) -> np.ndarray:
+    """Assemble the observation vector (length OBS_DIM, or OBS_DIM_WINDOWED
+    when `v_bar` is given).
 
     All quantities are instantaneous state or live command — nothing here
     depends on elapsed time or on when the policy was engaged.
@@ -78,16 +173,30 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
                      [m/s]. Body-frame so the obs is yaw-equivariant.
     psi_err        : wrap_pi(psi_cmd - psi) [rad] -> sin/cos, mod 2*pi.
     prev_action    : the previous normalized action (length ACT_DIM).
+    v_bar          : (v_bar_lon, v_bar_lat) [m/s], the low-passed measured
+                     velocity ALREADY rotated into the body frame, or None for
+                     a policy trained without a velocity window. Appended, so
+                     the un-windowed layout stays a prefix of this one.
     """
     pa = np.asarray(prev_action, dtype=float).reshape(-1)
-    return np.array([
+    obs = [
         roll, roll_rate, yaw_rate,
         np.sin(2 * steer), np.cos(2 * steer), steer_rate,
         v_lon, v_lat,
         v_cmd_lon, v_cmd_lat,
         np.sin(psi_err), np.cos(psi_err),
         pa[0], pa[1], pa[2] if pa.shape[0] >= 3 else 0.0,
-    ], dtype=np.float32)
+    ]
+    if v_bar is not None:
+        obs.extend((float(v_bar[0]), float(v_bar[1])))
+    return np.array(obs, dtype=np.float32)
+
+
+def rotate_to_body(vx, vy, psi) -> tuple[float, float]:
+    """World-frame planar vector -> body frame (+X forward, +Y left)."""
+    c, s = np.cos(psi), np.sin(psi)
+    vx, vy = float(vx), float(vy)
+    return c * vx + s * vy, -s * vx + c * vy
 
 
 def command_to_body(v_cmd_world, psi_cmd, psi) -> tuple[float, float, float]:
@@ -96,8 +205,5 @@ def command_to_body(v_cmd_world, psi_cmd, psi) -> tuple[float, float, float]:
 
     Shared by the training env and the controller replay so the two cannot
     disagree about the frame convention."""
-    c, s = np.cos(psi), np.sin(psi)
-    vx, vy = float(v_cmd_world[0]), float(v_cmd_world[1])
-    return (c * vx + s * vy,          # body longitudinal
-            -s * vx + c * vy,         # body lateral (+Y = left)
-            wrap_pi(psi_cmd - psi))
+    v_lon, v_lat = rotate_to_body(v_cmd_world[0], v_cmd_world[1], psi)
+    return v_lon, v_lat, wrap_pi(psi_cmd - psi)
