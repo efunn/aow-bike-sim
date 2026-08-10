@@ -211,6 +211,31 @@ bike. Those protocols were written wheel-only; **the protocol docs have not
 been rewritten and still describe the rig versions.** The adaptations below are
 the current intent.
 
+> **Correction, 2026-08-09 — read before taking any contact measurement.**
+> `solref`'s two numbers are not separately identifiable, and the protocol
+> docs still say they are. MuJoCo's positive-solref form gives
+> `b = 2/(d_width·timeconst)` and `k = d(r)/(d_width²·timeconst²·dampratio²)`,
+> so **`timeconst` sets damping AND stiffness, while `dampratio` sets
+> stiffness only** (as `1/dampratio²`). Dropping dampratio 1.0 → 0.5 does not
+> reduce damping — it makes the contact **4× stiffer**, which is what makes it
+> bounce. Measured against this model: penetration falls 3.85× (1.0→0.5) and
+> 10.7× (1.0→0.3), vs 4× and 11.1× predicted.
+>
+> Two consequences. (a) A static reading fixes only the **product**
+> `timeconst·dampratio`; the static and drop tests must be solved jointly.
+> (b) **The "timeconst 0.020 is ruled out" conclusion is withdrawn** — it came
+> from a table `analysis/contact_calibration.py` generated at a hardcoded
+> dampratio 1.0 while the config ships 0.5. At 0.5, timeconst 0.020 sinks
+> **1.04 mm** under the bike's own weight, not 3.60 mm, and the ~1 mm reading
+> at 4.5 kg now points to timeconst ≈ 0.007 rather than 0.0035. The tool is
+> fixed; `docs/measurements/contact-protocol.md` and `contact-measurements.yaml`
+> still carry the old tables and notes and **need regenerating**.
+>
+> Cheapest real fix: switch to the **negative** convention,
+> `solref: [-stiffness, -damping]`, which MuJoCo's own docs recommend for
+> system identification. That genuinely decouples the two, so a static test
+> gives stiffness and a drop test gives damping.
+
 1. **Static load-deflection.** Park the bike, add known mass to the chassis,
    and measure **rear axle height above the floor**, loaded vs. unloaded, same
    spot and same roll phase. Referencing the axle rather than the chassis keeps

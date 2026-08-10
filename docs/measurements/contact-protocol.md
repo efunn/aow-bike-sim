@@ -24,13 +24,43 @@ command — a fifth of the 11 mm roller radius, and near-identical across five
 different trained policies. When a number is the same for five controllers
 that behave differently, it is not a property of the controller.
 
-The two entries in `solref` are **separately identifiable by two separate
-experiments**, which is what makes this cheap:
+**CORRECTION (2026-08-09).** An earlier version of this document claimed the
+two entries are separately identifiable, one experiment each. **That was
+wrong.** With a positive `solref = (timeconst, dampratio)` MuJoCo forms
 
-| | fixes | bench test | rig needed |
+```
+b = 2 / (d_width * timeconst)                       <- damping
+k = d(r) / (d_width^2 * timeconst^2 * dampratio^2)  <- stiffness
+```
+
+The names mislead. `timeconst` enters **both** — it is the only thing setting
+damping, and it also sets stiffness as `1/timeconst^2`. `dampratio` sets
+**stiffness only**, as `1/dampratio^2`; it does not appear in `b` at all. It
+is the ratio of actual to critical damping *for the resulting stiffness*, so
+lowering it 1.0 → 0.5 leaves damping alone and makes the contact **four times
+stiffer**, which is what makes it underdamped and bouncy. Verified against
+this model: static penetration falls 3.85x for 1.0 → 0.5 and 10.7x for
+1.0 → 0.3, against the 4x and 11.1x the formula predicts.
+
+**Consequence for the bench tests.** A static load-deflection reading
+constrains the **product** `timeconst * dampratio`, not `timeconst` alone, so
+it cannot fix either number by itself. The static and drop tests have to be
+solved **jointly**. Concretely: a 4.5 kg reading of "about 1 mm" implies
+`timeconst ≈ 0.0035` if you assume `dampratio 1.0`, and `≈ 0.0075–0.010` at
+the 0.5 the config now ships — a factor of two to three, coming from an
+assumption rather than a measurement.
+
+**Consider the negative convention before measuring.** MuJoCo reads a negative
+`solref` as `(-stiffness, -damping)` directly, and its own docs recommend that
+form for system identification. Then the static test gives stiffness, the drop
+test gives damping, and neither contaminates the other — which is the clean
+version of what this document originally claimed. Worth switching to before
+the bench session rather than after.
+
+| | enters | bench test | rig needed |
 |---|---|---|---|
-| `timeconst` | contact **stiffness** | static load-deflection | weight + caliper |
-| `dampratio` | contact **damping** / restitution | drop test | drop height + slow-mo |
+| `timeconst` | damping **and** stiffness | both, jointly | weight + caliper |
+| `dampratio` | stiffness only (`1/dampratio^2`) | both, jointly | drop + slow-mo |
 
 Model-side companion: `analysis/contact_calibration.py` computes both curves,
 so a bench number can be read straight off a table instead of bisected by
@@ -51,11 +81,17 @@ effort, not by how interesting the test is.
 ### P0 — Static load-deflection (do this one first)
 
 The highest-value measurement in this document and the one that needs no rig.
+It pins the PRODUCT `timeconst * dampratio` (see the correction above), so the
+numbers below are quoted at a stated `dampratio` and are not readings of
+`timeconst` on their own.
 
 Set a known weight on top of the wheel assembly, axis horizontal, resting on
 the target floor material. Measure how far the axle drops relative to
 unloaded. Repeat at 2–3 loads so the curve's shape is visible, not just one
 point — the contact is not linear.
+
+Model predictions below assume `dampratio = 1.0`. At the 0.5 the config now
+ships, the same deflection implies a `timeconst` roughly 2x larger.
 
 | load | model prediction at `timeconst` = |
 |---|---|
@@ -83,8 +119,9 @@ Method notes:
 
 ### P1 — Drop test, rebound height
 
-Fixes `dampratio`, and the current value is **known to be wrong**: `1.0` is
-critical damping, and a critically damped contact **cannot bounce at all**.
+Constrains the pair jointly with P0. The shipped `1.0` was **known to be
+wrong**: it is critical damping, and a critically damped contact **cannot
+bounce at all**.
 Simulated drop from 35 mm at the shipped setting produces zero rebounds. The
 physical wheel audibly bounces two or three times, so this is a qualitative
 mismatch, not a tuning disagreement.
