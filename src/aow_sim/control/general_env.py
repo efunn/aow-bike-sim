@@ -36,8 +36,9 @@ from ..build_model import build_model, load_params
 from .balance import extract_state, mix
 from .drive import DriveController
 from .general_spec import (ACT_DIM, ActionBounds, build_obs, command_to_body,
-                           obs_dim_for, rotate_to_body, scale_action,
-                           vel_filter_alpha, vel_filter_step, wrap_pi)
+                           obs_dim_for, obs_layout, rotate_to_body,
+                           scale_action, vel_filter_alpha, vel_filter_step,
+                           wrap_pi)
 from .linearize import settle_upright
 from .randomize import DomainRandomizer
 
@@ -120,6 +121,12 @@ class GeneralEnv(gym.Env):
         self.vel_window_s = float(env.get("vel_window_s", 0.0))
         self._vbar_alpha = vel_filter_alpha(self.ctrl_dt, self.vel_window_s)
         self._settle_steps = int(round(self.vel_window_s / self.ctrl_dt))
+        # Pitch. Observed as well as penalized: charging w_pitch against a
+        # state the policy cannot see is the defect general_spec documents for
+        # prev_action. Unlike world position, pitch and pitch rate come
+        # straight off the AHRS on hardware (hw/state.set_orientation), so
+        # observing them costs nothing in transfer.
+        self.obs_pitch = bool(env.get("obs_pitch", False))
 
         cur = self.cfg["curriculum"]
         self.cur_on = bool(cur["enabled"])
@@ -130,7 +137,8 @@ class GeneralEnv(gym.Env):
 
         act_dim = ACT_DIM if self.full else 2
         self.action_space = spaces.Box(-1.0, 1.0, (act_dim,), np.float32)
-        self.obs_dim = obs_dim_for(self.vel_window_s)
+        self.obs_dim = obs_dim_for(self.vel_window_s, self.obs_pitch)
+        self.obs_layout = obs_layout(self.vel_window_s, self.obs_pitch)
         self.observation_space = spaces.Box(-np.inf, np.inf, (self.obs_dim,),
                                             np.float32)
         self._aid = {n: self.model.actuator(n).id
@@ -227,7 +235,8 @@ class GeneralEnv(gym.Env):
                         float(self.data.qpos[self._sj]),
                         float(self.data.qvel[self._sd]),
                         s.v_lon, s.v_lat, v_cl, v_ct, psi_err, self._prev_a,
-                        v_bar=vb)
+                        v_bar=vb,
+                        pitch=(s.pitch, s.pitch_rate) if self.obs_pitch else None)
         return obs, s, v_cl, v_ct, psi_err, vb_lon, vb_lat
 
     # -- curriculum --------------------------------------------------------
@@ -338,6 +347,14 @@ class GeneralEnv(gym.Env):
                   + rw["w_head"] * r_head
                   + rw["w_alive"]
                   - rw["w_upright"] * s.roll ** 2
+                  # Pitch was FREE until now: w_upright prices roll and
+                  # nothing priced pitch, so a wheelie cost the policy
+                  # nothing. Measured on general_rl_glide_og, the front wheel
+                  # reaches 79 mm of clearance at 23 deg nose-up under a plain
+                  # accelerate command (analysis/liftoff.py). Same quadratic
+                  # form as w_upright; 0.0 by default, so every config that
+                  # predates it is unchanged.
+                  - rw.get("w_pitch", 0.0) * s.pitch ** 2
                   - rw["w_effort"] * float(action @ action)
                   # Per-channel: w_smooth may be one number (broadcast, the
                   # historical behaviour) or one per action channel.
@@ -380,6 +397,7 @@ class GeneralEnv(gym.Env):
             "vel_err": float(np.sqrt(v_err2_inst)),
             "vel_err_win": float(np.sqrt(v_err2)),
             "v_bar_lon": float(vb_lon), "v_bar_lat": float(vb_lat),
+            "pitch_deg": float(np.degrees(s.pitch)),
             "head_err_deg": float(np.degrees(abs(psi_err))),
             "difficulty": float(self._diff),
             "fell": bool(fell),

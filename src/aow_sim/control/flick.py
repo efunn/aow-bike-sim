@@ -273,6 +273,12 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         # 0.0 = no window, which is what every general_rl exported before the
         # field existed was trained with.
         pol.vel_window_s = float(d.get("vel_window_s", 0.0))
+        # Does the policy observe (pitch, pitch_rate)? Also part of the obs
+        # contract. Together with vel_window_s these decide the layout, and
+        # `obs_layout` records the resulting entry names so a width collision
+        # between two different feature combinations cannot pass silently.
+        pol.obs_pitch = bool(d.get("obs_pitch", False))
+        pol.obs_layout = tuple(d.get("obs_layout", ()) or ())
         # The parameter set this policy was TRAINED against. "" for every move
         # exported before the field existed. See check_move_digest.
         pol.params_digest = str(d.get("params_digest", ""))

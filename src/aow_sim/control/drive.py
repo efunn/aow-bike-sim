@@ -143,6 +143,7 @@ class DriveController(LQRBalance):
         self._gen_every = 1             # controller ticks per policy query
         self._gen_u = None              # held action between queries
         self._gen_window_s = 0.0        # policy's velocity-window time constant
+        self._gen_obs_pitch = False     # does the policy observe pitch?
         self._gen_vbar_alpha = 1.0      # 1.0 => v_bar is the instantaneous v
         self._gen_v_bar_w = np.zeros(2)  # low-passed WORLD velocity
 
@@ -330,16 +331,29 @@ class DriveController(LQRBalance):
         heading, current velocity — so engaging never jolts the bike."""
         from .flick import load_move
         self._gen = load_move(name)
-        from .general_spec import obs_dim_for, vel_filter_alpha
-        # The observation WIDTH is a property of the policy, carried in its
-        # move yaml: a policy trained without a velocity window is 15-wide and
-        # still loads here unchanged, one trained with a window is 17-wide.
+        from .general_spec import obs_layout, vel_filter_alpha
+        # The observation LAYOUT is a property of the policy, carried in its
+        # move yaml, so a policy trained without any optional block is 15-wide
+        # and still loads here unchanged.
+        #
+        # Checked as a LAYOUT, not a width. Two optional 2-entry blocks make
+        # width ambiguous: a velocity-windowed policy and a pitch-observing
+        # one are both 17 wide with entirely different meanings in slots
+        # 15-16, and a width check would happily load either as the other and
+        # feed the net nonsense with nothing raised.
         self._gen_window_s = float(getattr(self._gen, "vel_window_s", 0.0))
-        want = obs_dim_for(self._gen_window_s)
-        if self._gen.obs_dim != want:
+        self._gen_obs_pitch = bool(getattr(self._gen, "obs_pitch", False))
+        want = obs_layout(self._gen_window_s, self._gen_obs_pitch)
+        declared = tuple(getattr(self._gen, "obs_layout", ()) or ())
+        if declared and declared != want:
+            raise ValueError(
+                f"moves/{name} declares an observation layout its flags do not"
+                f" produce:\n  declared {declared}\n  flags give {want}")
+        if self._gen.obs_dim != len(want):
             raise ValueError(
                 f"moves/{name} was trained with obs_dim {self._gen.obs_dim}"
-                f" but its vel_window_s={self._gen_window_s} implies {want}"
+                f" but its flags (vel_window_s={self._gen_window_s},"
+                f" obs_pitch={self._gen_obs_pitch}) imply {len(want)}"
                 " — retrain (`python -m aow_sim.train_general_rl`)")
         # The policy was trained at its own control rate; querying it at the
         # controller's rate would silently change the effective action scale
@@ -415,7 +429,9 @@ class DriveController(LQRBalance):
                             float(data.qpos[self._sj]),
                             float(data.qvel[self._sd]),
                             s.v_lon, s.v_lat, v_cl, v_ct, psi_err,
-                            self._gen_prev_a, v_bar=vb)
+                            self._gen_prev_a, v_bar=vb,
+                            pitch=((s.pitch, s.pitch_rate)
+                                   if self._gen_obs_pitch else None))
             steer_rate, hub, diff = pol.action(obs)
             self._gen_prev_a = np.array([
                 steer_rate / pol.bounds.steer_rate_max,

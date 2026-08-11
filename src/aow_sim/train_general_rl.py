@@ -37,7 +37,7 @@ from .params import params_digest
 from .control.balance import extract_state
 from .control.flick import MOVES_DIR, reserve_move_name
 from .control.general_env import GeneralEnv, _load_rl_config
-from .control.general_spec import ActionBounds
+from .control.general_spec import ActionBounds, obs_layout
 from .control.policy import save_policy_npz
 
 RUN_DIR = Path(__file__).resolve().parents[2] / "runs" / "general_rl"
@@ -537,6 +537,14 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # CONTRACT, not a preference: it decides whether this policy is 15
            # or 17 wide, and replay must low-pass with the same constant.
            "vel_window_s": cfg["env"].get("vel_window_s", 0.0),
+           "obs_pitch": bool(cfg["env"].get("obs_pitch", False)),
+           # The resulting entry names, recorded explicitly. Two optional
+           # 2-entry blocks make WIDTH ambiguous (a windowed policy and a
+           # pitch-observing one are both 17), so replay compares this list
+           # rather than a length -- see drive.engage_general.
+           "obs_layout": list(obs_layout(
+               cfg["env"].get("vel_window_s", 0.0),
+               cfg["env"].get("obs_pitch", False))),
            "action_space": cfg["env"]["action_space"],
            "trained": trained}
     with open(MOVES_DIR / f"{name}.yaml", "w") as f:

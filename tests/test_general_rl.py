@@ -470,22 +470,64 @@ def test_vel_filter_alpha_is_rate_independent():
     assert vel_filter_alpha(0.02, -1.0) == 1.0
 
 
-def test_unwindowed_layout_is_a_prefix_of_the_windowed_one():
-    """Every positional index into an observation stays valid across both
-    widths. analysis/mirror_equivariance.py slices FLIP_OBS on exactly this."""
-    from aow_sim.control.general_spec import (OBS_DIM_WINDOWED,
-                                              OBS_MIRROR_PARITY, OBS_NAMES)
-    a = _obs()
-    b = _obs(v_bar=(0.7, -0.04))
-    assert a.shape == (OBS_DIM,) and b.shape == (OBS_DIM_WINDOWED,)
-    assert b[:OBS_DIM] == pytest.approx(a, abs=0.0)
-    assert len(OBS_NAMES) == len(OBS_MIRROR_PARITY) == OBS_DIM_WINDOWED
+def test_base_layout_is_a_prefix_of_every_optional_layout():
+    """Every positional index into the base observation stays valid whatever
+    optional blocks are on. analysis/mirror_equivariance.py slices FLIP_OBS on
+    exactly this."""
+    from aow_sim.control.general_spec import (OBS_MIRROR_PARITY, OBS_NAMES,
+                                              obs_dim_for, obs_layout)
+    base = _obs()
+    assert base.shape == (OBS_DIM,)
+    for kw, flags in ((dict(v_bar=(0.7, -0.04)), (1.0, False)),
+                      (dict(pitch=(0.1, 0.4)), (0.0, True)),
+                      (dict(v_bar=(0.7, -0.04), pitch=(0.1, 0.4)), (1.0, True))):
+        o = _obs(**kw)
+        assert o.shape == (obs_dim_for(*flags),)
+        assert o[:OBS_DIM] == pytest.approx(base, abs=0.0)
+        assert obs_layout(*flags)[:OBS_DIM] == OBS_NAMES[:OBS_DIM]
+    assert len(OBS_NAMES) == len(OBS_MIRROR_PARITY)
     # A filter is linear and time-invariant, so a filtered quantity mirrors
     # exactly like its source. Getting this wrong does not raise -- it
     # silently corrupts every handedness number.
     i = OBS_NAMES.index
     assert OBS_MIRROR_PARITY[i("v_bar_lon")] == OBS_MIRROR_PARITY[i("v_lon")]
     assert OBS_MIRROR_PARITY[i("v_bar_lat")] == OBS_MIRROR_PARITY[i("v_lat")]
+    # Pitch is a SAGITTAL quantity: the mirror leaves it alone, unlike roll.
+    assert OBS_MIRROR_PARITY[i("pitch")] == +1
+    assert OBS_MIRROR_PARITY[i("pitch_rate")] == +1
+
+
+def test_observation_width_is_ambiguous_so_layout_is_the_contract():
+    """A velocity-windowed policy and a pitch-observing one are BOTH 17 wide
+    with different meanings in slots 15-16. A width check would load either as
+    the other and feed the net nonsense with nothing raised, so replay
+    compares the layout element-wise."""
+    from aow_sim.control.general_spec import obs_dim_for, obs_layout
+    assert obs_dim_for(1.0, False) == obs_dim_for(0.0, True) == 17
+    assert obs_layout(1.0, False) != obs_layout(0.0, True)
+
+
+def test_pitch_sign_is_nose_up():
+    """extract_state negates the textbook ZYX pitch so +ve means nose up.
+    Reported raw, `max(pitch)` picks the nose-DOWN tail and a 23 deg wheelie
+    reads as 0.4 deg -- which is exactly what it did."""
+    mujoco = pytest.importorskip("mujoco")
+    from aow_sim.control.balance import extract_state
+
+    class _D:
+        qpos = np.zeros(7)
+        qvel = np.zeros(6)
+    d = _D()
+    d.qpos = np.zeros(7)
+    ang = np.deg2rad(20.0)                    # nose up by 20 deg
+    q = np.zeros(4)
+    mujoco.mju_axisAngle2Quat(q, np.array([0.0, -1.0, 0.0]), ang)
+    d.qpos[3:7] = q
+    d.qvel = np.zeros(6)
+    d.qvel[4] = -1.0                          # nose rising
+    s = extract_state(d, np.zeros(2))
+    assert np.degrees(s.pitch) == pytest.approx(20.0, abs=0.5)
+    assert s.pitch_rate > 0
 
 
 def test_vel_window_zero_reproduces_the_instantaneous_reward():
@@ -562,13 +604,18 @@ def test_shipped_general_policy_matches_its_declared_width():
     obs-dim mismatch, so after a spec change the whole suite would go green by
     absence -- this is the one that goes red instead."""
     from aow_sim.control.flick import MOVES_DIR, load_move
-    from aow_sim.control.general_spec import obs_dim_for
+    from aow_sim.control.general_spec import obs_layout
     names = sorted(p.stem for p in MOVES_DIR.glob("general_*.yaml"))
     if not names:
         pytest.skip("no general policies exported yet")
     for name in names:
         pol = load_move(name)
-        want = obs_dim_for(getattr(pol, "vel_window_s", 0.0))
-        assert pol.obs_dim == want, (
-            f"moves/{name}: obs_dim {pol.obs_dim} but vel_window_s "
-            f"{pol.vel_window_s} implies {want}")
+        want = obs_layout(getattr(pol, "vel_window_s", 0.0),
+                          getattr(pol, "obs_pitch", False))
+        assert pol.obs_dim == len(want), (
+            f"moves/{name}: obs_dim {pol.obs_dim} but flags "
+            f"(vel_window_s={pol.vel_window_s}, obs_pitch={pol.obs_pitch}) "
+            f"imply {len(want)}")
+        declared = tuple(getattr(pol, "obs_layout", ()) or ())
+        assert not declared or declared == want, (
+            f"moves/{name}: declared layout disagrees with its own flags")

@@ -65,6 +65,13 @@ reward:
   sigma_v: 0.35          # [m/s] tracking tolerance scale
   sigma_psi_deg: 25.0    # heading tolerance scale
   w_upright: 0.5
+  # Pitch was FREE: w_upright prices roll and nothing priced pitch, so a
+  # wheelie cost nothing. Measured on general_rl_glide_og, the front wheel
+  # reaches 79 mm of clearance at 23 deg nose-up on a plain accelerate
+  # command, and 11 deg at a pure hold (analysis/liftoff.py). 0.0 keeps every
+  # policy trained before this identical; set it together with env.obs_pitch,
+  # so the penalty is not charged against a state the policy cannot see.
+  w_pitch: 0.0
   w_effort: 0.001
   w_smooth: 0.005        # higher than the moves': prev_action is observable
                          #   here, so the penalty is actually well-posed.

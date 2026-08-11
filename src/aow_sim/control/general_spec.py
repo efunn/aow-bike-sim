@@ -87,21 +87,30 @@ import numpy as np
 from .flick_spec import ActionBounds, scale_action  # noqa: F401
 from .steer import wrap_pi  # noqa: F401
 
-OBS_DIM = 15            # no velocity window (the original spec)
+OBS_DIM = 15            # no optional blocks (the original spec)
 OBS_DIM_WINDOWED = 17   # ...plus v_bar_lon, v_bar_lat
 ACT_DIM = 3   # [steer_rate, hub, diff]; feedforward mode uses only [0:2]
 
+# Optional observation blocks, in APPEND ORDER. Each is a (flag, names) pair;
+# the base 15 stay a prefix of every layout, so positional indices into the
+# base never move.
+_OPTIONAL_BLOCKS = (
+    ("vel_window", ("v_bar_lon", "v_bar_lat")),
+    ("obs_pitch", ("pitch", "pitch_rate")),
+)
+
+
 # One home for the layout, so nothing has to re-derive it from index
 # literals. The first OBS_DIM entries are the un-windowed observation.
-OBS_NAMES = (
+OBS_NAMES_BASE = (
     "roll", "roll_rate", "yaw_rate",
     "sin2steer", "cos2steer", "steer_rate",
     "v_lon", "v_lat",
     "v_cmd_lon", "v_cmd_lat",
     "sin_psi_err", "cos_psi_err",
     "prev_steer_rate", "prev_hub", "prev_diff",
-    "v_bar_lon", "v_bar_lat",
 )
+OBS_NAMES = OBS_NAMES_BASE + ("v_bar_lon", "v_bar_lat", "pitch", "pitch_rate")
 # Sign under the sagittal mirror. A filter is linear and time-invariant, so a
 # filtered quantity mirrors exactly like its source: v_bar_lon follows v_lon
 # (+1), v_bar_lat follows v_lat (-1). Getting these wrong does not raise --
@@ -115,13 +124,39 @@ OBS_MIRROR_PARITY = np.array([
     -1, +1,            # sin psi_err, cos psi_err
     -1, +1, -1,        # prev_action [steer_rate, hub, diff]
     +1, -1,            # v_bar_lon, v_bar_lat
+    +1, +1,            # pitch, pitch_rate -- SAGITTAL, so the mirror leaves
+                       #   them alone, unlike roll and yaw which flip
 ], dtype=float)
-assert len(OBS_NAMES) == OBS_DIM_WINDOWED == len(OBS_MIRROR_PARITY)
+assert len(OBS_NAMES) == len(OBS_MIRROR_PARITY)
+assert len(OBS_NAMES_BASE) == OBS_DIM
 
 
-def obs_dim_for(vel_window_s: float) -> int:
-    """Observation width implied by a policy's velocity window."""
-    return OBS_DIM_WINDOWED if float(vel_window_s) > 0.0 else OBS_DIM
+def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False) -> tuple:
+    """The exact entry names this feature combination produces.
+
+    WIDTH ALONE IS AMBIGUOUS and must not be used as the contract. With two
+    optional 2-entry blocks, a velocity-windowed policy and a pitch-observing
+    policy are BOTH 17 wide with completely different layouts, and a width
+    check would load either as the other and feed the net nonsense without
+    raising. So the layout is recorded in the move yaml and compared
+    element-wise -- see control/drive.py engage_general.
+    """
+    names = list(OBS_NAMES_BASE)
+    for flag, block in _OPTIONAL_BLOCKS:
+        on = (float(vel_window_s) > 0.0 if flag == "vel_window"
+              else bool(obs_pitch))
+        if on:
+            names.extend(block)
+    return tuple(names)
+
+
+def obs_dim_for(vel_window_s: float = 0.0, obs_pitch: bool = False) -> int:
+    """Observation width implied by a policy's feature flags.
+
+    Prefer `obs_layout()` for the CONTRACT -- width collides (see its
+    docstring). This stays for sizing an array.
+    """
+    return len(obs_layout(vel_window_s, obs_pitch))
 
 
 def vel_filter_alpha(dt: float, window_s: float) -> float:
@@ -155,7 +190,7 @@ def vel_filter_step(v_bar_w, v_w, alpha: float) -> np.ndarray:
 
 def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
               v_cmd_lon, v_cmd_lat, psi_err, prev_action,
-              v_bar=None) -> np.ndarray:
+              v_bar=None, pitch=None) -> np.ndarray:
     """Assemble the observation vector (length OBS_DIM, or OBS_DIM_WINDOWED
     when `v_bar` is given).
 
@@ -177,6 +212,11 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
                      velocity ALREADY rotated into the body frame, or None for
                      a policy trained without a velocity window. Appended, so
                      the un-windowed layout stays a prefix of this one.
+    pitch          : (pitch, pitch_rate) [rad, rad/s], +ve = NOSE UP, or None
+                     for a policy that does not observe pitch. Present so the
+                     w_pitch penalty is not charged against a state the policy
+                     cannot see -- the same argument that put prev_action in.
+                     Both come off the AHRS on hardware.
     """
     pa = np.asarray(prev_action, dtype=float).reshape(-1)
     obs = [
@@ -187,8 +227,11 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
         np.sin(psi_err), np.cos(psi_err),
         pa[0], pa[1], pa[2] if pa.shape[0] >= 3 else 0.0,
     ]
+    # Append order must match _OPTIONAL_BLOCKS.
     if v_bar is not None:
         obs.extend((float(v_bar[0]), float(v_bar[1])))
+    if pitch is not None:
+        obs.extend((float(pitch[0]), float(pitch[1])))
     return np.array(obs, dtype=np.float32)
 
 
