@@ -53,7 +53,7 @@ from aow_sim.control.balance import extract_state
 from aow_sim.control.flick import MOVES_DIR
 from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 from aow_sim.control.policy import load_policy_npz
-from rsa_policies import POLICIES, REPO
+from rsa_policies import POLICIES, REPO, env_for, load_general
 
 CHANNELS = ("steer_rate", "hub", "diff")
 
@@ -163,8 +163,8 @@ def main():
 
     data = {}
     for key in POLICIES:
-        pol = load_policy_npz(MOVES_DIR / f"{key}.npz")
-        data[key] = hold_trace(pol, env, steps)
+        pol = load_general(key)          # one env per policy width
+        data[key] = hold_trace(pol, env_for(pol, params, cfg), steps)
 
     w = max(len(k) for k in data) + 2
 

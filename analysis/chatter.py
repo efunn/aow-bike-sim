@@ -41,7 +41,7 @@ from aow_sim.control.flick import MOVES_DIR
 from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 from aow_sim.control.policy import load_policy_npz
 from aow_sim.train_general_rl import _eval_episodes, _score, eval_cmds
-from rsa_policies import POLICIES, REPO
+from rsa_policies import POLICIES, REPO, env_for, load_general
 
 CHANNELS = ("steer", "hub", "diff")
 
@@ -107,13 +107,15 @@ def main():
     params = load_params()
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
-    env = GeneralEnv(params, cfg)
     cmds = eval_cmds(cfg["env"]["v_max"])
 
     out = {}
     for key in POLICIES:
-        pol = load_policy_npz(MOVES_DIR / f"{key}.npz")
-        out[key] = rollout_grid(pol, env, cmds)
+        # One env PER POLICY: a velocity-windowed policy needs a 17-wide
+        # observation and its own filter constant, so a single shared env
+        # cannot serve both widths.
+        pol = load_general(key)
+        out[key] = rollout_grid(pol, env_for(pol, params, cfg), cmds)
 
     w = f"{max(len(k) for k in out) + 2}"
 

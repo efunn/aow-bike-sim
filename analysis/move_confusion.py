@@ -58,7 +58,7 @@ from aow_sim.build_model import load_params
 from aow_sim.control.flick import MOVES_DIR
 from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 from aow_sim.control.policy import load_policy_npz
-from rsa_policies import (POLICIES, REPO, condition_sets,
+from rsa_policies import (POLICIES, REPO, env_for, load_general, condition_sets,
                           hidden, trace)
 
 
@@ -290,8 +290,9 @@ def main():
 
     mats = {"IDEAL": None}
     for key, short in POLICIES.items():
-        pol = load_policy_npz(MOVES_DIR / f"{key}.npz")
-        labels, C = confusion(pol, env, conds, args.steps)
+        pol = load_general(key)          # one env per policy width
+        labels, C = confusion(pol, env_for(pol, params, cfg), conds,
+                              args.steps)
         mats[short] = C
         if mats["IDEAL"] is None:
             mats["IDEAL"] = ideal_matrix(labels)

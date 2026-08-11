@@ -47,8 +47,39 @@ from aow_sim.control.policy import load_policy_npz
 # mistaken for a different export.
 POLICIES = {n: n for n in ("general_rl_og", "general_rl", "general_rl_1k",
                            "general_rl_smooth_og",
-                           "general_rl_smooth_diff_og")}
+                           "general_rl_smooth_diff_og",
+                           "general_rl_glide_og")}
 REPO = Path(__file__).resolve().parents[1]
+
+
+def load_general(name):
+    """Load a general policy WITH its move-yaml fields attached.
+
+    `load_policy_npz` reads only the weights, so a policy loaded that way has
+    no `vel_window_s` and the caller cannot build an env that matches it.
+    `load_move` is the same object plus the yaml contract, which is what
+    `env_for` below needs.
+    """
+    from aow_sim.control.flick import load_move
+    return load_move(name)
+
+
+def env_for(pol, params, cfg):
+    """A GeneralEnv whose observation matches THIS policy.
+
+    Policies no longer share one width: a velocity window appends v_bar and
+    obs_pitch appends (pitch, pitch_rate), so policies need differently-
+    configured envs. EVERY optional block has to be carried -- missing one
+    builds an env narrower than the policy and `policy.action` raises.
+
+    Taking the window from the policy rather than from the config also gets
+    the FILTER right, which is the quieter failure: feeding a tau=1.5 policy
+    a tau=1.0 average matches on width, so nothing would raise at all.
+    """
+    from aow_sim.control.general_env import GeneralEnv
+    over = {"vel_window_s": float(getattr(pol, "vel_window_s", 0.0)),
+            "obs_pitch": bool(getattr(pol, "obs_pitch", False))}
+    return GeneralEnv(params, {**cfg, "env": {**cfg["env"], **over}})
 
 
 def condition_sets(v_max: float) -> dict:
