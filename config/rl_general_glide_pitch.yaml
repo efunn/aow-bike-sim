@@ -1,0 +1,168 @@
+# Glide arm 2: windowed velocity + a REACHABLE crab envelope + a priced
+# pitch. Differs from rl_general_glide.yaml (arm 1) in three lines, all
+# listed here so the comparison is readable.
+#
+# WHY ARM 1 DID NOT DELIVER. general_rl_glide_og learned to oscillate -- 2x
+# more than any other policy, measured against a common 1 s reference -- so
+# the windowed reward did admit the gait it was meant to. But the oscillation
+# it found was PITCH, not the parallel-park bracket, and pitching produces no
+# lateral travel: net v_lat under a crab command came out at 0.064 m/s,
+# BELOW general_rl_smooth_diff_og's 0.082 from plain per-channel smoothing.
+# It also cost hold quality (drift 0.20 -> 1.46 m) and contact.
+#
+# Three changes, each aimed at one link in that chain:
+#
+# 1. v_lat_frac 0.4 -> 0.12. Arm 1 trained at the FULL envelope, where the
+#    crab command reaches 0.48 m/s = 102% of the differential's kinematic
+#    ceiling, and 8.1% of sampled commands cannot be executed by ANY
+#    controller: the hub and diff shares of one drive actuator sum past its
+#    +-33.3 rad/s limit before a single rad/s is reserved for balance. At
+#    0.12 that figure is 0.0%. The optimal response to a channel that is
+#    mostly impossible is to ignore it, which is what every policy so far has
+#    done.
+#
+# 2. w_pitch 0.0 -> 2.0. Pitch was FREE -- w_upright prices roll and nothing
+#    priced pitch -- and a time-averaged velocity reward makes a pitch
+#    oscillation free twice over, since a wheelie that comes back down
+#    averages to nothing. Arm 1 reached 23 deg nose-up with the front wheel
+#    79 mm off the floor on a plain accelerate command, and 11 deg at a pure
+#    hold, against 6.7 and 2.7 for general_rl_smooth_diff_og
+#    (analysis/liftoff.py; corr(front gap, pitch) = 0.999, so the gap IS the
+#    pitch and not a hop). At 2.0 a 23 deg wheelie costs 0.32/step, ~11% of
+#    the ~3.0 per-step maximum: priced, not forbidden.
+#
+# 3. obs_pitch true. REQUIRED by 2, not optional. Charging w_pitch against a
+#    state the policy cannot see is the exact defect general_spec documents
+#    for prev_action. Pitch and pitch rate come off the AHRS on hardware
+#    (hw/state.set_orientation), so unlike world position this costs nothing
+#    in transfer.
+#
+# NOTE this makes the observation 19 wide, and WIDTH IS NOT THE CONTRACT: a
+# windowed-only policy and a pitch-only policy are both 17. The move yaml
+# records `obs_layout` and replay compares it element-wise.
+#
+# WHAT TO WATCH. crab_ratio_left/right (displacement-based) is still the
+# headline. Add the liftoff check: analysis/liftoff.py should show `at peak`
+# pitch falling from 23 deg toward general_rl_smooth_diff_og's 6.7. If crab
+# is still flat AND pitch is now controlled, the wriggle hypothesis is dead
+# and the honest next step is the open-loop gait sweep, not another arm.
+#
+#   python -m aow_sim.train_general_rl --config config/rl_general_glide_pitch.yaml \
+#       --run-dir runs/general_glide_pitch --export-name general_glide_pitch_rl
+#
+algo:
+  algorithm: PPO
+  total_timesteps: 6000000    # a general controller is a bigger task than a
+                              #   single move; expect to need the full budget
+  n_envs: 32    # was 8
+  learning_rate: 3.0e-4
+  n_steps: 512 # was 2048  -> 32 x 512 = 16384, unchanged
+  batch_size: 1024
+  n_epochs: 10
+  # gamma at 50 Hz: 1/(1-g) = 100 steps = 2.0 s of lookahead, which matches
+  # the timescale of a heading change. THE MOVES' 0.99 AT 200 Hz IS ONLY
+  # 0.5 s — far too myopic here; they get away with it because their reward
+  # is a dense per-step yaw-progress term rather than setpoint tracking.
+  # If control_rate_hz is raised back to 200, gamma must go to ~0.998.
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005        # ball_rl's lesson: 0.0 collapsed exploration
+  net_arch: [128, 128]
+  seed: 0
+  eval_every: 1000000     # BestByScore cadence [timesteps]
+
+env:
+  action_space: full
+  # 50 Hz, not the moves' 200 Hz: standard for locomotion RL, and it makes a
+  # 2.5 s maneuver 125 steps instead of 500 — far better credit assignment.
+  # Replay is ZOH at this rate, so the controller holds each action 4 physics
+  # ticks longer than a move does.
+  control_rate_hz: 50
+  max_episode_s: 15.0    # long: the policy must hold a command, not finish one
+  v_max: 1.2             # matches control.drive.v_max in bike_params.yaml
+  # Low-pass time constant [s] on MEASURED velocity, which the reward
+  # tracks the command against. 0.0 (or absent) is the instantaneous
+  # reward bit for bit and a 15-wide observation; > 0 appends v_bar to
+  # the observation, making it 17 wide. See control/general_spec.py.
+  vel_window_s: 1.0
+  obs_pitch: true        # REQUIRED by w_pitch below -- do not set one
+                         #   without the other
+  v_lat_frac: 0.12       # was 0.4; see the header -- 0.4 puts 8.1% of
+                         #   sampled commands past what the drive
+                         #   actuators can produce at all
+                         #   (the rear omni makes crabbing physical); only
+                         #   opens up with curriculum difficulty
+  p_v_zero: 0.2          # chance the speed command is exactly 0 (stop is a
+                         #   first-class command, not an edge case)
+  resample_s: [3.0, 6.0] # was [1.5, 4.0]: the velocity filter needs about
+                         #   vel_window_s to flush after a step change, so
+                         #   short commands would be mostly transient
+  ball_prob: 0.25        # fraction of episodes with a ball parked nearby --
+                         #   contact robustness only, NO ball reward. Set to
+                         #   0.0 to train on the ball-free model.
+  ball_place_radius: 0.5 # ball dropped within this radius of the start pose
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4         # v_max 1.2 + margin (moves cap at 0.6-0.72 because
+                         #   they are standstill maneuvers)
+    diff_max: 40.0
+
+curriculum:              # the repo's first; a single scalar scaling the
+  enabled: true          #   command sampling ranges in _sample_command
+  start: 0.15            # gentle: low speed, +-30 deg heading steps, no crab
+  step: 0.02             # advance per episode that clears advance_score
+  advance_score: 0.6     # mean of (vel + heading) tracking rewards, in [0,1]
+
+reward:
+  # Bounded-POSITIVE tracking + alive bonus. Over a 15 s episode a
+  # penalty-only reward (the moves' form) makes falling early strictly
+  # rational; this removes that incentive.
+  w_vel: 1.5             # x exp(-|v_cmd - v|^2 / sigma_v^2)
+  w_head: 1.0            # x exp(-(psi_err/sigma_psi)^2)
+  w_alive: 0.5
+  sigma_v: 0.35          # [m/s] tracking tolerance scale
+  sigma_psi_deg: 25.0    # heading tolerance scale
+  w_upright: 0.5
+  w_pitch: 2.0           # was absent (= 0.0). A 23 deg wheelie costs
+                         #   0.32/step, ~11% of the ~3.0 per-step max:
+                         #   priced, not forbidden. Set together with
+                         #   env.obs_pitch -- see the header.
+  w_effort: 0.001
+  w_smooth: 0.005        # higher than the moves': prev_action is observable
+                         #   here, so the penalty is actually well-posed.
+                         #   One number prices all three action channels
+                         #   alike; a 3-list prices [steer_rate, hub, diff]
+                         #   separately -- see rl_general_smooth_diff.yaml.
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+
+randomization:           # as rl_flick/rl_pivot
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15        # was 0.1. The as-built payload mass (battery + Pi +
+                         #   U2D2 + buck, ~190 g of a 1.02 kg bike) is a GUESS
+                         #   until the thing is weighed, and it is a bigger
+                         #   share of the total than anything else unmeasured.
+  friction_frac: 0.2
+  # Supply voltage. The model's servo numbers are the 12 V datasheet column,
+  # but a 3S pack spans 12.6 V (full) to 9.9 V (cutoff) -> ~0.83-1.05x nominal
+  # strength. 0.15 covers that window with margin. Scales ctrlrange AND
+  # forcerange from a single draw (speed and torque both go with voltage) --
+  # see control/randomize.py. Untethered transfer depends on this.
+  actuator_frac: 0.15
+  # Contact. UNCOMMENT FOR THE NEXT RUN -- left off so this config still
+  # reproduces the policies trained before it existed. sim.contact_solref is
+  # the least-measured parameter in the model (the bench tests that would pin
+  # it are specified in docs/measurements/contact-protocol.md but not yet
+  # done), and it is the one the policies are most brittle to: holding
+  # timeconst and sweeping dampratio, eval survival is 1.00 from 1.0 down to
+  # 0.5 and then drops to 0.9 at 0.3 and 0.7 at 0.2. The drop test puts the
+  # true value near 0.3, i.e. right on the cliff edge.
+  # solref_frac: 0.4          # scales contact_solref[0], the time constant
+  # dampratio_range: [0.3, 0.8]   # absolute draw, not a fraction of nominal
+  disturb_force_N: 2.0
+  disturb_prob: 0.01
