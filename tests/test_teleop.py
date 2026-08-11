@@ -544,3 +544,59 @@ def test_trail_is_solid_inside_the_window_then_ramps_to_clear(
     assert alphas[0] == pytest.approx((horizon - 2.4) / _TRAIL_FADE_S, abs=1e-3)
     assert alphas[1] == pytest.approx((horizon - 2.25) / _TRAIL_FADE_S, abs=1e-3)
     assert alphas[2] == 1.0, "a point inside the solid window must not fade"
+
+
+def test_snap_then_continuous_turn_works_both_ways(monkeypatch, model, params,
+                                                   eq_qpos):
+    """Regression: after a 90/180 snap the heading lead sits far outside the
+    +-35 deg band, and the clamp only ever blocks the direction that would
+    GROW the lead -- so continuous turning died one way and worked the other
+    ("you can move it left but not right"). A snap now disarms the clamp."""
+    from aow_sim.run_drive import _LEAD_MAX, _STEP_PSI
+    g = _capture(monkeypatch, model, params, eq_qpos)
+    c = g["c"]
+    if c.mode != "general":
+        pytest.skip("snaps are the general-mode layer")
+
+    g["on_key"](ord("6"))               # snap +90, deliberately leading
+    _idle(g, 0.05)
+    after_snap = c._gen_psi_cmd
+    lead = abs(np.arctan2(np.sin(after_snap - c._psi),
+                          np.cos(after_snap - c._psi)))
+    assert lead > _LEAD_MAX, "snap should leave the command leading"
+
+    # BOTH directions must still move the command while the lead is large.
+    g["on_key"](RIGHT)                  # the direction that grows the lead
+    _idle(g, 0.05)
+    grew = c._gen_psi_cmd
+    assert abs(grew - after_snap) > _STEP_PSI * 0.5, \
+        "continuous turn was blocked after a snap"
+
+    g["on_key"](LEFT)                   # and back the other way
+    _idle(g, 0.05)
+    assert abs(c._gen_psi_cmd - grew) > _STEP_PSI * 0.5
+
+
+def test_lead_clamp_rearms_once_the_bike_catches_up(monkeypatch, model,
+                                                    params, eq_qpos):
+    """The disarm is temporary: once the lead is back inside the band the
+    clamp must resume, or one snap would unclamp teleop forever."""
+    from aow_sim.run_drive import _LEAD_MAX
+    g = _capture(monkeypatch, model, params, eq_qpos)
+    c = g["c"]
+    if c.mode != "general":
+        pytest.skip("snaps are the general-mode layer")
+
+    g["on_key"](ord("6"))               # disarm
+    _idle(g, 6.0)                       # let the bike turn to the command
+    lead = abs(np.arctan2(np.sin(c._gen_psi_cmd - c._psi),
+                          np.cos(c._gen_psi_cmd - c._psi)))
+    if lead > _LEAD_MAX:
+        pytest.skip(f"policy did not converge on the snap (lead {lead:.2f})")
+
+    # Re-armed: holding a turn must now park at the band edge, not wind up.
+    _hold(g, 3.0, LEFT)
+    lead = abs(np.arctan2(np.sin(c._gen_psi_cmd - c._psi),
+                          np.cos(c._gen_psi_cmd - c._psi)))
+    assert lead <= _LEAD_MAX + 0.05, \
+        f"clamp did not re-arm: lead wound to {np.degrees(lead):.0f} deg"

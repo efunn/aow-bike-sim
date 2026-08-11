@@ -874,6 +874,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # legible, since a tracked camera holds the bike still in frame.
     cam_mode = ["free"]
     cam_free_pending = [False]   # re-frame free view on the switch INTO it
+    lead_armed = [True]          # heading lead clamp; a snap disarms it
     view = [None]              # the viewer handle, once teleop_loop hands it over
     chassis_id = model.body("chassis").id
     ax_v, ax_psi, ax_lat = _Axis(), _Axis(), _Axis()
@@ -941,6 +942,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         state["psi"] = state["psi_sent"] = c._psi
         ax_v.clear()
         ax_psi.clear()
+        lead_armed[0] = True        # command re-anchored on the bike
         ax_lat.clear()
         if c.mode == "general":
             c.set_command_polar(0.0, psi_cmd=c._psi)
@@ -1009,17 +1011,32 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         if state["want_general"] and c.mode != "general":
             engage(d, quiet=True)
 
+    def lead_now():
+        """Signed heading command lead over the bike, wrapped to +-180."""
+        return float(np.arctan2(np.sin(state["psi"] - c._psi),
+                                np.cos(state["psi"] - c._psi)))
+
     def turn(delta, clamp=True):
         """Move the heading command. `clamp` keeps a *held* turn from winding
         the command past what the bike can follow (which would leave it
         spinning long after release); snaps pass clamp=False because a
-        commanded 90/180 is meant to lead."""
-        if clamp:
-            lead = float(np.arctan2(np.sin(state["psi"] - c._psi),
-                                    np.cos(state["psi"] - c._psi)))
+        commanded 90/180 is meant to lead.
+
+        A snap DISARMS the clamp until the bike catches up. Without that, the
+        snap leaves a 90-180 deg lead, and the gate below -- which only ever
+        blocks the direction that would grow the lead -- kills continuous
+        turning one way while allowing the other. That reads as "steering
+        broke after a snap". While disarmed both directions are free; the
+        clamp re-arms in `apply` the moment the lead falls back inside the
+        band, so its anti-windup job resumes as soon as it can be done
+        without fighting a deliberate command."""
+        if clamp and lead_armed[0]:
+            lead = lead_now()
             if (delta > 0 and lead >= _LEAD_MAX) or \
                (delta < 0 and lead <= -_LEAD_MAX):
                 return
+        if not clamp:
+            lead_armed[0] = False        # a snap is meant to lead; let it
         state["psi"] += delta
 
     def apply(m, d):
@@ -1084,6 +1101,12 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         elif coasting_lat:
             vl = state["v_lat"]
             state["v_lat"] = float(vl - np.sign(vl) * min(abs(vl), _DECAY * dt))
+
+        # Re-arm the lead clamp once the bike has caught up to within the
+        # band. Done here rather than in `turn` so it re-arms while coasting,
+        # not only on the next keypress.
+        if not lead_armed[0] and abs(lead_now()) <= _LEAD_MAX:
+            lead_armed[0] = True
 
         # Heading: continuous slew while held. No decay — it is a setpoint.
         if ramp_psi:
