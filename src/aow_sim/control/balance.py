@@ -51,6 +51,9 @@ class BikeState:
     e_lat: float   # lateral drift, +Y(left) positive
     v_lon: float
     v_lat: float
+    # Defaulted so every positional BikeState(...) construction still works.
+    pitch: float = 0.0        # +ve = NOSE UP; see extract_state on the sign
+    pitch_rate: float = 0.0
 
 
 def quat_to_mat(q) -> np.ndarray:
@@ -78,7 +81,19 @@ def extract_state(data, ref_pos: np.ndarray) -> BikeState:
     to_yaw = np.array([[c, s], [-s, c]])
     e_lon, e_lat = to_yaw @ (data.qpos[:2] - ref_pos[:2])
     v_lon, v_lat = to_yaw @ data.qvel[:2]
-    return BikeState(roll, roll_rate, yaw, e_lon, e_lat, v_lon, v_lat)
+    # NOTE THE SIGN. The textbook ZYX pitch is asin(-R[2,0]), which is NEGATIVE
+    # when the nose rises, because R[2,0] is the world-z component of the body
+    # +X (forward) axis. Reported that way, `max(pitch)` picks the nose-DOWN
+    # tail and a 23 deg wheelie reads as "pitch never exceeded 0.4 deg".
+    # Negated here so the sign matches the word. On hardware both of these
+    # come straight off the AHRS (hw/state.set_orientation), so unlike world
+    # position they are honestly observable.
+    # pitch_rate is -qvel[4] for the same reason: body +Y points LEFT, so a
+    # positive rotation about it pitches the nose DOWN. Verified against
+    # d(pitch)/dt, which correlates +0.81 with -qvel[4] and -0.81 with +qvel[4].
+    pitch = np.arcsin(np.clip(R[2, 0], -1.0, 1.0))
+    return BikeState(roll, roll_rate, yaw, e_lon, e_lat, v_lon, v_lat,
+                     pitch, -data.qvel[4])
 
 
 class _Base:
