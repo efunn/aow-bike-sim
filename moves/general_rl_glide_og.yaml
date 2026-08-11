@@ -1,0 +1,34 @@
+name: general_rl_glide_og
+type: rl
+kind: general
+policy_file: general_rl_glide_og.npz
+params_digest: c1742fe9ed089a66
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.4
+vel_window_s: 1.0
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 5000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 4.0659190458924854e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.894
+    track_geo: 0.886
+    vel_err: 0.306
+    head_err_deg: 2.5
+    n_eval: 20
+    drift_m: 1.603
+    steer_rest_deg: 3.7
+    speed_ratio_fwd: 0.911
+    speed_ratio_rev: 0.994
+    crab_ratio_left: 0.294
+    crab_ratio_right: 0.19
+    crab_head_err: 3.5
+    crab_osc: 0.248
+    turn_asym: 0.215
+  exported_from: best_model.zip
