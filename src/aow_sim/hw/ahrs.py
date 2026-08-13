@@ -28,7 +28,18 @@ different instants would inject phase error into the balance loop. At 68 bytes
 it also just fits the library's 70-byte payload ceiling.
 
 BAUD: a Combo frame is 68 + 5 = 73 bytes, so 200 Hz needs ~146 kbps. 115200 is
-NOT enough — use 230400 (37% headroom) or 460800 for 400 Hz.
+NOT enough. 230400 carries it arithmetically, but at 63% sustained utilization
+with no flow control — and the TM151 datasheet (V1.1.6) explicitly recommends
+**460800 for 200 Hz ODR**, and 921600/1M for 400 Hz. Follow the vendor: a
+dropped frame here is a stale attitude in the balance loop, and the only cost
+of the higher rate is a config field.
+
+WIRING (datasheet §3, pin numbers as printed on the baseboard):
+    Pin 1 RXD | Pin 2 TXD | Pin 3 VCC 5V | Pin 4 GND | Pin 5 GND
+Both UART pins run at TTL 3.3 V and tolerate 5 V, so they connect straight to
+the Pi's GPIO with no level shifter in either direction. Pins 4 and 5 are
+internally linked — they are one net, not separate power/signal grounds, so
+connecting either is sufficient.
 
 There is a second, independent `simpleChecksum` INSIDE the Combo payload
 (sum of its bytes, excluding the field itself). It is verified too: the CRC
@@ -228,7 +239,7 @@ def parse_frame(buf: bytes):
 class AhrsReader:
     """Background UART reader publishing the latest sample."""
 
-    def __init__(self, port: str = "/dev/serial0", baud: int = 230400,
+    def __init__(self, port: str = "/dev/serial0", baud: int = 460800,
                  calibration: MountCalibration | None = None):
         self.port, self.baud = port, baud
         self.cal = calibration or MountCalibration()

@@ -110,9 +110,29 @@ table address 144** — no divider, no ADC, no extra part.
 ### No Power Hub Board
 
 The U2D2 PHB only distributes power and the TTL bus, and it is bulky. Replace
-it with a ~25×25 mm perfboard: three 3-pin JST-EH (B3B-EH-A) wired in parallel
-(VDD/GND/DATA), an XT30 pigtail to the pack, and a pigtail to the U2D2's TTL
-port. Basic soldering, through-hole only, no PCBA.
+it with a ~25×25 mm perfboard carrying **two** 3-pin JST-EH (B3B-EH-A) wired in
+parallel (VDD/GND/DATA) — one to the head of the servo chain, one to the U2D2's
+TTL port — plus an XT30 pigtail to the pack. Basic soldering, through-hole only,
+no PCBA.
+
+**The servos daisy-chain**, which is what keeps it to two headers. Each X-series
+servo has two identical connectors wired straight through internally, so VDD,
+GND and DATA all pass to the next one. Both board connections then use **stock
+Dynamixel cables**, so there is no crimping anywhere in the build — see the
+sourcing note on why that matters.
+
+The chain is also the electrically better topology: it is one continuous line
+with taps, where a star would hang a stub off every spoke. The only cost is that
+the first cable carries all three servos' current, and at stock cable length
+that is ~0.12 V at a 3.6 A peak — nothing.
+
+**The U2D2's VDD pin is connected**, matching every standard Power Hub Board
+wiring. The U2D2 draws its logic power from USB; the VDD pin on its TTL port is
+bus pass-through, and X-series buses routinely run at 12 V and above. Connecting
+it is what lets the board→U2D2 link be an unmodified 3-pin cable.
+
+**Wiring diagram: [`untethered-wiring.svg`](untethered-wiring.svg)** — every
+component, both power domains, and the Pi's pin assignments on one page.
 
 ## Parts to order
 
@@ -172,7 +192,7 @@ CAD pricing, DDP, so no brokerage surprise at the door.
 | 5 V regulator | Traco **TSR 2-2450** | 2 | 3S bus → 5 V for the Pi, into GPIO pins 2/4. 1 in use, 1 spare: its failure bricks the bike | [detail](https://www.digikey.ca/en/products/detail/traco-power/TSR-2-2450/9383726) |
 | Buck input cap | Panasonic **EEU-FR1E471** | 2 | 470 µF at the regulator input. **Not** for regulator stability — the Traco needs no external caps — but to ride out pack sag from motor transients. Holds the Pi ~16 ms above the 6.5 V dropout | [detail](https://www.digikey.ca/en/products/detail/panasonic-industry/EEU-FR1E471/2433553) |
 | Servo rail cap | Panasonic **EEU-FR1E102** | 2 | 1000 µF across the servo rail, damping the transient at its source rather than riding it out downstream. The pair is deliberate, not redundant: different nodes, different jobs | [search](https://www.digikey.ca/en/products/result?keywords=EEU-FR1E102) |
-| Board header | JST **B3B-EH-A** | 5 | The 3 parallel VDD/GND/DATA taps on the splitter board. 3 in use; spares because one always dies in a desolder | [search](https://www.digikey.ca/en/products/result?keywords=B3B-EH-A) |
+| Board header | JST **B3B-EH-A** | 4 | The splitter board's two VDD/GND/DATA taps — one to the servo chain, one to the U2D2. 2 in use; spares because one always dies in a desolder | [search](https://www.digikey.ca/en/products/result?keywords=B3B-EH-A) |
 | Perfboard | 2.54 mm through-hole, ≥50×50 mm | 1 | Cut to ~25×25 mm; the Power Hub replacement | [search](https://www.digikey.ca/en/products/result?keywords=perfboard%20prototype%20board) |
 | Main switch | SPST, DC-rated ≥10 A @ 12 VDC | 1 | Failsafe 4 — kills servo power independent of the Pi | [search](https://www.digikey.ca/en/products/result?keywords=toggle%20switch%20SPST%2012VDC) |
 | Fuse holder + fuses | inline blade holder, **7.5 A** blade | 1 + 5 | Protects the 20 AWG trunk against a short or a jammed drivetrain | [search](https://www.digikey.ca/en/products/result?keywords=inline%20blade%20fuse%20holder) |
@@ -232,38 +252,49 @@ OTG port for the U2D2 — but it means the regulator's output is the only thing
 between the pack and the SoC. It is a reason to fit the 470 µF and to bench the
 rail before the Pi is ever connected to it.
 
-**TM151 wiring — three wires, not five.** The unit breaks out a 5-pin 2.54 mm
-header, **GND GND 5V TX RX in that order**. Both it and the Pi's GPIO are male
-2.54 mm pins, so female–female jumper leads mate at both ends with nothing else
-to buy.
+**TM151 wiring.** From the TM151/TM171 datasheet V1.1.6 §3, pin numbers as
+printed on the baseboard:
 
 | TM151 | → | Pi | note |
 |---|---|---|---|
-| GND | | pin 6 (GND) | one of the two GNDs is enough |
-| 5V | | pin 2 or 4 (5V) | same rail the buck feeds; TM151 draws tens of mA |
-| TX | | **pin 10 (RXD)** | the crossover — AHRS out to Pi in |
-| RX | | *leave open* | see below |
-| GND | | *leave open* | |
+| Pin 1 RXD | ← | pin 8 (TXD) | optional — nothing in the design transmits |
+| Pin 2 TXD | → | **pin 10 (RXD)** | the crossover, and the only wire that carries data |
+| Pin 3 VCC | ← | pin 2 or 4 (5V) | 4.5–5.5 V, 80 mA / 0.4 W typical |
+| Pin 4 GND | | pin 6 or 9 (GND) | |
+| Pin 5 GND | | — | internally linked to pin 4; one is enough |
 
-**Leave the Pi's TX line disconnected.** The AHRS free-runs and pushes (see
-*Loop rate*) — the Pi never transmits to it, and baud/rate/message config is
-done over USB with ImuAssistant in *One-time device configuration*, not over
-this link. So the return wire has no runtime purpose, and omitting it removes
-the only path by which a 5 V logic output could reach a 3.3 V-only GPIO input.
+Both it and the Pi's GPIO are 2.54 mm male pins, so female–female jumper leads
+mate at both ends with nothing else to buy.
 
-That risk is the reason to care. The port budget above asserts the TM151's UART
-is 3.3 V TTL and needs no level shifter; the unit is powered from 5 V, so
-**meter TX against GND before landing it on pin 10** — 5 V on a Pi GPIO damages
-the SoC and there is no protection in between. Three wires and a ten-second
-check is the whole mitigation.
+**No level shifter, and nothing to meter.** The datasheet specifies both UART
+pins as *"running at TTL 3.3 V and is compatible with TTL 5.0 V"* — 3.3 V out,
+5 V-tolerant in. So the TM151→Pi direction is 3.3 V into a 3.3 V GPIO, and the
+Pi→TM151 direction is 3.3 V into a 5 V-tolerant input. Both are safe as wired,
+by specification rather than by assumption.
 
-**Bundle the jumpers rather than running five loose leads.** Individual Dupont
+**The two grounds are one net** — *"Pin 5 … is internally linked together with
+Pin 4 and thus Pin 4 and Pin 5 play the same role."* They are not separate power
+and signal grounds, so there is nothing to gain from routing them separately.
+Connect one.
+
+**Pin 1 (RXD) is optional.** The AHRS free-runs and pushes (see *Loop rate*),
+`hw/ahrs.py` has no write path at all, and baud/rate/message config is done over
+USB with ImuAssistant in *One-time device configuration*. Wiring it costs one
+jumper and preserves the ability to reconfigure or recover the unit in place
+rather than unmounting it for a USB trip; leaving it open costs nothing today.
+
+**Bundle the jumpers rather than running loose leads.** Individual Dupont
 connections back off under vibration, and this is a machine whose normal failure
-mode is falling over. Either crimp the three wires into one 5-pin housing, or
-run separate leads and lock them with heat shrink and a dab of hot glue at each
-end. Note the header is symmetric about its centre pin, so a reversed plug still
-lands 5 V on 5 V while swapping the signal and ground positions — a keyed
-housing removes that class of mistake.
+mode is falling over. Crimp them into one 5-pin housing, or lock separate leads
+with heat shrink and a dab of hot glue at each end.
+
+**A reversed plug is survivable but not free.** VCC sits on the centre pin of
+five, so it lands correctly either way and there is no reverse-polarity event —
+and the board carries reverse voltage protection to −15 V regardless. What does
+happen is that both TXD pins get shorted to ground: the TM151's on pin 2 and the
+Pi's on pin 8 if it is wired. Both are current-limited outputs and normally
+survive, but "probably got away with it" is a poor substitute for a keyed
+housing.
 
 ### Order 2 — [PiShop.ca](https://www.pishop.ca) (Waterloo, ships domestic)
 
@@ -566,7 +597,7 @@ tethered rig where the bus is free.
 **The AHRS is the opposite case and should run fast.** It free-runs and pushes
 — no request, no response, no contention, its own UART, its own thread. 200 Hz
 (or 400) costs the control loop nothing; the only cost is baud (see
-`hw/ahrs.py`: 200 Hz needs 230400).
+`hw/ahrs.py`: 200 Hz needs 460800).
 
 **`latency_timer=1` is mandatory.** The `ftdi_sio` default is 16 ms, which
 makes any loop above ~30 Hz impossible and is a notorious silent failure. Set
@@ -815,8 +846,11 @@ a fresh anchor.
   independent encoder written from the C struct offsets.
 
   **Set the AHRS baud before power-on:** a Combo frame is 68 + 5 = 73 bytes,
-  so 200 Hz needs ~146 kbps. **115200 will not keep up** — use 230400, or
-  460800 if you want 400 Hz.
+  so 200 Hz needs ~146 kbps. **115200 will not keep up.** 230400 carries it
+  arithmetically but at 63% sustained utilization with no flow control, and the
+  datasheet (V1.1.6) recommends **460800 for 200 Hz** and 921600/1M for 400 Hz.
+  Following the vendor; a dropped frame is a stale attitude in the balance loop
+  and the higher rate costs nothing but a config field.
 - **Front-wheel liftoff is a blind spot.** The lateral estimator assumes the
   front wheel is on the ground. Under hard acceleration or braking it may not
   be, and nothing onboard detects it. Candidate proxies: a large pitch-rate
@@ -920,9 +954,17 @@ Without it `_try_realtime()` warns and continues at normal priority.
   (drive A, drive B, steer) and baud to **3 Mbps** on all three. Everything
   else — operating mode, Return Delay Time, indirect blocks — `ServoBus.open()`
   sets on every startup, so it is not part of this step.
-- **TM151**, via ImuAssistant: output **230400 baud** (115200 cannot carry
-  200 Hz Combo frames — see `hw/ahrs.py`), output rate 200 Hz, and enable the
-  `Ep_Combo` message.
+- **TM151**, via ImuAssistant: output **460800 baud** (the datasheet's
+  recommendation for 200 Hz ODR; 115200 cannot carry 200 Hz Combo frames at all
+  — see `hw/ahrs.py`), output rate 200 Hz, and enable the `Ep_Combo` message.
+  Also set **Auto boot mode**: the datasheet gives cold start as **3.2 s** on
+  auto boot against **10–30 s on static boot, and static is the factory
+  default**. That 30 s is long enough to look like a dead sensor during
+  bring-up, and it delays every power-on once the systemd unit exists.
+
+  This configuration is stored in the unit and survives power cycles — which is
+  what lets the Pi's TX line stay optional. It is also why a factory reset means
+  a USB trip, not a field fix.
 
 ### 4. Sync the code
 

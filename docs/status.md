@@ -263,8 +263,11 @@ the current intent.
    balance.
 8. **Bench: loop timing** at 1/2/3 Mbps with `latency_timer` 16 vs 1. Gate:
    p99 tick jitter < 1 ms at 100 Hz.
-9. **Bench: AHRS** at 230400 baud (115200 will not carry 200 Hz Combo frames),
-   quaternion against known orientations, age-of-data at the tick.
+9. **Bench: AHRS** at 460800 baud (the datasheet's recommendation for 200 Hz;
+   115200 will not carry 200 Hz Combo frames at all), quaternion against known
+   orientations, age-of-data at the tick. Expect no data for the first ~3 s
+   after power-on — and ~30 s if the unit is still on its factory static-boot
+   default.
 10. **Failsafes, deliberately triggered** — WiFi kill, pack below LVC, bike
     laid on its side.
 
