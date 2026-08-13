@@ -14,7 +14,9 @@ policy balances and drives the bike from a live (velocity vector, heading)
 command, and the analytic LQR stack exists alongside it as a reference
 baseline. The onboard software path is built and proven in sim — the hardware
 shim, the deploy bundle, the odometry estimator, the AHRS protocol — with no
-hardware to run it on yet. Parts are ordered. The two open engineering
+hardware to run it on yet. The tethered rig's parts are on hand (servos, U2D2,
+TM151, 12 V brick); the untethered electronics are specced and sourced but not
+ordered — see `docs/plans/untethered-setup.md#sourcing`. The two open engineering
 questions are **the contact model**, which is currently the least-known
 parameter in the sim and the one the policy is not randomized over, and **the
 self-righting mechanism**, which has a recommended design (a mirrored wing pair

@@ -53,7 +53,7 @@ placed deliberately. It works out with no hub:
 | device | connection |
 |---|---|
 | U2D2 | the single micro-USB OTG port (FTDI, `ftdi_sio`) |
-| TM151 AHRS | **GPIO UART0** (pins 8/10) — TTL 3.3 V compatible, no level shifter |
+| TM151 AHRS | **GPIO UART0** (RX only, pin 10) — TTL 3.3 V compatible, no level shifter. See *TM151 wiring* under Sourcing |
 | Teleop | WiFi (onboard). The gamepad plugs into the *laptop*, not the bike |
 
 The TM151's USB-C virtual COM port is an alternative, not a requirement — the
@@ -125,12 +125,16 @@ port. Basic soldering, through-hole only, no PCBA.
 | 5 V rail | Pololu D24V22F5 (5 V 2.5 A, 21×16 mm); D24V10F5 also sufficient | 16 |
 | Bulk caps | 470 µF 25 V low-ESR + 1000 µF | 5 |
 | Distribution | perfboard, 3× B3B-EH-A, XT30 pigtails, 20 AWG silicone | 20 |
-| Safety | inline main switch + 5 A fuse, cutting **servo** power independent of the Pi | 12 |
+| Safety | inline main switch + fuse, cutting **servo** power independent of the Pi | 12 |
 | Cabling | micro-USB OTG adapter, TM151 UART pigtail | 16 |
 | | **total** | **~190** |
 
 Already owned: U2D2, TM151, 3 servos. Gamepad is laptop-side — use whatever is
 on hand.
+
+*Substitutions and exact part numbers are in **Sourcing** below — notably a
+Traco TSR 2-2450 in place of the Pololu buck, which Digi-Key Canada does not
+appear to carry.*
 
 **Not buying, and why:** U2D2 Power Hub (bulky, replaced by the perfboard);
 OpenRB-150 (would force a C++ rewrite); RC transmitter/receiver (WiFi carries
@@ -139,6 +143,247 @@ a richer command set — see below); any custom PCB.
 Against the <$100 stretch target: the core electronics is ~$75 (Pi + SD + buck
 + connectors + safety). The remaining ~$115 is packs and a charger — reusable
 consumables, and free if a charger is already on hand.
+
+## Sourcing — three orders, shipping to Canada
+
+The table above is the design intent. This section is the orderable form of it,
+with a few substitutions where the intended part is not available from a
+Canadian-friendly supplier.
+
+**It is written as a complete from-scratch build**, assuming nothing on hand
+beyond the tethered rig listed above. Consumables like wire, heat shrink and
+solder are included for that reason, as is a charger — skip whatever the bench
+already has. The point is that this list still works for someone rebuilding the
+bike somewhere else.
+
+**Why three and not one.** The split is forced by the LiPos: they are UN3480
+hazmat, ground-only, and Digi-Key does not sell hobby packs or balance chargers
+at all. Buying them domestically also sidesteps the cross-border shipping
+restriction entirely. The Pi is a second forced split — `SC0721` on digikey.ca
+was out of stock at time of writing (0 units, with a nonsense Jun-2027 restock
+date) and Digi-Key's listing is the headerless board regardless.
+
+### Order 1 — [Digi-Key Canada](https://www.digikey.ca)
+
+CAD pricing, DDP, so no brokerage surprise at the door.
+
+| what | mfr PN | qty | purpose | link |
+|---|---|---|---|---|
+| 5 V regulator | Traco **TSR 2-2450** | 2 | 3S bus → 5 V for the Pi, into GPIO pins 2/4. 1 in use, 1 spare: its failure bricks the bike | [detail](https://www.digikey.ca/en/products/detail/traco-power/TSR-2-2450/9383726) |
+| Buck input cap | Panasonic **EEU-FR1E471** | 2 | 470 µF at the regulator input. **Not** for regulator stability — the Traco needs no external caps — but to ride out pack sag from motor transients. Holds the Pi ~16 ms above the 6.5 V dropout | [detail](https://www.digikey.ca/en/products/detail/panasonic-industry/EEU-FR1E471/2433553) |
+| Servo rail cap | Panasonic **EEU-FR1E102** | 2 | 1000 µF across the servo rail, damping the transient at its source rather than riding it out downstream. The pair is deliberate, not redundant: different nodes, different jobs | [search](https://www.digikey.ca/en/products/result?keywords=EEU-FR1E102) |
+| Board header | JST **B3B-EH-A** | 5 | The 3 parallel VDD/GND/DATA taps on the splitter board. 3 in use; spares because one always dies in a desolder | [search](https://www.digikey.ca/en/products/result?keywords=B3B-EH-A) |
+| Perfboard | 2.54 mm through-hole, ≥50×50 mm | 1 | Cut to ~25×25 mm; the Power Hub replacement | [search](https://www.digikey.ca/en/products/result?keywords=perfboard%20prototype%20board) |
+| Main switch | SPST, DC-rated ≥10 A @ 12 VDC | 1 | Failsafe 4 — kills servo power independent of the Pi | [search](https://www.digikey.ca/en/products/result?keywords=toggle%20switch%20SPST%2012VDC) |
+| Fuse holder + fuses | inline blade holder, **7.5 A** blade | 1 + 5 | Protects the 20 AWG trunk against a short or a jammed drivetrain | [search](https://www.digikey.ca/en/products/result?keywords=inline%20blade%20fuse%20holder) |
+| Trunk wire | 20 AWG silicone, red/black | ~2 m | Pack → switch → fuse → splitter board | [search](https://www.digikey.ca/en/products/result?keywords=20%20AWG%20silicone%20hook%20up%20wire) |
+| Pigtail wire | 22 AWG silicone, 3 colours | ~2 m | Servo drops and the U2D2 TTL pigtail — see the gauge note below | [search](https://www.digikey.ca/en/products/result?keywords=22%20AWG%20silicone%20hook%20up%20wire) |
+| Heat shrink | assortment, 2–8 mm | 1 | Every joint in the list above | [search](https://www.digikey.ca/en/products/result?keywords=heat%20shrink%20tubing%20assortment) |
+| Barrel jack pigtail | female **5.5 × 2.5 mm**, flying leads | 2 | Adapts the 12 V brick to an XT30/XT60. One makes the bench-power lead (below) — which is what lets bring-up start before the packs arrive; the second is the charger's DC input, if that route is taken | [search](https://www.digikey.ca/en/products/result?keywords=dc%20power%20jack%20pigtail%202.5mm) |
+| GPIO jumper leads | female–female Dupont, 2.54 mm | 1 pk | Mates the TM151's 5-pin male header to the Pi's male GPIO pins, and lands the buck's 5 V on pins 2/4. See the TM151 wiring note below | [search](https://www.digikey.ca/en/products/result?keywords=jumper%20wire%20female%20to%20female%202.54mm) |
+
+Optional, and only if the corresponding decision goes that way:
+
+| what | mfr PN | qty | purpose | link |
+|---|---|---|---|---|
+| Schottky | **1N5822** (3 A, 40 V) | 3 | ~0.4 V drop ahead of the steer servo, *if* the XC330 ever misbehaves near full charge. That call is **decided as accept-it** — these are bin insurance so the fix needs no second order | [search](https://www.digikey.ca/en/products/result?keywords=1N5822) |
+
+### What is deliberately *not* in that list
+
+**JST crimp contacts and housings — the servos already ship with EH cables.**
+An earlier draft had `EHR-3` housings and 50× `SEH-001T-P0.6` contacts for
+building servo cables. That is work that does not need doing: every XC430 and
+XC330 comes with a 3-pin JST-EH cable, and those plug straight into the
+`B3B-EH-A` headers on the splitter board. Only two things would change that —
+stock cables too short for the as-built routing, or wanting the U2D2 pigtail
+terminated in a connector rather than soldered. **Neither is known yet, so do
+not buy for them.** And if it does come up, note that `SEH-001T-P0.6` needs a
+real JST crimp tool; hand-crimping these with generic pliers produces
+intermittent joints on the one bus every servo shares. Buying a pre-made
+Dynamixel extension cable beats crimping.
+
+**No second buck for the AHRS.** The TM151 runs off the Pi's own 5 V/3.3 V pins
+and its UART is 3.3 V TTL — no level shifter, no separate supply.
+
+**No USB hub.** The port budget (above) exists precisely so there is nothing to
+buy here.
+
+### Notes on the choices above
+
+**`SEH-001T-P0.6` is rated 22–26 AWG and will not crimp 20 AWG** — which is
+part of why the wire plan splits by run: 20 AWG silicone for the pack→board
+trunk, **22 AWG for the servo drops**. 22 AWG carries 1.4 A per servo with room
+to spare. Check Digi-Key's silicone-jacket stock at both gauges before counting
+on it; silicone wire is a staple at any hobby shop if the selection is thin.
+
+**7.5 A fuse, not the 5 A in the table above.** Peak draw is ~4 A (see
+*Budget*), and a 5 A fast-blow sits close enough to that to nuisance-trip on a
+three-servo stall transient. 7.5 A still protects 20 AWG, whose chassis rating
+is ~11 A.
+
+**The switch must be DC-rated.** Many panel rockers are specified for AC only;
+on a 12 V inductive DC load their contacts arc and can weld closed — which
+defeats the entire point of a failsafe that cuts servo power independent of the
+Pi. Filter on a DC current rating, not just amps.
+
+**Feeding 5 V into GPIO pins 2/4 bypasses the Pi's input protection.** That is
+the normal way to power a Zero from a buck and it is what frees the micro-USB
+OTG port for the U2D2 — but it means the regulator's output is the only thing
+between the pack and the SoC. It is a reason to fit the 470 µF and to bench the
+rail before the Pi is ever connected to it.
+
+**TM151 wiring — three wires, not five.** The unit breaks out a 5-pin 2.54 mm
+header, **GND GND 5V TX RX in that order**. Both it and the Pi's GPIO are male
+2.54 mm pins, so female–female jumper leads mate at both ends with nothing else
+to buy.
+
+| TM151 | → | Pi | note |
+|---|---|---|---|
+| GND | | pin 6 (GND) | one of the two GNDs is enough |
+| 5V | | pin 2 or 4 (5V) | same rail the buck feeds; TM151 draws tens of mA |
+| TX | | **pin 10 (RXD)** | the crossover — AHRS out to Pi in |
+| RX | | *leave open* | see below |
+| GND | | *leave open* | |
+
+**Leave the Pi's TX line disconnected.** The AHRS free-runs and pushes (see
+*Loop rate*) — the Pi never transmits to it, and baud/rate/message config is
+done over USB with ImuAssistant in *One-time device configuration*, not over
+this link. So the return wire has no runtime purpose, and omitting it removes
+the only path by which a 5 V logic output could reach a 3.3 V-only GPIO input.
+
+That risk is the reason to care. The port budget above asserts the TM151's UART
+is 3.3 V TTL and needs no level shifter; the unit is powered from 5 V, so
+**meter TX against GND before landing it on pin 10** — 5 V on a Pi GPIO damages
+the SoC and there is no protection in between. Three wires and a ten-second
+check is the whole mitigation.
+
+**Bundle the jumpers rather than running five loose leads.** Individual Dupont
+connections back off under vibration, and this is a machine whose normal failure
+mode is falling over. Either crimp the three wires into one 5-pin housing, or
+run separate leads and lock them with heat shrink and a dab of hot glue at each
+end. Note the header is symmetric about its centre pin, so a reversed plug still
+lands 5 V on 5 V while swapping the signal and ground positions — a keyed
+housing removes that class of mistake.
+
+### Order 2 — [PiShop.ca](https://www.pishop.ca) (Waterloo, ships domestic)
+
+- [Raspberry Pi Zero 2 W with header](https://www.pishop.ca/product/raspberry-pi-zero-2-w-with-header/) (SC0721)
+- 2× 32 GB A1 microSD — the second is the recovery path for the
+  `/boot/firmware` UART edits in *Pi setup*, which are easy to get wrong once
+- micro-USB **OTG** adapter for the U2D2 — must be OTG, not a charge-only cable
+
+If Digi-Key restocks the Pi before ordering, the headerless `SC0721` is fine
+and collapses this into order 1: only pins 6/8/10 (GND/TXD/RXD) are used, so
+"WH" buys convenience on 37 pins that do nothing in this design.
+
+### Order 3 — Canadian hobby shop
+
+[EpicFPV](https://epicfpv.ca) (Calgary) and [DroneDynamics.ca](https://dronedynamics.ca)
+both stock the charger; any domestic RC shop works.
+
+- 2× **3S 1300–1500 mAh** LiPo
+- **ISDT Q6 Nano** or **SkyRC B6neo** — but see the AC note below
+- LiPo charging bag
+- **XT30 and XT60 matched pairs, both** — see below
+- JST-XH balance extension
+- 20 AWG / 22 AWG silicone wire, if Digi-Key's selection is thin
+
+### XT30 vs XT60 — buy both, decide when the packs arrive
+
+Many 1300 mAh 3S packs ship XT60 rather than the XT30 assumed above. Both are
+the same Amass design at different sizes; they do not intermate.
+
+| | XT30 | XT60 |
+|---|---|---|
+| rated | 30 A | 60 A |
+| peak draw here | 4 A | 4 A |
+| pair mass | ~2 g | ~6 g |
+| footprint | small | roughly double |
+
+**Electrically the choice is meaningless** — XT30 is already ~7× overrated for
+this bike. It comes down to the requirements line at the top of this document,
+*size over weight*, which XT30 wins; against XT30's smaller, closer solder pads,
+which are fussier to get clean than XT60's.
+
+There is nothing to commit to now, because the bike-side connector is a pigtail
+soldered to the splitter board — the last joint made, and five minutes to redo.
+So buy pairs of **both** and solder whichever matches the packs. Prefer XT30 if
+both are available.
+
+**Buy matched pairs, not singles.** Male/female labelling on XT connectors is
+genuinely inconsistent between vendors — listings disagree about which half
+belongs on the battery, and the same physical part is called both. A pair costs
+about what a single does and guarantees the mating half whatever the packs turn
+up with.
+
+**Do not use an XT30↔XT60 adapter**, though they are sold everywhere. It adds a
+junction to the single path carrying all servo current, plus bulk and ~10 g
+exactly where the pack should sit flush, and buys nothing that five minutes with
+an iron does not.
+
+### Bench power — the same bike, tethered
+
+Nothing about the design requires the pack. Build a **female 5.5 × 2.5 mm barrel
+socket → pack-side XT30/XT60** adapter and the 12 V brick impersonates a battery
+at the bike's one power input. Same splitter board, same buck, same switch and
+fuse, same code — the bike cannot tell the difference.
+
+This is worth building first, because **it decouples order 3 from getting
+started.** Verification steps 1 and 2 (loop timing and jitter at 1/2/3 Mbps;
+AHRS on the GPIO UART) need no battery at all, so Digi-Key and PiShop can be
+ordered now and bring-up can begin while the packs and charger are still
+undecided.
+
+It also happens to be electrically kind: 12.0 V is dead-on the XC330's ceiling,
+so the over-voltage question does not arise on the bench at all.
+
+Three things to respect:
+
+- **Polarity, metered, before first plug-in.** Centre-positive to XT30-positive.
+  Reversed, this feeds the servos and the buck backwards, and neither has
+  reverse-polarity protection. Label the finished adapter on both ends.
+- **5 A is a real ceiling here.** The peak budget is ~4 A, so wheels-clear
+  bench work has margin but a three-servo stall does not. Expect the brick to
+  fold back or trip rather than sag gracefully, which shows up as a Pi reboot
+  mid-test. Do not read a brownout on the brick as a fault in the bike, and do
+  not do stall or hard-acceleration testing on it.
+- **The brick masks the LVC failsafe.** At 12 V the address-144 cutoff can
+  never fire, so *Verification* step 5's low-voltage test still needs a real
+  pack — or a variable bench supply, if one is worth buying later.
+
+The bike having exactly one power input is what makes this safe: the pack and
+the brick are physically exclusive, so there is no way to have both sources
+fighting on the rail.
+
+### Powering the charger from the existing Dynamixel brick
+
+Both candidate chargers are **DC-input only** — no AC brick in the box. The
+[ROBOTIS SMPS 12V 5A](https://en.robotis.com/shop_en/item.php?it_id=903-0126-000)
+already on the bench is the obvious donor:
+
+| | |
+|---|---|
+| brick output | 12 V 5 A (60 W), **5.5 mm OD × 2.5 mm ID barrel, centre-positive** |
+| Q6 Nano input | DC 10–30 V, via **XT60** |
+| B6neo input | DC 10–28 V via XT60, or USB-C PD 12–20 V |
+
+So 12 V sits inside both windows, and 60 W is far more than the ~16 W a 1 C
+charge of a 1300 mAh 3S needs. **The adapter is barrel-jack-female → XT60-male**
+— either the Digi-Key pigtail listed above with an XT60 soldered on, or the
+ready-made "DC 5.5×2.5 to XT60 charge lead" most hobby shops stock, which is
+the easier buy.
+
+Two things to get right:
+- **2.5 mm ID, not 2.1 mm.** The 2.1 mm jack is far more common and the
+  ROBOTIS plug will not seat in it.
+- **Verify polarity with a meter before plugging in a charger.** Centre-positive
+  is the ROBOTIS convention and is what the barrel marking says, but reverse
+  polarity into a charger's DC input is an instant kill and the check costs
+  ten seconds.
+
+The alternative that removes this entirely is the **SkyRC B6ACneo** — same
+charger with mains input built in (60 W AC / 200 W DC). It costs a little more
+and needs no adapter, no barrel pigtail, and no polarity check.
 
 ## Mass and CoM
 
@@ -592,8 +837,14 @@ a fresh anchor.
   `python -m aow_sim.optimize_flick --name flick_untethered` when the as-built
   mass is known; regenerating them against estimated mass would just be work
   thrown away twice.
-- **XC330 over-voltage near full charge** (above) — pick one of the three
-  mitigations at build time.
+- ~~**XC330 over-voltage near full charge.**~~ **Decided: accept it.** A fresh
+  3S at 12.6 V is 5% over the XC330's 12.0 V datasheet ceiling, for the first
+  minutes of a pack's discharge only. Judged not worth a hardware mitigation.
+  Two cheap outs remain if a servo ever misbehaves near full charge: set the
+  charger to 4.10 V/cell, which tops out at 12.3 V for ~5% of capacity and no
+  hardware at all; or fit one of the 1N5822s in the steer servo's VDD line for
+  a ~0.4 V drop. The diodes are in the Digi-Key order as insurance and are
+  expected to stay in the parts bin.
 - **As-built payload mass and position** — the numbers above are estimates;
   weigh and measure at assembly, then re-run `python -m aow_sim.export_deploy`.
 - **Servo IDs** — `hw/dynamixel.py` assumes drive_a=1, drive_b=2, steer=3. Set
