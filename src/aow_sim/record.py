@@ -30,6 +30,7 @@ and draws the phase instead of the stick gates.
 from __future__ import annotations
 
 import argparse
+import copy
 from pathlib import Path
 
 import mujoco
@@ -43,7 +44,8 @@ except ImportError as e:            # fail at import, not 15 s into a render
         "    pip install -e '.[viz]'   (or: pip install imageio imageio-ffmpeg)"
     ) from e
 
-from .build_model import build_model, load_params
+from .build_model import (FLOOR_GRID_M, build_model, load_params,
+                          tune_lighting)
 from .control import DriveController
 from .control import gamepad as gp
 from .control.linearize import design_all, settle_upright
@@ -54,7 +56,7 @@ from .run_drive import (_LEAD_MAX, _TRAIL, _TURN_RATE, _command_ref,
 
 # Scripts that own their own controller and start from a non-upright pose, so
 # the gamepad/command machinery below does not apply to them.
-_SEQUENCES = {"right"}
+_SEQUENCES = {"right", "demo"}
 
 # (t [s], label, fn(controller, psi0)) -- applied once when the clock passes t.
 _SCRIPTS = {
@@ -208,7 +210,11 @@ def _hud(frame, seg, pen_down, v_max, crab_max):
 # +X from behind, which is the roll plane -- the only view a righting stroke
 # reads in at all. -22 rather than level: a near-level camera spends the top
 # third of the frame on empty sky, and this all happens near the floor.
-_CAM_PRESETS = {"rear": (-22.0, 180.0), "front": (-22.0, 0.0)}
+# `corner` is the one to use when a run has BOTH a pitch event and a roll
+# event: a pure rear view flattens the wheelie (it happens straight down the
+# camera axis) and a side view flattens the righting. 135 deg splits them.
+_CAM_PRESETS = {"rear": (-22.0, 180.0), "front": (-22.0, 0.0),
+                "side": (-12.0, 90.0), "corner": (-18.0, 135.0)}
 
 
 def _camera(model, mode: str, distance: float, elevation: float,
@@ -236,10 +242,52 @@ def _camera(model, mode: str, distance: float, elevation: float,
 
 
 _INVERT_SETTLE_S = 3.0     # let it roll off the roof before deploying
+_LOOPOUT_AT_S = 3.0        # balance and get to speed first
+_LOOPOUT_SPEED = -1.2      # reverse at v_max; the snap is what loops it
+# The loop-out needs a policy that does NOT penalise pitch. `general_rl` (the
+# current export) rides the 180 out and stays upright; the older exports flip.
+# Measured min chassis up_z on reverse+180: general_rl +0.96 (no flip),
+# general_rl_1k -0.99 and general_rl_smooth_diff_og -0.98 (fully inverted),
+# general_rl_og / _prev / _smooth_og about -0.35 (over, but not onto the back).
+_LOOPOUT_MOVE = "general_rl_1k"
+_DRIVE_AWAY = 0.6          # m/s forward once it is up and stowing
+# Start yaw. Driving down a checker line makes the grid useless as a motion
+# reference -- the squares slide along themselves and the bike reads as static.
+# An off-axis heading cuts across the squares so translation is unmistakable.
+_START_YAW_DEG = 25.0
+# Slow weave on the COMMANDED heading, so the drive is visibly a drive and not
+# a rail. Amplitude is well inside the policy's tracking envelope and the
+# period is long enough that it never fights the balance loop.
+_WEAVE_DEG = 12.0
+_WEAVE_PERIOD_S = 3.5
+# Rendered floor for the demo only. A MuJoCo plane is INFINITE for collision --
+# `sim.floor_size` sets what gets DRAWN -- so at 3.0 m the bike reversing at
+# 1.2 m/s for 3 s ran off the visible grid and appeared to drive into the void
+# while still, physically, on the ground. Bigger plane, identical physics.
+#
+# 12 m, not 8: the run reverses ~3.8 m into the loop-out and then drives ~3.9 m
+# away from where it landed, so 8 m left only 0.4 m of margin at the end of a
+# 15 s take and none at all for a longer one.
+_DEMO_FLOOR = 12.0
+# Let it stop moving before the mechanism engages. 3.0 was arbitrary; measured
+# floor is 0.75 s, and it does not fail gracefully below that -- at 0.25-0.50 s
+# the wings jam against a bike that is still rolling, the servo SATURATES at
+# 0.800 N.m and it ends stuck at -107 deg. 1.0 s recovers with the peak down at
+# 0.508 N.m. "Deploy as it falls" is therefore not available; deploy as soon as
+# it has stopped is.
+_WHEELIE_SETTLE_S = 1.0
+# "balance" is only a HAND-OFF when the sequencer had to engage the policy
+# itself. When it adopted a controller that never stopped driving, nothing
+# changes hands at that instant -- the wings simply stop lifting and hold
+# position while the bike stabilises. Calling that a hand-off is a leftover
+# from the older flow and misreads the run.
+_PHASE_LABEL_HELD = {"balance": "UPRIGHT"}
 _PHASE_LABEL = {"lift": "DEPLOY", "balance": "HAND-OFF", "retract": "RETRACT",
+                "driving": "REVERSING", "wheelie": "LOOP-OUT", "down": "DOWN",
                 "inverted": "ON ITS BACK", "fallen": "FALLEN"}
 _PHASE_RGB = {"fallen": (200, 60, 50), "inverted": (150, 40, 130),
-              "lift": (230, 150, 40),
+              "driving": (40, 150, 70), "wheelie": (200, 60, 50),
+              "down": (150, 40, 130), "lift": (230, 150, 40),
               "balance": (40, 150, 70), "retract": (60, 110, 200)}
 
 
@@ -252,7 +300,7 @@ def _phase_hud(frame, info):
     XC330 has to be in extended-position (multi-turn) mode."""
     if info is None:
         return frame
-    phase, roll, mech_deg, turns = info
+    phase, label, roll, mech_deg, turns = info
     h = frame.shape[0]
     r = max(14, h // 16)
     cx, cy = r + 12, h - r - 30
@@ -263,8 +311,7 @@ def _phase_hud(frame, info):
         im = Image.fromarray(frame)
         dr = ImageDraw.Draw(im)
         ink = (20, 20, 20)
-        dr.text((cx + r + 12, cy - 14),
-                _PHASE_LABEL.get(phase, phase.upper()), fill=ink)
+        dr.text((cx + r + 12, cy - 14), label, fill=ink)
         dr.text((cx + r + 12, cy - 1), f"roll {roll:+6.1f}°", fill=ink)
         dr.text((cx + r + 12, cy + 12),
                 f"mech {mech_deg:+6.1f}°   servo {turns:4.2f} turns"
@@ -323,7 +370,7 @@ def _record_righting(params, general: str | None, wings: bool, fps: int,
     every = max(1, int(round(1.0 / fps / model.opt.timestep)))
     states, marks, phase = [], [], "inverted" if inverted else "fallen"
     if inverted:
-        marks.append((0, _PHASE_LABEL.get(phase, phase)))
+        marks.append((0, _phase_label(phase, seq)))
     hold = int(round((_INVERT_SETTLE_S if inverted else 0.0)
                      / model.opt.timestep))
     for i in range(int(round(seconds / model.opt.timestep))):
@@ -339,30 +386,171 @@ def _record_righting(params, general: str | None, wings: bool, fps: int,
         # its constructed one -- don't let that register as a transition.
         if i >= hold and seq.phase != phase:
             phase = seq.phase
-            marks.append((len(states), _PHASE_LABEL.get(phase, phase)))
-            print(f"  t={data.time:5.2f}s  {_PHASE_LABEL.get(phase, phase)}"
+            marks.append((len(states), _phase_label(phase, seq)))
+            print(f"  t={data.time:5.2f}s  {_phase_label(phase, seq)}"
                   f"  roll {roll:+.1f} deg  servo {seq.servo_turns:.2f} turns")
         if len(states) * every <= int(data.time / model.opt.timestep):
             # The mechanism has no drive command until hand-off, so the ground
             # dial is suppressed (cmd=None) until there is one to draw.
             cmd = _command_ref(seq.ctrl, data) if seq.ctrl is not None else None
             states.append((data.qpos.copy(), data.qvel.copy(), cmd, False,
-                           (phase, roll, np.degrees(seq.cmd), seq.servo_turns)))
+                           (phase, _phase_label(phase, seq), roll,
+                            np.degrees(seq.cmd), seq.servo_turns)))
     return model, data, seq.ctrl, states, marks
+
+
+
+def _phase_label(phase: str, seq) -> str:
+    """Screen label for a sequencer phase, given how that run is wired."""
+    if getattr(seq, "keep_policy", False) and phase in _PHASE_LABEL_HELD:
+        return _PHASE_LABEL_HELD[phase]
+    return _PHASE_LABEL.get(phase, phase)
+
+
+def _weave(psi: float, t: float) -> float:
+    """A commanded heading with a slow sinusoidal weave added.
+
+    Purely presentational: a bike holding a dead-straight line reads as a
+    static object being slid across the floor, and the checker makes that more
+    obvious, not less. The weave stays inside the policy's tracking envelope so
+    it costs nothing in behaviour."""
+    return psi + np.deg2rad(_WEAVE_DEG) * np.sin(2 * np.pi * t / _WEAVE_PERIOD_S)
+
+
+def _record_demo(params, general: str | None, wings: bool, fps: int,
+                 seconds: float, retract_after: float):
+    """PASS 1 for `--script demo`: balance, loop out on a wheelie, then recover.
+
+    The whole point is that the crash is SELF-INFLICTED and continuous with the
+    recovery -- one run, no teleporting into a fallen pose. Saturating both
+    drive actuators from a standstill pitches the bike back past vertical
+    (chassis up-vector reaches -0.14) and it comes down on its side, which is
+    where the mechanism has leverage.
+
+    The drive override is written AFTER the controller steps, because the
+    policy owns `data.ctrl` and would otherwise stamp on it."""
+    params = copy.deepcopy(params)
+    params["sim"]["floor_size"] = max(params["sim"]["floor_size"], _DEMO_FLOOR)
+    model = build_model(params, variant="full", righting=True, wings=wings)
+    design = design_all(params, build_model(params))
+    data = mujoco.MjData(model)
+    data.qpos[:] = settle_upright(model).qpos
+    # Roll nudge off the unstable equilibrium, then yaw off the grid axis.
+    qr = np.array([np.cos(np.deg2rad(0.5) / 2), np.sin(np.deg2rad(0.5) / 2), 0, 0])
+    y = np.deg2rad(_START_YAW_DEG) / 2
+    qy = np.array([np.cos(y), 0.0, 0.0, np.sin(y)])
+    q = np.empty(4)
+    mujoco.mju_mulQuat(q, qy, qr)
+    data.qpos[3:7] = q
+    mujoco.mj_forward(model, data)
+    move = general or _LOOPOUT_MOVE
+
+    ctrl = DriveController(params, model, design=design)
+    ctrl.reset(model, data)
+    ctrl.engage_general(data, name=move)
+    psi0 = ctrl._psi
+    ctrl.set_command_polar(_LOOPOUT_SPEED, 0.0, psi_cmd=_weave(psi0, 0.0))
+
+    seq = RightingSequencer(params, model, wings=wings,
+                            direction=1.0 if wings else None,
+                            retract_after=retract_after, move=move,
+                            design=design)
+    # Nothing ever switches the policy off in this run -- it drives into the
+    # loop-out, keeps running while the bike is on its side, and is still the
+    # same controller when the wings hand back to it. The only thing that
+    # changes at the crash is the COMMAND.
+    seq.adopt(ctrl)
+    seq.reset(model, data)
+
+    every = max(1, int(round(1.0 / fps / model.opt.timestep)))
+    states, marks = [], []
+    phase, t_down, commanded_fwd, psi_away = "driving", None, False, 0.0
+    for i in range(int(round(seconds / model.opt.timestep))):
+        roll, _ = roll_pitch(data.qpos[3:7])
+        up_z = float(data.body("chassis").xmat.reshape(3, 3)[2, 2])
+        new = phase
+        # ONE command law from the crash to the end of the run: drive forward,
+        # weaving, about the heading it had when it went down. Nothing steps it
+        # again -- not the hand-off, not the retract. The bike is asked for the
+        # same thing while it is on its side, while the wings lift it, and once
+        # it is rolling; only its ability to deliver changes.
+        if commanded_fwd:
+            ctrl.set_command_polar(_DRIVE_AWAY, 0.0,
+                                   psi_cmd=_weave(psi_away, data.time))
+        if phase in ("driving", "wheelie"):
+            # The policy drives THROUGHOUT the loop-out -- it is not overridden
+            # and not cheated. Reversing at v_max and then commanding a 180
+            # heading is a real teleop input; on a policy that never learned to
+            # protect its pitch, the rear wheel walks under the bike and throws
+            # it over backwards. That is the whole point of using an older
+            # export here.
+            if phase == "driving":
+                ctrl.set_command_polar(_LOOPOUT_SPEED, 0.0,
+                                       psi_cmd=_weave(psi0, data.time))
+            ctrl.step(model, data)
+            data.ctrl[seq.aid] = seq.cmd          # wings stay stowed
+            if data.time >= _LOOPOUT_AT_S and phase == "driving":
+                new = "wheelie"
+                ctrl.set_command_polar(_LOOPOUT_SPEED, 0.0,
+                                       psi_cmd=psi0 + np.pi)
+            if phase == "wheelie" and up_z < 0.5:
+                new, t_down = "down", data.time   # committed; stop driving
+        elif phase == "down":
+            # Policy still live, just told to drive forward instead of
+            # whatever it was doing. On its side the rear wheel is not under
+            # the CoM so it has almost no authority -- the point is that the
+            # bike is never handed to a dead controller and back.
+            if not commanded_fwd:
+                psi_away, commanded_fwd = ctrl._psi, True
+            ctrl.step(model, data)
+            data.ctrl[seq.aid] = seq.cmd
+            if data.time - t_down > _WHEELIE_SETTLE_S:
+                new = "lift"
+                seq.reset(model, data)            # re-aim from where it landed
+        else:
+            seq.step(model, data)
+            new = seq.phase
+            # Drive away the moment the wings start stowing, not after: the
+            # policy has already been holding it for `retract_after`, and
+            # overlapping the two is what "back on its wheels" should look
+            # like. The retract is unloaded, so it does not fight this.
+
+        mujoco.mj_step(model, data)
+        if new != phase:
+            phase = new
+            marks.append((len(states), _phase_label(phase, seq)))
+            print(f"  t={data.time:5.2f}s  {_phase_label(phase, seq)}"
+                  f"  roll {roll:+.1f} deg  up_z {up_z:+.2f}")
+        if len(states) * every <= int(data.time / model.opt.timestep):
+            live = seq.ctrl or ctrl
+            cmd = _command_ref(live, data) if live is not None else None
+            states.append((data.qpos.copy(), data.qvel.copy(), cmd, False,
+                           (phase, _phase_label(phase, seq), roll,
+                            np.degrees(seq.cmd), seq.servo_turns)))
+    return model, data, (seq.ctrl or ctrl), states, marks
 
 
 def record(script: str, general: str | None, analytic: bool, out: Path,
            width: int, height: int, fps: int, distance: float,
            elevation: float, azimuth: float, hockey: bool,
            camera: str = 'top', wings: bool = True, seconds: float = 12.0,
-           retract_after: float = 1.0, inverted: bool = False) -> dict:
+           retract_after: float = 1.0, inverted: bool = False,
+           grid: float | None = None) -> dict:
     params = load_params()
+    if grid:
+        params["sim"]["floor_grid_m"] = grid
     righting = script in _SEQUENCES
     if righting:
-        model, data, c, states, marks = _record_righting(
-            params, general, wings, fps, seconds, retract_after, inverted)
-        mode = ("wings" if wings else "arm") + ":" + (
-            general or params["control"].get("general_move", "general_rl"))
+        maker = _record_demo if script == "demo" else _record_righting
+        kw = {} if script == "demo" else {"inverted": inverted}
+        model, data, c, states, marks = maker(
+            params, general, wings, fps, seconds, retract_after, **kw)
+        # Report the policy actually used. `demo` defaults to a DIFFERENT
+        # export from every other script (it needs one that loops out), so
+        # re-deriving the name from config here quietly reported the wrong one.
+        default_move = (_LOOPOUT_MOVE if script == "demo"
+                        else params["control"].get("general_move", "general_rl"))
+        mode = ("wings" if wings else "arm") + ":" + (general or default_move)
         fell, v_max, crab_max, drawing = False, 1.2, 0.0, None
         return _render(model, data, c, states, marks, out, width, height, fps,
                        distance, elevation, azimuth, camera, v_max, crab_max,
@@ -455,10 +643,7 @@ def _render(model, data, c, states, marks, out: Path, width: int, height: int,
     span = float(max(np.ptp(xy[:, 0]), np.ptp(xy[:, 1]), 0.6))
     if camera == "top":
         distance = span * 1.35 + 0.9      # bike + trail + margin, always in frame
-    # Modest lift only: the earlier +0.6/+0.7 washed the floor to pure white.
-    model.vis.headlight.ambient[:] = 0.45
-    model.vis.headlight.diffuse[:] = 0.35
-    model.vis.headlight.specular[:] = 0.0   # kill the blown-out floor hotspot
+    tune_lighting(model)
     # The offscreen framebuffer is declared in the MJCF (default 640x480) and
     # Renderer refuses anything larger, so raise it to whatever was asked for.
     model.vis.global_.offwidth = max(width, model.vis.global_.offwidth)
@@ -470,7 +655,14 @@ def _render(model, data, c, states, marks, out: Path, width: int, height: int,
     # killer: 500 frames at 900x640x3 is ~880 MB, and the process just died
     # mid-render with no traceback. Only the contact-sheet tiles are kept.
     out.parent.mkdir(parents=True, exist_ok=True)
-    picks = [0] + [min(i + int(fps * 1.5), len(states) - 1) for i, _ in marks]
+    # Land each tile inside the phase it is labelled with. Sampling a fixed
+    # 1.5 s after every mark silently skipped short phases -- the wheelie is
+    # ~1.4 s and its tile came out already on the floor, labelled WHEELIE.
+    bounds = [i for i, _ in marks] + [len(states)]
+    picks = [0]
+    for k, (i, _) in enumerate(marks):
+        picks.append(min(i + int(fps * 0.6), max(i, bounds[k + 1] - 1),
+                         len(states) - 1))
     picks = sorted(set(p for p in picks if 0 <= p < len(states)))[:8]
     tiles = {}
     writer = imageio.get_writer(out, fps=fps, macro_block_size=1)
@@ -549,9 +741,10 @@ def main() -> None:
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--camera", default=None,
-                    choices=("top", "chase", "rear", "front"),
+                    choices=("top", "chase", "rear", "front", "side", "corner"),
                     help="top = fixed world view (shows translation); "
-                         "chase/rear/front = locked to the bike (shows "
+                         "corner = 3/4, the one that shows pitch AND roll; "
+                         "chase/rear/front/side = locked to the bike (shows "
                          "attitude). Default: top, or rear for --script right")
     ap.add_argument("--distance", type=float, default=3.0)
     # -89, not -65: a true plan view makes image-up = world +Y, so "moved
@@ -565,6 +758,10 @@ def main() -> None:
                          "mirrored wing pair")
     ap.add_argument("--seconds", type=float, default=12.0,
                     help="right: run length")
+    ap.add_argument("--grid", type=float, default=None, metavar="M",
+                    help="floor checker pitch in metres (default "
+                         f"{FLOOR_GRID_M}); display only, the squares double "
+                         "as a distance scale")
     ap.add_argument("--inverted", action="store_true",
                     help="start the `right` script UPSIDE DOWN, so the "
                          "recording covers the roof rolling it onto its side "
@@ -576,8 +773,13 @@ def main() -> None:
     righting = a.script in _SEQUENCES
     # A righting stroke is all attitude and no translation, so the plan view
     # that the drive scripts want shows nothing at all here.
-    camera = a.camera or ("rear" if righting else "top")
-    distance = a.distance if a.camera or not righting else 0.9
+    # `demo` pitches over AND rolls, so it wants the corner view and more room
+    # than a stationary righting stroke: the wheelie carries it a good way
+    # forward before it goes down.
+    camera = a.camera or ({"demo": "corner"}.get(a.script,
+                                                 "rear" if righting else "top"))
+    distance = (a.distance if a.camera or not righting
+                else 1.4 if a.script == "demo" else 0.9)
     tag = (("wings" if not a.arm else "arm") if righting else
            a.general or ("analytic" if a.analytic else "general"))
     out = a.out or Path("traces") / f"{a.script}_{tag}.mp4"
@@ -585,7 +787,7 @@ def main() -> None:
     print(record(a.script, a.general, a.analytic, out, a.width, a.height,
                  a.fps, distance, a.elevation, a.azimuth, a.hockey,
                  camera, not a.arm, a.seconds, a.retract_after,
-                 a.inverted))
+                 a.inverted, a.grid))
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ import argparse
 import mujoco
 import mujoco.viewer
 
-from .build_model import build_model, load_params
+from .build_model import build_model, load_params, tune_lighting
 
 
 def main() -> None:
@@ -22,6 +22,7 @@ def main() -> None:
     ap.add_argument("--training-wheels", action="store_true")
     args = ap.parse_args()
     model = build_model(load_params(args.params), args.variant, args.training_wheels)
+    tune_lighting(model)
     print(__doc__)
     mujoco.viewer.launch(model)
 

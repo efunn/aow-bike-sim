@@ -38,7 +38,7 @@ import copy
 import mujoco
 import numpy as np
 
-from .build_model import build_model, load_params
+from .build_model import build_model, load_params, tune_lighting
 from .control import DriveController, run
 from .control.balance import extract_state
 from .control.linearize import settle_upright
@@ -333,6 +333,9 @@ def main() -> None:
     params = load_params(args.params)
     model = build_model(params, variant="full", hockey=args.hockey,
                         righting=args.wings, wings=args.wings)
+    # Same lighting the recorder applies, so a teleop session and a video of
+    # the same thing do not look like two different simulators.
+    tune_lighting(model)
     eq = settle_upright(model)
 
     if args.teleop:
