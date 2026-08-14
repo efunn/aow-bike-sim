@@ -43,7 +43,7 @@ python -m aow_sim.run_drive --teleop --wings            # 9 extend, 4 retract, .
 | Does the bike rest consistently? | **Yes, already.** 90.2° roll / 10.3° pitch on every fall tried, independent of steer angle |
 | What should the side geometry be? | A short pad per side just proud of the drive servos. **Not** a wide outrigger — every wide or tall rail tried made it worse |
 | Can one XC330 lift it? | **Only through a reduction.** 0.65–0.75 N·m at the arm; direct drive is a coin flip on a half-empty 3S pack. At 3:1 it is 0.25 N·m at the servo |
-| One arm or a mirrored pair? | **The pair, on these numbers.** It stops itself at upright instead of falling over the far side, hands off in 2.09 s instead of 3.53 s, and never has to know which side it fell on — for 35 g and a much tighter torque margin. See part 4 |
+| One arm or a mirrored pair? | **The pair, on these numbers.** It stops itself at upright instead of falling over the far side, hands off in 0.63 s instead of 1.11 s, and never has to know which side it fell on — for 35 g and a much tighter torque margin. See part 4 |
 | Will righting flatten the battery? | **No, by a wide margin.** 0.74 A peak and 0.26 mAh per attempt, against 1.2–2.0 A just to drive. The servo's own overload cutout is the thing to bench-test, not the pack |
 
 ---
@@ -144,7 +144,7 @@ largest boundary value anywhere is 30.9°, and that at a roll rate of ‑1 rad/s
 (i.e. already returning). A pure `|roll| > 35°` trigger would also be safe;
 the rate term just stops it firing on a hard lean that is on its way back.
 
-![recoverable set](../../analysis/no_return.png)
+![recoverable set](../../analysis/plots/no_return.png)
 
 ---
 
@@ -221,7 +221,7 @@ holds the bike a few degrees further over but a millimetre higher.
 This is the geometry now in `righting.bumper`. It is deliberately the smallest
 change that does the job; the sweep is there to re-run if the chassis changes.
 
-![energy landscape](../../analysis/righting_profile.png)
+![energy landscape](../../analysis/plots/righting_profile.png)
 
 ### What is still unmodelled
 
@@ -276,7 +276,7 @@ configured 80 mm / 30 mm arm needs **0.249 N·m at the servo, 38% of the
 Mass cost of the whole mechanism: 63 g (servo 23 g, arm + foot 20 g, two pads
 20 g) on a 1016 g bike, +6%.
 
-![righting stroke](../../analysis/righting_lift.png)
+![righting stroke](../../analysis/plots/righting_lift.png)
 
 The torque trace is flat at 0.20–0.25 N·m across the stroke with a small spike
 at first contact — no bad spot to design around. The interesting part of that
@@ -289,11 +289,18 @@ other side. **The arm must stop at hand-off, not complete its stroke.**
 `self_righting.py sequence` runs it end to end and it works:
 
 ```
-fell to 100 deg; handed over at t = 3.53 s; final roll -1.1 deg, arm at 0 deg
+fell to 81 deg; handed over at t = 1.11 s; final roll 1.8 deg, arm at 0 deg
 upright and balancing
 ```
 
-![sequence](../../analysis/righting_sequence.png)
+![sequence](../../analysis/plots/righting_sequence.png)
+
+Two numbers here moved after this section was first written, and neither is a
+change to the arm itself. It now falls to **81°** rather than 100° because the
+roof ridge (part 5) is present and the bike rests further upright on it; and
+hand-off comes at **1.11 s** rather than 3.53 s because the deploy rate is now
+scheduled on roll angle rather than flat (part 4). The arm is the same arm —
+it just shares the improvements.
 
 The hand-off rule: engage `general_rl` when `|roll| < 12°` **and**
 `|roll_rate| < 3 rad/s`, with the arm holding position. 12° is inside the
@@ -526,13 +533,16 @@ is the failure mode to watch, and it is a bench test, not a simulation.
 video (`traces/right_wings.mp4`, rear view):
 
 ```
-fell to 94 deg; handed over at t = 2.09 s; final roll 0.4 deg, wings at 0 deg
+fell to 88 deg; handed over at t = 0.63 s; final roll -0.7 deg, wings at 0 deg
 upright and balancing
 ```
 
-**2.09 s to hand-off against the arm's 3.53 s**, on the same fall, same policy,
-same slew rate. The pair is faster because it starts pushing immediately —
-there is no ~0.5 s of swinging the arm around to find the floor first.
+**0.63 s to hand-off against the arm's 1.11 s**, on the same fall, same policy,
+same slew schedule. The pair is faster because it starts pushing immediately —
+there is no ~0.5 s of swinging the arm around to find the floor first. (Both
+figures are roughly 3x quicker than when this was first written, because the
+deploy rate is now scheduled rather than flat; the *ratio* between the two
+mechanisms is what this section is about, and it is unchanged.)
 
 Falls stay repeatable. `rest --wings` over the same eight falls gives **94.4°
 roll / 13.9° pitch, spread 0.1°**, and the static barrier onward triples

@@ -25,7 +25,7 @@ zero with a large common lift means hopping. Both nonzero means both.
   python analysis/liftoff.py
   python analysis/liftoff.py --policies general_rl_glide_og --seconds 20
 
-Writes analysis/liftoff_<policy>.png and prints the tables. Read-only
+Writes analysis/plots/liftoff_<policy>.png and prints the tables. Read-only
 otherwise: loads moves/*.npz and changes nothing else.
 """
 
@@ -41,6 +41,20 @@ from aow_sim.build_model import load_params
 from aow_sim.control.general_env import _load_rl_config
 from rsa_policies import POLICIES, REPO, env_for, load_general
 from wheel_slowmo import clearance_mm, wheel_vertices
+
+
+def _plots_dir():
+    """analysis/plots/, created on demand.
+
+    Figures live in a SUBDIRECTORY because .gitignore excludes `analysis/*.png`
+    and a gitignore `*` does not cross `/` -- so anything here is tracked
+    without needing a negation rule, while a stray png dropped beside a script
+    still gets ignored. docs/ links point here.
+    """
+    d = Path(__file__).resolve().parent / "plots"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 
 COMMANDS = [
     ("hold",       (0.0, 0.0)),
@@ -179,7 +193,7 @@ def main():
                 ax.set_ylabel("chassis pitch [deg]", fontsize=7)
         fig.suptitle(f"{key} — wheel clearance and pitch", fontsize=10)
         fig.tight_layout()
-        out = Path(__file__).parent / f"liftoff_{key}.png"
+        out = _plots_dir() / f"liftoff_{key}.png"
         fig.savefig(out, dpi=150, bbox_inches="tight")
         print(f"wrote {out}")
 

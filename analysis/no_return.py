@@ -63,6 +63,20 @@ from aow_sim.control.drive import DriveController
 from aow_sim.control.linearize import design_all, settle_rolling
 
 
+def _plots_dir():
+    """analysis/plots/, created on demand.
+
+    Figures live in a SUBDIRECTORY because .gitignore excludes `analysis/*.png`
+    and a gitignore `*` does not cross `/` -- so anything here is tracked
+    without needing a negation rule, while a stray png dropped beside a script
+    still gets ignored. docs/ links point here.
+    """
+    d = Path(__file__).resolve().parent / "plots"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+
 FALL_DEG = 75.0        # committed: past here the bike is going down
 FLAT_DEG = 90.0        # chassis horizontal (true rest angle needs side geometry)
 RECOVER_DEG = 20.0     # tail-window ceiling that counts as "caught it"
@@ -369,7 +383,7 @@ def main() -> None:
     ap.add_argument("--jobs", type=int, default=0, help="0 = cpu_count")
     ap.add_argument("--csv", type=Path, default=None)
     ap.add_argument("--out", type=Path,
-                    default=Path(__file__).parent / "no_return.png")
+                    default=_plots_dir() / "no_return.png")
     args = ap.parse_args()
 
     params = load_params()

@@ -48,6 +48,20 @@ from aow_sim.build_model import load_params
 import no_return as nr
 
 
+def _plots_dir():
+    """analysis/plots/, created on demand.
+
+    Figures live in a SUBDIRECTORY because .gitignore excludes `analysis/*.png`
+    and a gitignore `*` does not cross `/` -- so anything here is tracked
+    without needing a negation rule, while a stray png dropped beside a script
+    still gets ignored. docs/ links point here.
+    """
+    d = Path(__file__).resolve().parent / "plots"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+
 def critical_roll(v0: float, steer_deg: float, side: int,
                   ceiling: float = 60.0) -> float:
     """Largest initial roll [deg] on `side` still recovered, at this steer.
@@ -104,7 +118,7 @@ def main() -> None:
     ap.add_argument("--steers", type=float, nargs="+",
                     default=[-90, -60, -30, 0, 30, 60, 90])
     ap.add_argument("--out", type=Path,
-                    default=Path(__file__).with_suffix(".png"))
+                    default=_plots_dir() / "steer_stability.png")
     args = ap.parse_args()
 
     params = load_params()

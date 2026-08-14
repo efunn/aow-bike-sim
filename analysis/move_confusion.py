@@ -43,7 +43,7 @@ time-resolved analysis (matched time offsets), not a static pattern.
   python analysis/move_confusion.py --set with_turns # the counterexample above
   python analysis/move_confusion.py --set crab --steps 200
 
-Writes analysis/move_confusion_<set>.png and prints the matrices.
+Writes analysis/plots/move_confusion_<set>.png and prints the matrices.
 Loads moves/*.npz; changes nothing else.
 """
 
@@ -60,6 +60,19 @@ from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 from aow_sim.control.policy import load_policy_npz
 from rsa_policies import (POLICIES, REPO, env_for, load_general, condition_sets,
                           hidden, trace)
+
+
+def _plots_dir():
+    """analysis/plots/, created on demand.
+
+    Figures live in a SUBDIRECTORY because .gitignore excludes `analysis/*.png`
+    and a gitignore `*` does not cross `/` -- so anything here is tracked
+    without needing a negation rule, while a stray png dropped beside a script
+    still gets ignored. docs/ links point here.
+    """
+    d = Path(__file__).resolve().parent / "plots"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def hold_quality(pol, env, steps):
@@ -277,10 +290,10 @@ def main():
                          "counterexample described above")
     ap.add_argument("--steps", type=int, default=150)
     ap.add_argument("--out", type=Path, default=None,
-                    help="default: analysis/move_confusion_<set>.png")
+                    help="default: analysis/plots/move_confusion_<set>.png")
     args = ap.parse_args()
     if args.out is None:
-        args.out = Path(__file__).parent / f"move_confusion_{args.set}.png"
+        args.out = _plots_dir() / f"move_confusion_{args.set}.png"
 
     params = load_params()
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")

@@ -55,6 +55,20 @@ from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 from aow_sim.control.policy import load_policy_npz
 from rsa_policies import POLICIES, REPO, env_for, load_general
 
+
+def _plots_dir():
+    """analysis/plots/, created on demand.
+
+    Figures live in a SUBDIRECTORY because .gitignore excludes `analysis/*.png`
+    and a gitignore `*` does not cross `/` -- so anything here is tracked
+    without needing a negation rule, while a stray png dropped beside a script
+    still gets ignored. docs/ links point here.
+    """
+    d = Path(__file__).resolve().parent / "plots"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 CHANNELS = ("steer_rate", "hub", "diff")
 
 # Everything the rear omni wheel can touch the floor with. The rollers carry
@@ -151,7 +165,7 @@ def main():
     ap.add_argument("--show-seconds", type=float, default=3.0,
                     help="how much of the time series to draw")
     ap.add_argument("--out", type=Path,
-                    default=Path(__file__).parent / "hold_spectrum.png")
+                    default=_plots_dir() / "hold_spectrum.png")
     args = ap.parse_args()
 
     params = load_params()

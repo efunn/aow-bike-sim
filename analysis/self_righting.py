@@ -53,7 +53,7 @@ docs/plans/self-righting.md.
   python analysis/self_righting.py lift --wings --sweep
   python analysis/self_righting.py sequence --wings
 
-Read-only apart from the PNGs it writes.
+Read-only apart from the PNGs it writes to analysis/plots/.
 """
 
 from __future__ import annotations
@@ -72,6 +72,19 @@ from aow_sim.control.drive import DriveController
 from aow_sim.control.linearize import design_all, settle_upright
 from aow_sim.control.righting import (RECOVER_DEG, RightingSequencer,
                                       mechanism, roll_pitch, settle_fallen)
+
+
+def _plots_dir():
+    """analysis/plots/, created on demand.
+
+    Figures live in a SUBDIRECTORY because .gitignore excludes `analysis/*.png`
+    and a gitignore `*` does not cross `/` -- so anything here is tracked
+    without needing a negation rule, while a stray png dropped beside a script
+    still gets ignored. docs/ links point here.
+    """
+    d = Path(__file__).resolve().parent / "plots"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 GRAVITY = 9.81
@@ -718,7 +731,7 @@ def cmd_sequence(args) -> None:
         _plot_sequence(args.out, np.array(log), seq.t_hand)
 
 
-def _plot_sequence(out: Path, log, t_hand) -> None:
+def _plot_sequence(out: Path, log, t_hand, mech: str = "arm") -> None:
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -727,7 +740,8 @@ def _plot_sequence(out: Path, log, t_hand) -> None:
         return
     fig, ax = plt.subplots(figsize=(7.5, 4.0))
     ax.plot(log[:, 0], log[:, 1], label="chassis roll [deg]", color="#1f77b4")
-    ax.plot(log[:, 0], log[:, 2], label="arm angle [deg]", color="#7f7f7f", lw=0.9)
+    ax.plot(log[:, 0], log[:, 2], label=f"{mech} angle [deg]",
+            color="#7f7f7f", lw=0.9)
     ax.axvline(t_hand, color="#2ca02c", ls="--", lw=0.9, label="hand-off")
     ax.set_xlabel("time [s]")
     ax.grid(alpha=0.3)
@@ -828,7 +842,7 @@ def main() -> None:
     p1.add_argument("--heights", type=float, nargs="+",
                     default=[0.04, 0.06, 0.08, 0.10, 0.12])
     p1.add_argument("--out", type=Path,
-                    default=Path(__file__).parent / "righting_profile.png")
+                    default=_plots_dir() / "righting_profile.png")
     wings_flag(p1, "also profile the bike with the STOWED wing pair, to see "
                    "whether it moves the resting attitude the pads already fix")
     p1.set_defaults(func=cmd_profile)
@@ -851,7 +865,7 @@ def main() -> None:
                          "this is the OUTER sweep loop, and the ladder runs "
                          "from just off the floor up to axle height")
     p3.add_argument("--out", type=Path,
-                    default=Path(__file__).parent / "righting_lift.png")
+                    default=_plots_dir() / "righting_lift.png")
     wings_flag(p3, "sweep the mirrored wing pair instead of the single arm")
     p3.set_defaults(func=cmd_lift)
 
@@ -861,8 +875,12 @@ def main() -> None:
                     help="mechanism slew [rad/s]")
     p4.add_argument("--retract-after", type=float, default=1.0)
     p4.add_argument("--seconds", type=float, default=12.0)
-    p4.add_argument("--out", type=Path,
-                    default=Path(__file__).parent / "righting_sequence.png")
+    # Default depends on the mechanism -- resolved after parsing, because the
+    # two arms would otherwise SHARE this path and silently overwrite each
+    # other's figure. docs/plans/self-righting.md references the arm one by
+    # name from the arm section, so a --wings run used to replace the picture
+    # under the arm's caption.
+    p4.add_argument("--out", type=Path, default=None)
     wings_flag(p4, "run the sequence on the wing pair instead of the arm")
     p4.set_defaults(func=cmd_sequence)
 
@@ -877,6 +895,9 @@ def main() -> None:
     p5.set_defaults(func=cmd_invert)
 
     args = ap.parse_args()
+    if args.cmd == "sequence" and args.out is None:
+        args.out = _plots_dir() / ("righting_sequence_wings.png" if args.wings
+                                   else "righting_sequence.png")
     if args.cmd == "lift":
         # Different mechanisms want different ladders: the arm's pivot sits
         # ABOVE the axle and it is the length that matters; the wing pivot is

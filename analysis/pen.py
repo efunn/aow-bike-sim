@@ -14,7 +14,7 @@ while one that curves shows them fanning.
   python analysis/pen.py
   python analysis/pen.py --policies general_rl_glide_og --seconds 20
 
-Writes analysis/pen_<policy>.png and prints the coupling table. Read-only
+Writes analysis/plots/pen_<policy>.png and prints the coupling table. Read-only
 otherwise: loads moves/*.npz and changes nothing else.
 """
 
@@ -29,6 +29,20 @@ from aow_sim.build_model import load_params
 from aow_sim.control.balance import extract_state
 from aow_sim.control.general_env import _load_rl_config
 from rsa_policies import POLICIES, REPO, env_for, load_general
+
+
+def _plots_dir():
+    """analysis/plots/, created on demand.
+
+    Figures live in a SUBDIRECTORY because .gitignore excludes `analysis/*.png`
+    and a gitignore `*` does not cross `/` -- so anything here is tracked
+    without needing a negation rule, while a stray png dropped beside a script
+    still gets ignored. docs/ links point here.
+    """
+    d = Path(__file__).resolve().parent / "plots"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 
 # (label, (v_lon, v_lat), heading step [deg]). The crab pair and the turn pair
 # are the ones teleop reports asymmetries in, so both signs of each are here.
@@ -150,7 +164,7 @@ def main():
                      f"(red ticks = heading every {args.tick:.0f} s)",
                      fontsize=10)
         fig.tight_layout()
-        out = Path(__file__).parent / f"pen_{key}.png"
+        out = _plots_dir() / f"pen_{key}.png"
         fig.savefig(out, dpi=150, bbox_inches="tight")
         print(f"  wrote {out}")
 
