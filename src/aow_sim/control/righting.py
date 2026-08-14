@@ -120,14 +120,39 @@ class RightingSequencer:
 
     def __init__(self, params: dict, model, *, wings: bool = False,
                  direction: float | None = None, rate: float = 0.7,
+                 rate_max: float | None = 2.4, rate_ref_deg: float = 30.0,
+                 rate_floor: float = 0.25, retract_rate: float | None = None,
                  retract_after: float = 1.0, move: str = "general_rl",
-                 design=None):
+                 design=None, keep_policy: bool = False):
         self.params, self.wings = params, wings
         act, joint, self.cfg = mechanism(params, wings)
         self.aid = model.actuator(act).id
         self.jadr = model.joint(joint).qposadr[0]
         self.rate, self.retract_after, self.move = rate, retract_after, move
+        self.rate_max = rate_max
+        self.rate_ref_deg, self.rate_floor = rate_ref_deg, rate_floor
+        # Retract is the UNLOADED stroke -- the bike is already upright and the
+        # policy is holding it, so the wings are swinging through air and there
+        # is no reason to creep. The only cost is the reaction torque into a
+        # bike that is balancing, which is what bounds it.
+        # Measured: 2.4 rad/s retracts in 0.57 s against 1.96 s at 0.7, and the
+        # bike's worst roll during it is 5.6 deg EITHER WAY -- the reaction
+        # torque simply is not the binding constraint, so creeping bought
+        # nothing. Falls back to the flat `rate` only if rate_max is disabled.
+        self.retract_rate = (retract_rate if retract_rate is not None
+                             else (rate_max if rate_max is not None else rate))
         self.design = design
+        # keep_policy: run the general policy THROUGHOUT, including while the
+        # bike is down and the mechanism is lifting, instead of engaging it at
+        # hand-off. Hand-off then becomes a command change rather than a
+        # controller swap.
+        #
+        # Off by default because it is wrong for a FALL TEST -- a policy sawing
+        # the bars against the floor is not a fall, and analysis/self_righting
+        # deliberately cuts it once the fall is committed. It is right for
+        # anything that has to look and behave like the real bike, where
+        # nothing actually switches the policy off.
+        self.keep_policy = keep_policy
         self.stow = np.deg2rad(self.cfg["stow_deg"])
         self.gear = self.cfg["gear_ratio"]
         # The wing pair deploys the same way whatever side it fell on; the
@@ -140,12 +165,22 @@ class RightingSequencer:
         self.direction = 1.0
         self._t = 0.0
 
+    def adopt(self, ctrl) -> None:
+        """Take over an ALREADY RUNNING controller (implies keep_policy).
+
+        Reusing the live one matters: constructing a fresh DriveController at
+        hand-off re-engages the policy from a clean slate, which throws away
+        its command state and any recurrent state the export carries."""
+        self.ctrl, self.keep_policy = ctrl, True
+
     def reset(self, model, data) -> None:
         roll0, _ = roll_pitch(data.qpos[3:7])
         self.direction = (self._fixed_direction if self._fixed_direction is not None
                           else (float(np.sign(roll0)) or 1.0))
         self.cmd = float(data.qpos[self.jadr])
-        self.phase, self.t_hand, self.ctrl, self._t = "lift", float("nan"), None, 0.0
+        self.phase, self.t_hand, self._t = "lift", float("nan"), 0.0
+        if not self.keep_policy:
+            self.ctrl = None
         self.roll0 = roll0
 
     @property
@@ -159,24 +194,61 @@ class RightingSequencer:
         has to run in extended-position (multi-turn) mode."""
         return self.stroke_deg * self.gear / 360.0
 
+    def deploy_rate(self, roll_deg: float) -> float:
+        """Commanded wing slew [rad/s], scheduled on how far over the bike is.
+
+        A FLAT rate has to be sized by the worst moment of the stroke, and the
+        worst moment is counter-intuitive: torque peaks at the END, 0.52 N.m
+        inside 20 deg of upright, against only 0.13-0.15 N.m through the
+        20-60 deg middle. The mechanism is cheap while it is levering and
+        expensive while it is catching the bike as it arrives.
+
+        So the schedule is fast far from upright and eases into hand-off --
+        the opposite of "speed up as it comes up". Measured against a flat
+        0.7 rad/s: 0.63 s to hand-off instead of 2.04 s (3.2x) at a slightly
+        LOWER peak torque, because the easing removes the arrival spike.
+
+        `rate` remains the flat fallback and is what the retract stroke uses;
+        set `rate_max` to None to disable the schedule (the torque study wants
+        a constant rate so its reading stays quasi-static)."""
+        if self.rate_max is None:
+            return self.rate
+        frac = np.clip(abs(roll_deg) / self.rate_ref_deg, self.rate_floor, 1.0)
+        return self.rate_max * float(frac)
+
     def step(self, model, data) -> None:
         dt = model.opt.timestep
         roll, _ = roll_pitch(data.qpos[3:7])
         if self.phase == "lift":
-            self.cmd += self.direction * self.rate * dt
+            self.cmd += self.direction * self.deploy_rate(roll) * dt
+            # The policy keeps driving while the bike is down, if it was never
+            # switched off. It has almost no authority on its side -- the rear
+            # wheel is not under the CoM -- so this does not do the righting,
+            # it just means nothing has to be re-engaged at hand-off.
+            if self.keep_policy and self.ctrl is not None:
+                self.ctrl.step(model, data)
             if abs(roll) < RECOVER_DEG and abs(data.qvel[3]) < HANDOFF_RATE:
                 self.phase, self.t_hand = "balance", self._t
-                self.ctrl = DriveController(self.params, model, design=self.design)
-                self.ctrl.reset(model, data)
-                self.ctrl.engage_general(data, self.move)
-                self.ctrl.set_command(v_cmd_world=(0.0, 0.0))
+                if self.ctrl is None:
+                    # Built one from scratch, so it has no command yet: park it.
+                    self.ctrl = DriveController(self.params, model,
+                                                design=self.design)
+                    self.ctrl.reset(model, data)
+                    self.ctrl.engage_general(data, self.move)
+                    self.ctrl.set_command(v_cmd_world=(0.0, 0.0))
+                # An ADOPTED controller keeps whatever it was last told. Hand-
+                # off is a change of who is holding the bike up, not a change
+                # of where it was going -- zeroing here put a visible step in
+                # the commanded heading and velocity at the moment of recovery,
+                # for no reason. The caller owns the command; the sequencer
+                # owns the mechanism.
         else:
             self.ctrl.step(model, data)
             if self._t - self.t_hand > self.retract_after:
                 self.phase = "retract"
                 # Stop AT stow rather than sweeping through it and out the
                 # other side.
-                step = self.rate * dt
+                step = self.retract_rate * dt
                 self.cmd = (max(self.cmd - step, self.stow) if self.cmd > self.stow
                             else min(self.cmd + step, self.stow))
         data.ctrl[self.aid] = float(np.clip(self.cmd, -np.pi, np.pi))
