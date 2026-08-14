@@ -35,11 +35,36 @@ sim:
   # controller we drive with, and the RL policy never touches it. It is left
   # crappy on purpose until the mechanical design settles.
   #
-  # Flagged in two places so it cannot be forgotten: a RuntimeWarning from
-  # control/linearize.py on every design, and an xfail on
-  # test_lqr_model_fit_and_steering. Pin this parameter down, re-tune the
-  # control.lqr weights, then drop both.
+  # Currently back at damping 1.0, where the fit is healthy (worst R^2 0.9893)
+  # -- but the underdamped model is expected to return, so the guard stays:
+  # control/linearize.py warns on every design whose fit drops under
+  # MIN_FIT_R2, and test_lqr_model_fit_and_steering fails outright. It is NOT
+  # xfailed, on purpose: a non-strict xfail would report the regression as a
+  # green run. When damping goes back down, expect both to fire, and re-tune
+  # the control.lqr weights rather than silencing either.
   contact_solref: [0.005, 1.0]
+  # (dmin, dmax, width, midpoint, power). MuJoCo's stock default, written down
+  # explicitly because it was an INVISIBLE inherited choice: nothing in this
+  # repo ever set it, so every result to date silently assumed it.
+  #
+  # It is not negligible, and dmin confounds BOTH bench tests in
+  # docs/measurements/contact-protocol.md. Measured on this model:
+  #   dmin  0.9 -> 0.5    sink at bike weight 0.375 -> 0.647 mm (2.3x), and
+  #                       restitution 0.46 -> 0.56 at dampratio 0.3
+  #   dmax  0.95 -> 0.999 sink at 44 N 1.946 -> 1.709 mm, restitution flat
+  #   width 1e-4 -> 1e-2  sink at bike weight 0.278 -> 0.419 mm
+  # So the joint (timeconst, dampratio) identification is really a THREE
+  # parameter problem until dmin is pinned or the negative-solref convention
+  # makes it moot (under (-8000, -60) the same dmin sweep moves the light-load
+  # sink by 6% instead of 2.3x).
+  #
+  # `width` 1 mm is the same scale as the deflections being measured, which is
+  # why the contact is nonlinear across exactly the measurement range: secant
+  # stiffness runs 26.6 N/mm at bike weight down to 22.7 N/mm at 44 N. Pinning
+  # dmin = dmax does NOT fix that -- it makes it worse (ratio 0.85 -> 0.63),
+  # because the residual is geometric: faceted cones and a contact patch that
+  # grows as the wheel sinks.
+  contact_solimp: {value: [0.9, 0.95, 0.001, 0.5, 2.0], source: GUESS}
   friction_sliding: {value: 0.9, source: GUESS}      # TPU on hard floor -> incline slide test
   friction_torsional: {value: 0.005, source: GUESS}  # scales with contact patch size -> validation
   floor_size: 3.0

@@ -73,24 +73,16 @@ def test_lqr_balances_with_wound_steer(model, params, eq_qpos, wound):
     assert np.max(np.abs(np.array(ctrls) - wound)) < 0.5
 
 
-@pytest.mark.xfail(reason="DELIBERATE, not a regression. sim.contact_solref "
-                          "damping is 0.5 (chosen from teleop + slowmo contact "
-                          "tests), under which the identified lateral model "
-                          "fits to R^2 0.861 at -0.50 m/s. The LQR is a "
-                          "REFERENCE baseline, not a controller we drive with, "
-                          "so it is knowingly left untuned until the mechanical "
-                          "design settles and the contact model is pinned by "
-                          "physical tests. The RuntimeWarning from "
-                          "linearize._warn_fit is the standing reminder. Re-tune "
-                          "control.lqr weights then and drop this marker.",
-                   strict=False)
 def test_lqr_model_fit_and_steering(model, params):
     """The identified lateral model fits well and the LQR actually uses the
     steering channel (the steer/crawl coordination seen in the toy).
 
-    xfail while the contact model is provisional — see the marker. It is
-    non-strict on purpose: pin down contact_solref and this goes XPASS, which
-    is the signal to re-tune and un-mark it rather than a new failure."""
+    This was xfailed while contact damping was 0.5 (worst R^2 0.861). It is
+    NOT xfailed any more, deliberately: an underdamped contact model is
+    expected to come back, and a non-strict xfail would report that breakage
+    as a green "xfailed" run. Letting it fail is the point — it fails here AND
+    warns at runtime from control.linearize, which is two live signals instead
+    of one muted test."""
     from aow_sim.control.linearize import MIN_FIT_R2
 
     c = make_controller("lqr", params, model)

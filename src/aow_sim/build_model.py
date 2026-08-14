@@ -30,6 +30,8 @@ from .params import DEFAULT_PARAMS, _normalize, load_params  # noqa: F401
 
 
 FLOOR_CONTYPE, FLOOR_CONAFF = 1, 2
+FLOOR_GRID_M = 0.25   # default metres per checker square; override with
+                      #   sim.floor_grid_m (record.py exposes --grid)
 DYN_CONTYPE, DYN_CONAFF = 2, 1
 # Hockey extras (build_model(..., hockey=True)). The base 2-bit scheme lets
 # dynamic geoms touch only the floor; the ball needs to touch floor + stick +
@@ -654,9 +656,39 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
 
 def _add_world(spec: mujoco.MjSpec, p: dict) -> None:
     sim = p["sim"]
+    # Checkered floor. Not decoration: against a plain plane the bike has no
+    # visual reference at all, so translation is invisible in any tracked
+    # camera -- it reads as a bike wobbling on the spot while the world stays
+    # put. `run_drive._overlay` draws a grid for the same reason, but that one
+    # is +-3 m of scene geoms tied to the teleop dial; a texture is unbounded,
+    # costs no geom budget, and shows up in every recording.
+    tex = spec.add_texture(
+        name="floor_grid",
+        type=mujoco.mjtTexture.mjTEXTURE_2D,
+        builtin=mujoco.mjtBuiltin.mjBUILTIN_CHECKER,
+        width=300, height=300,
+        rgb1=[0.78, 0.78, 0.80], rgb2=[0.86, 0.86, 0.88],
+    )
+    mat = spec.add_material(name="floor_grid")
+    mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "floor_grid"
+    # texuniform + texrepeat in WORLD units: one square per FLOOR_GRID_M, so
+    # the squares stay the same physical size whatever floor_size is and can
+    # be read as a distance scale.
+    mat.texuniform = True
+    pitch = sim.get("floor_grid_m") or FLOOR_GRID_M
+    mat.texrepeat = [1.0 / pitch, 1.0 / pitch]
+    # Matte. The material default (specular 0.5) puts a specular highlight on
+    # the floor from the DIRECTIONAL sun, and on a flat plane that is a broad
+    # smear rather than a small glint -- it washed the checker out across the
+    # middle of every plan view, which defeats the point of having a grid.
+    # Measured centre-minus-corner brightness: +15.0 at specular 0.5, -3.4 at
+    # 0 (i.e. uniform). A floor is not a shiny surface anyway.
+    mat.specular = 0.0
+    mat.shininess = 0.0
     spec.worldbody.add_geom(
         name="floor",
         type=mujoco.mjtGeom.mjGEOM_PLANE,
+        material="floor_grid",
         size=[sim["floor_size"], sim["floor_size"], 0.1],
         contype=FLOOR_CONTYPE,
         conaffinity=FLOOR_CONAFF,
@@ -664,7 +696,16 @@ def _add_world(spec: mujoco.MjSpec, p: dict) -> None:
         friction=_contact_friction(sim),
         rgba=[0.85, 0.85, 0.85, 1],
     )
-    spec.worldbody.add_light(name="sun", pos=[0.5, 0.3, 2.0], dir=[-0.2, -0.1, -1.0])
+    # DIRECTIONAL, not positional. A point light at the origin lights the bike
+    # only while it stays near the origin -- drive a few metres and it falls
+    # off into flat grey, which shows up in any recording with real
+    # translation (the drive scripts, and the righting demo especially, which
+    # ends ~8 m out). Directional light has no falloff, so the bike is lit the
+    # same wherever it is. `pos` is ignored for a directional light; the
+    # direction is what matters.
+    sun = spec.worldbody.add_light(name="sun", pos=[0.5, 0.3, 2.0],
+                                   dir=[-0.2, -0.1, -1.0])
+    sun.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
 
 
 def _apply_options(spec: mujoco.MjSpec, p: dict) -> None:
@@ -683,6 +724,10 @@ def _apply_options(spec: mujoco.MjSpec, p: dict) -> None:
     # NOTE the equality solrefs elsewhere in this file are also 0.005 but are
     # a different constraint class (gear couplings), and never governed this.
     spec.default.geom.solref = list(sim["contact_solref"])
+    # Set to the value MuJoCo was already defaulting to, so this is a physics
+    # no-op -- but it stops being an invisible inherited choice, and `dmin`
+    # confounds both bench tests (see the note in bike_params.yaml).
+    spec.default.geom.solimp = list(sim["contact_solimp"])
 
 
 def build_spec(
@@ -874,6 +919,44 @@ def build_spec(
         _add_wings(spec, chassis, p)
 
     return spec
+
+
+def tune_lighting(model: mujoco.MjModel) -> None:
+    """Viewing-only lighting tweaks, shared by the recorder and the viewer.
+
+    Not part of `build_spec` because these live on `model.vis`, which is render
+    state rather than model structure — but they must be applied identically in
+    both places or a teleop session and its recording look like different
+    simulators.
+
+    Weighted toward AMBIENT: the headlight is a point light AT THE CAMERA, so a
+    plan view lights the floor directly beneath brightest and smears out the
+    floor checker in the middle of frame. Ambient is uniform and has no such
+    hotspot. Measured on a top view, blown floor pixels 3.0% -> 0.2% moving
+    from 0.28/0.22 to these values, and a tracked 3/4 view gets slightly
+    BRIGHTER (mean 132.7 -> 138.3) rather than darker. Some diffuse is kept:
+    at 0.06 the bike loses its shading and reads as a flat decal.
+    """
+    model.vis.headlight.ambient[:] = 0.36
+    model.vis.headlight.diffuse[:] = 0.10
+    model.vis.headlight.specular[:] = 0.0
+
+    # SHADOW COVERAGE. For a directional light the shadow map is a square of
+    # half-size `shadowclip * stat.extent` centred on the model origin -- at
+    # the stock shadowclip of 1.0 and this model's extent of 2.4 m that is a
+    # +-2.4 m box, and the bike simply stops casting a shadow once it drives
+    # out of it. Measured shadow strength at the default: 0.74 at x=0, 0.05 at
+    # x=-4, 0.01 at x=-12, i.e. gone.
+    #
+    # Size it from the FLOOR instead, so it always covers wherever the bike can
+    # actually be, and raise the shadow texture to pay for the bigger area --
+    # spreading the same texels over a wider square is what makes a large
+    # shadowclip look washed out. At clip 6 / size 8192 the strength is
+    # 0.70/0.69/0.68/0.54 across x = 0..-12, against 0.74 for the stock setup
+    # at the origin only.
+    half = float(model.geom_size[model.geom("floor").id][0]) or 3.0
+    model.vis.map.shadowclip = max(1.0, half / max(model.stat.extent, 1e-6))
+    model.vis.quality.shadowsize = max(int(model.vis.quality.shadowsize), 8192)
 
 
 def build_model(
