@@ -1,4 +1,4 @@
-# Project status — 2026-08-14
+# Project status — 2026-08-15
 
 Midpoint snapshot. The design logs under `docs/plans/` are where decisions and
 their reasoning live; this file is the layer on top of them — what is true
@@ -253,6 +253,43 @@ at the time of writing, so this is the last reading, not the current state.
 
 `turn_asym` has now sat at 0.2–0.32 across every run and has never improved
 with more steps. It is not a training-length problem.
+
+### Wings in the policy — tried four ways, answer is no (2026-08-15)
+
+Four 5–6 M runs asked whether the general policy should observe and drive the
+righting wings. It should not, and the reason is structural rather than a
+tuning failure.
+
+| run | wings available | `w_wing` | outcome |
+|---|---|---|---|
+| wings1 | from step 0 | flat 0.05 | total crutch: 89°, duty 1.0, **20/20 falls** forced stowed |
+| wings2 | from step 0 | ramp → 1.0 | worse: deployed less but let roll reach 43° and got caught harder (24% of weight on the feet vs 9%) |
+| wings3 | gated open 0.5–0.8 | ramped on `_diff` | never used — the two schedules collided, no free window |
+| wings4 | gated open 0.4–0.6 | ramped 0.85–1.0 | **never used**, with a verified 0.57 M-step window where they were open and nearly free |
+
+Available early and it never learns to balance; available late and it has no
+use for them. **The cause is that episodes terminate at `fall_roll_deg` 60, so
+the fallen state the wings exist for is outside the training distribution by
+construction** — see "Still open" in `docs/plans/self-righting.md` for what
+changing that would require. Do not re-open this by tuning the reward.
+
+Two results worth keeping out of the detour:
+
+* **`general_wings3_rl` does a genuine flick** — 211° of steer sweep in the
+  BODY frame against only 94° in the WORLD frame, i.e. it rotates the bike
+  around a wheel whose ground heading barely moves. Every other policy is the
+  inverse (65–80° body, 206–221° world): it cranks the wheel and drives round.
+  First policy in the repo to do the manoeuvre the flick move was authored for.
+* **The crab ceiling is roll headroom, confirmed.** `crab_ratio` hit 0.65/0.70
+  with the wings pinning roll to ~5°, and fell straight back to ~0.27 as they
+  withdrew. Crab is bounded by the differential being spent on balance, not by
+  the policy failing to learn it.
+
+**Default is unchanged: the wings are operated separately from the policy.**
+The scaffolding stays and is inert when off — `obs_wings`/`act_wings` default
+false, `ActionBounds.wing_rate_max` defaults to 0.0 so every existing 3-arg
+move yaml still constructs, and `rl_general.yaml` still yields obs 15 / act 3 /
+`nu` 3 with no wings in the model. flick/pivot/ball are untouched.
 
 ---
 

@@ -563,6 +563,39 @@ and a much tighter torque margin.
 
 ### Still open
 
+* **THE POLICY CANNOT LEARN RIGHTING WHILE EPISODES END AT 60 DEG.** This is
+  the finding from the four wings runs (2026-08-15) and it should be read
+  before anyone re-opens the idea. `general_env` terminates on
+  `abs(roll) > fall_roll_deg` (60), so the fallen state — the entire regime
+  the wings exist for — is *outside the training distribution by
+  construction*. The policy is never shown a bike on its side, never gets a
+  reward signal for righting one, and so has no reason to want a wing.
+  Anything that expects the general policy to use them has to change the
+  episode contract first, not the reward.
+
+  What that would take, roughly, and none of it is small:
+  - Stop terminating on roll, or raise the threshold past the resting attitude,
+    so an episode can continue through a fall.
+  - A curriculum that *starts* fallen and rewards arriving upright, because a
+    policy that only ever drives will never explore a 105 deg stroke by
+    accident.
+  - A reward for the recovery itself. Tracking reward is meaningless on a bike
+    lying on its side, and `w_alive` actively punishes the time spent
+    recovering.
+  - Deciding what the differential and steer should do mid-recovery, since
+    `extract_state`'s roll/yaw decomposition and the whole velocity command
+    stop meaning much past ~60 deg.
+
+  The four runs that established this: wings available from step 0 produced a
+  total crutch (deployed 89 deg, duty 1.0, and 20/20 falls when forced stowed);
+  pricing them away produced a *worse* failure (deployed less, let roll reach
+  43 deg, caught harder — 24% of weight on the feet vs 9%); gating them open
+  late and cheap produced no use at all (1.4 deg, duty 0.0, with a verified
+  0.57 M-step window where they were both available and nearly free).
+  Available early → never learns balance. Available late → no use for them.
+  There is no window between those, because the thing that would motivate a
+  wing never happens in an episode.
+
 * **Torque margin, and it is now boxed in.** 0.88 of the 9.9 V stall is not
   enough headroom, and the gear-fit ceiling of 4.83:1 means the usual fix has
   almost no room left. Widening the pivot half-span past 35 mm is the lever
