@@ -911,21 +911,48 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 # rather than a mouse gesture. Same lateral force pulse
                 # analysis/self_righting.py falls the bike with; 8 N for 0.35 s
                 # is comfortably past the recoverable set at any speed.
+                # Set the moment 9 or 4 is pressed: the operator has taken
+                # the wings back from a policy that drives them. Without this
+                # a wing-driving policy owns the channel unconditionally, so
+                # the manual keys do nothing -- and a bike that has flipped
+                # cannot be righted by hand, because the policy has never seen
+                # a fallen state and just holds whatever it holds.
+                "manual": False,
                 "push_n": 0, "push_dir": 1.0, "push_force": 8.0,
                 "push_s": 0.35, "body": model.body("chassis").id}
+
+    def policy_owns_wings() -> bool:
+        """True when the engaged general policy is DRIVING the wings itself.
+
+        A policy trained with `act_wings` commands the wing channel from its
+        4th action. Stamping the teleop target over it every step leaves the
+        wings stowed no matter what the policy asks for -- and a policy that
+        learned to ride on them then falls over instantly, which is exactly
+        what happened the first time this was driven."""
+        return (c.mode == "general"
+                and bool(getattr(c._gen, "act_wings", False))
+                and not wing["manual"])
 
     def wing_step(m, d):
         """Slew the pair toward its latched target and hold it there.
 
         MUST run after `c.step`: the balance controllers write the WHOLE ctrl
         vector (`data.ctrl[:] = self._u`), so anything written before them is
-        overwritten every step."""
+        overwritten every step. The exception is a wing-driving policy, which
+        writes that channel itself inside `c.step` and must not be clobbered
+        here -- see policy_owns_wings."""
         if wing is None:
             return
-        t, cmd = wing["target"], wing["cmd"]
-        step = wing["rate"] * m.opt.timestep
-        wing["cmd"] = (min(cmd + step, t) if t > cmd else max(cmd - step, t))
-        d.ctrl[wing["aid"]] = wing["cmd"]
+        if policy_owns_wings():
+            # Keep the latched target tracking the policy so that handing
+            # control back (engage the analytic controller, or load a policy
+            # without act_wings) does not snap the wings to a stale setpoint.
+            wing["cmd"] = wing["target"] = float(d.qpos[wing["jadr"]])
+        else:
+            t, cmd = wing["target"], wing["cmd"]
+            step = wing["rate"] * m.opt.timestep
+            wing["cmd"] = (min(cmd + step, t) if t > cmd else max(cmd - step, t))
+            d.ctrl[wing["aid"]] = wing["cmd"]
         # The shove, if one is running. xfrc_applied PERSISTS, so it has to be
         # cleared on the step the pulse ends or the bike gets pushed forever.
         if wing["push_n"] > 0:
@@ -984,6 +1011,12 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         from .control.flick import check_move_digest
         check_move_digest(c._gen, params)
         zero_command(d)                  # never inherit a stale setpoint
+        # Re-engaging hands the wings back to the policy, so the manual
+        # override is a temporary grab (right the bike by hand, then re-engage)
+        # rather than a one-way door.
+        if wing is not None and wing["manual"]:
+            wing["manual"] = False
+            print("wings: returned to the policy")
         return True
 
     def select(d, name: str) -> None:
@@ -1277,6 +1310,12 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 print(f"SHOVE {'left' if wing['push_dir'] > 0 else 'right'} "
                       f"({wing['push_force']:.0f} N for {wing['push_s']:.2f} s)")
             elif wing is not None and k in (ord("9"), ord("4")):
+                if not wing["manual"]:
+                    wing["manual"] = True
+                    wing["cmd"] = float(d.qpos[wing["jadr"]])   # no snap
+                    if c.mode == "general" and getattr(c._gen, "act_wings", False):
+                        print("wings: MANUAL override (policy no longer drives "
+                              "them; re-engage the policy to hand them back)")
                 wing["target"] = wing["deploy"] if k == ord("9") else wing["stow"]
                 turns = abs(np.degrees(wing["target"] - wing["stow"])) \
                     * wing["gear"] / 360.0
