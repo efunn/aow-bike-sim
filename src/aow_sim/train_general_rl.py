@@ -194,7 +194,7 @@ def _eval_episodes(env, act_fn, cmds):
         steps = 0
         t_head = None                      # first step inside _HEAD_TOL_DEG
         v_lons, v_lats, steers = [], [], []  # tail windows, refilled as we go
-        xys, oscs = [], []
+        xys, oscs, wings = [], [], []
         # World-frame axis the LATERAL command points along, fixed for the
         # episode because psi_cmd is.
         lat_axis = np.array([-np.sin(env._psi_cmd), np.cos(env._psi_cmd)])
@@ -214,8 +214,9 @@ def _eval_episodes(env, act_fn, cmds):
             # policy has no velocity window.
             oscs.append(float(np.hypot(s.v_lon - info.get("v_bar_lon", s.v_lon),
                                        s.v_lat - info.get("v_bar_lat", s.v_lat))))
+            wings.append(float(info.get("wing_deg", 0.0)))
             del v_lons[:-tail], v_lats[:-tail], steers[:-tail]
-            del xys[:-tail], oscs[:-tail]
+            del xys[:-tail], oscs[:-tail], wings[:-tail]
         s = extract_state(env.data, env._p0)
         # NET lateral speed: world displacement over the tail projected on the
         # commanded lateral axis. NOT the mean of body-frame v_lat -- under a
@@ -243,6 +244,13 @@ def _eval_episodes(env, act_fn, cmds):
             # ...and the displacement-based version that crab_ratio_* uses.
             "v_lat_net": v_lat_net,
             "v_osc_rms": float(np.sqrt(np.mean(np.square(oscs)))) if oscs else 0.0,
+            # Wings. `wing_duty` is the fraction of the tail spent deployed
+            # far enough to be near the floor -- READ THIS BEFORE THE SCORE on
+            # a wings arm. A policy that discovers "deploy and lean" scores
+            # well while quietly turning a righting mechanism into landing
+            # gear, and the score alone cannot tell you that happened.
+            "wing_deg": float(np.mean(wings)) if wings else 0.0,
+            "wing_duty": float(np.mean(np.asarray(wings) > 60.0)) if wings else 0.0,
             # A turn that never got inside tolerance is censored at the episode
             # length, not dropped -- "never finished" must cost more than slow.
             "t_head_s": (t_head if t_head is not None else steps) * env.ctrl_dt,
@@ -344,6 +352,15 @@ def _behaviour_metrics(rows: list[dict]) -> dict:
         # Diagnostic only, deliberately not in _score.
         "crab_osc": round(float(np.mean([r["v_osc_rms"] for r in crab])), 3)
                     if crab else float("nan"),
+        # Averaged over EVERY command, not just one family: the question is
+        # whether the policy leans on the wings at all, anywhere.
+        # .get, not [], because this averages over EVERY row and
+        # _behaviour_metrics is a pure function callers hand minimal row dicts
+        # to; a wingless run legitimately has no wing fields.
+        "wing_deg": round(float(np.mean([r.get("wing_deg", 0.0)
+                                         for r in rows])), 1),
+        "wing_duty": round(float(np.mean([r.get("wing_duty", 0.0)
+                                          for r in rows])), 3),
         "turn_asym": round(float(np.mean(asyms)), 3) if asyms else float("nan"),
     }
 
@@ -470,9 +487,12 @@ def _verify_export(model, vecnorm, npz_path):
         norm = vecnorm.normalize_obs(obs)
         with torch.no_grad():
             sb3_mean = model.policy.predict(norm, deterministic=True)[0]
-        sr, hub, diff = pol.action(obs)
-        raw = np.array([sr / pol.bounds.steer_rate_max, hub / pol.bounds.hub_max,
-                        diff / pol.bounds.diff_max])[:len(sb3_mean)]
+        act = pol.action(obs)
+        # Arity follows the policy's output width (3, or 4 with the wing
+        # channel), so unpack positionally rather than by fixed name count.
+        scales = [pol.bounds.steer_rate_max, pol.bounds.hub_max,
+                  pol.bounds.diff_max, pol.bounds.wing_rate_max]
+        raw = np.array([a / s for a, s in zip(act, scales)])[:len(sb3_mean)]
         worst = max(worst, float(np.max(np.abs(raw - sb3_mean))))
     return worst
 
@@ -485,11 +505,15 @@ def _eval(params, cfg, npz_path):
     ecfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     env = GeneralEnv(params, ecfg)
 
+    # Scales in channel order; the 4th is present only for a wing policy and
+    # is sliced off below for any env that does not have the channel.
+    scales = np.array([pol.bounds.steer_rate_max, pol.bounds.hub_max,
+                       pol.bounds.diff_max,
+                       max(pol.bounds.wing_rate_max, 1e-9)])
+
     def act(obs):
-        a = pol.action(obs)
-        return np.array([a[0] / pol.bounds.steer_rate_max,
-                         a[1] / pol.bounds.hub_max,
-                         a[2] / pol.bounds.diff_max])[:env.action_space.shape[0]]
+        a = np.asarray(pol.action(obs), float)
+        return (a / scales[:len(a)])[:env.action_space.shape[0]]
 
     m, rows = _eval_episodes(env, act, eval_cmds(cfg["env"]["v_max"]))
     _print_rows(rows)
@@ -538,13 +562,17 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # or 17 wide, and replay must low-pass with the same constant.
            "vel_window_s": cfg["env"].get("vel_window_s", 0.0),
            "obs_pitch": bool(cfg["env"].get("obs_pitch", False)),
+           "obs_wings": bool(cfg["env"].get("obs_wings", False)),
+           "act_wings": bool(cfg["env"].get("act_wings", False)),
+           "wing_max_deg": float(cfg["env"].get("wing_max_deg", 90.0)),
            # The resulting entry names, recorded explicitly. Two optional
            # 2-entry blocks make WIDTH ambiguous (a windowed policy and a
            # pitch-observing one are both 17), so replay compares this list
            # rather than a length -- see drive.engage_general.
            "obs_layout": list(obs_layout(
                cfg["env"].get("vel_window_s", 0.0),
-               cfg["env"].get("obs_pitch", False))),
+               cfg["env"].get("obs_pitch", False),
+               cfg["env"].get("obs_wings", False))),
            "action_space": cfg["env"]["action_space"],
            "trained": trained}
     with open(MOVES_DIR / f"{name}.yaml", "w") as f:

@@ -478,9 +478,13 @@ def test_base_layout_is_a_prefix_of_every_optional_layout():
                                               obs_dim_for, obs_layout)
     base = _obs()
     assert base.shape == (OBS_DIM,)
-    for kw, flags in ((dict(v_bar=(0.7, -0.04)), (1.0, False)),
-                      (dict(pitch=(0.1, 0.4)), (0.0, True)),
-                      (dict(v_bar=(0.7, -0.04), pitch=(0.1, 0.4)), (1.0, True))):
+    for kw, flags in ((dict(v_bar=(0.7, -0.04)), (1.0, False, False)),
+                      (dict(pitch=(0.1, 0.4)), (0.0, True, False)),
+                      (dict(wings=(1.2, 0.3)), (0.0, False, True)),
+                      (dict(v_bar=(0.7, -0.04), pitch=(0.1, 0.4)),
+                       (1.0, True, False)),
+                      (dict(v_bar=(0.7, -0.04), pitch=(0.1, 0.4),
+                            wings=(1.2, 0.3)), (1.0, True, True))):
         o = _obs(**kw)
         assert o.shape == (obs_dim_for(*flags),)
         assert o[:OBS_DIM] == pytest.approx(base, abs=0.0)
@@ -495,6 +499,11 @@ def test_base_layout_is_a_prefix_of_every_optional_layout():
     # Pitch is a SAGITTAL quantity: the mirror leaves it alone, unlike roll.
     assert OBS_MIRROR_PARITY[i("pitch")] == +1
     assert OBS_MIRROR_PARITY[i("pitch_rate")] == +1
+    # Wings are +1 for a DIFFERENT reason: one actuator drives the pair
+    # through an equality with mirror = -1, so left = -right and every
+    # reachable wing state is symmetric. Only true while they are coupled.
+    assert OBS_MIRROR_PARITY[i("wing_angle")] == +1
+    assert OBS_MIRROR_PARITY[i("wing_rate")] == +1
 
 
 def test_observation_width_is_ambiguous_so_layout_is_the_contract():
@@ -503,8 +512,11 @@ def test_observation_width_is_ambiguous_so_layout_is_the_contract():
     the other and feed the net nonsense with nothing raised, so replay
     compares the layout element-wise."""
     from aow_sim.control.general_spec import obs_dim_for, obs_layout
-    assert obs_dim_for(1.0, False) == obs_dim_for(0.0, True) == 17
-    assert obs_layout(1.0, False) != obs_layout(0.0, True)
+    # THREE distinct 17-wide layouts now, which is the whole point.
+    assert (obs_dim_for(1.0, False, False) == obs_dim_for(0.0, True, False)
+            == obs_dim_for(0.0, False, True) == 17)
+    assert len({obs_layout(1.0, False, False), obs_layout(0.0, True, False),
+                obs_layout(0.0, False, True)}) == 3
 
 
 def test_pitch_sign_is_nose_up():
@@ -604,18 +616,71 @@ def test_shipped_general_policy_matches_its_declared_width():
     obs-dim mismatch, so after a spec change the whole suite would go green by
     absence -- this is the one that goes red instead."""
     from aow_sim.control.flick import MOVES_DIR, load_move
-    from aow_sim.control.general_spec import obs_layout
+    from aow_sim.control.general_spec import obs_layout_for
     names = sorted(p.stem for p in MOVES_DIR.glob("general_*.yaml"))
     if not names:
         pytest.skip("no general policies exported yet")
     for name in names:
         pol = load_move(name)
-        want = obs_layout(getattr(pol, "vel_window_s", 0.0),
-                          getattr(pol, "obs_pitch", False))
+        want = obs_layout_for(pol)
         assert pol.obs_dim == len(want), (
-            f"moves/{name}: obs_dim {pol.obs_dim} but flags "
-            f"(vel_window_s={pol.vel_window_s}, obs_pitch={pol.obs_pitch}) "
-            f"imply {len(want)}")
+            f"moves/{name}: obs_dim {pol.obs_dim} but its declared flags "
+            f"imply {len(want)}: {want}")
         declared = tuple(getattr(pol, "obs_layout", ()) or ())
         assert not declared or declared == want, (
             f"moves/{name}: declared layout disagrees with its own flags")
+
+
+def test_wing_channel_is_optional_and_appended():
+    """ACT_DIM stays the SHARED move contract at 3; the wing channel is a
+    general-policy-only fourth entry. scale_action's return arity follows its
+    input arity, so every move policy still unpacks three."""
+    from aow_sim.control.general_spec import ACT_DIM, act_dim_for
+    from aow_sim.control.flick_spec import ActionBounds, scale_action
+
+    assert ACT_DIM == 3
+    assert act_dim_for(False) == 3 and act_dim_for(True) == 4
+    b = ActionBounds(8.0, 1.4, 40.0)
+    assert b.wing_rate_max == 0.0            # defaulted: moves are unchanged
+    assert len(scale_action([0.5, 0.5], b)) == 3
+    assert len(scale_action([1.0, -1.0, 0.5], b)) == 3
+    bw = ActionBounds(8.0, 1.4, 40.0, 4.0)
+    assert scale_action([1.0, -1.0, 0.5, 0.25], bw) == pytest.approx(
+        (8.0, -1.4, 20.0, 1.0))
+    # a bounds list written before the wing channel existed still loads
+    assert ActionBounds.from_list([8.0, 1.4, 40.0]).wing_rate_max == 0.0
+    assert ActionBounds.from_list([8.0, 1.4, 40.0, 4.0]).wing_rate_max == 4.0
+
+
+def test_wing_command_is_clipped_to_the_no_lift_cap():
+    """Past ~96 deg the deployed foot goes under the floor and jacks the bike
+    off its wheels. The integrator must clamp at the cap and never below 0."""
+    env = _env(obs_wings=True, act_wings=True, wing_max_deg=90.0,
+               action_bounds=dict(steer_rate_max=8.0, hub_max=1.4,
+                                  diff_max=40.0, wing_rate_max=4.0))
+    assert env.action_space.shape == (4,)
+    env.reset(seed=1)
+    a = np.zeros(4)
+    a[3] = 1.0                                # drive it hard open
+    for _ in range(80):
+        _o, _r, term, trunc, info = env.step(a)
+        assert info["wing_deg"] <= 90.0 + 1e-6
+        if term or trunc:
+            break
+    assert info["wing_deg"] == pytest.approx(90.0, abs=1e-6)
+    a[3] = -1.0                               # ...and hard shut
+    for _ in range(80):
+        _o, _r, term, trunc, info = env.step(a)
+        assert info["wing_deg"] >= -1e-9
+        if term or trunc:
+            break
+
+
+def test_wings_off_builds_the_wingless_model():
+    """The gating guarantee: without the flags this is today's robot, with no
+    wing actuator and a 3-channel action."""
+    env = _env()
+    assert env.obs_dim == OBS_DIM and env.action_space.shape == (3,)
+    assert not env.wings and env.model.nu == 3
+    assert all("wing" not in env.model.joint(i).name
+               for i in range(env.model.njnt))

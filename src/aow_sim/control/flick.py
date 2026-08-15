@@ -278,6 +278,12 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         # `obs_layout` records the resulting entry names so a width collision
         # between two different feature combinations cannot pass silently.
         pol.obs_pitch = bool(d.get("obs_pitch", False))
+        # Wings: observed and/or driven. Both part of the obs/action contract,
+        # and `wing_max_deg` is the cap replay must integrate against or the
+        # policy commands a stroke it never trained on.
+        pol.obs_wings = bool(d.get("obs_wings", False))
+        pol.act_wings = bool(d.get("act_wings", False))
+        pol.wing_max_deg = float(d.get("wing_max_deg", 90.0))
         pol.obs_layout = tuple(d.get("obs_layout", ()) or ())
         # The parameter set this policy was TRAINED against. "" for every move
         # exported before the field existed. See check_move_digest.

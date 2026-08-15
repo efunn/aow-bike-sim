@@ -103,6 +103,12 @@ class _Base:
         self.params = params
         self.dt = 1.0 / params["control"]["rate_hz"]
         self.aid = {n: model.actuator(n).id for n in ("drive_a", "drive_b", "steer")}
+        # Present only on a wings model; every wingless model omits it and the
+        # general policy's wing channel is simply unavailable there.
+        try:
+            self.aid["wings"] = model.actuator("wings").id
+        except (KeyError, ValueError):
+            pass
         # Saturate only actuators that declare a ctrlrange (steer is unlimited).
         limited = model.actuator_ctrllimited.astype(bool)
         self.lo = np.where(limited, model.actuator_ctrlrange[:, 0], -np.inf)
@@ -202,6 +208,14 @@ class LQRBalance(_Base):
         self.steer_limit = np.deg2rad(params["control"]["lqr"]["steer_limit_deg"])
         self._sj = model.joint("steer_joint").qposadr[0]
         self._sd = model.joint("steer_joint").dofadr[0]
+        # Wings model only; None everywhere else, which is what the general
+        # policy's wing flags are checked against in engage_general.
+        self._wj = self._wd = None
+        try:
+            wj = model.joint("wing_right_joint")
+            self._wj, self._wd = wj.qposadr[0], wj.dofadr[0]
+        except (KeyError, ValueError):
+            pass
         self._ref_yaw = 0.0
         self.steer_frame = SteerFrame()
 

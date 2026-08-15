@@ -35,10 +35,10 @@ from gymnasium import spaces
 from ..build_model import build_model, load_params
 from .balance import extract_state, mix
 from .drive import DriveController
-from .general_spec import (ACT_DIM, ActionBounds, build_obs, command_to_body,
-                           obs_dim_for, obs_layout, rotate_to_body,
-                           scale_action, vel_filter_alpha, vel_filter_step,
-                           wrap_pi)
+from .general_spec import (ACT_DIM, ActionBounds, act_dim_for, build_obs,
+                           command_to_body, obs_dim_for, obs_layout,
+                           rotate_to_body, scale_action, vel_filter_alpha,
+                           vel_filter_step, wrap_pi)
 from .linearize import settle_upright
 from .randomize import DomainRandomizer
 
@@ -88,7 +88,16 @@ class GeneralEnv(gym.Env):
         self.cfg = rl_cfg or _load_rl_config()
         env = self.cfg["env"]
         self.hockey = bool(env.get("ball_prob", 0.0) > 0.0)
-        self.model = build_model(self.p, variant="full", hockey=self.hockey)
+        # Wings are GATED. Building them is not a small addition: it pulls in
+        # the righting shell, adds ~143 g to a ~1016 g bike, raises the CoM
+        # ~1.9 mm, and flips the chassis lumps to COLLIDABLE -- a materially
+        # different robot, whose numbers never compare to the wingless arms.
+        # Off by default so every existing policy and comparison is untouched.
+        self.obs_wings = bool(env.get("obs_wings", False))
+        self.act_wings = bool(env.get("act_wings", False))
+        self.wings = self.obs_wings or self.act_wings
+        self.model = build_model(self.p, variant="full", hockey=self.hockey,
+                                 righting=self.wings, wings=self.wings)
         self._eq = settle_upright(self.model).qpos.copy()
         self.data = mujoco.MjData(self.model)
         # Crawl-balance fallback gain from the ball-free model, as ball_env.
@@ -112,8 +121,10 @@ class GeneralEnv(gym.Env):
         self.fall = np.deg2rad(self.rw["fall_roll_deg"])
         self.sigma_v = float(self.rw["sigma_v"])
         self.sigma_psi = np.deg2rad(self.rw["sigma_psi_deg"])
-        self.w_smooth = _per_channel(self.rw["w_smooth"],
-                                     ACT_DIM if self.full else 2, "w_smooth")
+        self.w_smooth = _per_channel(
+            self.rw["w_smooth"],
+            act_dim_for(bool(env.get("act_wings", False))) if
+            env["action_space"] == "full" else 2, "w_smooth")
         # Velocity window. Lives under `env:` rather than `reward:` because it
         # changes the OBSERVATION CONTRACT, not just a weight -- and `env:` is
         # where the fields that get exported into the move yaml live. Absent
@@ -127,6 +138,17 @@ class GeneralEnv(gym.Env):
         # straight off the AHRS on hardware (hw/state.set_orientation), so
         # observing them costs nothing in transfer.
         self.obs_pitch = bool(env.get("obs_pitch", False))
+        # Cap on the wing command. 90 deg keeps the deployed foot 11 mm clear
+        # of the floor with the bike upright, while the full 105 deg stroke
+        # puts it 15 mm BELOW and jacks the bike off its wheels -- that stroke
+        # belongs to control/righting.py, not to the policy.
+        self.wing_max = np.deg2rad(float(env.get("wing_max_deg", 90.0)))
+        # Curriculum gate on the wing RANGE, as [open_lo, open_hi] in
+        # difficulty. Below open_lo the cap is 0 -- the wings are pinned stowed
+        # and the bike must balance on two wheels; above open_hi it is the full
+        # wing_max. Absent => open from the start, which is what the first two
+        # wings runs did.
+        self.wing_open = tuple(env.get("wing_open", (0.0, 0.0)))
 
         cur = self.cfg["curriculum"]
         self.cur_on = bool(cur["enabled"])
@@ -135,14 +157,20 @@ class GeneralEnv(gym.Env):
         self.diff_thresh = float(cur["advance_score"])
         self._diff = self.diff_start if self.cur_on else 1.0
 
-        act_dim = ACT_DIM if self.full else 2
+        act_dim = act_dim_for(self.act_wings) if self.full else 2
         self.action_space = spaces.Box(-1.0, 1.0, (act_dim,), np.float32)
-        self.obs_dim = obs_dim_for(self.vel_window_s, self.obs_pitch)
-        self.obs_layout = obs_layout(self.vel_window_s, self.obs_pitch)
+        self.obs_dim = obs_dim_for(self.vel_window_s, self.obs_pitch,
+                                   self.obs_wings)
+        self.obs_layout = obs_layout(self.vel_window_s, self.obs_pitch,
+                                     self.obs_wings)
         self.observation_space = spaces.Box(-np.inf, np.inf, (self.obs_dim,),
                                             np.float32)
         self._aid = {n: self.model.actuator(n).id
                      for n in ("drive_a", "drive_b", "steer")}
+        if self.wings:
+            self._aid["wings"] = self.model.actuator("wings").id
+            self._wj = self.model.joint("wing_right_joint").qposadr[0]
+            self._wd = self.model.joint("wing_right_joint").dofadr[0]
         self._sj = self.model.joint("steer_joint").qposadr[0]
         self._sd = self.model.joint("steer_joint").dofadr[0]
         self._chassis = self.model.body("chassis").id
@@ -209,6 +237,54 @@ class GeneralEnv(gym.Env):
         self.data.qpos[q + 3:q + 7] = [1.0, 0.0, 0.0, 0.0]
         self.data.qvel[self._ball_v:self._ball_v + 6] = 0.0
 
+    def _wing_cap(self) -> float:
+        """Wing range allowed at the current difficulty [rad].
+
+        REVERSED from the first attempt. Runs 1 and 2 had the wings available
+        from step 0 and tried to price them away later; both ended unable to
+        balance without them (20/20 falls when forced stowed), because a
+        policy that learns wing-dependent balance first has to UNLEARN it, and
+        a penalty just buys the cheapest escape -- run 2 deployed less but let
+        roll reach 43 deg and got caught harder (24% of weight on the feet vs
+        9%).
+
+        Opening the range late instead means wingless balance is learned while
+        it is the only option, and the wings arrive as an extra capability
+        rather than a crutch to be taken away. A cap also cannot be traded
+        against tracking reward the way a penalty can.
+        """
+        lo, hi = self.wing_open
+        if hi <= lo:
+            return self.wing_max                  # no gate: open from the start
+        f = (self._diff - lo) / (hi - lo)
+        return self.wing_max * float(np.clip(f, 0.0, 1.0))
+
+    def _w_wing_now(self) -> float:
+        """Wing penalty at the current curriculum difficulty.
+
+        Linear from `w_wing` at difficulty 0 to `w_wing_late` at 1. When
+        `w_wing_late` is absent it equals `w_wing`, so every config written
+        before this ramp existed keeps a flat weight and reproduces exactly.
+
+        `w_wing_ramp` gives the difficulty range the ramp spans, which run 3
+        showed is necessary rather than decorative. There the gate opened over
+        _diff 0.5-0.8 while this weight ramped on _diff DIRECTLY, so it was
+        already ~0.5 when the wings first became usable: they became available
+        exactly as they became expensive, and the policy never touched them
+        (max 9.5 deg at 700k, ~0 for the rest of training). Keying the ramp to
+        a later range leaves a window where the wings are both usable and
+        cheap, which is the only way exploring them can pay.
+        """
+        lo = float(self.rw.get("w_wing", 0.0))
+        hi = float(self.rw.get("w_wing_late", lo))
+        r = self.rw.get("w_wing_ramp")
+        if r and float(r[1]) > float(r[0]):
+            f = (self._diff - float(r[0])) / (float(r[1]) - float(r[0]))
+            f = float(np.clip(f, 0.0, 1.0))
+        else:
+            f = self._diff          # keyed straight to difficulty (run 2/3)
+        return lo + (hi - lo) * f
+
     def _advance_vel_filter(self):
         """One tick of the low-pass on measured WORLD velocity.
 
@@ -236,7 +312,10 @@ class GeneralEnv(gym.Env):
                         float(self.data.qvel[self._sd]),
                         s.v_lon, s.v_lat, v_cl, v_ct, psi_err, self._prev_a,
                         v_bar=vb,
-                        pitch=(s.pitch, s.pitch_rate) if self.obs_pitch else None)
+                        pitch=(s.pitch, s.pitch_rate) if self.obs_pitch else None,
+                        wings=((float(self.data.qpos[self._wj]),
+                                float(self.data.qvel[self._wd]))
+                               if self.obs_wings else None))
         return obs, s, v_cl, v_ct, psi_err, vb_lon, vb_lat
 
     # -- curriculum --------------------------------------------------------
@@ -290,6 +369,9 @@ class GeneralEnv(gym.Env):
         # agree or a policy sees a startup transient in replay it never saw in
         # training.
         self._v_bar_w = self.data.qvel[:2].copy()
+        # Wings start STOWED, and the integrator is seeded from the model so
+        # replay (engage_general) can seed itself the same way.
+        self._wing = float(self.data.qpos[self._wj]) if self.wings else 0.0
         opts = options or {}
         if "difficulty" in opts:
             self.set_difficulty(opts["difficulty"])
@@ -307,8 +389,17 @@ class GeneralEnv(gym.Env):
 
     def step(self, action):
         action = np.asarray(action, np.float32)
-        steer_rate, hub, diff = scale_action(action, self.bounds)
+        scaled = scale_action(action, self.bounds)
+        steer_rate, hub, diff = scaled[0], scaled[1], scaled[2]
         self._steer += steer_rate * self.ctrl_dt
+        if self.act_wings:
+            # A RATE integrated into a position target, exactly like steer,
+            # because the wing servo is the same multi-turn XC330 in extended
+            # position mode. UNLIKE steer it is clipped: the joint is limited,
+            # and past ~96 deg the foot goes under the floor and jacks the
+            # bike off its wheels instead of catching a fall.
+            self._wing = float(np.clip(self._wing + scaled[3] * self.ctrl_dt,
+                                       0.0, self._wing_cap()))
         if not self.full:                       # feedforward: crawl balance
             s0 = extract_state(self.data, self._p0)
             diff = float(-self._K0[0] @ np.array(
@@ -317,6 +408,9 @@ class GeneralEnv(gym.Env):
         self.data.ctrl[self._aid["drive_a"]] = a
         self.data.ctrl[self._aid["drive_b"]] = b
         self.data.ctrl[self._aid["steer"]] = self._steer
+        if self.wings:
+            # Held at 0 (stowed) when the policy does not own the channel.
+            self.data.ctrl[self._aid["wings"]] = self._wing
 
         self.data.xfrc_applied[self._chassis, :] = 0.0
         if self.rand["enabled"] and self._np_random.random() < self.rand["disturb_prob"]:
@@ -355,6 +449,25 @@ class GeneralEnv(gym.Env):
                   # form as w_upright; 0.0 by default, so every config that
                   # predates it is unchanged.
                   - rw.get("w_pitch", 0.0) * s.pitch ** 2
+                  # Wing deployment, normalised by the allowed range so the
+                  # term is in [0, 1], and RAMPED with the curriculum: cheap
+                  # at difficulty 0 so the wings work as training wheels while
+                  # the policy learns to track, expensive at difficulty 1 so
+                  # it has to give them up.
+                  #
+                  # The late weight is set by arithmetic, not taste. Over a
+                  # 750-step episode a 0.5 s save is ~25 steps of full deploy,
+                  # and it buys back `penalty_fall` (50). So the late weight
+                  # must satisfy 25*w < 50 (a genuine save still pays) and
+                  # 750*w >> 50 (living on them does not): w in [0.2, 2.0].
+                  # The first wings run used a flat 0.05, which costs 38 over
+                  # a whole episode against a 50-point fall -- so riding the
+                  # wings permanently was simply cheaper than balancing, and
+                  # the policy did exactly that (forcing them stowed made it
+                  # fall in 20 of 20 eval episodes).
+                  - (self._w_wing_now()
+                     * (self._wing / max(self.wing_max, 1e-9)) ** 2  # static cap: normalising by the scheduled one would divide by ~0
+                     if self.wings else 0.0)
                   - rw["w_effort"] * float(action @ action)
                   # Per-channel: w_smooth may be one number (broadcast, the
                   # historical behaviour) or one per action channel.
@@ -398,6 +511,7 @@ class GeneralEnv(gym.Env):
             "vel_err_win": float(np.sqrt(v_err2)),
             "v_bar_lon": float(vb_lon), "v_bar_lat": float(vb_lat),
             "pitch_deg": float(np.degrees(s.pitch)),
+            "wing_deg": float(np.degrees(self._wing)) if self.wings else 0.0,
             "head_err_deg": float(np.degrees(abs(psi_err))),
             "difficulty": float(self._diff),
             "fell": bool(fell),

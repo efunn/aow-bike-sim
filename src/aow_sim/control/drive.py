@@ -144,6 +144,10 @@ class DriveController(LQRBalance):
         self._gen_u = None              # held action between queries
         self._gen_window_s = 0.0        # policy's velocity-window time constant
         self._gen_obs_pitch = False     # does the policy observe pitch?
+        self._gen_obs_wings = False     # ...and the wings?
+        self._gen_act_wings = False     # does it DRIVE the wings?
+        self._gen_wing = 0.0            # integrated wing position target
+        self._gen_wing_max = 0.0
         self._gen_vbar_alpha = 1.0      # 1.0 => v_bar is the instantaneous v
         self._gen_v_bar_w = np.zeros(2)  # low-passed WORLD velocity
 
@@ -331,7 +335,7 @@ class DriveController(LQRBalance):
         heading, current velocity — so engaging never jolts the bike."""
         from .flick import load_move
         self._gen = load_move(name)
-        from .general_spec import obs_layout, vel_filter_alpha
+        from .general_spec import obs_layout_for, vel_filter_alpha
         # The observation LAYOUT is a property of the policy, carried in its
         # move yaml, so a policy trained without any optional block is 15-wide
         # and still loads here unchanged.
@@ -343,7 +347,16 @@ class DriveController(LQRBalance):
         # feed the net nonsense with nothing raised.
         self._gen_window_s = float(getattr(self._gen, "vel_window_s", 0.0))
         self._gen_obs_pitch = bool(getattr(self._gen, "obs_pitch", False))
-        want = obs_layout(self._gen_window_s, self._gen_obs_pitch)
+        self._gen_obs_wings = bool(getattr(self._gen, "obs_wings", False))
+        self._gen_act_wings = bool(getattr(self._gen, "act_wings", False))
+        self._gen_wing_max = np.deg2rad(
+            float(getattr(self._gen, "wing_max_deg", 90.0)))
+        if (self._gen_obs_wings or self._gen_act_wings) and \
+                "wings" not in self.aid:
+            raise ValueError(
+                f"moves/{name} expects the wings, but this model has no `wings`"
+                " actuator — build with build_model(..., wings=True)")
+        want = obs_layout_for(self._gen)
         declared = tuple(getattr(self._gen, "obs_layout", ()) or ())
         if declared and declared != want:
             raise ValueError(
@@ -372,6 +385,8 @@ class DriveController(LQRBalance):
         # policy never saw in training.
         self._gen_vbar_alpha = vel_filter_alpha(self.dt, self._gen_window_s)
         self._gen_v_bar_w = np.asarray(data.qvel[:2], float).copy()
+        self._gen_wing = (float(data.qpos[self._wj]) if self._wj is not None
+                          else 0.0)
         s = extract_state(data, self._ref_pos)
         self._gen_psi_cmd = self._psi
         self._gen_v_cmd = data.qvel[:2].copy()
@@ -425,22 +440,35 @@ class DriveController(LQRBalance):
             if self._gen_window_s > 0.0:
                 vb = rotate_to_body(self._gen_v_bar_w[0],
                                     self._gen_v_bar_w[1], self._psi)
+            wg = None
+            if self._gen_obs_wings:
+                wg = (float(data.qpos[self._wj]), float(data.qvel[self._wd]))
             obs = build_obs(s.roll, s.roll_rate, data.qvel[5],
                             float(data.qpos[self._sj]),
                             float(data.qvel[self._sd]),
                             s.v_lon, s.v_lat, v_cl, v_ct, psi_err,
                             self._gen_prev_a, v_bar=vb,
                             pitch=((s.pitch, s.pitch_rate)
-                                   if self._gen_obs_pitch else None))
-            steer_rate, hub, diff = pol.action(obs)
-            self._gen_prev_a = np.array([
-                steer_rate / pol.bounds.steer_rate_max,
-                hub / pol.bounds.hub_max,
-                diff / pol.bounds.diff_max])
-            self._gen_u = (steer_rate, hub, diff)
+                                   if self._gen_obs_pitch else None),
+                            wings=wg)
+            act = pol.action(obs)
+            steer_rate, hub, diff = act[0], act[1], act[2]
+            wing_rate = act[3] if len(act) > 3 else 0.0
+            prev = [steer_rate / pol.bounds.steer_rate_max,
+                    hub / pol.bounds.hub_max,
+                    diff / pol.bounds.diff_max]
+            if len(act) > 3:
+                prev.append(wing_rate / max(pol.bounds.wing_rate_max, 1e-9))
+            self._gen_prev_a = np.array(prev)
+            self._gen_u = (steer_rate, hub, diff, wing_rate)
             self._gen_hold = self._gen_every
-        steer_rate, hub, diff = self._gen_u
+        steer_rate, hub, diff, wing_rate = self._gen_u
         self._gen_hold -= 1
+        if self._gen_act_wings:
+            # Same clipped rate integration as GeneralEnv.step, at the
+            # CONTROLLER rate like the steer integrator beside it.
+            self._gen_wing = float(np.clip(
+                self._gen_wing + wing_rate * self.dt, 0.0, self._gen_wing_max))
         # Integrate at the CONTROLLER rate so the commanded steer traces the
         # same ramp the training env produced in one of its longer steps.
         self._gen_steer += steer_rate * self.dt
@@ -451,6 +479,8 @@ class DriveController(LQRBalance):
         u = np.zeros(len(self._u))
         u[self.aid["drive_a"]], u[self.aid["drive_b"]] = a, b
         u[self.aid["steer"]] = clamp_extended(self._gen_steer)
+        if self._gen_act_wings:
+            u[self.aid["wings"]] = self._gen_wing
         return u
 
     def viz_reference(self, data) -> tuple[float, float]:

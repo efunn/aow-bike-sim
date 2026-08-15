@@ -74,9 +74,26 @@ channel (general_env._per_channel): the three channels are not
 interchangeable, since `diff` is the one that catches roll and it declines to
 smooth at a price the other two accept.
 
-Action is identical to every other move (steer rate, hub speed, rear
-differential), so ActionBounds/scale_action are reused from flick_spec
-rather than duplicated.
+Action is the same three channels as every other move (steer rate, hub speed,
+rear differential), so ActionBounds/scale_action are reused from flick_spec
+rather than duplicated. ACT_DIM stays 3 and is the SHARED contract.
+
+OPTIONAL WING CHANNEL (`act_wings`). The self-righting wing pair can be given
+to the general policy as a FOURTH channel, appended so the move layout is
+untouched: `scale_action` returns four values only when handed four, and
+`ActionBounds.wing_rate_max` defaults to 0. Like the observation blocks this
+is off unless asked for, and it is an EXPERIMENT -- the wings are still
+"analysis only, nothing decided, nothing ordered" (docs/plans/self-righting.md)
+and the policy has never seen one.
+
+The wing action is a RATE integrated into a position target, exactly like
+steer, because the real wing servo is a multi-turn XC330 in extended-position
+mode just as the steering one is. Unlike steer it must be CLIPPED, because
+`wing_right_joint` is limited: measured on the model, the deployed foot is
+still 11 mm clear of the floor at 90 deg but 15 mm BELOW it at the full
+105 deg stroke, so a command above ~96 deg jacks an upright bike off its
+wheels. 90 deg is the cap that keeps the wings a fall-catcher rather than a
+jack; the full stroke stays reserved for control/righting.py.
 """
 
 from __future__ import annotations
@@ -97,6 +114,7 @@ ACT_DIM = 3   # [steer_rate, hub, diff]; feedforward mode uses only [0:2]
 _OPTIONAL_BLOCKS = (
     ("vel_window", ("v_bar_lon", "v_bar_lat")),
     ("obs_pitch", ("pitch", "pitch_rate")),
+    ("obs_wings", ("wing_angle", "wing_rate")),
 )
 
 
@@ -110,7 +128,8 @@ OBS_NAMES_BASE = (
     "sin_psi_err", "cos_psi_err",
     "prev_steer_rate", "prev_hub", "prev_diff",
 )
-OBS_NAMES = OBS_NAMES_BASE + ("v_bar_lon", "v_bar_lat", "pitch", "pitch_rate")
+OBS_NAMES = OBS_NAMES_BASE + ("v_bar_lon", "v_bar_lat", "pitch", "pitch_rate",
+                              "wing_angle", "wing_rate")
 # Sign under the sagittal mirror. A filter is linear and time-invariant, so a
 # filtered quantity mirrors exactly like its source: v_bar_lon follows v_lon
 # (+1), v_bar_lat follows v_lat (-1). Getting these wrong does not raise --
@@ -126,12 +145,24 @@ OBS_MIRROR_PARITY = np.array([
     +1, -1,            # v_bar_lon, v_bar_lat
     +1, +1,            # pitch, pitch_rate -- SAGITTAL, so the mirror leaves
                        #   them alone, unlike roll and yaw which flip
+    +1, +1,            # wing_angle, wing_rate -- also +1, and NOT obvious.
+                       #   The wing pair is driven by ONE actuator through an
+                       #   equality with mirror = -1 (build_model _add_wings),
+                       #   so left = -right and every reachable wing state is
+                       #   symmetric: the single observed DoF is mirror-
+                       #   INVARIANT. This holds ONLY because the pair is
+                       #   constrained. Independently actuated wings would be
+                       #   a mirror-ANTISYMMETRIC PAIR, which a flat sign
+                       #   vector cannot express -- it negates but does not
+                       #   permute -- and mirror_equivariance would need a
+                       #   permutation instead.
 ], dtype=float)
 assert len(OBS_NAMES) == len(OBS_MIRROR_PARITY)
 assert len(OBS_NAMES_BASE) == OBS_DIM
 
 
-def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False) -> tuple:
+def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False,
+               obs_wings: bool = False) -> tuple:
     """The exact entry names this feature combination produces.
 
     WIDTH ALONE IS AMBIGUOUS and must not be used as the contract. With two
@@ -141,22 +172,51 @@ def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False) -> tuple:
     raising. So the layout is recorded in the move yaml and compared
     element-wise -- see control/drive.py engage_general.
     """
+    on = {"vel_window": float(vel_window_s) > 0.0,
+          "obs_pitch": bool(obs_pitch),
+          "obs_wings": bool(obs_wings)}
     names = list(OBS_NAMES_BASE)
     for flag, block in _OPTIONAL_BLOCKS:
-        on = (float(vel_window_s) > 0.0 if flag == "vel_window"
-              else bool(obs_pitch))
-        if on:
+        if on[flag]:
             names.extend(block)
     return tuple(names)
 
 
-def obs_dim_for(vel_window_s: float = 0.0, obs_pitch: bool = False) -> int:
+def policy_flags(pol) -> dict:
+    """The optional-block flags a loaded policy declares, with defaults.
+
+    ONE place that maps a policy object to flags. Every call site that
+    re-derived this by hand has eventually forgotten a block: `env_for` missed
+    obs_pitch (built a 17-wide env for a 19-wide policy), and the shipped-
+    policy guard missed it again and then missed obs_wings. Adding a block
+    should require editing `_OPTIONAL_BLOCKS` and this function, and nothing
+    else.
+    """
+    return {"vel_window_s": float(getattr(pol, "vel_window_s", 0.0)),
+            "obs_pitch": bool(getattr(pol, "obs_pitch", False)),
+            "obs_wings": bool(getattr(pol, "obs_wings", False))}
+
+
+def obs_layout_for(pol) -> tuple:
+    """`obs_layout` for a loaded policy -- the contract replay checks against."""
+    return obs_layout(**policy_flags(pol))
+
+
+def obs_dim_for(vel_window_s: float = 0.0, obs_pitch: bool = False,
+                obs_wings: bool = False) -> int:
     """Observation width implied by a policy's feature flags.
 
     Prefer `obs_layout()` for the CONTRACT -- width collides (see its
     docstring). This stays for sizing an array.
     """
-    return len(obs_layout(vel_window_s, obs_pitch))
+    return len(obs_layout(vel_window_s, obs_pitch, obs_wings))
+
+
+def act_dim_for(act_wings: bool = False) -> int:
+    """Action width. ACT_DIM (3) stays the SHARED contract with flick/ball/
+    pivot; the wing channel is a general-policy-only fourth entry, appended so
+    the move layout is untouched."""
+    return ACT_DIM + (1 if act_wings else 0)
 
 
 def vel_filter_alpha(dt: float, window_s: float) -> float:
@@ -190,7 +250,7 @@ def vel_filter_step(v_bar_w, v_w, alpha: float) -> np.ndarray:
 
 def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
               v_cmd_lon, v_cmd_lat, psi_err, prev_action,
-              v_bar=None, pitch=None) -> np.ndarray:
+              v_bar=None, pitch=None, wings=None) -> np.ndarray:
     """Assemble the observation vector (length OBS_DIM, or OBS_DIM_WINDOWED
     when `v_bar` is given).
 
@@ -217,6 +277,12 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
                      w_pitch penalty is not charged against a state the policy
                      cannot see -- the same argument that put prev_action in.
                      Both come off the AHRS on hardware.
+    wings          : (wing_angle, wing_rate) [rad, rad/s] of `wing_right_joint`
+                     -- the driven wing; the other is mirrored onto it by an
+                     equality. None for a policy that does not observe them.
+                     Position and velocity are what the servo measures;
+                     current is deliberately NOT observed (a noisy, lagged
+                     torque proxy with no sim counterpart).
     """
     pa = np.asarray(prev_action, dtype=float).reshape(-1)
     obs = [
@@ -232,6 +298,8 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
         obs.extend((float(v_bar[0]), float(v_bar[1])))
     if pitch is not None:
         obs.extend((float(pitch[0]), float(pitch[1])))
+    if wings is not None:
+        obs.extend((float(wings[0]), float(wings[1])))
     return np.array(obs, dtype=np.float32)
 
 
