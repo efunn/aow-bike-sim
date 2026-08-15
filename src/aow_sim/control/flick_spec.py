@@ -33,13 +33,22 @@ class ActionBounds:
     steer_rate_max: float   # rad/s
     hub_max: float          # m/s
     diff_max: float         # rad/s (rear differential)
+    # OPTIONAL fourth channel, general policy only (see general_spec: the
+    # wings are a general-policy experiment, not part of the move contract).
+    # Defaulted, so every 3-argument construction in the moves is unchanged
+    # and ACT_DIM stays 3.
+    wing_rate_max: float = 0.0   # rad/s of wing joint rate command
 
     def to_list(self) -> list[float]:
-        return [self.steer_rate_max, self.hub_max, self.diff_max]
+        return [self.steer_rate_max, self.hub_max, self.diff_max,
+                self.wing_rate_max]
 
     @classmethod
     def from_list(cls, v) -> "ActionBounds":
-        return cls(float(v[0]), float(v[1]), float(v[2]))
+        # Length-tolerant: every npz written before the wing channel existed
+        # carries three entries and must keep loading unchanged.
+        return cls(float(v[0]), float(v[1]), float(v[2]),
+                   float(v[3]) if len(v) > 3 else 0.0)
 
 
 def build_obs(roll, roll_rate, yaw_err, yaw_rate, steer, v_lon, v_lat,
@@ -61,10 +70,21 @@ def build_obs(roll, roll_rate, yaw_err, yaw_rate, steer, v_lon, v_lat,
     ], dtype=np.float32)
 
 
-def scale_action(a, bounds: ActionBounds) -> tuple[float, float, float]:
-    """Map a normalized action to (steer_rate, hub, diff). Accepts length 3
-    (full: policy also drives the differential) or length 2 (feedforward: the
-    differential comes from the crawl balance instead, returned here as 0)."""
+def scale_action(a, bounds: ActionBounds):
+    """Map a normalized action to (steer_rate, hub, diff[, wing_rate]).
+
+    Length 3 = full (the policy also drives the differential), length 2 =
+    feedforward (the differential comes from the crawl balance instead,
+    returned here as 0).
+
+    Length 4 additionally returns a wing RATE and is general-policy only. The
+    arity of the RETURN follows the arity of the INPUT, so every move policy --
+    which emits at most 3 -- still unpacks three values exactly as before.
+    """
     a = np.clip(np.asarray(a, dtype=float), -1.0, 1.0)
     diff = float(a[2]) * bounds.diff_max if a.shape[0] >= 3 else 0.0
-    return float(a[0]) * bounds.steer_rate_max, float(a[1]) * bounds.hub_max, diff
+    out = (float(a[0]) * bounds.steer_rate_max,
+           float(a[1]) * bounds.hub_max, diff)
+    if a.shape[0] >= 4:
+        out = out + (float(a[3]) * bounds.wing_rate_max,)
+    return out

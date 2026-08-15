@@ -41,15 +41,21 @@ class MLPPolicy:
         self.obs_var = np.asarray(obs_var, np.float64)
         self.bounds = bounds
         self.obs_clip = float(obs_clip)            # VecNormalize clip_obs
-        self.act_dim = self.layers[-1][0].shape[0]   # 3 = full, 2 = feedforward
+        # 3 = full, 2 = feedforward, 4 = full + the general policy's optional
+        # wing channel (see general_spec; ACT_DIM stays 3 for the moves).
+        self.act_dim = self.layers[-1][0].shape[0]
         self.obs_dim = self.layers[0][0].shape[1]    # flick=10, ball=14, etc.
         # Consistency check against the normalization stats, not a fixed OBS_DIM,
         # so the same replay serves any move's observation length.
         assert self.obs_dim == self.obs_mean.shape[0], "policy input != obs stats"
-        assert self.act_dim in (2, ACT_DIM), "policy output dim must be 2 or 3"
+        assert self.act_dim in (2, ACT_DIM, ACT_DIM + 1), (
+            f"policy output dim {self.act_dim} is not 2 (feedforward), "
+            f"{ACT_DIM} (full) or {ACT_DIM + 1} (full + wing channel)")
 
-    def action(self, obs) -> tuple[float, float, float]:
-        """obs (OBS_DIM,) -> (steer_rate, hub, diff). Mirrors VecNormalize +
+    def action(self, obs):
+        """obs (OBS_DIM,) -> (steer_rate, hub, diff[, wing_rate]). The return
+        arity follows the policy's own output width, so a move policy always
+        unpacks three. Mirrors VecNormalize +
         the SB3 policy: normalize+clip obs, MLP forward, deterministic mean,
         clip to the action box, then scale to physical units."""
         obs = np.asarray(obs, np.float64)
