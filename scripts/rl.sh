@@ -143,16 +143,24 @@ start() {
 # so deriving the logdir from the move name alone points the board at an empty
 # directory ("No dashboards are active for the current data set"). The launch
 # argv recorded in the train log is the source of truth. LOGDIR overrides.
+# Canonical absolute path, so the two sides of the stale-board comparison are
+# always in the same form. `realpath` is not on every macOS by default and the
+# directory may not exist yet (the board can start before the first rollout),
+# so this resolves textually rather than requiring the path to exist.
+canon_dir() {
+  local d="$1"
+  [[ -n "$d" ]] || return 0
+  [[ "$d" = /* ]] || d="$REPO/$d"
+  printf '%s\n' "${d%/}"
+}
+
 board_logdir() {
   local move=$1 log rd
-  if [[ -n "${LOGDIR:-}" ]]; then echo "$LOGDIR"; return; fi
+  if [[ -n "${LOGDIR:-}" ]]; then canon_dir "$LOGDIR"; return; fi
   log="$(run_dir "$move")/logs/train-latest.log"
   if [[ -f "$log" ]]; then
     rd="$(sed -n 's/.*--run-dir[= ]\{1,\}\([^ ]*\).*/\1/p' "$log" | head -1)"
-    if [[ -n "$rd" ]]; then
-      [[ "$rd" = /* ]] || rd="$REPO/$rd"
-      echo "$rd"; return
-    fi
+    if [[ -n "$rd" ]]; then canon_dir "$rd"; return; fi
   fi
   run_dir "$move"
 }
@@ -167,9 +175,26 @@ board_url() {
 cmd_board() {
   local move=$1 port log
   port="${PORT:-$(port_for "$move")}"
-  if running "$move" board >/dev/null; then
-    echo "tensorboard  -> already up at $(board_url "$port")  (port $port)"
-    return 0
+  local want; want="$(board_logdir "$move")"
+  local job
+  if job="$(running "$move" board)"; then
+    # `up` after a run with a new --run-dir leaves a board serving the OLD
+    # directory, and it looks healthy -- a full dashboard of the wrong run.
+    # Compare what it was actually launched with and restart on a mismatch.
+    local bpid cur
+    bpid="${job##* }"
+    cur="$(canon_dir "$(ps -o command= -p "$bpid" 2>/dev/null |
+           sed -n 's/.*--logdir[= ]\{1,\}\([^ ]*\).*/\1/p')")"
+    if [[ -n "$cur" && "$cur" != "$want" ]]; then
+      echo "tensorboard  -> logdir changed, restarting"
+      echo "                was: $cur"
+      echo "                now: $want"
+      stop "$move" board >/dev/null 2>&1 || true
+    else
+      echo "tensorboard  -> already up at $(board_url "$port")  (port $port)"
+      [[ -n "$cur" ]] && echo "                logdir: $cur"
+      return 0
+    fi
   fi
   # Someone is on the port but this script has no pidfile for it -- usually a
   # board that outlived its pidfile (the file is removed as soon as a liveness
@@ -185,7 +210,7 @@ cmd_board() {
     return 0
   fi
   activate_env
-  local dir; dir="$(board_logdir "$move")"
+  local dir="$want"
   log="$(start "$move" board tensorboard -- \
     tensorboard --logdir "$dir" --bind_all --port "$port")"
   echo "tensorboard  -> $(board_url "$port")        <-- port $port"
@@ -209,6 +234,24 @@ cmd_train() {
 
 cmd_up() {
   local move=$1; shift
+  # Resolve the board's logdir from the argv we are ABOUT TO LAUNCH, not from
+  # the last run's train log. board_logdir parses --run-dir out of
+  # train-latest.log, which at this instant still describes the PREVIOUS run --
+  # so `up` used to point the board at the previous run's directory. That
+  # failure is quiet and convincing: you get a full dashboard of the wrong run,
+  # not the obvious "No dashboards are active".
+  if [[ -z "${LOGDIR:-}" ]]; then
+    local rd=""
+    local -a argv=("$@")
+    local i
+    for ((i = 0; i < ${#argv[@]}; i++)); do
+      case "${argv[i]}" in
+        --run-dir=*) rd="${argv[i]#--run-dir=}" ;;
+        --run-dir)   rd="${argv[i+1]:-}" ;;
+      esac
+    done
+    [[ -n "$rd" ]] && export LOGDIR="$rd"
+  fi
   cmd_board "$move"
   cmd_train "$move" "$@"
 }
