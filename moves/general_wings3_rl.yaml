@@ -1,0 +1,58 @@
+name: general_wings3_rl
+type: rl
+kind: general
+policy_file: general_wings3_rl.npz
+params_digest: d80a4c570dd7065d
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.12
+vel_window_s: 0.0
+obs_pitch: false
+obs_wings: true
+act_wings: true
+wing_max_deg: 90.0
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- wing_angle
+- wing_rate
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 5000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 3.775248433868228e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.83
+    track_geo: 0.824
+    vel_err: 0.2
+    head_err_deg: 4.8
+    n_eval: 20
+    drift_m: 0.693
+    steer_rest_deg: 25.8
+    speed_ratio_fwd: 0.944
+    speed_ratio_rev: 0.983
+    crab_ratio_left: 0.337
+    crab_ratio_right: 0.112
+    crab_head_err: 11.1
+    crab_osc: 0.0
+    wing_deg: 0.1
+    wing_duty: 0.0
+    turn_asym: 0.259
+  exported_from: best_model.zip
