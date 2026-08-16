@@ -58,13 +58,29 @@ the floor is drawn hot, so "which roller is carrying the bike" is readable
 frame by frame.
 
 SUBSTEP RESOLUTION. The control loop runs at 50 Hz but the physics runs at
-5 kHz, and everything interesting here lives between control ticks. So the
+2.5 kHz, and everything interesting here lives between control ticks. So the
 rollout re-creates GeneralEnv.step's actuator write and then single-steps the
-physics itself, sampling every `stride` steps. That duplication is checked
-rather than trusted: `_verify_replication` asserts this loop reproduces
-GeneralEnv.step's qpos to machine precision before any frame is rendered. The
-env is never modified -- as with the rest of analysis/, no trained policy can
-be affected by a measurement.
+physics itself. That duplication is checked rather than trusted:
+`_verify_replication` asserts this loop reproduces GeneralEnv.step's qpos to
+machine precision before any frame is rendered. The env is never modified --
+as with the rest of analysis/, no trained policy can be affected by a
+measurement.
+
+PLAYBACK RATE IS A REQUEST, NOT AN OUTCOME. Frames are sampled on a SIM-TIME
+clock, so `--slowmo` is honoured exactly at any timestep. (It used to sample
+every N physics steps, which tied the rate to the timestep: one `--slowmo 83`
+came out at 83x under a 2e-4 step and 5.6x under 3e-3, and the two clips could
+not be compared.) The one hard floor is the timestep itself -- no run emits
+frames faster than it integrates -- and asking for more says so and caps.
+
+  python analysis/wheel_slowmo.py --slowmo 1 --seconds 4     # real time
+  python analysis/wheel_slowmo.py --compare 4e-4,3e-3 --slowmo 5
+
+`--compare` stacks one run per timestep into a single video on that shared
+clock, with a shared clearance scale. They are NOT the same trajectory: same
+policy, same seed, but a different timestep diverges within a few steps
+because the hold is a buzz, not a fixed point. Read a stacked clip as two
+samples of the same behaviour, never as one drifting from the other.
 """
 
 from __future__ import annotations
@@ -172,8 +188,18 @@ def _norm_action(pol, obs):
     return np.asarray(pol.action(obs), float) / scale
 
 
-def rollout(pol, env, seconds, stride, rear_geoms, floor):
-    """Hold command, sampled every `stride` physics steps.
+def rollout(pol, env, seconds, frame_dt, rear_geoms, floor):
+    """Hold command, sampled on a SIM-TIME clock: one frame per `frame_dt`.
+
+    Not "every N physics steps". A stride ties the playback rate to the
+    timestep -- 83x at 2e-4 and 5.6x at 3e-3 for the same request -- so two
+    runs at different timesteps could not be played against each other, which
+    is the whole point of `--compare`. Sampling on sim time makes the output
+    rate exactly what was asked for at any timestep, at the cost of the sample
+    landing on the first physics step at or after each frame time (within one
+    timestep, i.e. under half a pixel of wheel travel here).
+
+    `frame_dt` must be >= the timestep; the caller clamps and says so.
 
     Returns a list of frames; each carries the full simulator state needed to
     render it plus the scalars the HUD reads, so rendering never re-simulates.
@@ -181,19 +207,21 @@ def rollout(pol, env, seconds, stride, rear_geoms, floor):
     obs, _ = env.reset(seed=7, options=_HOLD)
     weight = float(env.model.body_subtreemass[env.model.body("chassis").id] * 9.81)
     verts = wheel_vertices(env.model, rear_geoms)
+    dt = env.model.opt.timestep
     n_ctrl = int(round(seconds / env.ctrl_dt))
     out, buf = [], np.zeros(6)
     action = np.zeros(3)
-    k = 0
+    k, next_t = 0, 0.0
     for _ in range(n_ctrl):
         action = _norm_action(pol, obs)
         _apply_control(env, action)
         for _ in range(env.substeps):
             mujoco.mj_step(env.model, env.data)
-            if k % stride == 0:
+            k += 1
+            if k * dt >= next_t:
                 out.append(_sample(env, action, rear_geoms, floor, weight,
                                    buf, verts))
-            k += 1
+                next_t += frame_dt
         obs, *_ = env._obs()
     return out
 
@@ -502,7 +530,8 @@ def _font(size):
 _TINT_FLOOR = np.array([21, 34, 51], np.uint8)     # 0.55 * tint, over black
 
 
-def compose(panels, frame, policy, slowmo, hist, font, font_sm, width):
+def compose(panels, frame, policy, slowmo, hist, font, font_sm, width,
+            span=None):
     """Panels side by side, HUD underneath.
 
     Every panel puts world z=0 on the same row (it is the panel's vertical
@@ -563,7 +592,11 @@ def compose(panels, frame, policy, slowmo, hist, font, font_sm, width):
         hx0, hy0 = int(im.width * 0.60) + 190, y0 + 2
         hw, hh = im.width - hx0 - 14, 74
         if hw > 40:
-            span = max(0.05, float(np.abs(hist).max()))
+            # `span` is passed in by --compare so the stacked runs share one
+            # y-scale. Left to autoscale, the coarse run's ±2.7 mm hop and the
+            # fine run's ±0.5 mm buzz draw as the same-sized squiggle, which
+            # inverts the comparison the video exists to make.
+            span = span or max(0.05, float(np.abs(hist).max()))
             mid = hy0 + hh / 2
             sc = (hh / 2) / span
             d.rectangle([hx0, mid, hx0 + hw, hy0 + hh], fill=(20, 31, 46))
@@ -643,6 +676,23 @@ def main():
     ap.add_argument("--timeconst", type=float, default=None,
                     help="override contact solref timeconst [s] for this "
                          "render only; config/bike_params.yaml is untouched")
+    ap.add_argument("--compare", default=None, metavar="DT,DT,...",
+                    help="stack one run PER TIMESTEP in a single video, on a "
+                         "shared frame clock and a shared clearance scale, so "
+                         "they play against each other. e.g. --compare "
+                         "4e-4,3e-3. The runs are NOT the same trajectory: "
+                         "same policy and seed, but a different timestep "
+                         "diverges within a few steps, so read it as two "
+                         "samples of the same behaviour, not as drift")
+    ap.add_argument("--timestep", type=float, default=None,
+                    help="override sim.timestep [s] for this render only; "
+                         "config/bike_params.yaml is untouched. Applied "
+                         "BEFORE the env is built, so the control substep "
+                         "count follows it. Watch the refsafe margin the "
+                         "header prints: once 2*timestep exceeds the solref "
+                         "timeconst MuJoCo silently substitutes 2*timestep "
+                         "and the clip is of a softer contact than the one "
+                         "asked for")
     ap.add_argument("--dampratio", type=float, default=None,
                     help="override contact solref dampratio; 1.0 cannot "
                          "bounce, the physical wheel does -- see "
@@ -656,22 +706,65 @@ def main():
                          "in analysis/ beside the committed PNGs")
     args = ap.parse_args()
 
-    params = load_params()
+    base = load_params()
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
-    env = GeneralEnv(params, cfg)
     solref = (args.timeconst, args.dampratio)
-    override_solref(env.model, *solref)
+
+    def env_at(timestep):
+        # Patch BEFORE GeneralEnv, not after: `substeps` is derived from the
+        # timestep at construction, so setting model.opt.timestep on the
+        # compiled model would leave the control rate silently wrong.
+        p = base if not timestep else {
+            **base, "sim": {**base["sim"], "timestep": timestep}}
+        e = GeneralEnv(p, cfg)
+        override_solref(e.model, *solref)
+        return p, e
+
+    steps = ([float(x) for x in args.compare.split(",")] if args.compare
+             else [args.timestep])
+    runs = [dict(zip(("params", "env"), env_at(s))) for s in steps]
+    for r, s in zip(runs, steps):
+        r["label"] = f"dt {r['env'].model.opt.timestep:g}" if len(steps) > 1 else ""
+    params, env = runs[0]["params"], runs[0]["env"]
+    # One renderer for every run: the models differ ONLY in opt.timestep, so
+    # any run's state can be posed in any run's model. Asserted rather than
+    # assumed, because a divergence here would render one run's wheel using
+    # another run's geometry and look perfectly plausible.
+    assert len({(r["env"].model.nq, r["env"].model.nv, r["env"].model.ngeom)
+                for r in runs}) == 1, "compared models are not structurally identical"
     model = env.model
     print(f"contact solref {np.round(model.geom_solref[0], 5).tolist()}"
           + ("  (overridden)" if any(v is not None for v in solref) else ""))
 
-    dt_frame = 1.0 / (FPS * args.slowmo)
-    stride = max(1, int(round(dt_frame / model.opt.timestep)))
-    eff = 1.0 / (FPS * stride * model.opt.timestep)
-    print(f"physics {1 / model.opt.timestep:.0f} Hz, stride {stride} "
-          f"-> {eff:.1f}x slow at {FPS} fps, "
-          f"{args.seconds * eff:.1f} s of video per policy")
+    # MuJoCo's `refsafe` (on unless mjDSBL_REFSAFE is set) raises a POSITIVE
+    # solref timeconst to 2*timestep without saying so, so past that point the
+    # clip stops being of the contact that was configured. Negative solref gets
+    # no such guard -- it just diverges. Either way the ratio is worth seeing.
+    tc = float(model.geom_solref[0, 0])
+    for r in runs:
+        step = r["env"].model.opt.timestep
+        if tc > 0:
+            margin = 2 * step / tc
+            note = (f"  ** CLAMPED: refsafe is using timeconst {2 * step:g} s, "
+                    f"not {tc:g}" if margin >= 1.0 else "")
+            print(f"dt {step:g}: refsafe margin 2*dt/timeconst = {margin:.2f} "
+                  f"({tc / step:.1f} steps per contact time constant)" + note)
+
+    # The frame clock is the SAME sim-time interval for every run, which is
+    # what makes stacked runs comparable. Its one hard floor is the coarsest
+    # timestep: no run can emit frames faster than it integrates.
+    coarsest = max(r["env"].model.opt.timestep for r in runs)
+    frame_dt = 1.0 / (FPS * args.slowmo)
+    if frame_dt < coarsest:
+        print(f"  slowmo {args.slowmo:g}x needs {frame_dt:.2e} s per frame but the "
+              f"coarsest timestep is {coarsest:.2e} s -- capped at "
+              f"{1 / (FPS * coarsest):.1f}x")
+        frame_dt = coarsest
+    eff = 1.0 / (FPS * frame_dt)
+    print(f"frame clock {frame_dt:.2e} s of sim per frame -> {eff:.1f}x slow "
+          f"at {FPS} fps, {args.seconds * eff:.1f} s of video per policy"
+          + (f", {len(runs)} runs stacked" if len(runs) > 1 else ""))
 
     gname = [model.geom(i).name for i in range(model.ngeom)]
     floor = gname.index("floor")
@@ -712,40 +805,62 @@ def main():
             print(f"  skip {key}: no {npz.name}")
             continue
         pol = load_policy_npz(npz)
-        err = _verify_replication(params, cfg, pol, solref)
-        frames = rollout(pol, env, args.seconds, stride, rear, floor)
-        # SIGNED clearance, not pen_mm: pen_mm is >= 0 by
-        # construction, so feeding it here drew the lift half of
-        # every cycle as a flat line on the axis.
-        clear_all = [f["clear_mm"] for f in frames]
-        rows[key] = viability(frames, args.seconds, roller_r_mm)
+        errs, takes = [], []
+        for r in runs:
+            errs.append(_verify_replication(r["params"], cfg, pol, solref))
+            takes.append(rollout(pol, r["env"], args.seconds, frame_dt,
+                                 rear, floor))
+        # SIGNED clearance, not pen_mm: pen_mm is >= 0 by construction, so
+        # feeding it here drew the lift half of every cycle as a flat line.
+        clears = [[f["clear_mm"] for f in t] for t in takes]
+        # One clearance scale across the stack, set by whichever run swings
+        # furthest -- see the note in compose().
+        span = (max(0.05, max(abs(v) for c in clears for v in c))
+                if len(runs) > 1 else None)
+        for r, t in zip(runs, takes):
+            tag = f"{key} {r['label']}".strip()
+            rows[tag] = viability(t, args.seconds, roller_r_mm)
         if not args.no_video:
             out = args.out_dir / f"wheel_slowmo_{key}{args.tag}.mp4"
             out.parent.mkdir(parents=True, exist_ok=True)
             writer = imageio.get_writer(out, fps=FPS, macro_block_size=1,
                                         quality=8)
-            for n, fr in enumerate(frames):
-                env.data.qpos[:] = fr["qpos"]
-                env.data.qvel[:] = fr["qvel"]
-                mujoco.mj_forward(model, env.data)
-                panels = [render_panel(renderer, model, env.data, v, fr,
-                                       frames_geom, framings, font_sm)
-                          for v in args.views]
-                writer.append_data(compose(panels, fr, key, eff,
-                                           clear_all[:n + 1], font, font_sm,
-                                           args.width))
+            # Runs can differ by a frame from the rounding in the clock, and a
+            # stacked video has to end when the shortest one does.
+            n_out = min(len(t) for t in takes)
+            for n in range(n_out):
+                bands = []
+                for r, t, c in zip(runs, takes, clears):
+                    fr = t[n]
+                    env.data.qpos[:] = fr["qpos"]
+                    env.data.qvel[:] = fr["qvel"]
+                    mujoco.mj_forward(model, env.data)
+                    panels = [render_panel(renderer, model, env.data, v, fr,
+                                           frames_geom, framings, font_sm)
+                              for v in args.views]
+                    bands.append(compose(
+                        panels, fr, f"{key}  {r['label']}".strip(), eff,
+                        c[:n + 1], font, font_sm, args.width, span=span))
+                frame = (bands[0] if len(bands) == 1
+                         else np.vstack([b[:, :min(x.shape[1] for x in bands)]
+                                         for b in bands]))
+                h, w = frame.shape[:2]          # even dims again after vstack
+                writer.append_data(frame[:h - h % 2, :w - w % 2])
             writer.close()
-            print(f"  wrote {out}  ({len(frames)} frames, "
-                  f"replication err {err:.1e})")
+            print(f"  wrote {out}  ({n_out} frames, replication err "
+                  + ", ".join(f"{e:.1e}" for e in errs) + ")")
 
     print(f"\nwhat the hardware would have to survive "
           f"({args.seconds:.2f} s of hold, roller radius {roller_r_mm:.1f} mm)")
-    print(f"{'policy':26}{'pen pk':>8}{'of roller':>11}{'force pk':>10}"
+    # Width follows the labels: --compare appends "dt 0.0004" to each, which
+    # overflowed the old fixed 26 and pushed every number out of its column.
+    kw = max([26] + [len(k) + 2 for k in rows])
+    print(f"{'policy':{kw}}{'pen pk':>8}{'of roller':>11}{'force pk':>10}"
           f"{'airborne':>10}{'landings':>10}{'roller':>9}{'hub':>8}")
-    print(f"{'':26}{'[mm]':>8}{'[%]':>11}{'[x weight]':>10}{'[%]':>10}"
+    print(f"{'':{kw}}{'[mm]':>8}{'[%]':>11}{'[x weight]':>10}{'[%]':>10}"
           f"{'[/s]':>10}{'[rpm]':>9}{'[rpm]':>8}")
     for key, r in rows.items():
-        print(f"{key:26}{r['pen_peak']:>8.2f}{100 * r['pen_frac']:>11.1f}"
+        print(f"{key:{kw}}{r['pen_peak']:>8.2f}{100 * r['pen_frac']:>11.1f}"
               f"{r['force_peak']:>10.2f}{100 * r['air_frac']:>10.0f}"
               f"{r['landings_hz']:>10.1f}{r['roller_rpm']:>9.0f}"
               f"{r['hub_rpm']:>8.0f}")
