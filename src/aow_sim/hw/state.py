@@ -141,3 +141,23 @@ def load_bundle(path: str | Path, params: dict | None = None
                                        dofadr=d["steer_dofadr"])},
     )
     return design, model
+
+
+def load_ahrs_mount(path: str | Path) -> tuple[np.ndarray, str]:
+    """Load the AHRS mounting quaternion from a bundle -> (q_mount, source).
+
+    Separate from `load_bundle` so its two-tuple return stays stable for the
+    callers that only want the controller.
+
+    Unlike the gain schedule, a missing value here is NOT fatal: bundles
+    exported before this was persisted have no such key, and identity is
+    exactly what the code assumed before. It is still worth shouting about —
+    an uncalibrated mount is a permanent roll bias, not a neutral default —
+    so the source string is returned for the caller to check rather than
+    swallowed.
+    """
+    d = np.load(path, allow_pickle=False)
+    if "ahrs_q_mount" not in d:
+        return np.array([1.0, 0.0, 0.0, 0.0]), "absent"
+    q = np.asarray(d["ahrs_q_mount"], dtype=float)
+    return q / np.linalg.norm(q), str(d["ahrs_mount_source"])

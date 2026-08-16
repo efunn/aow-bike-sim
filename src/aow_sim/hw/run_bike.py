@@ -45,13 +45,17 @@ from ..control.drive import DriveController
 from .ahrs import AhrsReader, MountCalibration
 from .dynamixel import ServoBus
 from .odometry import VelocityEstimator, body_to_world
-from .state import HardwareData, load_bundle
+from .state import HardwareData, load_ahrs_mount, load_bundle
 
 CONTROL_HZ = 100.0
 CMD_STALE_S = 0.15        # -> zero the command. PROVISIONAL, see note below
 CMD_DEAD_S = 1.0          # -> torque off
 VOLTAGE_MIN = 10.2        # 3.4 V/cell on 3S. Pack total, not per-cell — see note
 FALL_ROLL_RAD = np.deg2rad(60.0)
+
+GRAVITY = 9.80665
+PREFLIGHT_ACCEL_TOL = 0.15               # fraction of g
+PREFLIGHT_GYRO_MAX = np.deg2rad(2.0)     # at rest
 
 # CMD_STALE_S is a round number, not a measurement. Two things can put the real
 # command-age distribution's tail past it:
@@ -142,7 +146,9 @@ class BikeRunner:
         self.aid = self.ctl.aid
         self.data = HardwareData(self.model.nq, self.model.nv, self.model.nu)
         self.bus = ServoBus(self.params, port=port)
-        self.ahrs = AhrsReader(ahrs_port, calibration=MountCalibration())
+        q_mount, self.mount_source = load_ahrs_mount(bundle_path)
+        self.ahrs = AhrsReader(ahrs_port,
+                               calibration=MountCalibration(q_mount))
         self.est = VelocityEstimator(self.params)
         self.link = CommandLink()
         self.jitter = []
@@ -188,6 +194,61 @@ class BikeRunner:
         self.ctl.set_command(v_cmd_world=c.get("v_cmd_world", [0.0, 0.0]),
                              psi_cmd=c.get("psi_cmd"))
 
+    def preflight_ahrs(self, seconds: float = 0.5, strict: bool = True) -> list[str]:
+        """Sanity-check the AHRS before engaging. Bike must be STATIONARY.
+
+        Deliberately POSE-INDEPENDENT — it does not assume the bike is upright,
+        because at startup it is usually on a stand or lying on its wings. So it
+        checks only what holds in any orientation at rest:
+
+          * frames are arriving at all, and are fresh;
+          * |accel| == g, which catches a dead, mis-scaled or mis-parsed
+            accelerometer regardless of which way is down;
+          * |gyro| ~ 0, which catches a runaway bias — the failure that would
+            otherwise show up as the bike calmly driving itself over.
+
+        What it CANNOT check is the mounting calibration, because that needs a
+        known reference pose. See docs/plans/untethered-setup.md for the
+        wings-down self-check that would close that gap once the wing geometry
+        is built and its expected attitude is known.
+        """
+        problems: list[str] = []
+        if self.mount_source != "measured":
+            problems.append(
+                f"AHRS mount calibration is '{self.mount_source}', not 'measured' — "
+                "assuming the sensor is perfectly aligned with the chassis. "
+                "Any mounting tilt is a permanent roll bias.")
+
+        t_end = time.monotonic() + seconds
+        accels, gyros = [], []
+        while time.monotonic() < t_end:
+            try:
+                s = self.ahrs.latest()
+            except Exception as e:                      # stale or nothing yet
+                problems.append(f"AHRS not producing fresh frames: {e}")
+                return _report_preflight(problems, strict)
+            accels.append(np.linalg.norm(s.accel))
+            gyros.append(np.linalg.norm(s.gyro))
+            time.sleep(0.01)
+
+        if not accels:
+            problems.append("AHRS produced no samples during preflight")
+            return _report_preflight(problems, strict)
+
+        a, g = float(np.mean(accels)), float(np.max(gyros))
+        if abs(a - GRAVITY) > PREFLIGHT_ACCEL_TOL * GRAVITY:
+            problems.append(
+                f"|accel| is {a:.2f} m/s^2, expected ~{GRAVITY:.2f} "
+                f"(+-{PREFLIGHT_ACCEL_TOL:.0%}) — check units, parsing, or the sensor")
+        if g > PREFLIGHT_GYRO_MAX:
+            problems.append(
+                f"|gyro| peaks at {np.degrees(g):.1f} deg/s while supposedly at rest "
+                f"(limit {np.degrees(PREFLIGHT_GYRO_MAX):.1f}) — bias, vibration, "
+                "or the bike is moving")
+        print(f"preflight: |accel| {a:.2f} m/s^2, |gyro| max {np.degrees(g):.2f} deg/s, "
+              f"mount '{self.mount_source}'")
+        return _report_preflight(problems, strict)
+
     def _check_failsafes(self, voltage: float) -> str | None:
         if self.link.age() > CMD_DEAD_S:
             return f"command link dead ({self.link.age():.1f} s)"
@@ -197,11 +258,14 @@ class BikeRunner:
             return f"roll {np.degrees(self._roll):.0f} deg — fallen"
         return None
 
-    def run(self) -> None:
+    def run(self, preflight: bool = True) -> None:
         self.bus.open()
         self.ahrs.start()
         self.link.start()
         _try_realtime()
+
+        # Before any torque: the bike is stationary here and never again.
+        self.preflight_ahrs(strict=preflight)
 
         voltage = self.bus.pack_voltage()
         print(f"pack {voltage:.1f} V — engaging general policy at "
@@ -273,6 +337,21 @@ def _rpy(quat) -> tuple[float, float, float]:
             float(np.arctan2(R[1, 0], R[0, 0])))
 
 
+def _report_preflight(problems: list[str], strict: bool) -> list[str]:
+    """Print preflight findings; raise on them only when strict.
+
+    `strict` defaults on because the whole point of the check is to stop before
+    engaging, but `--no-preflight` exists for bench work where the bike is
+    deliberately being moved or a sensor is deliberately absent.
+    """
+    for p in problems:
+        print(f"PREFLIGHT: {p}")
+    if problems and strict:
+        raise RuntimeError(
+            f"{len(problems)} preflight problem(s); fix them or pass --no-preflight")
+    return problems
+
+
 def _try_realtime() -> None:
     """SCHED_FIFO for the control thread. Best effort — without CAP_SYS_NICE
     this fails, and a warning beats refusing to run."""
@@ -289,8 +368,11 @@ def main() -> None:
     ap.add_argument("--port", default="/dev/ttyUSB0", help="U2D2 serial port")
     ap.add_argument("--ahrs-port", default="/dev/serial0", help="TM151 UART")
     ap.add_argument("--rate", type=float, default=CONTROL_HZ)
+    ap.add_argument("--no-preflight", action="store_true",
+                    help="report AHRS preflight problems but engage anyway")
     args = ap.parse_args()
-    BikeRunner(args.bundle, args.port, args.ahrs_port, args.rate).run()
+    BikeRunner(args.bundle, args.port, args.ahrs_port, args.rate).run(
+        preflight=not args.no_preflight)
 
 
 if __name__ == "__main__":

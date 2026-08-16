@@ -1,0 +1,30 @@
+# Fixed rotation between the TM151 case and the chassis frame.
+#
+# This is a MECHANICAL constant. It changes only when the sensor physically
+# moves relative to the chassis — not on every boot, not per session. Capture
+# it once on the built bike, paste the quaternion here, and re-run
+#
+#     python -m aow_sim.export_deploy
+#
+# so the bike picks it up. Re-capture after any disassembly that disturbs the
+# bracket, or after a hard crash.
+#
+# HOW TO CAPTURE: hold the bike in the reference pose — upright, wheels on the
+# ground, pointing along chassis +X — and read the sensor quaternion. From then
+# on that pose reads as identity, which is what the controllers assume. See
+# `MountCalibration` in src/aow_sim/hw/ahrs.py. The calibration absorbs mount
+# error; it CANNOT absorb error in the pose you captured, so the effort belongs
+# in making that pose flat and repeatable rather than in a perfect bracket.
+#
+# WHY IT MATTERS: a few degrees of uncorrected mounting tilt reads as a
+# constant roll offset. The balance controller trims against it forever and the
+# bike creeps.
+#
+# WHY IT IS NOT IN bike_params.yaml: it has no effect on the model, the LQR
+# design, or any trained policy — it describes the sensor's relationship to the
+# chassis, not the bike's physics. Folding it into the params digest would
+# force a full gain re-export every time the sensor is re-seated, and would
+# invalidate every move file for a change that cannot affect them.
+
+q_mount: [1.0, 0.0, 0.0, 0.0]   # w, x, y, z. Identity = case aligned with chassis.
+source: GUESS                   # GUESS until captured on the built bike, then `measured`.

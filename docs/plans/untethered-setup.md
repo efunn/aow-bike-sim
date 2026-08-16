@@ -236,6 +236,29 @@ trunk, **22 AWG for the servo drops**. 22 AWG carries 1.4 A per servo with room
 to spare. Check Digi-Key's silicone-jacket stock at both gauges before counting
 on it; silicone wire is a staple at any hobby shop if the selection is thin.
 
+**Twist the power pair — it is not cosmetic.** Run + and − twisted together
+along the whole trunk. Equal and opposite currents make their magnetic fields
+largely cancel, so the field falls off as 1/r² instead of 1/r. Two things
+depend on this:
+
+- **The magnetometer.** The TM151 is a 9-axis AHRS with a 3-axis magnetometer
+  feeding its heading solution (datasheet: <1.0° RMS static yaw). A straight
+  conductor gives B = µ₀I/2πr, so at the 3.6 A peak here a *single* untwisted
+  lead puts ~40 µT at 2 cm and ~8 µT at 10 cm — against an Earth field of only
+  ~50 µT. Worse, it scales with motor current, so it varies with what the bike
+  is doing and cannot be removed by a static hard/soft-iron calibration the way
+  a fixed magnet or a steel bracket can.
+- **Loop area**, which is what couples motor PWM into everything else.
+
+Only yaw is at risk — roll and pitch are referenced to gravity, and the balance
+path consumes `yaw_rate` rather than absolute heading, so `general_spec` never
+sees it. This is therefore an outer-loop and navigation concern, not a
+balance-stability one. Route the AHRS off the high-current path anyway (motor
+magnets are dipoles, falling off as 1/r³, so distance works well there), and
+run the magnetometer calibration **fully assembled and powered** so the static
+distortions that *are* correctable get captured. **If heading ever misbehaves
+on hardware, start here.**
+
 **7.5 A fuse, not the 5 A in the table above.** Peak draw is ~4 A (see
 *Budget*), and a 5 A fast-blow sits close enough to that to nuisance-trip on a
 three-servo stall transient. 7.5 A still protects 20 AWG, whose chassis rating
@@ -796,10 +819,62 @@ then runs **verbatim** on hardware.
 - **`ahrs.py`** — TM151 reader: quaternion → `qpos[3:7]`, body-frame gyro →
   `qvel[3:6]`. `extract_state` already does `mju_quat2Mat` on `qpos[3:7]` and
   reads `qvel[3]`/`qvel[5]` as body-frame roll/yaw rate, so these are direct
-  writes. Needs a **mounting-misalignment calibration** — the AHRS sits at
-  `[0.05, 0, 0.13]`, not at the chassis origin.
+  writes. **Mounting-misalignment calibration is persisted** — see below.
 - **`odometry.py`** — the only piece with real uncertainty (below).
 - **`run_bike.py`** — the three-thread process, UDP protocol, failsafes.
+
+### AHRS mounting calibration
+
+`MountCalibration.q_mount` is the fixed rotation between the sensor case and
+the chassis. It is a **mechanical** constant: it changes when the sensor
+physically moves and at no other time, so it is captured once and reloaded
+forever — not re-derived per boot.
+
+**Where it lives.** `config/ahrs_mount.yaml` on the laptop is the source of
+truth; `export_deploy` folds it into `deploy/bundle.npz`, and `run_bike`
+reads it back with `hw.state.load_ahrs_mount`. Deliberately **not** in
+`bike_params.yaml`: it cannot affect the model, the gain schedule or any
+trained policy, so putting it in the params digest would invalidate every
+gain export and every move file each time the sensor is re-seated. A bundle
+exported before this existed has no such key and degrades to identity, which
+is exactly what the code did before.
+
+**Position does not matter; orientation does.** Angular velocity and
+orientation are identical at every point on a rigid body, and the balance
+path reads only `qpos[3:7]` and `qvel[3]`/`qvel[5]` — all position-invariant.
+The mount *position* (`ahrs.pos`, currently `[0.05, 0, 0.13]`) only enters
+through accelerometer lever-arm terms, which is the path already de-weighted
+for exactly that reason (see *Velocity estimation*). So do not contort the
+packaging to put the sensor at the CoM; rigidity of the mount outranks its
+location by a wide margin, since any compliance becomes a resonance the gyro
+reports as real body rotation and the balance loop chases.
+
+**The capture pose is what sets the accuracy**, not the bracket. The
+calibration absorbs mount error and cannot absorb error in the pose it was
+captured from, so effort belongs in a flat, repeatable reference pose. Prefer
+mounting at 90° multiples anyway — `q_mount` then comes out as a clean axis
+permutation you can verify by inspection instead of a quaternion you can only
+trust as far as you trust the capture.
+
+**Preflight, and what it cannot check.** `BikeRunner.preflight_ahrs` runs
+before any torque and is deliberately *pose-independent* — at startup the bike
+is usually on a stand or on its side, so it asserts only what holds at rest in
+any orientation: frames arriving and fresh, `|accel| == g`, `|gyro| ~ 0`. That
+catches a dead, mis-scaled or mis-parsed sensor and a runaway gyro bias. It
+also reports when the mount calibration is not yet `measured`. `--no-preflight`
+downgrades it to warnings for bench work.
+
+**Tabled: the wings-down self-check.** What preflight cannot verify is the
+calibration itself, because that needs a *known* reference pose. Lowering the
+self-righting wings to the floor would give one — two symmetric wing contacts
+plus the wheels over-determine roll, which is the axis where error becomes a
+permanent lean. Two things block it today: the wing geometry is not built, so
+its expected attitude is unknown; and `capture()` assumes the reference pose is
+chassis-identity, whereas wings-down is some known non-identity attitude, so it
+would need to compose the two. Worth doing once the wings are physical — as a
+*verification* step rather than a re-calibration, since the constant should not
+drift. Also worth checking then whether the TM151's ground-vehicle gyro-bias
+removal can be triggered from the same known-stationary pose.
 
 ### Velocity estimation
 
