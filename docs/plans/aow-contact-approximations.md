@@ -71,6 +71,69 @@ one policy, one grid, and all of these schemes share the same 8-fold (or
 finer) periodic envelope. It says the policy is insensitive to roller *shape*;
 it does not test a genuinely smooth wheel, because no smooth wheel can crab.
 
+## 1c. Where the roller machinery's 2× actually goes — and why it can't be slept
+
+Only 1–2 of the 8 rollers can touch the floor at once, which makes "can the
+other 6–7 be made cheap?" the obvious question. Ablation says no, and the reason
+is worth writing down because it is a property of the engine, not of the wheel.
+`analysis/contact_surrogates.py --study ablate`; the `ghost` modes keep the
+roller bodies but stop them colliding and let a torus carry the contact, so the
+contact is held identical while the machinery varies.
+
+| variant | nv | neq | µs/step | |
+|---|---|---|---|---|
+| `cones` (shipped) | 15 | 10 | 7.76 | |
+| `free` (no equalities) | 15 | 2 | 6.96 | |
+| `ghost` (rollers non-colliding) | 15 | 10 | 7.65 | |
+| `ghostfree` (…and no equalities) | 15 | 2 | 6.87 | |
+| `torus` (no rollers at all) | 7 | 2 | 3.73 | |
+
+Splitting the 3.92 µs of roller machinery (`ghost` − `torus`):
+
+- **8 DOFs: 3.14 µs (80%)**
+- 8 equality rows: 0.78 µs (20%)
+- 16 colliding roller meshes: 0.11 µs (3%) — **free**, which is the same
+  conclusion §1 reached from the other side.
+
+The stage breakdown is the interesting part. Of the 3.14 µs the DOFs cost,
+**2.04 µs is inside `CONSTRAINT`** — a stage those DOFs do not participate in,
+since `ghostfree` has no roller equalities at all. Forward kinematics accounts
+for 0.29 µs and inertia for 0.16. The constraint Jacobian is `nefc × nv` and the
+Newton solve runs over every DOF, so **a DOF that nothing constrains still taxes
+the solver.**
+
+Sleeping does not rescue this, though not for the reason it first appears — see
+§7: MuJoCo 3.10 *does* have island sleeping, but the bike is a single island
+containing every roller DOF, it never goes quiet enough to sleep, and the
+gearbox's tendon equalities make the model refuse the flag outright.
+
+**The deeper point, though, is that those 8 DOFs are not real freedom.**
+`roller_i = k · ring_rel` exactly, so the mechanism has *zero* degrees of freedom
+beyond hub + ring: the shipped model is a redundant-coordinate formulation
+(15 DOFs + 8 constraints) of a 7-DOF system. The exact reduction is standard for
+gear trains — a joint whose coordinate is a fixed linear function of another,
+resolved at the coordinate level rather than by the solver. MuJoCo has no such
+primitive (a body's joints are relative to its parent, and there is no
+cross-tree gear coupling), which is why this is expressed as `mjEQ_JOINT`
+equalities instead. Half of the reduction *is* available and exact — the rollers'
+spin kinetic energy is ½(n·I_r·k²)·ω², i.e. **1.066e-5 kg·m² of `armature` on
+`ring_spin`** — but it buys nothing on its own, because what forces the bodies to
+exist is contact: MuJoCo derives contact-point velocity from body twists, so
+lateral surface velocity requires a body actually spinning about the axle. Same
+wall the torus hits.
+
+And they are not idle in any case. Geared at k = 2.4, the 8 rollers reflect
+**5.2× the ring gear's own inertia** onto the crawl channel — though only 3.5% of
+the servo's reflected rotor armature (3.0e-4 kg·m²), which dominates everything.
+So the load implication is real but small, and a reduced model that lumped it
+wrongly would be making a 3.5% error at the input shaft.
+
+Bottom line for the theoretical exercise: the ceiling is the 2.08× that `torus`
+sets, it is all DOFs, none of it is reachable without giving up crab, and 1.7× of
+it was already taken from the timestep (§2) at no modelling risk. The two
+mechanisms that look like they should help — island sleeping and MJX — are
+scoped in §7; neither is available today.
+
 ## 2. The 10× is in the timestep
 
 Contact statistics at ~1 m/s, 8 cone rollers, nothing else changed:
@@ -353,6 +416,56 @@ that buzzed.
 
 ---
 
+## 7. The two things that look like free speedups and are not
+
+**Island sleeping (`mjENBL_SLEEP`).** MuJoCo 3.10 does have it — islands are on
+by default (`mjDSBL_ISLAND` is a *disable* flag) and sleeping is opt-in via
+`mjENBL_SLEEP` + `opt.sleep_tolerance` (default 1e-4). It is the obvious
+candidate for "only 1–2 rollers matter at a time". It does not apply here, for
+three independent reasons, in increasing order of how fundamental they are:
+
+1. **The model refuses to run with it.** `mj_wakeEquality: tendon equality does
+   not yet support sleeping` — the gearbox's two `mjEQ_TENDON` constraints. That
+   one is incidental and would lift if MuJoCo adds support, or if the 2×2 mix
+   were applied in software and hub/ring driven directly.
+2. **There is no subset to sleep.** Measured standing on its wheels, the bike is
+   `nisland = 1`, `ntree = 1`, and all 8 roller DOFs report `dof_island == 0` —
+   the same island as the chassis freejoint. The equality constraints that make
+   the rollers turn are precisely what welds them into the chassis's island, and
+   sleep granularity is the *tree*, which here is the entire bike.
+3. **Nothing ever goes quiescent.** The whole point of §4 is that this wheel
+   buzzes: the rear contact is intermittent 30–50% of the time and residual
+   speeds sit around 1e-1, three orders above `sleep_tolerance`. A balancing
+   bike is the worst possible sleep candidate.
+
+Where it *could* pay is the fallen bike in the righting studies, which really
+does lie still — but that is seconds of a study, not the training loop.
+
+**MJX / GPU.** This is where "8 identical subtrees are duplicate work" would
+actually cash out, and it is the right long-term answer to throughput. But it is
+a port, not a flag, and three things have to be true first — none of which are
+today:
+
+- **It needs a GPU.** MJX's win is `vmap` over thousands of envs on one device;
+  a single MJX env is typically *slower* than C MuJoCo, and MJX on CPU is not a
+  win at all. The remote box is a 16C/32T Threadripper with no GPU, and the
+  laptop is Apple silicon, where JAX support is experimental. Neither machine
+  can show a gain.
+- **It replaces the training stack**, not just the model: SB3 + `SubprocVecEnv`
+  gives way to batched on-device rollouts.
+- **Several of this model's choices are exactly the ones MJX restricts.** Worth
+  checking before any scoping: `cone: elliptic` (MJX has favoured pyramidal),
+  `condim: 4`, `integrator: implicitfast`, the 16 cone **meshes** plus the
+  crowned tyre (MJX wants primitives and statically-bounded contact counts), and
+  `mjEQ_TENDON` again. Unverified here — `mujoco-mjx` and `jax` are not
+  installed, so this list is a checklist, not a measurement.
+
+The one real connection back to §1: if MJX ever happens, the `spheres1`/
+`spheres2` variants stop being pointless. They buy ~15% on CPU and are not worth
+the fidelity argument there, but "primitives instead of meshes, statically
+bounded contacts" is precisely what an MJX port would need — so that work is
+prep for a port rather than a CPU optimisation.
+
 ## Recommendations
 
 1. **Done: `sim.timestep: 4.0e-4` and `sim.mesh_segments: 64` are landed.**
@@ -383,9 +496,3 @@ that buzzed.
    `general_wings_rl` sits at **100% wing saturation with 0.000 per-step
    change**, which is the "total crutch" of the wings1 run showing up as a
    number rather than a description.
-
-If the throughput question comes back after (1) is banked, the next lever is
-not a better contact model — it is **MJX**, where the constraint count and
-primitive-vs-mesh choice start to matter for a different reason (GPU batching),
-and where thousands of parallel envs dwarf any single-env factor. That is worth
-scoping only if sample count actually becomes the binding constraint.

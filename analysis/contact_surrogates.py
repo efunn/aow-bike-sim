@@ -95,7 +95,9 @@ def _add_aow(spec, parent, p, mode="cones", n_axles=None):
                   quat=_Y_AXIS_QUAT, mass=ow["ring"]["mass"],
                   contype=0, conaffinity=0, rgba=[0.8, 0.5, 0.1, 1])
 
-    fr = dict(contype=DYN_CONTYPE, conaffinity=DYN_CONAFF, condim=sim["condim"],
+    solid = mode not in ("ghost", "ghostfree")
+    fr = dict(contype=DYN_CONTYPE if solid else 0,
+              conaffinity=DYN_CONAFF if solid else 0, condim=sim["condim"],
               friction=_contact_friction(sim), rgba=[0.15, 0.15, 0.15, 1])
     # Total roller mass held fixed across n, so a roller-count sweep is a
     # geometry sweep and not also an inertia sweep.
@@ -103,21 +105,34 @@ def _add_aow(spec, parent, p, mode="cones", n_axles=None):
     s_ridge = roller["pair_gap"] / 2                        # cone big-end ridge
     s_center = s_ridge + roller["length"] / 2
 
-    if mode == "cones":
+    if mode in ("cones", "ghost", "ghostfree"):
         cone = spec.add_mesh(name="roller_cone")
         cone.uservert = geometry.truncated_cone_vertices(
             roller["big_diameter"] / 2, roller["small_diameter"] / 2,
             roller["length"], sim["mesh_segments"]).flatten()
 
-    if mode == "torus":
+    # `ghost`/`ghostfree` are ABLATION modes, not candidate wheels. The rollers
+    # keep their bodies and DOFs but stop colliding, and a torus carries the
+    # contact instead -- which holds the CONTACT fixed while the roller
+    # machinery varies, the only way to price the machinery on its own.
+    # `ghost` keeps the 8 equalities, `ghostfree` drops them, so the pair
+    # separates "8 more DOFs" from "8 more constraint rows".
+    if mode in ("torus", "ghost", "ghostfree"):
         disc = spec.add_mesh(name="rear_tyre")
         rho = roller["big_diameter"] / 2
         disc.uservert = geometry.crowned_wheel_vertices(
             R, 1.96 * rho, rho, sim["mesh_segments"]).flatten()
         hub.add_geom(name="rear_disc", type=mujoco.mjtGeom.mjGEOM_MESH,
                      meshname="rear_tyre", quat=_Y_AXIS_QUAT,
-                     mass=roller["pair_mass"] * ow["n_axles"], **fr)
-    else:
+                     # Under the ablations the rollers still carry the mass, so
+                     # the stand-in tyre must not add any.
+                     mass=(roller["pair_mass"] * ow["n_axles"] if mode == "torus"
+                           else 1e-6),
+                     contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
+                     condim=sim["condim"], friction=_contact_friction(sim),
+                     rgba=[0.15, 0.15, 0.15, 1])
+
+    if mode != "torus":
         for i in range(n):
             th = 2 * np.pi * i / n
             radial = np.array([np.cos(th), 0.0, np.sin(th)])
@@ -126,7 +141,7 @@ def _add_aow(spec, parent, p, mode="cones", n_axles=None):
             axle.add_joint(name=f"roller_spin_{i}", type=mujoco.mjtJoint.mjJNT_HINGE,
                            axis=tangent, damping=dt["roller_joint_damping"],
                            frictionloss=dt["roller_joint_frictionloss"])
-            if mode == "cones":
+            if mode in ("cones", "ghost", "ghostfree"):
                 for side in (-1, 1):
                     axle.add_geom(name=f"roller_{i}_{side}",
                                   type=mujoco.mjtGeom.mjGEOM_MESH, meshname="roller_cone",
@@ -150,12 +165,13 @@ def _add_aow(spec, parent, p, mode="cones", n_axles=None):
             else:
                 raise ValueError(f"unknown mode {mode!r}")
 
-        for i in range(n):
-            eq = spec.add_equality()
-            eq.type = mujoco.mjtEq.mjEQ_JOINT
-            eq.name1, eq.name2 = f"roller_spin_{i}", "ring_spin"
-            eq.data[:5] = [0.0, dt["k_roller"], 0.0, 0.0, 0.0]
-            eq.solref = [0.005, 1.0]
+        if mode != "ghostfree":
+            for i in range(n):
+                eq = spec.add_equality()
+                eq.type = mujoco.mjtEq.mjEQ_JOINT
+                eq.name1, eq.name2 = f"roller_spin_{i}", "ring_spin"
+                eq.data[:5] = [0.0, dt["k_roller"], 0.0, 0.0, 0.0]
+                eq.solref = [0.005, 1.0]
 
     y_off = ow["width"] / 2 + dt["input_pulley_offset"]
     for tag, y in (("a", y_off), ("b", -y_off)):
@@ -339,6 +355,83 @@ def study_stiffness(dt=None):
     print("  cuts contact loss and halves peak load at 8 rollers, unchanged. The")
     print("  randomizer currently sweeps dampratio 0.2-1.0, i.e. only the bouncier")
     print("  half. contact_solref is still a GUESS: docs/measurements/contact-protocol.md.")
+
+
+_TIMERS = ["POS_KINEMATICS", "POS_INERTIA", "POS_COLLISION", "POS_MAKE",
+           "VELOCITY", "CONSTRAINT", "ADVANCE", "STEP"]
+
+
+def study_ablate(n_steps=25000):
+    """Is the roller machinery's ~2x the JOINTS, the CONSTRAINTS, or the CONTACT?
+
+    Only 1-2 of the 8 rollers can touch the floor at once, so the natural
+    question is whether the other 6-7 can be made cheap. Answering it needs the
+    layers separated, which is what the ghost modes are for:
+
+      cones      shipped: 8 bodies + 8 DOFs + 8 equalities + 16 colliding meshes
+      free       same, minus the equalities        -> cones-free  = 8 eq rows
+      ghost      same as cones, rollers NOT colliding, torus does the contact
+      ghostfree  ghost minus the equalities        -> ghostfree-torus = 8 DOFs
+      torus      no rollers at all                 -> ghost-torus = the lot
+
+    `welded` (geoms rigid on the hub) is deliberately NOT the DOF control: with
+    the rollers unable to spin the wheel rides differently and the contact count
+    changes with it, so it confounds DOFs with contacts. The ghost pair holds
+    the contact identical by construction.
+    """
+    print("\n=== ABLATE: which layer of the roller machinery costs the time? ===")
+    out = {}
+    for mode in ("cones", "free", "ghost", "ghostfree", "torus"):
+        model = build_rig("cones" if mode == "free" else mode)
+        if mode == "free":                    # strip the joint equalities only
+            keep = model.eq_type != int(mujoco.mjtEq.mjEQ_JOINT)
+            model.eq_active0[~keep] = 0
+        d = mujoco.MjData(model)
+        act = _actuators(model)
+        for _ in range(4000):
+            mujoco.mj_step(model, d)
+        d.ctrl[act["drive_a"]] = d.ctrl[act["drive_b"]] = DRIVE_RAD_S
+        for _ in range(4000):
+            mujoco.mj_step(model, d)
+        for t in _TIMERS:
+            d.timer[getattr(mujoco.mjtTimer, f"mjTIMER_{t}")].duration = 0
+        nefc = []
+        t0 = time.perf_counter()
+        for _ in range(n_steps):
+            mujoco.mj_step(model, d)
+            nefc.append(d.nefc)
+        wall = time.perf_counter() - t0
+        out[mode] = dict(
+            us=1e6 * wall / n_steps, nv=model.nv, nefc=float(np.mean(nefc)),
+            neq=int(sum(model.eq_active0)),
+            stage={t: 1e6 * d.timer[getattr(mujoco.mjtTimer, f"mjTIMER_{t}")].duration
+                   / n_steps for t in _TIMERS})
+
+    print(f"{'variant':11s} {'nv':>3s} {'neq':>4s} {'nefc':>6s} {'us/step':>8s} {'vs cones':>9s}")
+    for k, r in out.items():
+        print(f"{k:11s} {r['nv']:3d} {r['neq']:4d} {r['nefc']:6.1f} {r['us']:8.2f} "
+              f"{out['cones']['us'] / r['us']:8.2f}x")
+
+    print(f"\n{'stage [us/step]':16s}" + "".join(f"{k:>11s}" for k in out))
+    for t in _TIMERS:
+        print(f"{t:16s}" + "".join(f"{out[k]['stage'][t]:11.2f}" for k in out))
+
+    tot = out["ghost"]["us"] - out["torus"]["us"]
+    dofs = out["ghostfree"]["us"] - out["torus"]["us"]
+    eqs = out["ghost"]["us"] - out["ghostfree"]["us"]
+    geom = out["cones"]["us"] - out["ghost"]["us"]
+    print(f"\n  roller machinery, total (ghost - torus) {tot:6.2f} us/step")
+    print(f"    of which 8 DOFs   (ghostfree - torus) {dofs:6.2f}  ({100*dofs/tot:.0f}%)")
+    print(f"    of which 8 eq rows (ghost - ghostfree) {eqs:6.2f}  ({100*eqs/tot:.0f}%)")
+    print(f"  16 colliding roller meshes (cones - ghost) {geom:6.2f}  "
+          f"({100*geom/tot:.0f}% -- i.e. free)")
+    print("  The DOFs are charged mostly INSIDE the constraint solver even when")
+    print("  they carry no constraints: the Jacobian is nefc x nv and the Newton")
+    print("  solve runs over every DOF, so a DOF nothing constrains still taxes it.")
+    print("  That is also why MuJoCo cannot 'sleep' them -- one global solve, no")
+    print("  islands. And they are not idle anyway: geared to the ring at k=2.4,")
+    print("  the 8 rollers reflect 5.2x the ring gear's own inertia (though only")
+    print("  3.5% of the servo's reflected rotor armature, which dominates).")
 
 
 def study_refsafe():
@@ -645,7 +738,7 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--study", nargs="+",
                     choices=["cost", "chatter", "stiffness", "lean", "timestep",
-                             "front", "refsafe", "transfer", "all"],
+                             "front", "refsafe", "ablate", "transfer", "all"],
                     default=["all"])
     ap.add_argument("--dt", type=float, default=None,
                     help="override sim.timestep for every study except `timestep`")
@@ -659,7 +752,7 @@ def main():
     # everything else builds its own models and runs in seconds.
     if "all" in want:
         want = {"cost", "chatter", "stiffness", "lean", "timestep", "front",
-                "refsafe"}
+                "refsafe", "ablate"}
 
     rows = lean = None
     if "cost" in want:
@@ -674,6 +767,8 @@ def main():
         study_timestep()
     if "front" in want:
         study_front()
+    if "ablate" in want:
+        study_ablate()
     if "refsafe" in want:
         study_refsafe()
     if "transfer" in want:
