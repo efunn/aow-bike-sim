@@ -12,11 +12,47 @@
 # Plain scalars are simulation/tuning knobs, not physical quantities.
 
 sim:
-  timestep: 2.0e-4
+  # 4.0e-4, was 2.0e-4 (2026-08-15). The old value was placeholder-validated in
+  # 2026-07 and never revisited. The CONTACT tolerates far more: in
+  # analysis/contact_surrogates.py --study timestep, ride ripple, airborne
+  # fraction, peak normal force and rest penetration are flat from 5e-5 through
+  # 6e-4, and general_rl_smooth_stiff replays the whole 20-command eval grid at
+  # 0.764 -> 0.767 -> 0.760 across 2e-4 / 4e-4 / 6e-4 at survival 1.00.
+  #
+  # 6e-4 IS NOT SAFE, and the RL eval cannot see why. What binds is the LQR's
+  # finite-amplitude system ID, which fits one linear model per grid speed:
+  #
+  #   dt      worst fit R^2   where
+  #   2e-4        0.9748      +0.25 m/s
+  #   4e-4        0.9727      +0.25 m/s
+  #   6e-4        0.9408      +0.80 m/s   <- test_gain_schedule fails (floor 0.95)
+  #
+  # The damage lands almost entirely on +0.80 m/s, which was already the worst
+  # point in the schedule. 4e-4 leaves the fit indistinguishable from 2e-4 and
+  # still roughly halves wall-clock; 6e-4 buys ~30% more and degrades the
+  # reference baseline to do it, which is the wrong trade for a knob that buys
+  # nothing physical. Revisit if the LQR is ever retired or re-identified
+  # differently. 2e-3 falls outright in run_balance.
+  #
+  # WHAT IT INVALIDATED, all ACCEPTED: every policy in moves/ was trained at
+  # 2e-4 and is now an artifact of a different plant (check_move_digest says so
+  # on load); the deploy bundle was re-exported. Impact cases (righting
+  # sequence, fall/rest attitudes, inverted drops, the flick/flip trajopt set)
+  # were re-run rather than assumed -- docs/plans/aow-contact-approximations.md.
+  timestep: 4.0e-4
   integrator: implicitfast
   cone: elliptic          # elliptic friction cones + Newton solver (MuJoCo default solver)
   impratio: 10.0
-  mesh_segments: 32       # tessellation of revolved contact meshes (rollers, tire)
+  # 64, was 32 (2026-08-15). Tessellation of revolved contact meshes (rollers,
+  # front tire). At 32 the facet sagitta is 241 um on a 50 mm wheel, which is
+  # the same scale as the contact deflections -- so the PERFECTLY ROUND front
+  # tire was bouncing off its own polygon: 17.5% of a 0.5 m/s drive off the
+  # ground at a 0.26 mm ride swing, against 0.2% / 0.064 mm at 64 segments.
+  # That is pure numerics, unlike the rear wheel's 8-fold envelope ripple,
+  # which is measured real geometry (omni-wheel-protocol.md §1) and does not
+  # move with tessellation at all. Costs ~3% of step time; 128 costs 19% and
+  # buys almost nothing on top.
+  mesh_segments: 64
   condim: 4               # 3 = sliding only; 4 adds torsional friction at the contact patch
   # Contact [time constant s, damping ratio]. Was MuJoCo's default [0.02, 1]
   # by omission, which let the rollers sink ~2.2 mm (a fifth of the roller
