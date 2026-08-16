@@ -9,6 +9,10 @@ from aow_sim.control import DriveController, SpeedProfile
 from aow_sim.control.linearize import settle_upright
 from aow_sim.run_drive import circle_ok, flip_scenario, sprint_scenario
 
+# Closed-loop drive: gain schedule, sprints, circles, and the trajopt moves.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.contact
+
 
 @pytest.fixture(scope="module")
 def params():

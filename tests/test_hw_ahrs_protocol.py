@@ -15,6 +15,10 @@ import pytest
 from aow_sim.hw.ahrs import (COMBO_SIZE, EP_CMD_COMBO, G_TO_MS2, MAX_PAYLOAD,
                              SYNC, crc16_modbus, parse_combo, parse_frame)
 
+# Byte-level frame decoding; no bike model, no hardware.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.pure
+
 
 def make_combo_payload(quat=(1.0, 0.0, 0.0, 0.0), gyro=(0.0, 0.0, 0.0),
                        accel=(0.0, 0.0, 1.0), cmd=EP_CMD_COMBO,

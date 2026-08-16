@@ -63,3 +63,24 @@ packages = ["src/aow_sim"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# --strict-markers turns a misspelt marker into an error. Without it
+# `pytest -m contct` selects nothing, says nothing, and exits 0 -- which is
+# indistinguishable from "that change affected no tests", the one answer a
+# marker must never give by accident.
+addopts = ["--strict-markers"]
+# Every marker answers ONE question: what change should send me back here?
+# The text below is that answer, and `pytest --markers` prints it. Markers are
+# set per FILE (a `pytestmark` line under the imports) and added per test where
+# a file is mixed, so a test can carry more than one.
+#
+# The standing red set is NOT expressed here -- see tests/expected_failures.txt
+# and the summary tests/conftest.py prints at the end of every run.
+markers = [
+    "contact: rides on the contact model. Run after any config/bike_params.yaml `sim:` change -- contact_solref, timestep, mesh_segments, impratio, condim. These are also the slow ones.",
+    "geometry: rides on a dimension, a mass, or a gear ratio. Run after any other bike_params change.",
+    "spec: pins a contract two sides have to agree on -- a control/*_spec.py obs/action layout, or the HardwareData shim. Change one side and this catches the other.",
+    "policy: replays a trained export from moves/. All of these go provisional whenever the plant moves; analysis/chatter.py is the fuller check.",
+    "deploy: pins deploy/bundle.npz against the params digest. This is step 1 of the bike_params checklist in CLAUDE.md.",
+    "boundary: the onboard import boundary -- the Pi installs no mujoco, scipy or torch. Run after touching imports under hw/.",
+    "pure: builds no model and returns in well under a second. The inner loop while editing control logic.",
+]

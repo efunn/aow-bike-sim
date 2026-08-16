@@ -17,6 +17,10 @@ from aow_sim.control.linearize import settle_upright
 from aow_sim.run_drive import (_COAST_DELAY, _LEAD_MAX, _REPEAT_GAP, _STEP_V,
                                _Axis, _KeyState)
 
+# The input model driven through a closed-loop sim.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.contact
+
 UP, DOWN, LEFT, RIGHT = 265, 264, 263, 262
 
 

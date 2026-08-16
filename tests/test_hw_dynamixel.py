@@ -16,6 +16,10 @@ from aow_sim.hw.dynamixel import (CT, INDIRECT_ADDRESS_1, INDIRECT_DATA_1,
                                   READ_BLOCK, TICK_WRAP, VEL_LSB_RAD_S,
                                   RateFilter, ServoBus, _signed, _tick_delta_ms)
 
+# Register maps, unit conversions and tick math; no bike model.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.pure
+
 
 class FakePacket:
     """Records register writes instead of putting them on a wire."""

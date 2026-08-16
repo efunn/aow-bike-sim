@@ -8,6 +8,10 @@ from aow_sim.control import YawProfile
 from aow_sim.control.linearize import settle_upright
 from aow_sim.run_pivot import pivot_scenario
 
+# Closed-loop crawl-pivot.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.contact
+
 
 @pytest.fixture(scope="module")
 def params():

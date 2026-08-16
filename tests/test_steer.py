@@ -15,6 +15,10 @@ from aow_sim.control.steer import (
     wrap_pi,
 )
 
+# Multi-turn steering frame arithmetic; no sim, no model build.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.pure
+
 
 def test_wrap_and_nearest_multiple():
     assert wrap_pi(0.0) == pytest.approx(0.0)

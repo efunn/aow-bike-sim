@@ -19,6 +19,10 @@ import sys
 
 import pytest
 
+# The import boundary itself -- the Pi installs no mujoco/scipy/torch.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.boundary
+
 # Everything a laptop has and the bike must not need.
 LAPTOP_ONLY = {"mujoco", "scipy", "torch", "gymnasium", "stable_baselines3",
                "matplotlib", "tensorboard"}

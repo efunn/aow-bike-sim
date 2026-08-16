@@ -25,6 +25,10 @@ from aow_sim.control.linearize import settle_upright
 from aow_sim.control.steer import wheel_heading
 from aow_sim.hw.odometry import VelocityEstimator, body_to_world
 
+# The estimator against simulator ground truth, so it rides on the contact.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.contact
+
 MAX_ROLL_DEG = 25.0
 
 

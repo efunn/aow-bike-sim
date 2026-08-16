@@ -12,6 +12,10 @@ from aow_sim.control.flick_spec import (ACT_DIM, OBS_DIM, ActionBounds, build_ob
                                         scale_action)
 from aow_sim.control.policy import load_policy_npz, save_policy_npz
 
+# flick_spec's obs/action layout, plus the numpy policy round-trip.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.spec
+
 
 def test_obs_and_action_spec():
     obs = build_obs(0.01, 0.1, np.pi / 2, 0.2, 3.0, 0.4, -0.1, 0.05, 0.5)
@@ -68,6 +72,7 @@ def test_env_reset_step():
     assert np.allclose(o1, o2)
 
 
+@pytest.mark.policy
 def test_rl_move_replays():
     """If a trained RL policy exists, it loads and replays without blowing up."""
     from aow_sim.control.flick import MOVES_DIR, load_move

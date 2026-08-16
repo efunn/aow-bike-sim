@@ -13,6 +13,10 @@ import pytest
 from aow_sim.control.balance import extract_state
 from aow_sim.hw.ahrs import MountCalibration, quat_conj, quat_mul, quat_to_mat
 
+# Quaternion algebra against MuJoCo as an oracle; no bike model.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.pure
+
 
 def _random_quats(n, seed=0):
     rng = np.random.default_rng(seed)

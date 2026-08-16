@@ -23,6 +23,10 @@ from aow_sim.build_model import build_model, load_params
 from aow_sim.control.drive import DriveController
 from aow_sim.hw.state import HardwareData, load_bundle
 
+# The HardwareData shim contract, and the digest that pins the deploy bundle.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.spec
+
 BUNDLE = Path(__file__).resolve().parents[1] / "deploy" / "bundle.npz"
 
 
@@ -134,6 +138,7 @@ def test_hardware_data_covers_the_general_policy():
             f"general-policy ctrl diverged at frame {i}: {f['ctrl']} vs {u}")
 
 
+@pytest.mark.deploy
 @pytest.mark.skipif(not BUNDLE.exists(),
                     reason="run `python -m aow_sim.export_deploy` first")
 def test_bundle_controller_matches_mujoco_controller():
@@ -174,6 +179,7 @@ def test_bundle_controller_matches_mujoco_controller():
             f"bundle controller diverged at frame {i}: {f['ctrl']} vs {u}")
 
 
+@pytest.mark.deploy
 def test_bundle_digest_rejects_stale_params():
     """A bundle designed for different parameters must refuse to load."""
     if not BUNDLE.exists():

@@ -9,6 +9,10 @@ import pytest
 from aow_sim import geometry
 from aow_sim.build_model import build_model, load_params
 
+# Compilation, couplings, and derived envelopes -- all from bike_params.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.geometry
+
 
 @pytest.fixture(scope="module")
 def params():
@@ -82,6 +86,7 @@ def test_gearbox_mixing(params, testbed_model):
     assert hub_v == pytest.approx(in_v * params["drivetrain"]["mix_hub_a"], rel=0.02)
 
 
+@pytest.mark.contact
 def test_rest_stability(params):
     """With training wheels, the bike stands still: no jitter, drift, or sinking."""
     m = build_model(params, variant="full", training_wheels=True)
@@ -93,6 +98,7 @@ def test_rest_stability(params):
     assert np.abs(d.qvel).max() < 0.05, "bike jitters at rest"
 
 
+@pytest.mark.contact
 def test_falls_without_support(params, full_model):
     """No training wheels, no control: the bike tips over like a real bike."""
     d = mujoco.MjData(full_model)
@@ -103,6 +109,7 @@ def test_falls_without_support(params, full_model):
     assert up_z[8] < 0.5, "bike should have fallen over (chassis z-axis tilted > 60°)"
 
 
+@pytest.mark.contact
 def test_forward_roll(params):
     """Equal drive input rolls the bike forward near the rigid-rolling speed."""
     m = build_model(params, variant="full", training_wheels=True)
@@ -114,6 +121,7 @@ def test_forward_roll(params):
     assert abs(d.qpos[1]) < 0.05, "veered sideways under symmetric drive"
 
 
+@pytest.mark.contact
 def test_lateral_crawl(params):
     """Opposed inputs = pure differential: rollers spin, rear wheel crawls
     sideways with (almost) no forward roll (hub = mean of the ring gears = 0)."""

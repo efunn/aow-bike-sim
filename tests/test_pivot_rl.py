@@ -10,6 +10,10 @@ from aow_sim.control.pivot_spec import (ACT_DIM, OBS_DIM, ActionBounds,
                                         steer_for_heading, wheel_heading,
                                         wrap_pi)
 
+# pivot_spec's obs/action layout, shared by the trainer and the replay.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.spec
+
 RAKE = np.deg2rad(15.0)
 
 
@@ -153,6 +157,7 @@ def test_success_requires_velocity_match():
     assert gate(0.5)
 
 
+@pytest.mark.policy
 def test_pivot_move_replays():
     """If a trained pivot policy exists, it loads and replays without blowing
     up. (No quality assertion — the artifact may be a smoke-run policy; move

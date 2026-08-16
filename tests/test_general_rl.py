@@ -12,6 +12,10 @@ from aow_sim.control.general_spec import (ACT_DIM, OBS_DIM, ActionBounds,
                                           build_obs, command_to_body,
                                           scale_action)
 
+# general_spec's obs/action layout, shared by the trainer and the replay.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.spec
+
 
 def _obs(**kw):
     """build_obs with a nominal argument set; override by keyword."""
@@ -100,6 +104,7 @@ def test_command_to_body_frame():
     assert abs(command_to_body((0, 0), 0.0, 3.0)[2]) <= np.pi + 1e-9
 
 
+@pytest.mark.policy
 def test_action_contract_shared_with_moves():
     b = ActionBounds(8.0, 1.4, 40.0)
     sr, hub, diff = scale_action([2.0, -2.0, 0.5], b)      # clips to [-1, 1]
@@ -375,6 +380,7 @@ def test_plot_command_branch_is_non_directional():
     assert same == pytest.approx(0.3)
 
 
+@pytest.mark.policy
 def test_general_move_replays():
     """If a trained general policy exists, it loads and replays without NaN."""
     from aow_sim.control.flick import MOVES_DIR
@@ -388,6 +394,7 @@ def test_general_move_replays():
     assert len(act) == 3 and np.all(np.isfinite(act))
 
 
+@pytest.mark.policy
 def test_move_file_carries_the_lateral_envelope(tmp_path):
     """v_lat_frac rides in the move yaml so teleop clamps the crab command to
     what THIS policy trained on; files written before the field default to

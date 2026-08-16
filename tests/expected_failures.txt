@@ -1,0 +1,33 @@
+# Tests that are red on purpose. One pytest nodeid per line, then why.
+#
+# This is NOT an xfail list, and the difference is the whole point. These tests
+# still RUN and still report as failures; what this file adds is a delta at the
+# end of the session -- whether the red set is the one that was signed off, or
+# whether it moved. A non-strict xfail would report a regression as a green run,
+# which is the failure mode docs/status.md argues against for
+# test_lqr_model_fit_and_steering, and the same argument applies here.
+#
+# So: a red line below is not a TODO. It is a cost that was priced and accepted,
+# and the entry has to say by whom and against what. When one of these goes
+# green, the run says so and this file is what gets updated.
+#
+# Format:  <nodeid>  <TAB or 2+ spaces>  # <date> <reason>
+# Keep it sorted by file. Blank lines and #-comments are ignored.
+
+# ---------------------------------------------------------------------------
+# The trajopt flick/flip set, all seven. The bike falls partway through the
+# manoeuvre. These are open-loop trajectories optimised against the OLD contact
+# model (solref damping 1.0) and never re-optimised after the revert to 0.5 in
+# 511421f; they are replaying a plan for a plant that no longer exists. The fix
+# is to re-run the trajectory optimisation, not to widen a tolerance -- the
+# assertion is measuring the right thing and correctly reporting a fall.
+#
+# Unchanged by the 2026-08-15 timestep move (2e-4 -> 4e-4): still exactly these
+# seven, same assertions, same failure text.
+tests/test_drive.py::test_flip_completes[1]           # 2026-08-09 trajopt vs current contact
+tests/test_drive.py::test_flip_completes[-1]          # 2026-08-09 trajopt vs current contact
+tests/test_drive.py::test_flick_replay                # 2026-08-09 trajopt vs current contact
+tests/test_drive.py::test_flick_mirror_survives       # 2026-08-09 trajopt vs current contact
+tests/test_drive.py::test_double_flick                # 2026-08-09 trajopt vs current contact
+tests/test_drive.py::test_heading_after_flick_no_snap # 2026-08-09 trajopt vs current contact
+tests/test_drive.py::test_reset_after_flick_no_snap   # 2026-08-09 trajopt vs current contact

@@ -8,6 +8,10 @@ import pytest
 from aow_sim.build_model import build_model, load_params
 from aow_sim.control.ball_spec import OBS_DIM, ACT_DIM, ActionBounds, build_obs, scale_action
 
+# ball_spec's obs/action layout, shared by the trainer and the replay.
+# See `pytest --markers` for what each one means.
+pytestmark = pytest.mark.spec
+
 
 def test_obs_and_action_spec():
     obs = build_obs(0.01, 0.1, np.pi / 3, 0.2, 3.0, 0.4, -0.1,
@@ -30,6 +34,7 @@ def _collide(m, a, b):
     return bool((ct[ia] & ca[ib]) or (ct[ib] & ca[ia]))
 
 
+@pytest.mark.geometry
 def test_hockey_model_collision_classes():
     p = load_params()
     m = build_model(p, variant="full", hockey=True)
@@ -179,6 +184,7 @@ def test_launch_reward_is_direction_projected():
     assert env._peak_proj > env.hit_speed_min
 
 
+@pytest.mark.policy
 def test_ball_move_replays():
     """If a trained ball policy exists, it loads and replays without blowing up."""
     from aow_sim.control.flick import MOVES_DIR, load_move
