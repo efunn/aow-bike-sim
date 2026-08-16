@@ -325,14 +325,20 @@ def main() -> None:
     ap.add_argument("--ui", action="store_true",
                     help="restore the viewer's side panels (off by default: "
                          "teleop is keyboard-driven and Reset is Backspace)")
+    ap.add_argument("--linkage", action="store_true",
+                    help="the four-bar wing mechanism instead of the geared "
+                         "pair (config/wing_linkage_locking.yaml); same 9/4 "
+                         "keys, but the actuator drives the CRANK")
     ap.add_argument("--wings", action="store_true",
                     help="add the self-righting wing pair (teleop: 9 extends, "
-                         "0 retracts). Nothing deploys on its own — the fallen "
+                         "4 retracts). Nothing deploys on its own — the fallen "
                          "state is worth watching")
     args = ap.parse_args()
     params = load_params(args.params)
     model = build_model(params, variant="full", hockey=args.hockey,
-                        righting=args.wings, wings=args.wings)
+                        righting=args.wings or args.linkage,
+                        wings=args.wings and not args.linkage,
+                        linkage=args.linkage)
     # Same lighting the recorder applies, so a teleop session and a video of
     # the same thing do not look like two different simulators.
     tune_lighting(model)
@@ -340,7 +346,8 @@ def main() -> None:
 
     if args.teleop:
         _teleop(model, params, eq.qpos, hockey=args.hockey,
-                general=args.general, show_ui=args.ui, wings=args.wings)
+                general=args.general, show_ui=args.ui,
+                wings=args.wings, linkage=args.linkage)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -837,7 +844,7 @@ def _reset_ball(model, data, params):
 
 
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
-            show_ui=False, wings=False):
+            show_ui=False, wings=False, linkage=False):
     from .interactive import teleop_loop
 
     from . import policy_menu
@@ -896,17 +903,53 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # what a fallen bike actually does before deciding what should trigger.
     # The viewer only ever reports a key going DOWN, so latch-a-target is the
     # only thing that can work here -- hold-to-move would need key-up.
+    # The LINKAGE drives a different joint through a different range, and the
+    # units are not comparable: the geared pair is commanded in WING degrees
+    # (0..deploy_deg) while the four-bar is commanded in CRANK degrees
+    # (0..servo_travel_deg), with a ratio that varies 0.17..0.70 through the
+    # stroke instead of being fixed. A schedule tuned for one is meaningless
+    # for the other -- see the rate note below.
     wing = None
-    if wings:
-        wcfg = params["righting"]["wings"]
+    if wings or linkage:
+        if linkage:
+            import yaml as _yaml
+            from .build_model import LINKAGE_CFG
+            lcfg = _yaml.safe_load(LINKAGE_CFG.read_text())
+            joint = "wing_crank_joint"
+            stow_rad = 0.0
+            deploy_rad = np.deg2rad(float(lcfg["stroke"]["servo_travel_deg"]))
+            # CURRENT-BASED POSITION MODE, which is how the XC330 will actually
+            # be driven: a position setpoint plus a goal current, moving as
+            # fast as it can under that cap. There is no commanded trajectory,
+            # so `rate` is effectively infinite and the current limit is the
+            # only throttle. Ramping it was my invention and it was slow --
+            # measured 5.2 s for a stroke the mechanism does in ~0.3 s.
+            #
+            # Safe here only because the four-bar SELF-LIMITS: near full
+            # deployment its ratio collapses toward zero, so the wing
+            # decelerates into the end pose however hard the crank is driven.
+            # The geared pair has no such property and somersaults the bike
+            # under the same command (0/8 falls recovered), which is why this
+            # is not shared with it.
+            rate, gear = float("inf"), 1.0
+        else:
+            wcfg = params["righting"]["wings"]
+            joint = "wing_right_joint"
+            stow_rad = np.deg2rad(wcfg["stow_deg"])
+            deploy_rad = np.deg2rad(wcfg["deploy_deg"])
+            rate, gear = 0.7, wcfg["gear_ratio"]
+        if linkage:
+            # Goal current, from the linkage config rather than a literal --
+            # it is the only throttle on the stroke, and it moved once already
+            # (0.40 -> 0.66) when the roof derivation was fixed. A number that
+            # tracks a measurement belongs next to the measurement.
+            cap = float(lcfg["stroke"]["goal_current_nm"])
+            model.actuator_forcerange[model.actuator("wings").id] = [-cap, cap]
         wing = {"aid": model.actuator("wings").id,
-                "jadr": model.joint("wing_right_joint").qposadr[0],
-                "stow": np.deg2rad(wcfg["stow_deg"]),
-                "deploy": np.deg2rad(wcfg["deploy_deg"]),
-                "rate": 0.7,                      # rad/s at the wing
-                "gear": wcfg["gear_ratio"],
-                "cmd": np.deg2rad(wcfg["stow_deg"]),
-                "target": np.deg2rad(wcfg["stow_deg"]),
+                "jadr": model.joint(joint).qposadr[0],
+                "stow": stow_rad, "deploy": deploy_rad,
+                "rate": rate, "gear": gear, "linkage": linkage,
+                "cmd": stow_rad, "target": stow_rad,
                 # A repeatable shove, so knocking the bike over is one key
                 # rather than a mouse gesture. Same lateral force pulse
                 # analysis/self_righting.py falls the bike with; 8 N for 0.35 s

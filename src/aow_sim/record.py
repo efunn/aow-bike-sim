@@ -339,13 +339,14 @@ def _trail(scn, pts, rgba=(*_TRAIL, 1.0)):
 
 def _record_righting(params, general: str | None, wings: bool, fps: int,
                      seconds: float, retract_after: float,
-                     inverted: bool = False):
+                     inverted: bool = False, linkage: bool = False):
     """PASS 1 for `--script right`: start fallen, run the mechanism through
     deploy -> hand-off -> retract, and keep one snapshot per output frame.
 
     Returns (model, data, controller, states, marks) in the same shape the
     drive scripts produce, so PASS 2 renders both without branching."""
-    model = build_model(params, variant="full", righting=True, wings=wings)
+    model = build_model(params, variant="full", righting=True,
+                        wings=wings and not linkage, linkage=linkage)
     design = design_all(params, build_model(params))
     data = mujoco.MjData(model)
     # `inverted` starts the run UPSIDE DOWN instead of on its side, so the
@@ -355,14 +356,18 @@ def _record_righting(params, general: str | None, wings: bool, fps: int,
     # filming, so the run has to begin at the drop rather than after it. The
     # mechanism is held at stow for `_INVERT_SETTLE_S` below so the bike gets
     # to find its own rest first, the way it would on the floor.
-    data.qpos[:] = (settle_inverted(params, wings=wings, settle=0.0) if inverted
-                    else settle_fallen(params, wings=wings))
+    data.qpos[:] = (
+        settle_inverted(params, wings=wings and not linkage, settle=0.0,
+                        linkage=linkage) if inverted
+        else settle_fallen(params, wings=wings and not linkage,
+                           linkage=linkage))
     mujoco.mj_forward(model, data)
     move = general or params["control"].get("general_move", "general_rl")
-    seq = RightingSequencer(params, model, wings=wings,
-                            # The wing pair deploys the same way whichever side
-                            # it fell on; the single arm has to reach for it.
-                            direction=1.0 if wings else None,
+    seq = RightingSequencer(params, model, wings=wings and not linkage,
+                            linkage=linkage,
+                            # Both wing mechanisms deploy the same way whichever
+                            # side it fell on; the single arm has to reach.
+                            direction=1.0 if (wings or linkage) else None,
                             retract_after=retract_after, move=move,
                             design=design)
     seq.reset(model, data)
@@ -535,14 +540,15 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
            elevation: float, azimuth: float, hockey: bool,
            camera: str = 'top', wings: bool = True, seconds: float = 12.0,
            retract_after: float = 1.0, inverted: bool = False,
-           grid: float | None = None) -> dict:
+           grid: float | None = None, linkage: bool = False) -> dict:
     params = load_params()
     if grid:
         params["sim"]["floor_grid_m"] = grid
     righting = script in _SEQUENCES
     if righting:
         maker = _record_demo if script == "demo" else _record_righting
-        kw = {} if script == "demo" else {"inverted": inverted}
+        kw = ({} if script == "demo"
+              else {"inverted": inverted, "linkage": linkage})
         model, data, c, states, marks = maker(
             params, general, wings, fps, seconds, retract_after, **kw)
         # Report the policy actually used. `demo` defaults to a DIFFERENT
@@ -550,7 +556,8 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
         # re-deriving the name from config here quietly reported the wrong one.
         default_move = (_LOOPOUT_MOVE if script == "demo"
                         else params["control"].get("general_move", "general_rl"))
-        mode = ("wings" if wings else "arm") + ":" + (general or default_move)
+        mode = ("linkage" if linkage else "wings" if wings else "arm") \
+            + ":" + (general or default_move)
         fell, v_max, crab_max, drawing = False, 1.2, 0.0, None
         return _render(model, data, c, states, marks, out, width, height, fps,
                        distance, elevation, azimuth, camera, v_max, crab_max,
@@ -762,6 +769,9 @@ def main() -> None:
                     help="floor checker pitch in metres (default "
                          f"{FLOOR_GRID_M}); display only, the squares double "
                          "as a distance scale")
+    ap.add_argument("--linkage", action="store_true",
+                    help="the four-bar wing mechanism instead of the geared "
+                         "pair (config/wing_linkage_locking.yaml)")
     ap.add_argument("--inverted", action="store_true",
                     help="start the `right` script UPSIDE DOWN, so the "
                          "recording covers the roof rolling it onto its side "
@@ -780,14 +790,15 @@ def main() -> None:
                                                  "rear" if righting else "top"))
     distance = (a.distance if a.camera or not righting
                 else 1.4 if a.script == "demo" else 0.9)
-    tag = (("wings" if not a.arm else "arm") if righting else
+    tag = (("linkage" if a.linkage else "wings" if not a.arm else "arm")
+           if righting else
            a.general or ("analytic" if a.analytic else "general"))
     out = a.out or Path("traces") / f"{a.script}_{tag}.mp4"
     print(f"recording {a.script} ({tag})")
     print(record(a.script, a.general, a.analytic, out, a.width, a.height,
                  a.fps, distance, a.elevation, a.azimuth, a.hockey,
                  camera, not a.arm, a.seconds, a.retract_after,
-                 a.inverted, a.grid))
+                 a.inverted, a.grid, a.linkage))
 
 
 if __name__ == "__main__":

@@ -45,17 +45,43 @@ RECOVER_DEG = 12.0
 HANDOFF_RATE = 3.0      # rad/s; a roll inside the window but still moving fast
                         #   is not a hand-off, it is a bike on its way past
 
+# Where the FOUR-BAR's servo torque peaks, in bike roll. Measured from
+# analysis/wing_linkage.py --torque: 0.54 N.m at roll 53-57 deg, with the
+# mechanism strong at both ends of the stroke and weak between them.
+LINKAGE_PEAK_ROLL_DEG = 55.0
+LINKAGE_EASE_BAND_DEG = 35.0
+
 
 # Mechanism -> (actuator name, joint name, params sub-block). The stroke
 # direction is not here because for the arm it depends on which way it fell.
 MECHANISMS = {
     "arm": ("righting", "righting_joint", "arm"),
     "wings": ("wings", "wing_right_joint", "wings"),
+    # The four-bar drives the CRANK, not a wing. Its stroke is therefore in
+    # crank degrees (0..servo_travel_deg, ~180) rather than wing degrees
+    # (0..deploy_deg, ~105), and there is no gear ratio to divide by -- the
+    # ratio varies through the stroke. Its config also lives in its own file,
+    # not in bike_params, so `mechanism` synthesises a matching sub-block.
+    "linkage": ("wings", "wing_crank_joint", None),
 }
 
 
-def mechanism(params: dict, wings: bool) -> tuple[str, str, dict]:
+def mechanism(params: dict, wings: bool, linkage: bool = False):
     """(actuator, joint, sub-block) for the selected mechanism."""
+    if linkage:
+        import yaml
+        from ..build_model import LINKAGE_CFG
+        cfg = yaml.safe_load(LINKAGE_CFG.read_text())
+        act, joint, _ = MECHANISMS["linkage"]
+        return act, joint, {
+            "stow_deg": 0.0,
+            "deploy_deg": float(cfg["stroke"]["servo_travel_deg"]),
+            # No reduction: the actuator IS the crank, so servo turns are the
+            # crank's own turns. Reporting a ratio here would be a lie that
+            # `servo_turns` would then repeat.
+            "gear_ratio": 1.0,
+            "_linkage": cfg,
+        }
     act, joint, key = MECHANISMS["wings" if wings else "arm"]
     return act, joint, params["righting"][key]
 
@@ -68,9 +94,10 @@ def roll_pitch(quat) -> tuple[float, float]:
 
 
 def settle_fallen(params: dict, roll_deg: float = 100.0, settle: float = 2.0,
-                  wings: bool = False):
+                  wings: bool = False, linkage: bool = False):
     """Drop the bike onto its side and let it stop moving; returns the qpos."""
-    model = build_model(params, righting=True, wings=wings)
+    model = build_model(params, righting=True, wings=wings and not linkage,
+                        linkage=linkage)
     data = mujoco.MjData(model)
     data.qpos[:] = settle_upright(model).qpos
     a = np.deg2rad(roll_deg) / 2
@@ -83,14 +110,16 @@ def settle_fallen(params: dict, roll_deg: float = 100.0, settle: float = 2.0,
 
 
 def settle_inverted(params: dict, roll_deg: float = 180.0, wings: bool = False,
-                    settle: float = 4.0, drop: float = 0.02):
+                    settle: float = 4.0, drop: float = 0.02,
+                    linkage: bool = False):
     """Drop the bike UPSIDE DOWN and let it find its own rest; returns the qpos.
 
     Not the same question as `settle_fallen`. On its side the bike is already
     where the mechanism can work; on its back it is not, and whether it gets
     there is a property of the roof ridge, not of the mechanism. Starting a run
     here exercises that first stage. See `self_righting.py invert`."""
-    model = build_model(params, righting=True, wings=wings)
+    model = build_model(params, righting=True, wings=wings and not linkage,
+                        linkage=linkage)
     data = mujoco.MjData(model)
     data.qpos[:] = settle_upright(model).qpos
     a = np.deg2rad(roll_deg) / 2
@@ -119,14 +148,40 @@ class RightingSequencer:
     """
 
     def __init__(self, params: dict, model, *, wings: bool = False,
+                 linkage: bool = False,
                  direction: float | None = None, rate: float = 0.7,
                  rate_max: float | None = 2.4, rate_ref_deg: float = 30.0,
                  rate_floor: float = 0.25, retract_rate: float | None = None,
                  retract_after: float = 1.0, move: str = "general_rl",
-                 design=None, keep_policy: bool = False):
-        self.params, self.wings = params, wings
-        act, joint, self.cfg = mechanism(params, wings)
+                 design=None, keep_policy: bool = False,
+                 step_command: bool = False, torque_cap: float | None = None):
+        self.params, self.wings, self.linkage = params, wings, linkage
+        act, joint, self.cfg = mechanism(params, wings, linkage)
         self.aid = model.actuator(act).id
+        # CURRENT-BASED POSITION MODE. The XC330 mode we actually intend to use
+        # takes a position setpoint plus a goal CURRENT, and moves as fast as
+        # it can under that cap -- there is no commanded trajectory at all. So
+        # the faithful model is: clamp the actuator's forcerange to the goal
+        # current, command the endpoint, and let the physics decide the speed.
+        #
+        # A ramped setpoint is a different mode and a slower one: measured,
+        # the rate schedule made the linkage 2.14 s to hand-off where a step
+        # command takes 0.15-0.33 s. It also changes what the stroke COSTS,
+        # because a slow ramp fights gravity quasi-statically the whole way
+        # while a step lets the stroke be dynamic.
+        self.step_command = step_command
+        if torque_cap is not None:
+            # `torque_cap` is the goal current AT THE SERVO, so it has to be
+            # multiplied back up by the reduction to become a forcerange, which
+            # MuJoCo applies at the JOINT. The geared pair's joint is the wing
+            # (forcerange = stall x gear_ratio); the linkage's is the crank
+            # itself (gear_ratio 1). Applying a servo-side number directly as a
+            # joint-side limit handicapped the gears by exactly the gear ratio
+            # -- 4x -- and made them look incapable of current-based position
+            # mode when they had simply been given a quarter of the torque.
+            at_joint = torque_cap * self.cfg["gear_ratio"]
+            model.actuator_forcerange[self.aid] = [-at_joint, at_joint]
+        self.torque_cap = torque_cap
         self.jadr = model.joint(joint).qposadr[0]
         self.rate, self.retract_after, self.move = rate, retract_after, move
         self.rate_max = rate_max
@@ -213,6 +268,22 @@ class RightingSequencer:
         a constant rate so its reading stays quasi-static)."""
         if self.rate_max is None:
             return self.rate
+        if self.linkage:
+            # INVERTED relative to the geared pair, because the torque peak is
+            # somewhere else entirely. The gear train's worst moment is the
+            # END of the stroke (catching the bike as it arrives); the
+            # four-bar's is the MIDDLE -- mechanical advantage is high at both
+            # ends (7.7:1 at stow, ~79:1 at full deployment, where the crank
+            # approaches its input-side dead point) and worst in between.
+            # Measured peak servo torque lands near 55 deg of roll.
+            #
+            # So ease through the middle and run fast at both ends, which is
+            # the opposite shape. Reusing the geared schedule here would slow
+            # the mechanism exactly where it is strongest and hurry it through
+            # the one place it is weak.
+            frac = np.clip(abs(abs(roll_deg) - LINKAGE_PEAK_ROLL_DEG)
+                           / LINKAGE_EASE_BAND_DEG, self.rate_floor, 1.0)
+            return self.rate_max * float(frac)
         frac = np.clip(abs(roll_deg) / self.rate_ref_deg, self.rate_floor, 1.0)
         return self.rate_max * float(frac)
 
@@ -220,7 +291,11 @@ class RightingSequencer:
         dt = model.opt.timestep
         roll, _ = roll_pitch(data.qpos[3:7])
         if self.phase == "lift":
-            self.cmd += self.direction * self.deploy_rate(roll) * dt
+            if self.step_command:
+                # Endpoint, immediately. The current cap is the only throttle.
+                self.cmd = self.direction * np.deg2rad(self.cfg["deploy_deg"])
+            else:
+                self.cmd += self.direction * self.deploy_rate(roll) * dt
             # The policy keeps driving while the bike is down, if it was never
             # switched off. It has almost no authority on its side -- the rear
             # wheel is not under the CoM -- so this does not do the righting,
@@ -246,6 +321,11 @@ class RightingSequencer:
             self.ctrl.step(model, data)
             if self._t - self.t_hand > self.retract_after:
                 self.phase = "retract"
+                if self.step_command:
+                    self.cmd = self.stow
+                    data.ctrl[self.aid] = float(np.clip(self.cmd, -np.pi, np.pi))
+                    self._t += dt
+                    return
                 # Stop AT stow rather than sweeping through it and out the
                 # other side.
                 step = self.retract_rate * dt
