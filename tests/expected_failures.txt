@@ -16,18 +16,26 @@
 
 # ---------------------------------------------------------------------------
 # The trajopt flick/flip set, all seven. The bike falls partway through the
-# manoeuvre. These are open-loop trajectories optimised against the OLD contact
-# model (solref damping 1.0) and never re-optimised after the revert to 0.5 in
-# 511421f; they are replaying a plan for a plant that no longer exists. The fix
-# is to re-run the trajectory optimisation, not to widen a tolerance -- the
-# assertion is measuring the right thing and correctly reporting a fall.
+# manoeuvre. These are open-loop trajectories -- a plan, replayed, with nothing
+# closing the loop -- and they no longer survive the MODELLED PAYLOAD. They are
+# queued for re-authoring once the as-built mass is known, deliberately, so the
+# optimisation is run once rather than twice; see "Explicitly not being worked
+# on" in docs/status.md.
+#
+# So the fix is to re-run the trajectory optimisation against measured mass, not
+# to widen a tolerance -- the assertion is measuring the right thing and
+# correctly reporting a fall.
+#
+# NOT the contact revert. 511421f (contact_solref back to [0.005, 1.0]) is what
+# CLEARED most of the old red -- test_hw_odometry, test_teleop, the analytic
+# circles -- and these seven were left standing behind it.
 #
 # Unchanged by the 2026-08-15 timestep move (2e-4 -> 4e-4): still exactly these
 # seven, same assertions, same failure text.
-tests/test_drive.py::test_flip_completes[1]           # 2026-08-09 trajopt vs current contact
-tests/test_drive.py::test_flip_completes[-1]          # 2026-08-09 trajopt vs current contact
-tests/test_drive.py::test_flick_replay                # 2026-08-09 trajopt vs current contact
-tests/test_drive.py::test_flick_mirror_survives       # 2026-08-09 trajopt vs current contact
-tests/test_drive.py::test_double_flick                # 2026-08-09 trajopt vs current contact
-tests/test_drive.py::test_heading_after_flick_no_snap # 2026-08-09 trajopt vs current contact
-tests/test_drive.py::test_reset_after_flick_no_snap   # 2026-08-09 trajopt vs current contact
+tests/test_drive.py::test_flip_completes[1]           # 2026-08-09 trajopt vs modelled payload
+tests/test_drive.py::test_flip_completes[-1]          # 2026-08-09 trajopt vs modelled payload
+tests/test_drive.py::test_flick_replay                # 2026-08-09 trajopt vs modelled payload
+tests/test_drive.py::test_flick_mirror_survives       # 2026-08-09 trajopt vs modelled payload
+tests/test_drive.py::test_double_flick                # 2026-08-09 trajopt vs modelled payload
+tests/test_drive.py::test_heading_after_flick_no_snap # 2026-08-09 trajopt vs modelled payload
+tests/test_drive.py::test_reset_after_flick_no_snap   # 2026-08-09 trajopt vs modelled payload
