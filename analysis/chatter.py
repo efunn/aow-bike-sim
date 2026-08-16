@@ -24,6 +24,13 @@ bound. A policy can have low per-step change while sitting saturated (smooth
 but maxed out), and high per-step change while never reaching a bound, so
 neither number substitutes for the other.
 
+MIXED WIDTHS. A policy trained with `act_wings` emits FOUR channels, not three,
+and the set here contains both kinds. Each policy is normalized by its own
+`ActionBounds.to_list()[:act_dim]`; the wing column prints "-" for the
+three-channel policies. The consequence to keep in mind when reading down a
+column: the per-channel cells are comparable across policies, the TOTALS are
+not, because a four-channel policy sums one more term.
+
   python analysis/chatter.py
   python analysis/chatter.py --w-smooth 0.05   # price the table at a weight
 
@@ -43,7 +50,11 @@ from aow_sim.control.policy import load_policy_npz
 from aow_sim.train_general_rl import _eval_episodes, _score, eval_cmds
 from rsa_policies import POLICIES, REPO, env_for, load_general
 
-CHANNELS = ("steer", "hub", "diff")
+# The three channels every general policy has, plus the optional fourth. A
+# policy's own width decides how many of these it fills -- see `act_scale`.
+# Columns a policy does not have print as "-" rather than being dropped, so
+# the table stays one shape across a mixed set.
+CHANNELS = ("steer", "hub", "diff", "wing")
 
 # Command families for the per-family breakdown. A policy could in principle
 # be smooth at rest and violent while moving (or the reverse), which a single
@@ -57,13 +68,36 @@ FAMILIES = {
 }
 
 
+def act_scale(pol) -> np.ndarray:
+    """The bound of each channel THIS policy emits, in its own output order.
+
+    Not a fixed 3-vector: a policy trained with `act_wings` emits four values
+    and dividing it by three bounds raises a broadcast error that reads like a
+    corrupt export. `ActionBounds.to_list()` is always four long and the
+    policy's output width says how many of them are real.
+
+    A zero bound would divide by zero, which is a silently poisoned table
+    rather than a crash, so it is rejected: a policy that emits a channel it
+    has no bound for is a broken export and should say so.
+    """
+    scale = np.asarray(pol.bounds.to_list(), float)[:pol.act_dim]
+    if not np.all(scale > 0):
+        raise ValueError(
+            f"policy emits {pol.act_dim} channels but its bounds are {scale} — "
+            "a zero bound cannot normalize an action")
+    return scale
+
+
 def rollout_grid(pol, env, cmds):
     """Run the eval grid, keeping every normalized action alongside the
     per-command metrics. Actions are recorded as a fraction of their bound,
-    i.e. what the network emits before scale_action, so the three channels
-    share one scale and the numbers match what the reward sees."""
-    b = pol.bounds
-    scale = np.array([b.steer_rate_max, b.hub_max, b.diff_max])
+    i.e. what the network emits before scale_action, so the channels share one
+    scale and the numbers match what the reward sees.
+
+    `A` is (steps, this policy's width) — ragged across a mixed policy set, so
+    every consumer reads its width off the array rather than assuming three.
+    """
+    scale = act_scale(pol)
     acts = []
 
     def act(obs):
@@ -129,6 +163,11 @@ def main():
               f"{m['head_err_deg']:>10.1f}{m['drift_m']:>9.3f}"
               f"{m['steer_rest_deg']:>11.1f}")
 
+    def cells(values, fmt):
+        """One cell per CHANNEL, "-" where this policy has no such channel."""
+        return "".join(f"{values[i]:>10{fmt}}" if i < len(values)
+                       else f"{'-':>10}" for i in range(len(CHANNELS)))
+
     print("\nmean squared per-step action change, by channel "
           "(fraction of bound)")
     print(f"{'policy':{w}}" + "".join(f"{'d' + c + '^2':>10}" for c in CHANNELS)
@@ -136,7 +175,9 @@ def main():
     for k, (_m, _r, A, _p) in out.items():
         d2 = np.diff(A, axis=0) ** 2      # grid-wide; per-family below is
         mu = d2.mean(0)                   #   the reset-safe version
-        print(f"{k:{w}}" + "".join(f"{mu[i]:>10.3f}" for i in range(3))
+        # The TOTAL is not comparable across widths -- a wings policy sums four
+        # channels against three. Compare the per-channel cells.
+        print(f"{k:{w}}" + cells(mu, ".3f")
               + f"{mu.sum():>9.3f}{args.w_smooth * mu.sum():>10.3f}")
 
     print("\nfraction of steps pinned to a bound (|a| > 0.98)")
@@ -144,8 +185,7 @@ def main():
           + f"{'any':>9}")
     for k, (_m, _r, A, _p) in out.items():
         sat = np.abs(A) > 0.98
-        print(f"{k:{w}}" + "".join(f"{sat[:, i].mean():>10.1%}"
-                                   for i in range(3))
+        print(f"{k:{w}}" + cells(sat.mean(0), ".1%")
               + f"{sat.any(1).mean():>9.1%}")
 
     print("\nsum-squared per-step action change, by command family")
