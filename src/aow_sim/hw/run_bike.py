@@ -48,10 +48,33 @@ from .odometry import VelocityEstimator, body_to_world
 from .state import HardwareData, load_bundle
 
 CONTROL_HZ = 100.0
-CMD_STALE_S = 0.15        # -> zero the command
+CMD_STALE_S = 0.15        # -> zero the command. PROVISIONAL, see note below
 CMD_DEAD_S = 1.0          # -> torque off
-VOLTAGE_MIN = 10.2        # 3.4 V/cell on 3S
+VOLTAGE_MIN = 10.2        # 3.4 V/cell on 3S. Pack total, not per-cell — see note
 FALL_ROLL_RAD = np.deg2rad(60.0)
+
+# CMD_STALE_S is a round number, not a measurement. Two things can put the real
+# command-age distribution's tail past it:
+#
+#   * `brcmfmac` enables WiFi power save by DEFAULT, which spikes latency by
+#     tens to hundreds of ms — squarely inside this window. The bike then zeroes
+#     its velocity command with no external cause, i.e. the failsafe firing
+#     correctly on a fault that does not exist. Fix it at the OS level
+#     (`iw dev wlan0 set power_save off`, made persistent) and assert it at
+#     startup the same way ServoBus asserts latency_timer.
+#   * Client reconnect after an AP hiccup takes seconds, which is past
+#     CMD_DEAD_S as well — that surfaces as an unexplained torque-off.
+#
+# Set this from a measured p99 before the first untethered run. See
+# docs/plans/untethered-setup.md, "The radio, and what actually goes wrong with
+# it" and Verification step 2b.
+#
+# VOLTAGE_MIN reads the pack total via the servos' address 144, which cannot see
+# individual cells. A pack with one weak cell can sit at 3.6/3.6/3.0 V and still
+# report 10.2 V, so the weak cell is over-discharged with nothing onboard to
+# notice. That is an accepted limitation — the free voltage read is still the
+# right call — but it assumes regular balance charging keeps the cells matched
+# enough for the average to mean something.
 
 
 class CommandLink:

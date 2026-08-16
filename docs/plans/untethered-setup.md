@@ -18,7 +18,7 @@ fits the bike (size over weight), fully understandable codebase, <$1000
 | Power | **One 3S bus** for all three servos; 5 V buck for the Pi |
 | Charging | **Buy a hobby balance charger.** Do not build a charger circuit |
 | U2D2 Power Hub | **Not used** — replaced by a ~25×25 mm perfboard splitter |
-| Teleop | **WiFi/UDP from the laptop**, which stays a full ground station |
+| Teleop | **WiFi/UDP from the laptop**, which stays a full ground station and hosts the AP |
 
 ## Why a Linux SBC and not a microcontroller
 
@@ -671,8 +671,59 @@ move triggers, re-zero, log start/stop — which is exactly the surface
 stays laptop-side and keeps working unchanged, and telemetry streams back for
 live plotting.
 
-The Pi should run its own WiFi AP (hostapd) so the link never depends on house
-networking.
+**The laptop runs the access point, not the Pi.** The requirement was only that
+the link never depend on house networking, and a laptop-hosted AP satisfies that
+just as well while being the better side to host it on: bigger antennas and more
+transmit power on the ground station help *both* directions of a link whose weak
+end is a chip antenna on a 65 mm board, and it keeps `hostapd`/`dnsmasq` off a
+512 MB SBC that is also running the balance loop. AP mode on the CYW43438 works,
+but it is the chip's weaker path and there is no reason to lean on it.
+
+The Zero 2 W is then an ordinary client. Note that client reconnects after an AP
+hiccup take seconds, not milliseconds — long enough for `CMD_DEAD_S` to fire and
+drop torque. That is the correct behaviour, but it means a flaky ground-station
+AP shows up as unexplained torque-offs rather than as sluggish steering.
+
+### The radio, and what actually goes wrong with it
+
+The Zero 2 W's wireless is a Cypress/Broadcom **CYW43438** on SDIO, driven by
+`brcmfmac`: 2.4 GHz only, single chip antenna at one end of the board. It has a
+reputation, and it is worth separating the parts of that reputation which matter
+here from the parts which do not.
+
+**Bandwidth is not one of the problems.** The command struct at 50 Hz is
+kilobits against a chip that does tens of megabits, and the SDIO throughput
+ceiling everyone cites is three orders of magnitude away from what this link
+asks for. Latency and dropouts are the only axes that matter.
+
+| concern | verdict here |
+|---|---|
+| **Power-save latency spikes** | **The real one.** Tens to hundreds of ms, default-on, lands inside `CMD_STALE_S = 0.15`. Fixed in *OS configuration* item d — and it must be asserted at startup, not assumed |
+| **Supply dips during TX bursts** | **Real, and specific to this build.** See below |
+| **Bluetooth coexistence** | Already solved. One radio time-shares WiFi and BT, and `dtoverlay=disable-bt` is already set to free the PL011 UART for the TM151 — a constraint that pays twice |
+| **Firmware halts** | Version-dependent, not common, but indistinguishable from "laptop went away". Pin a known-good image; consider a link-health check that resets `wlan0` |
+| **Slow client reconnect** | Seconds, longer than `CMD_DEAD_S`. Correct behaviour, confusing symptom (above) |
+| **Regulatory domain unset** | Caps channels and TX power; reads as unexplained short range. Set it (item d) |
+| **AP-mode instability** | Sidestepped by hosting the AP on the laptop |
+| **SDIO throughput ceiling** | Irrelevant at this data rate |
+
+**The supply interaction is the one this design creates for itself.** WiFi
+transmit draws sharp current spikes, and the Zero 2 W is known to be sensitive
+to 5 V rail dips. This build feeds 5 V into GPIO pins 2/4 — bypassing the Pi's
+own input protection — from a buck on a pack that three servos are also pulling
+transients from. That is two independent transient sources on one rail with only
+the 470 µF between them and the SoC.
+
+The bulk capacitance above is justified purely by motor current. It is also
+carrying the radio, and nothing has measured whether it carries both at once.
+Until it has, treat "random Pi reboots" as a power-integrity question before a
+software one — see *Verification* step 1.
+
+**Antenna placement is a mounting constraint, not just an electrical one.** The
+chip antenna sits at one end of the board and a LiPo pack is effectively RF
+opaque. Do not sandwich the Pi between the pack and the chassis. This is the one
+WiFi consideration that has to be settled at build time rather than fixed in
+config later.
 
 ### Failsafes
 
@@ -948,6 +999,28 @@ sudo setcap cap_sys_nice+ep $(readlink -f $(which python3))
 
 Without it `_try_realtime()` warns and continues at normal priority.
 
+**d. Turn WiFi power save off.** The `brcmfmac` driver enables WiFi power
+management by default, and it produces latency spikes of tens to hundreds of
+milliseconds. `run_bike.py` sets `CMD_STALE_S = 0.15`, so a power-save stall
+lands squarely inside the command-age watchdog: the bike intermittently zeroes
+its velocity command with no external cause. That is the failsafe working
+correctly on a fault that does not exist, which is the worst kind to diagnose on
+hardware.
+
+```sh
+sudo iw dev wlan0 set power_save off
+```
+
+Make it persistent — a `systemd` unit or a `NetworkManager` connection property,
+depending on the image — and assert it at startup the same way `latency_timer`
+is, rather than trusting it. This is the same species of bug as the FTDI latency
+timer: a driver default that silently degrades a real-time path and gets blamed
+on the wrong subsystem.
+
+Also **set the regulatory domain** (`country=` in `wpa_supplicant.conf`, or via
+Imager's locale settings). Without it some channels are unavailable and transmit
+power is capped, which reads as unexplained short range.
+
 ### 3. One-time device configuration (done from the laptop, before mounting)
 
 - **Dynamixels**, via DYNAMIXEL Wizard 2.0 over the U2D2: set IDs to 1/2/3
@@ -1021,9 +1094,21 @@ come up balancing on power-on with no laptop. Do this **only after** the
 failsafes are verified — an autostarting balance loop on a bench is a bike
 that throws itself off the bench.
 
-Run `hostapd`/`dnsmasq` so the Pi is its own AP: the command link then never
-depends on house WiFi, and the failsafe never fires because someone's router
-rebooted.
+Run `hostapd`/`dnsmasq` **on the laptop** so the command link never depends on
+house WiFi and the failsafe never fires because someone's router rebooted. See
+*The laptop stays a ground station* for why the AP lives on that side.
+
+**There is no RTC on a Zero 2 W, and in AP-island mode there is no NTP either.**
+Nothing on the control path cares — every timing call in `hw/` is
+`time.monotonic()`, `HardwareData` documents that its origin does not matter,
+and the control `dt` comes from the servos' Realtime Tick rather than the Pi.
+What suffers is log timestamps and file mtimes, which `fake-hwclock` leaves at
+roughly-last-shutdown rather than at the epoch. Since the ground station is
+already on the other end of the link, make it the time source — point `chrony`
+at the laptop, or skip syncing entirely and let laptop-side telemetry carry the
+wall clock while bike-side logs carry monotonic ticks. A DS3231 on I²C solves it
+in hardware for $2, but it is a part and some pins for a problem the existing
+link already solves.
 
 ## Verification
 
@@ -1033,8 +1118,22 @@ Bench-first. The bike should not attempt to balance untethered until 1–3 pass.
    SyncRead+BulkWrite round trip and tick jitter over 60 s at 1/2/3 Mbps, and
    with `latency_timer` at 16 vs 1 (to see the failure mode).
    **Gate: p99 tick jitter < 1 ms at 100 Hz.**
+
+   Same session, **scope the 5 V rail** under the three loads together — WiFi
+   transmitting, servos moving, control loop running. The bulk caps were sized
+   against motor transients alone and the radio was never in that budget, and
+   feeding the Pi through GPIO leaves no input protection between the buck and
+   the SoC. **Gate: no dip below 4.75 V.** Do this before blaming any reboot on
+   software.
 2. **AHRS.** TM151 on GPIO UART at 200 Hz; check the quaternion against known
    hand-held orientations; measure age-of-data at the control tick.
+2b. **Link latency, before trusting the watchdog.** With power save off and the
+   laptop hosting the AP, log command-age over several minutes of normal
+   driving range. **Set `CMD_STALE_S` from the measured p99 rather than from the
+   round 150 ms it currently holds** — that number is a guess, and if the real
+   distribution has a tail past it the bike will zero its command for no visible
+   reason. Repeat once with power save deliberately left on, to learn what the
+   failure looks like.
 3. **Replay equivalence — the test that proves the shim. DONE.**
    `tests/test_hw_replay.py` drives the real controller in a MuJoCo loop, then
    replays only the slots the hardware backend can populate through a
