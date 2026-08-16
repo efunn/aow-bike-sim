@@ -1,0 +1,79 @@
+# Wing LINKAGE study — a four-bar per wing, both driven by one servo.
+#
+# Separate from bike_params.yaml on purpose (docs/plans/
+# wing-linkage-design-and-optimization.md): this is an exploration of an
+# alternative to the gear train, nothing here feeds the MuJoCo model or the
+# params digest, and it should be free to move without invalidating a single
+# trained policy.
+#
+# FRAME. Everything is the 2D front/back view: the (y, z) plane, millimetres,
+# measured from the FLOOR and the CENTRELINE. +y is the bike's LEFT, +z is up.
+# (bike_params.yaml measures chassis z from the REAR AXLE; this file does not,
+# because a linkage is easier to reason about against the ground it pushes on.
+# `wheel_radius` is the conversion.)
+#
+# EVERYTHING IS DRAWN FROM STOWED. The stowed pose is the thing we can state
+# confidently — wings folded symmetrically alongside the bike — so it is the
+# input, and the link lengths that close the loop there are DERIVED. That is
+# what makes the two sides come out asymmetric on their own rather than by
+# being told to.
+
+# =====================================================================
+# TIER 1 -- YOU CHOOSE. The bike envelope. Change these and re-run the
+# optimiser; everything in tiers 2 and 3 moves.
+# =====================================================================
+bike:
+  # Fixed for a given bike; the first three already exist in bike_params.yaml
+  # and are repeated here in floor coordinates.
+  wheel_radius: 51.2        # rear axle height above the floor
+  bike_width: 120.0         # wing outer edge to wing outer edge, stowed
+  bike_height: 216.2        # top of the bike above the floor (= axle + 165)
+  ground_clearance: 20.0    # bottom of the stowed wing above the floor
+
+# =====================================================================
+# TIER 2 -- THE OPTIMISER SEARCHES THESE. Values here are a starting point
+# and the last saved result, not a design. See analysis/wing_linkage.py::_VARS
+# and docs/plans/wing-linkage-design-and-optimization.md.
+#
+# NOTE `ground_clearance` above is also searched, despite living under `bike:`.
+# =====================================================================
+mechanism:
+  servo_offset: 30.0        # servo centre, mm z+ above wheel_radius
+  wing_pivot_offset: 30.0   # wing pivot, mm y+ from the centreline (symmetric)
+
+  # Where the second link attaches to the wing, as (y, z) mm from that wing's
+  # pivot, at STOW. Need NOT lie on the wing plane -- the wing is treated as a
+  # long line and the attach point can stand off it, which is what lets the
+  # two sides differ without the wings themselves differing.
+  wing_attach_offset: [0.0, 35.0]
+
+  # First link (the servo crank), per side. Both are keyed to the same shaft,
+  # separated by `angle_between_first_links`, so one goes UP+LEFT while the
+  # other goes DOWN+RIGHT.
+  wing_first_link_length: {right: 25.0, left: 25.0}
+  # RIGHT wing's crank bearing at stow, CCW from +y. Must point AWAY from its
+  # own wing: the right wing is at -y, so its crank reaches +y ("up and left"
+  # in bike frame) and the coupler then reaches back out to -y. 70 deg does
+  # that; anything past 90 has the crank leaning over its own wing, which
+  # inverts the linkage the brief describes.
+  first_link_angle_deg: 70.0
+  angle_between_first_links: 180.0   # left crank = right crank + this
+
+  # -------------------------------------------------------------------
+  # TIER 3 -- DRIVEN. Computed, never hand-edited. Also derived elsewhere:
+  #   wing_length      = bike_height - ground_clearance      (Linkage)
+  #   wing_stow_offset = bike_width/2 - wing_pivot_offset    (Linkage)
+  #   roof radius/axis = build_model.derive_linkage_roof()
+  # Coupler lengths are whatever closes the four-bar AT STOW, which is why the
+  # two sides come out asymmetric on their own. The asymmetry is an OUTPUT.
+  # -------------------------------------------------------------------
+  wing_second_link_length: {right: null, left: null}
+
+# TIER 3 -- DRIVEN. `servo_travel_deg` is the optimiser's best simultaneous
+# pose; `goal_current_nm` (locking config only) is measured off the fall set.
+stroke:
+  # How far the servo turns from stow to fully deployed. Positive = the
+  # direction that swings the wings down and out. Single-turn matters: the
+  # XC330 in current-based position mode cannot multi-turn.
+  servo_travel_deg: 140.0
+  steps: 5                  # midpoints drawn in the stowed->deployed figure

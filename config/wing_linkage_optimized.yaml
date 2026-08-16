@@ -1,0 +1,22 @@
+bike:
+  wheel_radius: 51.2
+  bike_width: 120.0
+  bike_height: 216.2
+  ground_clearance: 79.40249724587022
+mechanism:
+  servo_offset: 117.23214305597462
+  wing_pivot_offset: 9.528899131987352
+  wing_attach_offset:
+  - 35.13130907726531
+  - 38.202412972139456
+  wing_first_link_length:
+    right: 34.20779771138166
+    left: 33.75582069270405
+  first_link_angle_deg: 72.00653358450083
+  angle_between_first_links: 45.341702995452636
+  wing_second_link_length:
+    right: null
+    left: null
+stroke:
+  servo_travel_deg: 172.0
+  steps: 6

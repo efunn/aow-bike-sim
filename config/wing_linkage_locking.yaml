@@ -1,0 +1,39 @@
+bike:
+  wheel_radius: 51.2
+  bike_width: 120.0
+  bike_height: 216.2
+  ground_clearance: 71.58371696232793
+mechanism:
+  servo_offset: 83.45699404547359
+  wing_pivot_offset: 17.288687923812894
+  wing_attach_offset:
+  - 11.917965561246824
+  - 42.66176420480147
+  wing_first_link_length:
+    right: 30.57500056694086
+    left: 31.01103711189319
+  first_link_angle_deg: 61.73881124620429
+  angle_between_first_links: 64.90107777671227
+  wing_second_link_length:
+    right: null
+    left: null
+stroke:
+  servo_travel_deg: 176.0
+  steps: 6
+  # Goal current for CURRENT-BASED POSITION MODE, as the torque it corresponds
+  # to at the servo. The only throttle on the stroke -- there is no commanded
+  # trajectory -- so it is the most consequential number in this file.
+  #
+  # It is a WINDOW, not a minimum, and that is the thing to understand before
+  # touching it. Too little cannot lift the bike; too much throws it clean past
+  # upright, because the four-bar's self-limiting only bleeds off so much and
+  # the shortened wing has little inertia to absorb the rest. Measured over the
+  # eight-fall set in MuJoCo:
+  #     0.34 -> 1/8    0.38..0.50 -> 8/8    0.54 -> 7/8    0.62 -> 0/8
+  # 0.44 is the middle of that window, deliberately, rather than the edge.
+  #
+  # This differs from the geared pair, where more torque is simply more margin.
+  # Re-measure the window after ANY change to wing length, mass or contact --
+  # it moved once already when the wing was shortened (the old geometry wanted
+  # 0.66, which now fails outright).
+  goal_current_nm: 0.44
