@@ -22,7 +22,9 @@ already scheduled for re-authoring) after `contact_solref` was reverted to
 now observed and priced**, which closed out a long-running investigation into
 why crab does not work, and **the self-righting mechanism is now a complete,
 verified design** rather than a recommendation — a mirrored wing pair whose
-whole envelope derives from two measurable numbers. The remaining open
+whole envelope derives from two measurable numbers, now with a **second,
+independently optimised mechanism** (a four-bar linkage) built and measured
+alongside it. The remaining open
 engineering question is still **the contact model**, which is the least-known
 parameter in the sim and the one no policy has been randomized over.
 
@@ -178,8 +180,156 @@ Still `GUESS`: `min_pinion_radius`, which the 5:1 ceiling hangs entirely off.
 
 ---
 
+## Simplified contact models — surveyed, and the answer is "no, but"
+
+`docs/plans/aow-contact-approximations.md` (2026-08-15) closes the "fast
+approximation models deferred" item in `mujoco-modeling-decisions.md`.
+Reproduce with `python analysis/contact_surrogates.py`.
+
+- **No contact surrogate is worth building.** Swapping the 16 cone meshes for
+  primitives buys 10–20%; deleting the whole roller multibody buys 1.7–2.0×
+  and is the hard ceiling, because the cost is DOFs and equality rows, not
+  collision geometry. The two textbook reductions are both unavailable: a
+  ball wheel drops the toppling lever arm from `h_com` to `h_com − R` (−42%),
+  and MuJoCo's anisotropic friction is world-locked on a flat floor
+  (`t1 = [0,1,0]` at every wheel yaw), so the LeKiwi capsule trick does not
+  survive a steering bike. Mark it **rejected**, not deferred.
+- **Policies do not depend on roller detail.** `general_rl_smooth_stiff`,
+  unmodified weights, eval grid, rear wheel swapped: survival 1.00 on every
+  scheme, tracking within 5.5%, ordered by ride roughness. The blind spot the
+  survey was looking for is not there.
+- **The speedup was in `sim.timestep`, and it is now taken: 2.0e-4 → 4.0e-4,
+  with `mesh_segments` 32 → 64.** Contact statistics are converged from 5e-5
+  clear through 6e-4, so the contact never bound it — **the LQR's
+  finite-amplitude system ID does.** Worst fit R² runs 0.9748 (2e-4) → 0.9727
+  (4e-4) → 0.9408 (6e-4, collapsing at +0.80 m/s alone), and
+  `test_gain_schedule` floors it at 0.95. So 6e-4 is off the table despite
+  scoring fine on every policy eval — no eval can see this bound.
+- **`mesh_segments: 32` was bouncing the front tyre off its own facets** —
+  17.5% of a 0.5 m/s run off the ground at a 0.26 mm swing, against 0.2% at 64
+  segments for ~3% of step time. Pure numerics, unlike the rear wheel's 8-fold
+  ripple, which is measured real geometry (`omni-wheel-protocol.md` §1) and
+  does not move with tessellation at all.
+- **What the change cost, all checked rather than assumed:** red set unmoved at
+  7 failed / 217 passed (suite 262 s → 161 s), eval grid 0.764 → 0.760 at
+  survival 1.00 (29.4 s → 16.9 s), righting sequence / fall attitudes /
+  inverted drops / hockey all unchanged, deploy bundle re-exported
+  (`7af0ce42dfc91154`). **Still ungated: a full training run.** Everything so
+  far is replay, and replay cannot show that a policy *trained* at 4e-4
+  transfers back. Every `moves/*` export now warns on load.
+- **`contact_solref` outweighs all of it**: at fixed geometry it swings contact
+  loss 53% → 0% and peak load 5×. Still a `GUESS`. Also worth widening the
+  randomizer's `dampratio_range` above 1.0 — it currently samples only the
+  bouncy half, and overdamped is where filled TPU plausibly lives.
+- **`timestep` and `contact_solref` are ONE decision, not two.** MuJoCo's
+  `refsafe` (on by default) silently raises a positive `timeconst` to
+  `2 × timestep`, so past `dt = timeconst/2` the sim stops modelling the
+  contact that was configured — at `timeconst 0.005` that is `dt = 2.5e-3`, and
+  static sink is bit-exact at every step below it. Well before that, peak force
+  drifts once there are fewer than ~10 steps per contact time constant (the
+  shipped pair sits at 12.5). **Two live consequences:** if the bench lands on
+  a stiffer contact the timestep ceiling drops with it, and switching to the
+  recommended **negative** solref convention removes the guard entirely — stiff
+  pairs then diverge rather than being clamped. `(-4e4, -150)` reproduces the
+  current positive pair exactly, if that conversion gets made.
+
+---
+
+## The wing LINKAGE — a second mechanism, and a real alternative
+
+`docs/plans/wing-linkage-design-and-optimization.md`, `analysis/wing_linkage.py`,
+`config/wing_linkage*.yaml`. Figures in `analysis/plots/wing_linkage_*`, with
+`--tag _opt` / `_lock` marking which config drew each one.
+
+A four-bar per wing, both on one servo, as an alternative to the gear train.
+Gears give a rigidly mirrored pair and a fixed ratio; a linkage gives a ratio
+that VARIES through the stroke, which is the point — the deployed pose can be
+put at the crank's input-side dead point, where the wing cannot backdrive the
+servo.
+
+The geometry is optimised in a standalone 2D study, then built in MuJoCo
+(`build_model(..., linkage=True)`, closed with `mjEQ_CONNECT` site
+constraints), driven by the same `RightingSequencer`, and available in teleop
+(`run_drive --teleop --linkage`).
+
+| | geared 2:1 | linkage |
+|---|---|---|
+| peak servo torque (2D) | 0.339 N·m | 0.541 N·m |
+| MuJoCo eight-fall set | 8/8 | **8/8 across 0.38–0.50 N·m** |
+| holds deployed pose | continuous current | **free — MA ≈ 52** |
+| current-based position mode | **0/8, somersaults** | **8/8, 0.35 s** |
+| total bike height | 216.2 mm | 216.2 mm |
+| peak pin loads | — | coupler 21.7 N, **wing pivot 32.4 N** |
+
+**The linkage's case is not peak torque, where gears win.** It is that it needs
+no commanded trajectory: cap the current, command the endpoint, and the toggle
+decelerates the wing into the end pose by itself. Gears under the same command
+throw the bike clean over — 0/8 — and need a tuned rate schedule to be safe,
+which is a thing that must be re-tuned whenever mass or contact moves.
+
+**The goal current is a WINDOW, not a minimum**, and this is the single most
+important operational fact about it. Too little cannot lift the bike; too much
+throws it past upright, because the four-bar's self-limiting only bleeds off so
+much and the short wing has little inertia to absorb the rest:
+
+    0.34 -> 1/8     0.38..0.50 -> 8/8     0.54 -> 7/8     0.62 -> 0/8
+
+Configured at **0.44 N·m**, the middle of that window rather than an edge. The
+geared pair has no such ceiling — there, more torque is simply more margin.
+
+### What the optimiser taught, mostly by cheating
+
+Every constraint in `analysis/wing_linkage.py` exists because a search walked
+through the gap where it wasn't, and **every wrong answer passed its own
+numeric test and was caught by looking at a picture**:
+
+* scoring raw wing rotation → wings folding 180° *through* the bike;
+* scoring `|angle|` → a wing driven 90° INBOARD, scoring a perfect zero, and
+  dipping 55 mm below the floor on the way;
+* scoring each wing's best pose separately → forgetting there is only one
+  servo, so only the simultaneous pose is reachable;
+* torque-only → parking in an output-side dead point, where the load happens to
+  be near zero so it costs nothing on the metric while being the least
+  buildable part of the design.
+
+Render the mechanism before believing the objective.
+
+### Drivers vs driven
+
+Three tiers, recorded in the config files as well as the plan doc. **You
+choose** `bike_width`, `bike_height`, `wheel_radius`. **The optimiser searches**
+nine mechanism variables. **Driven, never hand-edited**: both coupler lengths
+(whatever closes the four-bar at stow — which is why the two sides come out
+asymmetric on their own, an OUTPUT and not an input), wing length, stow offset,
+servo travel, goal current, and the roof geometry.
+
+`bike_height` now means the roof CREST in every file. It previously meant the
+wing top in the linkage config alone, which made that bike a roof-radius taller
+and got mis-reported as the linkage "forcing a taller roof". Fixing it shortened
+the wing 181 → 84.6 mm, dropped the fall-set requirement from 0.66 N·m to the
+0.38–0.50 window, and collapsed the two roof derivations into one rule.
+
+### Not decided
+
+The linkage is **not** a replacement for the geared pair. Both are built, both
+pass the fall set, and the choice is a real trade: gears have more torque margin
+and a simpler part count; the linkage has a self-locking deployed pose and needs
+no trajectory. Nothing downstream depends on the answer, so it can wait for the
+mechanical design.
+
+
 ## Tooling added
 
+- **`analysis/wing_linkage.py`** — the whole four-bar study in one file:
+  kinematic solve, three optimiser objectives (kinematics / peak torque /
+  self-locking deployed pose), quasi-static pin loads, and both the
+  mechanism-frame and ground-frame animations. Reads its own config and touches
+  nothing in `bike_params.yaml`, so it cannot move the params digest.
+- **`analysis/contact_surrogates.py`** — the harness behind the above: a
+  parameterised omni-wheel builder (cone meshes / spheres / capsules / smooth
+  torus, any roller count) on a loaded carriage rig, plus the transfer arm that
+  replays a trained policy across schemes. Its `cones-8` row must score
+  identically to the unpatched model; that equality is the control.
 - **`scripts/tb_summary.py`** — reads a running TensorBoard over its own JSON
   API, so watching a remote run needs no data sync and no change to how the
   board is launched. Default view bins the reward curve against the curriculum,
@@ -203,14 +353,41 @@ Still `GUESS`: `min_pinion_radius`, which the 5:1 ceiling hangs entirely off.
 
 ## Health: the suite is defensible again
 
-`pytest` at HEAD: **7 failed, 214 passed, 2 skipped.** Was 21 failed + 10
-errors + 179 passed.
+`pytest` at HEAD: **7 failed, 217 passed, 2 skipped** in 162 s. Was 21 failed +
+10 errors + 179 passed.
 
 All 7 are in `test_drive.py` and all are the trajopt moves — `test_flip_completes`
 (×2) and five `flick` tests. These are the **already-accepted** set: those moves
 no longer survive the modelled payload and are deliberately queued for
 re-authoring once the as-built mass is known, rather than being re-optimised
 twice. Nothing else is red.
+
+**That acceptance is now machine-checked, not prose.** `tests/expected_failures.txt`
+lists those seven nodeids with a reason and a date, and `tests/conftest.py`
+ends every run with a verdict on whether the red set *moved* — `NEWLY RED`,
+`UNEXPECTEDLY GREEN`, or `STALE ENTRY` — rather than leaving you to remember
+which seven were fine. Still not an xfail, for the same reason as the guard
+below: these tests run, fail, and exit non-zero. The registry only judges.
+
+### Which tests a change moves
+
+Markers say what sends you back to a test, and are registered with their
+descriptions in `pyproject.toml` (`pytest --markers`). `--strict-markers` is on,
+so a misspelt one is an error rather than a silent empty selection.
+
+| marker | run it after | tests | wall |
+|---|---|---|---|
+| `contact` | any `sim:` change — `contact_solref`, `timestep`, `mesh_segments` | 87 | ~99 s |
+| `geometry` | any other `bike_params` change — a dimension, mass, gear ratio | 19 | 0.5 s |
+| `spec` | changing a `control/*_spec.py` layout, or the `HardwareData` shim | 56 | ~60 s |
+| `policy` | retraining or re-exporting anything in `moves/` | 6 | — |
+| `deploy` | step 1 of the `bike_params` checklist: is the bundle stale? | 2 | — |
+| `boundary` | touching imports under `hw/` | 19 | 0.0 s |
+| `pure` | always — no model build, the inner loop | 50 | **0.24 s** |
+
+`pytest -m pure` is the edit loop. `pytest -m contact` is what the timestep
+change above should have been read against, and is most of the suite's
+wall-clock.
 
 Two standing guards, both deliberate and neither an xfail:
 
@@ -317,23 +494,29 @@ Two tracks. The sim track does not wait on the build.
 4. **Resolve the crab question one way or the other.** Read arm 2 against its
    own exit criterion; if pitch is controlled and crab is still flat, run the
    open-loop gait sweep instead of a third arm.
+5. **Validate the new timestep with a full training run.** `sim.timestep: 4e-4`
+   + `mesh_segments: 64` are landed and every *replay* check passes, but no
+   policy has been TRAINED at 4e-4 yet. The next long run is that check — pick
+   a config whose 2e-4 result is already known so the comparison means
+   something, and read it against that run's own numbers rather than against
+   the table above.
 
 **Build track:**
 
-5. **Mechanical design and assembly of the full bike.** Carry the
+6. **Mechanical design and assembly of the full bike.** Carry the
    `bike_width` / `bike_height` envelope (120 × 165 mm) in at design time — the
    roof and the stowed wings both derive from it, so retrofitting means
    redoing both.
-6. **Print a test pinion.** `min_pinion_radius` is a `GUESS` and the 5:1 gear
+7. **Print a test pinion.** `min_pinion_radius` is a `GUESS` and the 5:1 gear
    ceiling hangs entirely off it. A mechanical-design input, not a follow-up.
-7. **Weigh everything as built** — chassis (`GUESS` 0.45 kg), pack (0.115),
+8. **Weigh everything as built** — chassis (`GUESS` 0.45 kg), pack (0.115),
    electronics stack (0.076). Re-run `export_deploy`.
-8. **Measure contact off the assembled bike** (§ below), then re-centre
+9. **Measure contact off the assembled bike** (§ below), then re-centre
    `sim.contact_solref` and re-check the policies with `analysis/chatter.py`.
-9. **Bench verification 1–5** from `docs/plans/untethered-setup.md#verification`
+10. **Bench verification 1–5** from `docs/plans/untethered-setup.md#verification`
    — loop timing, AHRS, odometry, failsafes. These gate first power-on.
-10. **First untethered balance** on training wheels, then without.
-11. **Self-righting**, deliberately last. The design is finished and verified in
+11. **First untethered balance** on training wheels, then without.
+12. **Self-righting**, deliberately last. The design is finished and verified in
     sim; it should not consume build time until the bike balances.
 
 ---
@@ -371,16 +554,16 @@ Two tracks. The sim track does not wait on the build.
 3. **Print a test pinion** and find the smallest that survives.
 4. **Spin-down tests**, bike on a stand — driven hub and flicked roller, for
    joint damping and frictionloss. A stand is not a rig.
-5. **Incline slide test** for sliding friction (`GUESS` 0.9).
-6. **Weigh everything** at assembly.
-7. **Known-circle drive** for front tire lateral stiffness. Needs a driving
+6. **Incline slide test** for sliding friction (`GUESS` 0.9).
+7. **Weigh everything** at assembly.
+8. **Known-circle drive** for front tire lateral stiffness. Needs a driving
    bike, so it lands after first balance.
-8. **Bench: loop timing** at 1/2/3 Mbps, `latency_timer` 16 vs 1. Gate: p99
+9. **Bench: loop timing** at 1/2/3 Mbps, `latency_timer` 16 vs 1. Gate: p99
    tick jitter < 1 ms at 100 Hz.
-9. **Bench: AHRS** at 460800 baud, quaternion against known orientations,
+10. **Bench: AHRS** at 460800 baud, quaternion against known orientations,
    age-of-data at the tick. Expect no data for ~3 s after power-on — ~30 s if
    the unit is still on its factory static-boot default.
-10. **Failsafes, deliberately triggered** — WiFi kill, pack below LVC, bike
+11. **Failsafes, deliberately triggered** — WiFi kill, pack below LVC, bike
     laid on its side.
 
 Roll-phase and surface dependence stay deferred; they check the mesh, not the
@@ -427,14 +610,14 @@ chassis/pack/electronics mass, front tire lateral stiffness, and
    handedness **flips sign between policies** — the cleanest available evidence
    that this is spontaneous symmetry breaking, not plant asymmetry. Fixing it
    widens the recoverable set and reduces how often righting is needed at all.
-5. **Steer homing at power-up is undesigned.** The XC330 loses its multi-turn
+6. **Steer homing at power-up is undesigned.** The XC330 loses its multi-turn
    count across a power cycle, and the fix depends on an unmade mechanical
    choice (hard stop vs magnetic index). Blocks first power-on, not ordering.
-6. **Front-wheel liftoff is undetected by the estimator.** The lateral estimator
+7. **Front-wheel liftoff is undetected by the estimator.** The lateral estimator
    assumes the front wheel is down. `analysis/liftoff.py` now measures how
    often that is false — 79 mm of clearance on arm 1 — so this is quantified
    rather than suspected.
-7. **The contact protocol docs are stale.** They still describe wheel-only rigs
+8. **The contact protocol docs are stale.** They still describe wheel-only rigs
    and carry tables generated under the wrong `dampratio`. Anyone following
    them literally will take the wrong measurement.
 
