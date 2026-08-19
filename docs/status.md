@@ -1,4 +1,4 @@
-# Project status — 2026-08-15
+# Project status — 2026-08-18
 
 Midpoint snapshot. The design logs under `docs/plans/` are where decisions and
 their reasoning live; this file is the layer on top of them — what is true
@@ -16,7 +16,7 @@ baseline. The onboard software path is built and proven in sim — the hardware
 shim, the deploy bundle, the odometry estimator, the AHRS protocol — with no
 hardware to run it on yet. The tethered rig's parts are on hand; the untethered
 electronics are specced and sourced but not ordered. **The test suite is back
-to a defensible state** (7 failed / 214 passed, and all 7 are the trajopt moves
+to a defensible state** (7 failed / 217 passed, and all 7 are the trajopt moves
 already scheduled for re-authoring) after `contact_solref` was reverted to
 `[0.005, 1.0]`. Two things changed shape since the last snapshot: **pitch is
 now observed and priced**, which closed out a long-running investigation into
@@ -24,13 +24,17 @@ why crab does not work, and **the self-righting mechanism is now a complete,
 verified design** rather than a recommendation — a mirrored wing pair whose
 whole envelope derives from two measurable numbers, now with a **second,
 independently optimised mechanism** (a four-bar linkage) built and measured
-alongside it. The remaining open
-engineering question is still **the contact model**, which is the least-known
-parameter in the sim and the one no policy has been randomized over.
+alongside it. A fifth workstream opened since: **CAD**, which
+is where the bike stops being parametric and starts being drawn. It already
+pushed back — the belt geometry pinned a placeholder that had been made up, and
+the rear of the bike went from 99 mm wide to 75 mm as a result. The remaining
+open engineering question is still **the contact model**, which is the
+least-known parameter in the sim and the one no policy has been randomized
+over.
 
 ---
 
-## The four workstreams
+## The five workstreams
 
 | workstream | state | what "done" looks like | blocker |
 |---|---|---|---|
@@ -38,6 +42,7 @@ parameter in the sim and the one no policy has been randomized over.
 | **Control — RL** | Working, and the primary path. Pitch is now observable and priced (`obs_pitch`, `w_pitch`) | One champion policy, symmetric left/right, exercised over the randomization ranges the hardware will actually see | Crab still one-sided; turn asymmetry stuck ~0.27–0.32 across every run |
 | **Control — analytic (LQR)** | Reference baseline only; nothing drives with it. Fit is currently **healthy** (worst R² 0.9893) | Re-tuned once the contact model is pinned | Nothing right now — it will degrade again when contact damping moves |
 | **Hardware / untethered** | Software complete and tested in sim; nothing physical assembled | Bike balances untethered on a mat | Parts, chassis, servo homing decision |
+| **CAD** | Started 2026-08-18. Layout exports from `aow_sim.cad_layout` into Onshape; drivetrain, steering and self-righting stations pinned, electronics packing deferred | A drawn bike whose as-built numbers replace the `GUESS`es in `bike_params.yaml` | Nothing — it is the thing being worked on |
 
 ---
 
@@ -318,8 +323,72 @@ no trajectory. Nothing downstream depends on the answer, so it can wait for the
 mechanical design.
 
 
+## CAD — the bike stops being parametric
+
+Started 2026-08-18. Drawn in Onshape; `python -m aow_sim.cad_layout` exports the
+component layout from the parameters, as YAML for reading and as a FeatureScript
+Feature Studio for Onshape. Both are **exports** — generated, never edited, with
+the regeneration command in the header.
+
+`config/bike_params_cad.yaml` is a scratch copy of `bike_params.yaml` that the
+CAD work edits freely. It eventually becomes the authoritative one. **Never pass
+it to `export_deploy`**: `params_digest` hashes the whole tree, so a bundle built
+from a diverged file carries a digest no bike matches, and refusing that is the
+entire point of the check. Keeping the work here is also why none of it has
+moved the digest — `deploy/bundle.npz` and all 23 `moves/*.npz` are still valid.
+
+**What CAD has already sent back into the model.** This is the value of the
+workstream and it arrived immediately:
+
+- **`input_pulley_offset` was made up.** Its own comment said so — "placeholder
+  until the mount/pulley design is done" — and nothing derived from it. Pinned
+  from real belt geometry (9 mm HTD5M, 45T/15T on the 370 mm belts bought,
+  centre distance 107.35 mm from the belt equation) it becomes 7.5 mm, the
+  minimum a 9 mm belt allows over a 33 mm wheel. **Rear width 99 → 75 mm.**
+- **The steer servo was 10.17 mm off the steering axis**, which direct drive at
+  `gear_ratio: 1.0` does not permit. Its position is now solved, not chosen.
+- **The TM151 is 40 × 34 × 12.6 mm and 19 g**, against the 30 × 30 × 12 mm / 12 g
+  placeholders the sim still carries.
+- **The drive servos' separation is a solved 2D packing problem** — two
+  rectangles free to rotate about their own shafts, separating-axis tested —
+  not a guess. 16.35°, with the alternatives tabled in the config.
+- **The self-righting linkage moved 75 → 130 mm** to clear the drive belts and
+  then the servo cases.
+
+**Two traps worth not re-learning**, both of which produced confident wrong
+answers before the user caught them from the CAD:
+
+- **A 2D projection is not an interference.** The battery reads as overlapping
+  the drive pulley by 13 mm in side view and clears it by 1.00 mm in 3D — the
+  pack is 35 mm wide and the pulleys start at 18.5 mm, so they never share
+  lateral space.
+- **The roof is a cylinder, so its constraint is radial.** "Stay below the roof
+  axis" is a *sufficient* condition, not the real one, and using it understated
+  the battery's headroom by 36 mm.
+
+**Outstanding.** `bike_params_cad.yaml` still has the drive servos at their old
+`[45, 30, 75]` — `cad_layout` derives the real position every run and prints it
+but does not write it back, so a MuJoCo model built from that file is not yet
+the layout the CAD shows. Electronics packing is deferred until the tethered
+version's wire routing is understood.
+
+---
+
 ## Tooling added
 
+- **`src/aow_sim/cad_layout.py`** — the layout export, YAML and FeatureScript
+  from one data model, with the frame conversion done once in code rather than
+  per component by hand. `--righting {linkage,wings,none}`, `--bumpers`,
+  `--chassis-box`, `--linkage-config`.
+- **`analysis/wing_linkage.py` grew buildability metrics** — `stow_half_width`,
+  `stow_roof_margin`, `pivot_crossover` — each added after an optimiser found a
+  design that scored well and could not be made. Five opt-in flags
+  (`--fit-envelope`, `--max-crank`, `--no-crossover`, `--crank-angle`,
+  `--min-pivot`), all off by default so the committed configs stay reproducible.
+- **`aow_sim.record` can test any bike** — `--params`, `--linkage-config`,
+  `--mirror`, `--recover-deg`. The mirror flag matters because the policy's
+  recovery is asymmetric (16.3° right vs 11.8° left) and a mechanism that works
+  one way is not verified until both run.
 - **`analysis/wing_linkage.py`** — the whole four-bar study in one file:
   kinematic solve, three optimiser objectives (kinematics / peak torque /
   self-locking deployed pose), quasi-static pin loads, and both the
@@ -473,6 +542,18 @@ move yaml still constructs, and `rl_general.yaml` still yields obs 15 / act 3 /
 ## Critical path
 
 Two tracks. The sim track does not wait on the build.
+
+**CAD track (new, and does not wait on either of the others):**
+
+1. **Draw the details.** The layout export is good enough to build on; the
+   envelope will move as real structures appear.
+2. **Feed the as-built numbers back into `bike_params_cad.yaml`**, then make it
+   authoritative and retire `bike_params.yaml`. That is the step that turns
+   `GUESS` into `measured` and moves the digest for the first time.
+3. **Re-verify self-righting at whatever envelope it settles at.** The 75 mm
+   layout reaches 13–14.5° against a 12° hand-off window, on all four fall
+   cases — see the linkage section. Not a mechanism failure, but it needs
+   `RECOVER_DEG` re-derived rather than assumed.
 
 **Sim track:**
 
