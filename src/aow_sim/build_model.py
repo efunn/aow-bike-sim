@@ -581,15 +581,26 @@ def _add_wing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
                                 pos=[px, side * pivot_y, pivot_z])
         wing.add_joint(name=f"wing_{tag}_joint",
                        type=mujoco.mjtJoint.mjJNT_HINGE, axis=[1, 0, 0])
-        # The wing is a flat panel alongside the bike: the bike lies ON it and
-        # the mechanism levers it out, so the whole face is the contact, not a
-        # tip. Modelled as one long capsule for now.
+        # The wing is a flat PLATE alongside the bike: the bike lies ON it and
+        # the mechanism levers it out, so the whole face is the contact.
+        #
+        # It was a capsule, which is a LINE contact — the bike could pitch
+        # freely about it because nothing resisted rotation along the bike's
+        # own axis. A plate with real fore/aft extent is what actually stops
+        # that, and it is also what gets built. `panel_length_x` and
+        # `panel_offset_x` are optional: without them the plate falls back to
+        # the capsule's diameter, so existing configs build as before.
         lo = np.array([side * stow_out, wing_lo - pivot_z])
         hi = np.array([side * stow_out, wing_hi - pivot_z])
+        th = w_ref.get("panel_thickness", 2 * w_ref["radius"])
+        plate_x = w_ref.get("panel_length_x", 2 * w_ref["radius"])
         wing.add_geom(
             name=f"wing_{tag}",
-            type=mujoco.mjtGeom.mjGEOM_CAPSULE, size=[w_ref["radius"], 0, 0],
-            fromto=[0, lo[0], lo[1], 0, hi[0], hi[1]],
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            size=[plate_x / 2, th / 2, float(hi[1] - lo[1]) / 2],
+            pos=[w_ref.get("panel_offset_x", 0.0),
+                 float(lo[0]) - side * th / 2,
+                 float(lo[1] + hi[1]) / 2],
             mass=w_ref["mass"], contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
             condim=sim["condim"], friction=_contact_friction(sim),
             rgba=[0.85, 0.2, 0.2, 1] if side < 0 else [0.2, 0.4, 0.8, 1])
@@ -939,6 +950,7 @@ def build_spec(
     righting: bool = False,
     wings: bool = False,
     linkage: bool = False,
+    linkage_cfg: str | Path | None = None,
 ) -> mujoco.MjSpec:
     p = params or load_params()
     spec = mujoco.MjSpec()
@@ -1122,7 +1134,10 @@ def build_spec(
     # geared roof and kept losing the same fall.
     lk_cfg = None
     if linkage:
-        lk_cfg = yaml.safe_load(LINKAGE_CFG.read_text())
+        # `linkage_cfg` lets a caller build a DIFFERENT four-bar without
+        # touching the module default, so an exploratory geometry never
+        # becomes the one the rest of the repo silently builds.
+        lk_cfg = yaml.safe_load(Path(linkage_cfg or LINKAGE_CFG).read_text())
         p = {**p, "righting": {**p["righting"],
                                "roof": {**p["righting"]["roof"],
                                         **derive_linkage_roof(p, lk_cfg)}}}
@@ -1180,9 +1195,10 @@ def build_model(
     params: dict | None = None, variant: str = "full", training_wheels: bool = False,
     hockey: bool = False, payload: bool = True, righting: bool = False,
     wings: bool = False, linkage: bool = False,
+    linkage_cfg: str | Path | None = None,
 ) -> mujoco.MjModel:
     return build_spec(params, variant, training_wheels, hockey, payload,
-                      righting, wings, linkage).compile()
+                      righting, wings, linkage, linkage_cfg).compile()
 
 
 def main() -> None:
