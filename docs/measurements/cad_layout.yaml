@@ -1,0 +1,535 @@
+# AOW bike — component layout in CAD coordinates.
+#
+# GENERATED — do not edit. Regenerate with:
+#     python -m aow_sim.cad_layout
+#
+# FRAME:  +X right, +Y forward, +Z up.   UNITS: mm and g.
+# ORIGIN: the REAR AXLE, 51.2 mm above the floor when upright.
+#
+# This is the SIMULATOR's belief about the layout, exported for drawing.
+# It is NOT a measurement — most entries are `design` or `GUESS`, and the
+# payload positions are explicitly a plausible layout rather than a
+# design. As parts get drawn and built, the real numbers go back into
+# config/bike_params.yaml with `source: measured` and this file is
+# REGENERATED. It is an export, never a source.
+# Wing linkage geometry from: config/wing_linkage_w75.yaml
+#
+# Conversion from the sim frame (+X forward, +Y left, +Z up, m/kg):
+#     cad_x = -model_y ;  cad_y = model_x ;  cad_z = model_z
+# Both frames are right-handed, so this is a pure 90 deg rotation about Z
+# with no mirroring. Box extents swap X and Y along with it.
+#
+# `pos_mm` is the component CENTRE unless its note says otherwise.
+# `axis` is named in the frame it was authored in: `y_model` means the
+# axis runs left-right across the bike, i.e. along CAD X.
+
+# --- Rear omni-wheel and its two belt-driven inputs.
+drivetrain:
+  omni_wheel_rear:
+    pos_mm: [0.0, 0.0, 0.0]
+    shape: cylinder
+    radius_mm: 51.2
+    length_mm: 33.0
+    axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    mass_g: 115.2
+    source: {pos: origin, size: measured, mass: measured}
+    note: >-
+      THE ORIGIN. Axle sits 51.2 mm above the floor when upright. 8
+      axles x 2 truncated-cone rollers. A bevel DIFFERENTIAL inside: the
+      two inputs are the ring-gear shafts, and hub speed is their mean.
+
+  pulley_input_left:
+    pos_mm: [-24.0, 0.0, 0.0]
+    shape: cylinder
+    radius_mm: 13.94
+    length_mm: 11.0
+    axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    source: {pos: derived from belt width + wheel clearance, size: 15T HTD5M}
+    note: >-
+      15T pulley on the ring-gear input shaft, coaxial with the rear
+      axle. Pitch dia 23.87 mm; envelope is the flange dia. Belt centre
+      plane at 24.0 mm — the minimum a 9.0 mm belt allows over a 33.0 mm
+      wheel.
+
+  axle_mount_left:
+    pos_mm: [-33.5, 0.0, 0.0]
+    shape: cylinder
+    radius_mm: 15.94
+    length_mm: 8.0
+    axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    source: {pos: derived, size: design}
+    note: >-
+      Where the rear axle is picked up, outboard of the pulley and a
+      little larger so the belt never touches it. This is the stub the
+      chassis eventually attaches to — the widest thing at the rear, at
+      37.5 mm half-width.
+
+  pulley_input_right:
+    pos_mm: [24.0, 0.0, 0.0]
+    shape: cylinder
+    radius_mm: 13.94
+    length_mm: 11.0
+    axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    source: {pos: derived from belt width + wheel clearance, size: 15T HTD5M}
+    note: >-
+      15T pulley on the ring-gear input shaft, coaxial with the rear
+      axle. Pitch dia 23.87 mm; envelope is the flange dia. Belt centre
+      plane at 24.0 mm — the minimum a 9.0 mm belt allows over a 33.0 mm
+      wheel.
+
+  axle_mount_right:
+    pos_mm: [33.5, 0.0, 0.0]
+    shape: cylinder
+    radius_mm: 15.94
+    length_mm: 8.0
+    axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    source: {pos: derived, size: design}
+    note: >-
+      Where the rear axle is picked up, outboard of the pulley and a
+      little larger so the belt never touches it. This is the stub the
+      chassis eventually attaches to — the widest thing at the rear, at
+      37.5 mm half-width.
+
+  pulley_servo_left:
+    pos_mm: [-24.0, 85.93, 64.34]
+    shape: cylinder
+    radius_mm: 37.81
+    length_mm: 11.0
+    axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    source: {pos: derived — centre distance C on the belt plane, size: 45T HTD5M}
+    note: >-
+      45T driving pulley, pitch dia 71.62 mm. Centre distance 107.35 mm
+      falls out of the 370.0 mm belt and the tooth counts — it is not a
+      placement choice. Only the ANGLE about the rear axle is free, so
+      both servos may sit anywhere on that circle and still share
+      identical belts.
+
+  pulley_servo_right:
+    pos_mm: [24.0, 64.34, 85.93]
+    shape: cylinder
+    radius_mm: 37.81
+    length_mm: 11.0
+    axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    source: {pos: derived — centre distance C on the belt plane, size: 45T HTD5M}
+    note: >-
+      45T driving pulley, pitch dia 71.62 mm. Centre distance 107.35 mm
+      falls out of the 370.0 mm belt and the tooth counts — it is not a
+      placement choice. Only the ANGLE about the rear axle is free, so
+      both servos may sit anywhere on that circle and still share
+      identical belts.
+
+# --- Front wheel, fork, steering axis.
+steering:
+  front_wheel:
+    pos_mm: [0.0, 200.0, -1.2]
+    shape: cylinder
+    radius_mm: 50.0
+    length_mm: 28.0
+    axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    mass_g: 60.0
+    source: {pos: design, size: design, mass: GUESS}
+    note: >-
+      Axle sits 1.2 mm BELOW the rear axle: the front wheel is 50.0 mm
+      radius against the rear's 51.2 mm. Tire crown radius 14.0 mm. This
+      wheel cannot slide sideways, which is what makes the lateral
+      velocity estimator work.
+
+  fork:
+    pos_mm: [0.0, 188.35, 42.27]
+    shape: capsule
+    radius_mm: 5.0
+    length_mm: 90.0
+    axis: [0.0, -0.258819, 0.965926]   # unit vector, CAD frame
+    mass_g: 25.0
+    source: {pos: design, size: design, mass: GUESS}
+    note: >-
+      Steering axis raked 15.0 deg back from vertical, fork offset 0.0
+      mm. `axis` IS the steering axis — sketch the head tube and any
+      clamp perpendicular to it, not to the world. pos_mm is the capsule
+      centre; the axis passes through the front axle.
+
+# --- Dynamixels. Drive pair and steer; the wing servo is under `righting`.
+servos:
+  servo_drive_left:
+    pos_mm: [-1.5, 77.44, 55.85]
+    shape: box
+    envelope_mm: [28.5, 34.0, 46.5]
+    axis_width: [0.0, 0.707107, -0.707107]
+    axis_shaft: [-1.0, 0.0, 0.0]   # horn faces this way
+    axis_up: [0.0, 0.707107, 0.707107]
+    rotate_about: [-0.357407, 0.357407, 0.862856]
+    rotate_deg: 98.4211
+    mass_g: 65.0
+    source: {pos: design, size: datasheet, mass: datasheet}
+    note: >-
+      XC430-W150, drives one ring-gear input by belt. POSITION is
+      derived: the shaft must lie in the belt plane at 24.0 mm and
+      107.35 mm from the rear axle. Only the angle about that axle is
+      free. Orientation comes from `cad_mounts`; the two bodies overlap
+      near the centreline, so give them different angles rather than
+      trying to fit them side by side.
+
+  servo_drive_left_shaft:
+    pos_mm: [-18.5, 85.93, 64.34]
+    shape: point
+    source: {pos: datasheet offsets + cad_mounts}
+    note: >-
+      Output shaft, ON THE HORN FACE: 17.0 mm out along the axis and
+      12.0 mm off the case centre along body_up. Mate the ROBOTIS model
+      here. Cables exit the OPPOSITE face — keep routing room there.
+
+  servo_drive_right:
+    pos_mm: [1.5, 55.85, 77.44]
+    shape: box
+    envelope_mm: [28.5, 34.0, 46.5]
+    axis_width: [0.0, -0.707107, 0.707107]
+    axis_shaft: [1.0, 0.0, 0.0]   # horn faces this way
+    axis_up: [0.0, 0.707107, 0.707107]
+    rotate_about: [-0.357407, -0.357407, -0.862856]
+    rotate_deg: 98.4211
+    mass_g: 65.0
+    source: {pos: design, size: datasheet, mass: datasheet}
+    note: >-
+      XC430-W150, drives one ring-gear input by belt. POSITION is
+      derived: the shaft must lie in the belt plane at 24.0 mm and
+      107.35 mm from the rear axle. Only the angle about that axle is
+      free. Orientation comes from `cad_mounts`; the two bodies overlap
+      near the centreline, so give them different angles rather than
+      trying to fit them side by side.
+
+  servo_drive_right_shaft:
+    pos_mm: [18.5, 64.34, 85.93]
+    shape: point
+    source: {pos: datasheet offsets + cad_mounts}
+    note: >-
+      Output shaft, ON THE HORN FACE: 17.0 mm out along the axis and
+      12.0 mm off the case centre along body_up. Mate the ROBOTIS model
+      here. Cables exit the OPPOSITE face — keep routing room there.
+
+  servo_steer:
+    pos_mm: [0.0, 166.1, 96.35]
+    shape: box
+    envelope_mm: [20.0, 26.0, 34.0]
+    axis_width: [1.0, 0.0, 0.0]
+    axis_shaft: [0.0, 0.258819, -0.965926]   # horn faces this way
+    axis_up: [0.0, 0.965926, 0.258819]
+    rotate_about: [-1.0, 0.0, 0.0]
+    rotate_deg: 75.0
+    mass_g: 23.0
+    source: {pos: design, size: datasheet, mass: datasheet}
+    note: >-
+      XC330-T181, extended-position mode. Its +Z (opposite the horn)
+      runs along the STEERING AXIS, so the horn faces down the axis
+      toward the front axle. NOTE the sim models this box axis-aligned
+      and 7.81 mm off the steering axis; at gear_ratio 1.0 the real
+      servo must be coaxial, so bike_params is the thing to correct, not
+      this export. Loses its multi-turn count across a power cycle, so
+      it needs homing or an index feature.
+
+  servo_steer_shaft:
+    pos_mm: [0.0, 176.71, 85.73]
+    shape: point
+    source: {pos: derived — front axle, on the steering axis}
+    note: >-
+      Output shaft on the horn face, pointing DOWN the steering axis
+      toward the front axle. Direct drive at gear_ratio 1.0 forces it
+      coaxial, so it is DERIVED: 50.0 mm of wheel radius plus 40.0 mm of
+      `steering.servo_clearance`, up the axis from the axle. Change the
+      clearance to move the whole steer column; the case follows.
+
+# --- AHRS and the untethered payload.
+electronics:
+  ahrs_tm151:
+    pos_mm: [0.0, 50.0, 130.0]
+    shape: box
+    envelope_mm: [34.0, 40.0, 12.6]
+    mass_g: 19.0
+    source: {pos: design, size: datasheet, mass: datasheet}
+    note: >-
+      SYD Dynamics TM151, datasheet size and mass. NOTE the simulator's
+      own bike_params.yaml still carries the old 30 x 30 x 12 mm / 12 g
+      placeholders — this is the CAD copy, and the two are meant to
+      converge when it becomes authoritative. Long axis fore-aft and
+      thin axis vertical is a MOUNTING assumption; MountCalibration
+      absorbs any fixed orientation, so it only has to be right for the
+      envelope. Position hardly matters (quaternion and gyro are
+      position-invariant on a rigid body) but mount RIGIDITY does —
+      compliance becomes a resonance the gyro reports as real body
+      rotation.
+
+  payload_battery:
+    pos_mm: [0.0, 25.9, 100.2]
+    shape: box
+    envelope_mm: [26.0, 35.0, 72.0]
+    axis_width: [0.0, 0.707107, -0.707107]
+    axis_shaft: [-1.0, 0.0, 0.0]   # horn faces this way
+    axis_up: [0.0, 0.707107, 0.707107]
+    rotate_about: [-0.357407, 0.357407, 0.862856]
+    rotate_deg: 98.4211
+    mass_g: 115.0
+    source: {pos: design (plausible layout, NOT a design), size: design, mass: GUESS}
+    note: >-
+      3S 1300-1500 mAh LiPo, slung under the frame between the wheels.
+      Must stay on the centerline: lateral offset is a standing roll
+      bias the controller trims out continuously. Its leads are the
+      strongest magnetic source on the bike — keep them twisted and away
+      from the AHRS.
+
+  payload_pi:
+    pos_mm: [0.0, 90.0, 108.0]
+    shape: box
+    envelope_mm: [30.0, 65.0, 5.0]
+    mass_g: 11.0
+    source: {pos: design (plausible layout, NOT a design), size: design, mass: datasheet}
+    note: >-
+      Raspberry Pi Zero 2 W. Board outline is exact; the microSD
+      protrudes past it. Keep the ANTENNA end away from the pack — a
+      LiPo is effectively RF-opaque. Powered through GPIO pins 2/4, so
+      the micro-USB OTG port must stay reachable for the U2D2.
+
+  payload_u2d2:
+    pos_mm: [0.0, 90.0, 120.0]
+    shape: box
+    envelope_mm: [18.0, 48.0, 14.9]
+    mass_g: 9.0
+    source: {pos: design (plausible layout, NOT a design), size: design, mass: measured}
+    note: >-
+      ROBOTIS U2D2 with its USB cable. Needs its micro-USB and its 3-pin
+      JST-EH TTL port both accessible; the USB cable to the Pi wants to
+      be as short as routing allows.
+
+  payload_power_board:
+    pos_mm: [0.0, 90.0, 93.0]
+    shape: box
+    envelope_mm: [30.0, 30.0, 25.0]
+    mass_g: 56.0
+    source: {pos: design (plausible layout, NOT a design), size: design, mass: GUESS}
+    note: >-
+      Buck regulator, splitter perfboard, bulk caps and the XT30 trunk
+      as one lump. The tallest items are the standing electrolytics.
+      This is where the main switch and fuse tie in, so it wants to be
+      reachable.
+
+# --- Self-righting candidates — NOTHING HERE IS BUILT YET.
+righting:
+  linkage_crank_servo:
+    pos_mm: [0.0, 117.0, 75.96]
+    shape: box
+    envelope_mm: [20.0, 26.0, 34.0]
+    axis_width: [1.0, 0.0, 0.0]
+    axis_shaft: [0.0, 1.0, 0.0]   # horn faces this way
+    axis_up: [0.0, 0.0, 1.0]
+    mass_g: 23.0
+    source: {pos: design (linkage cfg), size: datasheet, mass: datasheet}
+    note: >-
+      XC330-T181 driving BOTH cranks off one shaft, hinge axis fore-aft.
+      Arms 30.6 / 31.0 mm at 61.7 deg and 64.9 deg apart — deliberately
+      UNEQUAL, so the two sides reach their dead points at different
+      crank angles. Run in current-based position mode at 0.44 N.m; that
+      is a WINDOW (0.38-0.50 works 8/8 falls), not a minimum.
+
+  linkage_crank_shaft:
+    pos_mm: [0.0, 130.0, 83.46]
+    shape: point
+    source: {pos: design (linkage cfg)}
+    note: >-
+      The crank shaft — both arms are keyed to it, and it is the servo's
+      output axis (fore-aft, CAD Y). Mate the real ROBOTIS model to
+      THIS, not to the box: the box orientation about this axis is a
+      guess about which face carries the horn.
+
+  crank_tip_right:
+    pos_mm: [-14.48, 130.0, 110.39]
+    shape: point
+    source: {pos: derived from linkage cfg}
+    note: >-
+      Tip of the right crank arm, stowed: 30.6 mm at 61.7 deg from the
+      shaft. NOTE THE CROSSOVER — this arm sits on the far side of the
+      centreline from the right wing it drives.
+
+  wing_attach_right:
+    pos_mm: [29.21, 130.0, 42.66]
+    shape: point
+    source: {pos: derived from linkage cfg}
+    note: >-
+      Where the coupler meets the right wing, 11.9 / 42.7 mm from that
+      wing's pivot. Stowed pose.
+
+  crank_tip_left:
+    pos_mm: [18.51, 130.0, 108.34]
+    shape: point
+    source: {pos: derived from linkage cfg}
+    note: >-
+      Tip of the left crank arm, stowed: 31.0 mm at 126.6 deg from the
+      shaft. NOTE THE CROSSOVER — this arm sits on the far side of the
+      centreline from the left wing it drives.
+
+  wing_attach_left:
+    pos_mm: [-29.21, 130.0, 42.66]
+    shape: point
+    source: {pos: derived from linkage cfg}
+    note: >-
+      Where the coupler meets the left wing, 11.9 / 42.7 mm from that
+      wing's pivot. Stowed pose.
+
+  crank_sweep_right:
+    pos_mm: [26.41, 130.0, 98.87]
+    shape: arc
+    radius_mm: 30.58
+    arc_start_mm: [-14.48, 110.39]
+    arc_mid_mm: [26.41, 98.87]
+    arc_end_mm: [16.32, 57.6]
+    plane: linkage station, sketch coords (CAD x, z)
+    shape: point
+    source: {pos: derived from linkage cfg + stroke}
+    note: >-
+      Path swept by the right crank arm tip over the full 176 deg
+      stroke, radius 30.6 mm about the crank shaft. THIS IS THE
+      CLEARANCE THAT MATTERS for the crank — nothing may enter it. The
+      couplers and wings sweep too, but their envelopes are not circular
+      and are not drawn.
+
+  crank_sweep_left:
+    pos_mm: [25.51, 130.0, 65.83]
+    shape: arc
+    radius_mm: 31.01
+    arc_start_mm: [18.51, 108.34]
+    arc_mid_mm: [25.51, 65.83]
+    arc_end_mm: [-16.73, 57.34]
+    plane: linkage station, sketch coords (CAD x, z)
+    shape: point
+    source: {pos: derived from linkage cfg + stroke}
+    note: >-
+      Path swept by the left crank arm tip over the full 176 deg stroke,
+      radius 31.0 mm about the crank shaft. THIS IS THE CLEARANCE THAT
+      MATTERS for the crank — nothing may enter it. The couplers and
+      wings sweep too, but their envelopes are not circular and are not
+      drawn.
+
+  link_crank_right:
+    pos_mm: [-7.24, 130.0, 96.92]
+    shape: cylinder
+    radius_mm: 1.5
+    length_mm: 30.58
+    axis: [-0.473492, 0.0, 0.880798]   # unit vector, CAD frame
+    source: {pos: derived from linkage cfg}
+    note: >-
+      Crank arm (right), stowed. MOVES — drawn as a thin rod so the
+      stowed pose is legible, not as a part.
+
+  link_coupler_right:
+    pos_mm: [7.36, 130.0, 76.52]
+    shape: cylinder
+    radius_mm: 1.5
+    length_mm: 80.59
+    axis: [0.542037, 0.0, -0.840355]   # unit vector, CAD frame
+    source: {pos: derived from linkage cfg}
+    note: >-
+      Coupler (right), stowed. This is the link that crosses the
+      centreline. MOVES.
+
+  link_rocker_right:
+    pos_mm: [23.25, 130.0, 21.33]
+    shape: cylinder
+    radius_mm: 1.5
+    length_mm: 44.3
+    axis: [0.269058, 0.0, 0.963124]   # unit vector, CAD frame
+    source: {pos: derived from linkage cfg}
+    note: >-
+      Wing rocker (right) — pivot to coupler attach. Fixed to the wing
+      panel, so it swings with it.
+
+  link_crank_left:
+    pos_mm: [9.25, 130.0, 95.9]
+    shape: cylinder
+    radius_mm: 1.5
+    length_mm: 31.01
+    axis: [0.596784, 0.0, 0.802402]   # unit vector, CAD frame
+    source: {pos: derived from linkage cfg}
+    note: >-
+      Crank arm (left), stowed. MOVES — drawn as a thin rod so the
+      stowed pose is legible, not as a part.
+
+  link_coupler_left:
+    pos_mm: [-5.35, 130.0, 75.5]
+    shape: cylinder
+    radius_mm: 1.5
+    length_mm: 81.18
+    axis: [-0.587747, 0.0, -0.809045]   # unit vector, CAD frame
+    source: {pos: derived from linkage cfg}
+    note: >-
+      Coupler (left), stowed. This is the link that crosses the
+      centreline. MOVES.
+
+  link_rocker_left:
+    pos_mm: [-23.25, 130.0, 21.33]
+    shape: cylinder
+    radius_mm: 1.5
+    length_mm: 44.3
+    axis: [-0.269058, 0.0, 0.963124]   # unit vector, CAD frame
+    source: {pos: derived from linkage cfg}
+    note: >-
+      Wing rocker (left) — pivot to coupler attach. Fixed to the wing
+      panel, so it swings with it.
+
+  wing_left_pivot:
+    pos_mm: [-17.29, 130.0, 0.0]
+    shape: point
+    source: {pos: design (linkage cfg)}
+    note: >-
+      Wing hinge on the chassis, 17.29 mm off the centreline and level
+      with the rear axle. The coupler runs from the crank arm tip to an
+      attach point 11.9 / 42.7 mm from this pivot; that link moves, so
+      it is not drawn.
+
+  wing_left_panel:
+    pos_mm: [-35.5, 105.0, 73.94]
+    shape: box
+    envelope_mm: [4.0, 90.0, 107.12]
+    mass_g: 20.0
+    source: {pos: derived from linkage cfg + panel offset, size: design, mass: design}
+    note: >-
+      STOWED pose. Flat plate 90.0 x 107.12 x 4.0 mm, OUTER FACE on the
+      37.5 mm half-span, spanning z 20.38..127.5. Centre sits 25.0 mm
+      rearward of the linkage station — the mechanism is planar but the
+      plate is what touches the floor and wants area behind it. It
+      sweeps outboard and down when deployed; leave that clear.
+
+  wing_right_pivot:
+    pos_mm: [17.29, 130.0, 0.0]
+    shape: point
+    source: {pos: design (linkage cfg)}
+    note: >-
+      Wing hinge on the chassis, 17.29 mm off the centreline and level
+      with the rear axle. The coupler runs from the crank arm tip to an
+      attach point 11.9 / 42.7 mm from this pivot; that link moves, so
+      it is not drawn.
+
+  wing_right_panel:
+    pos_mm: [35.5, 105.0, 73.94]
+    shape: box
+    envelope_mm: [4.0, 90.0, 107.12]
+    mass_g: 20.0
+    source: {pos: derived from linkage cfg + panel offset, size: design, mass: design}
+    note: >-
+      STOWED pose. Flat plate 90.0 x 107.12 x 4.0 mm, OUTER FACE on the
+      37.5 mm half-span, spanning z 20.38..127.5. Centre sits 25.0 mm
+      rearward of the linkage station — the mechanism is planar but the
+      plate is what touches the floor and wants area behind it. It
+      sweeps outboard and down when deployed; leave that clear.
+
+  roof:
+    pos_mm: [0.0, 92.5, 127.5]
+    shape: capsule
+    radius_mm: 37.5
+    length_mm: 145.0
+    axis: [0.0, 1.0, 0.0]   # unit vector, CAD frame
+    mass_g: 45.0
+    source: {pos: design, size: DERIVED from the linkage stow envelope, mass: design}
+    note: >-
+      Re-derived for the LINKAGE, whose stowed wing is a full-length
+      panel rather than the geared pair's shape. Axis at the panel top,
+      radius the stow half-span, so the crest clears the panels by a
+      radius — without that an inverted bike perches on two panel edges
+      plus the ridge instead of rolling off.
+

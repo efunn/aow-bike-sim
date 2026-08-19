@@ -1,0 +1,912 @@
+# ============================================================================
+# CAD SCRATCH COPY of bike_params.yaml — NOT the simulator's source of truth.
+# ============================================================================
+#
+# Purpose: somewhere to put real numbers as the CAD model is drawn, without
+# disturbing the simulator. Edit this freely. `config/bike_params.yaml` stays
+# authoritative until the CAD is settled, at which point THIS file becomes the
+# authoritative one and the old one is retired.
+#
+# Read by:  python -m aow_sim.cad_layout        (defaults to this file)
+#
+# NEVER pass this to `export_deploy`. `params_digest` hashes the whole
+# parameter tree, so a bundle built from this file carries a digest that no
+# bike will match — and the point of that check is to refuse a gain schedule
+# designed for a different machine. Diverge here on purpose; do not let the
+# divergence reach the robot.
+#
+# Keep the `source:` discipline: measured / tooth-count / datasheet / design /
+# GUESS. The whole reason for this file is to turn GUESSes into `measured` as
+# parts get drawn and weighed, so the tags are the actual deliverable.
+#
+# Known disagreements with reality at the time of the copy, both to fix here:
+#   * bike.ahrs.box_size / mass — datasheet says 40 x 34 x 12.6 mm and 19 g;
+#     this file still carries 30 x 30 x 12 mm and 12 g.
+#   * servos.xc330_t181.pos — 10.17 mm off the steering axis, but the steer
+#     servo is direct drive at gear_ratio 1.0 and must be coaxial.
+#
+# AOW bike model parameters — single source of truth for the MJCF builder.
+#
+# Units: meters, kilograms, degrees (suffix _deg), N·m, rpm. Coordinates:
+# +X forward, +Y left, +Z up; wheel axles along Y.
+#
+# Measurable leaves are written as {value: ..., source: ...} where source is one of:
+#   measured    — caliper/scale measurement of the physical part
+#   tooth-count — exact ratio from counting gear/pulley teeth
+#   datasheet   — from ROBOTIS / SYD Dynamics documentation
+#   design      — a choice we make for the custom chassis (record intent, verify as-built)
+#   GUESS       — placeholder to be replaced; plausible for a 1:6-scale bike
+# Plain scalars are simulation/tuning knobs, not physical quantities.
+
+sim:
+  # 4.0e-4, was 2.0e-4 (2026-08-15). The old value was placeholder-validated in
+  # 2026-07 and never revisited. The CONTACT tolerates far more: in
+  # analysis/contact_surrogates.py --study timestep, ride ripple, airborne
+  # fraction, peak normal force and rest penetration are flat from 5e-5 through
+  # 6e-4, and general_rl_smooth_stiff replays the whole 20-command eval grid at
+  # 0.764 -> 0.767 -> 0.760 across 2e-4 / 4e-4 / 6e-4 at survival 1.00.
+  #
+  # 6e-4 IS NOT SAFE, and the RL eval cannot see why. What binds is the LQR's
+  # finite-amplitude system ID, which fits one linear model per grid speed:
+  #
+  #   dt      worst fit R^2   where
+  #   2e-4        0.9748      +0.25 m/s
+  #   4e-4        0.9727      +0.25 m/s
+  #   6e-4        0.9408      +0.80 m/s   <- test_gain_schedule fails (floor 0.95)
+  #
+  # The damage lands almost entirely on +0.80 m/s, which was already the worst
+  # point in the schedule. 4e-4 leaves the fit indistinguishable from 2e-4 and
+  # still roughly halves wall-clock; 6e-4 buys ~30% more and degrades the
+  # reference baseline to do it, which is the wrong trade for a knob that buys
+  # nothing physical. Revisit if the LQR is ever retired or re-identified
+  # differently. 2e-3 falls outright in run_balance.
+  #
+  # WHAT IT INVALIDATED, all ACCEPTED: every policy in moves/ was trained at
+  # 2e-4 and is now an artifact of a different plant (check_move_digest says so
+  # on load); the deploy bundle was re-exported. Impact cases (righting
+  # sequence, fall/rest attitudes, inverted drops, the flick/flip trajopt set)
+  # were re-run rather than assumed -- docs/plans/aow-contact-approximations.md.
+  timestep: 4.0e-4
+  integrator: implicitfast
+  cone: elliptic          # elliptic friction cones + Newton solver (MuJoCo default solver)
+  impratio: 10.0
+  # 64, was 32 (2026-08-15). Tessellation of revolved contact meshes (rollers,
+  # front tire). At 32 the facet sagitta is 241 um on a 50 mm wheel, which is
+  # the same scale as the contact deflections -- so the PERFECTLY ROUND front
+  # tire was bouncing off its own polygon: 17.5% of a 0.5 m/s drive off the
+  # ground at a 0.26 mm ride swing, against 0.2% / 0.064 mm at 64 segments.
+  # That is pure numerics, unlike the rear wheel's 8-fold envelope ripple,
+  # which is measured real geometry (omni-wheel-protocol.md §1) and does not
+  # move with tessellation at all. Costs ~3% of step time; 128 costs 19% and
+  # buys almost nothing on top.
+  mesh_segments: 64
+  condim: 4               # 3 = sliding only; 4 adds torsional friction at the contact patch
+  # Contact [time constant s, damping ratio]. Was MuJoCo's default [0.02, 1]
+  # by omission, which let the rollers sink ~2.2 mm (a fifth of the roller
+  # radius) into the floor while holding station. Penetration scales with the
+  # square of the time constant, so this is ~16x stiffer. Raise it back toward
+  # 0.02 if the solver starts complaining rather than to soften a contact.
+  # Damping ratio 0.5 (underdamped) was picked from teleop feel plus the slowmo
+  # contact study, NOT from a physical measurement -- nail it down with real
+  # bounce/settle tests when the hardware exists.
+  #
+  # KNOWN CONSEQUENCE, accepted deliberately: at 0.5 the identified lateral
+  # model degrades (worst R^2 0.861 at -0.50 m/s, vs >=0.975 everywhere at 1.0),
+  # so the LQR gain schedule is designed against a plant its own linearity
+  # assumption is measurably violated on. That is fine for now -- the LQR is a
+  # REFERENCE baseline for "the standard modern control approach", not a
+  # controller we drive with, and the RL policy never touches it. It is left
+  # crappy on purpose until the mechanical design settles.
+  #
+  # Currently back at damping 1.0, where the fit is healthy (worst R^2 0.9893)
+  # -- but the underdamped model is expected to return, so the guard stays:
+  # control/linearize.py warns on every design whose fit drops under
+  # MIN_FIT_R2, and test_lqr_model_fit_and_steering fails outright. It is NOT
+  # xfailed, on purpose: a non-strict xfail would report the regression as a
+  # green run. When damping goes back down, expect both to fire, and re-tune
+  # the control.lqr weights rather than silencing either.
+  contact_solref: [0.005, 1.0]
+  # (dmin, dmax, width, midpoint, power). MuJoCo's stock default, written down
+  # explicitly because it was an INVISIBLE inherited choice: nothing in this
+  # repo ever set it, so every result to date silently assumed it.
+  #
+  # It is not negligible, and dmin confounds BOTH bench tests in
+  # docs/measurements/contact-protocol.md. Measured on this model:
+  #   dmin  0.9 -> 0.5    sink at bike weight 0.375 -> 0.647 mm (2.3x), and
+  #                       restitution 0.46 -> 0.56 at dampratio 0.3
+  #   dmax  0.95 -> 0.999 sink at 44 N 1.946 -> 1.709 mm, restitution flat
+  #   width 1e-4 -> 1e-2  sink at bike weight 0.278 -> 0.419 mm
+  # So the joint (timeconst, dampratio) identification is really a THREE
+  # parameter problem until dmin is pinned or the negative-solref convention
+  # makes it moot (under (-8000, -60) the same dmin sweep moves the light-load
+  # sink by 6% instead of 2.3x).
+  #
+  # `width` 1 mm is the same scale as the deflections being measured, which is
+  # why the contact is nonlinear across exactly the measurement range: secant
+  # stiffness runs 26.6 N/mm at bike weight down to 22.7 N/mm at 44 N. Pinning
+  # dmin = dmax does NOT fix that -- it makes it worse (ratio 0.85 -> 0.63),
+  # because the residual is geometric: faceted cones and a contact patch that
+  # grows as the wheel sinks.
+  contact_solimp: {value: [0.9, 0.95, 0.001, 0.5, 2.0], source: GUESS}
+  friction_sliding: {value: 0.9, source: GUESS}      # TPU on hard floor -> incline slide test
+  friction_torsional: {value: 0.005, source: GUESS}  # scales with contact patch size -> validation
+  floor_size: 3.0
+
+omni_wheel:
+  outer_radius: {value: 0.0512, source: measured}   # ridge Ø102.35; envelope ripples ~0.3 mm below
+  width: {value: 0.033, source: measured}
+  n_axles: {value: 8, source: measured}         # 8 axles x 2 truncated cones = 16 rollers
+  axle_mount_radius: {value: 0.040, source: measured}  # wheel axis -> roller axle axis
+  axle_cant_deg: {value: 0.0, source: measured}    # axles are purely tangential
+  roller:
+    big_diameter: {value: 0.022, source: measured}   # large end of one truncated cone
+    small_diameter: {value: 0.019, source: measured}
+    length: {value: 0.0075, source: measured}        # one cone, along its axis
+    pair_gap: {value: 0.010, source: measured}       # big end to big end; floats 8.5-10 mm (axial play)
+    big_end_inward: true    # confirmed: big ends face each other across the gap
+    pair_mass: {value: 0.004372, source: measured}   # 2 cones + roller axle w/ 20t gear
+  hub:
+    # Carrier lump: frames 25.0 + casing 37.3 + 8 planet axles 8.0
+    #             + ring gear 2 (counter-spin inertia neglected) 4.57 + screws 0.76 [g]
+    mass: {value: 0.07563, source: measured}
+    body_radius: 0.038      # inertia/visual cylinder (non-contact)
+    body_width: 0.020
+  ring:
+    mass: {value: 0.00457, source: measured}      # ring gear 1 only (input-A side gear)
+    body_radius: 0.030
+    body_width: 0.008
+
+drivetrain:
+  # TEARDOWN: the wheel is a bevel DIFFERENTIAL. Two side ("ring") gears mesh all
+  # 8 planet axles mounted in the carrier (= hub). Input A/B = ring gear 1/2
+  # shafts, belt-driven directly (toy's motor pinions discarded). Hence:
+  #   hub (carrier) = (ring1_abs + ring2_abs)/2 ; model "ring" body = ring gear 1.
+  # Kinematics (rad per rad, signed):  [hub; ring_abs] = [[mix_hub_a, mix_hub_b],
+  #                                                       [mix_ring_a, mix_ring_b]] @ [input_a; input_b]
+  mix_hub_a: {value: 0.5, source: tooth-count}
+  mix_hub_b: {value: 0.5, source: tooth-count}
+  mix_ring_a: {value: 1.0, source: tooth-count}
+  mix_ring_b: {value: 0.0, source: tooth-count}
+  # Roller axle spin per radian of ring-vs-hub relative rotation:
+  # (ring 48 / planet bevel 12) * (planet bevel 12 / roller gear 20) = 2.4.
+  # Sign flips if the wheel is mounted flipped — confirm at final assembly.
+  k_roller: {value: 2.4, source: tooth-count}
+  # Input shaft speed / servo speed (pulley tooth counts; >1 = wheel side faster).
+  belt_ratio: {value: 3.0, source: design}
+  # --- BELT DRIVE -------------------------------------------------------
+  # HTD 5M, 370 mm (74T) belts, 9 mm wide. Tooth counts set both the ratio and
+  # the centre distance, which solves from
+  #     L = 2C + (pi/2)(D1 + D2) + (D1 - D2)^2 / 4C ,   D = N * pitch / pi
+  #
+  # 45T -> 15T keeps the 3:1 the sim is built around, at C = 107.35 mm.
+  # 40T -> 20T (2:1) was the first thought and gives C = 108.84 mm — only
+  # 1.5 mm different, because N1+N2 is 60 either way so the dominant term is
+  # identical. But 2:1 caps the no-load top speed at 1.14 m/s at 12 V and
+  # 1.06 m/s on a 3S average, and `control.drive.v_max` is 1.2 — i.e. above
+  # the ceiling, unreachable before any load. Do not go to 2:1 without also
+  # dropping v_max and retraining.
+  belt:
+    pitch: {value: 0.005, source: design}        # HTD 5M
+    width: {value: 0.009, source: design}
+    length: {value: 0.370, source: measured}     # the belts actually bought
+    teeth_servo: {value: 45, source: design}
+    teeth_input: {value: 15, source: design}
+    flange_thickness: {value: 0.001, source: design}   # per side
+    flange_margin: {value: 0.004, source: design}      # diameter over pitch dia
+  # Gap between the rear wheel's side face and the inner flange of the input
+  # pulley.
+  wheel_clearance: {value: 0.002, source: design}
+  # PINNED, was a 25 mm placeholder whose own comment admitted it was made up.
+  # Now = wheel_width/2 (16.5) + wheel_clearance (2) + pulley_width/2 (5.5)
+  # - wheel_width/2, i.e. the belt centre plane sits at 24.0 mm from the
+  # centreline. That is the minimum a 9 mm belt allows, and it takes the rear
+  # from 99 mm wide to 75 mm including the axle mounts below.
+  input_pulley_offset: {value: 0.0075, source: design}
+  # Angular station of the drive servos about the rear axle, measured from
+  # straight-ahead (0 = level with the axle, forward; 90 = directly above).
+  # Both servos share it — see cad_mounts for why that is possible.
+  #
+  # 45 deg, with the two servos straddling it so their cases miss each other.
+  #
+  # AN EARLIER 0 deg WAS WRONG. It was checked against the servo pulley DISC
+  # only, but the belt wraps both pulleys, so the keep-out is the hull of the
+  # two circles PLUS the tangent run between them. Against that envelope 0 deg
+  # collides by 3.9 mm and 45 deg by 37.5 mm — and 22.1 mm of that is present
+  # with the linkage merely STOWED, not only while deploying.
+  #
+  # So at 45 deg the linkage cannot stay at its current 75 mm station: it needs
+  # to move forward to ~115 mm (+40 mm) to clear the belt. That is `righting.
+  # wings.pivot[0]`, deliberately NOT changed here — moving it invalidates the
+  # self-righting study and wants re-running, not editing.
+  drive_servo_angle_deg: {value: 45.0, source: design}
+  # Gap between the two servo cases.
+  drive_servo_gap: {value: 0.002, source: design}
+  # Angular separation of the two shafts, straddling the angle above.
+  #
+  # SOLVED as a 2D packing problem: both shafts on the circle of radius C, each
+  # case a 28.5 x 46.5 rectangle in the side plane pinned at its shaft (which
+  # sits 12 mm off the case centre), each free to rotate about that pin, and
+  # the pair tested for overlap with a separating-axis test. Minimum feasible
+  # separation, by case orientation:
+  #
+  #   orientation            sep     bbox      wedge   r_max
+  #   radial (along its own) 24.25  80 x 80    46.6    119.5
+  #   BOTH PARALLEL AT 45    16.35  75 x 75    45.1    121.2   <- chosen
+  #   anti-parallel at 45    16.35  58 x 92    39.8    144.6
+  #   anti-parallel 131/311  13.15  85 x 89    54.4    131.8   <- min angle
+  #
+  # 13.15 deg is the true minimum but it sprawls: the biggest bounding box and
+  # the widest angular wedge of the four. Both-parallel gives up 3.2 deg of
+  # separation and wins on every other measure — and two parallel servos share
+  # one flat mounting plate, which the skewed arrangements do not.
+  #
+  # Re-solve if the case size, the shaft offset or C change.
+  drive_servo_separation_deg: {value: 16.35, source: design}
+  # Standoff between the servo's horn face and the pulley's inner face, for a
+  # pulley hub that does not sit flush. 0 = the pulley bolts straight on.
+  pulley_hub_offset: {value: 0.0, source: design}
+  # Outboard of each input pulley: the block the rear axle runs in, and where
+  # the chassis eventually picks the axle up. Diameter is a little over the
+  # pulley flange so the belt never touches it.
+  axle_mount:
+    width: {value: 0.008, source: design}
+    diameter_margin: {value: 0.004, source: design}
+  # Reflected rotor+gearbox inertia seen at each input shaft (XC430 rotor through
+  # 159.59:1 internal gearing, then /belt_ratio^2). -> spin-down / step-response tests.
+  input_armature: {value: 3.0e-4, source: GUESS}
+  hub_joint_damping: {value: 1.0e-4, source: GUESS}        # -> driven-wheel spin-down test
+  hub_joint_frictionloss: {value: 1.0e-3, source: GUESS}
+  roller_joint_damping: {value: 1.0e-6, source: GUESS}     # -> roller flick spin-down test
+  roller_joint_frictionloss: {value: 1.0e-5, source: GUESS}
+
+bike:
+  wheelbase: {value: 0.20, source: design}
+  rake_deg: {value: 15.0, source: design}      # steering axis tilt back from vertical
+  fork_offset: {value: 0.0, source: design}  # perpendicular distance steer axis -> front axle
+  chassis:
+    mass: {value: 0.45, source: GUESS}   # frame + electronics + wiring, excluding servos/wheels/AHRS
+    box_size: [0.16, 0.04, 0.05]         # inertia primitive (full extents)
+    com_pos: [0.09, 0.0, 0.10]           # chassis-frame position of that primitive (origin = rear axle)
+  fork_mass: {value: 0.025, source: GUESS}   # steerer + fork, excluding front wheel
+  front_wheel:
+    radius: {value: 0.050, source: design}
+    width: {value: 0.028, source: design}
+    crown_radius: {value: 0.014, source: design}  # tire cross-section crown
+    mass: {value: 0.060, source: GUESS}
+  steering:
+    gear_ratio: {value: 1.0, source: design}  # servo rotation per steer rotation; range is continuous 360°+
+    # Gap between the front TIRE and the steer servo's horn face, measured
+    # along the steering axis. This one number sets the steer column: the
+    # shaft sits (front_wheel.radius + this) up the axis from the front axle,
+    # and the fork spans exactly that. Raise it for tire/mud clearance, lower
+    # it to drop the servo mass and shorten the steerer.
+    servo_clearance: {value: 0.040, source: design}
+  ahrs:                                       # SYD Dynamics TM151
+    pos: [0.05, 0.0, 0.13]
+    # 19 g and 40 x 34 x 12.6 mm from the TM151/TM171 datasheet V1.1.6, which
+    # supersedes the 12 g / 30 x 30 x 12 mm placeholders the sim still carries.
+    # Long axis fore-aft, thin axis vertical: a mounting assumption, not a
+    # datasheet fact — `MountCalibration` absorbs any fixed orientation, so
+    # this only has to be right for the ENVELOPE, not for the maths.
+    mass: {value: 0.019, source: datasheet}
+    box_size: [0.040, 0.034, 0.0126]
+  payload:
+    # Untethered running gear — see docs/plans/untethered-setup.md. Kept
+    # SEPARATE from chassis.mass (which is frame + wiring only) so the two are
+    # independently identifiable: the payload is a known, weighable set of
+    # parts, while the chassis mass stays a GUESS until the frame is built.
+    # Omitted by build_model(payload=False) to recover the tethered bike.
+    #
+    # ~190 g on an 825 g bike (+23%). Placement is NOT critical for balance:
+    # across the plausible mounting envelope the CoM height only moves
+    # 0.117-0.131 m and the fall time constant 1/sqrt(g/h) only 0.109-0.116 s.
+    # What matters is (a) staying on the centerline — a lateral offset is a
+    # standing roll bias the controller must trim out continuously, and (b)
+    # staying near the rear axle, since yaw inertia is what the pivot and
+    # flick moves fight. Positions below are a plausible layout, not a design.
+    battery:                                  # 3S 1300 mAh LiPo
+      # PACKED FORWARD against the upper drive servo, parallel to both cases
+      # (same 45 deg body_up), 10 mm off the upper case, slid up the 45 deg
+      # line to 15 mm of rear-wheel clearance.
+      #
+      # NO INTERFERENCE WITH THE PULLEY. It overlaps in the SIDE VIEW and does
+      # not in 3D: the pack is 35 mm wide (+/-17.5) and the pulleys start at
+      # 18.5 mm, so they never share lateral space. 1.00 mm of clearance,
+      # confirmed against CAD. Do not re-flag this from a planar check.
+      #
+      #   upper servo case  10.00 mm  (parallel, by construction)
+      #   rear wheel        15.04 mm
+      #   roof              18.53 mm  (see below — this is NOT axis headroom)
+      #   upper pulley       1.00 mm  LATERAL
+      #
+      # THE ROOF CONSTRAINT IS RADIAL, NOT A CEILING. An earlier note here said
+      # the pack had to stay below the roof AXIS. That is a sufficient
+      # condition, not the real one: what matters is distance from the axis
+      # <= R, so an inverted bike still rolls on the shell rather than on the
+      # pack. At the pack's lateral edge (|y| = 17.5) the roof arches to vert
+      # 160.7, not 127.5 — about 36 mm more headroom than that note claimed.
+      #
+      # Rotating the pack 90 deg about its long axis would take the lateral
+      # clearance 1.00 -> 5.50 mm, at the cost of 9 mm more in-plane thickness.
+      # Affordable now that the wheel gap is 15 mm; not currently taken.
+      pos: [0.0259, 0.0, 0.1002]
+      wheel_gap: {value: 0.015, source: design}
+      # Pack's own +H direction: 45 deg, matching `drive_servo_angle_deg`, so
+      # it sits square on the servos rather than skew to them.
+      body_up: [0.70711, 0.0, 0.70711]
+      mass: {value: 0.115, source: GUESS}     # -> weigh the actual pack
+      box_size: [0.072, 0.035, 0.026]         # length x width x thickness
+    # The old single `electronics` lump (76 g, 65 x 30 x 25 mm) is split into
+    # the parts that actually exist, because packing and wire routing are the
+    # problem being solved and a single block hides both. Masses still sum to
+    # ~76 g and the mass-weighted centroid still sits at z ~ 0.104, so the
+    # bike's inertia is essentially unchanged.
+    #
+    # POSITIONS ARE A PLAUSIBLE STACK, NOT A DESIGN — same caveat as the old
+    # lump. Sizes: the Pi is exact, the other two are GUESSES until measured.
+    pi:                                       # Raspberry Pi Zero 2 W
+      pos: [0.09, 0.0, 0.108]
+      mass: {value: 0.011, source: datasheet}
+      box_size: [0.065, 0.030, 0.005]
+    u2d2:                                     # ROBOTIS U2D2, case only
+      pos: [0.09, 0.0, 0.120]
+      # Measured: 48 long x 18 wide x 14.9 high, 9 g. The 3-pin Dynamixel
+      # connector is on the 18 mm top face; the USB connector is on one
+      # 14.9 mm end. Both need to stay reachable.
+      mass: {value: 0.009, source: measured}
+      box_size: [0.048, 0.018, 0.0149]
+    power_board:                              # buck + splitter + caps + wiring
+      pos: [0.09, 0.0, 0.093]
+      # Mass now also carries the U2D2's USB cable and the inter-board wiring,
+      # since the U2D2 line above is the bare case (9 g measured, against the
+      # 25 g the old budget allowed for case + cable). Electronics still total
+      # ~76 g.
+      mass: {value: 0.056, source: GUESS}
+      # WHAT HAS TO FIT, tallest first:
+      #   1000 uF cap      12.5 dia x 20 tall   (standing)
+      #   470 uF cap       10 dia x 12.5 tall
+      #   TSR 2-2450       ~11.6 x 8.5 x 10.4, SIP, stands upright
+      #   2x B3B-EH-A      ~7.6 x 5 footprint, ~6 tall, +8 more for the mated
+      #                    plug and its bend radius
+      #   perfboard        25 x 25
+      # FOUR bundles leave it: XT30 trunk in (20 AWG, via switch and fuse),
+      # 3-pin JST-EH to the servo chain, 3-pin JST-EH to the U2D2, and 5V/GND
+      # to the Pi's GPIO pins 2/4 and 9. Laying the caps down trades height
+      # for footprint if 25 mm is too tall.
+      box_size: [0.030, 0.030, 0.025]
+
+servos:
+  # NOTE: the values below are the 12 V datasheet column, i.e. the TETHERED
+  # bike on its 12 V brick. Untethered on 3S the pack averages 11.1 V and sags
+  # to 9.9 V at cutoff, so the real numbers are the 11.1 V column or worse:
+  #   XC430-W150   1.4 N.m /  99 rpm   (vs 1.6 / 106 here)
+  #   XC330-T181   0.76 N.m / 104 rpm  (vs 0.80 / 113 here)
+  # That is ~12% less torque, compounding with the +23% payload mass for a
+  # ~30% authority reduction. Do not "fix" it by editing these values — the
+  # sim is a 12 V bike by definition; instead let randomization.actuator_frac
+  # cover the range during training. See docs/plans/untethered-setup.md.
+  xc430_w150:   # 2x, AOW drive (values at 12 V per datasheet)
+    stall_torque: {value: 1.6, source: datasheet}
+    stall_current: {value: 1.4, source: datasheet}
+    no_load_rpm: {value: 106.0, source: datasheet}
+    mass: {value: 0.065, source: datasheet}
+    box_size: [0.034, 0.0285, 0.0465]   # D x W x H, axis along Y
+    # --- OUTPUT SHAFT, servo-local. NEEDED FOR CAD, unused by the sim. ---
+    # Datasheet W x H x D = 28.5 x 46.5 x 34.0 mm. The horn sits on the MEDIUM
+    # face (28.5 x 46.5) with its axis along DEPTH (34 mm), offset toward one
+    # end of the 46.5 mm height. Two numbers pin it down:
+    #   shaft_from_horn_face : axis depth below the horn-side face, along D
+    #   shaft_from_end       : axis distance from the near end, along H
+    # `shaft_from_end` is off the ROBOTIS drawing (XL-430_new.pdf, which shows
+    # 11.25 alongside the 28.5 and 46.5 case dimensions; XL430 and XC430 share
+    # a case). That puts the axis 46.5/2 - 11.25 = 12.0 mm off the box centre.
+    #
+    # `shaft_from_horn_face` is DEFERRED, not measured: 0 means "treat the axis
+    # as centred on depth". Revisit if a clearance ever turns out tight along D.
+    #
+    # CABLES exit the BACK face (opposite the horn), near the middle but
+    # slightly off the horn axis to clear the optional idler. No idlers are
+    # planned here, but the cable exit still needs routing room behind each
+    # servo — that is the face to keep clear, not an end.
+    shaft_from_horn_face: {value: 0.0, source: GUESS}
+    shaft_from_end: {value: 0.01125, source: datasheet}
+    # Which way the servo is installed: +1 puts the shaft toward +H, -1 toward
+    # -H. A MOUNTING choice, not a property of the part.
+    #
+    # +1 puts the case on the INBOARD side of its shaft radially (body_up is
+    # radial for these two), which pulls 12 mm out of the overall envelope.
+    # It was -1 briefly while the servos sat at 0 deg, purely for ground
+    # clearance; at 45 deg the case is nowhere near the floor and the envelope
+    # argument wins instead.
+    shaft_dir: {value: 1.0, source: design}
+    pos_left: [0.045, 0.030, 0.075]     # chassis-frame positions of the two drive servos
+    pos_right: [0.045, -0.030, 0.075]
+  xc330_t181:   # steering (values at 12 V per datasheet)
+    stall_torque: {value: 0.80, source: datasheet}
+    # Torque constant kt = stall_torque / stall_current is what actually sets
+    # the current a given LOAD draws, and kt does not depend on pack voltage --
+    # so a torque number from the sim converts to amps directly. See the power
+    # budget in docs/plans/untethered-setup.md, and `self_righting.py lift`,
+    # which uses it to price the righting stroke against the pack.
+    stall_current: {value: 0.88, source: datasheet}
+    no_load_rpm: {value: 113.0, source: datasheet}
+    mass: {value: 0.023, source: datasheet}
+    box_size: [0.026, 0.020, 0.034]
+    # --- OUTPUT SHAFT, servo-local. See the XC430 block above for the
+    # convention. Datasheet W x H x D = 20.0 x 34.0 x 26.0 mm; horn on the
+    # medium face (20.0 x 34.0), axis along DEPTH (26 mm). `shaft_from_end` is
+    # off XL,XC-330.pdf; the axis lands 34/2 - 9.5 = 7.5 mm off the box centre.
+    shaft_from_horn_face: {value: 0.0, source: GUESS}
+    shaft_from_end: {value: 0.0095, source: datasheet}
+    shaft_dir: {value: 1.0, source: design}
+    # DERIVED, not chosen, and NOT read by cad_layout — which recomputes it
+    # every run from `bike.steering.servo_clearance`, the rake and the
+    # datasheet shaft offsets. It is kept here only because build_model still
+    # wants a `pos` for the MuJoCo geom, and deleting it would break this file
+    # the moment it becomes the authoritative one.
+    #
+    # So: do not tune this. Change `servo_clearance` and re-run
+    # `python -m aow_sim.cad_layout`, which prints the value to paste back.
+    pos: [0.166097, 0.0, 0.096349]
+
+actuators:
+  drive_kv: 0.5        # velocity-servo gain at the input shafts (placeholder for Dynamixel velocity PI)
+  steer_kp: 2.0        # position-servo gains at the steer joint
+  steer_kv: 0.05
+
+control:
+  # Balance controller settings (tuning knobs, not measurements).
+  rate_hz: 200          # controller update rate; zero-order hold between updates
+  moves_dir: moves      # optimized maneuver files (moves/<name>.yaml); see optimize_flick.py
+  general_move: general_rl   # which always-on policy teleop drives with, as
+                        #   moves/<name>.{yaml,npz}. Point it at a second
+                        #   export (e.g. general_rl_prev) to A/B two trained
+                        #   policies without renaming files; `run_drive
+                        #   --general NAME` overrides it for one session.
+  pd:                   # PD cascade (rear crawl only, steer held straight)
+    roll_kp: 6.0        # lateral contact velocity [m/s] per rad of roll
+    roll_kd: 1.2        # ... per rad/s of roll rate
+    y_kp: 0.35          # roll setpoint [rad] per meter of lateral drift
+    y_kd: 0.12          # ... per m/s of lateral velocity
+    max_roll_setpoint_deg: 3.0
+    x_kp: 8.0           # common-mode input [rad/s] per meter of fore/aft drift
+  lqr:                  # weights for the DLQR on the identified lateral model
+    q_ypos: 3.0
+    q_yvel: 0.2
+    q_roll: 60.0
+    q_roll_rate: 6.0
+    q_yaw: 8.0          # LIGHT-ish: heading swings are intrinsic to crawl recovery;
+    q_yaw_rate: 12.0    #   damp rotation (rate) over position. Heavy q_yaw (>~15)
+    q_steer: 0.5        #   rings against the steer clamp; 8/12 also tracks pivots.
+    r_drive: 0.05       # balance of authority vs. saturation margin on pushes
+    r_steer: 6.0
+    steer_limit_deg: 15.0   # keep steering inside the identified linear region
+  drive:                # line/circle driving on the gain-scheduled LQR
+    v_max: 1.2          # m/s; ~70% of the 1.7 no-load ceiling (torque margin)
+    accel: 1.5          # m/s^2 speed-profile limit; harness sweep finds true max
+    speed_grid: [0.0, 0.25, 0.5, 0.8, 1.2]   # mirrored to negatives at design
+    speed_kp: 4.0       # common-mode speed loop gain [rad/s per m/s]
+    steer_ff_gain: 1.0  # kinematic steer feedforward scale (circle mode)
+    lean_ff: 0.85       # centripetal lean feedforward; <1 because the crowned
+                        #   tire's contact shifts into the turn (ideal formula over-leans)
+    ki_lat: 0.05        # slow integral lean-trim on cross-track error [rad/(m s)];
+    int_limit_deg: 5.0  #   mops residual radius bias; higher values hunt
+    yaw_slew: 1.5       # rad/s heading slew for low-speed (arc-mode) turns
+    yaw_accel: 4.0      # rad/s^2 slew ramp (trapezoid, like the pivot profile)
+    # At-speed sharp turns (feedforward-carried, circle-mode structure):
+    steer_ff_max_deg: 45.0   # feedforward steer ceiling; feedback stays +-steer_limit around it
+    turn_rate_margin: 0.7    # fraction of the kinematic ceiling v*tan(ff_max)/L used
+    yaw_slew_sharp: 3.0      # rad/s absolute ceiling for at-speed turns
+    reverse_turn_scale: 1.0  # extra cap factor for v < 0 (tune down if reverse validates worse)
+    # Reverse keep-out band: cruise diverges in [-0.88,-0.78] (slow caster/
+    # weave coalescence; no gain choice stabilizes it at our authority), and
+    # *turning* is unreliable across (-1.15,-0.72) — only the identified grid
+    # speeds outside it turn cleanly. Speed targets inside snap to the edges;
+    # transiting during ramps is fine. Location depends on steering stiffness
+    # -> recalibrate on hardware; stage-2 turning-equilibrium ID would shrink it.
+    reverse_avoid_band: [-1.2, -0.72]
+  flip:                 # 180-degree swap-ends about the midline (standstill<->standstill)
+    # Realization: pre-steer the front to ~90 deg (frees it to roll laterally so
+    # the bike can rotate about the midline, not the front contact), hold while
+    # the rear crawls the spin, then unwind. See the decisions doc: exact
+    # center-spin is a delta=90 kinematic singularity, so this bulges out to
+    # ~1 wheelbase mid-spin and the hub loop reels the center back by the end.
+    # Tight-throughout (<=0.5 L) needs trajectory optimization (deferred).
+    yaw_accel: 4.0      # rad/s^2 yaw-rate trapezoid ramp
+    yaw_rate: 1.0       # rad/s cruise yaw rate (higher = faster, looser)
+    pre_steer_time: 0.7 # s to wind the front to hold_deg before spinning
+    hold_deg: 90.0      # front angle held during the spin (frees the front)
+    steer_rate: 8.0     # rad/s cap on the scripted steer slew
+    hub_kp: 12.0        # longitudinal center-error loop [rad/s per m] (re-centers)
+  pivot:                # crawl pivot about the front contact
+    yaw_rate: 1.5       # rad/s cruise (crawl ceiling ~4 rad/s; balance-limited)
+    yaw_accel: 4.0      # rad/s^2 profile ramp
+    lean_ff: 1.0        # centripetal lean feedforward gain (0 disables)
+    ff_gain: 1.0        # crawl feedforward scale (vs. kinematic)
+
+testbed:
+  # Wheel-only system-ID rig: AOW + input shafts on a stand fixed to the world.
+  stand_clearance: 0.02   # axle height = outer_radius + this; >0 spins freely in air, 0 touches floor
+
+training_wheels:
+  # Optional outriggers for development/tests (not a physical part).
+  half_span: 0.10       # lateral distance from chassis centerline
+  radius: 0.008
+  pos_x: 0.06           # forward of rear axle
+  clearance: 0.002      # gap above floor when upright, so they never carry standing load
+
+righting:
+  # Self-righting study (build_model(..., righting=True)); see
+  # docs/plans/self-righting.md. NOTHING HERE IS BUILT YET -- this block exists
+  # so that falls can be simulated and candidate geometry compared. Every
+  # dimension is `design` in the "record the intent" sense, not the "we chose
+  # this" sense.
+  #
+  # righting=True does two things regardless of the sub-blocks:
+  #   1. makes the chassis lumps (frame box, servos, AHRS, payload) COLLIDABLE,
+  #      so a fall comes to rest on the parts that would really touch the floor
+  #      instead of sinking through them, and
+  #   2. adds whatever of `roof` / `bumper` / `arm` is present below.
+  #
+  # TWO ALTERNATIVE MECHANISMS live here, `arm` and `wings`, and they are never
+  # built into the same model: build_model(righting=True) gives the single arm,
+  # build_model(righting=True, wings=True) swaps it for the wing pair. Keeping
+  # them exclusive is not tidiness -- the arm's mass and geometry would pollute
+  # every wing torque and rest-attitude reading, and the whole point of the
+  # tools in analysis/self_righting.py is that the two sets of numbers are
+  # comparable. `bumper` is shared by both.
+  #
+  # Frame for z: metres above the REAR AXLE, like every other chassis-frame
+  # position in this file (the axle sits 51.2 mm off the floor when upright).
+  #
+  # ------------------------------------------------------------------
+  # THE TWO DRIVERS. The roof and the stowed wings are one envelope, not two
+  # parts that happen to clear each other: the roof is the circle that
+  # circumscribes the stowed wing tips. Set the envelope here and
+  # params.derive_righting() computes the four dimensions that follow --
+  #     roof.radius, roof.height, wings.crank_length, wings.length
+  # -- so the tips sit exactly ON the roof surface. Upside down they are then
+  # tangent to the rolling envelope and cannot prop the bike up, which is the
+  # failure that left it stuck at 154 deg before (part 5 of self-righting.md).
+  # Enforced by construction, not rediscovered by sweeping.
+  #
+  # Both are a metre-stick measurement of the finished bike, which is the
+  # point: they are the numbers to hand a CAD model or check on the bench.
+  bike_width: {value: 0.120, source: design}   # wing tip to wing tip, stowed
+                                               #   = the roof DIAMETER
+  bike_height: {value: 0.165, source: design}  # top of the roof above the rear
+                                               #   axle (216 mm off the floor)
+  roof:
+    # A ridge over the top of the bike, so it cannot come to rest INVERTED.
+    #
+    # Why it is needed even though the bare bike already "passes": statically
+    # the inverted shelf past 150 deg is only 2.69 mm of CoM height, which at
+    # 1016 g is ~27 mJ -- and falls arrive at the floor with 75-300 mJ. So the
+    # bare bike drains back onto its side in the roll-plane landscape and still
+    # ends up on its back in real falls once any side geometry gives it a
+    # fulcrum (measured: 2 of 8 falls at 147 and 180 deg with an early wing).
+    # It is also reachable on purpose -- reverse at speed, then a 180 flip.
+    #
+    # Right now the thing defining the top of the bike is the AHRS: a flat-
+    # topped 30x30x12 box at z = 0.136, the highest lump on the vehicle and
+    # what actually touches at 180 deg. The roof replaces that plateau with a
+    # surface that has no facet to sit on.
+    #
+    # Shape: a CAPSULE along +X. Round in the roll plane (so an inverted bike
+    # rolls off it rather than balancing), with hemispherical ends supplying
+    # the fore/aft doming for free. "Mostly ridge, a bit of egg" without
+    # needing a mesh -- upgrade to a revolved mesh only if the sweep says the
+    # cross-section matters.
+    #
+    # Mass is a SHELL, not a lump: 30 g at the top of the bike raises the CoM
+    # from 124.3 to 126.2 mm (+1.9 mm), which is the price of admission. Do not
+    # let it become somewhere to mount things -- every gram here is at the
+    # worst possible height (see the CoG breakdown in self-righting.md).
+    x_start: {value: 0.020, source: design}
+    x_end: {value: 0.165, source: design}   # spans ahrs (x=0.05) to steer (0.16)
+    # 40 mm, not 30, and the cliff between them is sharp. At 30 mm an inverted
+    # bike rolls off 180 deg and is then CAUGHT AT 154 deg by a stowed wing
+    # foot -- the wings are 60 mm outboard when folded, so upside down they are
+    # outriggers, which is part 2's "a rail high on the chassis becomes a foot
+    # when the bike is inverted" caused by the mechanism itself. The wing tip
+    # sits 60.4 mm from the roof axis; the roof has to be big enough that the
+    # bike rolls decisively before the tip can reach the floor. 40 mm does it
+    # (settles at 88 deg, i.e. on its side); 30 mm does not, and from 154 deg
+    # the wings only reach 123 deg and stall -- on REACH, not torque (0.23 N.m).
+    # radius and height are DERIVED from bike_width / bike_height above.
+    # For the record, what the sweep found before they were coupled: at a
+    # 30 mm radius the bike rolls off 180 deg and is then CAUGHT AT 154 deg by
+    # a stowed wing foot, and from there the wings reach only 123 deg and stall
+    # -- on REACH, not torque (0.23 N.m). The response is also NOT MONOTONIC in
+    # the radius (50 mm was worse than either 45 or 60), which is exactly why
+    # this is now derived rather than tuned. Re-run both tests after any change
+    # to the envelope:
+    #     python analysis/self_righting.py invert --wings
+    #     python analysis/self_righting.py rest   --wings
+    mass: {value: 0.045, source: design}    # shell only -- see the CoG note above
+  bumper:
+    # Side geometry that sets the resting attitude: a short capsule pad per
+    # side, sitting just proud of the drive servo it protects.
+    #
+    # The counter-intuitive result from `self_righting.py profile --sweep` and
+    # `rest`: the bare bike ALREADY settles on its side at 90.2 deg roll /
+    # 10.3 deg pitch with zero spread over every fall tried, and every wide or
+    # tall outrigger made that WORSE, not better. Rails at 60-75 mm half-span
+    # and 100-130 mm height give the inverted bike a stable stance and it ends
+    # up on its back roughly a quarter of the time (rest spread 65-115 deg).
+    # A tall narrow rail is a fulcrum, not a stop.
+    #
+    # So the pad is deliberately minimal: barely outboard of the drive servo
+    # (whose outer face is at y = 44.25 mm) and only as long as the servo, so
+    # it takes the load the servo case is currently taking without changing
+    # the energy landscape that already works. Measured spread over the same
+    # eight falls: 0.0 deg, resting at 99.6 deg roll / 10.2 deg pitch, and
+    # independent of the steer angle at the moment of the fall.
+    half_span: {value: 0.046, source: design}   # pad axis; servo face is at 0.04425
+    height: {value: 0.050, source: design}      # pad axis height above the rear axle
+    x_start: {value: 0.026, source: design}     # spans the drive servos (x = 0.045)
+    x_end: {value: 0.064, source: design}
+    radius: {value: 0.006, source: design}
+    mass: {value: 0.010, source: design}        # per side
+  arm:
+    # The righting arm: ONE extra XC330-T181 swinging a single arm through
+    # +-180 deg about a fore/aft axis, so the same arm reaches the floor on
+    # either side (that is what makes one servo enough for a symmetric
+    # mechanism). Angle convention: 0 = stowed pointing straight up; the hinge
+    # axis is body +X, so POSITIVE rotates the arm toward -Y (the bike's
+    # right) -- the same handedness as roll, which is why the arm swings with
+    # sign(roll) to reach the floor the bike is lying on.
+    pivot: {value: [0.09, 0.0, 0.030], source: design}   # chassis-frame hinge
+    length: {value: 0.080, source: design}      # pivot -> foot centre
+    radius: {value: 0.005, source: design}
+    foot_radius: {value: 0.010, source: design}
+    mass: {value: 0.020, source: design}        # arm + foot
+    servo_mass: {value: 0.023, source: datasheet}   # the extra XC330-T181
+    stow_deg: {value: 0.0, source: design}
+    # Reduction between servo and arm. `self_righting.py lift --sweep` says the
+    # stroke needs 0.65-0.75 N.m AT THE ARM for every geometry that gets all
+    # the way up, against an XC330-T181 that is 0.80 N.m at 12 V, 0.76 at the
+    # 3S nominal 11.1 V and ~0.66 at the 9.9 V cutoff. Direct drive is
+    # therefore a coin flip on a half-empty pack. Nothing about the stroke
+    # wants speed -- two seconds is fine -- so the fix is a reduction, and 3:1
+    # is the same ratio the drive belts already use. Set to 1.0 to price
+    # direct drive.
+    gear_ratio: {value: 4.0, source: design}
+    # Position-servo gains for the arm (tuning knobs, not measurements). Much
+    # stiffer than the steer actuator's 2.0 on purpose: the whole point of the
+    # torque study is to see the actuator hit its 0.80 N.m forcerange, and a
+    # soft gain would report "not enough gain" as "not enough torque".
+    servo_kp: 30.0
+    servo_kv: 1.0
+  wings:
+    # The ALTERNATIVE to `arm`: a mirrored pair of wings, one per side, driven
+    # by ONE servo through a gear train (meshed gears at the two pivots with a
+    # reversal on one side, so the pair counter-rotates and deploys
+    # symmetrically). Both wings swing down-and-outward together; whichever one
+    # is on the fallen side plants and levers the bike up.
+    #
+    # The gear train is NOT modelled. All it contributes to the dynamics is
+    # (a) the inversion, as a joint equality theta_left = mirror * theta_right,
+    # and (b) the reduction, as gear_ratio. See docs/plans/self-righting.md.
+    #
+    # Angle convention, same as `arm`: hinge axis is body +X, so POSITIVE
+    # rotates toward -Y (the bike's right). The right wing deploys at +d and
+    # the left at -d, i.e. both swing outboard and down. 0 = stowed, folded up
+    # alongside the chassis.
+    #
+    # Three things this buys over the single arm, and one risk:
+    #   + the stroke is ONE fixed direction, so the mechanism never has to know
+    #     which side it fell on (the arm swings with sign(roll));
+    #   + it folds flat inside the chassis instead of standing through it;
+    #   + the far wing may catch the overshoot the arm has to be stopped to
+    #     avoid (see the arm's "must stop at hand-off" note above);
+    #   - ...or it may plant EARLY and wedge the bike short of upright, outside
+    #     the +-12 deg hand-off window. That is what `lift --wings --sweep` and
+    #     `sequence --wings` exist to answer.
+    # x moved 75 -> 125 mm so the mechanism clears the drive belts. At 75 the
+    # linkage fouled the belt envelope by 37.5 mm.
+    #
+    # 115 was the answer for ONE belt at 45 deg. There are two, straddling it,
+    # and the LOWER one (36.83 deg) reaches fore-aft 123.7 mm — so 115 still
+    # fouled it by 7.7 mm while the upper belt was clear by 12.8 mm. The lower
+    # belt binds; the upper has ~20 mm more room throughout.
+    #
+    # 125 mm cleared the belt by 2.1 mm; 130 gives the lower drive SERVO CASE
+    # room too, which the belt-envelope check did not cover. Re-check after any
+    # change to the servo angle, the separation, or the pulley diameter:
+    # dropping `drive_servo_angle_deg` swings the lower belt further forward
+    # and pushes this station out with it.
+    #
+    # VISUAL/PACKAGING ONLY so far — the self-righting study
+    # was optimised at 75 and has NOT been re-run, so treat the mechanism's
+    # performance as unverified at this station:
+    #     python analysis/self_righting.py invert --wings
+    #     python analysis/self_righting.py rest   --wings
+    pivot: {value: [0.130, 0.030, 0.0], source: design}  # [x, |y|, z]; mirrored in y
+    # pivot HEIGHT is the parameter this design turns on, and -0.020 (20 mm
+    # below the rear axle = 31 mm off the floor) is what `lift --wings --sweep`
+    # settles on. Three things fight over it, and the third is the one that
+    # actually decides:
+    #
+    #   packaging  A low pivot ought to stow lower. It does NOT, because a low
+    #     pivot also needs a LONGER leg to reach the floor, and the extra length
+    #     eats the gain exactly: z = -30/105 mm and z = -20/95 mm both stow at
+    #     153 mm. Below that the wing has to grow faster than the pivot drops
+    #     and the stowed height starts climbing again.
+    #   torque  Also flat across the working band (0.57 N.m at both), because
+    #     the same trade runs backwards: a lower pivot shortens the moment arm
+    #     it pushes on, and the longer leg needed to fix that costs it back.
+    #   riding-lean clearance  THE BINDING CONSTRAINT. The stowed wing is the
+    #     lowest outboard thing on the bike after the wheels, so it decides the
+    #     roll angle at which something other than a tyre touches down. At
+    #     z = -30 that is 27 deg -- INSIDE the recoverable set (up to 30.9 deg,
+    #     analysis/no_return.py), so a lean the policy could still save would
+    #     drag a wing on the floor. z = -20 puts it at 40 deg, clear of both the
+    #     recoverable set and any riding lean.
+    #
+    # So the floor on pivot height is set by lean clearance, not by torque or
+    # packaging -- `profile --wings` reports it as `first non-wheel contact`.
+    #
+    # x = 0.045 is the drive-servo station (same as the bumper pads);
+    # |y| = 0.035 is INBOARD of the servo outer face at 44.25 mm, so the stowed
+    # pair is narrower than the side geometry that is already known to give a
+    # 0.0 deg rest spread.
+    #
+    # Each wing is a dogleg, as sketched: a short crank off the pivot, then the
+    # long leg to the foot. Rigid -- one body, no second joint. The crank is
+    # what lets the leg fold flat ALONGSIDE the chassis at stow while still
+    # clearing the gear.
+    #
+    # crank_deg is measured from +Z and cranks OUTBOARD. It is NOT a free knob
+    # to trade against torque, for two reasons, and ~90 deg is close to forced:
+    #
+    #   1. The crank exists to carry the leg past the RIM OF ITS OWN GEAR. The
+    #      leg has to land on the floor, not on the disc it is bolted to, so
+    #      the outboard reach (crank_length * sin(crank_deg)) must exceed
+    #      disc_radius. Cranking inboard shortens that reach by sin and the
+    #      mechanism starts standing on its gear. build_model.wing_fit()
+    #      reports it as `leg_stands_on_gear`; the physics will NOT catch it,
+    #      because the discs are drawn non-colliding.
+    #   2. The drive servos occupy |y| = 15.75..44.25 mm, so an INBOARD crank
+    #      parks the stowed leg straight through them -- also invisible to the
+    #      simulation, since the wings collide only with the floor.
+    #
+    # The angle is somewhat notional anyway: the real part will integrate the
+    # crank into the gear itself, so what this parameter actually encodes is
+    # WHERE THE LEG LANDS relative to the pivot, not a physical bend.
+    #
+    # Note the coupling this creates: disc_radius grows with gear_ratio, so a
+    # bigger reduction demands a longer crank, which widens the stance, which
+    # is what part 2's rest sweep punishes. Reduction and landing behaviour are
+    # not independent.
+    crank_deg: {value: 90.0, source: design}       # from +Z, positive = OUTBOARD
+    # crank_length and length are DERIVED from bike_width / bike_height.
+    # What they have to satisfy, and what the derivation therefore guarantees:
+    #   crank_length  carries the leg clear of its own gear disc (see
+    #                 crank_deg above) and puts the tip at bike_width/2;
+    #   length        reaches from the elbow up to the roof axis, which is
+    #                 also what gives the deployed wing enough REACH -- too
+    #                 short and the stroke stalls near 90 deg of roll on reach
+    #                 rather than torque, and lands badly besides.
+    # The real wing will be wider and curved so it rolls onto its side
+    # gracefully; this straight capsule is the rough-physics stand-in.
+    radius: {value: 0.005, source: design}
+    foot_radius: {value: 0.010, source: design}
+    mass: {value: 0.020, source: design}           # PER WING
+    # --- PANEL, CAD only. The sim models each wing as a capsule, which is a
+    # collision primitive, not a shape: it gave the panel a 5 mm radius and so
+    # made the bike read 85 mm wide when the mechanism only needs 75. The real
+    # part is a flat plate.
+    #
+    # The plate need NOT be centred on the linkage station. The four-bar sits
+    # at one fore/aft plane, but the panel is what actually contacts the floor
+    # and wants area behind that plane, over the rear wheel. `panel_offset_x`
+    # is the plate centre relative to the linkage, positive REARWARD.
+    panel_thickness: {value: 0.004, source: design}   # ABS sheet, as `hockey.stick`
+    panel_length_x: {value: 0.090, source: design}    # fore/aft extent
+    panel_offset_x: {value: -0.025, source: design}   # centre, rearward of the linkage
+    servo_mass: {value: 0.023, source: datasheet}  # the extra XC330-T181
+    gearbox_mass: {value: 0.015, source: design}   # the gear train itself
+    stow_deg: {value: 0.0, source: design}
+    deploy_deg: {value: 105.0, source: design}     # hard stop; joint range is +-this
+    # Reduction between servo and wing. 3:1 is the arm's number and the drive
+    # belts'. NOTE the consequence the sketch already anticipated: a stow ->
+    # deploy stroke of 135 deg at 3:1 is 405 deg AT THE SERVO, so this needs
+    # EXTENDED POSITION (multi-turn) mode, not the 0-360 single-turn mode. The
+    # analysis reports servo turns explicitly rather than assuming it.
+    #
+    # The ratio is ALSO a fit constraint, and that is the surprising part --
+    # see build_model.wing_fit(). One central pinion meshing both wing gears
+    # fixes the centre distance at the pivot half-span, so
+    #     r_pinion = half_span / (1 + ratio),  r_disc = half_span - r_pinion
+    # and both radii follow from the ratio alone. It runs the wrong way from
+    # intuition: a BIGGER reduction shrinks the PINION rather than growing the
+    # disc without limit, and the pinion is the 3D-printed part with a floor on
+    # how small its teeth can be. `min_pinion_radius` is that floor, and the
+    # disc separately cannot exceed the pivot's height above the floor without
+    # grounding out. `lift --wings --sweep` reports both ceilings.
+    gear_ratio: {value: 4.0, source: design}
+    min_pinion_radius: {value: 0.006, source: GUESS}  # smallest printable pitch
+                                                      #   radius on the XC330
+                                                      #   side -> print a test
+    gear_width: {value: 0.006, source: design}        # face width; visual only
+    mirror: {value: -1.0, source: design}          # theta_left = mirror * theta_right
+    # Position-servo gains, same reasoning as the arm's: stiff on purpose, so
+    # the torque study reads a forcerange limit and not a gain limit.
+    servo_kp: 30.0
+    servo_kv: 1.0
+
+hockey:
+  # Ball-shot move extras (build_model(..., hockey=True)); see
+  # docs/plans/ball-shot-move.md. Physical dims are GUESS placeholders to refine.
+  stick:                # thin translucent ABS panel, one per side of the chassis
+    length: 0.11        # x-extent (chassis frame): ~center-x back over the rear wheel
+    thickness: 0.004    # ABS panel
+    height: 0.03
+    pos: [0.04, 0.045, 0.00]   # per-side; y is mirrored L/R, z gives ground clearance
+    mass: 0.02
+  ball:                 # road (street) hockey ball
+    radius: {value: 0.0335, source: GUESS}   # street-hockey ball ~Ø67 mm
+    mass:   {value: 0.06,   source: GUESS}    # ~60 g no-bounce ball
+    start:  [0.50, -0.15]     # bike-frame start [x fwd, y]; front-right (y<0), mirrorable
+    friction_sliding: 0.4     # ball on floor
+
+# ============================================================================
+# CAD-ONLY: how each servo is actually installed.
+# ============================================================================
+#
+# Read by `aow_sim.cad_layout`; the MuJoCo builder ignores this block entirely.
+#
+# THE IDEA. A servo is fully located by three things, and only the last is a
+# free choice:
+#   shaft_axis   the actuation axis direction — a MECHANISM constraint (the
+#                steer servo must lie on the steering axis, the crank servo on
+#                the crank axis, the drive servos along the belt run)
+#   horn_dir     which way along that axis the horn faces  (+1 / -1)
+#   body_up      roll about the axis: the case's +H direction, i.e. which way
+#                the shaft is offset from the case centre. A DESIGN CHOICE.
+#
+# The case is then DERIVED from those plus the datasheet offsets, rather than
+# the case being placed and the axis guessed from it. That is the right
+# direction of derivation: the mechanism fixes the axis, and the box follows.
+#
+# Vectors are MODEL frame (+X forward, +Y left, +Z up) — the same frame as the
+# rest of this file. `cad_layout` converts.
+#
+# `shaft_point` is seeded from each servo's existing box centre so nothing
+# jumps on the first regeneration. As real constraints land (belt geometry,
+# the steering axis, the crank axis) replace it with the point on the axis and
+# let the case move to suit.
+
+cad_mounts:
+  # horn_dir +1 faces each horn OUTBOARD, so the cases sit INBOARD of their
+  # belt planes and overlap by 20 mm across the centreline. That is the skinny
+  # arrangement, and it is why the two servos must be at DIFFERENT angles —
+  # they are separated tangentially instead of laterally.
+  #
+  # `body_up` is the case's +H direction. BOTH servos use the same one, aligned
+  # with the 45 deg mean radius, so the cases are parallel and can share a flat
+  # mounting plate. cad_layout no longer overrides this.
+  servo_drive_left:
+    model: xc430_w150
+    shaft_axis: [0.0, 1.0, 0.0]     # belt plane on the left
+    horn_dir: 1.0
+    body_up: [0.70711, 0.0, 0.70711]     # 45 deg, same for both
+  servo_drive_right:
+    model: xc430_w150
+    shaft_axis: [0.0, -1.0, 0.0]
+    horn_dir: 1.0
+    body_up: [0.70711, 0.0, 0.70711]
+  servo_steer:
+    model: xc330_t181
+    # Direct drive at gear_ratio 1.0, so this MUST be the steering axis.
+    # cad_layout substitutes the raked axis; the value here is a placeholder
+    # that gets overridden, kept so the block reads completely.
+    shaft_axis: [0.0, 0.0, -1.0]    # horn faces DOWN the steering axis
+    horn_dir: 1.0
+    body_up: [1.0, 0.0, 0.0]
+  linkage_crank_servo:
+    model: xc330_t181
+    shaft_axis: [1.0, 0.0, 0.0]     # fore-aft, the crank shaft
+    horn_dir: 1.0
+    body_up: [0.0, 0.0, 1.0]
