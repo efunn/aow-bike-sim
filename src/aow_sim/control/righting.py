@@ -150,6 +150,7 @@ class RightingSequencer:
     def __init__(self, params: dict, model, *, wings: bool = False,
                  linkage: bool = False,
                  direction: float | None = None, rate: float = 0.7,
+                 recover_deg: float | None = None,
                  rate_max: float | None = 2.4, rate_ref_deg: float = 30.0,
                  rate_floor: float = 0.25, retract_rate: float | None = None,
                  retract_after: float = 1.0, move: str = "general_rl",
@@ -213,6 +214,11 @@ class RightingSequencer:
         # The wing pair deploys the same way whatever side it fell on; the
         # single arm has to reach for the floor it is lying on.
         self._fixed_direction = direction
+        # Overridable so a study can ask "how close does the mechanism get?"
+        # without editing the module constant. RECOVER_DEG is not a tuning
+        # knob — it is what analysis/no_return.py measured the POLICY can
+        # recover from — so raising it here is a question, not a fix.
+        self.recover_deg = RECOVER_DEG if recover_deg is None else recover_deg
         self.phase = "lift"
         self.t_hand = float("nan")
         self.ctrl = None
@@ -302,7 +308,7 @@ class RightingSequencer:
             # it just means nothing has to be re-engaged at hand-off.
             if self.keep_policy and self.ctrl is not None:
                 self.ctrl.step(model, data)
-            if abs(roll) < RECOVER_DEG and abs(data.qvel[3]) < HANDOFF_RATE:
+            if abs(roll) < self.recover_deg and abs(data.qvel[3]) < HANDOFF_RATE:
                 self.phase, self.t_hand = "balance", self._t
                 if self.ctrl is None:
                     # Built one from scratch, so it has no command yet: park it.

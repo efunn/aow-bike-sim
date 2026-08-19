@@ -339,14 +339,17 @@ def _trail(scn, pts, rgba=(*_TRAIL, 1.0)):
 
 def _record_righting(params, general: str | None, wings: bool, fps: int,
                      seconds: float, retract_after: float,
-                     inverted: bool = False, linkage: bool = False):
+                     inverted: bool = False, linkage: bool = False,
+                     linkage_cfg=None, side: float = 1.0,
+                     recover_deg: float | None = None):
     """PASS 1 for `--script right`: start fallen, run the mechanism through
     deploy -> hand-off -> retract, and keep one snapshot per output frame.
 
     Returns (model, data, controller, states, marks) in the same shape the
     drive scripts produce, so PASS 2 renders both without branching."""
     model = build_model(params, variant="full", righting=True,
-                        wings=wings and not linkage, linkage=linkage)
+                        wings=wings and not linkage, linkage=linkage,
+                        linkage_cfg=linkage_cfg)
     design = design_all(params, build_model(params))
     data = mujoco.MjData(model)
     # `inverted` starts the run UPSIDE DOWN instead of on its side, so the
@@ -357,17 +360,22 @@ def _record_righting(params, general: str | None, wings: bool, fps: int,
     # mechanism is held at stow for `_INVERT_SETTLE_S` below so the bike gets
     # to find its own rest first, the way it would on the floor.
     data.qpos[:] = (
+        # INVERTED has no side — 180 deg either way is the same pose on its
+        # back. What `side` flips there is which way the mechanism pushes it
+        # off the ridge (`direction` below). FALLEN does have a side, and that
+        # is where roll_deg carries it.
         settle_inverted(params, wings=wings and not linkage, settle=0.0,
                         linkage=linkage) if inverted
         else settle_fallen(params, wings=wings and not linkage,
-                           linkage=linkage))
+                           linkage=linkage, roll_deg=100.0 * side))
     mujoco.mj_forward(model, data)
     move = general or params["control"].get("general_move", "general_rl")
     seq = RightingSequencer(params, model, wings=wings and not linkage,
                             linkage=linkage,
                             # Both wing mechanisms deploy the same way whichever
                             # side it fell on; the single arm has to reach.
-                            direction=1.0 if (wings or linkage) else None,
+                            direction=side if (wings or linkage) else None,
+                            recover_deg=recover_deg,
                             retract_after=retract_after, move=move,
                             design=design)
     seq.reset(model, data)
@@ -540,15 +548,19 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
            elevation: float, azimuth: float, hockey: bool,
            camera: str = 'top', wings: bool = True, seconds: float = 12.0,
            retract_after: float = 1.0, inverted: bool = False,
-           grid: float | None = None, linkage: bool = False) -> dict:
-    params = load_params()
+           grid: float | None = None, linkage: bool = False,
+           params_path=None, linkage_cfg=None, side: float = 1.0,
+           recover_deg: float | None = None) -> dict:
+    params = load_params(params_path)
     if grid:
         params["sim"]["floor_grid_m"] = grid
     righting = script in _SEQUENCES
     if righting:
         maker = _record_demo if script == "demo" else _record_righting
         kw = ({} if script == "demo"
-              else {"inverted": inverted, "linkage": linkage})
+              else {"inverted": inverted, "linkage": linkage,
+                    "linkage_cfg": linkage_cfg, "side": side,
+                    "recover_deg": recover_deg})
         model, data, c, states, marks = maker(
             params, general, wings, fps, seconds, retract_after, **kw)
         # Report the policy actually used. `demo` defaults to a DIFFERENT
@@ -769,6 +781,20 @@ def main() -> None:
                     help="floor checker pitch in metres (default "
                          f"{FLOOR_GRID_M}); display only, the squares double "
                          "as a distance scale")
+    ap.add_argument("--mirror", action="store_true",
+                    help="fall and right on the OTHER side. The policy's "
+                         "recovery is asymmetric (16.3 deg right vs 11.8 left "
+                         "per analysis/no_return.py), so a mechanism that "
+                         "works one way is not verified until both are run")
+    ap.add_argument("--recover-deg", type=float, default=None,
+                    help="override the hand-off roll window [deg]. A QUESTION, "
+                         "not a fix: the default 12 is what the policy was "
+                         "measured to recover from, not a tunable")
+    ap.add_argument("--params", default=None,
+                    help="bike_params.yaml to build from (default: the sim's)")
+    ap.add_argument("--linkage-config", default=None,
+                    help="four-bar geometry, e.g. config/wing_linkage_w75.yaml "
+                         "(default: the one build_model pins)")
     ap.add_argument("--linkage", action="store_true",
                     help="the four-bar wing mechanism instead of the geared "
                          "pair (config/wing_linkage_locking.yaml)")
@@ -798,7 +824,8 @@ def main() -> None:
     print(record(a.script, a.general, a.analytic, out, a.width, a.height,
                  a.fps, distance, a.elevation, a.azimuth, a.hockey,
                  camera, not a.arm, a.seconds, a.retract_after,
-                 a.inverted, a.grid, a.linkage))
+                 a.inverted, a.grid, a.linkage, a.params, a.linkage_config,
+                 -1.0 if a.mirror else 1.0, a.recover_deg))
 
 
 if __name__ == "__main__":
