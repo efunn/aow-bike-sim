@@ -1258,6 +1258,14 @@ def _objective(x, cfg):
     # while wandering into an OUTPUT-side one -- seed 2 came back at 24.2 deg,
     # below the healthy floor, purely because nothing was checking.
     bind = max(0.0, MIN_TRANSMISSION_DEG - min_transmission(lk, T))
+    # Stowed width: a crank that pokes out of the envelope while parked has
+    # defeated the point of narrowing the bike. Soft, with a steep slope, for
+    # the same reason as the floor constraint.
+    wide = (0.0 if _MAX_STOW_HALF is None
+            else max(0.0, stow_half_width(lk) - _MAX_STOW_HALF))
+    # Hinge interference: hard to see in a 2D animation, fatal in metal.
+    cross = (0.0 if not _NO_CROSSOVER
+             else max(0.0, pivot_crossover(lk, T) + _HINGE_MARGIN))
     if _MODE == "lock":
         # Torque becomes a FEASIBILITY constraint rather than the objective,
         # and what we maximise is the advantage at the deployed pose. Without
@@ -1269,34 +1277,142 @@ def _objective(x, cfg):
         # chasing a truer singularity just buys tolerance sensitivity. Leaving
         # it uncapped also gives the search a huge dynamic range to no benefit.
         ma = min(end_advantage(lk, T), 30.0)
-        return -ma + 40.0 * over + 2.0 * short + 1.5 * bind
+        return -ma + 40.0 * over + 2.0 * short + 1.5 * bind + 2.0 * wide + 3.0 * cross
     # 0.02 N.m per degree of transmission shortfall: a design 20 deg into the
     # bad region pays 0.4 N.m, which is the whole torque budget. Enough to
     # keep it out of dead points without forbidding a brief dip.
-    return peak_torque(lk) + 0.05 * short + 0.02 * bind
+    return peak_torque(lk) + 0.05 * short + 0.02 * bind + 0.05 * wide + 0.08 * cross
+
+
+def stow_half_width(lk: "Linkage") -> float:
+    """Widest |lateral| the MECHANISM reaches when STOWED [mm].
+
+    Crank tips, coupler line and attach points only — not the wing panel, whose
+    lateral position IS the half-span by definition.
+
+    Stowed, not swept, and that distinction is the whole point: the stowed pose
+    is the bike's driving envelope, while everything past it happens with the
+    bike already on its side, where sticking out costs nothing. Constraining
+    the full sweep instead would throw away most of the useful designs.
+    """
+    worst = 0.0
+    for tag in ("right", "left"):
+        tip = lk.crank_tip(tag, 0.0)
+        att = lk.attach0[tag]
+        for f in np.linspace(0.0, 1.0, 21):          # along the coupler too
+            q = tip + f * (att - tip)
+            worst = max(worst, abs(float(q[0])))
+        worst = max(worst, abs(float(tip[0])), abs(float(att[0])))
+    return worst
+
+
+def stow_roof_margin(lk: "Linkage", cfg: dict) -> float:
+    """Smallest clearance from the STOWED mechanism to the roof surface [mm].
+
+    Negative means something pokes THROUGH the roof, which defeats the shell:
+    an inverted bike is then resting on a crank arm instead of rolling on the
+    cylinder. Same points as `stow_half_width`, but measured radially from the
+    roof axis rather than laterally, which is the constraint that actually
+    matters — the roof is a cylinder, not a slab.
+    """
+    R = cfg["bike"]["bike_width"] / 2.0
+    axis_z = cfg["bike"]["bike_height"] - R          # mm above the floor
+    worst = 1e9
+    for tag in ("right", "left"):
+        tip, att = lk.crank_tip(tag, 0.0), lk.attach0[tag]
+        for f in np.linspace(0.0, 1.0, 21):
+            q = tip + f * (att - tip)
+            # ONLY points above the roof axis. The roof is a cylinder covering
+            # the TOP of the bike, so it is the high parts that end up at the
+            # bottom when inverted and could touch down before the shell does.
+            # Points below the axis are simply outside its angular coverage —
+            # the wheels are 105 mm from the axis and that is not a defect.
+            if q[1] <= axis_z:
+                continue
+            worst = min(worst, R - float(np.hypot(q[0], q[1] - axis_z)))
+    return worst if worst < 1e8 else float("inf")
+
+
+def pivot_crossover(lk: "Linkage", travel: float) -> float:
+    """How far a wing's attach point reaches PAST the opposite pivot [mm].
+
+    Positive = interference. The wing pivots are the one place that has to
+    carry a real hinge — a pin with length along the fore/aft axis, not a
+    point — so nothing from the other side may occupy that lateral station.
+    An attach point that crosses it means the two sides' hardware wants the
+    same space, and no amount of fore/aft staggering fixes a hinge that has to
+    be long.
+
+    Checked over the WHOLE stroke, unlike the envelope constraint: sticking out
+    of the envelope while deploying is free, but two parts trying to occupy one
+    volume is interference whenever it happens.
+    """
+    p_off = lk.pivot(1)[0]                    # +y pivot station
+    worst = -1e9
+    lk._last = {}
+    t = 0.0
+    while t <= travel:
+        for tag in ("right", "left"):
+            att, _ = lk.solve(tag, t)
+            y = float(att[0])
+            worst = max(worst, (-p_off - y) if tag == "left" else (y - p_off))
+        t += 4.0
+    return worst
 
 
 _WITH_TORQUE = False
 _KIN_TOL = 3.0
+# Half-width the STOWED mechanism may not exceed [mm]. None = unconstrained,
+# which is what every pre-existing config was optimised under.
+_MAX_STOW_HALF = None
+# Keep each wing's attach point clear of the OPPOSITE pivot, by this margin.
+_NO_CROSSOVER = False
+_HINGE_MARGIN = 4.0       # mm of hinge boss to leave room for
 _MODE = "torque"          # "torque" = minimise peak; "lock" = maximise end MA
 _TORQUE_BUDGET = 0.55     # N.m the servo may need anywhere in the stroke
 
 
 def cmd_optimize(cfg, out: Path, seed: int, iters: int, with_torque: bool = False,
-                 mode: str = "torque"):
+                 mode: str = "torque", max_stow_half: float | None = None,
+                 max_crank: float | None = None, no_crossover: bool = False,
+                 crank_angle=None, min_pivot: float | None = None):
     from scipy.optimize import differential_evolution
 
-    global _WITH_TORQUE, _MODE
+    global _WITH_TORQUE, _MODE, _MAX_STOW_HALF, _NO_CROSSOVER
     _WITH_TORQUE = with_torque or mode == "lock"
     _MODE = mode
+    _MAX_STOW_HALF = max_stow_half
+    _NO_CROSSOVER = no_crossover
+    if no_crossover:
+        print(f"attach points kept {_HINGE_MARGIN:.0f} mm clear of the opposite pivot")
+    if max_stow_half is not None:
+        print(f"stowed mechanism constrained to +/-{max_stow_half:.1f} mm")
 
     lk0 = Linkage(cfg)
     T0, r0, l0, e0 = best_pose(lk0)
     print(f"start:  best pose at {T0:5.0f} deg servo -> right {r0:6.1f}  "
           f"left {l0:6.1f}   worst error {e0:6.1f}"
           + (f"   peak servo torque {peak_torque(lk0):.3f} N.m" if with_torque else ""))
+    def _bound(name, lo, hi):
+        if max_crank and name.startswith("link1"):
+            hi = min(hi, max_crank)
+        if crank_angle and name == "first_link_angle_deg":
+            lo, hi = max(lo, crank_angle[0]), min(hi, crank_angle[1])
+        if min_pivot and name == "wing_pivot_offset":
+            lo = max(lo, min_pivot)
+        return (lo, hi)
+    bounds = [_bound(name, lo, hi) for name, _p, lo, hi in _VARS]
+    if max_crank:
+        print(f"crank arms capped at {max_crank:.1f} mm")
+    if crank_angle:
+        # Keeps the search in the ARMS-UP-AND-OUT basin. Left free, it drifts
+        # to ~277 deg — cranks pointing down and inward — which collapses the
+        # whole mechanism onto the centreline and leaves no room for pins.
+        print(f"crank angle held to {crank_angle[0]:.0f}..{crank_angle[1]:.0f} deg")
+    if min_pivot:
+        print(f"wing pivots at least +/-{min_pivot:.1f} mm apart")
     res = differential_evolution(
-        _objective, [(lo, hi) for _, _, lo, hi in _VARS], args=(cfg,),
+        _objective, bounds, args=(cfg,),
         seed=seed, maxiter=iters, tol=1e-6, polish=True, disp=False)
     best = _apply(cfg, res.x)
     lk = Linkage(best)
@@ -1318,6 +1434,14 @@ def cmd_optimize(cfg, out: Path, seed: int, iters: int, with_torque: bool = Fals
     pk = peak_torque(lk)
     print(f"  peak servo torque          {pk:8.3f} N.m  "
           f"({pk/(0.80*9.9/12):.2f} of the 9.9 V stall; geared 2:1 needs 0.339)")
+    print(f"  stowed mechanism half-width {stow_half_width(lk):7.2f} mm  "
+          f"(envelope +/-{cfg['bike']['bike_width']/2:.1f})")
+    xo = pivot_crossover(lk, T)
+    print(f"  attach vs opposite pivot  {-xo:9.2f} mm clearance  "
+          f"({'ok' if xo < 0 else 'CROSSES THE HINGE'})")
+    rm = stow_roof_margin(lk, best)
+    print(f"  stowed clearance to roof    {rm:7.2f} mm  "
+          f"({'inside the shell' if rm > 0 else 'POKES THROUGH THE ROOF'})")
     fc = floor_clearance(lk, T)
     print(f"  floor clearance            {fc:8.2f} mm  "
           f"({'ok' if fc >= MIN_FLOOR_MM else 'BELOW THE ' + str(MIN_FLOOR_MM) + ' mm MINIMUM'})")
@@ -1355,6 +1479,21 @@ def main() -> None:
     ap.add_argument("--lock", action="store_true",
                     help="optimise for a SELF-LOCKING deployed pose (max MA at "
                          "the end) with torque as a budget instead")
+    ap.add_argument("--crank-angle", type=float, nargs=2, default=None,
+                    metavar=("LO", "HI"),
+                    help="bound first_link_angle_deg, to hold the search in the "
+                         "arms-up basin instead of the arms-down one")
+    ap.add_argument("--min-pivot", type=float, default=None,
+                    help="minimum wing_pivot_offset [mm], so the two hinges "
+                         "have room for real pins")
+    ap.add_argument("--no-crossover", action="store_true",
+                    help="forbid a wing's attach point from crossing the "
+                         "opposite pivot, so each pivot can carry a real hinge")
+    ap.add_argument("--max-crank", type=float, default=None,
+                    help="upper bound on both crank arm lengths [mm]")
+    ap.add_argument("--fit-envelope", action="store_true",
+                    help="keep the STOWED mechanism inside bike_width/2. Off by "
+                         "default so the committed configs stay reproducible")
     ap.add_argument("--optimize", action="store_true",
                     help="search link geometry for both wings reaching "
                          f"{TARGET_WING_DEG:.0f} deg inside one monotonic stroke")
@@ -1384,7 +1523,11 @@ def main() -> None:
 
     if a.optimize:
         cmd_optimize(cfg, a.save, a.seed, a.iters, with_torque=a.torque,
-                     mode="lock" if a.lock else "torque")
+                     mode="lock" if a.lock else "torque",
+                     max_stow_half=(cfg["bike"]["bike_width"] / 2
+                                    if a.fit_envelope else None),
+                     max_crank=a.max_crank, no_crossover=a.no_crossover,
+                     crank_angle=a.crank_angle, min_pivot=a.min_pivot)
         return
     if a.righting:
         if a.video:
