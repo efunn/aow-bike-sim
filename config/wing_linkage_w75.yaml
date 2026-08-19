@@ -1,0 +1,88 @@
+# Wing linkage for a 75 mm WIDTH envelope — the width the rear drivetrain
+# actually needs (axle mounts at +/-37.5 mm), rather than the 120 mm the
+# geared-wing study settled on.
+#
+# THIS IS wing_linkage_locking.yaml WITH bike_width 120 -> 75 AND NOTHING ELSE.
+# The mechanism is untouched: same cranks, same coupler, same pivots. Only the
+# wing PANEL changes, because bike_width sets where it sits and how long it is
+# (84.6 -> 107.1 mm) and does not enter the four-bar at all.
+#
+# WHY NOT OPTIMISED. It was, four times, and every solve was worse to build:
+#
+#   variant            crank    pivot gap  hinge clr  wing deg   MA  lock-fail
+#   THIS (cut only)  30.6/31.0     34.6      +46.5      87.2    51.8    13%
+#   unconstrained    67.5/66.4     16.8      +38.9      87.3    32.4     7%   (46 mm stow, outside envelope)
+#   fit-envelope     49.4/48.1     16.8      +35.0      87.3   241.8     7%   (2.8 mm from the roof)
+#   +max-crank 32    27.9/27.4     28.9      -13.7      88.8    63.2    30%   (attach crosses the opposite pivot)
+#   +no-crossover    16.9/16.6     28.9       +5.2      88.8    45.1    36%   (whole mechanism on the centreline)
+#   arms-up basin    33.1/33.2     32.7      +53.0      88.9    53.6    58%
+#
+# The cut version already satisfies every constraint those solves were added to
+# enforce — envelope 29.2 < 37.5, nothing above the roof axis, 46.5 mm of hinge
+# clearance, transmission 38.7 deg — and misses the 90 deg wing target by 2.8
+# deg. Every optimised variant bought part of that 2.8 deg with geometry that
+# is harder to build, tighter on tolerance, or both; the best of them still
+# costs 4.5x the lock-failure rate for 1.7 deg.
+#
+# So the target is the thing that was wrong, not the mechanism. Re-optimise
+# only if 90 deg turns out to be a real requirement rather than a round number.
+#
+# bike_height IS FREE FOR THE MECHANISM. Swept 216.2 -> 140 mm: peak torque,
+# MA, transmission angle, wing angle and floor clearance are IDENTICAL at every
+# value. It only sets how far UP the wing panel runs (107.1 -> 30.9 mm of
+# panel), because the panel's lower end — the end that touches the floor — is
+# `ground_clearance` and does not move.
+#
+# It is also freer for PACKAGING than an earlier note here claimed. That note
+# said the battery pinned bike_height at >= 212.9 because the pack had to stay
+# below the roof AXIS. Wrong test: the roof is a cylinder, so the constraint is
+# distance from the axis <= R, and the pack sits 17.8 mm from an axis with
+# R = 37.5. With the battery at its current station the roof can come down to
+# bike_height ~ 180 before the pack leaves the shell.
+#
+# The real floor is the roll-off: the CoM must stay below the roof axis, which
+# needs bike_height >= 165.5.
+#
+# AN ELLIPTICAL ROOF would buy more, but not much, and it has a hard limit.
+# With semi-axes a (lateral, fixed by bike_width/2) and b (vertical), an
+# inverted bike rests on the crest where the radius of curvature is a^2/b, and
+# it only rolls off while
+#       b + (roof_axis - CoM)  >  a^2 / b
+# Flattening the roof RAISES a^2/b, so it works against you — the flatter the
+# crest, the more stable the inverted pose. At a = 37.5 and the current CoM the
+# critical value is b = 19.9 mm:
+#       b = 37.5 (circle)  crest 165.0  rolls off
+#       b = 25             crest 152.5  rolls off
+#       b = 20             crest 147.5  rolls off, barely
+#       b = 19             crest 146.5  PERCHES — stable inverted
+# So an ellipse can lower the crest by at most ~17.6 mm at this width, and the
+# last few millimetres of that are on the edge of a cliff, not a slope.
+#
+# UNCHANGED FROM THE 120 mm DESIGN AND STILL UNVERIFIED HERE:
+#   stroke.goal_current_nm 0.44 was measured on an 84.6 mm wing; this one is
+#   107.1 mm. Its own comment says re-measure after any change to wing length,
+#   mass or contact. Re-run the eight-fall set before trusting it.
+
+bike:
+  wheel_radius: 51.2
+  bike_width: 75.0
+  bike_height: 216.2
+  ground_clearance: 71.58371696232793
+mechanism:
+  servo_offset: 83.45699404547359
+  wing_pivot_offset: 17.288687923812894
+  wing_attach_offset:
+  - 11.917965561246824
+  - 42.66176420480147
+  wing_first_link_length:
+    right: 30.57500056694086
+    left: 31.01103711189319
+  first_link_angle_deg: 61.73881124620429
+  angle_between_first_links: 64.90107777671227
+  wing_second_link_length:
+    right: null
+    left: null
+stroke:
+  servo_travel_deg: 176.0
+  steps: 6
+  goal_current_nm: 0.44
