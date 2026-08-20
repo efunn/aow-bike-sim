@@ -401,15 +401,48 @@ servos:
     # 11.25 alongside the 28.5 and 46.5 case dimensions; XL430 and XC430 share
     # a case). That puts the axis 46.5/2 - 11.25 = 12.0 mm off the box centre.
     #
-    # `shaft_from_horn_face` is DEFERRED, not measured: 0 means "treat the axis
-    # as centred on depth". Revisit if a clearance ever turns out tight along D.
+    # `shaft_from_horn_face` is the DATUM: negative means the mounting face
+    # stands PROUD of the case's horn-side face by that much. It is -horn_thickness
+    # here because the datum is the OUTER FACE OF THE HORN — the surface a pulley
+    # or bracket actually bolts to — not the case face it sits on. Drop a ROBOTIS
+    # STEP with its horn face on this plane and it lands right.
     #
     # CABLES exit the BACK face (opposite the horn), near the middle but
     # slightly off the horn axis to clear the optional idler. No idlers are
     # planned here, but the cable exit still needs routing room behind each
     # servo — that is the face to keep clear, not an end.
-    shaft_from_horn_face: {value: 0.0, source: GUESS}
+    shaft_from_horn_face: {value: -0.002, source: measured (drawing)}
     shaft_from_end: {value: 0.01125, source: datasheet}
+    # --- OUTPUT HORN, as a rough envelope. Measured off the three-view in
+    # docs/robotis/XC-430.pdf (whose title block actually reads XL-430 — same
+    # case, as the shaft_from_end note above already assumes).
+    #
+    # The drawing's 34 mm datum is the CASE FACE, so `box_size` D is the case
+    # ALONE and the horn stands proud of it: overall depth over the horn is 36,
+    # not the 34 ROBOTIS quotes. (The XC330 below is the opposite — its quoted
+    # 26 includes its horn — which is why neither number can be taken on trust.)
+    #
+    # Two dimensions, one derived. The drawing gives 2.0 for the Phi 20.5 plate
+    # and 3.9 for the Phi 7.9 boss, both from the case face; 1.9 is the
+    # subtraction, not a pixel measurement. The datasheet's 1 mm for the boss
+    # disagrees with its own drawing and is not used.
+    #
+    # The real horn is splined and scalloped; nothing here needs that, and the
+    # ROBOTIS STEP goes into the CAD for the actual shape.
+    horn_thickness: {value: 0.002, source: measured (drawing)}
+    horn_diameter: {value: 0.0205, source: measured (drawing)}
+    # The boss stands proud of the HORN face, i.e. of the mounting datum — so
+    # anything bolted flat to that face has to counterbore for it or sit on it.
+    boss_projection: {value: 0.0019, source: derived (3.9 - 2.0 on the drawing)}
+    boss_diameter: {value: 0.0079, source: measured (drawing)}
+    # --- CASE HOLE PATTERN, W x H, centred on the FACE and not on the shaft
+    # axis: the axis is `shaft_from_end` off that centre, so in servo-local
+    # terms the four holes land at +8 and -32 along H. Present on both of the
+    # 28.5 x 46.5 faces. The 8 | 8 chain beside it on the drawing is the horn's
+    # P.C.D 16 written as two radii — the same circle twice, not a third
+    # pattern. NOT the mounting holes the packing actually leaves free: those
+    # are the Phi 2.1 sets on the sides (12 x 24) and the far end (12 x 16).
+    case_hole_pattern: [0.022, 0.040]
     # Which way the servo is installed: +1 puts the shaft toward +H, -1 toward
     # -H. A MOUNTING choice, not a property of the part.
     #
@@ -431,13 +464,33 @@ servos:
     stall_current: {value: 0.88, source: datasheet}
     no_load_rpm: {value: 113.0, source: datasheet}
     mass: {value: 0.023, source: datasheet}
-    box_size: [0.026, 0.020, 0.034]
+    # D is the CASE ALONE, 23 mm, NOT the 26 ROBOTIS quotes — the quoted figure
+    # is 23 + the 3 mm horn, dimensioned as two separate numbers on the drawing,
+    # and the horn is carried as its own primitive below. Over the horn the
+    # envelope is still 26; it is only the split that is now explicit.
+    box_size: [0.023, 0.020, 0.034]
     # --- OUTPUT SHAFT, servo-local. See the XC430 block above for the
     # convention. Datasheet W x H x D = 20.0 x 34.0 x 26.0 mm; horn on the
-    # medium face (20.0 x 34.0), axis along DEPTH (26 mm). `shaft_from_end` is
-    # off XL,XC-330.pdf; the axis lands 34/2 - 9.5 = 7.5 mm off the box centre.
-    shaft_from_horn_face: {value: 0.0, source: GUESS}
+    # medium face (20.0 x 34.0), axis along DEPTH. `shaft_from_end` is off
+    # XC-330.pdf; the axis lands 34/2 - 9.5 = 7.5 mm off the box centre.
+    shaft_from_horn_face: {value: -0.003, source: measured (drawing)}
     shaft_from_end: {value: 0.0095, source: datasheet}
+    # --- OUTPUT HORN. See the XC430 block for the convention. Thicker and
+    # smaller than the XC430's, which is not a typo.
+    #
+    # docs/robotis/XC-330.pdf is explicit: the side view dimensions the case at
+    # 23 and the Phi 16 horn at 3 beside it, and 23 + 3 = 26 is the depth ROBOTIS
+    # quotes. The [X330 IDLER] view confirms it from the other end — 3 + 23 + 3
+    # = 29 with a horn at both ends. So `box_size` D carries the 23 and this
+    # carries the 3, rather than the quoted 26 standing for both.
+    #
+    # No boss: unlike the XC430 the drawing dimensions no second step, only the
+    # Phi 16 x 3 horn.
+    horn_thickness: {value: 0.003, source: measured (drawing)}
+    horn_diameter: {value: 0.016, source: measured (drawing)}
+    # See the XC430 block. Same idea, smaller case: the front view dimensions
+    # 20 / 16 across and 34 / 30 down, so the pattern is 16 x 30 on the face.
+    case_hole_pattern: [0.016, 0.030]
     shaft_dir: {value: 1.0, source: design}
     # DERIVED, not chosen, and NOT read by cad_layout — which recomputes it
     # every run from `bike.steering.servo_clearance`, the rake and the
@@ -447,7 +500,7 @@ servos:
     #
     # So: do not tune this. Change `servo_clearance` and re-run
     # `python -m aow_sim.cad_layout`, which prints the value to paste back.
-    pos: [0.166097, 0.0, 0.096349]
+    pos: [0.165709, 0.0, 0.097798]
 
 actuators:
   drive_kv: 0.5        # velocity-servo gain at the input shafts (placeholder for Dynamixel velocity PI)
