@@ -150,6 +150,19 @@ def to_cad_extent(e):
     return [_mm(e[1]), _mm(e[0]), _mm(e[2])]
 
 
+def _np_cross(a, b):
+    """3-vector cross product, without dragging numpy into module scope."""
+    return [a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0]]
+
+
+def _deg(r):
+    """Radians -> degrees, rounded the way _mm rounds mm."""
+    from math import degrees
+    return round(degrees(r), 6)
+
+
 def _g(x):
     return round(float(x) * 1000.0, 1)
 
@@ -172,7 +185,7 @@ def _steer_axis_offset(b: dict, d3: dict) -> float:
     return sqrt(sum(c * c for c in perp))
 
 
-def _add_linkage(add, params: dict, raw: dict, d3: dict,
+def _add_linkage(add, add_horn, add_case_holes, params: dict, raw: dict, d3: dict,
                  bumpers: bool = False,
                  linkage_cfg: str = LINKAGE_CFG) -> None:
     """The four-bar wing linkage — `build_model(linkage=True)`.
@@ -205,7 +218,7 @@ def _add_linkage(add, params: dict, raw: dict, d3: dict,
     half_span = bk["bike_width"] / 2000.0
     lo, hi = z_of(bk["ground_clearance"]), z_of(bk["bike_height"] - half_span * 1000)
 
-    add("linkage_crank_servo", "righting", [px, 0.0, servo_z],
+    _ck = add("linkage_crank_servo", "righting", [px, 0.0, servo_z],
         box=d3["box_size"], mount=("linkage_crank_servo", d3, "shaft"),
         mass=w_ref["servo_mass"],
         source={"pos": "design (linkage cfg)", "size": "datasheet",
@@ -219,6 +232,15 @@ def _add_linkage(add, params: dict, raw: dict, d3: dict,
              f"crank angles. Run in current-based position mode at "
              f"{st['goal_current_nm']} N.m; that is a WINDOW (0.38-0.50 works "
              f"8/8 falls), not a minimum.")
+
+    add_case_holes("linkage_crank_servo", "righting", d3, _ck[1], _ck[2])
+
+    add_horn("linkage_crank_horn", "righting", "linkage_crank_servo", d3,
+             [px, 0.0, servo_z],
+             note="BOTH crank arms are keyed to this one horn, at "
+                  "deliberately unequal angles — so it is the part that will "
+                  "actually be replaced by something custom, and the disc is "
+                  "only standing in for its hub.")
 
     add("linkage_crank_shaft", "righting", [px, 0.0, servo_z],
         source={"pos": "design (linkage cfg)"},
@@ -362,11 +384,13 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
 
     def add(name, group, pos, *, box=None, cyl=None, cap=None, zaxis=None,
             seg=None, frame=None, arc=None, mount=None, mass=None,
-            source=None, note=None):
+            holes=None, normal=None, source=None, note=None):
+        solved = None
         if mount:
             _nm, _spec, *_a = mount
             _sp, pos, frame = mount_of(_nm, _spec, pos,
                                        _a[0] if _a else "centre")
+            solved = (_sp, pos, frame)
         d = {"name": name, "group": group, "pos": pos, "mass": mass,
              "source": source or {}}
         if zaxis:
@@ -383,17 +407,31 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
             d["cyl"] = cyl
         if cap:
             d["cap"] = cap
+        if holes:
+            d["holes"] = holes
+        if normal is not None:
+            d["normal"] = normal
         if note:
             d["note"] = note
         items.append(d)
+        # Callers that let `add` do the mount solve get the result back rather
+        # than having to redo it; `_add_linkage` needs the case frame for the
+        # hole pattern and has no access to `mount_of`.
+        return solved
 
     def mount_of(name, spec, pos, anchor="centre"):
         """(shaft_point, box_centre, local axes) for one installed servo.
 
         Local frame: +D is the shaft axis (horn faces +D), +H is `body_up`,
-        +W completes it. The shaft sits on the horn FACE, i.e. D/2 out from
-        the centre less `shaft_from_horn_face`, and (H/2 - shaft_from_end)
-        toward +H. Both offsets come off the ROBOTIS drawings.
+        +W completes it.
+
+        The shaft point is the MOUNTING DATUM: the outer face of the horn, the
+        surface a pulley or a bracket actually bolts to. `box_size` D is the
+        CASE alone, so that datum sits D/2 out from the case centre less
+        `shaft_from_horn_face` — which is NEGATIVE, equal to -horn_thickness,
+        because the datum stands proud of the case rather than inside it. The
+        axis is also (H/2 - shaft_from_end) toward +H. Every one of those
+        numbers comes off the ROBOTIS drawings.
         """
         import numpy as _n
         mt = params.get("cad_mounts", {}).get(name, {})
@@ -422,6 +460,99 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
             sp = centre + off
         return [float(v) for v in sp], [float(v) for v in centre], (w_hat, d_hat, h_hat)
 
+    def add_horn(name, group, mount_name, spec, shaft_pt, note=""):
+        """The output horn as a disc on the horn face, facing away from the case.
+
+        A ROUGH ENVELOPE and nothing more — the real part is splined and
+        scalloped, and the ROBOTIS STEP carries that into the CAD. What it is
+        here for is the two millimetres of depth it adds beyond the case, which
+        is the part that decides whether something fits.
+
+        The axis is read from `cad_mounts` exactly as `mount_of` reads it, so
+        the disc cannot drift out of agreement with the case it sits on —
+        including for the steer servo, whose `shaft_axis` this file overwrites
+        at runtime with the raked steering axis.
+        """
+        import numpy as _n
+        t, dia = spec.get("horn_thickness"), spec.get("horn_diameter")
+        if not t or not dia:
+            return              # a servo whose horn has not been measured
+        mt = params.get("cad_mounts", {}).get(mount_name, {})
+        d_hat = _n.asarray(mt.get("shaft_axis", [0, 1, 0]), float)
+        d_hat = d_hat / _n.linalg.norm(d_hat) * mt.get("horn_dir", 1.0)
+        # The disc fills the gap between the case face and the datum, so it
+        # runs INWARD from the shaft point in every case — the datum being the
+        # horn's outer face is what makes that one rule instead of a per-model
+        # flag. ROBOTIS is not consistent about whether the depth it quotes
+        # includes the horn (the XC330's 26 does, the XC430's 34 does not), but
+        # `box_size` now carries the case alone for both, so the ambiguity is
+        # spent at the config and not here.
+        sp = _n.asarray(shaft_pt, float)
+        add(name, group, [float(v) for v in sp - d_hat * t / 2],
+            cyl=(dia / 2, t, tuple(float(v) for v in d_hat)),
+            source={"pos": "derived — under the mounting datum",
+                    "size": "measured (ROBOTIS drawing)"},
+            note=f"Output horn, {_mm(dia)} mm across and {_mm(t)} mm thick, "
+                 f"drawn as a plain disc and nothing more. It fills the "
+                 f"{_mm(t)} mm between the case face and the MOUNTING DATUM, "
+                 f"which is the point of the same name — so the real horn face "
+                 f"lands on that plane and a ROBOTIS STEP dropped onto it is "
+                 f"in the right place. NO MASS: the datasheet servo figure is "
+                 f"taken to be the assembled unit including the horn. " + note)
+
+        # The centre boss, where the drawing dimensions one. It is the only
+        # thing on this servo that sticks out PAST the mounting datum, which
+        # makes it the thing a flat-faced part has to counterbore for.
+        bp, bd = spec.get("boss_projection"), spec.get("boss_diameter")
+        if bp and bd:
+            add(name + "_boss", group, [float(v) for v in sp + d_hat * bp / 2],
+                cyl=(bd / 2, bp, tuple(float(v) for v in d_hat)),
+                source={"pos": "derived — proud of the mounting datum",
+                        "size": "measured (ROBOTIS drawing)"},
+                note=f"Centre boss, {_mm(bd)} mm across, standing {_mm(bp)} mm "
+                     f"PAST the horn face. Anything bolted flat to that face "
+                     f"has to clear it — counterbore, or sit on the boss "
+                     f"instead. Drawn because it is the one feature of the "
+                     f"servo that the mounting datum does not bound.")
+
+
+    def add_case_holes(name, group, spec, centre, axes):
+        """The four case holes on each of the two horn-axis faces.
+
+        A REFERENCE, not an envelope: nothing is drawn solid and nothing here
+        claims what the holes are for. The pattern is centred on the FACE, not
+        on the shaft axis — the axis is `shaft_from_end` off that centre — so
+        emitting it from the case frame is the only way to get it right without
+        a sign error per servo.
+
+        Both faces, because which one is reachable is exactly the question the
+        mount has to answer, and it differs per servo: the drive servos' horn
+        faces are under a pulley and their back faces are under the OTHER
+        servo's pulley, while the steer servo's horn face is clear.
+        """
+        import numpy as _n
+        pat = spec.get("case_hole_pattern")
+        if not pat:
+            return              # a servo whose face pattern is not measured
+        w_hat, d_hat, h_hat = (_n.asarray(a, float) for a in axes)
+        a, b = pat[0] / 2, pat[1] / 2
+        depth = spec["box_size"][0]
+        for tag, sgn in (("horn", 1.0), ("back", -1.0)):
+            fc = _n.asarray(centre, float) + d_hat * sgn * depth / 2
+            pts = [fc + w_hat * sw * a + h_hat * sh * b
+                   for sw in (1.0, -1.0) for sh in (1.0, -1.0)]
+            add(f"{name}_case_holes_{tag}", group,
+                [float(v) for v in fc],
+                holes=[[float(v) for v in q] for q in pts],
+                source={"pos": "derived — case frame",
+                        "size": "measured (ROBOTIS drawing)"},
+                note=f"Case hole pattern, {_mm(pat[0])} x {_mm(pat[1])} mm "
+                     f"centred on the {tag}-side face — four reference points, "
+                     f"nothing solid. The shaft axis is NOT the centre of it: "
+                     f"the axis sits {_mm(spec['box_size'][2] / 2 - spec['shaft_from_end'])} "
+                     f"mm off along body_up, so the holes land asymmetrically "
+                     f"about it.")
+
 
     # ---- frame -------------------------------------------------------
     ch = b["chassis"]
@@ -449,7 +580,28 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
     import numpy as _np
     be = dt["belt"]
     pw = be["width"] + 2 * be["flange_thickness"]          # pulley axial width
-    plane = ow["width"] / 2 + dt["wheel_clearance"] + pw / 2
+
+    # THE BELT PLANE IS DERIVED, from whichever of two clearances binds.
+    #
+    #   wheel  the pulley flange has to miss the rear wheel;
+    #   servo  the two cases sit SYMMETRIC about the centreline — which is what
+    #          lets one flat plate touch both, since they face opposite ways —
+    #          and the plate outboard of them has to miss the pulley.
+    #
+    # The second one is the new constraint and it is currently the binding one.
+    # Writing it as a max rather than a number means that if the wheel ever
+    # gets wider, or the plate thinner, the plane follows instead of going
+    # quietly wrong.
+    d4 = sv["xc430_w150"]
+    plate = dt.get("drive_mount_plate", 0.0)
+    # A standoff the plate forces, and a standoff the pulley's own hub already
+    # provides, are the same room — so take the larger, do not add them.
+    gap = dt.get("drive_mount_gap", 0.0)
+    hub = max(dt.get("pulley_hub_offset", 0.0),
+              plate + gap - d4["horn_thickness"], 0.0)
+    plane_wheel = ow["width"] / 2 + dt["wheel_clearance"] + pw / 2
+    plane_servo = d4["box_size"][0] / 2 + d4["horn_thickness"] + hub + pw / 2
+    plane = max(plane_wheel, plane_servo)
     d_in = be["teeth_input"] * be["pitch"] / _np.pi
     d_sv = be["teeth_servo"] * be["pitch"] / _np.pi
     # L = 2C + (pi/2)(D1+D2) + (D1-D2)^2/4C, solved for C.
@@ -457,7 +609,10 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
     C = float((-_b + _np.sqrt(_b * _b - 4 * _a * _c)) / (2 * _a))
     C_m = C
     am = dt["axle_mount"]
-    am_y = ow["width"] / 2 + dt["wheel_clearance"] + pw + am["width"] / 2
+    # OFF THE PLANE, not off the wheel chain. It used to re-derive the pulley's
+    # outer face from wheel_clearance, which was the same number while the
+    # plane was wheel-driven and silently wrong the moment it stopped being.
+    am_y = plane + pw / 2 + am["width"] / 2
 
     for tag, sgn in (("left", +1), ("right", -1)):
         add(f"pulley_input_{tag}", "drivetrain", [0.0, sgn * plane, 0.0],
@@ -557,7 +712,12 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
         # the pulley bolts ONTO the horn and its body occupies the plane. Using
         # `plane` here put the actuation point inside the pulley and pushed each
         # servo 5.5 mm too far outboard.
-        horn_y = plane - pw / 2 + dt.get("pulley_hub_offset", 0.0) * 1000
+        #
+        # MINUS the standoff, not plus, and in metres, not millimetres. A
+        # standoff holds the horn face further INBOARD of the pulley's inner
+        # face; the old expression moved it outboard, INTO the pulley, and
+        # scaled it by 1000 into the bargain. Both were invisible at zero.
+        horn_y = plane - pw / 2 - hub
         shaft = [C * _np.cos(_t), sgn * horn_y, C * _np.sin(_t)]
         sp, centre, axes = mount_of(nm, d4, shaft, "shaft")
         add(nm, "servos", centre, box=d4["box_size"], frame=axes,
@@ -571,13 +731,115 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
                  "`cad_mounts`; the two bodies overlap near the centreline, so "
                  "give them different angles rather than trying to fit them "
                  "side by side.")
+        add_case_holes(nm, "servos", d4, centre, axes)
+        add_horn(f"{nm}_horn", "servos", nm, d4, sp,
+                 note="The driving pulley bolts ONTO it and is far larger "
+                      "(71.6 mm pitch dia against 20.5 mm), so this disc sits "
+                      "wholly inside the pulley envelope and adds nothing to "
+                      "the drivetrain keep-out. It matters for the MOUNT, "
+                      "which has to clear it.")
         add(f"{nm}_shaft", "servos", sp,
             source={"pos": "datasheet offsets + cad_mounts"},
-            note=f"Output shaft, ON THE HORN FACE: "
-                 f"{_mm(d4['box_size'][0] / 2)} mm out along the axis and "
+            note=f"Output shaft, ON THE HORN FACE — the MOUNTING DATUM, so "
+                 f"mate the ROBOTIS model's horn face to this point: "
+                 f"{_mm(d4['box_size'][0] / 2 - d4['shaft_from_horn_face'])} "
+                 f"mm out along the axis and "
                  f"{_mm(d4['box_size'][2] / 2 - d4['shaft_from_end'])} mm off "
                  f"the case centre along body_up. Mate the ROBOTIS model here. "
                  f"Cables exit the OPPOSITE face — keep routing room there.")
+    if plate > 0:
+        # The plate itself, so the thing that now sets the bike's rear width is
+        # visible rather than implied. Its OUTLINE is a placeholder — a
+        # rectangle over both cases — but its two faces are not: the inboard
+        # one lies on the case faces and the outboard one is what the pulley
+        # had to stand off from.
+        _half = d4["box_size"][0] / 2
+        _wall = dt.get("drive_mount_wall", 0.003)
+        # Sized to the collar's OUTER footprint, not to the cases — otherwise
+        # the plate stops short of the walls that rise off it and the two are
+        # not one body.
+        _t0 = C_m * _np.sin(dth) + d4["box_size"][1] / 2 + _wall
+        _mid = (_np.cos(th0), _np.sin(th0))
+        _rc = C_m - (d4["box_size"][2] / 2 - d4["shaft_from_end"])
+        add("drive_mount_plate", "mount",
+            [_rc * _np.cos(th0), -(_half + plate / 2), _rc * _np.sin(th0)],
+            box=(2 * _t0, plate, d4["box_size"][2] + 2 * _wall),
+            zaxis=[_mid[0], 0.0, _mid[1]],
+            source={"pos": "derived — on the case faces",
+                    "size": "design (outline is a placeholder)"},
+            note=f"ONE plate, ONE side, {_mm(plate)} mm thick. It lies on the "
+                 f"right servo's horn-side face and the left servo's back "
+                 f"face — the two servos face opposite ways, so one plane "
+                 f"touches both — and takes 8 M2.5 machine screws on the "
+                 f"22 x 40 patterns. Which side is a free choice; mirror it by "
+                 f"negating the offset here. The cases are symmetric about the "
+                 f"centreline at +/-{_mm(_half)} mm precisely so this can be "
+                 f"flat rather than stepped, and that symmetry is what forced "
+                 f"the belt plane out to {_mm(plane)} mm.")
+
+        # The horn hole. Drawn as a solid marking a VOID, which is the only
+        # way this schema has of saying "hole" — the plate is a box primitive
+        # and the layout has no boolean. The horn it clears stands 2 mm proud
+        # of the case face and rotates, so the relief is not optional.
+        _rel = dt.get("drive_mount_relief", 0.0)
+        if _rel > 0:
+            _hd = d4["horn_diameter"] + 2 * _rel
+            # On the RIGHT servo's shaft axis — the one whose horn faces
+            # CAD +X, i.e. the side the plate is on. Radius C, not the case
+            # centre: the hole is concentric with the shaft, not with the plate.
+            _th_r = servo_angle["right"]
+            add("drive_mount_relief", "mount",
+                [C_m * _np.cos(_th_r), -(_half + plate / 2),
+                 C_m * _np.sin(_th_r)],
+                cyl=(_hd / 2, plate, AXIS_LATERAL),
+                source={"pos": "derived — on the horn axis", "size": "design"},
+                note=f"A VOID, not a part: the {_mm(_hd)} mm hole the plate "
+                     f"needs where the horn passes through it. "
+                     f"{_mm(d4['horn_diameter'])} mm horn plus "
+                     f"{_mm(_rel)} mm of radial clearance. Only the servo whose "
+                     f"HORN faces the plate needs it — the other presents its "
+                     f"flat back face — so this is one hole, not two.")
+
+        # THE SLEEVE: a collar rising off the plate and running back along the
+        # four sides of the pair. Four walls, not one solid, because that is
+        # what it is — the servos are captured by shape and the plate's eight
+        # screws only have to stop them drifting along their own shafts.
+        #
+        # It stops at the case faces, x = +/-D/2, well inside the pulley faces,
+        # so nothing about it is close to the belts.
+        wall = dt.get("drive_mount_wall", 0.003)
+        if wall > 0:
+            t_half = C_m * _np.sin(dth) + d4["box_size"][1] / 2   # both cases
+            r_half = d4["box_size"][2] / 2
+            for nm_, off_t, off_r, ext_t, ext_r in (
+                    ("side_a", t_half + wall / 2, 0.0, wall, 2 * (r_half + wall)),
+                    ("side_b", -(t_half + wall / 2), 0.0, wall, 2 * (r_half + wall)),
+                    ("radial_in", 0.0, -(r_half + wall / 2),
+                     2 * (t_half + wall), wall),
+                    ("radial_out", 0.0, r_half + wall / 2,
+                     2 * (t_half + wall), wall)):
+                # (u, v) offsets about the case centre, back into model x/z.
+                cu, su = _np.cos(th0), _np.sin(th0)
+                # Case centre is the shaft pulled back along body_up by
+                # H/2 - shaft_from_end, the same offset `mount_of` applies.
+                r_c = C_m - (r_half - d4["shaft_from_end"])
+                cx = r_c * cu + off_r * cu - off_t * su
+                cz = r_c * su + off_r * su + off_t * cu
+                # Extents are model-frame (x, y, z) BEFORE the zaxis rotation,
+                # which is about model Y and so leaves the lateral one alone:
+                # tangential, lateral, radial.
+                add(f"drive_mount_{nm_}", "mount", [cx, 0.0, cz],
+                    box=(ext_t, d4["box_size"][0], ext_r),
+                    zaxis=[cu, 0.0, su],
+                    source={"pos": "derived — around the case pair",
+                            "size": "design"},
+                    note=f"Sleeve wall, {_mm(wall)} mm. One of four round the "
+                         f"pair — the servos share a face, so the two of them "
+                         f"present one rectangle and it takes four sides, not "
+                         f"eight. Torque goes in here as bearing on the case "
+                         f"walls, which is why the plate's screws only have to "
+                         f"retain.")
+
     d3 = sv["xc330_t181"]
     params.setdefault("cad_mounts", {}).setdefault("servo_steer", {})[
         "shaft_axis"] = [-fork_axis[0], -fork_axis[1], -fork_axis[2]]
@@ -599,6 +861,10 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
              f"export. Loses its multi-turn count across a power cycle, so it "
              f"needs homing or an index feature.")
 
+    add_case_holes("servo_steer", "servos", d3, c_st, ax_st)
+    add_horn("servo_steer_horn", "servos", "servo_steer", d3, sp_st,
+             note="Faces DOWN the steering axis toward the front axle, so its "
+                  "thickness comes straight off the fork clearance.")
     add("servo_steer_shaft", "servos", sp_st,
         source={"pos": "derived — front axle, on the steering axis"},
         note=f"Output shaft on the horn face, pointing DOWN the steering axis "
@@ -624,6 +890,77 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
              "matters (quaternion and gyro are position-invariant on a rigid "
              "body) but mount RIGIDITY does — compliance becomes a resonance "
              "the gyro reports as real body rotation.")
+    # ---- print planes ------------------------------------------------
+    #
+    # THE THREE PLANES CAD STARTS FROM. Not envelopes and not derived from any
+    # part — they are the orientations the printed parts will be laid down in,
+    # and they are here because getting them from the geometry beats eyeballing
+    # them off a model.
+    #
+    # `normal` is a model-frame unit vector; the FeatureScript draws each as a
+    # construction plane through `pos`. Only the ORIENTATION is meant to be
+    # authoritative — offset the plane in Onshape to wherever the part sits.
+    # The plane CONTAINS the steering axis and the axle direction, so its
+    # normal is the cross product of the two: mostly forward, tilted up by the
+    # rake. Not the plane PERPENDICULAR to the steering axis, which is a
+    # different thing and was wrong here twice.
+    _fn = _np_cross(fork_axis, AXIS_LATERAL)
+    add("plane_fork_print", "planes", [b["wheelbase"], 0.0, front_z],
+        normal=[-v for v in _fn],
+        source={"pos": "derived — front axle", "size": "design"},
+        note=f"THE FORK'S OWN PLANE, and the one to both sketch and print it "
+             f"in. Looking down its normal you see the fork from the FRONT: "
+             f"two legs coming down left and right and meeting at the top. It "
+             f"holds the axle direction and the steering axis at once, so it "
+             f"is the front view tilted back by the {_deg(rake)} deg of rake — "
+             f"which is why no world plane will do. Sketch the profile here "
+             f"and extrude fore-aft; print it lying in this plane and both "
+             f"legs sit flat on the bed with the layers running along them.")
+
+    def _belt_tangent(c2, r1, r2, side):
+        """External tangent of two circles, in the model (x, z) plane.
+
+        `side` +1 takes the tangent anticlockwise of the centre line, -1 the
+        clockwise one — the upper and lower runs of the belt as seen from the
+        bike's left.
+        """
+        d = _np.hypot(c2[0], c2[1])
+        a = _np.arctan2(c2[1], c2[0])
+        bb = _np.arcsin((r2 - r1) / d)
+        th = a + side * (_np.pi / 2 + bb)
+        u_ = _np.array([_np.cos(th), _np.sin(th)])
+        p1 = r1 * u_
+        p2 = _np.asarray(c2, float) + r2 * u_
+        return p1, p2
+
+    r_in_env = d_in / 2 + be["flange_margin"] / 2
+    r_sv_env = d_sv / 2 + be["flange_margin"] / 2
+    # The LOWER servo's lower run and the UPPER servo's upper run: between them
+    # they are the extreme angles anything at the rear has to live inside.
+    for tag, sgn, side, word in (("left", 1, -1, "lower"),
+                                 ("right", -1, 1, "upper")):
+        _t = servo_angle[tag]
+        c2 = (C * _np.cos(_t), C * _np.sin(_t))
+        p1, p2 = _belt_tangent(c2, r_in_env, r_sv_env, side)
+        run = p2 - p1
+        run = run / _np.linalg.norm(run)
+        # Normal to the belt run, in the same plane. The plane therefore holds
+        # the run AND the axle direction, which is the sheet a dropout is.
+        nrm = [-run[1], 0.0, run[0]]
+        mid = (p1 + p2) / 2
+        add(f"plane_dropout_{word}", "planes",
+            [float(mid[0]), sgn * plane, float(mid[1])], normal=nrm,
+            source={"pos": "derived — belt tangent midpoint",
+                    "size": "design"},
+            note=f"Parallel to the {word.upper()} belt run — the {tag} servo's "
+                 f"{word} tangent, which is one of the two extreme angles the "
+                 f"belts reach. A rear dropout printed in this plane runs from "
+                 f"the axle forward to the servo mount without ever crossing "
+                 f"its own belt, and lies flat while doing it. Placed in the "
+                 f"belt plane at {_mm(plane)} mm; slide it inboard to wherever "
+                 f"the dropout actually sits — the ORIENTATION is the part "
+                 f"that is derived, not the offset.")
+
     payload_notes = {
         "battery": "3S 1300-1500 mAh LiPo, slung under the frame between the "
                    "wheels. Must stay on the centerline: lateral offset is a "
@@ -664,7 +1001,8 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
 
     # ---- self-righting ------------------------------------------------
     if mechanism == "linkage":
-        _add_linkage(add, params, raw, d3, bumpers, linkage_cfg)
+        _add_linkage(add, add_horn, add_case_holes, params, raw, d3,
+                     bumpers, linkage_cfg)
     elif mechanism == "wings" and "roof" in rg:
         rf, w, bp = rg["roof"], rg["wings"], rg["bumper"]
         add("roof", "righting", [(rf["x_start"] + rf["x_end"]) / 2, 0.0, rf["height"]],
@@ -751,9 +1089,18 @@ def render(items: list[dict], params: dict, linkage_used: str = "") -> str:
         "electronics": "AHRS and the untethered payload.",
         "righting": "Self-righting candidates — NOTHING HERE IS BUILT YET.",
     }
-    for grp in ("frame", "drivetrain", "steering", "servos", "electronics", "righting"):
+    headings["mount"] = "Drive-servo mount — plate and sleeve. PROPOSAL."
+    headings["planes"] = ("Sketch planes CAD starts from. Orientations, not "
+                          "parts.")
+    # Ordered where an order is known, then WHATEVER ELSE EXISTS. The fixed
+    # tuple used to be the whole list, so a new group rendered nowhere and the
+    # only symptom was a component count that did not match the file.
+    known = ("frame", "drivetrain", "steering", "servos", "mount", "planes",
+             "electronics", "righting")
+    for grp in known + tuple(g for g in groups if g not in known):
         if grp not in groups:
             continue
+        headings.setdefault(grp, grp)
         L += [f"# --- {headings[grp]}", f"{grp}:"]
         for it in groups[grp]:
             L.append(f"  {it['name']}:")
@@ -792,6 +1139,16 @@ def render(items: list[dict], params: dict, linkage_used: str = "") -> str:
                 L.append(f"    radius_mm: {_mm(r)}")
                 L.append(f"    length_mm: {_mm(ln)}")
                 L.append(f"    axis: {to_cad_dir(ax)}   # unit vector, CAD frame")
+            elif "normal" in it:
+                n = to_cad_dir(it["normal"])
+                L.append("    shape: plane")
+                L.append(f"    normal: {n}   # unit vector, CAD frame")
+            elif "holes" in it:
+                L.append("    shape: holes")
+                L.append("    holes_mm:")
+                for q in it["holes"]:
+                    c = to_cad_pos(q)
+                    L.append(f"      - [{c[0]}, {c[1]}, {c[2]}]")
             else:
                 L.append("    shape: point")
             if it.get("mass") is not None:
@@ -809,17 +1166,23 @@ def render(items: list[dict], params: dict, linkage_used: str = "") -> str:
 # FeatureScript output
 # ---------------------------------------------------------------------------
 #
-# UNTESTED AGAINST ONSHAPE. The DATA below is generated from the same source as
-# the YAML and is the valuable half; the ~40 lines of drawing code that consume
-# it are a first draft written from the FeatureScript docs, not from a running
-# document. If the API calls need fixing, fix them and regenerate — the data
-# block is machine-written and will not be disturbed.
+# PARTLY TESTED AGAINST ONSHAPE. The DATA below is generated from the same
+# source as the YAML and is the valuable half; the drawing code that consumes
+# it was written from the FeatureScript docs. Everything except the query
+# variables has been through a real document. If a call needs fixing, fix it
+# and regenerate — the data block is machine-written and will not be disturbed.
 #
-# Two things it does once inserted into a Part Studio:
-#   1. `setVariable` for every coordinate, so sketches can reference
-#      `#aow_servo_drive_left_y` and stay linked to the sim's numbers;
-#   2. optionally draws each envelope as a solid, so the packaging problem is
-#      visible in space instead of in a table.
+# What the studio gives a Part Studio, in the order to insert them:
+#   1. `AOW layout variables` — `setVariable` for every coordinate, so sketches
+#      reference `#aow_servo_drive_left_y` and stay linked to the sim's numbers;
+#   2. one feature PER GROUP — envelopes, origin points and axis planes for
+#      that group alone, so the node can be renamed and suppressed on its own.
+#      `AOW mount` is the drive-servo plate and sleeve; `AOW planes` is the
+#      three print planes and carries no tickboxes, everything in it being a
+#      plane already;
+#   3. `AOW four-bar sketch` — the righting linkage as construction geometry;
+#   4. `AOW bike layout` — the superseded all-in-one node, kept only so
+#      documents that already have it inserted do not lose their geometry.
 
 FS_HEADER = """FeatureScript {ver};
 import(path : "onshape/std/geometry.fs", version : "{ver}.0");
@@ -838,9 +1201,343 @@ import(path : "onshape/std/variable.fs", version : "{ver}.0");
 // !! The version number on the two lines above must match your document. The
 // !! easiest fix is to create the Feature Studio first, then replace only the
 // !! body below its auto-inserted header.
+//
+// This studio defines SEVERAL features; they all show up under Custom features
+// once it is committed. Insert `AOW layout variables` once and first, then one
+// `AOW <group>` per group you are working on, and RENAME each node — that name
+// is the only handle Onshape will give you on the planes it draws.
 """
 
-FS_FEATURE = """
+# --- the emitted FeatureScript ---------------------------------------------
+#
+# ONE Feature Studio, SEVERAL features. The original `aowBikeLayout` drew
+# everything under a single node with five checkboxes, which is the only shape
+# a Part Studio tree can take from one feature. Splitting it buys three things
+# a checkbox cannot: a tree node per group that can be RENAMED (Onshape derives
+# the name of a plane from the feature that made it, and refuses `setProperty`
+# on one), independent suppression while packing one group, and a smaller blast
+# radius when a runtime error aborts a feature.
+#
+# `aowBikeLayout` stays, delegating to the same helpers at the same sub-ids, so
+# a Part Studio that already has it inserted keeps its geometry and every
+# downstream reference to it. Deleting it would have orphaned them.
+#
+# Lines marked @QV@ publish QUERY VARIABLES — a named selection (`#aow_q_fork`)
+# that downstream features can consume in a selection field, which is the one
+# mechanism that survives geometry it points at being regenerated. They are
+# emitted unless --no-query-vars. `setQueryVariable` arrived in release 1.203;
+# an older document will fail to COMPILE THE WHOLE STUDIO on it, since an
+# unknown function is a compile error and not a runtime one -- regenerate with
+# --no-query-vars if that happens.
+
+FS_HELPERS = '''
+export const AOW_PLANE_BOUNDS =
+{
+    (meter)      : [1e-5, 0.06, 500],
+    (centimeter) : 6.0,
+    (millimeter) : 60.0,
+    (inch)       : 2.5,
+    (foot)       : 0.2,
+    (yard)       : 0.07
+} as LengthBoundSpec;
+
+// ---------------------------------------------------------------------------
+// Shared drawing helpers
+// ---------------------------------------------------------------------------
+// Every feature below is a thin wrapper around these. Sharing them is not just
+// about duplication: each component is drawn at the SAME sub-id whichever
+// feature draws it, and an Onshape entity id is a deterministic function of
+// the id of the operation that made it. Keying sub-ids by component NAME
+// rather than by a loop counter is what makes a regeneration safe — adding or
+// removing a component leaves every other component's ids untouched.
+
+export function aowEnvelope(context is Context, id is Id, name is string)
+{
+    var c = AOW_LAYOUT[name];
+    var subId = id + ("solid_" ~ name);
+
+    // Dispatch on KNOWN shapes only. An unrecognised or missing shape must
+    // draw nothing rather than fall through to code that dereferences keys the
+    // entry does not have.
+    if (c.shape == "box")
+    {
+        fCuboid(context, subId, {
+                "corner1" : c.pos - c.size / 2,
+                "corner2" : c.pos + c.size / 2
+        });
+
+        // fCuboid is axis-aligned only, so an oriented box is built square and
+        // then rotated about its own centre. The axis and angle are
+        // precomputed by the generator.
+        if (c.rotAxis != undefined)
+        {
+            opTransform(context, id + ("rot_" ~ name), {
+                    "bodies" : qCreatedBy(subId, EntityType.BODY),
+                    "transform" : rotationAround(line(c.pos, c.rotAxis), c.rotDeg)
+            });
+        }
+    }
+    else if (c.shape == "cylinder" || c.shape == "capsule")
+    {
+        // fCylinder, not opCylinder — solid primitives are the f* family.
+        // Capsules are drawn as plain cylinders: the end caps matter to the
+        // contact model, not to clearance.
+        var half = c.axis * c.length / 2;
+        fCylinder(context, subId, {
+                "topCenter" : c.pos + half,
+                "bottomCenter" : c.pos - half,
+                "radius" : c.radius
+        });
+    }
+    else
+    {
+        return;     // "point" — nothing solid to draw
+    }
+
+    // Without this every body lands in the list as "Part N". Note that a name
+    // the USER has since edited by hand can never be overwritten from
+    // FeatureScript again — reset it under part > properties if you want the
+    // generated name back.
+    setProperty(context, {
+            "entities" : qCreatedBy(subId, EntityType.BODY),
+            "propertyType" : PropertyType.NAME,
+            "value" : name
+    });
+@QV@    setQueryVariable(context, "aow_q_" ~ name, qCreatedBy(subId, EntityType.BODY));
+}
+
+export function aowPoint(context is Context, id is Id, name is string)
+{
+    var c = AOW_LAYOUT[name];
+
+    // A hole pattern is one entry carrying several positions. Each gets its
+    // own sub-id keyed by INDEX — safe here, unlike a loop counter over the
+    // whole layout, because the four corners of a rectangle cannot be
+    // reordered or added to without the pattern itself changing.
+    if (c.points != undefined)
+    {
+        for (var i = 0; i < size(c.points); i += 1)
+        {
+            var holeId = id + ("hole_" ~ name ~ "_" ~ i);
+            opPoint(context, holeId, { "point" : c.points[i] });
+            setProperty(context, {
+                    "entities" : qCreatedBy(holeId, EntityType.BODY),
+                    "propertyType" : PropertyType.NAME,
+                    "value" : name ~ "_" ~ i
+            });
+        }
+@QV@        setQueryVariable(context, "aow_q_" ~ name, qCreatedBy(id, EntityType.BODY));
+        return;
+    }
+
+    var subId = id + ("point_" ~ name);
+    opPoint(context, subId, { "point" : c.pos });
+    setProperty(context, {
+            "entities" : qCreatedBy(subId, EntityType.BODY),
+            "propertyType" : PropertyType.NAME,
+            "value" : name ~ "_origin"
+    });
+@QV@    setQueryVariable(context, "aow_q_" ~ name ~ "_point", qCreatedBy(subId, EntityType.BODY));
+}
+
+export function aowAxisPlane(context is Context, id is Id, name is string,
+        size is ValueWithUnits)
+{
+    var c = AOW_LAYOUT[name];
+
+    // Two kinds reach here. A cylinder or capsule gets a plane normal to its
+    // own axis — for the fork that is the plane perpendicular to the STEERING
+    // AXIS, which is the one you want for the head tube and any clamp, since
+    // sketching those against a world plane is what puts the rake in wrong.
+    // A "plane" entry carries its normal directly; those are the print planes
+    // and they are not derived from any part.
+    var nrm;
+    if (c.shape == "cylinder" || c.shape == "capsule")
+        nrm = c.axis;
+    else if (c.shape == "plane")
+        nrm = c.normal;
+    else
+        return;
+
+    var subId = id + ("plane_" ~ name);
+    opPlane(context, subId, {
+            "plane" : plane(c.pos, nrm),
+            "width" : size,
+            "height" : size
+    });
+    // The plane is NOT NAMED, and it cannot be. Planes and mate connectors
+    // carry no metadata — the UI derives their names from the FEATURE that
+    // made them, and that derivation is hardcoded to the feature type literally
+    // called `cPlane`. Both the filtered query (silently names nothing) and the
+    // unfiltered one (throws, taking the plane with it) were dead ends for the
+    // same underlying reason. So a plane is always "Plane N" under whatever
+    // feature drew it. What works instead is the query variable below: name
+    // the REFERENCE rather than the plane, and a downstream sketch picks
+    // `#aow_q_fork_plane` out of its plane field without anyone clicking a
+    // "Plane 9" that a regeneration might renumber.
+@QV@    setQueryVariable(context, "aow_q_" ~ name ~ "_plane", qCreatedBy(subId));
+}
+
+export function aowFourBar(context is Context, id is Id)
+{
+    if (size(AOW_FOURBAR) == 0)
+        return;     // built with --righting none
+
+    // A real sketch of construction lines. Cheap because the mechanism is
+    // planar: one plane at the linkage's fore/aft station and the 2D
+    // coordinates are just (CAD x, CAD z).
+    // Normal is CAD -Y, not +Y. A sketch plane's local Y is
+    // (normal CROSS xDir): with normal +Y that gives -Z and the whole
+    // mechanism draws upside down. With -Y it gives +Z, so the emitted
+    // (CAD x, CAD z) pairs mean what they say.
+    var sk = newSketchOnPlane(context, id + "fourbar", {
+            "sketchPlane" : plane(
+                    vector(0, 1, 0) * AOW_FOURBAR_STATION,
+                    vector(0, -1, 0),
+                    vector(1, 0, 0))
+    });
+    for (var seg in AOW_FOURBAR)
+    {
+        skLineSegment(sk, seg.name, {
+                "start" : seg.start,
+                "end" : seg.end,
+                "construction" : true
+        });
+    }
+    for (var a in AOW_FOURBAR_ARCS)
+    {
+        // Three-point arc: the crank tip's swept path. Construction, because
+        // it is a keep-out boundary rather than a part.
+        skArc(sk, a.name, {
+                "start" : a.start,
+                "mid" : a.mid,
+                "end" : a.end,
+                "construction" : true
+        });
+    }
+    skSolve(sk);
+@QV@    setQueryVariable(context, "aow_q_fourbar", qCreatedBy(id + "fourbar", EntityType.EDGE));
+}
+
+export function aowDrawGroup(context is Context, id is Id, definition is map,
+        group is string)
+{
+    for (var name in keys(AOW_LAYOUT))
+    {
+        if (AOW_LAYOUT[name].group != group)
+            continue;
+        if (definition.drawEnvelopes)
+            aowEnvelope(context, id, name);
+        if (definition.drawPoints)
+            aowPoint(context, id, name);
+        if (definition.drawAxisPlanes)
+            aowAxisPlane(context, id, name, definition.planeSize);
+    }
+}
+
+// Shared dialog for every per-group feature, so they stay identical without
+// the generator emitting the same annotations once per group.
+export predicate aowGroupPredicate(definition is map)
+{
+    annotation { "Name" : "Draw envelopes", "Default" : true }
+    definition.drawEnvelopes is boolean;
+
+    annotation { "Name" : "Draw origin points" }
+    definition.drawPoints is boolean;
+
+    annotation { "Name" : "Draw axis planes" }
+    definition.drawAxisPlanes is boolean;
+
+    if (definition.drawAxisPlanes)
+    {
+        annotation { "Name" : "Plane size" }
+        isLength(definition.planeSize, AOW_PLANE_BOUNDS);
+    }
+}
+'''
+
+FS_VARIABLES = '''
+// ---------------------------------------------------------------------------
+// Features
+// ---------------------------------------------------------------------------
+// Insert `AOW layout variables` FIRST and once. It draws nothing, cannot fail,
+// and is what makes `#aow_servo_steer_z` resolve in every sketch below it.
+
+annotation { "Feature Type Name" : "AOW layout variables" }
+export const aowLayoutVariables = defineFeature(function(context is Context, id is Id, definition is map)
+    precondition
+    {
+    }
+    {
+        for (var name in keys(AOW_LAYOUT))
+        {
+            var c = AOW_LAYOUT[name];
+            setVariable(context, "aow_" ~ name ~ "_x", c.pos[0]);
+            setVariable(context, "aow_" ~ name ~ "_y", c.pos[1]);
+            setVariable(context, "aow_" ~ name ~ "_z", c.pos[2]);
+        }
+        setVariable(context, "aow_fourbar_station", AOW_FOURBAR_STATION);
+    });
+'''
+
+FS_GROUP = '''
+annotation { "Feature Type Name" : "AOW @TITLE@" }
+export const @IDENT@ = defineFeature(function(context is Context, id is Id, definition is map)
+    precondition
+    {
+        aowGroupPredicate(definition);
+    }
+    {
+        aowDrawGroup(context, id, definition, "@GROUP@");
+    });
+'''
+
+FS_PLANES_GROUP = '''
+annotation { "Feature Type Name" : "AOW planes" }
+export const aowGroupPlanes = defineFeature(function(context is Context, id is Id, definition is map)
+    precondition
+    {
+        annotation { "Name" : "Plane size" }
+        isLength(definition.planeSize, AOW_PLANE_BOUNDS);
+    }
+    {
+        // No checkboxes. Everything in this group IS a plane, so the three the
+        // other groups carry would read "draw nothing", "draw nothing" and
+        // "draw the only thing there is" — insert it and it works. The dialog
+        // is synthesised rather than read off the definition so that
+        // `aowDrawGroup` stays the single code path.
+        aowDrawGroup(context, id, {
+                "drawEnvelopes" : false,
+                "drawPoints" : false,
+                "drawAxisPlanes" : true,
+                "planeSize" : definition.planeSize
+        }, "planes");
+    });
+'''
+
+FS_FOURBAR = '''
+annotation { "Feature Type Name" : "AOW four-bar sketch" }
+export const aowFourBarSketch = defineFeature(function(context is Context, id is Id, definition is map)
+    precondition
+    {
+    }
+    {
+        aowFourBar(context, id);
+    });
+'''
+
+FS_LEGACY = '''
+// ---------------------------------------------------------------------------
+// The original single-node feature. SUPERSEDED by the features above, and kept
+// only because a Part Studio that already has it inserted would lose all of
+// its geometry — and every downstream reference into that geometry — the
+// moment this feature type stopped existing. It delegates to the same helpers
+// at the same sub-ids, so every entity id it produces is the one it produced
+// before and nothing downstream of it moves. Only the ORDER of creation
+// changed (interleaved per component rather than all solids, then all
+// points), which the part list shows and nothing else depends on.
+// Prefer the per-group features for new work; they can be named.
+
 annotation { "Feature Type Name" : "AOW bike layout" }
 export const aowBikeLayout = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
@@ -861,14 +1558,13 @@ export const aowBikeLayout = defineFeature(function(context is Context, id is Id
         definition.drawAxisPlanes is boolean;
 
         annotation { "Name" : "Plane size" }
-        isLength(definition.planeSize, LENGTH_BOUNDS);
+        isLength(definition.planeSize, AOW_PLANE_BOUNDS);
     }
     {
         // Each block is independently switchable, and they run cheapest and
         // safest first. A runtime error anywhere aborts the WHOLE feature, so
         // if one of these misbehaves you can still get the others by turning
         // it off — which is how the missing-shape bug cost us the variables.
-
         if (definition.publishVariables)
         {
             for (var name in keys(AOW_LAYOUT))
@@ -880,147 +1576,43 @@ export const aowBikeLayout = defineFeature(function(context is Context, id is Id
             }
         }
 
-        if (definition.drawEnvelopes)
+        for (var name in keys(AOW_LAYOUT))
         {
-            for (var name in keys(AOW_LAYOUT))
-            {
-                var c = AOW_LAYOUT[name];
-                var subId = id + ("solid_" ~ name);
-
-                // Dispatch on KNOWN shapes only. An unrecognised or missing
-                // shape must draw nothing rather than fall through to code
-                // that dereferences keys the entry does not have.
-                if (c.shape == "box")
-                {
-                    fCuboid(context, subId, {
-                            "corner1" : c.pos - c.size / 2,
-                            "corner2" : c.pos + c.size / 2
-                    });
-
-                    // fCuboid is axis-aligned only, so an oriented box is
-                    // built square and then rotated about its own centre.
-                    // The axis and angle are precomputed by the generator.
-                    if (c.rotAxis != undefined)
-                    {
-                        opTransform(context, id + ("rot_" ~ name), {
-                                "bodies" : qCreatedBy(subId, EntityType.BODY),
-                                "transform" : rotationAround(
-                                        line(c.pos, c.rotAxis), c.rotDeg)
-                        });
-                    }
-                }
-                else if (c.shape == "cylinder" || c.shape == "capsule")
-                {
-                    // fCylinder, not opCylinder — solid primitives are the f*
-                    // family. Capsules are drawn as plain cylinders: the end
-                    // caps matter to the contact model, not to clearance.
-                    var half = c.axis * c.length / 2;
-                    fCylinder(context, subId, {
-                            "topCenter" : c.pos + half,
-                            "bottomCenter" : c.pos - half,
-                            "radius" : c.radius
-                    });
-                }
-                else
-                {
-                    continue;   // "point" — nothing solid to draw
-                }
-
-                // Without this every body lands in the list as "Part N".
-                setProperty(context, {
-                        "entities" : qCreatedBy(subId, EntityType.BODY),
-                        "propertyType" : PropertyType.NAME,
-                        "value" : name
-                });
-            }
+            if (definition.drawEnvelopes)
+                aowEnvelope(context, id, name);
+            if (definition.drawPoints)
+                aowPoint(context, id, name);
+            if (definition.drawAxisPlanes)
+                aowAxisPlane(context, id, name, definition.planeSize);
         }
 
-        if (definition.drawPoints)
-        {
-            for (var name in keys(AOW_LAYOUT))
-            {
-                var subId = id + ("point_" ~ name);
-                opPoint(context, subId, { "point" : AOW_LAYOUT[name].pos });
-                setProperty(context, {
-                        "entities" : qCreatedBy(subId, EntityType.BODY),
-                        "propertyType" : PropertyType.NAME,
-                        "value" : name ~ "_origin"
-                });
-            }
-        }
-
-        if (definition.drawFourBarSketch && size(AOW_FOURBAR) > 0)
-        {
-            // A real sketch of construction lines. Cheap because the mechanism
-            // is planar: one plane at the linkage's fore/aft station, normal
-            // CAD +Y, and the 2D coordinates are just (CAD x, CAD z).
-            // Normal is CAD -Y, not +Y. A sketch plane's local Y is
-            // (normal CROSS xDir): with normal +Y that gives -Z and the whole
-            // mechanism draws upside down. With -Y it gives +Z, so the emitted
-            // (CAD x, CAD z) pairs mean what they say.
-            var sk = newSketchOnPlane(context, id + "fourbar", {
-                    "sketchPlane" : plane(
-                            vector(0, 1, 0) * AOW_FOURBAR_STATION,
-                            vector(0, -1, 0),
-                            vector(1, 0, 0))
-            });
-            for (var seg in AOW_FOURBAR)
-            {
-                skLineSegment(sk, seg.name, {
-                        "start" : seg.start,
-                        "end" : seg.end,
-                        "construction" : true
-                });
-            }
-            for (var a in AOW_FOURBAR_ARCS)
-            {
-                // Three-point arc: the crank tip's swept path. Construction,
-                // because it is a keep-out boundary rather than a part.
-                skArc(sk, a.name, {
-                        "start" : a.start,
-                        "mid" : a.mid,
-                        "end" : a.end,
-                        "construction" : true
-                });
-            }
-            skSolve(sk);
-        }
-
-        if (definition.drawAxisPlanes)
-        {
-            for (var name in keys(AOW_LAYOUT))
-            {
-                var c = AOW_LAYOUT[name];
-                if (c.shape != "cylinder" && c.shape != "capsule")
-                    continue;
-
-                // Normal to the component axis, through its centre. For the
-                // fork this is the plane perpendicular to the STEERING AXIS,
-                // which is the one you want for the head tube and any clamp —
-                // sketching those against a world plane is what puts the rake
-                // in wrong.
-                var subId = id + ("plane_" ~ name);
-                opPlane(context, subId, {
-                        "plane" : plane(c.pos, c.axis),
-                        "width" : definition.planeSize,
-                        "height" : definition.planeSize
-                });
-                // NOT NAMED, and it cannot be. Planes and mate connectors
-                // carry no metadata — the UI derives their names from the
-                // FEATURE that made them, and only a `cPlane`-named feature
-                // can name a plane. So every plane a custom feature emits is
-                // named after that feature, whatever setProperty does. Both
-                // the filtered query (silently names nothing) and the
-                // unfiltered one (throws, taking the plane with it) were
-                // dead ends for the same underlying reason. If per-plane
-                // names matter, that is an argument for separate feature
-                // instances, not for more code here.
-            }
-        }
+        if (definition.drawFourBarSketch)
+            aowFourBar(context, id);
     });
-"""
+'''
 
-def render_featurescript(items: list[dict], params: dict, ver: str = "3044") -> str:
+
+def _fs_ident(group: str) -> str:
+    """`righting` -> `aowGroupRighting`. Prefixed rather than bare so a group
+    can never collide with a helper name, and sanitised because a FeatureScript
+    identifier is not allowed the characters a YAML key is."""
+    parts = [p for p in "".join(
+        ch if ch.isalnum() else " " for ch in group).split()]
+    return "aowGroup" + "".join(p[:1].upper() + p[1:] for p in parts)
+
+
+def _fs_qv(text: str, query_vars: bool) -> str:
+    """Resolve the @QV@ marker: keep the line without it, or drop the line."""
+    out = []
+    for ln in text.split("\n"):
+        if "@QV@" not in ln:
+            out.append(ln)
+        elif query_vars:
+            out.append(ln.replace("@QV@", ""))
+    return "\n".join(out)
+
+def render_featurescript(items: list[dict], params: dict, ver: str = "3044",
+                         query_vars: bool = True) -> str:
     axle_h = params["omni_wheel"]["outer_radius"]
     L = [FS_HEADER.format(ver=ver, axle=_mm(axle_h)), "", "export const AOW_LAYOUT = {"]
     entries = []
@@ -1059,6 +1651,24 @@ def render_featurescript(items: list[dict], params: dict, ver: str = "3044") -> 
             f.append(f'"radius" : {_mm(r)} * millimeter')
             f.append(f'"length" : {_mm(ln)} * millimeter')
             f.append(f'"axis" : {axis}')
+        elif "normal" in it:
+            n = to_cad_dir(it["normal"])
+            f.append('"shape" : "plane"')
+            f.append(f'"normal" : vector({n[0]}, {n[1]}, {n[2]})')
+        elif "normal" in it:
+            n = to_cad_dir(it["normal"])
+            f.append('"shape" : "plane"')
+            f.append(f'"normal" : vector({n[0]}, {n[1]}, {n[2]})')
+        elif "holes" in it:
+            # A hole PATTERN travels as one entry with a list of positions
+            # rather than four entries, so eight of these do not bury the
+            # layout. The feature draws a named point per position.
+            f.append('"shape" : "holes"')
+            pts = []
+            for q in it["holes"]:
+                c = to_cad_pos(q)
+                pts.append(f"vector({c[0]}, {c[1]}, {c[2]}) * millimeter")
+            f.append('"points" : [' + ", ".join(pts) + ']')
         else:
             # The wing pivots are bare points — no envelope. They still need a
             # `shape` key: FeatureScript returns undefined for a missing map
@@ -1077,35 +1687,48 @@ def render_featurescript(items: list[dict], params: dict, ver: str = "3044") -> 
     # can be a real sketch of construction lines rather than a bundle of thin
     # rods. Sketch 2D coords are (CAD x, CAD z) on a plane whose normal is
     # CAD +Y, offset to that station.
+    # Emitted even when EMPTY (--righting none). The features reference these
+    # constants unconditionally, and in FeatureScript an undefined symbol is a
+    # compile error that takes down the whole Feature Studio, not a runtime one
+    # that could be guarded at the call site.
     segs = [it for it in items if "seg" in it]
-    if segs:
-        y0 = to_cad_pos(segs[0]["seg"][0])[1]
-        L.append("")
-        L.append(f"export const AOW_FOURBAR_STATION = {y0} * millimeter;")
-        L.append("export const AOW_FOURBAR = [")
-        rows = []
-        for it in segs:
-            a, bb = (to_cad_pos(q) for q in it["seg"])
-            rows.append(f'    {{ "name" : "{it["name"]}", '
-                        f'"start" : vector({a[0]}, {a[2]}) * millimeter, '
-                        f'"end" : vector({bb[0]}, {bb[2]}) * millimeter }}')
-        L.append(",\n".join(rows))
-        L.append("];")
-        arcs = [it for it in items if "arc" in it]
-        if arcs:
-            L.append("")
-            L.append("export const AOW_FOURBAR_ARCS = [")
-            rows = []
-            for it in arcs:
-                a, m, e = (to_cad_pos(q) for q in it["arc"])
-                rows.append(f'    {{ "name" : "{it["name"]}", '
-                            f'"start" : vector({a[0]}, {a[2]}) * millimeter, '
-                            f'"mid" : vector({m[0]}, {m[2]}) * millimeter, '
-                            f'"end" : vector({e[0]}, {e[2]}) * millimeter }}')
-            L.append(",\n".join(rows))
-            L.append("];")
-    L.append(FS_FEATURE)
-    return "\n".join(L)
+    arcs = [it for it in items if "arc" in it]
+    y0 = to_cad_pos(segs[0]["seg"][0])[1] if segs else 0.0
+    L.append("")
+    L.append(f"export const AOW_FOURBAR_STATION = {y0} * millimeter;")
+    rows = []
+    for it in segs:
+        a, bb = (to_cad_pos(q) for q in it["seg"])
+        rows.append(f'    {{ "name" : "{it["name"]}", '
+                    f'"start" : vector({a[0]}, {a[2]}) * millimeter, '
+                    f'"end" : vector({bb[0]}, {bb[2]}) * millimeter }}')
+    L.append("export const AOW_FOURBAR = [\n" + ",\n".join(rows) + "\n];"
+             if rows else "export const AOW_FOURBAR = [];")
+    rows = []
+    for it in arcs:
+        a, m, e = (to_cad_pos(q) for q in it["arc"])
+        rows.append(f'    {{ "name" : "{it["name"]}", '
+                    f'"start" : vector({a[0]}, {a[2]}) * millimeter, '
+                    f'"mid" : vector({m[0]}, {m[2]}) * millimeter, '
+                    f'"end" : vector({e[0]}, {e[2]}) * millimeter }}')
+    L.append("")
+    L.append("export const AOW_FOURBAR_ARCS = [\n" + ",\n".join(rows) + "\n];"
+             if rows else "export const AOW_FOURBAR_ARCS = [];")
+
+    L.append(FS_HELPERS)
+    L.append(FS_VARIABLES)
+    # One feature per group, in the order the groups first appear in the
+    # layout, which is the order they get built in.
+    groups = list(dict.fromkeys(it["group"] for it in items))
+    for g in groups:
+        if g == "planes":
+            L.append(FS_PLANES_GROUP)      # planes only — no tickboxes to tick
+            continue
+        L.append(FS_GROUP.replace("@TITLE@", g.replace("_", " "))
+                 .replace("@IDENT@", _fs_ident(g)).replace("@GROUP@", g))
+    L.append(FS_FOURBAR)
+    L.append(FS_LEGACY)
+    return _fs_qv("\n".join(L), query_vars)
 
 
 def _arc_radius(pts):
@@ -1148,6 +1771,12 @@ def main() -> None:
                          "are noise while the chassis is being drawn)")
     ap.add_argument("--fs-version", default="3044",
                     help="FeatureScript version header; must match the document")
+    ap.add_argument("--no-query-vars", dest="query_vars", action="store_false",
+                    help="omit setQueryVariable calls. `setQueryVariable` "
+                         "arrived in Onshape 1.203 and an unknown function is "
+                         "a COMPILE error, so on an older document it takes "
+                         "the whole Feature Studio down rather than one "
+                         "feature — this is the escape hatch")
     args = ap.parse_args()
 
     params, raw = load_params(args.params), load_sources(args.params)
@@ -1156,7 +1785,8 @@ def main() -> None:
     if args.format == "yaml":
         text, default_out = render(items, params, args.linkage_config), OUT
     else:
-        text = render_featurescript(items, params, args.fs_version)
+        text = render_featurescript(items, params, args.fs_version,
+                                    args.query_vars)
         default_out = OUT_FS
     out = Path(args.output or default_out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -1167,6 +1797,12 @@ def main() -> None:
               f"servos.xc330_t181.pos: {[round(v, 6) for v in st['pos']]}")
     total = sum(i["mass"] for i in items if i.get("mass") and i["group"] != "righting")
     print(f"wrote {out}  ({len(items)} components)")
+    # The rear width, and WHICH clearance set it — the belt plane is a max of
+    # two and reading the number without knowing which one won is how it drifts.
+    am = next((i for i in items if i["name"] == "axle_mount_left"), None)
+    if am:
+        half = abs(to_cad_pos(am["pos"])[0]) + _mm(am["cyl"][1]) / 2
+        print(f"  rear width {2 * half:.1f} mm (half {half:.1f})")
     print(f"  modelled mass excluding righting: {_g(total)} g")
 
 
