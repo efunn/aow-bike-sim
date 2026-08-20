@@ -196,12 +196,45 @@ drivetrain:
   # Gap between the rear wheel's side face and the inner flange of the input
   # pulley.
   wheel_clearance: {value: 0.002, source: design}
-  # PINNED, was a 25 mm placeholder whose own comment admitted it was made up.
-  # Now = wheel_width/2 (16.5) + wheel_clearance (2) + pulley_width/2 (5.5)
-  # - wheel_width/2, i.e. the belt centre plane sits at 24.0 mm from the
-  # centreline. That is the minimum a 9 mm belt allows, and it takes the rear
-  # from 99 mm wide to 75 mm including the axle mounts below.
+  # STALE, and NOT read by cad_layout — which derives the belt plane itself,
+  # from whichever of two clearances binds (see `drive_mount_plate`). Kept only
+  # because build_model still wants it. The wheel-driven figure it describes,
+  # 24.0 mm, is no longer the answer: the servo mount is what sets the plane now.
   input_pulley_offset: {value: 0.0075, source: design}
+  # Mount plate for the drive servos, and the reason the belt plane moved.
+  #
+  # THE ARRANGEMENT. One flat plate on ONE side of the bike, so a 3D print
+  # comes off the bed in a single direction with nothing overhanging and no
+  # access needed from the far side. It lands on one servo's horn-side case
+  # face and the other's back face — the two servos face opposite ways, so a
+  # single plane touches both — and takes 8 machine screws on the 22 x 40
+  # pattern, four per servo. That pattern is the case's OWN M2.5 FHS assembly
+  # screws, replaced by longer ones; it is the only static pattern on both
+  # faces, because the P.C.D 16 on the horn side is on the ROTATING horn (bolt
+  # circle 16 sits inside the 20.5 horn disc) and there is no idler on the back
+  # by default.
+  #
+  # THE CONSEQUENCE. For the plate to be flat rather than stepped, the two
+  # cases must occupy the same lateral band, which pins the horn face at
+  # case_depth/2 + horn = 19.0 mm and makes the case span +/-17.0. The plate
+  # then sits on that face and the pulley has to stand off far enough to clear
+  # it. Below 3 mm an M2.5 countersink cannot sit flush, so 3 mm is a floor
+  # rather than a preference.
+  drive_mount_plate: {value: 0.003, source: design}
+  # Air between the plate's outer face and the pulley's inner face. It was
+  # zero — flush — which is a drawing, not a build. Every millimetre here is a
+  # millimetre on the belt plane and therefore two on the rear width, because
+  # the servos do NOT move: their horn faces are pinned at 19.0 by the symmetry
+  # condition, and the whole of the plate-plus-gap is absorbed by the pulley
+  # hub standing further off.
+  drive_mount_gap: {value: 0.001, source: design}
+  # Wall of the sleeve that wraps the case pair. The plate is sized to the
+  # collar's OUTER footprint so the two meet flush and print as one body.
+  drive_mount_wall: {value: 0.003, source: design}
+  # Diametral clearance around the horn where it passes through the plate. The
+  # plate lies on the case face and the horn stands 2 mm proud of that face, so
+  # a 3 mm plate has to be relieved or it fouls the horn — and the horn ROTATES.
+  drive_mount_relief: {value: 0.0015, source: design}
   # Angular station of the drive servos about the rear axle, measured from
   # straight-ahead (0 = level with the axle, forward; 90 = directly above).
   # Both servos share it — see cad_mounts for why that is possible.
@@ -244,6 +277,15 @@ drivetrain:
   drive_servo_separation_deg: {value: 16.35, source: design}
   # Standoff between the servo's horn face and the pulley's inner face, for a
   # pulley hub that does not sit flush. 0 = the pulley bolts straight on.
+  #
+  # The mount plate forces a standoff of its own (`drive_mount_plate` less the
+  # horn thickness), and the two do not add: a hub that already stands off is
+  # room the plate can use. cad_layout takes the larger.
+  #
+  # HAD TWO BUGS while it sat at zero, both now fixed: it was added to a
+  # metre-valued expression after being multiplied by 1000, and it was added
+  # where it should have been subtracted. Either would have been spectacular
+  # the first time someone set it.
   pulley_hub_offset: {value: 0.0, source: design}
   # Outboard of each input pulley: the block the rear axle runs in, and where
   # the chassis eventually picks the axle up. Diameter is a little over the
