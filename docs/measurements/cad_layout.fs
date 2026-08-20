@@ -66,7 +66,7 @@ export const AOW_LAYOUT = {
     },
     "pulley_servo_left" : {
         "group" : "drivetrain",
-        "pos" : vector(-26.5, 85.93, 64.34) * millimeter,
+        "pos" : vector(-26.5, 85.31, 65.16) * millimeter,
         "shape" : "cylinder",
         "radius" : 37.81 * millimeter,
         "length" : 11.0 * millimeter,
@@ -74,7 +74,7 @@ export const AOW_LAYOUT = {
     },
     "pulley_servo_right" : {
         "group" : "drivetrain",
-        "pos" : vector(26.5, 64.34, 85.93) * millimeter,
+        "pos" : vector(26.5, 65.16, 85.31) * millimeter,
         "shape" : "cylinder",
         "radius" : 37.81 * millimeter,
         "length" : 11.0 * millimeter,
@@ -100,7 +100,7 @@ export const AOW_LAYOUT = {
     },
     "servo_drive_left" : {
         "group" : "servos",
-        "pos" : vector(0.0, 77.44, 55.85) * millimeter,
+        "pos" : vector(0.0, 76.82, 56.67) * millimeter,
         "shape" : "box",
         "size" : vector(28.5, 34.0, 46.5) * millimeter,
         "rotAxis" : vector(-0.357407, 0.357407, 0.862856),
@@ -109,19 +109,19 @@ export const AOW_LAYOUT = {
     },
     "servo_drive_left_case_holes_horn" : {
         "group" : "servos",
-        "pos" : vector(-17.0, 77.44, 55.85) * millimeter,
+        "pos" : vector(-17.0, 76.82, 56.67) * millimeter,
         "shape" : "holes",
-        "points" : [vector(-17.0, 99.36, 62.22) * millimeter, vector(-17.0, 71.08, 33.93) * millimeter, vector(-17.0, 83.81, 77.77) * millimeter, vector(-17.0, 55.52, 49.49) * millimeter]
+        "points" : [vector(-17.0, 98.74, 63.04) * millimeter, vector(-17.0, 70.46, 34.75) * millimeter, vector(-17.0, 83.19, 78.59) * millimeter, vector(-17.0, 54.9, 50.31) * millimeter]
     },
     "servo_drive_left_case_holes_back" : {
         "group" : "servos",
-        "pos" : vector(17.0, 77.44, 55.85) * millimeter,
+        "pos" : vector(17.0, 76.82, 56.67) * millimeter,
         "shape" : "holes",
-        "points" : [vector(17.0, 99.36, 62.22) * millimeter, vector(17.0, 71.08, 33.93) * millimeter, vector(17.0, 83.81, 77.77) * millimeter, vector(17.0, 55.52, 49.49) * millimeter]
+        "points" : [vector(17.0, 98.74, 63.04) * millimeter, vector(17.0, 70.46, 34.75) * millimeter, vector(17.0, 83.19, 78.59) * millimeter, vector(17.0, 54.9, 50.31) * millimeter]
     },
     "servo_drive_left_horn" : {
         "group" : "servos",
-        "pos" : vector(-18.0, 85.93, 64.34) * millimeter,
+        "pos" : vector(-18.0, 85.31, 65.16) * millimeter,
         "shape" : "cylinder",
         "radius" : 10.25 * millimeter,
         "length" : 2.0 * millimeter,
@@ -129,7 +129,7 @@ export const AOW_LAYOUT = {
     },
     "servo_drive_left_horn_boss" : {
         "group" : "servos",
-        "pos" : vector(-19.95, 85.93, 64.34) * millimeter,
+        "pos" : vector(-19.95, 85.31, 65.16) * millimeter,
         "shape" : "cylinder",
         "radius" : 3.95 * millimeter,
         "length" : 1.9 * millimeter,
@@ -137,12 +137,12 @@ export const AOW_LAYOUT = {
     },
     "servo_drive_left_shaft" : {
         "group" : "servos",
-        "pos" : vector(-19.0, 85.93, 64.34) * millimeter,
+        "pos" : vector(-19.0, 85.31, 65.16) * millimeter,
         "shape" : "point"
     },
     "servo_drive_right" : {
         "group" : "servos",
-        "pos" : vector(0.0, 55.85, 77.44) * millimeter,
+        "pos" : vector(0.0, 56.67, 76.82) * millimeter,
         "shape" : "box",
         "size" : vector(28.5, 34.0, 46.5) * millimeter,
         "rotAxis" : vector(-0.357407, -0.357407, -0.862856),
@@ -151,19 +151,19 @@ export const AOW_LAYOUT = {
     },
     "servo_drive_right_case_holes_horn" : {
         "group" : "servos",
-        "pos" : vector(17.0, 55.85, 77.44) * millimeter,
+        "pos" : vector(17.0, 56.67, 76.82) * millimeter,
         "shape" : "holes",
-        "points" : [vector(17.0, 62.22, 99.36) * millimeter, vector(17.0, 33.93, 71.08) * millimeter, vector(17.0, 77.77, 83.81) * millimeter, vector(17.0, 49.49, 55.52) * millimeter]
+        "points" : [vector(17.0, 63.04, 98.74) * millimeter, vector(17.0, 34.75, 70.46) * millimeter, vector(17.0, 78.59, 83.19) * millimeter, vector(17.0, 50.31, 54.9) * millimeter]
     },
     "servo_drive_right_case_holes_back" : {
         "group" : "servos",
-        "pos" : vector(-17.0, 55.85, 77.44) * millimeter,
+        "pos" : vector(-17.0, 56.67, 76.82) * millimeter,
         "shape" : "holes",
-        "points" : [vector(-17.0, 62.22, 99.36) * millimeter, vector(-17.0, 33.93, 71.08) * millimeter, vector(-17.0, 77.77, 83.81) * millimeter, vector(-17.0, 49.49, 55.52) * millimeter]
+        "points" : [vector(-17.0, 63.04, 98.74) * millimeter, vector(-17.0, 34.75, 70.46) * millimeter, vector(-17.0, 78.59, 83.19) * millimeter, vector(-17.0, 50.31, 54.9) * millimeter]
     },
     "servo_drive_right_horn" : {
         "group" : "servos",
-        "pos" : vector(18.0, 64.34, 85.93) * millimeter,
+        "pos" : vector(18.0, 65.16, 85.31) * millimeter,
         "shape" : "cylinder",
         "radius" : 10.25 * millimeter,
         "length" : 2.0 * millimeter,
@@ -171,7 +171,7 @@ export const AOW_LAYOUT = {
     },
     "servo_drive_right_horn_boss" : {
         "group" : "servos",
-        "pos" : vector(19.95, 64.34, 85.93) * millimeter,
+        "pos" : vector(19.95, 65.16, 85.31) * millimeter,
         "shape" : "cylinder",
         "radius" : 3.95 * millimeter,
         "length" : 1.9 * millimeter,
@@ -179,20 +179,36 @@ export const AOW_LAYOUT = {
     },
     "servo_drive_right_shaft" : {
         "group" : "servos",
-        "pos" : vector(19.0, 64.34, 85.93) * millimeter,
+        "pos" : vector(19.0, 65.16, 85.31) * millimeter,
         "shape" : "point"
     },
-    "drive_mount_plate" : {
+    "drive_mount_plate_right" : {
         "group" : "mount",
         "pos" : vector(18.5, 67.42, 67.42) * millimeter,
         "shape" : "box",
-        "size" : vector(3.0, 65.03, 52.5) * millimeter,
+        "size" : vector(3.0, 63.5, 53.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
         "rotDeg" : 45.0 * degree
     },
-    "drive_mount_relief" : {
+    "drive_mount_relief_right" : {
         "group" : "mount",
-        "pos" : vector(18.5, 64.34, 85.93) * millimeter,
+        "pos" : vector(18.5, 65.16, 85.31) * millimeter,
+        "shape" : "cylinder",
+        "radius" : 11.75 * millimeter,
+        "length" : 3.0 * millimeter,
+        "axis" : vector(-1.0, 0.0, 0.0)
+    },
+    "drive_mount_plate_left" : {
+        "group" : "mount",
+        "pos" : vector(-18.5, 67.42, 67.42) * millimeter,
+        "shape" : "box",
+        "size" : vector(3.0, 63.5, 53.0) * millimeter,
+        "rotAxis" : vector(-1.0, 0.0, 0.0),
+        "rotDeg" : 45.0 * degree
+    },
+    "drive_mount_relief_left" : {
+        "group" : "mount",
+        "pos" : vector(-18.5, 85.31, 65.16) * millimeter,
         "shape" : "cylinder",
         "radius" : 11.75 * millimeter,
         "length" : 3.0 * millimeter,
@@ -200,33 +216,33 @@ export const AOW_LAYOUT = {
     },
     "drive_mount_side_a" : {
         "group" : "mount",
-        "pos" : vector(0.0, 45.49, 89.35) * millimeter,
+        "pos" : vector(0.0, 46.03, 88.81) * millimeter,
         "shape" : "box",
-        "size" : vector(34.0, 3.0, 52.5) * millimeter,
+        "size" : vector(34.0, 3.0, 53.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
         "rotDeg" : 45.0 * degree
     },
     "drive_mount_side_b" : {
         "group" : "mount",
-        "pos" : vector(0.0, 89.35, 45.49) * millimeter,
+        "pos" : vector(0.0, 88.81, 46.03) * millimeter,
         "shape" : "box",
-        "size" : vector(34.0, 3.0, 52.5) * millimeter,
+        "size" : vector(34.0, 3.0, 53.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
         "rotDeg" : 45.0 * degree
     },
     "drive_mount_radial_in" : {
         "group" : "mount",
-        "pos" : vector(0.0, 49.92, 49.92) * millimeter,
+        "pos" : vector(0.0, 49.74, 49.74) * millimeter,
         "shape" : "box",
-        "size" : vector(34.0, 65.03, 3.0) * millimeter,
+        "size" : vector(34.0, 63.5, 3.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
         "rotDeg" : 45.0 * degree
     },
     "drive_mount_radial_out" : {
         "group" : "mount",
-        "pos" : vector(0.0, 84.92, 84.92) * millimeter,
+        "pos" : vector(0.0, 85.1, 85.1) * millimeter,
         "shape" : "box",
-        "size" : vector(34.0, 65.03, 3.0) * millimeter,
+        "size" : vector(34.0, 63.5, 3.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
         "rotDeg" : 45.0 * degree
     },
@@ -277,17 +293,29 @@ export const AOW_LAYOUT = {
         "shape" : "plane",
         "normal" : vector(0.0, 0.965926, 0.258819)
     },
-    "plane_dropout_lower" : {
+    "plane_belt_left_lower" : {
         "group" : "planes",
-        "pos" : vector(-26.5, 53.48, 8.53) * millimeter,
+        "pos" : vector(-26.5, 53.39, 9.04) * millimeter,
         "shape" : "plane",
-        "normal" : vector(0.0, -0.406341, 0.913722)
+        "normal" : vector(0.0, -0.415043, 0.909802)
     },
-    "plane_dropout_upper" : {
+    "plane_belt_left_upper" : {
         "group" : "planes",
-        "pos" : vector(26.5, 8.53, 53.48) * millimeter,
+        "pos" : vector(-26.5, 22.77, 49.13) * millimeter,
         "shape" : "plane",
-        "normal" : vector(0.0, -0.913722, 0.406341)
+        "normal" : vector(0.0, -0.768526, 0.639819)
+    },
+    "plane_belt_right_lower" : {
+        "group" : "planes",
+        "pos" : vector(26.5, 49.13, 22.77) * millimeter,
+        "shape" : "plane",
+        "normal" : vector(0.0, -0.639819, 0.768526)
+    },
+    "plane_belt_right_upper" : {
+        "group" : "planes",
+        "pos" : vector(26.5, 9.04, 53.39) * millimeter,
+        "shape" : "plane",
+        "normal" : vector(0.0, -0.909802, 0.415043)
     },
     "payload_battery" : {
         "group" : "electronics",

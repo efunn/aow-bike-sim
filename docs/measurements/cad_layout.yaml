@@ -91,7 +91,7 @@ drivetrain:
       40.0 mm half-width.
 
   pulley_servo_left:
-    pos_mm: [-26.5, 85.93, 64.34]
+    pos_mm: [-26.5, 85.31, 65.16]
     shape: cylinder
     radius_mm: 37.81
     length_mm: 11.0
@@ -105,7 +105,7 @@ drivetrain:
       identical belts.
 
   pulley_servo_right:
-    pos_mm: [26.5, 64.34, 85.93]
+    pos_mm: [26.5, 65.16, 85.31]
     shape: cylinder
     radius_mm: 37.81
     length_mm: 11.0
@@ -151,7 +151,7 @@ steering:
 # --- Dynamixels. Drive pair and steer; the wing servo is under `righting`.
 servos:
   servo_drive_left:
-    pos_mm: [0.0, 77.44, 55.85]
+    pos_mm: [0.0, 76.82, 56.67]
     shape: box
     envelope_mm: [28.5, 34.0, 46.5]
     axis_width: [0.0, 0.707107, -0.707107]
@@ -170,13 +170,13 @@ servos:
       trying to fit them side by side.
 
   servo_drive_left_case_holes_horn:
-    pos_mm: [-17.0, 77.44, 55.85]
+    pos_mm: [-17.0, 76.82, 56.67]
     shape: holes
     holes_mm:
-      - [-17.0, 99.36, 62.22]
-      - [-17.0, 71.08, 33.93]
-      - [-17.0, 83.81, 77.77]
-      - [-17.0, 55.52, 49.49]
+      - [-17.0, 98.74, 63.04]
+      - [-17.0, 70.46, 34.75]
+      - [-17.0, 83.19, 78.59]
+      - [-17.0, 54.9, 50.31]
     source: {pos: derived — case frame, size: measured (ROBOTIS drawing)}
     note: >-
       Case hole pattern, 22.0 x 40.0 mm centred on the horn-side face —
@@ -185,13 +185,13 @@ servos:
       holes land asymmetrically about it.
 
   servo_drive_left_case_holes_back:
-    pos_mm: [17.0, 77.44, 55.85]
+    pos_mm: [17.0, 76.82, 56.67]
     shape: holes
     holes_mm:
-      - [17.0, 99.36, 62.22]
-      - [17.0, 71.08, 33.93]
-      - [17.0, 83.81, 77.77]
-      - [17.0, 55.52, 49.49]
+      - [17.0, 98.74, 63.04]
+      - [17.0, 70.46, 34.75]
+      - [17.0, 83.19, 78.59]
+      - [17.0, 54.9, 50.31]
     source: {pos: derived — case frame, size: measured (ROBOTIS drawing)}
     note: >-
       Case hole pattern, 22.0 x 40.0 mm centred on the back-side face —
@@ -200,7 +200,7 @@ servos:
       holes land asymmetrically about it.
 
   servo_drive_left_horn:
-    pos_mm: [-18.0, 85.93, 64.34]
+    pos_mm: [-18.0, 85.31, 65.16]
     shape: cylinder
     radius_mm: 10.25
     length_mm: 2.0
@@ -219,7 +219,7 @@ servos:
       which has to clear it.
 
   servo_drive_left_horn_boss:
-    pos_mm: [-19.95, 85.93, 64.34]
+    pos_mm: [-19.95, 85.31, 65.16]
     shape: cylinder
     radius_mm: 3.95
     length_mm: 1.9
@@ -232,7 +232,7 @@ servos:
       the servo that the mounting datum does not bound.
 
   servo_drive_left_shaft:
-    pos_mm: [-19.0, 85.93, 64.34]
+    pos_mm: [-19.0, 85.31, 65.16]
     shape: point
     source: {pos: datasheet offsets + cad_mounts}
     note: >-
@@ -243,7 +243,7 @@ servos:
       room there.
 
   servo_drive_right:
-    pos_mm: [0.0, 55.85, 77.44]
+    pos_mm: [0.0, 56.67, 76.82]
     shape: box
     envelope_mm: [28.5, 34.0, 46.5]
     axis_width: [0.0, -0.707107, 0.707107]
@@ -262,13 +262,13 @@ servos:
       trying to fit them side by side.
 
   servo_drive_right_case_holes_horn:
-    pos_mm: [17.0, 55.85, 77.44]
+    pos_mm: [17.0, 56.67, 76.82]
     shape: holes
     holes_mm:
-      - [17.0, 62.22, 99.36]
-      - [17.0, 33.93, 71.08]
-      - [17.0, 77.77, 83.81]
-      - [17.0, 49.49, 55.52]
+      - [17.0, 63.04, 98.74]
+      - [17.0, 34.75, 70.46]
+      - [17.0, 78.59, 83.19]
+      - [17.0, 50.31, 54.9]
     source: {pos: derived — case frame, size: measured (ROBOTIS drawing)}
     note: >-
       Case hole pattern, 22.0 x 40.0 mm centred on the horn-side face —
@@ -277,13 +277,13 @@ servos:
       holes land asymmetrically about it.
 
   servo_drive_right_case_holes_back:
-    pos_mm: [-17.0, 55.85, 77.44]
+    pos_mm: [-17.0, 56.67, 76.82]
     shape: holes
     holes_mm:
-      - [-17.0, 62.22, 99.36]
-      - [-17.0, 33.93, 71.08]
-      - [-17.0, 77.77, 83.81]
-      - [-17.0, 49.49, 55.52]
+      - [-17.0, 63.04, 98.74]
+      - [-17.0, 34.75, 70.46]
+      - [-17.0, 78.59, 83.19]
+      - [-17.0, 50.31, 54.9]
     source: {pos: derived — case frame, size: measured (ROBOTIS drawing)}
     note: >-
       Case hole pattern, 22.0 x 40.0 mm centred on the back-side face —
@@ -292,7 +292,7 @@ servos:
       holes land asymmetrically about it.
 
   servo_drive_right_horn:
-    pos_mm: [18.0, 64.34, 85.93]
+    pos_mm: [18.0, 65.16, 85.31]
     shape: cylinder
     radius_mm: 10.25
     length_mm: 2.0
@@ -311,7 +311,7 @@ servos:
       which has to clear it.
 
   servo_drive_right_horn_boss:
-    pos_mm: [19.95, 64.34, 85.93]
+    pos_mm: [19.95, 65.16, 85.31]
     shape: cylinder
     radius_mm: 3.95
     length_mm: 1.9
@@ -324,7 +324,7 @@ servos:
       the servo that the mounting datum does not bound.
 
   servo_drive_right_shaft:
-    pos_mm: [19.0, 64.34, 85.93]
+    pos_mm: [19.0, 65.16, 85.31]
     shape: point
     source: {pos: datasheet offsets + cad_mounts}
     note: >-
@@ -414,93 +414,126 @@ servos:
 
 # --- Drive-servo mount — plate and sleeve. PROPOSAL.
 mount:
-  drive_mount_plate:
+  drive_mount_plate_right:
     pos_mm: [18.5, 67.42, 67.42]
     shape: box
-    envelope_mm: [3.0, 65.03, 52.5]
+    envelope_mm: [3.0, 63.5, 53.0]
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
     source: {pos: derived — on the case faces, size: design (outline is a placeholder)}
     note: >-
-      ONE plate, ONE side, 3.0 mm thick. It lies on the right servo's
-      horn-side face and the left servo's back face — the two servos
-      face opposite ways, so one plane touches both — and takes 8 M2.5
-      machine screws on the 22 x 40 patterns. Which side is a free
-      choice; mirror it by negating the offset here. The cases are
-      symmetric about the centreline at +/-17.0 mm precisely so this can
-      be flat rather than stepped, and that symmetry is what forced the
-      belt plane out to 26.5 mm.
+      3.0 mm, on the bike's right. It lies on the right servo's horn-
+      side face and the other servo's back face — they face opposite
+      ways, so one plane touches both — and takes 8 M2.5 machine screws
+      on the 22 x 40 case patterns. The cases are symmetric about the
+      centreline at +/-17.0 mm precisely so this can be flat rather than
+      stepped, and that symmetry is what forced the belt plane out to
+      26.5 mm.
 
-  drive_mount_relief:
-    pos_mm: [18.5, 64.34, 85.93]
+  drive_mount_relief_right:
+    pos_mm: [18.5, 65.16, 85.31]
     shape: cylinder
     radius_mm: 11.75
     length_mm: 3.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
     source: {pos: derived — on the horn axis, size: design}
     note: >-
-      A VOID, not a part: the 23.5 mm hole the plate needs where the
-      horn passes through it. 20.5 mm horn plus 1.5 mm of radial
-      clearance. Only the servo whose HORN faces the plate needs it —
-      the other presents its flat back face — so this is one hole, not
-      two.
+      A VOID. The 23.5 mm hole the right plate needs where the right
+      servo's horn passes through it — 20.5 mm horn plus 1.5 mm of
+      radial clearance. Concentric with the SHAFT, not with the plate.
+      Only the servo whose horn faces this plate needs one; the other
+      presents its flat back face.
+
+  drive_mount_plate_left:
+    pos_mm: [-18.5, 67.42, 67.42]
+    shape: box
+    envelope_mm: [3.0, 63.5, 53.0]
+    z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
+    rotate_about: [-1.0, 0.0, 0.0]
+    rotate_deg: 45.0
+    source: {pos: derived — on the case faces, size: design (outline is a placeholder)}
+    note: >-
+      3.0 mm, on the bike's left. It lies on the left servo's horn-side
+      face and the other servo's back face — they face opposite ways, so
+      one plane touches both — and takes 8 M2.5 machine screws on the 22
+      x 40 case patterns. The cases are symmetric about the centreline
+      at +/-17.0 mm precisely so this can be flat rather than stepped,
+      and that symmetry is what forced the belt plane out to 26.5 mm.
+
+  drive_mount_relief_left:
+    pos_mm: [-18.5, 85.31, 65.16]
+    shape: cylinder
+    radius_mm: 11.75
+    length_mm: 3.0
+    axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    source: {pos: derived — on the horn axis, size: design}
+    note: >-
+      A VOID. The 23.5 mm hole the left plate needs where the left
+      servo's horn passes through it — 20.5 mm horn plus 1.5 mm of
+      radial clearance. Concentric with the SHAFT, not with the plate.
+      Only the servo whose horn faces this plate needs one; the other
+      presents its flat back face.
 
   drive_mount_side_a:
-    pos_mm: [0.0, 45.49, 89.35]
+    pos_mm: [0.0, 46.03, 88.81]
     shape: box
-    envelope_mm: [34.0, 3.0, 52.5]
+    envelope_mm: [34.0, 3.0, 53.0]
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
     source: {pos: derived — around the case pair, size: design}
     note: >-
-      Sleeve wall, 3.0 mm. One of four round the pair — the servos share
-      a face, so the two of them present one rectangle and it takes four
-      sides, not eight. Torque goes in here as bearing on the case
-      walls, which is why the plate's screws only have to retain.
+      Sleeve wall, 3.0 mm, joining the two plates. The servos share a
+      face, so the pair presents ONE rectangle and it takes four sides,
+      not eight — of which one is left open, being the ceiling in the
+      print. Torque goes in here as bearing on the case walls, which is
+      why the screws only have to retain.
 
   drive_mount_side_b:
-    pos_mm: [0.0, 89.35, 45.49]
+    pos_mm: [0.0, 88.81, 46.03]
     shape: box
-    envelope_mm: [34.0, 3.0, 52.5]
+    envelope_mm: [34.0, 3.0, 53.0]
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
     source: {pos: derived — around the case pair, size: design}
     note: >-
-      Sleeve wall, 3.0 mm. One of four round the pair — the servos share
-      a face, so the two of them present one rectangle and it takes four
-      sides, not eight. Torque goes in here as bearing on the case
-      walls, which is why the plate's screws only have to retain.
+      Sleeve wall, 3.0 mm, joining the two plates. The servos share a
+      face, so the pair presents ONE rectangle and it takes four sides,
+      not eight — of which one is left open, being the ceiling in the
+      print. Torque goes in here as bearing on the case walls, which is
+      why the screws only have to retain.
 
   drive_mount_radial_in:
-    pos_mm: [0.0, 49.92, 49.92]
+    pos_mm: [0.0, 49.74, 49.74]
     shape: box
-    envelope_mm: [34.0, 65.03, 3.0]
+    envelope_mm: [34.0, 63.5, 3.0]
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
     source: {pos: derived — around the case pair, size: design}
     note: >-
-      Sleeve wall, 3.0 mm. One of four round the pair — the servos share
-      a face, so the two of them present one rectangle and it takes four
-      sides, not eight. Torque goes in here as bearing on the case
-      walls, which is why the plate's screws only have to retain.
+      Sleeve wall, 3.0 mm, joining the two plates. The servos share a
+      face, so the pair presents ONE rectangle and it takes four sides,
+      not eight — of which one is left open, being the ceiling in the
+      print. Torque goes in here as bearing on the case walls, which is
+      why the screws only have to retain.
 
   drive_mount_radial_out:
-    pos_mm: [0.0, 84.92, 84.92]
+    pos_mm: [0.0, 85.1, 85.1]
     shape: box
-    envelope_mm: [34.0, 65.03, 3.0]
+    envelope_mm: [34.0, 63.5, 3.0]
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
     source: {pos: derived — around the case pair, size: design}
     note: >-
-      Sleeve wall, 3.0 mm. One of four round the pair — the servos share
-      a face, so the two of them present one rectangle and it takes four
-      sides, not eight. Torque goes in here as bearing on the case
-      walls, which is why the plate's screws only have to retain.
+      Sleeve wall, 3.0 mm, joining the two plates. The servos share a
+      face, so the pair presents ONE rectangle and it takes four sides,
+      not eight — of which one is left open, being the ceiling in the
+      print. Torque goes in here as bearing on the case walls, which is
+      why the screws only have to retain.
 
 # --- Sketch planes CAD starts from. Orientations, not parts.
 planes:
@@ -519,33 +552,81 @@ planes:
       it lying in this plane and both legs sit flat on the bed with the
       layers running along them.
 
-  plane_dropout_lower:
-    pos_mm: [-26.5, 53.48, 8.53]
+  plane_belt_left_lower:
+    pos_mm: [-26.5, 53.39, 9.04]
     shape: plane
-    normal: [0.0, -0.406341, 0.913722]   # unit vector, CAD frame
+    normal: [0.0, -0.415043, 0.909802]   # unit vector, CAD frame
     source: {pos: derived — belt tangent midpoint, size: design}
     note: >-
-      Parallel to the LOWER belt run — the left servo's lower tangent,
-      which is one of the two extreme angles the belts reach. A rear
-      dropout printed in this plane runs from the axle forward to the
-      servo mount without ever crossing its own belt, and lies flat
-      while doing it. Placed in the belt plane at 26.5 mm; slide it
-      inboard to wherever the dropout actually sits — the ORIENTATION is
-      the part that is derived, not the offset.
+      CLEARANCE, not a print plane. Parallel to the LOWER belt run — the
+      left servo's lower tangent, one of the two extreme angles the
+      belts reach — and therefore part of the boundary of the belt-and-
+      pulley hull. A rear dropout has to run from the axle OUTBOARD of
+      its own belt and end up INBOARD of it at the servo mount, so
+      somewhere it crosses the belt plane, and it can only do that
+      outside this line. Like a chainstay threading past the chain.
+      Which means the crossing dictates the part's shape and a single
+      flat build plane will not align with both the sleeve and the arm —
+      printing off this was the first guess and it does not survive the
+      geometry. Placed in the belt plane at 26.5 mm; the ORIENTATION is
+      what is derived, not the offset.
 
-  plane_dropout_upper:
-    pos_mm: [26.5, 8.53, 53.48]
+  plane_belt_left_upper:
+    pos_mm: [-26.5, 22.77, 49.13]
     shape: plane
-    normal: [0.0, -0.913722, 0.406341]   # unit vector, CAD frame
+    normal: [0.0, -0.768526, 0.639819]   # unit vector, CAD frame
     source: {pos: derived — belt tangent midpoint, size: design}
     note: >-
-      Parallel to the UPPER belt run — the right servo's upper tangent,
-      which is one of the two extreme angles the belts reach. A rear
-      dropout printed in this plane runs from the axle forward to the
-      servo mount without ever crossing its own belt, and lies flat
-      while doing it. Placed in the belt plane at 26.5 mm; slide it
-      inboard to wherever the dropout actually sits — the ORIENTATION is
-      the part that is derived, not the offset.
+      CLEARANCE, not a print plane. Parallel to the UPPER belt run — the
+      left servo's upper tangent, one of the two extreme angles the
+      belts reach — and therefore part of the boundary of the belt-and-
+      pulley hull. A rear dropout has to run from the axle OUTBOARD of
+      its own belt and end up INBOARD of it at the servo mount, so
+      somewhere it crosses the belt plane, and it can only do that
+      outside this line. Like a chainstay threading past the chain.
+      Which means the crossing dictates the part's shape and a single
+      flat build plane will not align with both the sleeve and the arm —
+      printing off this was the first guess and it does not survive the
+      geometry. Placed in the belt plane at 26.5 mm; the ORIENTATION is
+      what is derived, not the offset.
+
+  plane_belt_right_lower:
+    pos_mm: [26.5, 49.13, 22.77]
+    shape: plane
+    normal: [0.0, -0.639819, 0.768526]   # unit vector, CAD frame
+    source: {pos: derived — belt tangent midpoint, size: design}
+    note: >-
+      CLEARANCE, not a print plane. Parallel to the LOWER belt run — the
+      right servo's lower tangent, one of the two extreme angles the
+      belts reach — and therefore part of the boundary of the belt-and-
+      pulley hull. A rear dropout has to run from the axle OUTBOARD of
+      its own belt and end up INBOARD of it at the servo mount, so
+      somewhere it crosses the belt plane, and it can only do that
+      outside this line. Like a chainstay threading past the chain.
+      Which means the crossing dictates the part's shape and a single
+      flat build plane will not align with both the sleeve and the arm —
+      printing off this was the first guess and it does not survive the
+      geometry. Placed in the belt plane at 26.5 mm; the ORIENTATION is
+      what is derived, not the offset.
+
+  plane_belt_right_upper:
+    pos_mm: [26.5, 9.04, 53.39]
+    shape: plane
+    normal: [0.0, -0.909802, 0.415043]   # unit vector, CAD frame
+    source: {pos: derived — belt tangent midpoint, size: design}
+    note: >-
+      CLEARANCE, not a print plane. Parallel to the UPPER belt run — the
+      right servo's upper tangent, one of the two extreme angles the
+      belts reach — and therefore part of the boundary of the belt-and-
+      pulley hull. A rear dropout has to run from the axle OUTBOARD of
+      its own belt and end up INBOARD of it at the servo mount, so
+      somewhere it crosses the belt plane, and it can only do that
+      outside this line. Like a chainstay threading past the chain.
+      Which means the crossing dictates the part's shape and a single
+      flat build plane will not align with both the sleeve and the arm —
+      printing off this was the first guess and it does not survive the
+      geometry. Placed in the belt plane at 26.5 mm; the ORIENTATION is
+      what is derived, not the offset.
 
 # --- AHRS and the untethered payload.
 electronics:

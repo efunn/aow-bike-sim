@@ -748,83 +748,93 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
                  f"the case centre along body_up. Mate the ROBOTIS model here. "
                  f"Cables exit the OPPOSITE face — keep routing room there.")
     if plate > 0:
-        # The plate itself, so the thing that now sets the bike's rear width is
-        # visible rather than implied. Its OUTLINE is a placeholder — a
-        # rectangle over both cases — but its two faces are not: the inboard
-        # one lies on the case faces and the outboard one is what the pulley
-        # had to stand off from.
+        # A PLATE ON EACH SIDE. Each lateral side of the bike presents one
+        # servo's horn face and the other's back face, so one plane per side
+        # touches both cases — and the second plate is FREE, because the belt
+        # plane was already pushed out to clear the first and the geometry is
+        # symmetric. Eight M2.5 per side, sixteen in all, and the load path
+        # into the frame stops being one-sided.
+        #
+        # Their OUTLINE is a placeholder — a rectangle sized to the collar — but
+        # their two faces are not: the inboard one lies on the case faces and
+        # the outboard one is what the pulley stands off from.
         _half = d4["box_size"][0] / 2
         _wall = dt.get("drive_mount_wall", 0.003)
-        # Sized to the collar's OUTER footprint, not to the cases — otherwise
-        # the plate stops short of the walls that rise off it and the two are
-        # not one body.
-        _t0 = C_m * _np.sin(dth) + d4["box_size"][1] / 2 + _wall
-        _mid = (_np.cos(th0), _np.sin(th0))
+        # The cavity is the case pair plus a fit clearance; the walls sit
+        # outside that. One place for the clearance means the plates, sized to
+        # the collar's outer footprint, follow it too.
+        _cav = dt.get("drive_mount_cavity_clearance", 0.0)
+        _cav_t = C_m * _np.sin(dth) + d4["box_size"][1] / 2 + _cav
+        _cav_r = d4["box_size"][2] / 2 + _cav
+        _t0 = _cav_t + _wall
         _rc = C_m - (d4["box_size"][2] / 2 - d4["shaft_from_end"])
-        add("drive_mount_plate", "mount",
-            [_rc * _np.cos(th0), -(_half + plate / 2), _rc * _np.sin(th0)],
-            box=(2 * _t0, plate, d4["box_size"][2] + 2 * _wall),
-            zaxis=[_mid[0], 0.0, _mid[1]],
-            source={"pos": "derived — on the case faces",
-                    "size": "design (outline is a placeholder)"},
-            note=f"ONE plate, ONE side, {_mm(plate)} mm thick. It lies on the "
-                 f"right servo's horn-side face and the left servo's back "
-                 f"face — the two servos face opposite ways, so one plane "
-                 f"touches both — and takes 8 M2.5 machine screws on the "
-                 f"22 x 40 patterns. Which side is a free choice; mirror it by "
-                 f"negating the offset here. The cases are symmetric about the "
-                 f"centreline at +/-{_mm(_half)} mm precisely so this can be "
-                 f"flat rather than stepped, and that symmetry is what forced "
-                 f"the belt plane out to {_mm(plane)} mm.")
-
-        # The horn hole. Drawn as a solid marking a VOID, which is the only
-        # way this schema has of saying "hole" — the plate is a box primitive
-        # and the layout has no boolean. The horn it clears stands 2 mm proud
-        # of the case face and rotates, so the relief is not optional.
         _rel = dt.get("drive_mount_relief", 0.0)
-        if _rel > 0:
-            _hd = d4["horn_diameter"] + 2 * _rel
-            # On the RIGHT servo's shaft axis — the one whose horn faces
-            # CAD +X, i.e. the side the plate is on. Radius C, not the case
-            # centre: the hole is concentric with the shaft, not with the plate.
-            _th_r = servo_angle["right"]
-            add("drive_mount_relief", "mount",
-                [C_m * _np.cos(_th_r), -(_half + plate / 2),
-                 C_m * _np.sin(_th_r)],
-                cyl=(_hd / 2, plate, AXIS_LATERAL),
-                source={"pos": "derived — on the horn axis", "size": "design"},
-                note=f"A VOID, not a part: the {_mm(_hd)} mm hole the plate "
-                     f"needs where the horn passes through it. "
-                     f"{_mm(d4['horn_diameter'])} mm horn plus "
-                     f"{_mm(_rel)} mm of radial clearance. Only the servo whose "
-                     f"HORN faces the plate needs it — the other presents its "
-                     f"flat back face — so this is one hole, not two.")
+        # `sgn` is the MODEL y sign; CAD x is its negation, so sgn -1 is the
+        # bike's right. Each plate is relieved for the servo whose HORN faces
+        # it, which is the one on that same side.
+        for tag, sgn in (("right", -1.0), ("left", 1.0)):
+            add(f"drive_mount_plate_{tag}", "mount",
+                [_rc * _np.cos(th0), sgn * (_half + plate / 2),
+                 _rc * _np.sin(th0)],
+                box=(2 * _t0, plate, 2 * (_cav_r + _wall)),
+                zaxis=[_np.cos(th0), 0.0, _np.sin(th0)],
+                source={"pos": "derived — on the case faces",
+                        "size": "design (outline is a placeholder)"},
+                note=f"{_mm(plate)} mm, on the bike's {tag}. It lies on the "
+                     f"{tag} servo's horn-side face and the other servo's back "
+                     f"face — they face opposite ways, so one plane touches "
+                     f"both — and takes 8 M2.5 machine screws on the 22 x 40 "
+                     f"case patterns. The cases are symmetric about the "
+                     f"centreline at +/-{_mm(_half)} mm precisely so this can "
+                     f"be flat rather than stepped, and that symmetry is what "
+                     f"forced the belt plane out to {_mm(plane)} mm.")
 
-        # THE SLEEVE: a collar rising off the plate and running back along the
-        # four sides of the pair. Four walls, not one solid, because that is
-        # what it is — the servos are captured by shape and the plate's eight
-        # screws only have to stop them drifting along their own shafts.
+            if _rel > 0:
+                # A VOID, not a part: the hole the plate needs where the horn
+                # passes through it. Drawn as a solid because the layout has no
+                # boolean, and named so nobody mistakes it for material.
+                _hd = d4["horn_diameter"] + 2 * _rel
+                _th = servo_angle[tag]
+                add(f"drive_mount_relief_{tag}", "mount",
+                    [C_m * _np.cos(_th), sgn * (_half + plate / 2),
+                     C_m * _np.sin(_th)],
+                    cyl=(_hd / 2, plate, AXIS_LATERAL),
+                    source={"pos": "derived — on the horn axis",
+                            "size": "design"},
+                    note=f"A VOID. The {_mm(_hd)} mm hole the {tag} plate needs "
+                         f"where the {tag} servo's horn passes through it — "
+                         f"{_mm(d4['horn_diameter'])} mm horn plus "
+                         f"{_mm(_rel)} mm of radial clearance. Concentric with "
+                         f"the SHAFT, not with the plate. Only the servo whose "
+                         f"horn faces this plate needs one; the other presents "
+                         f"its flat back face.")
+
+        # THE SLEEVE: a collar joining the two plates, running along the four
+        # sides of the case pair. Walls rather than one solid, because that is
+        # what it is — the servos are captured by shape and the sixteen screws
+        # only have to stop them drifting along their own shafts.
         #
-        # It stops at the case faces, x = +/-D/2, well inside the pulley faces,
-        # so nothing about it is close to the belts.
-        wall = dt.get("drive_mount_wall", 0.003)
-        if wall > 0:
-            t_half = C_m * _np.sin(dth) + d4["box_size"][1] / 2   # both cases
-            r_half = d4["box_size"][2] / 2
-            for nm_, off_t, off_r, ext_t, ext_r in (
-                    ("side_a", t_half + wall / 2, 0.0, wall, 2 * (r_half + wall)),
-                    ("side_b", -(t_half + wall / 2), 0.0, wall, 2 * (r_half + wall)),
-                    ("radial_in", 0.0, -(r_half + wall / 2),
-                     2 * (t_half + wall), wall),
-                    ("radial_out", 0.0, r_half + wall / 2,
-                     2 * (t_half + wall), wall)):
-                # (u, v) offsets about the case centre, back into model x/z.
+        # It stops at the case faces, |x| = D/2, well inside the pulley faces,
+        # so nothing about it is near a belt.
+        if _wall > 0:
+            r_half = _cav_r
+            # All four, less whichever is the ceiling. The build axis is
+            # TANGENTIAL — across the two servos — so it is a SIDE wall that
+            # comes off and both radial walls stand vertical. Getting this
+            # backwards costs a wall in the wrong place, so it is named in the
+            # config rather than inferred.
+            walls = [("side_a", _cav_t + _wall / 2, 0.0, _wall,
+                      2 * (r_half + _wall)),
+                     ("side_b", -(_cav_t + _wall / 2), 0.0, _wall,
+                      2 * (r_half + _wall)),
+                     ("radial_in", 0.0, -(r_half + _wall / 2), 2 * _t0, _wall),
+                     ("radial_out", 0.0, r_half + _wall / 2, 2 * _t0, _wall)]
+            _open = dt.get("drive_mount_open_wall", "side_b")
+            walls = [w for w in walls if w[0] != _open]
+            for nm_, off_t, off_r, ext_t, ext_r in walls:
                 cu, su = _np.cos(th0), _np.sin(th0)
-                # Case centre is the shaft pulled back along body_up by
-                # H/2 - shaft_from_end, the same offset `mount_of` applies.
-                r_c = C_m - (r_half - d4["shaft_from_end"])
-                cx = r_c * cu + off_r * cu - off_t * su
-                cz = r_c * su + off_r * su + off_t * cu
+                cx = _rc * cu + off_r * cu - off_t * su
+                cz = _rc * su + off_r * su + off_t * cu
                 # Extents are model-frame (x, y, z) BEFORE the zaxis rotation,
                 # which is about model Y and so leaves the lateral one alone:
                 # tangential, lateral, radial.
@@ -833,12 +843,13 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
                     zaxis=[cu, 0.0, su],
                     source={"pos": "derived — around the case pair",
                             "size": "design"},
-                    note=f"Sleeve wall, {_mm(wall)} mm. One of four round the "
-                         f"pair — the servos share a face, so the two of them "
-                         f"present one rectangle and it takes four sides, not "
-                         f"eight. Torque goes in here as bearing on the case "
-                         f"walls, which is why the plate's screws only have to "
-                         f"retain.")
+                    note=f"Sleeve wall, {_mm(_wall)} mm, joining the two "
+                         f"plates. The servos share a face, so the pair "
+                         f"presents ONE rectangle and it takes four sides, not "
+                         f"eight — of which one is left open, being the "
+                         f"ceiling in the print. Torque goes "
+                         f"in here as bearing on the case walls, which is why "
+                         f"the screws only have to retain.")
 
     d3 = sv["xc330_t181"]
     params.setdefault("cad_mounts", {}).setdefault("servo_steer", {})[
@@ -935,9 +946,14 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
 
     r_in_env = d_in / 2 + be["flange_margin"] / 2
     r_sv_env = d_sv / 2 + be["flange_margin"] / 2
-    # The LOWER servo's lower run and the UPPER servo's upper run: between them
-    # they are the extreme angles anything at the rear has to live inside.
+    # ALL FOUR RUNS, because THE TWO SIDES ARE NOT MIRROR IMAGES. The servos
+    # straddle 45 deg rather than sharing it, so the left belt spans one pair of
+    # angles and the right another — overlapping, but offset. Drawing only the
+    # two extremes made the rear look symmetric, and anything threading between
+    # the belts has two different corridors to satisfy.
     for tag, sgn, side, word in (("left", 1, -1, "lower"),
+                                 ("left", 1, 1, "upper"),
+                                 ("right", -1, -1, "lower"),
                                  ("right", -1, 1, "upper")):
         _t = servo_angle[tag]
         c2 = (C * _np.cos(_t), C * _np.sin(_t))
@@ -948,18 +964,24 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
         # the run AND the axle direction, which is the sheet a dropout is.
         nrm = [-run[1], 0.0, run[0]]
         mid = (p1 + p2) / 2
-        add(f"plane_dropout_{word}", "planes",
+        add(f"plane_belt_{tag}_{word}", "planes",
             [float(mid[0]), sgn * plane, float(mid[1])], normal=nrm,
             source={"pos": "derived — belt tangent midpoint",
                     "size": "design"},
-            note=f"Parallel to the {word.upper()} belt run — the {tag} servo's "
-                 f"{word} tangent, which is one of the two extreme angles the "
-                 f"belts reach. A rear dropout printed in this plane runs from "
-                 f"the axle forward to the servo mount without ever crossing "
-                 f"its own belt, and lies flat while doing it. Placed in the "
-                 f"belt plane at {_mm(plane)} mm; slide it inboard to wherever "
-                 f"the dropout actually sits — the ORIENTATION is the part "
-                 f"that is derived, not the offset.")
+            note=f"CLEARANCE, not a print plane. Parallel to the "
+                 f"{word.upper()} belt run — the {tag} servo's {word} tangent, "
+                 f"one of the two extreme angles the belts reach — and "
+                 f"therefore part of the boundary of the belt-and-pulley hull. "
+                 f"A rear dropout has to run from the axle OUTBOARD of its own "
+                 f"belt and end up INBOARD of it at the servo mount, so "
+                 f"somewhere it crosses the belt plane, and it can only do "
+                 f"that outside this line. Like a chainstay threading past the "
+                 f"chain. Which means the crossing dictates the part's shape "
+                 f"and a single flat build plane will not align with both the "
+                 f"sleeve and the arm — printing off this was the first guess "
+                 f"and it does not survive the geometry. Placed in the belt "
+                 f"plane at {_mm(plane)} mm; the ORIENTATION is what is "
+                 f"derived, not the offset.")
 
     payload_notes = {
         "battery": "3S 1300-1500 mAh LiPo, slung under the frame between the "
