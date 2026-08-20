@@ -218,8 +218,17 @@ drivetrain:
   # cases must occupy the same lateral band, which pins the horn face at
   # case_depth/2 + horn = 19.0 mm and makes the case span +/-17.0. The plate
   # then sits on that face and the pulley has to stand off far enough to clear
-  # it. Below 3 mm an M2.5 countersink cannot sit flush, so 3 mm is a floor
-  # rather than a preference.
+  # it.
+  #
+  # 3 mm is the current choice, NOT a derived floor. What would drive it thicker
+  # is recessing the screw heads: a counterbore for an M2.5 cap head is ~2.5 mm
+  # deep and a 90 deg flat head consumes ~2.35, either of which leaves under a
+  # millimetre of plate behind it. Wants settling with a real screw in hand.
+  #
+  # ONE PLATE PER SIDE, not one in total. Each lateral side presents one servo's
+  # horn face and the other's back face, so a plane per side touches both cases
+  # — 16 screws in all, and the second plate is FREE, since the belt plane was
+  # already pushed out to clear the first and the geometry is symmetric.
   drive_mount_plate: {value: 0.003, source: design}
   # Air between the plate's outer face and the pulley's inner face. It was
   # zero — flush — which is a drawing, not a build. Every millimetre here is a
@@ -234,7 +243,35 @@ drivetrain:
   # Diametral clearance around the horn where it passes through the plate. The
   # plate lies on the case face and the horn stands 2 mm proud of that face, so
   # a 3 mm plate has to be relieved or it fouls the horn — and the horn ROTATES.
+  # One per plate, each over the servo whose horn faces it.
+  #
+  # The clearance can leave a sliver of plate between the relief and the two
+  # inner screw counterbores. NOT A CONCERN: the sliver is not structural and
+  # gets trimmed by eye in CAD rather than being designed around here.
   drive_mount_relief: {value: 0.0015, source: design}
+  # Which face is left OPEN, being the ceiling in the print. `none` draws all
+  # six — four sleeve walls and two plates — and you delete one in CAD once the
+  # build direction is settled. That is the honest default: the choice is a
+  # print decision, not a layout one, and the layout should not pre-empt it.
+  #
+  # WHICH FACE GOES, per build axis:
+  #
+  #   radial (+/-u, the mean radius)   a RADIAL wall. From the front of the
+  #                                    45 deg -> `radial_in`; from the rear ->
+  #                                    `radial_out`. Puts the dropout arms
+  #                                    ALONG the build axis, so they are
+  #                                    layer-stacked.
+  #   tangential (+/-v, across the     a SIDE wall. Bed on side_a -> `side_b`,
+  #   two servos, also 45 deg)         and vice versa. Puts the arms IN the
+  #                                    build plane, which is the strong one.
+  #   lateral (+/-x)                   no wall at all — the far PLATE is the
+  #                                    ceiling. Gives perfect servo-mount
+  #                                    bores, but the part has to be two.
+  #
+  # The radial one is the "bad" orientation for the arms and may still be the
+  # right call: at 15 mm of section rather than 1 mm, layer adhesion in ASA is
+  # not obviously the binding constraint.
+  drive_mount_open_wall: {value: none, source: design}
   # Angular station of the drive servos about the rear axle, measured from
   # straight-ahead (0 = level with the axle, forward; 90 = directly above).
   # Both servos share it — see cad_mounts for why that is possible.
@@ -252,8 +289,19 @@ drivetrain:
   # wings.pivot[0]`, deliberately NOT changed here — moving it invalidates the
   # self-righting study and wants re-running, not editing.
   drive_servo_angle_deg: {value: 45.0, source: design}
-  # Gap between the two servo cases.
-  drive_servo_gap: {value: 0.002, source: design}
+  # Gap between the two servo cases. ZERO, and deliberately.
+  #
+  # The 2 mm it used to carry was clearance for a 2D packing solve in which
+  # nothing located the cases — they were two free rectangles that had to miss
+  # each other. The sleeve locates them now, so a gap BETWEEN them is slop that
+  # lets them rattle against each other under belt tension. The fit clearance
+  # that does matter lives on the sleeve's inner dimensions, where FDM shrinkage
+  # is — see `drive_mount_cavity_clearance`.
+  drive_servo_gap: {value: 0.0, source: design}
+  # Fit clearance on the sleeve cavity, per side. NOMINAL: the real number is a
+  # print-tolerance decision made in CAD, and it lives here only so the layout
+  # does not draw an interference fit.
+  drive_mount_cavity_clearance: {value: 0.00025, source: design}
   # Angular separation of the two shafts, straddling the angle above.
   #
   # SOLVED as a 2D packing problem: both shafts on the circle of radius C, each
@@ -274,7 +322,11 @@ drivetrain:
   # one flat mounting plate, which the skewed arrangements do not.
   #
   # Re-solve if the case size, the shaft offset or C change.
-  drive_servo_separation_deg: {value: 16.35, source: design}
+  # With the cases parallel and at the same radius this now has a closed form,
+  #   sep = 2 asin((case_width + drive_servo_gap) / 2C),
+  # and cad_layout prints it every run so a gap change cannot leave it stale.
+  # 16.35 was the value for the old 2 mm gap; 15.2563 is the zero-gap one.
+  drive_servo_separation_deg: {value: 15.2563, source: design}
   # Standoff between the servo's horn face and the pulley's inner face, for a
   # pulley hub that does not sit flush. 0 = the pulley bolts straight on.
   #
