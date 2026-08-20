@@ -27,7 +27,7 @@ independently optimised mechanism** (a four-bar linkage) built and measured
 alongside it. A fifth workstream opened since: **CAD**, which
 is where the bike stops being parametric and starts being drawn. It already
 pushed back — the belt geometry pinned a placeholder that had been made up, and
-the rear of the bike went from 99 mm wide to 75 mm as a result. The remaining
+the rear of the bike went from 99 mm wide to 80 mm as a result. The remaining
 open engineering question is still **the contact model**, which is the
 least-known parameter in the sim and the one no policy has been randomized
 over.
@@ -344,7 +344,31 @@ workstream and it arrived immediately:
   until the mount/pulley design is done" — and nothing derived from it. Pinned
   from real belt geometry (9 mm HTD5M, 45T/15T on the 370 mm belts bought,
   centre distance 107.35 mm from the belt equation) it becomes 7.5 mm, the
-  minimum a 9 mm belt allows over a 33 mm wheel. **Rear width 99 → 75 mm.**
+  minimum a 9 mm belt allows over a 33 mm wheel. **Rear width 99 → 80 mm.**
+  It reached 75 briefly, on the wheel clearance alone. The belt plane is now
+  **derived as the larger of two clearances** — the pulley missing the wheel
+  (24.0) and the drive-servo mount plate missing the pulley (26.5) — and the
+  mount binds. Every millimetre of plate or of plate-to-pulley gap is two on
+  the bike, and the servos themselves do not move for any of it. The 3 mm that bought is what makes the two servo cases
+  symmetric about the centreline (±17.0), which is what lets a single flat plate
+  on one side of the bike bolt to both of them.
+- **The drive-servo mount is drawn, and it set the width.** One plate on one
+  side of the bike takes both servos — they face opposite ways, so a single
+  plane meets one horn-side face and one back face — on the 22 x 40 case
+  pattern with M2.5 machine screws. The P.C.D 16 on the horn side is on the
+  ROTATING horn and there is no idler by default, so 22 x 40 is the only static
+  pattern common to both faces. A sleeve round the pair carries the torque in
+  bearing so the screws only retain. `AOW mount` and `AOW planes` are their own
+  features in the Feature Studio, hence their own tickboxes.
+- **The Onshape workflow is written down** in
+  `docs/plans/cad-onshape-workflow.md`: what the platform will and will not
+  name, how query variables replace naming, why a regenerated Feature Studio
+  can be pasted over the old one safely, the API quota, and the three separate
+  ways a ROBOTIS datasheet depth turned out not to be a face.
+- **Three print planes are exported**, being where CAD actually starts: one
+  normal to the front wheel axis (the fork prints flat in it) and two parallel
+  to the extreme belt runs, 24 deg and 66 deg, for the rear dropouts. Derived
+  from the belt tangents rather than eyeballed.
 - **The steer servo was 10.17 mm off the steering axis**, which direct drive at
   `gear_ratio: 1.0` does not permit. Its position is now solved, not chosen.
 - **The TM151 is 40 × 34 × 12.6 mm and 19 g**, against the 30 × 30 × 12 mm / 12 g
