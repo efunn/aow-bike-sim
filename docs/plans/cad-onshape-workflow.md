@@ -19,7 +19,7 @@ a Part Studio as separate nodes:
 |---|---|
 | `AOW layout variables` | `setVariable` for every coordinate, so a sketch can reference `#aow_servo_steer_z`. Draws nothing, cannot fail. Insert first, once. |
 | `AOW drivetrain` / `steering` / `servos` / `mount` / `electronics` / `righting` | envelopes, origin points and axis planes for **one group** |
-| `AOW planes` | the three print planes. No tickboxes — everything in it is a plane already |
+| `AOW planes` | one print plane (the fork's) and four belt-clearance planes, two per side. No tickboxes — everything in it is a plane already |
 | `AOW four-bar sketch` | the righting linkage as construction geometry |
 | `AOW bike layout` | the superseded all-in-one node, kept so documents that already have it keep their geometry |
 
@@ -163,6 +163,34 @@ anything into one, and the same goes for the Parts list's folders.
 
 Where it does pay off: the per-group features can be selected and folded into
 one collapsed line. Which is an argument for inserting them.
+
+## When a plane is worth generating
+
+**Only when it does not coincide with geometry the model already has.** A print
+or sketch plane picked off an existing face costs nothing to select and cannot
+go stale; a generated one is a thing to keep in sync. So the servo mounting
+plane never needed exporting — it is the plate's own face — while the fork's
+plane did, because it holds the axle direction and the raked steering axis at
+once and no face in the model is parallel to it.
+
+Two traps found by using them:
+
+- **The linkage's axis planes are not datums.** Each is normal to its own link,
+  so they sit at 61.7 deg, 57.2 deg and so on to lateral — they look like flat
+  references in the viewport and measuring against one produced a 47.076 deg
+  that had no meaning. Only `AOW planes` and the `front_wheel` / `fork` axis
+  planes are intended as datums.
+- **The two sides are not mirror images.** The servos straddle 45 deg rather
+  than sharing it, so each belt spans its own pair of tangents — left 24.52 to
+  50.22, right 39.78 to 65.48. The bands OVERLAP, so their union is contiguous
+  and there is no corridor between them: anything crossing both belt planes at
+  one angular station has to pass below 24.52 or above 65.48.
+- **A plane parallel to a belt run is clearance, not a print orientation.** A
+  rear dropout leaves the axle outboard of its own belt and arrives at the
+  servo mount inboard of it, so it crosses the belt plane, and it can only do
+  that outside the belt-and-pulley hull — the way a chainstay threads past the
+  chain. The crossing dictates the shape, and no single flat build plane then
+  aligns with both the sleeve and the arm.
 
 ## What the export carries
 

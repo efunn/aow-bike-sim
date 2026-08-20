@@ -352,30 +352,46 @@ workstream and it arrived immediately:
   the bike, and the servos themselves do not move for any of it. The 3 mm that bought is what makes the two servo cases
   symmetric about the centreline (±17.0), which is what lets a single flat plate
   on one side of the bike bolt to both of them.
-- **The drive-servo mount is drawn, and it set the width.** One plate on one
-  side of the bike takes both servos — they face opposite ways, so a single
-  plane meets one horn-side face and one back face — on the 22 x 40 case
-  pattern with M2.5 machine screws. The P.C.D 16 on the horn side is on the
+- **The drive-servo mount is drawn, and it set the width.** A plate on EACH
+  side takes both servos — they face opposite ways, so one plane per side meets
+  one horn-side face and one back face — on the 22 x 40 case pattern with M2.5
+  machine screws, sixteen in all. The P.C.D 16 on the horn side is on the
   ROTATING horn and there is no idler by default, so 22 x 40 is the only static
-  pattern common to both faces. A sleeve round the pair carries the torque in
-  bearing so the screws only retain. `AOW mount` and `AOW planes` are their own
-  features in the Feature Studio, hence their own tickboxes.
+  pattern common to both faces. The second plate cost NOTHING in width: the
+  belt plane had already been pushed out to clear the first. A four-walled
+  sleeve joins them and carries the torque in bearing, so the sixteen screws
+  only retain; one of its six faces is the ceiling in the print and gets
+  deleted in CAD, which face depending on the build axis. `AOW mount` and
+  `AOW planes` are their own features in the Feature Studio, hence their own
+  tickboxes.
+- **The servo gap is now zero.** The 2 mm was clearance for a packing solve in
+  which nothing located the cases; the sleeve does, so a gap between them was
+  slop. Separation re-solved 16.35 -> 15.2563 deg, and it has a closed form now
+  that the cases are parallel. The fit clearance moved to the sleeve cavity,
+  where FDM shrinkage actually lives.
 - **The Onshape workflow is written down** in
   `docs/plans/cad-onshape-workflow.md`: what the platform will and will not
   name, how query variables replace naming, why a regenerated Feature Studio
   can be pasted over the old one safely, the API quota, and the three separate
   ways a ROBOTIS datasheet depth turned out not to be a face.
-- **Three print planes are exported**, being where CAD actually starts: one
-  normal to the front wheel axis (the fork prints flat in it) and two parallel
-  to the extreme belt runs, 24 deg and 66 deg, for the rear dropouts. Derived
-  from the belt tangents rather than eyeballed.
+- **Five planes are exported**, being where CAD actually starts. One is the
+  fork's: it holds the axle direction and the raked steering axis at once, so
+  it is the front view tilted back by 15 deg, and the fork is both sketched and
+  printed in it. The other four are the belt runs, two per side — and they are
+  NOT mirror images, because the servos straddle 45 deg rather than sharing it.
+  Left spans 24.52 to 50.22 deg, right 39.78 to 65.48, and the two bands
+  OVERLAP, so anything crossing both belt planes at one station has to pass
+  below 24.52 or above 65.48. There is no corridor between the belts.
+  All derived from the pulley tangents rather than eyeballed.
 - **The steer servo was 10.17 mm off the steering axis**, which direct drive at
   `gear_ratio: 1.0` does not permit. Its position is now solved, not chosen.
 - **The TM151 is 40 × 34 × 12.6 mm and 19 g**, against the 30 × 30 × 12 mm / 12 g
   placeholders the sim still carries.
 - **The drive servos' separation is a solved 2D packing problem** — two
   rectangles free to rotate about their own shafts, separating-axis tested —
-  not a guess. 16.35°, with the alternatives tabled in the config.
+  not a guess. Now 15.2563° with the gap closed, and reducible to a closed form
+  because the two cases ended up parallel; the alternatives are tabled in the
+  config.
 - **The self-righting linkage moved 75 → 130 mm** to clear the drive belts and
   then the servo cases.
 
