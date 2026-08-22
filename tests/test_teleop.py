@@ -604,3 +604,150 @@ def test_lead_clamp_rearms_once_the_bike_catches_up(monkeypatch, model,
                           np.cos(c._gen_psi_cmd - c._psi)))
     assert lead <= _LEAD_MAX + 0.05, \
         f"clamp did not re-arm: lead wound to {np.degrees(lead):.0f} deg"
+
+
+# -- slow motion ------------------------------------------------------------
+
+@pytest.mark.pure
+def test_steps_per_frame_holds_the_render_rate():
+    """Slow motion must cut steps-per-frame, not lengthen the frame.
+
+    The whole point is that the FRAME rate stays at 60 while sim time advances
+    slower; spending the extra wall time inside a frame would render at
+    60/slowmo fps, which reads as a stutter rather than as slow motion.
+    """
+    from aow_sim.interactive import steps_per_frame
+    dt = 4.0e-4
+    base = steps_per_frame(dt, 1.0)
+    assert base == 42                                   # 1/60/4e-4
+    for f in (2.0, 4.0, 10.0):
+        n = steps_per_frame(dt, f)
+        # sim advanced per frame falls as 1/f ...
+        assert n == pytest.approx(base / f, rel=0.15)
+        # ... while the wall time per frame stays put, i.e. 60 fps.
+        assert n * dt * f == pytest.approx(1 / 60, rel=0.10)
+
+
+@pytest.mark.pure
+def test_steps_per_frame_bottoms_out_at_one_physics_step():
+    """Past ~42x a frame IS one step; the ceiling must clamp, not go to zero."""
+    from aow_sim.interactive import steps_per_frame
+    dt = 4.0e-4
+    assert steps_per_frame(dt, 42.0) == 1
+    assert steps_per_frame(dt, 1000.0) == 1
+    assert steps_per_frame(dt, 0.0) >= 1        # guard against a divide-by-zero
+
+
+@pytest.mark.pure
+def test_axis_thresholds_are_wall_referenced_under_slow_motion():
+    """_REPEAT_GAP and friends describe a HAND, so they must not dilate.
+
+    They are compared against d.time, which slow motion stretches. Left alone
+    at 10x, two deliberate taps 0.2 s apart in wall time are 0.02 s apart in
+    sim time -- inside _REPEAT_GAP -- and the second reads as auto-repeat
+    instead of a fresh press, so the discrete step is silently swallowed.
+    """
+    from aow_sim.run_drive import _TIME_SCALE, _Axis
+    tap_gap_wall = 0.2                      # comfortably a deliberate re-tap
+    assert tap_gap_wall > _REPEAT_GAP
+
+    try:
+        for slowmo in (1.0, 10.0):
+            _TIME_SCALE[0] = slowmo
+            ax = _Axis()
+            assert ax.press(0.0, +1) is True                  # first press
+            sim_gap = tap_gap_wall / slowmo                   # sim time elapsed
+            assert ax.press(sim_gap, +1) is True, (
+                f"a {tap_gap_wall}s re-tap read as auto-repeat at {slowmo}x")
+            # and a real auto-repeat still reads as one, at either rate
+            ax2 = _Axis()
+            ax2.press(0.0, +1)
+            assert ax2.press(0.03 / slowmo, +1) is False
+    finally:
+        _TIME_SCALE[0] = 1.0
+
+
+@pytest.mark.pure
+def test_coast_delay_is_wall_referenced_too():
+    """Otherwise letting go takes _COAST_DELAY * slowmo of wall clock."""
+    from aow_sim.run_drive import _TIME_SCALE, _Axis
+    try:
+        _TIME_SCALE[0] = 10.0
+        ax = _Axis()
+        ax.press(0.0, +1)
+        just_under = (_COAST_DELAY / 10.0) * 0.9
+        just_over = (_COAST_DELAY / 10.0) * 1.1
+        assert not ax.released(just_under)
+        assert ax.released(just_over)
+    finally:
+        _TIME_SCALE[0] = 1.0
+
+
+@pytest.mark.pure
+def test_slowmo_badge_only_appears_below_real_time():
+    """No chrome at 1x, a badge otherwise, and one push per transition."""
+    import mujoco
+    from aow_sim.run_drive import _draw_slowmo_badge
+
+    class FakeView:
+        def __init__(self):
+            self.texts, self.clears = [], 0
+
+        def set_texts(self, t):
+            self.texts.append(t)
+
+        def clear_texts(self):
+            self.clears += 1
+
+    v, shown = FakeView(), [None]
+
+    # Real time draws nothing readable ...
+    _draw_slowmo_badge(v, 1.0, shown)
+    assert v.texts == []
+
+    # ... slowing down puts the factor top-left ...
+    _draw_slowmo_badge(v, 16.0, shown)
+    assert len(v.texts) == 1
+    font, gridpos, text1, _text2 = v.texts[0]
+    assert text1 == "16x slow"
+    assert gridpos == mujoco.mjtGridPos.mjGRID_TOPLEFT
+    assert font == mujoco.mjtFontScale.mjFONTSCALE_200
+
+    # ... an unchanged value is not re-pushed every frame ...
+    for _ in range(10):
+        _draw_slowmo_badge(v, 16.0, shown)
+    assert len(v.texts) == 1, "badge re-sent without changing"
+
+    # ... a new factor replaces it ...
+    _draw_slowmo_badge(v, 8.0, shown)
+    assert v.texts[-1][2] == "8x slow"
+
+    # ... and coming back to real time clears it, exactly once.
+    before = v.clears
+    _draw_slowmo_badge(v, 1.0, shown)
+    _draw_slowmo_badge(v, 1.0, shown)
+    assert v.clears == before + 1
+
+    # No handle yet (viewer not started) must not raise.
+    _draw_slowmo_badge(None, 4.0, [None])
+
+
+@pytest.mark.pure
+def test_slowmo_badge_formats_without_trailing_zeros():
+    """`2x slow`, not `2.0x slow` -- %g, since the ladder is powers of two."""
+    from aow_sim.run_drive import _draw_slowmo_badge
+
+    class FakeView:
+        def __init__(self):
+            self.texts = []
+
+        def set_texts(self, t):
+            self.texts.append(t)
+
+        def clear_texts(self):
+            pass
+
+    for factor, want in ((2.0, "2x slow"), (64.0, "64x slow"), (1.5, "1.5x slow")):
+        v = FakeView()
+        _draw_slowmo_badge(v, factor, [None])
+        assert v.texts[0][2] == want

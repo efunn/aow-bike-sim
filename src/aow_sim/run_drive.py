@@ -19,7 +19,8 @@ Headless (default) -- the envelope report:
   one-shot maneuvers instead.
 
   Arrows throttle and steer; 1/3 crab (general mode only); 5 stop; 2 dial;
-  / re-zero; ; ' trail history; \\ camera. With --wings: 9 extends the
+  / re-zero; ; ' trail history; \\ camera (incl. rear-wheel);
+  - / = slow motion. With --wings: 9 extends the
   righting pair, 4 retracts it, . shoves the bike over. The banner printed at
   startup is the authoritative list, and the README teleop table explains the
   modes.
@@ -40,6 +41,8 @@ import mujoco
 import numpy as np
 
 from .build_model import build_model, load_params, tune_lighting
+from .wheel_overlay import (STRIPE_RADIUS_TELEOP, add_stripes,
+                            stripe_frames)
 from .control import DriveController, run
 from .control.balance import extract_state
 from .control.linearize import settle_upright
@@ -331,6 +334,15 @@ def main() -> None:
     ap.add_argument("--general", default=None, metavar="NAME",
                     help="always-on policy to drive with (moves/NAME.{yaml,npz}); "
                          "overrides control.general_move for this session")
+    ap.add_argument("--slowmo", type=float, default=1.0, metavar="X",
+                    help="run teleop at 1/X speed (2 = half, 10 = a tenth). "
+                         "- halves and = doubles it live (shifted _ and + too), "
+                         "clamped 1x-64x. "
+                         "The trajectory "
+                         "is unchanged -- this buys wall-clock time per physics "
+                         "step, not resolution; sim.timestep is untouched. "
+                         "Pairs with the \\ wheel camera for watching the "
+                         "rear contact.")
     ap.add_argument("--ui", action="store_true",
                     help="restore the viewer's side panels (off by default: "
                          "teleop is keyboard-driven and Reset is Backspace)")
@@ -356,7 +368,8 @@ def main() -> None:
     if args.teleop:
         _teleop(model, params, eq.qpos, hockey=args.hockey,
                 general=args.general, show_ui=args.ui,
-                wings=args.wings, linkage=args.linkage, record=args.record)
+                wings=args.wings, linkage=args.linkage, record=args.record,
+                slowmo_x=args.slowmo)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -477,6 +490,15 @@ _TRAIL_FADE_S = 0.5                # s of older history fading to clear
 _GRID_PITCH = 0.5                  # m between floor grid lines
 _GRID_HALF = 3.0                   # m, grid extent either side of the bike
 _GRID_RGBA = (0.55, 0.55, 0.55, 0.28)
+# The `wheel` camera stands 0.45 m off a 0.05 m wheel, so the 0.5 m grid puts
+# at most one line in frame and reads as no reference at all. 25 mm is fine
+# enough that ground scrolling past is obvious at crawl speed -- which is the
+# measurement the view exists for: stripes say how far the wheel turned, the
+# grid says how far the ground actually went, and slip is the difference.
+# Extent shrinks with it so the line COUNT stays sane.
+_WHEEL_GRID_PITCH = 0.025
+_WHEEL_GRID_HALF = 0.30
+_WHEEL_GRID_RGBA = (0.42, 0.60, 0.78, 0.55)
 
 
 def _command_ref(c, data):
@@ -490,8 +512,33 @@ def _command_ref(c, data):
     return float(h), float(s) * np.array([np.cos(h), np.sin(h)])
 
 
+def _draw_slowmo_badge(view, factor, shown) -> None:
+    """`8x slow` in the top-left, and nothing at all at 1x.
+
+    Real time is the normal case, so it gets no chrome: a badge that is always
+    up stops being read, and this one only matters when it contradicts what
+    the motion looks like.
+
+    Pushed only when the value CHANGES (`shown` carries the last one). The
+    viewer keeps overlay text until it is replaced or cleared, so re-sending an
+    identical string every frame is pure overhead -- and `clear_texts` wipes
+    every overlay, not just ours, so it is worth calling exactly once per
+    transition rather than continuously.
+    """
+    if view is None or factor == shown[0]:
+        return
+    shown[0] = factor
+    if factor == 1.0:
+        view.clear_texts()
+    else:
+        view.set_texts((mujoco.mjtFontScale.mjFONTSCALE_200,
+                        mujoco.mjtGridPos.mjGRID_TOPLEFT,
+                        f"{factor:g}x slow", ""))
+
+
 def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
-             command=None, trail=None, grid=False, trail_level=None):
+             command=None, trail=None, grid=False, trail_level=None,
+             stripes=None, wheel_view=False):
     """Ground dial under the bike showing the teleop command against reality.
 
     Headings live ON the rim as radial ticks; velocities are arrows from the
@@ -508,8 +555,6 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
     # geoms, as the offscreen recorder does.
     if reset:
         scn.ngeom = 0
-    if not on[0]:
-        return
     p = data.body("chassis").xpos
     base = np.array([p[0], p[1], _DIAL_Z])
 
@@ -532,6 +577,39 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
         seg(at(heading, r0), at(heading, r1),
             mujoco.mjtGeom.mjGEOM_ARROW, width, rgba)
 
+    def floor_grid(pitch, half, rgba, width, centre):
+        """A world-FIXED reference. Without it a tracking camera keeps the
+        bike centred and stationary-looking, so translation is invisible --
+        the same trap the recorder hit. Snapped to the pitch so it reads as
+        fixed ground while only ever spanning the area around `centre`."""
+        cx = round(float(centre[0]) / pitch) * pitch
+        cy = round(float(centre[1]) / pitch) * pitch
+        n = int(half / pitch)
+        for i in range(-n, n + 1):
+            u = i * pitch
+            seg(np.array([cx + u, cy - half, 0.001]),
+                np.array([cx + u, cy + half, 0.001]),
+                mujoco.mjtGeom.mjGEOM_LINE, width, rgba)
+            seg(np.array([cx - half, cy + u, 0.001]),
+                np.array([cx + half, cy + u, 0.001]),
+                mujoco.mjtGeom.mjGEOM_LINE, width, rgba)
+
+    # The wheel view's stripes and fine grid are the SUBSTANCE of that view,
+    # not a reference laid over it, so key 2 -- which hides the command dial --
+    # must not take them away. Drawn before the toggle for exactly that reason.
+    # The grid centres on the REAR HUB rather than the chassis origin: at 25 mm
+    # pitch, snapping to a point 0.2 m away walks it out of frame on a turn.
+    if wheel_view:
+        if stripes is not None:
+            add_stripes(scn, data, stripes,
+                        radius=STRIPE_RADIUS_TELEOP)
+        if grid:
+            floor_grid(_WHEEL_GRID_PITCH, _WHEEL_GRID_HALF, _WHEEL_GRID_RGBA,
+                       1.0, data.body("aow_hub").xpos)
+
+    if not on[0]:
+        return
+
     # rim: a dashed circle, the reference dial the ticks sit on
     n = 48
     for i in range(0, n, 2):
@@ -539,22 +617,10 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
         seg(at(a0, _DIAL_R), at(a1, _DIAL_R),
             mujoco.mjtGeom.mjGEOM_LINE, 4.0, _RING)
 
-    # Floor grid: a world-FIXED reference. Without it a follow camera keeps the
-    # bike centred and stationary-looking, so translation is invisible -- the
-    # same trap the recorder hit. Snapped to the pitch so it reads as fixed
-    # ground while only ever spanning the area around the bike.
-    if grid:
-        cx = round(float(p[0]) / _GRID_PITCH) * _GRID_PITCH
-        cy = round(float(p[1]) / _GRID_PITCH) * _GRID_PITCH
-        n = int(_GRID_HALF / _GRID_PITCH)
-        for i in range(-n, n + 1):
-            u = i * _GRID_PITCH
-            seg(np.array([cx + u, cy - _GRID_HALF, 0.001]),
-                np.array([cx + u, cy + _GRID_HALF, 0.001]),
-                mujoco.mjtGeom.mjGEOM_LINE, 1.5, _GRID_RGBA)
-            seg(np.array([cx - _GRID_HALF, cy + u, 0.001]),
-                np.array([cx + _GRID_HALF, cy + u, 0.001]),
-                mujoco.mjtGeom.mjGEOM_LINE, 1.5, _GRID_RGBA)
+    # The coarse grid is for the follow/overhead framings; the wheel view drew
+    # its own fine one above.
+    if grid and not wheel_view:
+        floor_grid(_GRID_PITCH, _GRID_HALF, _GRID_RGBA, 1.5, p)
 
     # Path history: solid red for the recent _TRAIL_SOLID_S, then fading to
     # clear over _TRAIL_FADE_S. The dial travels with the bike and so cannot
@@ -641,6 +707,44 @@ _REPEAT_GAP = 0.12     # s, an event this soon after the last is auto-repeat
 _GRACE_REPEAT = 0.18   # s, ramp runs this long past the last repeat (must
                        #   exceed the slowest repeat interval or it stutters)
 _COAST_DELAY = 0.50    # s of silence before the speed target coasts down
+
+# Slow-motion divisor, shared with teleop_loop's pacing. The three constants
+# above describe a HUMAN -- OS auto-repeat rate, how long a finger rests
+# between taps -- but they are compared against `d.time`, which slow motion
+# stretches. Left alone at 10x, a 0.12 s wall gap becomes 0.012 s of sim, two
+# deliberate taps read as one auto-repeat, and the coast-down takes five
+# seconds of wall clock to notice you let go. So the _Axis comparisons divide
+# by this: the thresholds stay fixed in WALL time, which is where the hand is.
+#
+# Only the auto-repeat FALLBACK needs it. `_KeyState.physical_hold` asks the OS
+# whether the key is down right now and carries no timing at all, so on a
+# machine with the `teleop` extra installed slow motion needs no input work
+# whatsoever -- this is for the degraded path.
+_TIME_SCALE = [1.0]
+
+# Slow motion goes on +/-, which is ALSO MuJoCo's own "Speed Up / Down".
+# That is deliberate, and the reasoning is worth keeping because the note
+# beside the arrow handling below is easy to over-read.
+#
+# The viewer's full binding table, read out of _simulate's help strings:
+#   [ ]  cycle cameras      Space  play/pause      arrows  step back/forward
+#   + -  speed up/down      Tab    toggle UI       PageUp  select parent
+#   Esc  free camera        F1-F5  help/info/profiler/sensors/fullscreen
+#
+# The rule is not "these keys are taken". Under launch_passive our loop owns
+# the stepping, so every binding that drives the SIMULATION is inert: teleop
+# has always used the arrows for turning even though they are listed as step
+# back/forward, and it has never conflicted. Speed is simulation state, so +/-
+# is inert too -- and it is the key every MuJoCo user already reaches for.
+# ([ ] are also effectively free, because apply_camera reasserts the camera
+# every frame; see the note further down. +/- wins on meaning, not on
+# availability.)
+#
+# F6/F7 were tried first and are NOT free; the F-row keeps toggling viewer
+# panels past F5. If +/- ever stops reaching this callback, the symptom is
+# silence: the console line below is what says the key arrived.
+_KEYS_SLOWER = (ord("-"), ord("_"))
+_KEYS_FASTER = (ord("="), ord("+"))
 
 # Driving-game longitudinal feel. These set the TARGET; SpeedProfile still
 # rate-limits the actual command at control.drive.accel (1.5 m/s^2), so the
@@ -806,7 +910,8 @@ class _Axis:
         self.armed = False
 
     def press(self, now, direction) -> bool:
-        fresh = (now - self.last) > _REPEAT_GAP or direction != self.dir
+        fresh = ((now - self.last) > _REPEAT_GAP / _TIME_SCALE[0]
+                 or direction != self.dir)
         self.dir = direction
         self.repeating = not fresh      # a repeat proves the key is held
         self.last = now
@@ -825,10 +930,10 @@ class _Axis:
         return 0
 
     def ramping(self, now) -> bool:
-        return self.repeating and (now - self.last) < _GRACE_REPEAT
+        return self.repeating and (now - self.last) < _GRACE_REPEAT / _TIME_SCALE[0]
 
     def released(self, now) -> bool:
-        return (now - self.last) > _COAST_DELAY
+        return (now - self.last) > _COAST_DELAY / _TIME_SCALE[0]
 
     def clear(self):
         self.last = -1e9
@@ -956,7 +1061,8 @@ def _rec_write(rec, path, params, gen_name, mode):
 
 
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
-            show_ui=False, wings=False, linkage=False, record=None):
+            show_ui=False, wings=False, linkage=False, record=None,
+            slowmo_x=1.0):
     from .interactive import teleop_loop
 
     from . import policy_menu
@@ -1000,13 +1106,23 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     trail_levels = [0.0, 2.0, 4.0, 10.0, float("inf")]
     trail_level = [1]          # index; default 2 s
     # free = the viewer's own mouse camera; follow = chase from behind;
-    # overhead = plan view. Both tracked modes need the floor grid to be
-    # legible, since a tracked camera holds the bike still in frame.
+    # overhead = plan view; wheel = broadside on the rear wheel, with roller
+    # stripes and a 25 mm ground grid, for reading what the rear contact is
+    # actually doing (the same framing wheel_slowmo.py renders offline).
+    # Every tracked mode needs a floor grid to be legible, since a tracked
+    # camera holds the bike still in frame.
+    slowmo = [max(1e-3, float(slowmo_x))]
+    _TIME_SCALE[0] = slowmo[0]
+    slowmo_shown = [None]        # last value pushed to the viewer overlay
     cam_mode = ["free"]
     cam_free_pending = [False]   # re-frame free view on the switch INTO it
     lead_armed = [True]          # heading lead clamp; a snap disarms it
     view = [None]              # the viewer handle, once teleop_loop hands it over
     chassis_id = model.body("chassis").id
+    hub_id = model.body("aow_hub").id
+    # Static stripe geometry, computed once against the model; only the
+    # live body pose changes per frame. Costs 64 scene geoms when drawn.
+    stripe_geom = stripe_frames(model, params)
     ax_v, ax_psi, ax_lat = _Axis(), _Axis(), _Axis()
     keys = _KeyState()
     announced = [False]
@@ -1368,6 +1484,21 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             if cam_mode[0] == "follow":
                 v.cam.azimuth, v.cam.elevation, v.cam.distance = (
                     yaw, -18.0, 1.6)
+            elif cam_mode[0] == "wheel":
+                # Broadside on the rear wheel, tracking the HUB rather than the
+                # chassis so the wheel stays centred through a lean.
+                #
+                # azimuth = yaw + 90 keeps the camera abeam as the bike turns,
+                # which a fixed world azimuth would not -- and abeam is the
+                # angle the roller stripes read from, since the rollers spin
+                # about axes lying in the wheel plane. Standoff 0.45 m matches
+                # wheel_slowmo's `side` panel, so a teleop session and a slowmo
+                # clip are the same framing and can be compared directly.
+                # Elevation just above the horizon: at exactly 0 the floor
+                # collapses to a line and the grid disappears with it.
+                v.cam.trackbodyid = hub_id
+                v.cam.azimuth, v.cam.elevation, v.cam.distance = (
+                    yaw + 90.0, -8.0, 0.45)
             else:                       # overhead: heading points up-screen
                 v.cam.azimuth, v.cam.elevation, v.cam.distance = (
                     yaw, -89.0, 2.6)
@@ -1433,6 +1564,22 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             # Tab, +/-, F1-F5 and every letter A-Z. These three are what is
             # left. Do not "tidy" them back to brackets -- the keypress lands
             # in both places and the viewer's camera cycles underneath you.
+            #
+            # REFINED 2026-08-22. Most of that table is inert here, for two
+            # different reasons, and neither is "the key is unbound":
+            #   - play/pause, speed, step back/forward touch the SIMULATION
+            #     loop, which launch_passive does not own -- this loop does.
+            #     That is why the arrows below drive the bike happily despite
+            #     being listed as step back/forward.
+            #   - [ ] cycle the camera, but apply_camera reasserts type,
+            #     trackbodyid and the angles every frame in follow/overhead/
+            #     wheel, so the cycle is overwritten before it is ever drawn.
+            #     (Free mode returns early, so there they would still land --
+            #     but free mode is where the camera is yours anyway.)
+            # So the brackets are effectively available now; \\ is teleop's own
+            # camera cycle and stays. The warning above is kept because it
+            # predates the tracked modes and explains why these three were
+            # picked, not because the brackets are still dangerous.
             elif k in (ord(";"), ord("'")):   # trail history length
                 trail_level[0] = int(np.clip(
                     trail_level[0] + (1 if k == ord("'") else -1),
@@ -1453,11 +1600,27 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                     c.command_stop()
             elif k == ord("2"):     # toggle reference overlay
                 overlay_on[0] = not overlay_on[0]
-            elif k == ord("\\"):    # cycle camera: free -> follow -> overhead
-                order = ("free", "follow", "overhead")
-                cam_mode[0] = order[(order.index(cam_mode[0]) + 1) % 3]
+            elif k in _KEYS_SLOWER + _KEYS_FASTER:
+                # - halves speed, = doubles it. Clamped to 1x..64x. Below 1x
+                # the pacing loop cannot keep up anyway (it only ever sleeps,
+                # never skips). The top is soft: past ~42x -- 1/60/timestep --
+                # a frame is already one physics step, so further slowdown
+                # comes out of the FRAME RATE rather than the step count. 64x
+                # is one doubling past that and visibly choppier; it is left
+                # reachable because a single-step-per-frame crawl is
+                # occasionally what you want.
+                f = slowmo[0] * (2.0 if k in _KEYS_SLOWER else 0.5)
+                slowmo[0] = min(64.0, max(1.0, f))
+                _TIME_SCALE[0] = slowmo[0]
+                print(f"slow motion: {slowmo[0]:g}x"
+                      + ("  (real time)" if slowmo[0] == 1.0 else ""))
+            elif k == ord("\\"):    # cycle camera
+                order = ("free", "follow", "overhead", "wheel")
+                cam_mode[0] = order[(order.index(cam_mode[0]) + 1) % len(order)]
                 cam_free_pending[0] = cam_mode[0] == "free"
-                print(f"camera: {cam_mode[0]}")
+                print(f"camera: {cam_mode[0]}"
+                      + ("  (rear wheel broadside; roller stripes + 25 mm "
+                         "ground grid)" if cam_mode[0] == "wheel" else ""))
             # Wing keys sit ABOVE the mode split so they work in both analytic
             # and general mode -- the mechanism is orthogonal to who is
             # balancing. With --wings they shadow 9 (flick_fwd) and 4 (flip),
@@ -1562,11 +1725,13 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         is discarded. The menu needs the live camera, which only exists once
         the viewer has handed the handle over (on_start), hence the guard."""
         _overlay(scn, m, d, c, overlay_on, v_max, trail=trail, grid=True,
-                 trail_level=trail_levels[trail_level[0]])
+                 trail_level=trail_levels[trail_level[0]],
+                 stripes=stripe_geom, wheel_view=cam_mode[0] == "wheel")
         if menu["open"] and view[0] is not None:
             active = gen_name[0] if c.mode == "general" else policy_menu.ANALYTIC
             policy_menu.draw(scn, view[0].cam, menu["entries"],
                              menu["cursor"], active)
+        _draw_slowmo_badge(view[0], slowmo[0], slowmo_shown)
 
     # The viewer only ever reports a key going down, so how well "hold" works
     # depends on whether real key state is readable — say which one is live.
@@ -1611,7 +1776,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "  ←/→ hold to turn continuously   / re-zero command   "
                 "5 stop   2 overlay\n"
                 "  ; / \' trail shorter/longer (pen-up 2s 4s 10s inf)   "
-                "\\ camera (free/follow/overhead)\n"
+                "\\ camera (free/follow/overhead/wheel)\n"
+                "- / = slow motion (halve / double, 1x-64x)\n"
                 "  " + policy_menu.label_help() + "\n"
                 "  analytic-only keys: 6/7 circle L/R   8/9 flick (trajopt "
                 "rev/fwd)   3 flick (RL)\n"
@@ -1621,6 +1787,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "aow_sim.run_drive",
                 draw=draw_frame,
                 show_ui=show_ui,
+                slowmo=slowmo,
                 on_start=lambda v: view.__setitem__(0, v))
     # teleop_loop returns when the operator closes the viewer, so this is the
     # natural flush point. Ctrl-C bypasses it -- accepted, since a session
