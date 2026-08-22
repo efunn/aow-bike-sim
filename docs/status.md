@@ -523,31 +523,44 @@ version's wire routing is understood.
 
 ---
 
-## Health: the suite is defensible again
+## Health: the LQR layer is knowingly red
 
-`pytest` at HEAD: **7 failed, 217 passed, 2 skipped** in 162 s. Was 21 failed +
-10 errors + 179 passed.
+`pytest` at HEAD: **37 failed, 182 passed, 2 skipped, 10 errors** in 141 s,
+reproducible across runs. Was 7 failed / 217 passed / 2 skipped before the
+drive plant was armed on 2026-08-21.
 
-All 7 are in `test_drive.py` and all are the trajopt moves — `test_flip_completes`
-(×2) and five `flick` tests. These are the **already-accepted** set: those moves
-no longer survive the modelled payload and are deliberately queued for
-re-authoring once the as-built mass is known, rather than being re-optimised
-twice. Nothing else is red.
+| file | red | what it is |
+|---|---|---|
+| `test_drive.py` | 19 | 7 trajopt (the old accepted set) + 12 gain-schedule/circle/heading |
+| `test_hw_odometry.py` | 12 | 2 failed + 10 errors, all downstream of the schedule |
+| `test_balance.py` | 8 | the LQR balance controller |
+| `test_pivot.py` | 4 | pivots run on the scheduled LQR |
+| `test_teleop.py` | 3 | teleop's analytic modes |
+| `test_hw_replay.py` | 1 | stale `deploy/bundle.npz` — run `python -m aow_sim.export_deploy` |
 
-**One extra red is outstanding as of 2026-08-21 and is NOT accepted**:
-`test_hw_replay.py::test_bundle_controller_matches_mujoco_controller`. Adding
-`actuators.drive_ki` moved `params_digest` from `7af0ce42dfc91154` to
-`99f356e873cda2fc`, and `hw/state.py` is correctly refusing the stale
-`deploy/bundle.npz`. That is the guard working, not a regression, and the fix
-is one command — `python -m aow_sim.export_deploy`. It is deliberately absent
-from `tests/expected_failures.txt`, because it is a chore, not a cost.
+**Only 7 of those 47 are the previously accepted set** (the trajopt `flick` /
+`flip` moves, still queued for re-authoring once the as-built mass is known).
+Everything else arrived with `drive_ki: 0.6`, and every one of them is in the
+LQR layer: the gain schedule identifies at worst R² 0.941 against the 0.98
+floor, and controllers designed on that fit fall over. **Every bare-plant test
+in `test_model.py` passes**, so this is the reference baseline being broken, not
+the physics — which is the one place the project can afford it, since RL is what
+drives and LQR is the comparison.
 
-**That acceptance is now machine-checked, not prose.** `tests/expected_failures.txt`
-lists those seven nodeids with a reason and a date, and `tests/conftest.py`
+**They are deliberately NOT in `tests/expected_failures.txt`.** They are not an
+accepted cost; they are the visible price of arming a change whose
+identification half is unsolved, and registering ~47 nodeids would convert an
+open blocker into a background fact nobody looks at again. The registry will
+shout `NEWLY RED` on every run until the identification is fixed or the plant is
+disarmed. That is the intended behaviour. If it ever needs silencing, the entry
+should say exactly that and carry a date — not name 47 tests individually.
+
+**That acceptance mechanism is still machine-checked.** `tests/expected_failures.txt`
+lists the seven trajopt nodeids with a reason and a date, and `tests/conftest.py`
 ends every run with a verdict on whether the red set *moved* — `NEWLY RED`,
-`UNEXPECTEDLY GREEN`, or `STALE ENTRY` — rather than leaving you to remember
-which seven were fine. Still not an xfail, for the same reason as the guard
-below: these tests run, fail, and exit non-zero. The registry only judges.
+`UNEXPECTEDLY GREEN`, or `STALE ENTRY`. Still not an xfail, for the same reason
+as the guard below: these tests run, fail, and exit non-zero. The registry only
+judges.
 
 ### Which tests a change moves
 
@@ -810,8 +823,8 @@ with a note on how to identify it. The load-bearing ones are contact friction,
 chassis/pack/electronics mass, front tire lateral stiffness, and
 `min_pinion_radius`.
 
-**Known wrong, and the fix is now BUILT BUT NOT ARMED — the drive plant is
-~31x over-capable.** `drive_kv: 0.5` against a 0.016016 bare-motor droop, so
+**ARMED 2026-08-21, and the LQR layer is red because of it — the drive plant
+was ~31x over-capable.** `drive_kv: 0.5` against a 0.016016 bare-motor droop, so
 the modelled servo makes full stall torque at every speed and reverses 21.8
 times a second while told to stand still. Found 2026-08-21.
 
@@ -833,17 +846,23 @@ MuJoCo expresses natively as `dyntype=integrator` with an affine bias. `ctrl`
 still means commanded input-shaft velocity, so `nu` is unchanged and no caller
 learns a new command; `na` goes 0 → 2.
 
-**It ships disarmed: `drive_kv: 0.5`, `drive_ki: 0.0`, which is the old plant
-bit-exact** (the PI branch at ki = 0 would drop the `kv*ctrl` term, so
-`build_model` branches rather than folding — `test_drive_ki_zero_is_the_p_only_plant`
-is the guard). Measured on the way in, replaying `general_rl_smooth_diff_og`
-told to hold station for 15 s:
+**It now ships ARMED at `drive_kv: 0.016016`, `drive_ki: 0.6`** — a deliberate
+choice to make `bike_params.yaml` the file to experiment in, taking the LQR
+breakage as a known cost. `ki = 0` remains bit-exact with the old plant and is
+still tested — the PI branch at ki = 0 would drop the `kv*ctrl` term rather than
+reduce to the velocity actuator, so `build_model` branches rather than folding,
+and `test_drive_ki_zero_is_still_the_p_only_plant` is the guard on that. It has
+to keep working: every export in `moves/` was trained against the P-only form.
+`test_shipped_plant_is_the_pi_form` catches a silent revert the other way.
+
+Measured on the way in, replaying `general_rl_smooth_diff_og` told to hold
+station for 15 s:
 
 | plant | rim past the contact | hub reversals | bike drift | worst LQR fit R² |
 |---|---|---|---|---|
-| shipped `kv 0.5` | 5.09 m | 21.8 /s | 0.35 m | 0.9727 |
+| former `kv 0.5, ki 0` | 5.09 m | 21.8 /s | 0.35 m | 0.9727 |
 | `kv 0.016016, ki 0` | 2.96 m | 8.8 /s | 1.33 m | 0.9757 |
-| `kv 0.016016, ki 0.6` | 3.25 m | 9.1 /s | 0.63 m | 0.9412 |
+| **shipped** `kv 0.016016, ki 0.6` | 3.25 m | 9.1 /s | 0.63 m | 0.9412 |
 | `kv 0.016016, ki 0.855` | 4.38 m | 9.9 /s | 0.78 m | 0.9439 |
 
 The reversal rate halves and stays halved; the integrator buys the
@@ -859,11 +878,12 @@ unbounded hidden input. Cost when it leaks: worst gain-schedule fit R² 0.9727 �
 **0.7543**. All five now call `build_model.reset_actuator_state`, which is a
 no-op at `na = 0`; that recovers **0.9412**.
 
-**OUTSTANDING, and it is what still blocks arming this.** 0.9412 is under the
-0.98 floor, and with gains designed on that fit the LQR layer falls over: 36
-failed + 10 errors across `test_balance[lqr]`, `test_drive`, `test_pivot`,
-`test_teleop` and `test_hw_odometry`. Every bare-plant test in `test_model.py`
-passes throughout, so this is the reference baseline, not the physics. The
+**OUTSTANDING, and it is the cost being paid to keep this armed.** 0.9412 is
+under the 0.98 floor, and with gains designed on that fit the LQR layer falls
+over — the 37 failed + 10 errors in the health section above. Every bare-plant
+test in `test_model.py` passes throughout, so this is the reference baseline,
+not the physics; that is what made arming affordable rather than reckless, RL
+being what actually drives. It is still a real debt, not a shrug. The
 residual is the genuine hidden-state problem: the integrator is a state the
 8-state lateral model has nowhere to put. **A missing intercept was tested as
 the explanation and disproved** — adding a constant column to the regression
