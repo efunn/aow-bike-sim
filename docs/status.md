@@ -1,4 +1,4 @@
-# Project status — 2026-08-21
+# Project status — 2026-08-22
 
 Midpoint snapshot. The design logs under `docs/plans/` are where decisions and
 their reasoning live; this file is the layer on top of them — what is true
@@ -15,10 +15,14 @@ command, and the analytic LQR stack exists alongside it as a reference
 baseline. The onboard software path is built and proven in sim — the hardware
 shim, the deploy bundle, the odometry estimator, the AHRS protocol — with no
 hardware to run it on yet. The tethered rig's parts are on hand; the untethered
-electronics are specced and sourced but not ordered. **The test suite is back
-to a defensible state** (7 failed / 217 passed, and all 7 are the trajopt moves
-already scheduled for re-authoring) after `contact_solref` was reverted to
-`[0.005, 1.0]`. Two things changed shape since the last snapshot: **pitch is
+electronics are specced and sourced but not ordered. **The drive plant is now
+armed and a policy has been trained on it** — the placeholder velocity servo
+was replaced by a real velocity PI, and
+`general_rl_smooth_diff_pi` is the first export trained under the current
+physics, which closes the longest-standing open sim item. It cost the LQR
+layer: the suite went 7 failed / 217 passed to **37 failed / 188 passed**, all
+of the new red in the reference controller and none of it in the plant (see
+Health). Two things changed shape since the last snapshot: **pitch is
 now observed and priced**, which closed out a long-running investigation into
 why crab does not work, and **the self-righting mechanism is now a complete,
 verified design** rather than a recommendation — a mirrored wing pair whose
@@ -479,6 +483,28 @@ version's wire routing is understood.
 
 ## Tooling added
 
+- **A rear-wheel camera and slow motion in teleop.** `\\` now cycles
+  free/follow/overhead/**wheel**; the wheel view is broadside on the rear hub
+  at the same 0.45 m standoff as `wheel_slowmo`'s `side` panel, so a teleop
+  session and an offline clip are the same framing. It draws roller stripes
+  and a 25 mm ground grid (against 0.5 m elsewhere), which together are the
+  slip readout: stripes say how far the wheel turned, grid says how far the
+  ground went, slip is the difference. `--slowmo X`, with `-`/`=` live and a
+  `16x slow` badge top-left (nothing at 1x). Slow motion cuts steps-per-frame
+  rather than lengthening the frame, so the render rate stays at 60 and the
+  ceiling is ~42x — one physics step per frame — exactly as `wheel_slowmo`
+  documents for its offline renders. The trajectory is unchanged; this buys
+  wall-clock time per step, not resolution.
+  - **`src/aow_sim/wheel_overlay.py`** is new and holds the stripe drawing,
+    which `analysis/wheel_slowmo.py` now imports instead of defining its own.
+    One implementation, so the teleop view and the clips cannot drift apart —
+    which is the entire point of having the view in teleop.
+  - The `_Axis` auto-repeat thresholds now divide by the slow-motion factor.
+    They describe a HAND but are compared against `d.time`, which slow motion
+    stretches: at 10x, two deliberate taps 0.2 s apart become 0.02 s of sim,
+    inside `_REPEAT_GAP`, and the second silently reads as auto-repeat. Only
+    the FALLBACK path needs this — `_KeyState.physical_hold` asks the OS
+    whether the key is down and carries no timing at all.
 - **`src/aow_sim/cad_layout.py`** — the layout export, YAML and FeatureScript
   from one data model, with the frame conversion done once in code rather than
   per component by hand. `--righting {linkage,wings,none}`, `--bumpers`,
@@ -525,9 +551,11 @@ version's wire routing is understood.
 
 ## Health: the LQR layer is knowingly red
 
-`pytest` at HEAD: **37 failed, 182 passed, 2 skipped, 10 errors** in 141 s,
-reproducible across runs. Was 7 failed / 217 passed / 2 skipped before the
-drive plant was armed on 2026-08-21.
+`pytest` at HEAD: **37 failed, 188 passed, 2 skipped, 10 errors** in 139 s
+serial, or **~30 s** with `pytest -n 8 --dist load`. Was 7 failed / 217 passed
+/ 2 skipped before the drive plant was armed on 2026-08-21; the passed count
+has since risen 182 → 188 as tests were added for the new tooling, with no new
+failures.
 
 | file | red | what it is |
 |---|---|---|
@@ -554,6 +582,27 @@ open blocker into a background fact nobody looks at again. The registry will
 shout `NEWLY RED` on every run until the identification is fixed or the plant is
 disarmed. That is the intended behaviour. If it ever needs silencing, the entry
 should say exactly that and carry a date — not name 47 tests individually.
+
+**Run it in parallel.** 81% of the suite's wall time is inside MuJoCo C
+(`mj_step` 56 s, `mj_forward` 4.6 s, against 13.5 s of Python, cProfile over
+`test_drive` + `test_teleop`), so there is nothing to optimise in our own code
+— the only lever is running more of it at once. `pytest -n 8 --dist load`
+takes it 139 s → ~30 s. Per-test (`load`), not per-file: `test_drive.py` alone
+is 39 s, so `loadfile` can never beat that. `pytest-xdist` is now in the `dev`
+extra, and the numbers live beside the marker docs in `pyproject.toml`.
+
+**Do NOT pin BLAS threads for it.** An earlier version of that note said to,
+for a reproducible red set. It was wrong on both the mechanism and the fact:
+numpy and scipy here build against Apple **Accelerate**, not OpenBLAS, so
+`OPENBLAS_NUM_THREADS` was a no-op to begin with; ten concurrent processes each
+running `design_gain_schedule` produce a **bitwise identical** fingerprint of
+`(Ks, r2s)` matching the serial reference; and across eight runs the four
+UNPINNED ones agreed exactly while the single flip landed in the pinned batch.
+The real flake is `test_teleop.py::test_keystate_degrades_safely`, which is not
+parallelism at all: `_KeyState` reads **live OS keyboard state** and the test
+asserts nothing is held, so it fails when someone is typing while the suite
+runs. Serial is equally exposed; parallel runs are shorter and hit the window
+less.
 
 **That acceptance mechanism is still machine-checked.** `tests/expected_failures.txt`
 lists the seven trajopt nodeids with a reason and a date, and `tests/conftest.py`
@@ -681,8 +730,11 @@ Two tracks. The sim track does not wait on the build.
 
 **Sim track:**
 
-1. **Point `control.general_move` at a policy trained under the current
-   contact model.** Outstanding for two snapshots; one line.
+1. **Point `control.general_move` at `general_rl_smooth_diff_pi`.** That
+   policy now EXISTS — trained on the armed plant, `survive_rate 1.00` — so
+   this is finally a one-line change with a real target rather than a wait.
+   Outstanding for four snapshots. Re-export the deploy bundle in the same
+   pass; it is still pinned to a digest two moves ago.
 2. **Fix the eval score before spending another long run.** `_score =
    survive_rate × track` rose monotonically across exactly the span in which
    the 12M `smooth_bouncy_lat` run lost forward drive entirely, so `BestByScore`
@@ -823,6 +875,33 @@ with a note on how to identify it. The load-bearing ones are contact friction,
 chassis/pack/electronics mass, front tire lateral stiffness, and
 `min_pinion_radius`.
 
+**Contact friction now has a written test.** `contact-protocol.md` gained
+**§P0b — incline slide**, the cheapest measurement in the whole document: tilt
+until it slides, `mu = tan(theta)`, with a conversion table and the trap that
+matters most (block the rotation, or you measure rolling resistance instead).
+The protocol previously covered only the NORMAL direction, so the two friction
+values had nowhere to be recorded at all.
+
+What made it worth writing now is that the sensitivity is regime-dependent and
+counter-intuitive. Slip measured in the contact frame, not inferred:
+
+| | steady crab | policy holding station |
+|---|---|---|
+| shipped, mu 0.9 | 2.6 mm/s | 35.1 mm/s |
+| mu 2.0 | 2.2 mm/s | **15.9 mm/s** |
+
+Under a steady crab `mu` does nothing — the contact is nowhere near the cone.
+Under a hold it dominates, because the rapid reversals spike the tangential
+force. **A friction test that only exercises steady motion would conclude,
+wrongly, that the coefficient does not matter.** Two knobs that look like they
+should help and do not: `impratio` 10 → 100 makes it WORSE (35.1 → 45.6 mm/s),
+and `condim` 6 changes nothing; MuJoCo's own advice to raise `impratio` for
+slippery contacts is aimed at numerical creep below the friction limit, which
+is not what happens here. `friction_sliding` is the knob and it is the only
+one. Tried at 2.0 in teleop and NOT adopted — it did not look materially
+different, and `randomization.friction_frac: 0.2` means every policy has only
+seen mu 0.72–1.08 anyway, so 2.0 is off-distribution. Measure first.
+
 **ARMED 2026-08-21, and the LQR layer is red because of it — the drive plant
 was ~31x over-capable.** `drive_kv: 0.5` against a 0.016016 bare-motor droop, so
 the modelled servo makes full stall torque at every speed and reverses 21.8
@@ -852,7 +931,8 @@ breakage as a known cost. `ki = 0` remains bit-exact with the old plant and is
 still tested — the PI branch at ki = 0 would drop the `kv*ctrl` term rather than
 reduce to the velocity actuator, so `build_model` branches rather than folding,
 and `test_drive_ki_zero_is_still_the_p_only_plant` is the guard on that. It has
-to keep working: every export in `moves/` was trained against the P-only form.
+to keep working: every export in `moves/` EXCEPT `general_rl_smooth_diff_pi`
+was trained against the P-only form.
 `test_shipped_plant_is_the_pi_form` catches a silent revert the other way.
 
 Measured on the way in, replaying `general_rl_smooth_diff_og` told to hold
@@ -867,8 +947,10 @@ station for 15 s:
 
 The reversal rate halves and stays halved; the integrator buys the
 station-keeping back (drift 1.33 → 0.63 m) without giving the reversals up.
-This is a *replay* of a policy trained on the shipped plant, so read it as what
-the plant permits, not as what a retrained policy would do.
+Read this as what the plant PERMITS, not as what a retrained policy does: it
+replays `..._og`, which was trained on the old plant, so the two right-hand
+columns compare a policy against physics it never saw. What a policy trained on
+the armed plant actually does is the section below.
 
 **Landing this also turned up a real bug that `na = 0` was hiding.** Five
 hand-rolled resets — the four RL envs and `linearize._set_reduced_state` —
@@ -895,6 +977,46 @@ So the open question is how to identify a plant whose actuator carries memory
 the controller cannot see — not a parameter, and not yet solved.
 `analysis/wheel_slowmo.py --drive-tau` predates all of this and now
 double-counts the bandwidth; prefer overriding `drive_kv`/`drive_ki`.
+
+### The retrain landed: `general_rl_smooth_diff_pi`
+
+`config/rl_general_smooth_diff.yaml` on the armed plant, 12M budget, exported
+from `best_model.zip` at 11M, digest `dcb067cd1e8fd25f`, `survive_rate 1.00`.
+**The first policy in `moves/` trained under the current physics** — every
+other export predates either the 4e-4 timestep move or the plant arming.
+
+Judged with `analysis/liftoff.py` rather than the airborne-% columns, which its
+own docstring supersedes: binary is-it-touching counts the omni's ~0.6 mm
+envelope ripple identically to a real hop. Both policies on the armed plant,
+15 s per command:
+
+| gap [mm], hold | og p99 / max / >1mm | pi p99 / max / >1mm |
+|---|---|---|
+| rear | 0.71 / 1.08 / 0.4% | **0.24 / 0.49 / 0.0%** |
+| front | 5.38 / 10.23 / 7.9% | **2.89 / 5.70 / 4.7%** |
+| front, left crab | 11.16 / 19.04 / 10.1% | **1.53 / 4.90 / 1.5%** |
+
+The rear never leaves the floor — not "less hopping", none, at below
+envelope-ripple scale. Pitch sd on hold 0.32° → 0.17°; on crab 0.58° → 0.13°
+with max 5.36° → 1.26°. Rim past the contact over a 15 s hold, 3.25 → 2.02 m.
+
+Two honest qualifications. The reversal COUNT rose (9.1 → 19.5 /s) while rim
+per reversal collapsed 24 mm → 6.9 mm: it makes many small corrections instead
+of a few large ones, and the count on its own is a misleading headline. And it
+is livelier off the line — front gap max 35 → 53 mm, pitch max 10.1° → 15.4°,
+with `corr` 0.999, so a genuine wheelie rather than a hop.
+
+**`head_err_deg` 4.3 → 26.9 is an artifact of three eval rows, not a
+regression.** Decomposed: 17 of 20 commands average **3.0°, max 6.3°** — better
+than og's 4.3° overall. The other three all combine forward speed with a 180°
+heading command, where the policy drives BACKWARD (`speed_ratio_rev` 0.992)
+instead of turning, which achieves the commanded world-frame velocity without
+rotating. A 180° turn from standstill is fine at 2.4°. `crab_head_err` 81.8 is
+the same artifact twice over: it is the mean over rows with non-zero `v_lat`,
+two of which also command 180°; the pure-crab rows are **5.9° and 6.3°**.
+
+Not yet done: `control.general_move` still points at `general_rl`, and the
+deploy bundle has not been re-exported against `dcb067cd1e8fd25f`.
 
 **None of the numbers above are measured.** `drive_kv 0.016016` is derived from
 the datasheet block, and is a LOWER bound — firmware KVP makes the real loop
