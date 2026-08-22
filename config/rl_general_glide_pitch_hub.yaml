@@ -1,0 +1,166 @@
+# Glide arm 4: arm 2 PLUS a price on HUB MAGNITUDE at low commanded speed.
+# Identical to rl_general_glide_pitch.yaml except one new reward key, so it is
+# a clean A/B against general_rl_glide_pitch_dt4e4 (track_geo 0.886).
+#
+# THE MEASUREMENT. Holding station needs no net wheel rotation. Over 15 s of
+# hold, same physics, same seed:
+#
+#   controller                      hub rpm  flips/s  rim travel   drift
+#   LQR ([differential, steer])         0.0     11.7      0.00 m   0.001 m
+#   general_rl_smooth_diff_og          79.3     21.8      6.37 m   0.363 m
+#   general_rl_glide_pitch_dt4e4       94.3     13.7      7.58 m   1.405 m
+#   general_rl_glide_pitch_smooth     130.8     11.9     10.52 m   0.969 m
+#
+# TWO TOY RUNS ISOLATED THE CAUSE (config/rl_general_hold*.yaml):
+#   hold-only task, full actions -> STILL saws: 88.0 rpm, 7.07 m. So it is not
+#     the task; a policy asked to do nothing but stand still keeps the reflex.
+#   hold-only, hub_max pinned to 0 -> 0.6 rpm, 0.05 m, and drift HALVES to
+#     0.233 m, the best station-keeping of any RL policy. So the motion is
+#     gratuitous, and it actively costs the thing it is supposedly buying.
+# Nothing priced it: w_effort is 0.001, and w_smooth prices CHANGE, so a large
+# STEADY hub command was free.
+#
+# WHY PRICED AND NOT CLAMPED. Pinning hub_max to 0 is a stronger guarantee and
+# it worked in the toy -- but the toy only tested UNDISTURBED hold. During a
+# disturbance recovery the wheel may be exactly the right actuator, and a hard
+# clamp removes it there too. So the charge fades out linearly with COMMANDED
+# speed: full at a hold command, zero at v_max, keyed to the command (which is
+# in the observation) rather than to measured speed (which the policy could
+# duck by moving).
+#
+# THE WEIGHT, by arithmetic rather than taste. The current policy sits at mean
+# |hub| 0.547 -- half scale -- while standing still, i.e. mean hub^2 0.402.
+# Against a per-step ceiling of w_vel + w_head + w_alive = 3.0, w_hub_idle 1.0
+# charges 0.402/step = 13.4%. That is the same bracket as w_pitch (a 23 deg
+# wheelie costs ~11%) and under w_smooth's ~22% at full chatter: priced, not
+# forbidden. If it under-bites, 1.5-2.0 is the next rung.
+#
+# WHAT TO WATCH. The failure mode is that hub was partly load-bearing after
+# all, which shows up as WORSE hold, not better: compare survive_rate and
+# hold drift against arm 2, and check disturbance recovery specifically --
+# randomization stays on in training, so the policy does see shoves.
+#
+#   python -m aow_sim.train_general_rl \
+#       --config config/rl_general_glide_pitch_hub.yaml \
+#       --run-dir runs/general_rl_glide_pitch_hub \
+#       --export-name general_rl_glide_pitch_hub
+#
+# ---------------------------------------------------------------------------
+# INHERITED FROM ARM 2, unchanged:
+#
+# Glide arm 2: windowed velocity + a REACHABLE crab envelope + a priced
+# pitch. Differs from rl_general_glide.yaml (arm 1) in three lines, all
+# listed here so the comparison is readable.
+#
+# WHY ARM 1 DID NOT DELIVER. general_rl_glide_og learned to oscillate -- 2x
+# more than any other policy, measured against a common 1 s reference -- so
+# the windowed reward did admit the gait it was meant to. But the oscillation
+# it found was PITCH, not the parallel-park bracket, and pitching produces no
+# lateral travel: net v_lat under a crab command came out at 0.064 m/s,
+# BELOW general_rl_smooth_diff_og's 0.082 from plain per-channel smoothing.
+# It also cost hold quality (drift 0.20 -> 1.46 m) and contact.
+#
+# Three changes, each aimed at one link in that chain:
+#
+# 1. v_lat_frac 0.4 -> 0.12. Arm 1 trained at the FULL envelope, where the
+#    crab command reaches 0.48 m/s = 102% of the differential's kinematic
+#    ceiling, and 8.1% of sampled commands cannot be executed by ANY
+#    controller: the hub and diff shares of one drive actuator sum past its
+#    +-33.3 rad/s limit before a single rad/s is reserved for balance. At
+#    0.12 that figure is 0.0%. The optimal response to a channel that is
+#    mostly impossible is to ignore it, which is what every policy so far has
+#    done.
+#
+# 2. w_pitch 0.0 -> 2.0. Pitch was FREE -- w_upright prices roll and nothing
+#    priced pitch -- and a time-averaged velocity reward makes a pitch
+#    oscillation free twice over, since a wheelie that comes back down
+#    averages to nothing. Arm 1 reached 23 deg nose-up with the front wheel
+#    79 mm off the floor on a plain accelerate command, and 11 deg at a pure
+#    hold, against 6.7 and 2.7 for general_rl_smooth_diff_og
+#    (analysis/liftoff.py; corr(front gap, pitch) = 0.999, so the gap IS the
+#    pitch and not a hop). At 2.0 a 23 deg wheelie costs 0.32/step, ~11% of
+#    the ~3.0 per-step maximum: priced, not forbidden.
+#
+# 3. obs_pitch true. REQUIRED by 2, not optional. Charging w_pitch against a
+#    state the policy cannot see is the exact defect general_spec documents
+#    for prev_action. Pitch and pitch rate come off the AHRS on hardware
+#    (hw/state.set_orientation), so unlike world position this costs nothing
+#    in transfer.
+#
+# NOTE this makes the observation 19 wide, and WIDTH IS NOT THE CONTRACT: a
+# windowed-only policy and a pitch-only policy are both 17. The move yaml
+# records `obs_layout` and replay compares it element-wise.
+#
+# WHAT TO WATCH. crab_ratio_left/right (displacement-based) is still the
+# headline. Add the liftoff check: analysis/liftoff.py should show `at peak`
+# pitch falling from 23 deg toward general_rl_smooth_diff_og's 6.7. If crab
+# is still flat AND pitch is now controlled, the wriggle hypothesis is dead
+# and the honest next step is the open-loop gait sweep, not another arm.
+#
+#   python -m aow_sim.train_general_rl --config config/rl_general_glide_pitch.yaml \
+#       --run-dir runs/general_glide_pitch --export-name general_glide_pitch_rl
+#
+algo:
+  algorithm: PPO
+  total_timesteps: 6000000
+  n_envs: 32
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 1024
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005
+  net_arch:
+  - 128
+  - 128
+  seed: 0
+  eval_every: 1000000
+env:
+  action_space: full
+  control_rate_hz: 50
+  max_episode_s: 15.0
+  v_max: 1.2
+  vel_window_s: 1.0
+  obs_pitch: true
+  v_lat_frac: 0.12
+  p_v_zero: 0.2
+  resample_s:
+  - 3.0
+  - 6.0
+  ball_prob: 0.25
+  ball_place_radius: 0.5
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4
+    diff_max: 40.0
+curriculum:
+  enabled: true
+  start: 0.15
+  step: 0.02
+  advance_score: 0.6
+reward:
+  w_vel: 1.5
+  w_head: 1.0
+  w_alive: 0.5
+  sigma_v: 0.35
+  sigma_psi_deg: 25.0
+  w_upright: 0.5
+  w_pitch: 2.0
+  w_effort: 0.001
+  w_smooth: 0.005
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+  w_hub_idle: 1.0
+randomization:
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15
+  friction_frac: 0.2
+  actuator_frac: 0.15
+  disturb_force_N: 2.0
+  disturb_prob: 0.01

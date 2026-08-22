@@ -1,0 +1,106 @@
+# Glide arm 5: arm 4's hub price, with the fade FIXED.
+# Same w_hub_idle 1.0; the only change is inside _idle_frac (general_env.py).
+#
+# WHAT ARM 4 GOT RIGHT, measured on general_rl_glide_pitch_hub over 15 s hold:
+#   mean |hub| command 0.547 -> 0.154, hub 94.3 -> 28.3 rpm,
+#   rim travel 7.58 -> 2.27 m, drift 1.405 -> 0.874 m,
+#   and the eval grid went UP: track_geo 0.886 -> 0.898, survive 1.00.
+#
+# WHAT IT GOT WRONG. The fade was keyed to the COMMAND alone, so a hold
+# command meant full charge -- and a disturbance arrives during a hold
+# command. It priced the wheel hardest at the one moment recovery might need
+# it. Under a lateral velocity kick at hold, 6 seeds, arm 4 stopped reaching
+# for the channel (mean |hub| 0.19 vs the baseline 0.59) and lost the
+# recoveries with it: 2/6 vs 6/6 at dv 0.30, 0/6 vs 1/6 at 0.35.
+#
+# READ THAT WITH CARE -- the baseline row is non-monotonic across dv
+# (4/6, 6/6, 1/6, 4/6), so recovery is chaotic and the kick is a noisy
+# instrument. The direction is consistent, the fine structure is not. And in
+# ordinary teleop arm 4 drives fine; this is a narrow synthetic probe at
+# standstill, not a verdict on how it rides.
+#
+# THE FIX. Fade on max(commanded, measured) speed, whichever gives more
+# relief, with TWO scales: command against v_max (the span it is drawn from),
+# measured against sigma_v (the reward's own "velocity error that matters").
+# The second scale is the point -- against v_max a 0.3 m/s disturbance leaves
+# 75% of the charge standing, against sigma_v it leaves 14%. Hold-time
+# pressure is unchanged (measured ~0 -> fade 1.0); all that is added is
+# relief the instant the bike is actually moving.
+#
+#   idle_frac at a hold command:  0.00 m/s -> 1.000   0.15 -> 0.571
+#                                 0.05     -> 0.857   0.30 -> 0.143
+#
+# THE LOOPHOLE IS CLOSED BY ARITHMETIC, which is why measured speed is safe
+# here: drifting at 0.3 m/s under a hold command puts r_vel at
+# exp(-0.3^2/0.35^2) = 0.48, giving up ~0.78/step of w_vel to dodge at most
+# 0.40/step of hub charge. Moving to escape this term always loses.
+#
+# WATCH: hub rpm / rim travel should hold near arm 4's, and the kick sweep
+# should come back toward the baseline. If wheel motion regresses to arm 2
+# levels the measured fade is too generous and sigma_v is the knob.
+#
+# ---------------------------------------------------------------------------
+algo:
+  algorithm: PPO
+  total_timesteps: 6000000
+  n_envs: 32
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 1024
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005
+  net_arch:
+  - 128
+  - 128
+  seed: 0
+  eval_every: 1000000
+env:
+  action_space: full
+  control_rate_hz: 50
+  max_episode_s: 15.0
+  v_max: 1.2
+  vel_window_s: 1.0
+  obs_pitch: true
+  v_lat_frac: 0.12
+  p_v_zero: 0.2
+  resample_s:
+  - 3.0
+  - 6.0
+  ball_prob: 0.25
+  ball_place_radius: 0.5
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4
+    diff_max: 40.0
+curriculum:
+  enabled: true
+  start: 0.15
+  step: 0.02
+  advance_score: 0.6
+reward:
+  w_vel: 1.5
+  w_head: 1.0
+  w_alive: 0.5
+  sigma_v: 0.35
+  sigma_psi_deg: 25.0
+  w_upright: 0.5
+  w_pitch: 2.0
+  w_effort: 0.001
+  w_smooth: 0.005
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+  w_hub_idle: 1.0
+randomization:
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15
+  friction_frac: 0.2
+  actuator_frac: 0.15
+  disturb_force_N: 2.0
+  disturb_prob: 0.01

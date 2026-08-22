@@ -1,0 +1,96 @@
+# Glide arm 6: arm 5, with the measured-speed fade scale opened up to 0.6.
+# One key differs from rl_general_glide_pitch_hub2.yaml: hub_idle_v_scale.
+#
+# THE TWO ARMS BRACKET IT, and neither end is right. The hub charge fades on
+# max(commanded, measured) speed; the measured half needs a scale, and:
+#
+#   scale        hold-time wheel motion        disturbance recovery
+#   v_max 1.2    rim 2.27 m, 21% airborne      1/8 at dv 0.25  (baseline 8/8)
+#   (arm 4)      -- the calm one               mean |hub| 0.20 -- stopped
+#                                                 reaching for the wheel
+#   sigma_v .35  rim 6.76 m, 50% airborne      7/8 at dv 0.40  (baseline 0/8)
+#   (arm 5)      -- back to baseline           mean |hub| 0.50 -- best of all
+#
+# So arm 4 bought calm with fragility and arm 5 bought robustness by giving the
+# calm back. 0.6 sits between: at a 0.3 m/s disturbance it leaves 50% of the
+# charge (arm 4 left 75%, arm 5 left 14%).
+#
+#   idle_frac at a hold command, by measured speed:
+#     0.00 -> 1.000   0.15 -> 0.750   0.30 -> 0.500   0.50 -> 0.167
+#
+# WHAT WOULD COUNT AS SUCCESS: rim travel back toward arm 4's 2.27 m while
+# kick survival stays near arm 5's. If it lands halfway on BOTH, the two are
+# genuinely coupled through this one scale and the honest answer is to pick a
+# point on the curve rather than expect a free lunch.
+#
+# MEASURE WITH, in this order -- the first is the question, the second is the
+# constraint, the eval score is neither and moved <0.03 across all three arms:
+#   analysis/wheel_slowmo.py --policies <name> --no-video --seconds 8
+#   analysis/kick_recovery.py --policies <name> --seeds 8
+#
+# ---------------------------------------------------------------------------
+algo:
+  algorithm: PPO
+  total_timesteps: 6000000
+  n_envs: 32
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 1024
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005
+  net_arch:
+  - 128
+  - 128
+  seed: 0
+  eval_every: 1000000
+env:
+  action_space: full
+  control_rate_hz: 50
+  max_episode_s: 15.0
+  v_max: 1.2
+  vel_window_s: 1.0
+  obs_pitch: true
+  v_lat_frac: 0.12
+  p_v_zero: 0.2
+  resample_s:
+  - 3.0
+  - 6.0
+  ball_prob: 0.25
+  ball_place_radius: 0.5
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4
+    diff_max: 40.0
+curriculum:
+  enabled: true
+  start: 0.15
+  step: 0.02
+  advance_score: 0.6
+reward:
+  w_vel: 1.5
+  w_head: 1.0
+  w_alive: 0.5
+  sigma_v: 0.35
+  sigma_psi_deg: 25.0
+  w_upright: 0.5
+  w_pitch: 2.0
+  w_effort: 0.001
+  w_smooth: 0.005
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+  w_hub_idle: 1.0
+  hub_idle_v_scale: 0.6
+randomization:
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15
+  friction_frac: 0.2
+  actuator_frac: 0.15
+  disturb_force_N: 2.0
+  disturb_prob: 0.01
