@@ -31,6 +31,7 @@ drivetrain:
     radius_mm: 51.2
     length_mm: 33.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.36, 0.56, 0.76, 0.85]
     mass_g: 115.2
     source: {pos: origin, size: measured, mass: measured}
     note: >-
@@ -44,6 +45,7 @@ drivetrain:
     radius_mm: 13.94
     length_mm: 11.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.36, 0.56, 0.76, 0.85]
     source: {pos: derived from belt width + wheel clearance, size: 15T HTD5M}
     note: >-
       15T pulley on the ring-gear input shaft, coaxial with the rear
@@ -57,6 +59,7 @@ drivetrain:
     radius_mm: 15.94
     length_mm: 8.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.36, 0.56, 0.76, 0.85]
     source: {pos: derived, size: design}
     note: >-
       Where the rear axle is picked up, outboard of the pulley and a
@@ -70,6 +73,7 @@ drivetrain:
     radius_mm: 13.94
     length_mm: 11.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.36, 0.56, 0.76, 0.85]
     source: {pos: derived from belt width + wheel clearance, size: 15T HTD5M}
     note: >-
       15T pulley on the ring-gear input shaft, coaxial with the rear
@@ -83,6 +87,7 @@ drivetrain:
     radius_mm: 15.94
     length_mm: 8.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.36, 0.56, 0.76, 0.85]
     source: {pos: derived, size: design}
     note: >-
       Where the rear axle is picked up, outboard of the pulley and a
@@ -96,6 +101,7 @@ drivetrain:
     radius_mm: 37.81
     length_mm: 11.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.36, 0.56, 0.76, 0.85]
     source: {pos: derived — centre distance C on the belt plane, size: 45T HTD5M}
     note: >-
       45T driving pulley, pitch dia 71.62 mm. Centre distance 107.35 mm
@@ -110,6 +116,7 @@ drivetrain:
     radius_mm: 37.81
     length_mm: 11.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.36, 0.56, 0.76, 0.85]
     source: {pos: derived — centre distance C on the belt plane, size: 45T HTD5M}
     note: >-
       45T driving pulley, pitch dia 71.62 mm. Centre distance 107.35 mm
@@ -126,6 +133,7 @@ steering:
     radius_mm: 50.0
     length_mm: 28.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.24, 0.68, 0.58, 0.85]
     mass_g: 60.0
     source: {pos: design, size: design, mass: GUESS}
     note: >-
@@ -140,6 +148,7 @@ steering:
     radius_mm: 5.0
     length_mm: 90.0
     axis: [0.0, -0.258819, 0.965926]   # unit vector, CAD frame
+    color_rgba: [0.24, 0.68, 0.58, 0.85]
     mass_g: 25.0
     source: {pos: design, size: design, mass: GUESS}
     note: >-
@@ -155,10 +164,11 @@ servos:
     shape: box
     envelope_mm: [28.5, 34.0, 46.5]
     axis_width: [0.0, 0.707107, -0.707107]
-    axis_shaft: [-1.0, 0.0, 0.0]   # horn faces this way
+    axis_depth: [-1.0, 0.0, 0.0]
     axis_up: [0.0, 0.707107, 0.707107]
     rotate_about: [-0.357407, 0.357407, 0.862856]
     rotate_deg: 98.4211
+    color_rgba: [0.9, 0.62, 0.18, 0.85]
     mass_g: 65.0
     source: {pos: design, size: datasheet, mass: datasheet}
     note: >-
@@ -205,6 +215,7 @@ servos:
     radius_mm: 10.25
     length_mm: 2.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.9, 0.62, 0.18, 0.85]
     source: {pos: derived — under the mounting datum, size: measured (ROBOTIS drawing)}
     note: >-
       Output horn, 20.5 mm across and 2.0 mm thick, drawn as a plain
@@ -224,6 +235,7 @@ servos:
     radius_mm: 3.95
     length_mm: 1.9
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.9, 0.62, 0.18, 0.85]
     source: {pos: derived — proud of the mounting datum, size: measured (ROBOTIS drawing)}
     note: >-
       Centre boss, 7.9 mm across, standing 1.9 mm PAST the horn face.
@@ -247,10 +259,11 @@ servos:
     shape: box
     envelope_mm: [28.5, 34.0, 46.5]
     axis_width: [0.0, -0.707107, 0.707107]
-    axis_shaft: [1.0, 0.0, 0.0]   # horn faces this way
+    axis_depth: [1.0, 0.0, 0.0]
     axis_up: [0.0, 0.707107, 0.707107]
     rotate_about: [-0.357407, -0.357407, -0.862856]
     rotate_deg: 98.4211
+    color_rgba: [0.9, 0.62, 0.18, 0.85]
     mass_g: 65.0
     source: {pos: design, size: datasheet, mass: datasheet}
     note: >-
@@ -297,6 +310,7 @@ servos:
     radius_mm: 10.25
     length_mm: 2.0
     axis: [1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.9, 0.62, 0.18, 0.85]
     source: {pos: derived — under the mounting datum, size: measured (ROBOTIS drawing)}
     note: >-
       Output horn, 20.5 mm across and 2.0 mm thick, drawn as a plain
@@ -316,6 +330,7 @@ servos:
     radius_mm: 3.95
     length_mm: 1.9
     axis: [1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.9, 0.62, 0.18, 0.85]
     source: {pos: derived — proud of the mounting datum, size: measured (ROBOTIS drawing)}
     note: >-
       Centre boss, 7.9 mm across, standing 1.9 mm PAST the horn face.
@@ -339,10 +354,11 @@ servos:
     shape: box
     envelope_mm: [20.0, 23.0, 34.0]
     axis_width: [1.0, 0.0, 0.0]
-    axis_shaft: [0.0, 0.258819, -0.965926]   # horn faces this way
+    axis_depth: [0.0, 0.258819, -0.965926]
     axis_up: [0.0, 0.965926, 0.258819]
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 75.0
+    color_rgba: [0.9, 0.62, 0.18, 0.85]
     mass_g: 23.0
     source: {pos: design, size: datasheet, mass: datasheet}
     note: >-
@@ -390,6 +406,7 @@ servos:
     radius_mm: 8.0
     length_mm: 3.0
     axis: [0.0, 0.258819, -0.965926]   # unit vector, CAD frame
+    color_rgba: [0.9, 0.62, 0.18, 0.85]
     source: {pos: derived — under the mounting datum, size: measured (ROBOTIS drawing)}
     note: >-
       Output horn, 16.0 mm across and 3.0 mm thick, drawn as a plain
@@ -421,6 +438,7 @@ mount:
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
+    color_rgba: [0.62, 0.62, 0.66, 0.85]
     source: {pos: derived — on the case faces, size: design (outline is a placeholder)}
     note: >-
       3.0 mm, on the bike's right. It lies on the right servo's horn-
@@ -437,6 +455,7 @@ mount:
     radius_mm: 11.75
     length_mm: 3.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.62, 0.62, 0.66, 0.85]
     source: {pos: derived — on the horn axis, size: design}
     note: >-
       A VOID. The 23.5 mm hole the right plate needs where the right
@@ -452,6 +471,7 @@ mount:
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
+    color_rgba: [0.62, 0.62, 0.66, 0.85]
     source: {pos: derived — on the case faces, size: design (outline is a placeholder)}
     note: >-
       3.0 mm, on the bike's left. It lies on the left servo's horn-side
@@ -467,6 +487,7 @@ mount:
     radius_mm: 11.75
     length_mm: 3.0
     axis: [-1.0, 0.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.62, 0.62, 0.66, 0.85]
     source: {pos: derived — on the horn axis, size: design}
     note: >-
       A VOID. The 23.5 mm hole the left plate needs where the left
@@ -482,6 +503,7 @@ mount:
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
+    color_rgba: [0.62, 0.62, 0.66, 0.85]
     source: {pos: derived — around the case pair, size: design}
     note: >-
       Sleeve wall, 3.0 mm, joining the two plates. The servos share a
@@ -497,6 +519,7 @@ mount:
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
+    color_rgba: [0.62, 0.62, 0.66, 0.85]
     source: {pos: derived — around the case pair, size: design}
     note: >-
       Sleeve wall, 3.0 mm, joining the two plates. The servos share a
@@ -512,6 +535,7 @@ mount:
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
+    color_rgba: [0.62, 0.62, 0.66, 0.85]
     source: {pos: derived — around the case pair, size: design}
     note: >-
       Sleeve wall, 3.0 mm, joining the two plates. The servos share a
@@ -527,6 +551,7 @@ mount:
     z_axis: [0.0, 0.707107, 0.707107]   # box +Z, CAD frame
     rotate_about: [-1.0, 0.0, 0.0]
     rotate_deg: 45.0
+    color_rgba: [0.62, 0.62, 0.66, 0.85]
     source: {pos: derived — around the case pair, size: design}
     note: >-
       Sleeve wall, 3.0 mm, joining the two plates. The servos share a
@@ -551,6 +576,37 @@ planes:
       plane will do. Sketch the profile here and extrude fore-aft; print
       it lying in this plane and both legs sit flat on the bed with the
       layers running along them.
+
+  plane_fork_print_offset:
+    pos_mm: [0.0, 207.73, 0.87]
+    shape: plane
+    normal: [0.0, 0.965926, 0.258819]   # unit vector, CAD frame
+    source: {pos: derived — fork plane + fork_print_offset, size: design}
+    note: >-
+      THE FORK'S BUILD PLANE: `plane_fork_print` offset 8.0 mm along its
+      own normal, which points forward and 15.0 deg up. Same
+      orientation, and the orientation is the derived half — the OFFSET
+      is a design choice (`bike.fork_print_offset`, signed) and is meant
+      to be edited once the fork has a real thickness. Kept as a
+      separate entry rather than moving the datum, so sketching on one
+      cannot silently redefine the other.
+
+  plane_drive_mount_print:
+    pos_mm: [0.0, 96.06, 55.75]
+    shape: plane
+    normal: [0.0, -0.707107, 0.707107]   # unit vector, CAD frame
+    source: {pos: derived — lower servo's outer case face, size: design}
+    note: >-
+      BUILD PLANE for the rear motor mount + dropout. Lies in the LOWER
+      (left, 37.37185 deg) servo's long outer face — 34.0 x 46.5 mm — at
+      28.5 mm tangential off the 45.0 deg centre line. Build direction
+      is up and rearward; the bed face points down and forward. The 28.5
+      mm is C sin(dtheta) = 14.25 plus half a case = 14.25, equal only
+      because `drive_servo_gap` is 0 and the cases touch on the
+      centreline — open that gap and this plane moves with it. NOTE the
+      dropout still crosses the belt plane between here and the axle, so
+      this plane is where the MOUNT end is built, not a promise that the
+      whole part lies flat.
 
   plane_belt_left_lower:
     pos_mm: [-26.5, 53.39, 9.04]
@@ -634,6 +690,7 @@ electronics:
     pos_mm: [0.0, 50.0, 130.0]
     shape: box
     envelope_mm: [34.0, 40.0, 12.6]
+    color_rgba: [0.4, 0.74, 0.34, 0.85]
     mass_g: 19.0
     source: {pos: design, size: datasheet, mass: datasheet}
     note: >-
@@ -653,10 +710,11 @@ electronics:
     shape: box
     envelope_mm: [26.0, 35.0, 72.0]
     axis_width: [0.0, 0.707107, -0.707107]
-    axis_shaft: [-1.0, 0.0, 0.0]   # horn faces this way
+    axis_depth: [-1.0, 0.0, 0.0]
     axis_up: [0.0, 0.707107, 0.707107]
     rotate_about: [-0.357407, 0.357407, 0.862856]
     rotate_deg: 98.4211
+    color_rgba: [0.4, 0.74, 0.34, 0.85]
     mass_g: 115.0
     source: {pos: design (plausible layout, NOT a design), size: design, mass: GUESS}
     note: >-
@@ -670,6 +728,7 @@ electronics:
     pos_mm: [0.0, 90.0, 108.0]
     shape: box
     envelope_mm: [30.0, 65.0, 5.0]
+    color_rgba: [0.4, 0.74, 0.34, 0.85]
     mass_g: 11.0
     source: {pos: design (plausible layout, NOT a design), size: design, mass: datasheet}
     note: >-
@@ -682,6 +741,7 @@ electronics:
     pos_mm: [0.0, 90.0, 120.0]
     shape: box
     envelope_mm: [18.0, 48.0, 14.9]
+    color_rgba: [0.4, 0.74, 0.34, 0.85]
     mass_g: 9.0
     source: {pos: design (plausible layout, NOT a design), size: design, mass: measured}
     note: >-
@@ -693,6 +753,7 @@ electronics:
     pos_mm: [0.0, 90.0, 93.0]
     shape: box
     envelope_mm: [30.0, 30.0, 25.0]
+    color_rgba: [0.4, 0.74, 0.34, 0.85]
     mass_g: 56.0
     source: {pos: design (plausible layout, NOT a design), size: design, mass: GUESS}
     note: >-
@@ -708,8 +769,9 @@ righting:
     shape: box
     envelope_mm: [20.0, 23.0, 34.0]
     axis_width: [1.0, 0.0, 0.0]
-    axis_shaft: [0.0, 1.0, 0.0]   # horn faces this way
+    axis_depth: [0.0, 1.0, 0.0]   # horn faces this way
     axis_up: [0.0, 0.0, 1.0]
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     mass_g: 23.0
     source: {pos: design (linkage cfg), size: datasheet, mass: datasheet}
     note: >-
@@ -755,6 +817,7 @@ righting:
     radius_mm: 8.0
     length_mm: 3.0
     axis: [0.0, 1.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     source: {pos: derived — under the mounting datum, size: measured (ROBOTIS drawing)}
     note: >-
       Output horn, 16.0 mm across and 3.0 mm thick, drawn as a plain
@@ -851,6 +914,7 @@ righting:
     radius_mm: 1.5
     length_mm: 30.58
     axis: [-0.473492, 0.0, 0.880798]   # unit vector, CAD frame
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     source: {pos: derived from linkage cfg}
     note: >-
       Crank arm (right), stowed. MOVES — drawn as a thin rod so the
@@ -862,6 +926,7 @@ righting:
     radius_mm: 1.5
     length_mm: 80.59
     axis: [0.542037, 0.0, -0.840355]   # unit vector, CAD frame
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     source: {pos: derived from linkage cfg}
     note: >-
       Coupler (right), stowed. This is the link that crosses the
@@ -873,6 +938,7 @@ righting:
     radius_mm: 1.5
     length_mm: 44.3
     axis: [0.269058, 0.0, 0.963124]   # unit vector, CAD frame
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     source: {pos: derived from linkage cfg}
     note: >-
       Wing rocker (right) — pivot to coupler attach. Fixed to the wing
@@ -884,6 +950,7 @@ righting:
     radius_mm: 1.5
     length_mm: 31.01
     axis: [0.596784, 0.0, 0.802402]   # unit vector, CAD frame
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     source: {pos: derived from linkage cfg}
     note: >-
       Crank arm (left), stowed. MOVES — drawn as a thin rod so the
@@ -895,6 +962,7 @@ righting:
     radius_mm: 1.5
     length_mm: 81.18
     axis: [-0.587747, 0.0, -0.809045]   # unit vector, CAD frame
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     source: {pos: derived from linkage cfg}
     note: >-
       Coupler (left), stowed. This is the link that crosses the
@@ -906,6 +974,7 @@ righting:
     radius_mm: 1.5
     length_mm: 44.3
     axis: [-0.269058, 0.0, 0.963124]   # unit vector, CAD frame
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     source: {pos: derived from linkage cfg}
     note: >-
       Wing rocker (left) — pivot to coupler attach. Fixed to the wing
@@ -925,6 +994,7 @@ righting:
     pos_mm: [-35.5, 105.0, 73.94]
     shape: box
     envelope_mm: [4.0, 90.0, 107.12]
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     mass_g: 20.0
     source: {pos: derived from linkage cfg + panel offset, size: design, mass: design}
     note: >-
@@ -948,6 +1018,7 @@ righting:
     pos_mm: [35.5, 105.0, 73.94]
     shape: box
     envelope_mm: [4.0, 90.0, 107.12]
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     mass_g: 20.0
     source: {pos: derived from linkage cfg + panel offset, size: design, mass: design}
     note: >-
@@ -963,6 +1034,7 @@ righting:
     radius_mm: 37.5
     length_mm: 145.0
     axis: [0.0, 1.0, 0.0]   # unit vector, CAD frame
+    color_rgba: [0.58, 0.42, 0.84, 0.85]
     mass_g: 45.0
     source: {pos: design, size: DERIVED from the linkage stow envelope, mass: design}
     note: >-
@@ -971,4 +1043,160 @@ righting:
       radius the stow half-span, so the crest clears the panels by a
       radius — without that an inverted bike perches on two panel edges
       plus the ridge instead of rolling off.
+
+# --- belts
+belts:
+  belt_left_lower:
+    pos_mm: [-26.5, 54.14, 7.4]
+    shape: box
+    envelope_mm: [104.66, 9.0, 3.6]
+    axis_width: [0.0, -0.909802, -0.415043]
+    axis_depth: [-1.0, 0.0, 0.0]
+    axis_up: [0.0, 0.415043, -0.909802]
+    rotate_about: [-0.698903, 0.698903, 0.151887]
+    rotate_deg: 162.727
+    color_rgba: [0.13, 0.14, 0.16, 1.0]
+    source: {pos: derived — belt tangent, size: design}
+    note: >-
+      The LOWER run of the left belt, as material: 104.66 mm of 9.0 x
+      3.6 mm HTD5M between the two tangent points. Only the STRAIGHT run
+      — the wrap around each pulley is the pulley envelope's job and is
+      already drawn. Its inner face lies on the tangent line, so the
+      pair of these plus the two pulley cylinders IS the keep-out, with
+      nothing left over.
+
+  belt_left_upper:
+    pos_mm: [-26.5, 21.39, 50.28]
+    shape: box
+    envelope_mm: [104.66, 9.0, 3.6]
+    axis_width: [0.0, 0.639819, 0.768526]
+    axis_depth: [-1.0, 0.0, 0.0]
+    axis_up: [0.0, -0.768526, 0.639819]
+    rotate_about: [0.39065, -0.39065, 0.833538]
+    rotate_deg: 100.375
+    color_rgba: [0.13, 0.14, 0.16, 1.0]
+    source: {pos: derived — belt tangent, size: design}
+    note: >-
+      The UPPER run of the left belt, as material: 104.66 mm of 9.0 x
+      3.6 mm HTD5M between the two tangent points. Only the STRAIGHT run
+      — the wrap around each pulley is the pulley envelope's job and is
+      already drawn. Its inner face lies on the tangent line, so the
+      pair of these plus the two pulley cylinders IS the keep-out, with
+      nothing left over.
+
+  belt_right_lower:
+    pos_mm: [26.5, 50.28, 21.39]
+    shape: box
+    envelope_mm: [104.66, 9.0, 3.6]
+    axis_width: [0.0, -0.768526, -0.639819]
+    axis_depth: [-1.0, 0.0, 0.0]
+    axis_up: [0.0, 0.639819, -0.768526]
+    rotate_about: [-0.685046, 0.685046, 0.247836]
+    rotate_deg: 152.161
+    color_rgba: [0.13, 0.14, 0.16, 1.0]
+    source: {pos: derived — belt tangent, size: design}
+    note: >-
+      The LOWER run of the right belt, as material: 104.66 mm of 9.0 x
+      3.6 mm HTD5M between the two tangent points. Only the STRAIGHT run
+      — the wrap around each pulley is the pulley envelope's job and is
+      already drawn. Its inner face lies on the tangent line, so the
+      pair of these plus the two pulley cylinders IS the keep-out, with
+      nothing left over.
+
+  belt_right_upper:
+    pos_mm: [26.5, 7.4, 54.14]
+    shape: box
+    envelope_mm: [104.66, 9.0, 3.6]
+    axis_width: [0.0, 0.415043, 0.909802]
+    axis_depth: [-1.0, 0.0, 0.0]
+    axis_up: [0.0, -0.909802, 0.415043]
+    rotate_about: [0.475702, -0.475702, 0.739875]
+    rotate_deg: 107.0064
+    color_rgba: [0.13, 0.14, 0.16, 1.0]
+    source: {pos: derived — belt tangent, size: design}
+    note: >-
+      The UPPER run of the right belt, as material: 104.66 mm of 9.0 x
+      3.6 mm HTD5M between the two tangent points. Only the STRAIGHT run
+      — the wrap around each pulley is the pulley envelope's job and is
+      already drawn. Its inner face lies on the tangent line, so the
+      pair of these plus the two pulley cylinders IS the keep-out, with
+      nothing left over.
+
+# --- belts_mirror
+belts_mirror:
+  belt_left_lower_mirrored:
+    pos_mm: [26.5, 54.14, 7.4]
+    shape: box
+    envelope_mm: [104.66, 9.0, 3.6]
+    axis_width: [0.0, -0.909802, -0.415043]
+    axis_depth: [-1.0, 0.0, 0.0]
+    axis_up: [0.0, 0.415043, -0.909802]
+    rotate_about: [-0.698903, 0.698903, 0.151887]
+    rotate_deg: 162.727
+    color_rgba: [0.9, 0.25, 0.6, 0.3]
+    source: {pos: derived — mirror of the belt tangent, size: design}
+    note: >-
+      NOT A PART. The left belt's lower run reflected across the
+      centreline onto the bike's right, where no belt actually runs. It
+      is here so a SYMMETRIC chainstay can be drawn against one side:
+      clear this and the real belt beside it, and the mirror-image part
+      clears the other side too. Suppress the group if the design gives
+      up on symmetry.
+
+  belt_left_upper_mirrored:
+    pos_mm: [26.5, 21.39, 50.28]
+    shape: box
+    envelope_mm: [104.66, 9.0, 3.6]
+    axis_width: [0.0, 0.639819, 0.768526]
+    axis_depth: [-1.0, 0.0, 0.0]
+    axis_up: [0.0, -0.768526, 0.639819]
+    rotate_about: [0.39065, -0.39065, 0.833538]
+    rotate_deg: 100.375
+    color_rgba: [0.9, 0.25, 0.6, 0.3]
+    source: {pos: derived — mirror of the belt tangent, size: design}
+    note: >-
+      NOT A PART. The left belt's upper run reflected across the
+      centreline onto the bike's right, where no belt actually runs. It
+      is here so a SYMMETRIC chainstay can be drawn against one side:
+      clear this and the real belt beside it, and the mirror-image part
+      clears the other side too. Suppress the group if the design gives
+      up on symmetry.
+
+  belt_right_lower_mirrored:
+    pos_mm: [-26.5, 50.28, 21.39]
+    shape: box
+    envelope_mm: [104.66, 9.0, 3.6]
+    axis_width: [0.0, -0.768526, -0.639819]
+    axis_depth: [-1.0, 0.0, 0.0]
+    axis_up: [0.0, 0.639819, -0.768526]
+    rotate_about: [-0.685046, 0.685046, 0.247836]
+    rotate_deg: 152.161
+    color_rgba: [0.9, 0.25, 0.6, 0.3]
+    source: {pos: derived — mirror of the belt tangent, size: design}
+    note: >-
+      NOT A PART. The right belt's lower run reflected across the
+      centreline onto the bike's left, where no belt actually runs. It
+      is here so a SYMMETRIC chainstay can be drawn against one side:
+      clear this and the real belt beside it, and the mirror-image part
+      clears the other side too. Suppress the group if the design gives
+      up on symmetry.
+
+  belt_right_upper_mirrored:
+    pos_mm: [-26.5, 7.4, 54.14]
+    shape: box
+    envelope_mm: [104.66, 9.0, 3.6]
+    axis_width: [0.0, 0.415043, 0.909802]
+    axis_depth: [-1.0, 0.0, 0.0]
+    axis_up: [0.0, -0.909802, 0.415043]
+    rotate_about: [0.475702, -0.475702, 0.739875]
+    rotate_deg: 107.0064
+    color_rgba: [0.9, 0.25, 0.6, 0.3]
+    source: {pos: derived — mirror of the belt tangent, size: design}
+    note: >-
+      NOT A PART. The right belt's upper run reflected across the
+      centreline onto the bike's left, where no belt actually runs. It
+      is here so a SYMMETRIC chainstay can be drawn against one side:
+      clear this and the real belt beside it, and the mirror-image part
+      clears the other side too. Suppress the group if the design gives
+      up on symmetry.
 

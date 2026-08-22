@@ -30,6 +30,7 @@ export const AOW_LAYOUT = {
         "radius" : 51.2 * millimeter,
         "length" : 33.0 * millimeter,
         "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.36, 0.56, 0.76, 0.85],
         "mass_g" : 115.2
     },
     "pulley_input_left" : {
@@ -38,7 +39,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 13.94 * millimeter,
         "length" : 11.0 * millimeter,
-        "axis" : vector(-1.0, 0.0, 0.0)
+        "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.36, 0.56, 0.76, 0.85]
     },
     "axle_mount_left" : {
         "group" : "drivetrain",
@@ -46,7 +48,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 15.94 * millimeter,
         "length" : 8.0 * millimeter,
-        "axis" : vector(-1.0, 0.0, 0.0)
+        "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.36, 0.56, 0.76, 0.85]
     },
     "pulley_input_right" : {
         "group" : "drivetrain",
@@ -54,7 +57,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 13.94 * millimeter,
         "length" : 11.0 * millimeter,
-        "axis" : vector(-1.0, 0.0, 0.0)
+        "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.36, 0.56, 0.76, 0.85]
     },
     "axle_mount_right" : {
         "group" : "drivetrain",
@@ -62,7 +66,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 15.94 * millimeter,
         "length" : 8.0 * millimeter,
-        "axis" : vector(-1.0, 0.0, 0.0)
+        "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.36, 0.56, 0.76, 0.85]
     },
     "pulley_servo_left" : {
         "group" : "drivetrain",
@@ -70,7 +75,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 37.81 * millimeter,
         "length" : 11.0 * millimeter,
-        "axis" : vector(-1.0, 0.0, 0.0)
+        "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.36, 0.56, 0.76, 0.85]
     },
     "pulley_servo_right" : {
         "group" : "drivetrain",
@@ -78,7 +84,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 37.81 * millimeter,
         "length" : 11.0 * millimeter,
-        "axis" : vector(-1.0, 0.0, 0.0)
+        "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.36, 0.56, 0.76, 0.85]
     },
     "front_wheel" : {
         "group" : "steering",
@@ -87,6 +94,7 @@ export const AOW_LAYOUT = {
         "radius" : 50.0 * millimeter,
         "length" : 28.0 * millimeter,
         "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.24, 0.68, 0.58, 0.85],
         "mass_g" : 60.0
     },
     "fork" : {
@@ -96,6 +104,7 @@ export const AOW_LAYOUT = {
         "radius" : 5.0 * millimeter,
         "length" : 90.0 * millimeter,
         "axis" : vector(0.0, -0.258819, 0.965926),
+        "rgba" : [0.24, 0.68, 0.58, 0.85],
         "mass_g" : 25.0
     },
     "servo_drive_left" : {
@@ -105,6 +114,7 @@ export const AOW_LAYOUT = {
         "size" : vector(28.5, 34.0, 46.5) * millimeter,
         "rotAxis" : vector(-0.357407, 0.357407, 0.862856),
         "rotDeg" : 98.4211 * degree,
+        "rgba" : [0.9, 0.62, 0.18, 0.85],
         "mass_g" : 65.0
     },
     "servo_drive_left_case_holes_horn" : {
@@ -125,7 +135,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 10.25 * millimeter,
         "length" : 2.0 * millimeter,
-        "axis" : vector(-1.0, 0.0, 0.0)
+        "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.9, 0.62, 0.18, 0.85]
     },
     "servo_drive_left_horn_boss" : {
         "group" : "servos",
@@ -133,7 +144,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 3.95 * millimeter,
         "length" : 1.9 * millimeter,
-        "axis" : vector(-1.0, 0.0, 0.0)
+        "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.9, 0.62, 0.18, 0.85]
     },
     "servo_drive_left_shaft" : {
         "group" : "servos",
@@ -147,6 +159,7 @@ export const AOW_LAYOUT = {
         "size" : vector(28.5, 34.0, 46.5) * millimeter,
         "rotAxis" : vector(-0.357407, -0.357407, -0.862856),
         "rotDeg" : 98.4211 * degree,
+        "rgba" : [0.9, 0.62, 0.18, 0.85],
         "mass_g" : 65.0
     },
     "servo_drive_right_case_holes_horn" : {
@@ -167,7 +180,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 10.25 * millimeter,
         "length" : 2.0 * millimeter,
-        "axis" : vector(1.0, 0.0, 0.0)
+        "axis" : vector(1.0, 0.0, 0.0),
+        "rgba" : [0.9, 0.62, 0.18, 0.85]
     },
     "servo_drive_right_horn_boss" : {
         "group" : "servos",
@@ -175,7 +189,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 3.95 * millimeter,
         "length" : 1.9 * millimeter,
-        "axis" : vector(1.0, 0.0, 0.0)
+        "axis" : vector(1.0, 0.0, 0.0),
+        "rgba" : [0.9, 0.62, 0.18, 0.85]
     },
     "servo_drive_right_shaft" : {
         "group" : "servos",
@@ -188,7 +203,8 @@ export const AOW_LAYOUT = {
         "shape" : "box",
         "size" : vector(3.0, 63.5, 53.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
-        "rotDeg" : 45.0 * degree
+        "rotDeg" : 45.0 * degree,
+        "rgba" : [0.62, 0.62, 0.66, 0.85]
     },
     "drive_mount_relief_right" : {
         "group" : "mount",
@@ -196,7 +212,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 11.75 * millimeter,
         "length" : 3.0 * millimeter,
-        "axis" : vector(-1.0, 0.0, 0.0)
+        "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.62, 0.62, 0.66, 0.85]
     },
     "drive_mount_plate_left" : {
         "group" : "mount",
@@ -204,7 +221,8 @@ export const AOW_LAYOUT = {
         "shape" : "box",
         "size" : vector(3.0, 63.5, 53.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
-        "rotDeg" : 45.0 * degree
+        "rotDeg" : 45.0 * degree,
+        "rgba" : [0.62, 0.62, 0.66, 0.85]
     },
     "drive_mount_relief_left" : {
         "group" : "mount",
@@ -212,7 +230,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 11.75 * millimeter,
         "length" : 3.0 * millimeter,
-        "axis" : vector(-1.0, 0.0, 0.0)
+        "axis" : vector(-1.0, 0.0, 0.0),
+        "rgba" : [0.62, 0.62, 0.66, 0.85]
     },
     "drive_mount_side_a" : {
         "group" : "mount",
@@ -220,7 +239,8 @@ export const AOW_LAYOUT = {
         "shape" : "box",
         "size" : vector(34.0, 3.0, 53.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
-        "rotDeg" : 45.0 * degree
+        "rotDeg" : 45.0 * degree,
+        "rgba" : [0.62, 0.62, 0.66, 0.85]
     },
     "drive_mount_side_b" : {
         "group" : "mount",
@@ -228,7 +248,8 @@ export const AOW_LAYOUT = {
         "shape" : "box",
         "size" : vector(34.0, 3.0, 53.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
-        "rotDeg" : 45.0 * degree
+        "rotDeg" : 45.0 * degree,
+        "rgba" : [0.62, 0.62, 0.66, 0.85]
     },
     "drive_mount_radial_in" : {
         "group" : "mount",
@@ -236,7 +257,8 @@ export const AOW_LAYOUT = {
         "shape" : "box",
         "size" : vector(34.0, 63.5, 3.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
-        "rotDeg" : 45.0 * degree
+        "rotDeg" : 45.0 * degree,
+        "rgba" : [0.62, 0.62, 0.66, 0.85]
     },
     "drive_mount_radial_out" : {
         "group" : "mount",
@@ -244,7 +266,8 @@ export const AOW_LAYOUT = {
         "shape" : "box",
         "size" : vector(34.0, 63.5, 3.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
-        "rotDeg" : 45.0 * degree
+        "rotDeg" : 45.0 * degree,
+        "rgba" : [0.62, 0.62, 0.66, 0.85]
     },
     "servo_steer" : {
         "group" : "servos",
@@ -253,6 +276,7 @@ export const AOW_LAYOUT = {
         "size" : vector(20.0, 23.0, 34.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
         "rotDeg" : 75.0 * degree,
+        "rgba" : [0.9, 0.62, 0.18, 0.85],
         "mass_g" : 23.0
     },
     "servo_steer_case_holes_horn" : {
@@ -273,7 +297,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 8.0 * millimeter,
         "length" : 3.0 * millimeter,
-        "axis" : vector(0.0, 0.258819, -0.965926)
+        "axis" : vector(0.0, 0.258819, -0.965926),
+        "rgba" : [0.9, 0.62, 0.18, 0.85]
     },
     "servo_steer_shaft" : {
         "group" : "servos",
@@ -285,6 +310,7 @@ export const AOW_LAYOUT = {
         "pos" : vector(0.0, 50.0, 130.0) * millimeter,
         "shape" : "box",
         "size" : vector(34.0, 40.0, 12.6) * millimeter,
+        "rgba" : [0.4, 0.74, 0.34, 0.85],
         "mass_g" : 19.0
     },
     "plane_fork_print" : {
@@ -293,11 +319,41 @@ export const AOW_LAYOUT = {
         "shape" : "plane",
         "normal" : vector(0.0, 0.965926, 0.258819)
     },
+    "plane_fork_print_offset" : {
+        "group" : "planes",
+        "pos" : vector(0.0, 207.73, 0.87) * millimeter,
+        "shape" : "plane",
+        "normal" : vector(0.0, 0.965926, 0.258819)
+    },
+    "plane_drive_mount_print" : {
+        "group" : "planes",
+        "pos" : vector(0.0, 96.06, 55.75) * millimeter,
+        "shape" : "plane",
+        "normal" : vector(0.0, -0.707107, 0.707107)
+    },
     "plane_belt_left_lower" : {
         "group" : "planes",
         "pos" : vector(-26.5, 53.39, 9.04) * millimeter,
         "shape" : "plane",
         "normal" : vector(0.0, -0.415043, 0.909802)
+    },
+    "belt_left_lower" : {
+        "group" : "belts",
+        "pos" : vector(-26.5, 54.14, 7.4) * millimeter,
+        "shape" : "box",
+        "size" : vector(104.66, 9.0, 3.6) * millimeter,
+        "rotAxis" : vector(-0.698903, 0.698903, 0.151887),
+        "rotDeg" : 162.727 * degree,
+        "rgba" : [0.13, 0.14, 0.16, 1.0]
+    },
+    "belt_left_lower_mirrored" : {
+        "group" : "belts_mirror",
+        "pos" : vector(26.5, 54.14, 7.4) * millimeter,
+        "shape" : "box",
+        "size" : vector(104.66, 9.0, 3.6) * millimeter,
+        "rotAxis" : vector(-0.698903, 0.698903, 0.151887),
+        "rotDeg" : 162.727 * degree,
+        "rgba" : [0.9, 0.25, 0.6, 0.3]
     },
     "plane_belt_left_upper" : {
         "group" : "planes",
@@ -305,17 +361,71 @@ export const AOW_LAYOUT = {
         "shape" : "plane",
         "normal" : vector(0.0, -0.768526, 0.639819)
     },
+    "belt_left_upper" : {
+        "group" : "belts",
+        "pos" : vector(-26.5, 21.39, 50.28) * millimeter,
+        "shape" : "box",
+        "size" : vector(104.66, 9.0, 3.6) * millimeter,
+        "rotAxis" : vector(0.39065, -0.39065, 0.833538),
+        "rotDeg" : 100.375 * degree,
+        "rgba" : [0.13, 0.14, 0.16, 1.0]
+    },
+    "belt_left_upper_mirrored" : {
+        "group" : "belts_mirror",
+        "pos" : vector(26.5, 21.39, 50.28) * millimeter,
+        "shape" : "box",
+        "size" : vector(104.66, 9.0, 3.6) * millimeter,
+        "rotAxis" : vector(0.39065, -0.39065, 0.833538),
+        "rotDeg" : 100.375 * degree,
+        "rgba" : [0.9, 0.25, 0.6, 0.3]
+    },
     "plane_belt_right_lower" : {
         "group" : "planes",
         "pos" : vector(26.5, 49.13, 22.77) * millimeter,
         "shape" : "plane",
         "normal" : vector(0.0, -0.639819, 0.768526)
     },
+    "belt_right_lower" : {
+        "group" : "belts",
+        "pos" : vector(26.5, 50.28, 21.39) * millimeter,
+        "shape" : "box",
+        "size" : vector(104.66, 9.0, 3.6) * millimeter,
+        "rotAxis" : vector(-0.685046, 0.685046, 0.247836),
+        "rotDeg" : 152.161 * degree,
+        "rgba" : [0.13, 0.14, 0.16, 1.0]
+    },
+    "belt_right_lower_mirrored" : {
+        "group" : "belts_mirror",
+        "pos" : vector(-26.5, 50.28, 21.39) * millimeter,
+        "shape" : "box",
+        "size" : vector(104.66, 9.0, 3.6) * millimeter,
+        "rotAxis" : vector(-0.685046, 0.685046, 0.247836),
+        "rotDeg" : 152.161 * degree,
+        "rgba" : [0.9, 0.25, 0.6, 0.3]
+    },
     "plane_belt_right_upper" : {
         "group" : "planes",
         "pos" : vector(26.5, 9.04, 53.39) * millimeter,
         "shape" : "plane",
         "normal" : vector(0.0, -0.909802, 0.415043)
+    },
+    "belt_right_upper" : {
+        "group" : "belts",
+        "pos" : vector(26.5, 7.4, 54.14) * millimeter,
+        "shape" : "box",
+        "size" : vector(104.66, 9.0, 3.6) * millimeter,
+        "rotAxis" : vector(0.475702, -0.475702, 0.739875),
+        "rotDeg" : 107.0064 * degree,
+        "rgba" : [0.13, 0.14, 0.16, 1.0]
+    },
+    "belt_right_upper_mirrored" : {
+        "group" : "belts_mirror",
+        "pos" : vector(-26.5, 7.4, 54.14) * millimeter,
+        "shape" : "box",
+        "size" : vector(104.66, 9.0, 3.6) * millimeter,
+        "rotAxis" : vector(0.475702, -0.475702, 0.739875),
+        "rotDeg" : 107.0064 * degree,
+        "rgba" : [0.9, 0.25, 0.6, 0.3]
     },
     "payload_battery" : {
         "group" : "electronics",
@@ -324,6 +434,7 @@ export const AOW_LAYOUT = {
         "size" : vector(26.0, 35.0, 72.0) * millimeter,
         "rotAxis" : vector(-0.357407, 0.357407, 0.862856),
         "rotDeg" : 98.4211 * degree,
+        "rgba" : [0.4, 0.74, 0.34, 0.85],
         "mass_g" : 115.0
     },
     "payload_pi" : {
@@ -331,6 +442,7 @@ export const AOW_LAYOUT = {
         "pos" : vector(0.0, 90.0, 108.0) * millimeter,
         "shape" : "box",
         "size" : vector(30.0, 65.0, 5.0) * millimeter,
+        "rgba" : [0.4, 0.74, 0.34, 0.85],
         "mass_g" : 11.0
     },
     "payload_u2d2" : {
@@ -338,6 +450,7 @@ export const AOW_LAYOUT = {
         "pos" : vector(0.0, 90.0, 120.0) * millimeter,
         "shape" : "box",
         "size" : vector(18.0, 48.0, 14.9) * millimeter,
+        "rgba" : [0.4, 0.74, 0.34, 0.85],
         "mass_g" : 9.0
     },
     "payload_power_board" : {
@@ -345,6 +458,7 @@ export const AOW_LAYOUT = {
         "pos" : vector(0.0, 90.0, 93.0) * millimeter,
         "shape" : "box",
         "size" : vector(30.0, 30.0, 25.0) * millimeter,
+        "rgba" : [0.4, 0.74, 0.34, 0.85],
         "mass_g" : 56.0
     },
     "linkage_crank_servo" : {
@@ -352,6 +466,7 @@ export const AOW_LAYOUT = {
         "pos" : vector(0.0, 115.5, 75.96) * millimeter,
         "shape" : "box",
         "size" : vector(20.0, 23.0, 34.0) * millimeter,
+        "rgba" : [0.58, 0.42, 0.84, 0.85],
         "mass_g" : 23.0
     },
     "linkage_crank_servo_case_holes_horn" : {
@@ -372,7 +487,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 8.0 * millimeter,
         "length" : 3.0 * millimeter,
-        "axis" : vector(0.0, 1.0, 0.0)
+        "axis" : vector(0.0, 1.0, 0.0),
+        "rgba" : [0.58, 0.42, 0.84, 0.85]
     },
     "linkage_crank_shaft" : {
         "group" : "righting",
@@ -415,7 +531,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 1.5 * millimeter,
         "length" : 30.58 * millimeter,
-        "axis" : vector(-0.473492, 0.0, 0.880798)
+        "axis" : vector(-0.473492, 0.0, 0.880798),
+        "rgba" : [0.58, 0.42, 0.84, 0.85]
     },
     "link_coupler_right" : {
         "group" : "righting",
@@ -423,7 +540,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 1.5 * millimeter,
         "length" : 80.59 * millimeter,
-        "axis" : vector(0.542037, 0.0, -0.840355)
+        "axis" : vector(0.542037, 0.0, -0.840355),
+        "rgba" : [0.58, 0.42, 0.84, 0.85]
     },
     "link_rocker_right" : {
         "group" : "righting",
@@ -431,7 +549,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 1.5 * millimeter,
         "length" : 44.3 * millimeter,
-        "axis" : vector(0.269058, 0.0, 0.963124)
+        "axis" : vector(0.269058, 0.0, 0.963124),
+        "rgba" : [0.58, 0.42, 0.84, 0.85]
     },
     "link_crank_left" : {
         "group" : "righting",
@@ -439,7 +558,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 1.5 * millimeter,
         "length" : 31.01 * millimeter,
-        "axis" : vector(0.596784, 0.0, 0.802402)
+        "axis" : vector(0.596784, 0.0, 0.802402),
+        "rgba" : [0.58, 0.42, 0.84, 0.85]
     },
     "link_coupler_left" : {
         "group" : "righting",
@@ -447,7 +567,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 1.5 * millimeter,
         "length" : 81.18 * millimeter,
-        "axis" : vector(-0.587747, 0.0, -0.809045)
+        "axis" : vector(-0.587747, 0.0, -0.809045),
+        "rgba" : [0.58, 0.42, 0.84, 0.85]
     },
     "link_rocker_left" : {
         "group" : "righting",
@@ -455,7 +576,8 @@ export const AOW_LAYOUT = {
         "shape" : "cylinder",
         "radius" : 1.5 * millimeter,
         "length" : 44.3 * millimeter,
-        "axis" : vector(-0.269058, 0.0, 0.963124)
+        "axis" : vector(-0.269058, 0.0, 0.963124),
+        "rgba" : [0.58, 0.42, 0.84, 0.85]
     },
     "wing_left_pivot" : {
         "group" : "righting",
@@ -467,6 +589,7 @@ export const AOW_LAYOUT = {
         "pos" : vector(-35.5, 105.0, 73.94) * millimeter,
         "shape" : "box",
         "size" : vector(4.0, 90.0, 107.12) * millimeter,
+        "rgba" : [0.58, 0.42, 0.84, 0.85],
         "mass_g" : 20.0
     },
     "wing_right_pivot" : {
@@ -479,6 +602,7 @@ export const AOW_LAYOUT = {
         "pos" : vector(35.5, 105.0, 73.94) * millimeter,
         "shape" : "box",
         "size" : vector(4.0, 90.0, 107.12) * millimeter,
+        "rgba" : [0.58, 0.42, 0.84, 0.85],
         "mass_g" : 20.0
     },
     "roof" : {
@@ -488,6 +612,7 @@ export const AOW_LAYOUT = {
         "radius" : 37.5 * millimeter,
         "length" : 145.0 * millimeter,
         "axis" : vector(0.0, 1.0, 0.0),
+        "rgba" : [0.58, 0.42, 0.84, 0.85],
         "mass_g" : 45.0
     }
 };
@@ -579,6 +704,20 @@ export function aowEnvelope(context is Context, id is Id, name is string)
             "propertyType" : PropertyType.NAME,
             "value" : name
     });
+
+    // Colour, for the entries that carry one — the belts, where a REAL run and
+    // a MIRRORED one have to be told apart at a glance. Same hand-edit rule as
+    // the name above: recolour a body in the UI and FeatureScript can never
+    // set its appearance again. The alpha is what makes a mirrored belt read
+    // as a ghost rather than a part.
+    if (c.rgba != undefined)
+    {
+        setProperty(context, {
+                "entities" : qCreatedBy(subId, EntityType.BODY),
+                "propertyType" : PropertyType.APPEARANCE,
+                "value" : color(c.rgba[0], c.rgba[1], c.rgba[2], c.rgba[3])
+        });
+    }
     setQueryVariable(context, "aow_q_" ~ name, qCreatedBy(subId, EntityType.BODY));
 }
 
@@ -832,6 +971,28 @@ export const aowGroupPlanes = defineFeature(function(context is Context, id is I
     });
 
 
+annotation { "Feature Type Name" : "AOW belts" }
+export const aowGroupBelts = defineFeature(function(context is Context, id is Id, definition is map)
+    precondition
+    {
+        aowGroupPredicate(definition);
+    }
+    {
+        aowDrawGroup(context, id, definition, "belts");
+    });
+
+
+annotation { "Feature Type Name" : "AOW belts mirror" }
+export const aowGroupBeltsMirror = defineFeature(function(context is Context, id is Id, definition is map)
+    precondition
+    {
+        aowGroupPredicate(definition);
+    }
+    {
+        aowDrawGroup(context, id, definition, "belts_mirror");
+    });
+
+
 annotation { "Feature Type Name" : "AOW righting" }
 export const aowGroupRighting = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
@@ -885,8 +1046,71 @@ export const aowBikeLayout = defineFeature(function(context is Context, id is Id
 
         annotation { "Name" : "Plane size" }
         isLength(definition.planeSize, AOW_PLANE_BOUNDS);
+
+        // A NAMED SECTION, not nine loose checkboxes. Appended bare they land
+        // under a numeric field at the bottom of a fifteen-field dialog, below
+        // the fold and visually unrelated to the draw toggles above — which is
+        // exactly where the first version of this put them, and nobody found
+        // them. A group heading makes the block one obvious thing.
+        annotation { "Group Name" : "Which groups to draw", "Collapsed By Default" : false }
+        {
+            annotation { "Name" : "Draw drivetrain", "Default" : true }
+            definition.drawDrivetrain is boolean;
+
+            annotation { "Name" : "Draw steering", "Default" : true }
+            definition.drawSteering is boolean;
+
+            annotation { "Name" : "Draw servos", "Default" : true }
+            definition.drawServos is boolean;
+
+            annotation { "Name" : "Draw mount", "Default" : true }
+            definition.drawMount is boolean;
+
+            annotation { "Name" : "Draw electronics", "Default" : true }
+            definition.drawElectronics is boolean;
+
+            annotation { "Name" : "Draw planes", "Default" : true }
+            definition.drawPlanes is boolean;
+
+            annotation { "Name" : "Draw belts", "Default" : true }
+            definition.drawBelts is boolean;
+
+            annotation { "Name" : "Draw belts mirror", "Default" : true }
+            definition.drawBeltsMirror is boolean;
+
+            annotation { "Name" : "Draw righting", "Default" : true }
+            definition.drawRighting is boolean;
+        }
     }
     {
+        // PER-GROUP SWITCHES. The per-group FEATURES above are still the
+        // better answer — a tree node can be renamed, reordered, suppressed
+        // and folded, and a checkbox can do none of those — but a document
+        // already built on this single node cannot get any of that without
+        // re-inserting eleven features and losing every entity id. So the
+        // groups are ALSO switchable here, and "hide all the electronics" is
+        // one tickbox rather than a migration.
+        //
+        // TESTED FOR `== false`, NOT `!= true`, and the difference matters.
+        // These parameters are NEW on a feature that is already inserted in a
+        // live document. If Onshape does not backfill the annotation default
+        // into an existing instance, every one of them reads `undefined` —
+        // and under `!= true` the entire model would silently disappear on
+        // the next regeneration. Under `== false` an unset parameter DRAWS,
+        // so the worst case is that a checkbox does nothing until the feature
+        // is edited once. Wrong-but-visible beats wrong-and-empty.
+        var groupOn = {
+            "drivetrain" : definition.drawDrivetrain,
+            "steering" : definition.drawSteering,
+            "servos" : definition.drawServos,
+            "mount" : definition.drawMount,
+            "electronics" : definition.drawElectronics,
+            "planes" : definition.drawPlanes,
+            "belts" : definition.drawBelts,
+            "belts_mirror" : definition.drawBeltsMirror,
+            "righting" : definition.drawRighting
+        };
+
         // Each block is independently switchable, and they run cheapest and
         // safest first. A runtime error anywhere aborts the WHOLE feature, so
         // if one of these misbehaves you can still get the others by turning
@@ -904,6 +1128,10 @@ export const aowBikeLayout = defineFeature(function(context is Context, id is Id
 
         for (var name in keys(AOW_LAYOUT))
         {
+            // Gated on the group BEFORE the shape switches, so a group that is
+            // off costs nothing and cannot fail.
+            if (groupOn[AOW_LAYOUT[name].group] == false)
+                continue;
             if (definition.drawEnvelopes)
                 aowEnvelope(context, id, name);
             if (definition.drawPoints)

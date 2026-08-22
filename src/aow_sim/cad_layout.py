@@ -39,6 +39,55 @@ CAD_PARAMS = "config/bike_params_cad.yaml"
 LINKAGE_CFG = "config/wing_linkage_w75.yaml"
 OUT = "docs/measurements/cad_layout.yaml"
 OUT_FS = "docs/measurements/cad_layout.fs"
+OUT_PNG = "docs/measurements/cad_layout.png"
+
+# Belt colours, RGBA 0-1. The REAL runs are near-black rubber and opaque; the
+# MIRRORED ones are a hue nothing else in the layout uses, at low alpha. A
+# different HUE and not merely a lower alpha, because every envelope in the
+# model is already translucent and transparency alone would not read as "this
+# is not a part".
+#
+# ONE-WAY DOOR, same as the NAME property: a colour the USER sets by hand can
+# never afterwards be overwritten from FeatureScript. Recolour a mirrored belt
+# in the UI to see it better and the generator loses that body permanently —
+# reset it under part > properties to get it back.
+BELT_RGBA = (0.13, 0.14, 0.16, 1.0)
+BELT_MIRROR_RGBA = (0.90, 0.25, 0.60, 0.30)
+
+# Default colour per GROUP, so the layout reads by function at a glance and
+# every component added later inherits one without being asked. An explicit
+# `color=` on `add()` overrides it — which is how the belts get their two.
+#
+# All translucent, and deliberately: these are ENVELOPES, not parts. The one
+# opaque thing in the model is a real belt, because it is the only entry whose
+# drawn volume is the material rather than a keep-out. Anything that reads as
+# solid should be something you could hold.
+# Alpha 0.85, not 0.45. At 0.45 every hue washed toward the background and the
+# whole layout went one colour — the transparency that was legible on ONE ghost
+# belt is illegible applied to forty bodies. Keep the see-through for the two
+# things that earn it: the mirrored belts, and the frame's inertia primitives,
+# which are not parts at all.
+GROUP_RGBA = {
+    "drivetrain":   (0.36, 0.56, 0.76, 0.85),   # steel blue
+    "steering":     (0.24, 0.68, 0.58, 0.85),   # teal
+    "servos":       (0.90, 0.62, 0.18, 0.85),   # amber — the bought parts
+    "mount":        (0.62, 0.62, 0.66, 0.85),   # grey — printed brackets
+    "electronics":  (0.40, 0.74, 0.34, 0.85),   # green
+    "righting":     (0.58, 0.42, 0.84, 0.85),   # violet
+    "frame":        (0.72, 0.72, 0.76, 0.35),   # pale — inertia primitives
+}
+
+
+def rgba_for(it: dict):
+    """Colour for one entry, or None. Explicit beats group; group beats bare.
+
+    Only entries that become a BODY get one. Planes and points are drawn by
+    `aowAxisPlane` / `aowOrigin`, which never look at `rgba` — emitting it for
+    them would be noise in a generated file that people read.
+    """
+    if not ("box" in it or "cyl" in it or "cap" in it):
+        return None
+    return it.get("color") or GROUP_RGBA.get(it["group"])
 
 # Model-frame axes. +X forward, +Y left, +Z up.
 AXIS_LATERAL = (0.0, 1.0, 0.0)        # wheel axles, across the bike
@@ -148,6 +197,48 @@ def rotation_from_z(cad_axis):
 def to_cad_extent(e):
     """model full extents [dx,dy,dz] m -> CAD [dx,dy,dz] mm (X and Y swap)."""
     return [_mm(e[1]), _mm(e[0]), _mm(e[2])]
+
+
+def belt_centre_distance(length, d1, d2):
+    """Centre distance of a two-pulley open belt, from the belt LENGTH.
+
+    Inverts  L = 2C + (pi/2)(D1 + D2) + (D1 - D2)^2 / 4C  for C, which is a
+    quadratic in C with one positive root.
+
+    At module level because `analysis/` needs the same arithmetic and a second
+    copy of a belt equation is how two answers start disagreeing. Units are
+    whatever you pass in, consistently.
+    """
+    import numpy as _n
+    a = 2.0
+    b = (_n.pi / 2) * (d1 + d2) - length
+    c = (d1 - d2) ** 2 / 4
+    disc = b * b - 4 * a * c
+    if disc < 0:
+        raise ValueError(f"no real centre distance: a {length} belt cannot "
+                         f"wrap {d1} and {d2} pulleys — it is too short")
+    return float((-b + _n.sqrt(disc)) / (2 * a))
+
+
+def belt_tangent(c2, r1, r2, side):
+    """External tangent of two circles in a plane -> (p1, p2, outward_normal).
+
+    `c2` is the second centre relative to the first; `side` +1 takes the
+    tangent anticlockwise of the centre line and -1 the clockwise one — the
+    upper and lower runs of the belt.
+
+    The third return IS the hull's outward normal along that run: it points
+    from each centre to its own tangent point. The normal you get by rotating
+    the run 90 degrees is the same line but flips sign between the two runs,
+    which is no use to a solid.
+    """
+    import numpy as _n
+    d = _n.hypot(c2[0], c2[1])
+    a = _n.arctan2(c2[1], c2[0])
+    bb = _n.arcsin((r2 - r1) / d)
+    th = a + side * (_n.pi / 2 + bb)
+    u = _n.array([_n.cos(th), _n.sin(th)])
+    return r1 * u, _n.asarray(c2, float) + r2 * u, u
 
 
 def _np_cross(a, b):
@@ -384,7 +475,7 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
 
     def add(name, group, pos, *, box=None, cyl=None, cap=None, zaxis=None,
             seg=None, frame=None, arc=None, mount=None, mass=None,
-            holes=None, normal=None, source=None, note=None):
+            holes=None, normal=None, color=None, source=None, note=None):
         solved = None
         if mount:
             _nm, _spec, *_a = mount
@@ -393,6 +484,8 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
             solved = (_sp, pos, frame)
         d = {"name": name, "group": group, "pos": pos, "mass": mass,
              "source": source or {}}
+        if mount:
+            d["horn_frame"] = True
         if zaxis:
             d["zaxis"] = zaxis
         if seg:
@@ -411,6 +504,8 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
             d["holes"] = holes
         if normal is not None:
             d["normal"] = normal
+        if color:
+            d["color"] = color
         if note:
             d["note"] = note
         items.append(d)
@@ -604,9 +699,7 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
     plane = max(plane_wheel, plane_servo)
     d_in = be["teeth_input"] * be["pitch"] / _np.pi
     d_sv = be["teeth_servo"] * be["pitch"] / _np.pi
-    # L = 2C + (pi/2)(D1+D2) + (D1-D2)^2/4C, solved for C.
-    _a, _b, _c = 2.0, (_np.pi / 2) * (d_sv + d_in) - be["length"], (d_sv - d_in) ** 2 / 4
-    C = float((-_b + _np.sqrt(_b * _b - 4 * _a * _c)) / (2 * _a))
+    C = belt_centre_distance(be["length"], d_in, d_sv)
     C_m = C
     am = dt["axle_mount"]
     # OFF THE PLANE, not off the wheel chain. It used to re-derive the pulley's
@@ -928,24 +1021,64 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
              f"and extrude fore-aft; print it lying in this plane and both "
              f"legs sit flat on the bed with the layers running along them.")
 
-    def _belt_tangent(c2, r1, r2, side):
-        """External tangent of two circles, in the model (x, z) plane.
+    # The same plane, moved to where the part will actually be built. The one
+    # above is the DATUM and its offset is meaningless — it sits at the front
+    # axle because that is a point the geometry names, not because the fork
+    # does. This one carries the offset, so there is somewhere to sketch on
+    # without nudging a datum every time the fork's thickness changes.
+    _fo = b.get("fork_print_offset", 0.0)
+    _fnorm = [-v for v in _fn]
+    add("plane_fork_print_offset", "planes",
+        [b["wheelbase"] + _fo * _fnorm[0], _fo * _fnorm[1],
+         front_z + _fo * _fnorm[2]],
+        normal=_fnorm,
+        source={"pos": "derived — fork plane + fork_print_offset",
+                "size": "design"},
+        note=f"THE FORK'S BUILD PLANE: `plane_fork_print` offset "
+             f"{_mm(_fo)} mm along its own normal, which points forward and "
+             f"{_deg(rake)} deg up. Same orientation, and the orientation is "
+             f"the derived half — the OFFSET is a design choice "
+             f"(`bike.fork_print_offset`, signed) and is meant to be edited "
+             f"once the fork has a real thickness. Kept as a separate entry "
+             f"rather than moving the datum, so sketching on one cannot "
+             f"silently redefine the other.")
 
-        `side` +1 takes the tangent anticlockwise of the centre line, -1 the
-        clockwise one — the upper and lower runs of the belt as seen from the
-        bike's left.
-        """
-        d = _np.hypot(c2[0], c2[1])
-        a = _np.arctan2(c2[1], c2[0])
-        bb = _np.arcsin((r2 - r1) / d)
-        th = a + side * (_np.pi / 2 + bb)
-        u_ = _np.array([_np.cos(th), _np.sin(th)])
-        p1 = r1 * u_
-        p2 = _np.asarray(c2, float) + r2 * u_
-        return p1, p2
+    # The rear print plane, for the motor mount and the dropout as one part.
+    #
+    # Orientation comes from the servos, not from the plate: it is the plane
+    # the LOWER servo's long outer face lies in — the 34 x 46.5 face — so the
+    # part is built off a face that already exists in the assembly rather than
+    # off a datum nobody can point at. Normal is the mount's TANGENTIAL axis,
+    # 90 deg round from the 45 deg radial one, so the build direction is up
+    # and rearward and the first layer is the bottom-front face.
+    _tan = [_np.cos(th0 + _np.pi / 2), 0.0, _np.sin(th0 + _np.pi / 2)]
+    _rad = [_np.cos(th0), 0.0, _np.sin(th0)]
+    # Tangential station of that face: the servo's own offset off the
+    # centreline, plus half a case. Both terms are 14.25 mm here, and NOT by
+    # coincidence — `drive_servo_gap` is 0, so the two cases touch.
+    _t_face = C_m * _np.sin(dth) + d4["box_size"][1] / 2
+    _mp = [C_m * _rad[i] - _t_face * _tan[i] for i in range(3)]
+    add("plane_drive_mount_print", "planes", _mp, normal=_tan,
+        source={"pos": "derived — lower servo's outer case face",
+                "size": "design"},
+        note=f"BUILD PLANE for the rear motor mount + dropout. Lies in the "
+             f"LOWER (left, {_deg(servo_angle['left'])} deg) servo's long "
+             f"outer face — {_mm(d4['box_size'][0])} x "
+             f"{_mm(d4['box_size'][2])} mm — at {_mm(_t_face)} mm tangential "
+             f"off the {_deg(th0)} deg centre line. Build direction is up and "
+             f"rearward; the bed face points down and forward. The "
+             f"{_mm(_t_face)} mm is C sin(dtheta) = "
+             f"{_mm(C_m * _np.sin(dth))} plus half a case = "
+             f"{_mm(d4['box_size'][1] / 2)}, equal only because "
+             f"`drive_servo_gap` is 0 and the cases touch on the centreline — "
+             f"open that gap and this plane moves with it. NOTE the dropout "
+             f"still crosses the belt plane between here and the axle, so "
+             f"this plane is where the MOUNT end is built, not a promise that "
+             f"the whole part lies flat.")
 
     r_in_env = d_in / 2 + be["flange_margin"] / 2
     r_sv_env = d_sv / 2 + be["flange_margin"] / 2
+    bt = be["thickness"]
     # ALL FOUR RUNS, because THE TWO SIDES ARE NOT MIRROR IMAGES. The servos
     # straddle 45 deg rather than sharing it, so the left belt spans one pair of
     # angles and the right another — overlapping, but offset. Drawing only the
@@ -957,9 +1090,10 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
                                  ("right", -1, 1, "upper")):
         _t = servo_angle[tag]
         c2 = (C * _np.cos(_t), C * _np.sin(_t))
-        p1, p2 = _belt_tangent(c2, r_in_env, r_sv_env, side)
-        run = p2 - p1
-        run = run / _np.linalg.norm(run)
+        p1, p2, out = belt_tangent(c2, r_in_env, r_sv_env, side)
+        span = p2 - p1
+        run_len = float(_np.linalg.norm(span))
+        run = span / run_len
         # Normal to the belt run, in the same plane. The plane therefore holds
         # the run AND the axle direction, which is the sheet a dropout is.
         nrm = [-run[1], 0.0, run[0]]
@@ -982,6 +1116,79 @@ def build(params: dict, raw: dict, mechanism: str = "linkage",
                  f"and it does not survive the geometry. Placed in the belt "
                  f"plane at {_mm(plane)} mm; the ORIENTATION is what is "
                  f"derived, not the offset.")
+
+        # ---- the belt run as a SOLID -----------------------------------
+        #
+        # The plane above says where the belt points; this says where it IS.
+        # A chainstay cannot be checked against a plane — a plane has no
+        # thickness and no ends, so it forbids a whole sheet of space the belt
+        # does not occupy, and permits the two regions past the pulleys that it
+        # does.
+        #
+        # (run, lateral, outward) has to be a RIGHT-handed triad or
+        # `frame_rotation` refuses it outright. Rotating the run +90 deg in
+        # (x, z) gives a normal that agrees with `out` on the UPPER runs and
+        # opposes it on the LOWER ones, so flip the run where it does. A prism
+        # is symmetric along its length, so the flip costs nothing.
+        if (-run[1]) * out[0] + run[0] * out[1] < 0:
+            run = -run
+        run_m = [float(run[0]), 0.0, float(run[1])]
+        out_m = [float(out[0]), 0.0, float(out[1])]
+        # p1/p2 sit ON the flange envelopes, so the tangent line is the belt's
+        # INNER face, not its centreline. Push the prism out by half its
+        # thickness or it straddles the pulley it is wrapped around.
+        ctr = mid + out * (bt / 2)
+        # ORDERING TRAP, and it is load-bearing for the servos, so it is
+        # matched rather than fixed: `render*` feeds the box to fCuboid as
+        # (box[1], box[0], box[2]) — the model->CAD X/Y swap — but passes the
+        # three frame axes through UNREORDERED. So
+        #
+        #     box[0] lands along frame[1]
+        #     box[1] lands along frame[0]
+        #     box[2] lands along frame[2]
+        #
+        # Only the third pair reads the way it looks. Authored the wrong way
+        # round, a 104.66 x 9 mm belt run comes out 9 mm long and 104.66 mm
+        # wide, which is exactly what it did.
+        _belt_box = (be["width"], run_len, bt)
+        _belt_frame = (run_m, list(AXIS_LATERAL), out_m)
+        add(f"belt_{tag}_{word}", "belts",
+            [float(ctr[0]), sgn * plane, float(ctr[1])],
+            box=_belt_box, frame=_belt_frame, color=BELT_RGBA,
+            source={"pos": "derived — belt tangent", "size": "design"},
+            note=f"The {word.upper()} run of the {tag} belt, as material: "
+                 f"{_mm(run_len)} mm of {_mm(be['width'])} x {_mm(bt)} mm HTD"
+                 f"{int(be['pitch'] * 1000)}M between the two tangent points. "
+                 f"Only the STRAIGHT run — the wrap around each pulley is the "
+                 f"pulley envelope's job and is already drawn. Its inner face "
+                 f"lies on the tangent line, so the pair of these plus the two "
+                 f"pulley cylinders IS the keep-out, with nothing left over.")
+
+        # ---- the same run, mirrored onto the OTHER side ----------------
+        #
+        # THE TWO SIDES ARE NOT MIRROR IMAGES: the servos straddle 45 deg
+        # rather than sharing it, so the left belt lives at 37.372 deg and the
+        # right at 52.628. A chainstay that is the SAME PART on both sides
+        # therefore has to clear both, and no single side's geometry shows
+        # that. Copying each run across the centreline puts both belts on both
+        # sides, and their union is the symmetric keep-out, drawn rather than
+        # computed.
+        #
+        # Own group, not just its own colour, so the whole set can be
+        # suppressed in one click — which is what you want the moment an
+        # asymmetric pair of chainstays turns out to be acceptable.
+        add(f"belt_{tag}_{word}_mirrored", "belts_mirror",
+            [float(ctr[0]), -sgn * plane, float(ctr[1])],
+            box=_belt_box, frame=_belt_frame, color=BELT_MIRROR_RGBA,
+            source={"pos": "derived — mirror of the belt tangent",
+                    "size": "design"},
+            note=f"NOT A PART. The {tag} belt's {word} run reflected across "
+                 f"the centreline onto the bike's "
+                 f"{'right' if sgn > 0 else 'left'}, where no belt actually "
+                 f"runs. It is here so a SYMMETRIC chainstay can be drawn "
+                 f"against one side: clear this and the real belt beside it, "
+                 f"and the mirror-image part clears the other side too. "
+                 f"Suppress the group if the design gives up on symmetry.")
 
     payload_notes = {
         "battery": "3S 1300-1500 mAh LiPo, slung under the frame between the "
@@ -1143,9 +1350,15 @@ def render(items: list[dict], params: dict, linkage_used: str = "") -> str:
             if "box" in it:
                 rot = None
                 if "frame" in it:
+                    # The box's own W/D/H directions. They were named for the
+                    # SERVOS, which were the only framed boxes at the time —
+                    # but the payload pack and the belt runs are framed too and
+                    # have no horn and no shaft, so the servo gloss only goes
+                    # on entries that actually solved a mount.
                     w, d, h = (to_cad_dir(v) for v in it["frame"])
+                    _hint = "   # horn faces this way" if it.get("horn_frame") else ""
                     L.append(f"    axis_width: {w}")
-                    L.append(f"    axis_shaft: {d}   # horn faces this way")
+                    L.append(f"    axis_depth: {d}{_hint}")
                     L.append(f"    axis_up: {h}")
                     rot = frame_rotation(w, d, h)
                 elif "zaxis" in it:
@@ -1173,6 +1386,9 @@ def render(items: list[dict], params: dict, linkage_used: str = "") -> str:
                     L.append(f"      - [{c[0]}, {c[1]}, {c[2]}]")
             else:
                 L.append("    shape: point")
+            _rgba = rgba_for(it)
+            if _rgba:
+                L.append(f"    color_rgba: {list(_rgba)}")
             if it.get("mass") is not None:
                 L.append(f"    mass_g: {_g(it['mass'])}")
             L.append("    source: {%s}" % ", ".join(
@@ -1325,6 +1541,20 @@ export function aowEnvelope(context is Context, id is Id, name is string)
             "propertyType" : PropertyType.NAME,
             "value" : name
     });
+
+    // Colour, for the entries that carry one — the belts, where a REAL run and
+    // a MIRRORED one have to be told apart at a glance. Same hand-edit rule as
+    // the name above: recolour a body in the UI and FeatureScript can never
+    // set its appearance again. The alpha is what makes a mirrored belt read
+    // as a ghost rather than a part.
+    if (c.rgba != undefined)
+    {
+        setProperty(context, {
+                "entities" : qCreatedBy(subId, EntityType.BODY),
+                "propertyType" : PropertyType.APPEARANCE,
+                "value" : color(c.rgba[0], c.rgba[1], c.rgba[2], c.rgba[3])
+        });
+    }
 @QV@    setQueryVariable(context, "aow_q_" ~ name, qCreatedBy(subId, EntityType.BODY));
 }
 
@@ -1581,8 +1811,36 @@ export const aowBikeLayout = defineFeature(function(context is Context, id is Id
 
         annotation { "Name" : "Plane size" }
         isLength(definition.planeSize, AOW_PLANE_BOUNDS);
+
+        // A NAMED SECTION, not nine loose checkboxes. Appended bare they land
+        // under a numeric field at the bottom of a fifteen-field dialog, below
+        // the fold and visually unrelated to the draw toggles above — which is
+        // exactly where the first version of this put them, and nobody found
+        // them. A group heading makes the block one obvious thing.
+        annotation { "Group Name" : "Which groups to draw", "Collapsed By Default" : false }
+        {
+@GROUPBOXES@        }
     }
     {
+        // PER-GROUP SWITCHES. The per-group FEATURES above are still the
+        // better answer — a tree node can be renamed, reordered, suppressed
+        // and folded, and a checkbox can do none of those — but a document
+        // already built on this single node cannot get any of that without
+        // re-inserting eleven features and losing every entity id. So the
+        // groups are ALSO switchable here, and "hide all the electronics" is
+        // one tickbox rather than a migration.
+        //
+        // TESTED FOR `== false`, NOT `!= true`, and the difference matters.
+        // These parameters are NEW on a feature that is already inserted in a
+        // live document. If Onshape does not backfill the annotation default
+        // into an existing instance, every one of them reads `undefined` —
+        // and under `!= true` the entire model would silently disappear on
+        // the next regeneration. Under `== false` an unset parameter DRAWS,
+        // so the worst case is that a checkbox does nothing until the feature
+        // is edited once. Wrong-but-visible beats wrong-and-empty.
+        var groupOn = {
+@GROUPMAP@        };
+
         // Each block is independently switchable, and they run cheapest and
         // safest first. A runtime error anywhere aborts the WHOLE feature, so
         // if one of these misbehaves you can still get the others by turning
@@ -1600,6 +1858,10 @@ export const aowBikeLayout = defineFeature(function(context is Context, id is Id
 
         for (var name in keys(AOW_LAYOUT))
         {
+            // Gated on the group BEFORE the shape switches, so a group that is
+            // off costs nothing and cannot fail.
+            if (groupOn[AOW_LAYOUT[name].group] == false)
+                continue;
             if (definition.drawEnvelopes)
                 aowEnvelope(context, id, name);
             if (definition.drawPoints)
@@ -1646,8 +1908,22 @@ def render_featurescript(items: list[dict], params: dict, ver: str = "3044",
         f = [f'"group" : "{it["group"]}"',
              f'"pos" : vector({pos[0]}, {pos[1]}, {pos[2]}) * millimeter']
         if "box" in it:
-            # A framed box is authored in servo-local (W, D, H) and rotated
-            # into place; an unframed one keeps the model-frame extents.
+            # ORDERING, and the comment that used to be here was WRONG in a
+            # way that costs an afternoon. A framed box is authored
+            # (D, W, H) — `box_size: [0.034, 0.0285, 0.0465]  # D x W x H` —
+            # against a frame of (w, d, h). The extents get the model->CAD X/Y
+            # swap and the frame tuple does NOT, so
+            #     box[0] runs along frame[1]
+            #     box[1] runs along frame[0]
+            #     box[2] runs along frame[2]
+            # The servos are right because two swaps undo each other. Author
+            # (W, D, H) against (w, d, h) and you get a belt 9 mm long.
+            #
+            # Both arms of the ternary below compute the same thing —
+            # `to_cad_extent` IS [e[1], e[0], e[2]] — so there is ONE extent
+            # convention, not two. Normalising this later is therefore entirely
+            # a FRAME-side fix: reorder the tuple at the `frame=` call sites and
+            # leave the extent path alone.
             e = ([_mm(it["box"][1]), _mm(it["box"][0]), _mm(it["box"][2])]
                  if "frame" in it else to_cad_extent(it["box"]))
             f.append('"shape" : "box"')
@@ -1677,10 +1953,6 @@ def render_featurescript(items: list[dict], params: dict, ver: str = "3044",
             n = to_cad_dir(it["normal"])
             f.append('"shape" : "plane"')
             f.append(f'"normal" : vector({n[0]}, {n[1]}, {n[2]})')
-        elif "normal" in it:
-            n = to_cad_dir(it["normal"])
-            f.append('"shape" : "plane"')
-            f.append(f'"normal" : vector({n[0]}, {n[1]}, {n[2]})')
         elif "holes" in it:
             # A hole PATTERN travels as one entry with a list of positions
             # rather than four entries, so eight of these do not bury the
@@ -1698,6 +1970,11 @@ def render_featurescript(items: list[dict], params: dict, ver: str = "3044",
             # then dereferences c.axis/c.length/c.radius and kills the whole
             # feature regeneration — variables included.
             f.append('"shape" : "point"')
+        _rgba = rgba_for(it)
+        if _rgba:
+            # Emitted after the shape dispatch rather than inside it: colour is
+            # a property of the body, not of which primitive drew it.
+            f.append('"rgba" : [' + ", ".join(f"{v}" for v in _rgba) + ']')
         if it.get("mass") is not None:
             f.append(f'"mass_g" : {_g(it["mass"])}')
         body = ",\n".join(f"        {line}" for line in f)
@@ -1749,7 +2026,18 @@ def render_featurescript(items: list[dict], params: dict, ver: str = "3044",
         L.append(FS_GROUP.replace("@TITLE@", g.replace("_", " "))
                  .replace("@IDENT@", _fs_ident(g)).replace("@GROUP@", g))
     L.append(FS_FOURBAR)
-    L.append(FS_LEGACY)
+    boxes, gmap = [], []
+    for g in groups:
+        # `_fs_ident` is built for FEATURE names (aowGroupBelts); as a
+        # parameter name that reads drawAowGroupBelts, which is noise. Strip
+        # the feature prefix so the checkbox is drawBelts.
+        ident = "draw" + _fs_ident(g).removeprefix("aowGroup")
+        boxes.append(f'            annotation {{ "Name" : "Draw '
+                     f'{g.replace("_", " ")}", "Default" : true }}\n'
+                     f'            definition.{ident} is boolean;\n')
+        gmap.append(f'            "{g}" : definition.{ident}')
+    L.append(FS_LEGACY.replace("@GROUPBOXES@", "\n".join(boxes))
+             .replace("@GROUPMAP@", ",\n".join(gmap) + "\n"))
     return _fs_qv("\n".join(L), query_vars)
 
 
@@ -1793,6 +2081,24 @@ def main() -> None:
                          "are noise while the chassis is being drawn)")
     ap.add_argument("--fs-version", default="3044",
                     help="FeatureScript version header; must match the document")
+    ap.add_argument("--push", metavar="TAB|URL", nargs="?", const="",
+                    help="after writing, POST the FeatureScript into Onshape. "
+                         "Bare --push targets the `feature_studio` tab in "
+                         "config/onshape.yaml; or name another tab, or paste a "
+                         "browser URL. Implies --format featurescript. ONE "
+                         "billable call — see aow_sim.onshape for the quota")
+    ap.add_argument("--shot", metavar="TAB|URL", nargs="?", const="",
+                    help="render a Part Studio to PNG afterwards. Bare --shot "
+                         "targets the `layout` tab. One more billable call")
+    ap.add_argument("--shot-out", default=OUT_PNG, metavar="PATH")
+    ap.add_argument("--shot-bg", default="white",
+                    help="background to composite the render onto; the API "
+                         "returns a TRANSPARENT one, which reads differently "
+                         "in every viewer. Pass an empty string to keep the "
+                         "alpha channel")
+    ap.add_argument("--shot-view", default="isometric",
+                    help="named view (front/top/right/isometric) or twelve "
+                         "comma-separated numbers, a row-major 3x4 view matrix")
     ap.add_argument("--no-query-vars", dest="query_vars", action="store_false",
                     help="omit setQueryVariable calls. `setQueryVariable` "
                          "arrived in Onshape 1.203 and an unknown function is "
@@ -1800,6 +2106,10 @@ def main() -> None:
                          "the whole Feature Studio down rather than one "
                          "feature — this is the escape hatch")
     args = ap.parse_args()
+    if args.push is not None and args.format != "featurescript":
+        # Silently switching would write cad_layout.yaml while pushing .fs text,
+        # leaving the on-disk copy of what was pushed simply absent.
+        ap.error("--push sends FeatureScript; add --format featurescript")
 
     params, raw = load_params(args.params), load_sources(args.params)
     items = build(params, raw, args.righting, args.bumpers, args.chassis_box,
@@ -1826,6 +2136,28 @@ def main() -> None:
         half = abs(to_cad_pos(am["pos"])[0]) + _mm(am["cyl"][1]) / 2
         print(f"  rear width {2 * half:.1f} mm (half {half:.1f})")
     print(f"  modelled mass excluding righting: {_g(total)} g")
+    if args.push is not None or args.shot is not None:
+        _to_onshape(args, text)
+
+
+def _to_onshape(args, text: str) -> None:
+    """Push, then optionally render. Two calls at most, and never in a loop.
+
+    Import is local so that `cad_layout` with no network flags stays a pure
+    offline export — the module reads the Keychain on first call.
+    """
+    from . import onshape
+
+    if args.push is not None:
+        url = onshape.resolve(args.push, "feature_studio")
+        onshape.push_feature_studio(text, url)
+        print(f"pushed {len(text)} chars -> {url}")
+    if args.shot is not None:
+        out, _ = onshape.shaded_view(onshape.resolve(args.shot, "layout"),
+                                     Path(args.shot_out), view=args.shot_view,
+                                     bg=args.shot_bg or None)
+        print(f"rendered -> {out}")
+    print(onshape.budget_line())
 
 
 if __name__ == "__main__":
