@@ -416,6 +416,87 @@ that buzzed.
 
 ---
 
+## 6b. The drive plant is 31x over-capable, and fixing it is not a one-liner
+
+Investigated 2026-08-21, after the rear wheel looked impractical in preview
+clips. **Nothing landed** -- the config is unchanged and the digest is still
+`7af0ce42dfc91154` -- but the defect is real and precisely located, so this is
+the writeup rather than a diff. Reproduce the visual with
+`analysis/wheel_slowmo.py --drive-tau 0.04`, which is override-only.
+
+**It is not hopping.** Measured with `analysis/liftoff.py`, which supersedes the
+airborne-% columns for exactly this reason, the rear wheel's vertical gap is p99
+0.9-1.5 mm and max 2.5 mm -- envelope-ripple scale. What looks violent is
+ROTATIONAL. Commanded to stand still for 15 s, `general_rl_smooth_diff_og`:
+
+| | |
+|---|---|
+| rim travel past the contact | **6.37 m** |
+| distance the bike moved | 0.35 m |
+| hub direction reversals | **21.8 / s** |
+
+**The plant permits it.** Two independent over-capabilities, both derived from
+the datasheet block, no fitting:
+
+1. **Torque-speed envelope.** `drive_kv: 0.5` against a bare-motor droop of
+   `kt*ke/R / belt^2` = 0.0160 N.m/(rad/s) -- **31x too stiff** -- paired with a
+   FLAT `forcerange`, so the modelled servo makes full stall torque at every
+   speed. A real motor's torque falls linearly to zero at no-load speed.
+2. **Bandwidth.** No actuator dynamics at all: the modelled loop settles in
+   `J/kv` = 0.60 ms against the motor's own `tau_m = J R/(kt ke)` = **18.7 ms**.
+   Same 31x, as it must be.
+
+Measured demand: the policy jumps the commanded shaft speed by 19 rad/s mean and
+73 rad/s peak every 20 ms, against a total range of 66.6, and saturates torque
+25% of ticks.
+
+**Both fixes work and both break something else.** This is the part that stopped
+the change landing.
+
+| candidate | rim travel | what it breaks |
+|---|---|---|
+| shipped | 6.37 m | -- |
+| `drive_tau` 0.012 | 6.25 | nothing, and buys nothing |
+| `drive_tau` 0.019 (`tau_m`) | 4.99 | LQR gain schedule falls over |
+| `drive_tau` 0.040 | 3.73 | same |
+| `drive_kv` 0.15 | 6.13 | `test_straight_sprint` |
+| `drive_kv` 0.05 | 4.74 | `test_rest_stability` |
+| `drive_kv` 0.016 (derived) | 3.17 | `test_rest_stability`, pivots, odometry |
+
+- **`drive_tau`**: `linearize.py` fits one linear model per grid speed over a
+  single 5 ms control period. With a 19-25 ms actuator the input has barely
+  moved inside that window, so the identified input matrix comes out far too
+  small and the gains too hot. The scheduled `DriveController` holds to 0.012
+  and falls (roll 180 deg) at 0.025 on both straight and circle. Fit R^2
+  degrades at ANY lag -- 0.010 is as bad as 0.040 -- because the 8-state model
+  has no actuator state to put it in. Not tunable; structural.
+- **`drive_kv`**: lowering it gets the torque-speed envelope right and the LQR
+  fit actually IMPROVES (0.9727 -> 0.9757 at 0.016, all driving regimes
+  survive). But `kv` alone is open-loop VOLTAGE control, and the real servo
+  closes a velocity PI whose integral term holds position against back-drive.
+  Without it the bike cannot hold still -- `test_rest_stability` fails from 0.10
+  down. Top speed is fine (1.63 m/s at kv 0.016 against a 1.71 ceiling, clear of
+  the 1.2 m/s the RL grid commands), so the envelope is not the problem; the
+  missing integrator is.
+
+**The bench protocol for this is now written**:
+`docs/measurements/servo-protocol.md`, with `servo-measurements.yaml` as its
+data sheet. Its §2 is the one to run first -- a 25 Hz reversal sweep needs no
+load fixture and directly measures whether the hardware can do what the sim
+policy does. Its §6 maps the results onto which model form the sim needs, so
+the actuator design follows the measurement rather than the reverse.
+
+**What it actually needs** is the thing `mujoco-modeling-decisions.md` deferred
+in the first place: a real **Dynamixel velocity-PI emulation** -- stiff loop with
+integral action (so it holds), a speed-dependent torque limit (so it cannot make
+stall torque at speed), and a bandwidth limit (so it cannot reverse in 0.6 ms).
+Stock MuJoCo cannot express the speed-dependent clamp in the affine actuator
+form, so this is a `dyntype`/callback job, not a parameter. Enabling the lag
+additionally needs the actuator state added to `linearize.py`'s identification.
+
+Until then the plant lets a policy hold station by a means the hardware does not
+have, and every `general_rl*` policy has learned to use it.
+
 ## 7. The two things that look like free speedups and are not
 
 **Island sleeping (`mjENBL_SLEEP`).** MuJoCo 3.10 does have it — islands are on
