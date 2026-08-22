@@ -20,8 +20,10 @@ a Part Studio as separate nodes:
 | `AOW layout variables` | `setVariable` for every coordinate, so a sketch can reference `#aow_servo_steer_z`. Draws nothing, cannot fail. Insert first, once. |
 | `AOW drivetrain` / `steering` / `servos` / `mount` / `electronics` / `righting` | envelopes, origin points and axis planes for **one group** |
 | `AOW planes` | one print plane (the fork's) and four belt-clearance planes, two per side. No tickboxes — everything in it is a plane already |
+| `AOW belts` | the four straight belt runs as solids, opaque near-black |
+| `AOW belts mirror` | each run copied to the OTHER side, translucent magenta. Suppress this node to drop the symmetry aid without touching the real belts |
 | `AOW four-bar sketch` | the righting linkage as construction geometry |
-| `AOW bike layout` | the superseded all-in-one node, kept so documents that already have it keep their geometry |
+| `AOW bike layout` | the superseded all-in-one node, kept so documents that already have it keep their geometry. **Now carries a "Draw <group>" tickbox per group** — see below |
 
 The per-group split is not cosmetic. A tree node can be **renamed**,
 **suppressed**, and **reordered**; a checkbox inside one feature can do none of
@@ -31,6 +33,31 @@ a bug in the envelope code because both lived in one function.
 
 Groups are derived from the data — `groups = dict.fromkeys(it["group"] ...)` —
 so adding a group to `build()` adds a feature. There is no per-group code.
+
+### The legacy node got per-group tickboxes too
+
+The argument above is still right: a tree node can be renamed, reordered,
+suppressed and folded, and a checkbox can do none of those. But a document
+already built on the single `AOW bike layout` node cannot have any of it
+without inserting eleven features and losing every entity id it already
+references — which is a real cost for the one thing people actually want,
+"hide all the electronics". So the same group list also generates a
+`Draw <group>` boolean on the legacy node, and the draw loop skips a component
+whose group is switched off.
+
+They live in a **named parameter section** (`"Group Name" : "Which groups to
+draw"`), which is not cosmetic. Appended bare they landed underneath the
+`Plane size` numeric field at the bottom of a fifteen-field dialog, and the
+first person to go looking for one did not find it. A generated control nobody
+can locate is not a feature.
+
+**The test is `== false`, deliberately, not `!= true`.** These parameters are
+new on a feature that is already inserted in live documents. If Onshape does
+not backfill an annotation default into an existing instance, every one of them
+reads `undefined` — and under `!= true` the whole model would vanish on the
+next regeneration. Under `== false` an unset parameter draws, so the worst case
+is a checkbox that does nothing until the feature is edited once.
+Wrong-but-visible beats wrong-and-empty.
 
 ## What can be named, and what cannot
 
@@ -113,27 +140,156 @@ that, at the cost of a version per regeneration. Not done; noted.
 
 ## Getting the script into Onshape
 
-Copy-paste today. The automated path, if it is ever worth it:
+Copy-paste, or `--push`. Wired 2026-08-21 as `aow_sim.onshape`, two calls wide:
 
 ```
-POST /api/featurestudios/d/{did}/w/{wid}/e/{eid}
-{"contents": "<the whole .fs text>"}
+POST /api/featurestudios/d/{did}/w/{wid}/e/{eid}   {"contents": "<the .fs text>"}
+GET  /api/partstudios/d/{did}/w/{wid}/e/{eid}/shadedviews?pixelSize=0&...
 ```
+
+Copy-paste is still the default and still the fallback: browser calls are
+exempt from the quota, so exhausting the API changes nothing about pasting.
+
+`config/onshape.yaml` holds the document, workspace and three tab ids under
+names, so `--push` and `--shot` take no arguments. It is checked in and carries
+no secret — an id grants nobody anything. Naming the tabs is not tidiness: the
+Feature Studio and the two Part Studios are three 24-hex strings with no
+visible difference, and passing the wrong one 404s with nothing to read.
+
+- **`feature_studio`** — generated, overwritten wholesale on every push
+- **`layout`** (the Part Studio named `aow-bike-import`) — where the generated
+  features are inserted, and what `--shot` renders by default
+- **`bike`** — the real drawing, with imported wheel geometry. A `--shot`
+  target only; nothing generated is ever written there
 
 HTTP Basic with `accessKey:secretKey` from an API key (Onshape calls that
 "local testing only" and prefers HMAC-SHA256; for a script on one machine it is
-five lines instead of forty). `sourceMicroversion` + `rejectMicroversionSkew`
+five lines instead of forty). The key needs **read + write documents and
+nothing else** — replacing a studio's contents is a write, not a delete, and
+`delete` / `share` / `purchases` are the three scopes that turn a bad script
+from recoverable into not.
+
+**You cannot test a key for free.** Measured 2026-08-21: Onshape answers 404 to
+a nonexistent document id whether or not you are authenticated, and 403 to a
+real one identically for bogus credentials and for no `Authorization` header at
+all. So no probe of an absent document distinguishes a good key from a bad one,
+and `python -m aow_sim.onshape <url>` reads a document you own instead — one
+call on success, zero on failure, because 4xx is not billable. It proves read
+scope only; the first push is the only test of write. `sourceMicroversion` + `rejectMicroversionSkew`
 are optional concurrency guards — for a generated file that is never
 hand-edited, overwriting is what you want.
 
 **The quota is the reason not to get clever.** Free and Standard plans get
-**2500 API calls per year**; failed calls and anything done in the browser do
-not count. A `--push` that POSTs once per regeneration is fine. A
-watcher that syncs on save, or anything that walks the feature tree through
-`getPartStudioFeatures`, is how you burn a year's allowance in a week.
+**2500 API calls per year** (Professional 5000); failed calls and anything done
+in the browser do not count. A `--push` that POSTs once per regeneration is
+fine. A watcher that syncs on save, or anything that walks the feature tree
+through `getPartStudioFeatures`, is how you burn a year's allowance in a week.
+Onshape shows a total and never a breakdown, so every call is appended to
+`~/.local/state/aow/onshape_calls.jsonl` with what it did, billable or not
+(`python -m aow_sim.onshape --log`). It lives outside the repo because it is
+per-machine state, and it is advisory — check it against the usage page rather
+than trusting it.
+
+**The billing cycle is not the calendar year, and it is not the date the usage
+page calls "Tracking start date" either.** That field read 19 Feb 2026 while
+the same page said 312/365 days elapsed, which puts the real anchor at
+13 Oct 2025. The elapsed-day count is the field to trust. Unused calls do not
+roll over, so the number that matters is calls-per-day remaining, which is what
+`budget_line` prints.
+
+**`pixelSize=0` is what makes the render usable** — it fits the model to the
+frame. With any other value the view matrix sets direction and pan only, and
+the zoom is yours to get wrong. `shadedviews` reads the Part Studio, not the
+Feature Studio, so it needs the other tab's element id; a studio that failed to
+compile renders the error rather than the previous geometry.
 
 There is no official local↔Onshape sync, no LSP, and no first-party editor
 integration; the community VS Code extension is syntax highlighting only.
+
+## The belts, and what "symmetric" costs
+
+The belts were four clearance PLANES and are now also eight SOLIDS. A plane has
+no thickness and no ends, so it forbids a whole sheet the belt does not occupy
+and permits the two regions past the pulleys that it does; a chainstay can only
+be checked against a solid.
+
+Each run is a prism from tangent point to tangent point, 104.66 x 9 x 3.6 mm,
+with its INNER face on the tangent line — `p1`/`p2` sit on the flange
+envelopes, so the line is the belt's inner surface, not its centre. Only the
+straight run is drawn; the wrap is the pulley envelope, already there.
+
+**Each side also carries the OTHER side's belt, mirrored** (`belts_mirror`,
+translucent magenta, its own feature node so it can be suppressed in one
+click). The servos straddle 45 deg rather than sharing it — left at 37.372,
+right at 52.628 — so the two sides' keep-outs differ by the 15.256 deg of
+straddle. A chainstay that is the same part on both sides has to clear both,
+and no single side's geometry shows that. Mirroring draws the union instead of
+asserting it.
+
+### The corridor, in the frame that matters
+
+Two coordinate systems get mixed up here, and they differ by 90 deg.
+
+- **Run angles**: left 24.522 / 50.222, right 39.778 / 65.478. These OVERLAP —
+  right-lower sits below left-upper — so the union is contiguous, 24.522 to
+  65.478, and there is no threading between the two belts. A guess that the gap
+  lies "between the lower drive's upper belt and the upper drive's lower belt"
+  is inverted: that window is negative by 10.444 deg.
+- **Angular station about the rear axle**, which is the frame a chainstay
+  leaving the axle actually lives in. Each tangent line touches the input
+  pulley at run_angle -/+ 90, so the hull occupies 205.700 deg per side and the
+  symmetric free window is **155.478 to 294.522 deg** — 139.044 wide, centred
+  on exactly 225 = `drive_servo_angle_deg` + 180. Ray-sampled against the true
+  two-circle hull to confirm.
+
+Recorded rather than drawn. A drawn sector would wrongly exclude a chainstay
+that ducks under both belts entirely, which is a legitimate route.
+
+## Two traps in the generator
+
+**The framed-box ordering.** `render` and `render_featurescript` feed `fCuboid`
+the extents as `(box[1], box[0], box[2])` — the model-to-CAD X/Y swap — but
+pass the three frame axes through `to_cad_dir` **without reordering the tuple**.
+So `box[0]` lands along `frame[1]`, `box[1]` along `frame[0]`, and only
+`box[2]`/`frame[2]` pair up the way they read. The servos are correct because
+`box_size[0]` is the lateral width and `frame[1]` is the lateral axis, so they
+happen to agree — which is why this never surfaced. Authoring the belts the
+obvious way produced a run 9 mm long and 104.66 mm wide. Matched, not fixed:
+the servos depend on it. Normalising it means reordering the frame tuple
+alongside the extents and re-verifying the servos and the payload pack.
+
+**Colour is a one-way door, and this document has already walked through it.**
+`setProperty` with `PropertyType.APPEARANCE` and `color(r, g, b, a)` on
+`qCreatedBy(subId, EntityType.BODY)` works; the 4th alpha argument is real and
+alpha is honoured on a part with no `allowFaces`. But the rule that governs
+names governs appearance: a colour the USER has set by hand can never
+afterwards be overwritten from FeatureScript.
+
+**Observed 2026-08-21, not merely feared.** A per-group palette was pushed with
+correct `rgba` on all 49 bodies — verified in the generated `.fs`, amber servos,
+green electronics, violet linkage — and in the viewport ONLY the eight belts
+changed colour. The belts were brand-new bodies; every other body in this
+document already carried a hand-set appearance (which is why the model was
+uniformly pale translucent blue before any of this), and each one is
+permanently immune.
+
+Nothing in the generator can recover them. **What actually worked was a fresh
+Part Studio tab**: new bodies have no hand-set appearance, so they take the
+palette immediately. The old tab is kept as `rip` in `config/onshape.yaml`
+rather than deleted, because the lock-out is worth being able to poke at.
+Resetting appearance per part is the in-place alternative, if you can find the
+control.
+
+Until one or the other happens the palette is real in the export and invisible
+in the document — worth knowing before concluding the generator is broken. It
+took a check of the pushed `.fs`, where the correct `rgba` was sitting on all
+49 bodies, to tell the two apart.
+
+Two live consequences: **alpha is scene-wide.** A first attempt at 0.45 across
+every group washed all hues toward the background AND made `shadedviews` return
+a BLACK background instead of white. 0.85 restored both. And the see-through
+should be spent only where it earns its keep — the mirrored belts, and the
+frame's inertia primitives, which are not parts at all.
 
 ## Imports
 
@@ -172,6 +328,29 @@ go stale; a generated one is a thing to keep in sync. So the servo mounting
 plane never needed exporting — it is the plate's own face — while the fork's
 plane did, because it holds the axle direction and the raked steering axis at
 once and no face in the model is parallel to it.
+
+### The two prospective build planes
+
+Both added 2026-08-21, both alongside the datum they derive from rather than
+replacing it — sketching on one must not silently redefine the other.
+
+- **`plane_fork_print_offset`** — `plane_fork_print` moved 8 mm along its own
+  normal (forward, tilted up by the 15 deg of rake). The ORIENTATION is the
+  derived half and stays authoritative; the offset is `bike.fork_print_offset`,
+  signed, and is meant to be edited once the fork has a real thickness.
+- **`plane_drive_mount_print`** — the rear motor mount and dropout as one part.
+  Normal is the mount's TANGENTIAL axis, 135 deg, so the build direction is up
+  and rearward and the first layer is the bottom-front face. It lies in the
+  LOWER (left) servo's long 34 x 46.5 outer face, at 28.500 mm tangential off
+  the 45 deg centre line — a face that already exists in the assembly, rather
+  than a datum nobody can point at. That 28.500 is `C sin(dtheta)` = 14.250
+  plus half a case = 14.250, equal only because `drive_servo_gap` is 0 and the
+  cases touch; open that gap and the plane moves with it. Per
+  `drive_mount_open_wall`, a tangential build axis makes a SIDE wall the
+  ceiling.
+
+  It is a build plane for the MOUNT end, not a promise the whole part lies
+  flat: the dropout still crosses the belt plane between here and the axle.
 
 Two traps found by using them:
 
