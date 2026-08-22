@@ -137,6 +137,38 @@ class GeneralEnv(gym.Env):
         # prev_action. Unlike world position, pitch and pitch rate come
         # straight off the AHRS on hardware (hw/state.set_orientation), so
         # observing them costs nothing in transfer.
+        # Hub magnitude at LOW COMMANDED SPEED. Holding station needs no net
+        # wheel rotation -- the LQR does it with 0.0 hub rpm and 0.00 m of rim
+        # travel over 15 s, on [differential, steer] alone -- but every RL
+        # policy saws the wheel anyway: 79-131 hub rpm and 6.4-10.5 m of rim
+        # past the contact patch while the bike goes nowhere.
+        #
+        # It is not the task. A policy trained on hold ALONE still ran 88 rpm
+        # and 7.07 m. It is that nothing prices the channel: `w_effort` is
+        # 0.001 and `w_smooth` prices CHANGE, not magnitude, so a large steady
+        # hub command is free. Pinning hub_max to 0 removes it entirely (0.6
+        # rpm, 0.05 m) and HALVES hold drift, which is what says the motion is
+        # gratuitous rather than load-bearing.
+        #
+        # Priced rather than clamped, deliberately: a hard clamp would also
+        # remove the channel during a disturbance recovery, where using the
+        # wheel may be exactly right. This fades the charge out as the
+        # commanded speed rises, so it bites only where the LQR says it should.
+        # 0.0 by default, so every config predating it is bit-identical.
+        self.w_hub_idle = float(self.rw.get("w_hub_idle", 0.0))
+        # The speed at which a MEASURED motion fully cancels the hub charge.
+        # Defaults to sigma_v, which is what arm 5 used, so an absent key
+        # reproduces general_rl_glide_pitch_hub2 exactly. It is a knob because
+        # the two arms bracket it and neither end is right:
+        #   v_max 1.2  (arm 4) -- too stingy. A 0.3 m/s disturbance left 75% of
+        #                the charge standing, and the policy stopped reaching
+        #                for the wheel to recover (mean |hub| 0.19 vs 0.53).
+        #   sigma_v 0.35 (arm 5) -- too generous. Recovery came back and beat
+        #                the baseline (7/8 at dv 0.40 vs 0/8), but hold-time
+        #                wheel motion went most of the way back to baseline
+        #                (rim travel 2.27 -> 6.76 m).
+        self.hub_idle_v_scale = float(
+            self.rw.get("hub_idle_v_scale", self.sigma_v))
         self.obs_pitch = bool(env.get("obs_pitch", False))
         # Cap on the wing command. 90 deg keeps the deployed foot 11 mm clear
         # of the floor with the bike upright, while the full 105 deg stroke
@@ -186,6 +218,47 @@ class GeneralEnv(gym.Env):
 
     def _apply_randomization(self):
         self._rand.apply(self._np_random)
+
+    def _idle_frac(self, v_meas: float = 0.0) -> float:
+        """1 when the bike is asked to stand still AND is standing still,
+        0 at v_max, linear between. Faded on max(commanded, measured) speed.
+
+        CORRECTION. This first faded on the COMMAND alone, reasoning that the
+        charge should be predictable from something in the observation and
+        that a measured-speed fade would let the policy duck the penalty by
+        moving. Both halves were wrong in the way that mattered:
+
+        - A hold command means full charge, and a disturbance ARRIVES during a
+          hold command. So the first version priced the wheel hardest at
+          exactly the moment recovery might need it. Measured on
+          general_rl_glide_pitch_hub: hold-time wheel motion fell 70% (good),
+          but it also stopped reaching for the channel under a lateral kick
+          (mean |hub| 0.19 vs the baseline's 0.59) and lost the recoveries
+          that go with it.
+        - The "duck it by moving" loophole is already closed, by arithmetic,
+          by `w_vel`. Drifting at 0.3 m/s under a hold command puts r_vel at
+          exp(-0.3^2/0.35^2) = 0.48, i.e. it gives up ~0.78/step of w_vel to
+          dodge at most 0.40/step of hub charge. Moving to escape this term is
+          a losing trade whichever way the policy plays it.
+
+        So: while the bike is genuinely still, the wheel is expensive; the
+        instant it is moving -- commanded OR not -- the charge fades and the
+        channel is free for recovery.
+
+        TWO SCALES, because the two speeds mean different things. The COMMAND
+        is faded against `v_max`, the span of the channel it is drawn from.
+        The MEASURED speed is faded against `sigma_v` -- the reward's own
+        notion of "a velocity error that matters" -- because "idle" has to
+        mean actually stationary, and against v_max a 0.3 m/s disturbance
+        still leaves 75% of the charge standing, which is no relief at the
+        moment relief is the whole point. Against sigma_v it leaves 14%.
+        Whichever gives MORE relief wins.
+        """
+        if self.v_max <= 0.0:
+            return 1.0
+        by_cmd = 1.0 - float(np.linalg.norm(self._v_cmd_w)) / self.v_max
+        by_meas = 1.0 - abs(float(v_meas)) / max(self.hub_idle_v_scale, 1e-9)
+        return float(np.clip(min(by_cmd, by_meas), 0.0, 1.0))
 
     def _sample_command(self, rng, first=False):
         """Draw a fresh (world velocity, heading) command as a STEP change.
@@ -449,6 +522,15 @@ class GeneralEnv(gym.Env):
                   # form as w_upright; 0.0 by default, so every config that
                   # predates it is unchanged.
                   - rw.get("w_pitch", 0.0) * s.pitch ** 2
+                  # Hub magnitude, faded out with commanded speed: full charge
+                  # at a hold command, nothing at v_max. `action` is the
+                  # NORMALISED action, as w_effort above uses it, so the term
+                  # is in [0, 1] before weighting. v_max 0 (the hold-only
+                  # diagnostic configs) means every command is a hold, so the
+                  # fade is 1.0 throughout rather than a division by zero.
+                  - (self.w_hub_idle * action[1] ** 2
+                     * self._idle_frac(np.hypot(s.v_lon, s.v_lat))
+                     if self.full and self.w_hub_idle else 0.0)
                   # Wing deployment, normalised by the allowed range so the
                   # term is in [0, 1], and RAMPED with the curriculum: cheap
                   # at difficulty 0 so the wings work as training wheels while
