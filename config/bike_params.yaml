@@ -259,8 +259,14 @@ actuators:
   # and the real integral time, and section 6 maps them onto the model form.
   # Best guesses if you want to explore first: kv 0.016016, ki 0.6 (Dynamixel
   # X-series default KVI/KVP at a 1 kHz loop) to 0.855 (Ti = tau_m).
-  drive_kv: 0.5        # placeholder; derived droop is 0.016016
-  drive_ki: 0.0        # 0 = P-only, the shipped plant; > 0 builds the PI form
+  # ARMED 2026-08-21. kv is the derived bare-motor droop, not a measurement --
+  # and it is a LOWER bound, because firmware KVP makes the real loop stiffer.
+  # ki 0.6 is the Dynamixel X-series default KVI/KVP ratio at an assumed 1 kHz
+  # firmware loop; the assumed loop period is the shakiest link in it, and
+  # servo-protocol.md §4's settling_time_s measures Ti (= kv/ki) directly.
+  # Both are `GUESS` in spirit; replace them with §4, do not refine by feel.
+  drive_kv: 0.016016   # was 0.5 (placeholder). = stall_torque/no_load/belt^2
+  drive_ki: 0.6        # was 0.0 (P-only). Ti = kv/ki = 26.7 ms
   steer_kp: 2.0        # position-servo gains at the steer joint
   steer_kv: 0.05
 

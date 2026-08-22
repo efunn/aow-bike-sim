@@ -374,21 +374,30 @@ def _pi_params(params, kv=0.016016, ki=0.6):
     return p
 
 
-def test_drive_ki_zero_is_the_p_only_plant(params, full_model):
-    """The shipped default must be bit-exact, not merely close.
+def test_drive_ki_zero_is_still_the_p_only_plant(params):
+    """ki = 0 must stay bit-exact with the pre-PI velocity actuator.
 
     The PI branch evaluated at ki = 0 would DROP the kv*ctrl term rather than
     reduce to the velocity actuator, so build_model branches instead of
     folding the two together. This is the test that says the branch is still
-    there, and that shipping still means P-only.
+    there. It builds ki = 0 explicitly rather than reading the shipped value:
+    the plant was armed to ki 0.6 on 2026-08-21, and the P-only form has to go
+    on working regardless, because it is what every pre-2026-08-21 run and
+    every `moves/` export was trained against.
     """
-    assert params["actuators"]["drive_ki"] == 0.0, "the shipped plant is P-only"
-    assert full_model.na == 0, "no activation state at ki = 0"
-    aid = full_model.actuator("drive_a").id
-    kv = params["actuators"]["drive_kv"]
-    assert full_model.actuator_dyntype[aid] == mujoco.mjtDyn.mjDYN_NONE
-    assert full_model.actuator_gainprm[aid][0] == pytest.approx(kv)
-    assert full_model.actuator_biasprm[aid][:3] == pytest.approx([0.0, 0.0, -kv])
+    kv = 0.5
+    m = build_model(_pi_params(params, kv=kv, ki=0.0), variant="full")
+    assert m.na == 0, "no activation state at ki = 0"
+    aid = m.actuator("drive_a").id
+    assert m.actuator_dyntype[aid] == mujoco.mjtDyn.mjDYN_NONE
+    assert m.actuator_gainprm[aid][0] == pytest.approx(kv)
+    assert m.actuator_biasprm[aid][:3] == pytest.approx([0.0, 0.0, -kv])
+
+
+def test_shipped_plant_is_the_pi_form(params, full_model):
+    """The armed default, so a silent revert to P-only is caught."""
+    assert params["actuators"]["drive_ki"] > 0.0, "the shipped plant is PI"
+    assert full_model.na == 2, "one activation per drive actuator"
 
 
 def test_drive_ki_builds_the_pi_form(params, full_model):
