@@ -1,4 +1,4 @@
-# Project status — 2026-08-18
+# Project status — 2026-08-21
 
 Midpoint snapshot. The design logs under `docs/plans/` are where decisions and
 their reasoning live; this file is the layer on top of them — what is true
@@ -534,6 +534,14 @@ no longer survive the modelled payload and are deliberately queued for
 re-authoring once the as-built mass is known, rather than being re-optimised
 twice. Nothing else is red.
 
+**One extra red is outstanding as of 2026-08-21 and is NOT accepted**:
+`test_hw_replay.py::test_bundle_controller_matches_mujoco_controller`. Adding
+`actuators.drive_ki` moved `params_digest` from `7af0ce42dfc91154` to
+`99f356e873cda2fc`, and `hw/state.py` is correctly refusing the stale
+`deploy/bundle.npz`. That is the guard working, not a regression, and the fix
+is one command — `python -m aow_sim.export_deploy`. It is deliberately absent
+from `tests/expected_failures.txt`, because it is a chore, not a cost.
+
 **That acceptance is now machine-checked, not prose.** `tests/expected_failures.txt`
 lists those seven nodeids with a reason and a date, and `tests/conftest.py`
 ends every run with a verdict on whether the red set *moved* — `NEWLY RED`,
@@ -802,25 +810,80 @@ with a note on how to identify it. The load-bearing ones are contact friction,
 chassis/pack/electronics mass, front tire lateral stiffness, and
 `min_pinion_radius`.
 
-**Known wrong and NOT fixed — the drive plant is ~31x over-capable.**
-`drive_kv: 0.5` against a 0.016 bare-motor droop, and no actuator lag at all
-against the XC430's 18.7 ms electromechanical time constant, so the modelled
-velocity loop settles in J/kv = 0.6 ms and the modelled servo can reverse far
-faster than the hardware. Found 2026-08-21. **Both single-parameter fixes were
-tried and backed out**: adding `actuators.drive_tau` took the suite from 7
-failed to 20 failed + 10 errors, and lowering `drive_kv` instead broke a
-different set. It needs the Dynamixel velocity-PI emulation that
-`mujoco-modeling-decisions.md` deferred, not a constant. The red set is
-therefore **unchanged at 7** and `tests/expected_failures.txt` is untouched —
-the change was reverted rather than accepted. The two dead ends fail
-*differently*, which is what decides which is worth picking up: `drive_tau` is
-blocked by a **fixable dependency** — `linearize.py`'s one-period fit has
-nowhere to put an actuator state — while `drive_kv` is blocked by a **modelling
-gap**, no integral action, so the drive cannot hold. The first is a change to
-the identification; the second needs the PI emulation itself. Write-up, and the
-table of which test each candidate breaks, in `aow-contact-approximations.md`
-§6b; `analysis/wheel_slowmo.py --drive-tau` explores it without touching any
-config.
+**Known wrong, and the fix is now BUILT BUT NOT ARMED — the drive plant is
+~31x over-capable.** `drive_kv: 0.5` against a 0.016016 bare-motor droop, so
+the modelled servo makes full stall torque at every speed and reverses 21.8
+times a second while told to stand still. Found 2026-08-21.
+
+The two "31x" defects in `aow-contact-approximations.md` §6b are **one number,
+not two**: `input_armature / kv_droop = 3.0e-4 / 0.016016 = 18.7 ms`, which is
+exactly the XC430's own electromechanical time constant. Setting `drive_kv` to
+the droop value therefore fixes the stiffness AND the bandwidth together, and a
+separate `drive_tau` knob would double-count. That is why none exists. At the
+droop value the affine actuator also reproduces the whole torque-speed line by
+itself — max force at max command is 0.5333 = `stall_torque / belt_ratio`
+exactly — so the flat `forcerange` stops being a lie rather than needing a
+speed-dependent clamp.
+
+What `drive_kv` alone cannot do is hold: it is open-loop voltage control, and
+the real firmware closes an integral term. So `actuators.drive_ki` now exists
+and `build_model` builds a **velocity PI** when it is non-zero — a PI velocity
+loop is a P *position* loop whose setpoint ramps at the commanded speed, which
+MuJoCo expresses natively as `dyntype=integrator` with an affine bias. `ctrl`
+still means commanded input-shaft velocity, so `nu` is unchanged and no caller
+learns a new command; `na` goes 0 → 2.
+
+**It ships disarmed: `drive_kv: 0.5`, `drive_ki: 0.0`, which is the old plant
+bit-exact** (the PI branch at ki = 0 would drop the `kv*ctrl` term, so
+`build_model` branches rather than folding — `test_drive_ki_zero_is_the_p_only_plant`
+is the guard). Measured on the way in, replaying `general_rl_smooth_diff_og`
+told to hold station for 15 s:
+
+| plant | rim past the contact | hub reversals | bike drift | worst LQR fit R² |
+|---|---|---|---|---|
+| shipped `kv 0.5` | 5.09 m | 21.8 /s | 0.35 m | 0.9727 |
+| `kv 0.016016, ki 0` | 2.96 m | 8.8 /s | 1.33 m | 0.9757 |
+| `kv 0.016016, ki 0.6` | 3.25 m | 9.1 /s | 0.63 m | 0.9412 |
+| `kv 0.016016, ki 0.855` | 4.38 m | 9.9 /s | 0.78 m | 0.9439 |
+
+The reversal rate halves and stays halved; the integrator buys the
+station-keeping back (drift 1.33 → 0.63 m) without giving the reversals up.
+This is a *replay* of a policy trained on the shipped plant, so read it as what
+the plant permits, not as what a retrained policy would do.
+
+**Landing this also turned up a real bug that `na = 0` was hiding.** Five
+hand-rolled resets — the four RL envs and `linearize._set_reduced_state` —
+restore `qpos`/`qvel` but never `data.act`, so with an integrator every episode
+and every identification rollout inherits the previous one's wind-up as an
+unbounded hidden input. Cost when it leaks: worst gain-schedule fit R² 0.9727 →
+**0.7543**. All five now call `build_model.reset_actuator_state`, which is a
+no-op at `na = 0`; that recovers **0.9412**.
+
+**OUTSTANDING, and it is what still blocks arming this.** 0.9412 is under the
+0.98 floor, and with gains designed on that fit the LQR layer falls over: 36
+failed + 10 errors across `test_balance[lqr]`, `test_drive`, `test_pivot`,
+`test_teleop` and `test_hw_odometry`. Every bare-plant test in `test_model.py`
+passes throughout, so this is the reference baseline, not the physics. The
+residual is the genuine hidden-state problem: the integrator is a state the
+8-state lateral model has nowhere to put. **A missing intercept was tested as
+the explanation and disproved** — adding a constant column to the regression
+changes the fit by nothing at all. Nor is a 9th LQR state the answer: on
+hardware that integral lives inside Dynamixel firmware and the Pi cannot
+observe it, so an LQR designed on it would use a signal the bike does not have.
+
+So the open question is how to identify a plant whose actuator carries memory
+the controller cannot see — not a parameter, and not yet solved.
+`analysis/wheel_slowmo.py --drive-tau` predates all of this and now
+double-counts the bandwidth; prefer overriding `drive_kv`/`drive_ki`.
+
+**None of the numbers above are measured.** `drive_kv 0.016016` is derived from
+the datasheet block, and is a LOWER bound — firmware KVP makes the real loop
+stiffer. `drive_ki 0.6` is the Dynamixel X-series default `KVI/KVP` ratio at an
+assumed 1 kHz loop; `0.855` is `Ti = tau_m`. `docs/measurements/servo-protocol.md`
+§4 measures both directly, and its `settling_time_s` is `Ti`, i.e. `ki`. §1's
+large-step slew matters more than that document implies, because it measures
+`input_armature` — still a `GUESS` at 3.0e-4 — and the whole bandwidth result
+is `tau = J/kv`.
 
 ---
 
