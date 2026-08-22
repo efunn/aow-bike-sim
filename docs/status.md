@@ -383,15 +383,32 @@ workstream and it arrived immediately:
   name, how query variables replace naming, why a regenerated Feature Studio
   can be pasted over the old one safely, the API quota, and the three separate
   ways a ROBOTIS datasheet depth turned out not to be a face.
-- **Five planes are exported**, being where CAD actually starts. One is the
-  fork's: it holds the axle direction and the raked steering axis at once, so
-  it is the front view tilted back by 15 deg, and the fork is both sketched and
-  printed in it. The other four are the belt runs, two per side — and they are
-  NOT mirror images, because the servos straddle 45 deg rather than sharing it.
-  Left spans 24.52 to 50.22 deg, right 39.78 to 65.48, and the two bands
-  OVERLAP, so anything crossing both belt planes at one station has to pass
-  below 24.52 or above 65.48. There is no corridor between the belts.
-  All derived from the pulley tangents rather than eyeballed.
+- **Seven planes are exported**, being where CAD actually starts. One is the
+  fork's datum: it holds the axle direction and the raked steering axis at
+  once, so it is the front view tilted back by 15 deg. Four are the belt runs,
+  two per side — NOT mirror images, because the servos straddle 45 deg rather
+  than sharing it. Two are prospective BUILD planes added 2026-08-21: the
+  fork's datum offset 8 mm along its own normal, and the rear motor+dropout's,
+  which lies in the lower servo's long outer face with its normal on the
+  mount's tangential axis (135 deg), so the part builds up-and-rearward off a
+  face that already exists rather than off a datum nobody can point at. All
+  derived, none eyeballed.
+- **The belts are solids now, and each side carries both of them.** Eight
+  prisms: the four real runs (104.66 x 9 x 3.6 mm, inner face on the tangent
+  line, opaque near-black) plus each run mirrored onto the other side
+  (translucent magenta, its own suppressible feature node). A plane has no
+  thickness and no ends, so it could never be checked against; the mirror
+  exists because the 15.256 deg of straddle makes the two sides' keep-outs
+  differ, and a chainstay that is the same part on both sides must clear both.
+
+  The corridor arithmetic, in the frame that matters: measured as an angular
+  station about the rear axle, each belt hull occupies 205.700 deg and the
+  symmetric free window is **155.478 to 294.522 deg**, 139.044 wide, centred on
+  exactly 225 = `drive_servo_angle_deg` + 180 (ray-sampled to confirm). In
+  RUN-ANGLE — a different frame, 90 deg away — the bands are left 24.522 to
+  50.222 and right 39.778 to 65.478, and they OVERLAP by 10.444 deg, so there
+  is no threading between the two belts. Recorded, not drawn: a drawn sector
+  would wrongly exclude a chainstay that ducks under both belts.
 - **The steer servo was 10.17 mm off the steering axis**, which direct drive at
   `gear_ratio: 1.0` does not permit. Its position is now solved, not chosen.
 - **The TM151 is 40 × 34 × 12.6 mm and 19 g**, against the 30 × 30 × 12 mm / 12 g
@@ -402,7 +419,44 @@ workstream and it arrived immediately:
   because the two cases ended up parallel; the alternatives are tabled in the
   config.
 - **The self-righting linkage moved 75 → 130 mm** to clear the drive belts and
-  then the servo cases.
+  then the servo cases. **`analysis/linkage_through_belt.py` (2026-08-21) says
+  most of that is recoverable, and cheaply.** The belt is genuinely what binds
+  today — belt-limited minimum station 123.5 mm, so ~6.5 mm of the 130 is
+  margin — but delete the belts and the floor is 109.0, set by the mount
+  sleeve. Sweeping tooth counts and belt lengths with the servo cases carried
+  radially along with the centre distance:
+
+  | change | station | won | ratio | top speed |
+  |---|---|---|---|---|
+  | as built, 45T/15T on 370 mm | 123.5 | — | 3.00 | 1.06 |
+  | **same pulleys, 340 mm belt** | 111.0 | 12.5 | 3.00 | **unchanged** |
+  | **36T/12T on a 310 mm belt** | 105.0 | 18.5 | 3.00 | **unchanged** |
+  | 32T/12T on a 290 mm belt | 98.0 | 25.5 | 2.67 | 0.94 |
+  | 28T/12T on a 280 mm belt | 96.0 | 27.5 | 2.33 | 0.82 |
+
+  It saturates at 96 mm — below ratio 2.33 nothing more is won, because that is
+  where the servo cases meet the rear wheel rather than where the belt runs
+  out. **Not adopted, and nothing is changed by it.** Smaller pulleys at the
+  same ratio, closer together, is the free lunch and the thing to check first;
+  the cases are translated rather than re-solved, so any shortlist entry wants
+  re-deriving through `cad_layout` before it is believed.
+
+- **The Feature Studio pushes over the API now.** `--push` and `--shot` on
+  `aow_sim.cad_layout`, one billable call each, with the document and tab ids
+  in `config/onshape.yaml` and API keys in the macOS Keychain — never in this
+  checkout, which is Dropbox-synced, where gitignored is not un-synced. Every
+  call is logged with what it did (`python -m aow_sim.onshape --log`). The
+  annual quota is 2500 and the cycle is anchored to **13 Oct**, not January and
+  not the "Tracking start date" the usage page shows — that field disagreed
+  with the same page's own elapsed-day count. Copy-paste still works and is
+  quota-exempt, so exhausting the API strands nothing.
+
+  **Usage at 2026-08-21: 34 / 2500, with 53 days left in the cycle** — roughly
+  47 calls a day available, so the budget is not a live concern. It becomes one
+  only if something polls: `getPartStudioFeatures` reads the document's actual
+  tickbox and suppression state in one call, which is genuinely useful and is
+  also the endpoint that would burn a year in a week if put in a loop. The
+  ground rules are in `CLAUDE.md`, "Onshape — the CAD round trip".
 
 **Two traps worth not re-learning**, both of which produced confident wrong
 answers before the user caught them from the CAD:
@@ -747,6 +801,26 @@ open geometry question — only `min_pinion_radius` to verify.
 with a note on how to identify it. The load-bearing ones are contact friction,
 chassis/pack/electronics mass, front tire lateral stiffness, and
 `min_pinion_radius`.
+
+**Known wrong and NOT fixed — the drive plant is ~31x over-capable.**
+`drive_kv: 0.5` against a 0.016 bare-motor droop, and no actuator lag at all
+against the XC430's 18.7 ms electromechanical time constant, so the modelled
+velocity loop settles in J/kv = 0.6 ms and the modelled servo can reverse far
+faster than the hardware. Found 2026-08-21. **Both single-parameter fixes were
+tried and backed out**: adding `actuators.drive_tau` took the suite from 7
+failed to 20 failed + 10 errors, and lowering `drive_kv` instead broke a
+different set. It needs the Dynamixel velocity-PI emulation that
+`mujoco-modeling-decisions.md` deferred, not a constant. The red set is
+therefore **unchanged at 7** and `tests/expected_failures.txt` is untouched —
+the change was reverted rather than accepted. The two dead ends fail
+*differently*, which is what decides which is worth picking up: `drive_tau` is
+blocked by a **fixable dependency** — `linearize.py`'s one-period fit has
+nowhere to put an actuator state — while `drive_kv` is blocked by a **modelling
+gap**, no integral action, so the drive cannot hold. The first is a change to
+the identification; the second needs the PI emulation itself. Write-up, and the
+table of which test each candidate breaks, in `aow-contact-approximations.md`
+§6b; `analysis/wheel_slowmo.py --drive-tau` explores it without touching any
+config.
 
 ---
 
