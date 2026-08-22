@@ -4,17 +4,22 @@ Companion data sheet: `contact-measurements.yaml` (same section numbering).
 Extends §7 of `omni-wheel-protocol.md`, whose item 6 already flagged that
 contact softness needs calibrating; this is that item, worked out.
 
-Everything here calibrates **one config line**:
+This document covers the contact in **both directions**, which are separate
+measurements on separate config lines and do not constrain each other:
 
 ```yaml
 sim:
-  contact_solref: [0.005, 1.0]   # [timeconst_s, dampratio]
+  contact_solref: [0.005, 1.0]   # NORMAL: [timeconst_s, dampratio]   -> P0, P1
+  friction_sliding: 0.9          # TANGENTIAL: Coulomb mu             -> P0b
+  friction_torsional: 0.005      # TANGENTIAL: spin about the normal  -> P0b
 ```
 
-Status: **the pair is uncalibrated.** `0.005` was set 2026-08-08 by picking a
-number ~16x stiffer than MuJoCo's stock `[0.02, 1]`, not by measuring; `1.0`
-has never been anything but MuJoCo's default. Both are testable on the bench
-with a weight, a caliper and a phone.
+Status: **all four numbers are uncalibrated.** `0.005` was set 2026-08-08 by
+picking a number ~16x stiffer than MuJoCo's stock `[0.02, 1]`, not by
+measuring; `1.0` has never been anything but MuJoCo's default; the two friction
+values are marked `GUESS` in `bike_params.yaml` and always have been. All of
+them are testable on the bench with a weight, a caliper, a phone and a board
+that tilts.
 
 ## Why this is worth doing at all
 
@@ -75,10 +80,12 @@ python analysis/contact_calibration.py --load-kg 4.5 --drop-mm 35
 
 ## Priority
 
-**Do them in this order.** The list is ordered by information per unit of
-effort, not by how interesting the test is.
+**Do them in this order**, with one exception: P0b measures the TANGENTIAL
+direction and is independent of everything else here, so it can be done first,
+last, or while the weights are already out. The list is ordered by information
+per unit of effort, not by how interesting the test is.
 
-### P0 — Static load-deflection (do this one first)
+### P0 — Static load-deflection (the first of the normal-direction pair)
 
 The highest-value measurement in this document and the one that needs no rig.
 It pins the PRODUCT `timeconst * dampratio` (see the correction above), so the
@@ -116,6 +123,86 @@ Method notes:
   otherwise be read as compliance.
 - Note the roll phase used, and prefer a repeatable one (single roller in
   contact). Phase is a real confound here, worth §P2 on its own.
+
+### P0b — Incline slide angle → the friction coefficient
+
+**The cheapest test in this document**: a board that tilts and a phone
+protractor. It calibrates `sim.friction_sliding`, and it is independent of P0
+and P1 — normal and tangential are orthogonal, so do them in either order.
+
+Rest the wheel on the target surface, tilt slowly until it slides, read the
+angle. `mu = tan(theta)`. The shipped 0.9 corresponds to 42°.
+
+| measured angle | implied `friction_sliding` |
+|---|---|
+| 25° | 0.47 |
+| 31° | 0.60 |
+| 37° | 0.75 |
+| 42° | **0.90 — the shipped guess** |
+| 50° | 1.19 |
+| 55° | 1.43 |
+| 60° | 1.73 |
+| 63° | 1.96 |
+
+Method notes:
+- **Block the rotation.** A wheel free to roll will roll, and you will measure
+  rolling resistance instead. Wedge the hub, or test a single roller offcut,
+  or lay the wheel on its side so no roller can turn. This is the one way to
+  get a confidently wrong answer here.
+- Slide is what counts, not tip. Check the block is not toppling.
+- Read the angle at the moment motion STARTS (static mu). Then, if you can,
+  find the angle at which it keeps sliding once nudged (kinetic mu); MuJoCo
+  has only one coefficient, so if the two differ materially, prefer kinetic —
+  the contact spends its time sliding, not breaking away.
+- Repeat 5x and take the spread, not one reading. This test is noisy and the
+  spread is what sets `randomization.friction_frac`.
+- Same surface as P0/P1, and clean. TPU picks up dust and its mu falls.
+
+**Torsional friction** (`friction_torsional`, 0.005) has no equivalent
+one-liner. It resists spin about the contact normal and scales with patch
+size. If it is worth measuring: hold the bike upright and stationary, apply a
+measured torque about the vertical through the rear contact, find the torque
+at which the wheel starts to twist in place. Low priority — see the measured
+sensitivity below, where the risk is setting it too HIGH, not too low.
+
+#### Why this one matters, measured 2026-08-22
+
+Slip here is the tangential velocity of the roller surface against the floor,
+taken in the contact frame, not inferred from kinematics. Two regimes, and
+they disagree:
+
+| | steady crab | policy holding station |
+|---|---|---|
+| shipped, mu 0.9 | 2.6 mm/s | 35.1 mm/s |
+| mu 0.4 | 2.6 | 85.2 |
+| mu 1.4 | 2.4 | 29.1 |
+| mu 2.0 | 2.2 | **15.9** |
+
+**Under a steady crab `mu` does nothing** — the contact is nowhere near the
+friction cone, so grip is not what limits it. **Under a hold it dominates**:
+the policy's rapid reversals spike the tangential force, the cone is reached
+intermittently, and 0.9 → 2.0 cuts slip by 55%. Any friction test that only
+exercises steady motion will therefore conclude, wrongly, that the coefficient
+does not matter.
+
+Two knobs that look like they should help and do not, same hold case:
+
+| | mean slip |
+|---|---|
+| shipped (`impratio` 10) | 35.1 mm/s |
+| `impratio` 30 | 37.0 |
+| `impratio` 100 | **45.6** — worse |
+| `condim` 6 | 37.7 |
+| `friction_torsional` 0.005 → 0.05 | 43% of crab travel lost |
+
+MuJoCo's own guidance is to raise `impratio` to make contacts less slippery,
+and that is right for numerical creep BELOW the friction limit — which is not
+what is happening here. Raising it costs solver conditioning and buys nothing.
+Stacked on mu 2.0 it made things slightly worse (15.9 → 16.8 mm/s). Torsional
+friction actively fights the mechanism: it resists the roller spinning at the
+patch, which is how the wheel crawls.
+
+So: **`friction_sliding` is the knob, and it is the only one.**
 
 ### P1 — Drop test, rebound height
 
@@ -191,8 +278,11 @@ value. Splitting only earns its keep when the surface changes.
 
 1. Put raw readings in `contact-measurements.yaml`.
 2. Read the matching `timeconst` / `dampratio` off the tables above, or re-run
-   `analysis/contact_calibration.py` with your load and drop height.
-3. Update `sim.contact_solref` in `config/bike_params.yaml`.
+   `analysis/contact_calibration.py` with your load and drop height. For P0b
+   the conversion is just `mu = tan(theta)`; the table is there to save you
+   the arithmetic.
+3. Update `sim.contact_solref` and/or `sim.friction_sliding` in
+   `config/bike_params.yaml`, and change the friction `source:` off `GUESS`.
 4. Regenerate the deploy bundle — it is pinned to a params digest and
    `hw.state` raises rather than silently flying stale gains:
    `python -m aow_sim.export_deploy`.
@@ -213,3 +303,15 @@ A `solref_frac` alongside `friction_frac` would likely buy more transfer
 robustness than pinning the nominal value exactly, and the two are
 complementary: measure to get the centre, randomize to cover what the
 measurement cannot resolve. Worth doing before the next long training run.
+
+**For friction the randomizer already exists and its width is now the
+question.** `friction_frac: 0.2` about a nominal 0.9 means every policy in
+`moves/` has only ever seen **mu 0.72–1.08**. If P0b comes back near that
+window, widen `friction_frac` and leave the nominal alone — cheaper than a
+plant move and it buys robustness the exact value does not. If it comes back
+at 1.5+, the nominal has to move, and that is a `params_digest` change and a
+retrain: work the "Before changing a physical parameter" list in `CLAUDE.md`.
+
+Either way, do NOT pick the value that looks best in `wheel_slowmo`. The
+sensitivity table in P0b was measured precisely so that the number can be
+argued from the bench instead of from the render.

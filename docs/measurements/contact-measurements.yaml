@@ -4,9 +4,10 @@
 #   _mm = millimeters (float), _n = newtons (float), _kg = kilograms (float),
 #   _fps = frames per second (int). 0 / 0.0 means "not yet measured".
 # This file is for raw data entry only. When a section is complete, read the
-# matching solref entry off the tables in contact-protocol.md (or re-run
+# matching entry off the tables in contact-protocol.md (or re-run
 # analysis/contact_calibration.py with your numbers) and update
-# `sim.contact_solref` in config/bike_params.yaml.
+# `sim.contact_solref` (p0/p1) or `sim.friction_sliding` (p0b) in
+# config/bike_params.yaml.
 
 surface:
   material: "wood — smooth cutting board"   # what the tests below were run on
@@ -32,6 +33,36 @@ p0_static_deflection:
     maybe more". Not recorded as a data point because the reference and roll
     phase were not controlled. Enough to rule out timeconst 0.020 (3.6 mm
     under the bike's own weight); not enough to separate 0.005 from 0.0035.
+
+p0b_incline_slide:
+  # mu = tan(theta). Block the rotation first -- a wheel free to roll will roll,
+  # and you will have measured rolling resistance instead. See the protocol.
+  # Shipped guess is 0.9, i.e. 42 deg.
+  contact_used: ""            # str -- "whole wheel, hub wedged" / "roller offcut" / "wheel on its side"
+  static:
+    angles_deg: []            # list[float] -- angle at which motion STARTS, >=5 readings
+  kinetic:
+    # Angle at which it keeps sliding once nudged. MuJoCo has ONE coefficient;
+    # if static and kinetic differ materially, prefer kinetic -- the contact
+    # spends its time sliding, not breaking away.
+    angles_deg: []            # list[float]
+  surface_notes: >
+    Clean? TPU picks up dust and its mu falls. Same surface as p0/p1 or the
+    numbers do not belong in the same file.
+  notes: >
+    Not yet measured. The spread across readings is not noise to average away
+    -- it is what sets randomization.friction_frac, currently 0.2 about a
+    nominal 0.9 (so every policy in moves/ has only seen mu 0.72-1.08).
+
+p0b_torsional:
+  # Low priority, and the risk is setting it too HIGH: 0.005 -> 0.05 lost 43%
+  # of crab travel in sim. Torque about the vertical through the rear contact
+  # at which the wheel twists in place.
+  break_torque_nm: 0.0        # float
+  normal_load_n: 0.0          # float -- what was pressing down when you measured it
+  notes: >
+    Deferred. friction_torsional stays a GUESS at 0.005 until something
+    actually depends on it.
 
 p1_drop_rebound:
   # Release (do not throw) from a measured height; film; read the first apex.
@@ -64,4 +95,6 @@ derived:
   # Fill in once the sections above are complete.
   contact_solref_timeconst_s: 0.0   # float — from p0, via the protocol table
   contact_solref_dampratio: 0.0     # float — from p1
+  friction_sliding: 0.0             # float — from p0b, = tan(mean angle)
+  friction_frac_suggested: 0.0      # float — from the SPREAD of p0b, not the mean
   date: ""                          # str — YYYY-MM-DD the values were adopted
