@@ -94,10 +94,14 @@ import numpy as np
 from aow_sim.build_model import load_params
 from aow_sim.control.balance import extract_state, mix
 from aow_sim.control.flick import MOVES_DIR
+import aow_sim.control.general_env as ge
 from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 from aow_sim.control.general_spec import scale_action
 from aow_sim.control.policy import load_policy_npz
-from rsa_policies import POLICIES, REPO
+# load_general, NOT load_policy_npz: the latter reads only the weights, so the
+# result has no vel_window_s / obs_pitch and `policy_flags` sees an empty set --
+# which silently builds a 15-wide env for a 19-wide policy. See load_general.
+from rsa_policies import POLICIES, REPO, load_general
 
 try:
     import imageio.v2 as imageio
@@ -137,6 +141,27 @@ def _apply_control(env, action):
     env.data.xfrc_applied[env._chassis, :] = 0.0
 
 
+def drive_lag(base_params, tau):
+    """A `build_model` that gives the drive actuators a first-order lag.
+
+    Has to be done on the SPEC, before compile: MuJoCo allocates the actuator
+    activation state (`na`) at compile time, so setting `actuator_dyntype` on a
+    live model changes nothing and fails silently.
+    """
+    from aow_sim.build_model import build_spec
+
+    def f(params=None, variant="full", training_wheels=False, hockey=False,
+          payload=True, righting=False, wings=False):
+        spec = build_spec(params or base_params, variant, training_wheels,
+                          hockey, payload, righting, wings)
+        for a in spec.actuators:
+            if a.name.startswith("drive_"):
+                a.dyntype = mujoco.mjtDyn.mjDYN_FILTEREXACT
+                a.dynprm[0] = tau
+        return spec.compile()
+    return f
+
+
 def override_solref(model, timeconst, dampratio):
     """Retune the contact on an already-compiled model.
 
@@ -153,13 +178,20 @@ def override_solref(model, timeconst, dampratio):
         model.geom_solref[:, 1] = dampratio
 
 
-def _verify_replication(params, cfg, pol, solref=(None, None), n_ctrl=5):
+def _verify_replication(params, cfg, pol, solref=(None, None), n_ctrl=5,
+                        pol_env=False):
     """Assert the hand-rolled substep loop equals GeneralEnv.step().
 
     Cheap insurance against the duplication in `_apply_control` rotting: if
     the env's control law changes and this file does not, the numbers and the
     video would quietly stop being of the same policy.
     """
+    if pol_env:                     # match the env to the policy's obs blocks
+        from aow_sim.control.general_spec import policy_flags
+        cfg = {**cfg, "env": {**cfg["env"], **dict(
+            policy_flags(pol),
+            act_wings=bool(getattr(pol, "act_wings", False)),
+            wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)))}}
     ref, mine = GeneralEnv(params, cfg), GeneralEnv(params, cfg)
     for e in (ref, mine):                 # validate under the physics in use
         override_solref(e.model, *solref)
@@ -183,9 +215,17 @@ _HOLD = {"v_cmd": (0.0, 0.0), "psi_cmd_rel": 0.0, "difficulty": 1.0}
 
 
 def _norm_action(pol, obs):
+    """Physical action -> fraction of each channel's bound.
+
+    A bound of 0 DISABLES that channel (action_bounds.hub_max: 0.0 is how the
+    hold-without-the-hub diagnostic pins the wheel), and 0/0 is NaN, which
+    reaches the HUD as `int(NaN)` and kills the render several hundred frames
+    in. A disabled channel is already 0 in physical units, so dividing it by 1
+    leaves it 0 -- which is exactly what the bar should draw.
+    """
     b = pol.bounds
     scale = np.array([b.steer_rate_max, b.hub_max, b.diff_max])
-    return np.asarray(pol.action(obs), float) / scale
+    return np.asarray(pol.action(obs), float) / np.where(scale > 0, scale, 1.0)
 
 
 def rollout(pol, env, seconds, frame_dt, rear_geoms, floor):
@@ -684,6 +724,13 @@ def main():
                          "same policy and seed, but a different timestep "
                          "diverges within a few steps, so read it as two "
                          "samples of the same behaviour, not as drift")
+    ap.add_argument("--drive-tau", type=float, default=None, metavar="S",
+                    help="first-order lag [s] on the DRIVE actuators, for this "
+                         "render only. The shipped model has none: its velocity "
+                         "loop settles in J/kv = 0.6 ms, against the XC430's own "
+                         "electromechanical time constant of ~19 ms, so the "
+                         "modelled servo reverses ~31x faster than the motor can. "
+                         "See docs/plans/aow-contact-approximations.md.")
     ap.add_argument("--timestep", type=float, default=None,
                     help="override sim.timestep [s] for this render only; "
                          "config/bike_params.yaml is untouched. Applied "
@@ -710,20 +757,46 @@ def main():
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     solref = (args.timeconst, args.dampratio)
+    if args.drive_tau:
+        # Rebinding the name in general_env's namespace is what takes effect:
+        # it does `from ..build_model import build_model`, so patching the
+        # source module would be a no-op here.
+        ge.build_model = drive_lag(base, args.drive_tau)
+        print(f"drive actuators: first-order lag tau = {args.drive_tau * 1e3:.0f} ms "
+              f"(the shipped model has none; the XC430's own electromechanical "
+              f"time constant is ~19 ms)")
 
-    def env_at(timestep):
-        # Patch BEFORE GeneralEnv, not after: `substeps` is derived from the
-        # timestep at construction, so setting model.opt.timestep on the
-        # compiled model would leave the control rate silently wrong.
+    def env_at(timestep, pol=None):
+        """An env for THIS timestep and THIS policy.
+
+        The policy argument is not optional in spirit: observation width is a
+        property of the policy, not of the config. A `glide_pitch` export
+        carries `vel_window_s` and `obs_pitch` and reads a 19-wide observation,
+        while a bare `rl_general.yaml` env builds a 15-wide one — and the
+        failure is `pol.action` raising on a length mismatch, which reads like
+        a corrupt export rather than a mismatched env. `policy_flags` is the
+        one place that maps a loaded policy to those blocks; see its docstring
+        for the call sites that each forgot a different one.
+        """
+        from aow_sim.control.general_spec import policy_flags
         p = base if not timestep else {
             **base, "sim": {**base["sim"], "timestep": timestep}}
-        e = GeneralEnv(p, cfg)
+        c = cfg
+        if pol is not None:
+            over = dict(policy_flags(pol),
+                        act_wings=bool(getattr(pol, "act_wings", False)),
+                        wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)))
+            c = {**cfg, "env": {**cfg["env"], **over}}
+        e = GeneralEnv(p, c)
         override_solref(e.model, *solref)
         return p, e
 
     steps = ([float(x) for x in args.compare.split(",")] if args.compare
              else [args.timestep])
-    runs = [dict(zip(("params", "env"), env_at(s))) for s in steps]
+    _probe = (load_general(args.policies[0])
+              if args.policies and (MOVES_DIR / f"{args.policies[0]}.npz").exists()
+              else None)
+    runs = [dict(zip(("params", "env"), env_at(s, _probe))) for s in steps]
     for r, s in zip(runs, steps):
         r["label"] = f"dt {r['env'].model.opt.timestep:g}" if len(steps) > 1 else ""
     params, env = runs[0]["params"], runs[0]["env"]
@@ -804,10 +877,18 @@ def main():
         if not npz.exists():
             print(f"  skip {key}: no {npz.name}")
             continue
-        pol = load_policy_npz(npz)
+        pol = load_general(key)
         errs, takes = [], []
         for r in runs:
-            errs.append(_verify_replication(r["params"], cfg, pol, solref))
+            # Rebuild the env for THIS policy: observation width is a property
+            # of the policy, so a run of mixed policies cannot share one env.
+            # (`_probe` above already sized the render model off the first, and
+            # the assert there is what catches a genuinely different MODEL --
+            # a wings policy, say -- as opposed to a different obs width.)
+            r["params"], r["env"] = env_at(
+                r["env"].model.opt.timestep if len(runs) > 1 else args.timestep,
+                pol)
+            errs.append(_verify_replication(r["params"], cfg, pol, solref, pol_env=True))
             takes.append(rollout(pol, r["env"], args.seconds, frame_dt,
                                  rear, floor))
         # SIGNED clearance, not pen_mm: pen_mm is >= 0 by construction, so
