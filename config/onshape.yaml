@@ -1,0 +1,31 @@
+# Which Onshape document `aow_sim.cad_layout --push/--shot` talks to.
+#
+# NOT SECRET. A document id grants nobody anything -- access is the API key,
+# which lives in the macOS Keychain and never in this repo (see
+# aow_sim.onshape). This file exists so the ids stop being 24-hex arguments
+# pasted by hand, which is a mistake with no symptom other than a 404.
+#
+# Re-read them from a browser URL: .../documents/<document>/w/<workspace>/e/<tab>
+document: 1124c4fc2691d6f419d3156e
+workspace: edb7e05ee8cb5e6597ba6fb4
+
+tabs:
+  # The generated Feature Studio -- the ONLY --push target. Overwritten wholesale
+  # on every push, so nothing here may ever be hand-edited.
+  feature_studio: 8d3cc86d8a005a59d82d7c10
+  # Part Studio the generated features are inserted into: envelopes, datum
+  # planes, the four-bar sketch. This is what --shot renders by default,
+  # because it is the thing cad_layout actually produces.
+  #
+  # RE-POINTED 2026-08-21. The original tab is now `rip` below: every body in
+  # it had a hand-set appearance, and Onshape will never let FeatureScript
+  # overwrite one, so the generated palette was permanently invisible there.
+  # A fresh tab has fresh bodies and takes the colours. See
+  # docs/plans/cad-onshape-workflow.md, "Colour is a one-way door".
+  layout: 2339a3e2fa7a287797ed07ac
+  # The superseded tab, kept to debug the appearance lock-out rather than
+  # deleted. Nothing generated should be aimed here.
+  rip: 0e4da05733a469beac9024c3
+  # The real drawing -- actual parts, imported wheel geometry. cad_layout never
+  # writes here; it is a --shot target only, for seeing the parts in context.
+  bike: eb278418be25018fb7253dd3
