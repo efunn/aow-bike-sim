@@ -1,0 +1,43 @@
+# Drive servo velocity-loop measurements. Section numbers match
+# servo-protocol.md. Fill in as measured; leave null rather than guessing.
+#
+# Nothing here is read by code yet. It becomes actuators.drive_kv,
+# actuators.drive_tau and possibly the forcerange form in bike_params.yaml
+# once section 6 of the protocol is resolved.
+
+meta:
+  servo: XC430-W150
+  pack_voltage_V: null      # RECORD IT -- no-load speed scales with this
+  date: null
+  profile_velocity: 0       # must be 0, see the protocol
+  profile_acceleration: 0
+
+s1_step_response:
+  # small steps -> closed-loop bandwidth; large steps -> slew limit
+  small_step_tau_ms: null   # expect <= 18.7 (the motor's tau_m)
+  large_step_slew_rad_s2: null   # model predicts 1778 at the input shaft
+  command_latency_ms: null  # bus + firmware, ADDITIVE to tau
+  per_step: []              # [{target_frac, tau_ms, slew_rad_s2}]
+
+s2_reversal:
+  # the headline: can the hardware do what the sim policy does?
+  # sim reference: 21.8 reversals/s, 6.37 m of rim per 15 s
+  per_frequency: []         # [{hz, amplitude_frac, pp_achieved_frac, rim_m_per_s}]
+  falls_apart_above_hz: null
+
+s3_torque_speed:
+  kt_measured_Nm_per_A: null    # datasheet implies 1.143 at the servo output
+  points: []                    # [{speed_rad_s, current_A, torque_Nm}]
+  droop_confirmed: null         # true -> flat forcerange is wrong
+
+s4_droop:
+  integral_action: null         # true -> drive_kv must stay stiff
+  kv_measured_Nm_per_rad_s: null   # at the SERVO OUTPUT; /belt^2 for input shaft
+  settling_time_s: null
+
+s5_hold_at_zero:
+  holds: null                   # false -> low drive_kv is not viable
+  position_error_under_load_deg: null
+
+s6_conclusion:
+  model_form: null              # which row of the protocol's table
