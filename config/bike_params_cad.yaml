@@ -193,6 +193,15 @@ drivetrain:
     teeth_input: {value: 15, source: design}
     flange_thickness: {value: 0.001, source: design}   # per side
     flange_margin: {value: 0.004, source: design}      # diameter over pitch dia
+    # Total thickness, belt back to tooth tip. HTD 5M nominal (2.06 mm tooth
+    # on a 1.5 mm back). Read ONLY by cad_layout, to give each belt run a
+    # volume instead of a bare clearance plane -- the tangent lines were never
+    # enough to draw a chainstay against.
+    #
+    # The belts are in hand and `length` is already `measured`, so this is the
+    # easiest promotion on the list: put a caliper across one and change the
+    # tag. It moves the drawn solids only; no clearance is derived from it.
+    thickness: {value: 0.0036, source: datasheet}
   # Gap between the rear wheel's side face and the inner flange of the input
   # pulley.
   wheel_clearance: {value: 0.002, source: design}
@@ -357,6 +366,15 @@ bike:
   wheelbase: {value: 0.20, source: design}
   rake_deg: {value: 15.0, source: design}      # steering axis tilt back from vertical
   fork_offset: {value: 0.0, source: design}  # perpendicular distance steer axis -> front axle
+  # Offset of the fork's prospective BUILD plane from the derived datum plane
+  # `plane_fork_print`, along that plane's own normal -- mostly forward, tilted
+  # up by the rake. SIGNED: negative puts it behind the front axle.
+  #
+  # The datum's ORIENTATION is derived and authoritative (it holds the axle
+  # direction and the raked steering axis at once, so no world plane will do).
+  # This offset is not derived from anything: it is where the part happens to
+  # sit, and it is meant to be edited once the fork has a thickness.
+  fork_print_offset: {value: 0.008, source: design}
   chassis:
     mass: {value: 0.45, source: GUESS}   # frame + electronics + wiring, excluding servos/wheels/AHRS
     box_size: [0.16, 0.04, 0.05]         # inertia primitive (full extents)
