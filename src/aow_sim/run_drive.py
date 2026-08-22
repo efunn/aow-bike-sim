@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -42,6 +43,7 @@ from .build_model import build_model, load_params, tune_lighting
 from .control import DriveController, run
 from .control.balance import extract_state
 from .control.linearize import settle_upright
+from .params import params_digest
 
 UPRIGHT_LIMIT_DEG = 60.0
 
@@ -317,6 +319,13 @@ def main() -> None:
     ap.add_argument("--params", default=None)
     ap.add_argument("--view", action="store_true")
     ap.add_argument("--teleop", action="store_true")
+    ap.add_argument("--record", nargs="?", const="auto", default=None,
+                    metavar="PATH",
+                    help="log the teleop session to traces/teleop/<stamp>.npz "
+                         "(or PATH). Records the operator's INTENT and the "
+                         "bike's response at the control rate, plus every key "
+                         "press with its timestamp — review it with "
+                         "`python analysis/teleop_review.py <path>`")
     ap.add_argument("--hockey", action="store_true",
                     help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
     ap.add_argument("--general", default=None, metavar="NAME",
@@ -347,7 +356,7 @@ def main() -> None:
     if args.teleop:
         _teleop(model, params, eq.qpos, hockey=args.hockey,
                 general=args.general, show_ui=args.ui,
-                wings=args.wings, linkage=args.linkage)
+                wings=args.wings, linkage=args.linkage, record=args.record)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -843,8 +852,111 @@ def _reset_ball(model, data, params):
     data.qvel[v:v + 6] = 0.0
 
 
+# -- teleop session recording ----------------------------------------------
+
+# Column order for the recorded row stream. Written into the npz as `columns`
+# so the reader never has to hard-code it -- add a column here and old traces
+# still load, because they carry their own header.
+_REC_COLUMNS = (
+    "t",
+    "cmd_v", "cmd_v_lat", "cmd_psi",      # what the operator asked for
+    "psi_sent",                            # what has actually been handed over
+    "x", "y", "yaw", "roll", "pitch",      # where the bike is
+    "v_lon", "v_lat", "speed",             # what it is doing
+    "steer", "hub_rate", "ctrl_a", "ctrl_b",
+)
+_REC_HZ = 50.0        # sample rate; the policy's own control rate
+
+
+def _rec_sample(rec, m, d, c, state, gen_name, params):
+    """One row, at _REC_HZ. Called every physics step, so it self-decimates.
+
+    Deliberately records the operator's INTENT (`state`) rather than the
+    controller's internal command: the question a review answers is "what did
+    I ask for and what did it do", and the controller's rate limiter sits
+    between those two by design.
+    """
+    t = float(d.time)
+    if t - rec["t_last"] < 1.0 / _REC_HZ:
+        return
+    rec["t_last"] = t
+    R = d.body("chassis").xmat.reshape(3, 3)
+    yaw = float(np.arctan2(R[1, 0], R[0, 0]))
+    pitch = float(-np.arcsin(np.clip(R[2, 0], -1.0, 1.0)))
+    roll = float(np.arctan2(R[2, 1], R[2, 2]))
+    v = np.asarray(d.qvel[:2], float)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    aid = {n: m.actuator(n).id for n in ("drive_a", "drive_b")}
+    try:
+        steer = float(d.qpos[m.joint("steer_joint").qposadr[0]])
+    except Exception:
+        steer = float("nan")
+    hub = float(d.qvel[m.joint("hub_spin").dofadr[0]])
+    rec["rows"].append((
+        t,
+        float(state["v"]), float(state["v_lat"]), float(state["psi"]),
+        float(state["psi_sent"]),
+        float(d.qpos[0]), float(d.qpos[1]), yaw, roll, pitch,
+        float(v[0] * cy + v[1] * sy), float(-v[0] * sy + v[1] * cy),
+        float(np.linalg.norm(v)),
+        steer, hub,
+        float(d.ctrl[aid["drive_a"]]), float(d.ctrl[aid["drive_b"]]),
+    ))
+
+
+# What each key MEANS in general mode, for the event stream. Arrows and the
+# analytic-only bindings differ per mode, so this is best-effort: an unmapped
+# key records its character, which is still reviewable.
+_REC_KEY_LABELS = {
+    ord("6"): "snap +90", ord("7"): "snap -90", ord("8"): "snap 180",
+    ord("1"): "crab left", ord("3"): "crab right", ord("5"): "stop",
+    ord("2"): "overlay", ord("9"): "wing extend", ord("4"): "wing retract",
+    ord("."): "shove", ord("/"): "re-zero", ord(","): "policy menu",
+    265: "throttle up", 264: "brake/reverse", 263: "turn left", 262: "turn right",
+    259: "reset",
+}
+
+
+def _rec_key(rec, key, t, label):
+    """One discrete operator action. `label` is what the key MEANS, not its
+    code -- a trace is unreadable a week later if it says 56 instead of
+    'snap 180'."""
+    if rec is not None:
+        rec["events"].append((float(t), int(key), str(label)))
+
+
+def _rec_write(rec, path, params, gen_name, mode):
+    """Flush to npz. traces/ is gitignored but Dropbox-synced, which is the
+    right home: a session is worth keeping and not worth committing."""
+    import datetime
+    if rec is None or not rec["rows"]:
+        return None
+    if path == "auto":
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = Path("traces/teleop") / f"teleop_{stamp}.npz"
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ev = rec["events"]
+    np.savez_compressed(
+        path,
+        rows=np.asarray(rec["rows"], float),
+        columns=np.asarray(_REC_COLUMNS),
+        event_t=np.asarray([e[0] for e in ev], float),
+        event_key=np.asarray([e[1] for e in ev], int),
+        event_label=np.asarray([e[2] for e in ev]),
+        policy=np.asarray(gen_name), mode=np.asarray(mode),
+        rate_hz=np.asarray(_REC_HZ),
+        params_digest=np.asarray(params_digest(params)),
+    )
+    dur = rec["rows"][-1][0] - rec["rows"][0][0]
+    print(f"\nwrote {path}  ({len(rec['rows'])} rows, {len(ev)} key events, "
+          f"{dur:.1f} s)")
+    print(f"  review it:  python analysis/teleop_review.py {path}")
+    return path
+
+
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
-            show_ui=False, wings=False, linkage=False):
+            show_ui=False, wings=False, linkage=False, record=None):
     from .interactive import teleop_loop
 
     from . import policy_menu
@@ -875,6 +987,14 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
              "want_general": True}
     overlay_on = [True]
     trail = []                 # (t, x, y) history for the red path trace
+    # -- session recorder ---------------------------------------------------
+    # Two streams, because a teleop session is two different things. `rows` is
+    # the CONTINUOUS one, sampled at the control rate: what was asked for and
+    # what the bike did. `events` is the DISCRETE one: every key, with the time
+    # it landed. Reviewing "180 flips faster than the heading can settle" needs
+    # both -- the row stream shows the heading never converging, and only the
+    # event stream shows that is because another snap arrived first.
+    rec = {"rows": [], "events": [], "t_last": -1.0} if record else None
     # Seconds of SOLID history; 0 = pen up (stop drawing, keep what is drawn),
     # inf = never expires. [ and ] step through it.
     trail_levels = [0.0, 2.0, 4.0, 10.0, float("inf")]
@@ -1257,6 +1377,9 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         ensure_mode(d)          # survive viewer resets before reading keys
         while pending:
             k = pending.pop(0)
+            if rec is not None:
+                _rec_key(rec, k, d.time,
+                         _REC_KEY_LABELS.get(k, chr(k) if 32 <= k < 127 else f"key{k}"))
             general = c.mode == "general"
             # -- the policy menu owns the keyboard while it is open ---------
             # Deliberately swallowing everything, not just the keys it uses:
@@ -1429,6 +1552,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         apply(m, d)
         c.step(m, d)
         wing_step(m, d)         # after c.step: it rewrites the whole ctrl vector
+        if rec is not None:
+            _rec_sample(rec, m, d, c, state, gen_name[0], params)
 
     def draw_frame(scn, m, d):
         """Dial + trail, then the policy menu on top.
@@ -1497,6 +1622,11 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 draw=draw_frame,
                 show_ui=show_ui,
                 on_start=lambda v: view.__setitem__(0, v))
+    # teleop_loop returns when the operator closes the viewer, so this is the
+    # natural flush point. Ctrl-C bypasses it -- accepted, since a session
+    # abandoned that way is usually one you did not want kept.
+    if rec is not None:
+        _rec_write(rec, record, params, gen_name[0], c.mode)
     return c      # returned so the input model can be driven headlessly
 
 
