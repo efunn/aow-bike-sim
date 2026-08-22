@@ -29,7 +29,8 @@ onboard = [
 # normal inspection loop: rollout_move --out and the trainers' --trace both
 # write a PNG beside the CSV, and silently getting only the CSV is a
 # confusing way to find out it is missing.
-dev = ["pytest>=8.0", "matplotlib>=3.7", "imageio>=2.31", "imageio-ffmpeg>=0.4"]
+dev = ["pytest>=8.0", "pytest-xdist>=3.5", "matplotlib>=3.7", "imageio>=2.31",
+       "imageio-ffmpeg>=0.4"]
 # imageio/-ffmpeg are for `aow_sim.record`, which renders a scripted run
 # offscreen to MP4 + a contact sheet. Same argument as matplotlib being in
 # `dev`: looking at what the bike actually did is part of the normal loop, and
@@ -68,6 +69,45 @@ testpaths = ["tests"]
 # indistinguishable from "that change affected no tests", the one answer a
 # marker must never give by accident.
 addopts = ["--strict-markers"]
+# RUNNING IT IN PARALLEL. 81% of the suite's wall time is inside MuJoCo C
+# (mj_step 56 s, mj_forward 4.6 s, against 13.5 s of Python, measured with
+# cProfile over test_drive + test_teleop), so there is nothing to optimise in
+# our own code -- the only lever is running more of it at once:
+#
+#     pytest -n 10 --dist load
+#
+# Measured on a 10-core M4, whole suite:
+#
+#     serial                   139-147 s
+#     -n 10 --dist load          27-31 s   <- ~4.7x
+#     -n 6  --dist load          37-41 s
+#     -n 10 --dist loadfile         68 s   (floor is the longest FILE, 39 s)
+#
+# `--dist load` (per test, not per file) is what gets the speedup: test_drive.py
+# alone is 39 s, so loadfile can never beat that. Worker count barely matters
+# above 6; run-to-run spread at a fixed -n is several seconds.
+#
+# DO NOT bother pinning BLAS threads. An earlier version of this comment told
+# you to set OMP_NUM_THREADS / OPENBLAS_NUM_THREADS / VECLIB_MAXIMUM_THREADS
+# for a reproducible red set. That was wrong twice over, and the measurements
+# behind it were confounded:
+#
+#   - numpy and scipy here are built against Apple ACCELERATE, not OpenBLAS
+#     (`numpy.show_config()`; vmmap shows only vecLib in the process), so
+#     OPENBLAS_NUM_THREADS was a no-op on this machine to begin with.
+#   - The gains are not thread-sensitive anyway. Ten concurrent processes each
+#     running design_gain_schedule produce a BITWISE identical fingerprint of
+#     (Ks, r2s), matching the serial reference.
+#   - Four unpinned runs gave an identical red set; the one flip in eight runs
+#     was in the PINNED batch.
+#
+# The real flake is tests/test_teleop.py::test_keystate_degrades_safely, and it
+# is not parallelism at all: _KeyState reads LIVE OS KEYBOARD STATE through
+# pyobjc, and the test asserts nothing is held. It fails when someone is
+# actually typing while the suite runs -- which is exactly what was happening
+# during the runs that produced 47/48/51 failures and got blamed on threads.
+# Serial is just as exposed; parallel runs are shorter and so hit it less.
+#
 # Every marker answers ONE question: what change should send me back here?
 # The text below is that answer, and `pytest --markers` prints it. Markers are
 # set per FILE (a `pytestmark` line under the imports) and added per test where
