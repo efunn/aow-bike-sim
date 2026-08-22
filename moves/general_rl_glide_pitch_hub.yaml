@@ -1,0 +1,60 @@
+name: general_rl_glide_pitch_hub
+type: rl
+kind: general
+policy_file: general_rl_glide_pitch_hub.npz
+params_digest: 7af0ce42dfc91154
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.12
+vel_window_s: 1.0
+obs_pitch: true
+obs_wings: false
+act_wings: false
+wing_max_deg: 90.0
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- v_bar_lon
+- v_bar_lat
+- pitch
+- pitch_rate
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 6000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 6.327042672005234e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.905
+    track_geo: 0.898
+    vel_err: 0.224
+    head_err_deg: 4.0
+    n_eval: 20
+    drift_m: 0.884
+    steer_rest_deg: 12.3
+    speed_ratio_fwd: 0.949
+    speed_ratio_rev: 0.911
+    crab_ratio_left: 0.452
+    crab_ratio_right: 0.316
+    crab_head_err: 8.2
+    crab_osc: 0.177
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.143
+  exported_from: best_model.zip

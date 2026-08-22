@@ -1,0 +1,60 @@
+name: general_rl_glide_pitch_dt4e4
+type: rl
+kind: general
+policy_file: general_rl_glide_pitch_dt4e4.npz
+params_digest: 7af0ce42dfc91154
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.12
+vel_window_s: 1.0
+obs_pitch: true
+obs_wings: false
+act_wings: false
+wing_max_deg: 90.0
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- v_bar_lon
+- v_bar_lat
+- pitch
+- pitch_rate
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 6000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 8.62457404160466e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.893
+    track_geo: 0.886
+    vel_err: 0.231
+    head_err_deg: 2.6
+    n_eval: 20
+    drift_m: 1.392
+    steer_rest_deg: 5.0
+    speed_ratio_fwd: 1.051
+    speed_ratio_rev: 1.343
+    crab_ratio_left: 0.242
+    crab_ratio_right: 0.245
+    crab_head_err: 5.5
+    crab_osc: 0.197
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.153
+  exported_from: best_model.zip
