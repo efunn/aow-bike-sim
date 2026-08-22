@@ -363,3 +363,89 @@ def test_righting_envelope_is_derived_and_tangent(params):
     tip2_z = (w2["pivot"][2] + w2["crank_length"] * np.cos(np.deg2rad(w2["crank_deg"]))
               + w2["length"])
     assert np.hypot(tip2_y, tip2_z - r2["height"]) == pytest.approx(r2["radius"])
+
+
+# -- drive velocity servo: the P-only / PI branch ---------------------------
+
+def _pi_params(params, kv=0.016016, ki=0.6):
+    p = copy.deepcopy(params)
+    p["actuators"]["drive_kv"] = kv
+    p["actuators"]["drive_ki"] = ki
+    return p
+
+
+def test_drive_ki_zero_is_the_p_only_plant(params, full_model):
+    """The shipped default must be bit-exact, not merely close.
+
+    The PI branch evaluated at ki = 0 would DROP the kv*ctrl term rather than
+    reduce to the velocity actuator, so build_model branches instead of
+    folding the two together. This is the test that says the branch is still
+    there, and that shipping still means P-only.
+    """
+    assert params["actuators"]["drive_ki"] == 0.0, "the shipped plant is P-only"
+    assert full_model.na == 0, "no activation state at ki = 0"
+    aid = full_model.actuator("drive_a").id
+    kv = params["actuators"]["drive_kv"]
+    assert full_model.actuator_dyntype[aid] == mujoco.mjtDyn.mjDYN_NONE
+    assert full_model.actuator_gainprm[aid][0] == pytest.approx(kv)
+    assert full_model.actuator_biasprm[aid][:3] == pytest.approx([0.0, 0.0, -kv])
+
+
+def test_drive_ki_builds_the_pi_form(params, full_model):
+    """force = ki*(act - theta) - kv*w, with act = integral(ctrl) dt."""
+    kv, ki = 0.016016, 0.6
+    m = build_model(_pi_params(params, kv, ki), variant="full")
+    assert m.na == 2, "one activation per drive actuator"
+    assert m.nu == full_model.nu, "ctrl still means commanded input-shaft speed"
+    aid = m.actuator("drive_a").id
+    assert m.actuator_dyntype[aid] == mujoco.mjtDyn.mjDYN_INTEGRATOR
+    assert m.actuator_dynprm[aid][0] == pytest.approx(1.0)
+    assert m.actuator_gainprm[aid][0] == pytest.approx(ki)
+    assert m.actuator_biasprm[aid][:3] == pytest.approx([0.0, -ki, -kv])
+
+
+@pytest.mark.contact
+def test_pi_drive_holds_against_back_drive(params):
+    """The integral term is what earns the low, physical drive_kv.
+
+    At the derived droop gain (0.016016) the P-only actuator is open-loop
+    voltage control: a steady disturbance torque back-drives it to a standing
+    velocity error of tau/kv, and the bike creeps. That is why
+    aow-contact-approximations.md section 6b could not simply lower drive_kv.
+    The integrator removes the steady-state error, which is the whole reason
+    the PI form exists.
+    """
+    def creep(ki, tau_d=0.02, secs=2.0):
+        m = build_model(_pi_params(params, ki=ki), variant="full",
+                        training_wheels=True)
+        d = mujoco.MjData(m)
+        dofs = [m.joint(f"input_{t}_spin").dofadr[0] for t in ("a", "b")]
+        for _ in range(int(secs / m.opt.timestep)):
+            d.qfrc_applied[dofs] = tau_d      # steady back-drive, both shafts
+            mujoco.mj_step(m, d)
+        assert np.all(np.isfinite(d.qacc)), "simulation blew up"
+        return float(np.abs(d.qvel[dofs]).max()), float(d.qpos[0])
+
+    w_p, x_p = creep(0.0)
+    w_pi, x_pi = creep(0.6)
+    # Measured 2026-08-21: 0.598 rad/s / 84 mm against 0.0004 rad/s / 0.8 mm.
+    # The margins are loose because the point is the ORDER, not the value.
+    assert w_p > 0.3, f"P-only should back-drive at kv 0.016, got {w_p:.4f} rad/s"
+    assert w_pi < 0.01 * w_p, (
+        f"integral term did not hold: P-only {w_p:.4f} rad/s, PI {w_pi:.4f}")
+    assert abs(x_pi) < 0.05 * abs(x_p), (
+        f"bike still crept under PI: {x_p:.4f} m vs {x_pi:.4f} m")
+
+
+def test_reset_actuator_state_is_safe_to_call_unconditionally(params, full_model):
+    """Every hand-rolled reset calls it; at ki = 0 there is nothing to reset."""
+    from aow_sim.build_model import reset_actuator_state
+    d = mujoco.MjData(full_model)
+    reset_actuator_state(full_model, d)          # na == 0: must not raise
+    m = build_model(_pi_params(params), variant="full")
+    d = mujoco.MjData(m)
+    d.act[:] = 3.0
+    reset_actuator_state(m, d)
+    assert np.all(d.act == 0.0), "default restores the at-rest equilibrium"
+    reset_actuator_state(m, d, np.full(m.na, 1.5))
+    assert np.all(d.act == 1.5), "an explicit activation is restored verbatim"

@@ -200,7 +200,19 @@ def _add_aow(spec, parent, p, mode="cones", n_axles=None):
     servo, belt = p["servos"]["xc430_w150"], dt["belt_ratio"]
     for tag in ("a", "b"):
         act = spec.add_actuator(name=f"drive_{tag}")
-        act.set_to_velocity(kv=p["actuators"]["drive_kv"])
+        # Same PI/P branch as build_model's drive block -- this rig is a
+        # surrogate for that plant, so an actuator form that drifts from it
+        # would silently measure a different one.
+        ki = p["actuators"].get("drive_ki", 0.0)
+        if ki:
+            act.dyntype = mujoco.mjtDyn.mjDYN_INTEGRATOR
+            act.dynprm[0] = 1.0
+            act.gaintype = mujoco.mjtGain.mjGAIN_FIXED
+            act.gainprm[0] = ki
+            act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
+            act.biasprm[:3] = [0.0, -ki, -p["actuators"]["drive_kv"]]
+        else:
+            act.set_to_velocity(kv=p["actuators"]["drive_kv"])
         act.trntype = mujoco.mjtTrn.mjTRN_JOINT
         act.target = f"input_{tag}_spin"
         speed = servo["no_load_rpm"] * 2 * np.pi / 60 * belt

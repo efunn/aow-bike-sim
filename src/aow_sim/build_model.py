@@ -218,9 +218,36 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
     belt = dt["belt_ratio"]
     max_speed = servo["no_load_rpm"] * 2 * np.pi / 60 * belt
     max_torque = servo["stall_torque"] / belt
+    kv = p["actuators"]["drive_kv"]
+    ki = p["actuators"].get("drive_ki", 0.0)
     for tag in ("a", "b"):
         act = spec.add_actuator(name=f"drive_{tag}")
-        act.set_to_velocity(kv=p["actuators"]["drive_kv"])
+        if ki:
+            # Velocity PI. A PI velocity loop IS a P position loop whose
+            # setpoint ramps at the commanded speed, and MuJoCo expresses that
+            # natively: dyntype=integrator makes act = integral(ctrl) dt, so
+            #
+            #   force = ki*(act - theta) - kv*w = ki*integral(ctrl - w) dt - kv*w
+            #
+            # `ctrl` still means commanded input-shaft velocity, so nu is
+            # unchanged and no caller has to learn a new command; na goes
+            # 0 -> 2, which is why every hand-rolled reset in this repo has to
+            # call reset_actuator_state (see its docstring for the cost of
+            # forgetting). What this form DROPS relative to real firmware is
+            # the kv*w_cmd proportional feedforward -- the conservative
+            # direction, since the whole defect being fixed is a sim that is
+            # more capable than the hardware. servo-protocol.md section 4
+            # measures the feedforward stiffness that would restore it.
+            act.dyntype = mujoco.mjtDyn.mjDYN_INTEGRATOR
+            act.dynprm[0] = 1.0
+            act.gaintype = mujoco.mjtGain.mjGAIN_FIXED
+            act.gainprm[0] = ki
+            act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
+            act.biasprm[:3] = [0.0, -ki, -kv]
+        else:
+            # ki = 0 is the shipped P-only plant, bit-exact: the PI branch with
+            # ki = 0 would drop the kv*ctrl term entirely, not reduce to this.
+            act.set_to_velocity(kv=kv)
         act.trntype = mujoco.mjtTrn.mjTRN_JOINT
         act.target = f"input_{tag}_spin"
         act.ctrlrange = [-max_speed, max_speed]
@@ -1189,6 +1216,35 @@ def tune_lighting(model: mujoco.MjModel) -> None:
     half = float(model.geom_size[model.geom("floor").id][0]) or 3.0
     model.vis.map.shadowclip = max(1.0, half / max(model.stat.extent, 1e-6))
     model.vis.quality.shadowsize = max(int(model.vis.quality.shadowsize), 8192)
+
+
+def reset_actuator_state(model: mujoco.MjModel, data: mujoco.MjData,
+                         act=None) -> None:
+    """Restore actuator activations alongside a hand-rolled qpos/qvel reset.
+
+    At `actuators.drive_ki` > 0 the drive actuators carry an integrator, so
+    `model.na` is 2 rather than 0 and `data.act` is as much of the state as
+    `qvel` is. Every reset in this repo writes qpos/qvel by hand instead of
+    calling `mj_resetData`, so without this call the integrator LEAKS across
+    episode and rollout boundaries: each episode inherits whatever the previous
+    one wound up to, as an unbounded hidden input nothing accounts for.
+
+    Measured cost of the leak (drive_kv 0.016016, drive_ki 0.6): the LQR gain
+    schedule's worst fit R^2 falls 0.9727 -> 0.7543. Restoring `act` recovers
+    0.9412 of that. The rest is the genuine hidden-state problem described in
+    docs/plans/aow-contact-approximations.md section 6b, which this does not
+    fix and cannot.
+
+    `act` is the activation to restore; None means zero, which is the right
+    equilibrium for any reset that starts the input shafts at rest. Callers
+    that reset to a ROLLING equilibrium must pass that equilibrium's own `act`
+    -- the standing integral there is what holds the speed against droop.
+
+    A no-op at ki = 0, where na = 0 and the drives are memoryless.
+    """
+    if not model.na:
+        return
+    data.act[:] = 0.0 if act is None else act
 
 
 def build_model(

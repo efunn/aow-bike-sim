@@ -233,7 +233,34 @@ servos:
     pos: [0.16, 0.0, 0.11]
 
 actuators:
-  drive_kv: 0.5        # velocity-servo gain at the input shafts (placeholder for Dynamixel velocity PI)
+  # Drive velocity servo, both gains AT THE INPUT SHAFTS (i.e. after
+  # belt_ratio, so divide a servo-output measurement by belt_ratio^2):
+  #
+  #   force = drive_ki * integral(ctrl - w) dt  -  drive_kv * w
+  #
+  # drive_kv on its own is a bare-motor droop line, and the derived value is
+  # stall_torque / no_load_speed / belt_ratio^2 = 1.6 / 11.098 / 9 = 0.016016.
+  # At that value the affine actuator reproduces the whole torque-speed line
+  # by itself (max force at max command = 0.5333 = stall_torque / belt_ratio
+  # exactly), and the bandwidth comes with it for free: input_armature / kv =
+  # 18.7 ms, which IS the motor's own electromechanical time constant. The
+  # "31x too stiff" and "31x too fast" defects in
+  # docs/plans/aow-contact-approximations.md section 6b are one number, not two --
+  # a separate drive_tau knob would double-count and is deliberately absent.
+  #
+  # drive_ki is the firmware's integral term, and it is what holds position
+  # against back-drive; drive_kv alone is open-loop voltage control and the
+  # bike cannot hold station on it.
+  #
+  # BOTH ARE STILL THE PLACEHOLDER PLANT. 0.5 / 0.0 is P-only and 31x
+  # over-capable, and every general_rl* policy has learned to use capability
+  # the hardware does not have. Do not promote the derived numbers by guess:
+  # docs/measurements/servo-protocol.md section 4 measures the real stiffness
+  # and the real integral time, and section 6 maps them onto the model form.
+  # Best guesses if you want to explore first: kv 0.016016, ki 0.6 (Dynamixel
+  # X-series default KVI/KVP at a 1 kHz loop) to 0.855 (Ti = tau_m).
+  drive_kv: 0.5        # placeholder; derived droop is 0.016016
+  drive_ki: 0.0        # 0 = P-only, the shipped plant; > 0 builds the PI form
   steer_kp: 2.0        # position-servo gains at the steer joint
   steer_kv: 0.05
 
