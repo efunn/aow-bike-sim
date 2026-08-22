@@ -32,7 +32,7 @@ import mujoco
 import numpy as np
 from gymnasium import spaces
 
-from ..build_model import build_model, load_params
+from ..build_model import build_model, load_params, reset_actuator_state
 from .balance import extract_state, mix
 from .drive import DriveController
 from .general_spec import (ACT_DIM, ActionBounds, act_dim_for, build_obs,
@@ -409,6 +409,7 @@ class GeneralEnv(gym.Env):
         self._apply_randomization()
         self.data.qpos[:] = self._eq
         self.data.qvel[:] = 0.0
+        reset_actuator_state(self.model, self.data)
         r = self.rand
         if r["enabled"]:
             roll = rng.uniform(-1, 1) * np.deg2rad(r["init_roll_deg"])

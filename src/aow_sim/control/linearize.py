@@ -28,6 +28,8 @@ import warnings
 import mujoco
 import numpy as np
 
+from ..build_model import reset_actuator_state
+
 # The artifact lives in a MuJoCo-free module so the bike can load it.
 from .lqr_design import LQRDesign  # noqa: F401
 
@@ -122,6 +124,11 @@ def _set_reduced_state(model, data, eq: mujoco.MjData, x) -> None:
     data.qvel[3] = eq.qvel[3] + x[5]
     data.qvel[5] = eq.qvel[5] + x[6]
     data.qvel[sd] = eq.qvel[sd] + x[7]
+    # The drive integrator (actuators.drive_ki > 0) is state, exactly as qvel
+    # is: restore the equilibrium's, or every rollout inherits the previous
+    # episode's wind-up as a random unmodelled input. Worst fit R^2 measured
+    # 0.7543 without this, 0.9412 with it.
+    reset_actuator_state(model, data, eq.act)
     mujoco.mj_forward(model, data)
 
 

@@ -18,7 +18,7 @@ import mujoco
 import numpy as np
 from gymnasium import spaces
 
-from ..build_model import build_model, load_params
+from ..build_model import build_model, load_params, reset_actuator_state
 from .ball_spec import ACT_DIM, OBS_DIM, ActionBounds, build_obs, scale_action
 from .balance import extract_state, mix
 from .drive import DriveController
@@ -281,6 +281,7 @@ class BallEnv(gym.Env):
         self._apply_randomization()
         self.data.qpos[:] = self._eq
         self.data.qvel[:] = 0.0
+        reset_actuator_state(self.model, self.data)
         self._mirror = False
         r = self.rand
         if r["enabled"]:
