@@ -219,9 +219,18 @@ Reproduce with `python analysis/contact_surrogates.py`.
   7 failed / 217 passed (suite 262 s → 161 s), eval grid 0.764 → 0.760 at
   survival 1.00 (29.4 s → 16.9 s), righting sequence / fall attitudes /
   inverted drops / hockey all unchanged, deploy bundle re-exported
-  (`7af0ce42dfc91154`). **Still ungated: a full training run.** Everything so
-  far is replay, and replay cannot show that a policy *trained* at 4e-4
-  transfers back. Every `moves/*` export now warns on load.
+  (`7af0ce42dfc91154`). Every `moves/*` export trained before it warns on load.
+- **GATED NOW: a policy trained at 4e-4 matches the 2e-4 baseline.**
+  `general_rl_glide_pitch_dt4e4`, 6M steps on unmodified
+  `config/rl_general_glide_pitch.yaml`, scores **track_geo 0.886 / survive
+  1.00** against `general_rl_glide_pitch_og`'s identical 0.886 at 2e-4.
+  Head error improved 4.7° → 2.6°; crab stayed symmetric (.242/.245 vs
+  .248/.262). The righting handoff still catches the bike on both mechanisms
+  (arm 81°/1.12 s, wings 88°/0.61 s — same as the pre-change baselines).
+  Two caveats worth keeping: the budgets differ (baseline 4M, this 6M), and
+  it is ONE seed. `drift_m` regressed 0.588 → 1.392 and `turn_asym` 0.102 →
+  0.153; both are underdetermined in the reward, so treat them as noise until
+  a second seed disagrees.
 - **`contact_solref` outweighs all of it**: at fixed geometry it swings contact
   loss 53% → 0% and peak load 5×. Still a `GUESS`. Also worth widening the
   randomizer's `dampratio_range` above 1.0 — it currently samples only the
@@ -615,12 +624,40 @@ Two tracks. The sim track does not wait on the build.
 4. **Resolve the crab question one way or the other.** Read arm 2 against its
    own exit criterion; if pitch is controlled and crab is still flat, run the
    open-loop gait sweep instead of a third arm.
-5. **Validate the new timestep with a full training run.** `sim.timestep: 4e-4`
-   + `mesh_segments: 64` are landed and every *replay* check passes, but no
-   policy has been TRAINED at 4e-4 yet. The next long run is that check — pick
-   a config whose 2e-4 result is already known so the comparison means
-   something, and read it against that run's own numbers rather than against
-   the table above.
+5. **DONE — the new timestep is validated by a trained run.**
+   `general_rl_glide_pitch_dt4e4` (6M, `rl_general_glide_pitch.yaml`, 34 min
+   local at 32/512) scores track_geo 0.886 against the 2e-4 baseline's 0.886,
+   survival 1.00 both, righting handoff intact. One seed and a different step
+   budget, so a second seed would settle `drift_m` and `turn_asym`, which both
+   regressed. `sim.timestep: 4e-4` + `mesh_segments: 64` need no further gate.
+6. **Adopt `general_rl_glide_pitch_hub3` and retire the older glide arms.**
+   `reward.w_hub_idle` prices hub MAGNITUDE at low commanded speed, faded on
+   `max(commanded, measured)` speed with `hub_idle_v_scale: 0.6`. It is the
+   first policy that is meaningfully calmer without being worse at anything:
+   rim travel over a 15 s hold 7.58 -> 3.35 m, airborne 58% -> 13%, peak
+   contact force 7.23 -> 3.66 x weight, and kick recovery 8/8 through dv 0.35
+   where the baseline manages 7/8. Point `control.general_move` at it once it
+   has been driven in teleop for more than a few minutes.
+7. **The eval grid cannot see any of this, and that is the next real gap.**
+   Across the four glide arms the selection score moved 0.886 / 0.898 / 0.915 /
+   0.902 -- a spread of 0.03 -- while contact load moved 4x and the recovery
+   envelope moved from 1/8 to 8/8. `_score` is survival x tracking over 20
+   commands with randomization OFF, so it never disturbs the bike and never
+   looks at the contact. Two additions, in order of value:
+     - a DISTURBANCE arm (analysis/kick_recovery.py is the measurement; it
+       needs to become a selection criterion, not just a report), and
+     - a CONTACT-LOAD term, since "holds station by sawing the wheel 7 m" and
+       "holds station" score identically today.
+   This is a change to the trainer's scoring, so it re-bases every score in
+   docs/ and in every moves/*.yaml. Decide whether the old numbers get
+   re-measured or annotated before touching it.
+8. **Un-block the two drive-plant fixes** (aow-contact-approximations.md §6b).
+   `drive_kv` is 31x stiffer than the bare motor and there is no actuator lag
+   at all; both single-parameter fixes break the suite, and it needs the
+   Dynamixel velocity-PI emulation that mujoco-modeling-decisions.md deferred.
+   Until then the plant lets a policy hold station by a means the hardware
+   does not have -- which is what every hub-price arm above is working around
+   rather than fixing.
 
 **Build track:**
 
