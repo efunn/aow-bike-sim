@@ -454,12 +454,10 @@ class DriveController(LQRBalance):
             act = pol.action(obs)
             steer_rate, hub, diff = act[0], act[1], act[2]
             wing_rate = act[3] if len(act) > 3 else 0.0
-            prev = [steer_rate / pol.bounds.steer_rate_max,
-                    hub / pol.bounds.hub_max,
-                    diff / pol.bounds.diff_max]
-            if len(act) > 3:
-                prev.append(wing_rate / max(pol.bounds.wing_rate_max, 1e-9))
-            self._gen_prev_a = np.array(prev)
+            # A zero bound means the channel is disabled; ActionBounds.normalize
+            # handles that. Dividing here by hand raised ZeroDivisionError in
+            # teleop on a policy trained with hub_max 0.
+            self._gen_prev_a = np.array(pol.bounds.normalize(act))
             self._gen_u = (steer_rate, hub, diff, wing_rate)
             self._gen_hold = self._gen_every
         steer_rate, hub, diff, wing_rate = self._gen_u

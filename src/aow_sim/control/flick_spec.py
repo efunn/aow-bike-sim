@@ -39,6 +39,25 @@ class ActionBounds:
     # and ACT_DIM stays 3.
     wing_rate_max: float = 0.0   # rad/s of wing joint rate command
 
+    def normalize(self, act) -> list[float]:
+        """Physical action -> fraction of each channel's bound, one entry per
+        value in `act`.
+
+        A bound of 0 DISABLES that channel (`scale_action` multiplies by it),
+        which is a legitimate config -- `action_bounds.hub_max: 0.0` is how the
+        hold-without-the-hub diagnostic pins the rear wheel. The naive divide
+        is then 0/0, and it has now bitten in FOUR separate places: the
+        exporter (ZeroDivisionError after training finished, losing the move
+        yaml), analysis/chatter.py, analysis/wheel_slowmo.py's HUD (NaN ->
+        int(NaN) killed a render 600 frames in), and drive.py's replay path,
+        i.e. teleop. A disabled channel is already 0 in physical units, so
+        dividing by 1 leaves it 0, which is the right answer everywhere.
+
+        Use this rather than dividing by the bounds by hand.
+        """
+        return [float(a) / (b if b else 1.0)
+                for a, b in zip(act, self.to_list())]
+
     def to_list(self) -> list[float]:
         return [self.steer_rate_max, self.hub_max, self.diff_max,
                 self.wing_rate_max]

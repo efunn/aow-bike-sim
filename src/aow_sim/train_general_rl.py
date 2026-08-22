@@ -492,7 +492,20 @@ def _verify_export(model, vecnorm, npz_path):
         # channel), so unpack positionally rather than by fixed name count.
         scales = [pol.bounds.steer_rate_max, pol.bounds.hub_max,
                   pol.bounds.diff_max, pol.bounds.wing_rate_max]
-        raw = np.array([a / s for a, s in zip(act, scales)])[:len(sb3_mean)]
+        # A bound of 0 DISABLES that channel (scale_action multiplies by it),
+        # which is a legitimate config -- action_bounds.hub_max: 0.0 is how the
+        # hold-without-the-hub diagnostic pins the wheel. Dividing by it raised
+        # ZeroDivisionError and killed the run AFTER training finished and the
+        # .npz was written, leaving an export with no .yaml beside it.
+        #
+        # A disabled channel is EXCLUDED rather than unit-scaled. `pol.action`
+        # returns 0 for it (scaled by the zero bound) while sb3_mean still
+        # carries the net's raw output, so comparing them reports a mismatch of
+        # up to 1.0 on a channel that cannot affect the robot -- a false alarm
+        # on exactly the check that is supposed to catch real export bugs.
+        keep = [i for i, s in enumerate(scales[:len(sb3_mean)]) if s]
+        raw = np.array([act[i] / scales[i] for i in keep])
+        sb3_mean = np.asarray(sb3_mean)[keep]
         worst = max(worst, float(np.max(np.abs(raw - sb3_mean))))
     return worst
 
@@ -649,12 +662,23 @@ def _export_from(spec: str, params, cfg, name="general_rl"):
     with open(vn, "rb") as f:
         vecnorm = pickle.load(f)          # obs_rms/clip_obs only; no venv needed
     model = PPO.load(str(src), device="cpu")
-    from .control.general_spec import OBS_DIM
+    # Against the width THIS CONFIG implies, not the bare OBS_DIM constant.
+    # The optional blocks widen the observation -- vel_window_s appends v_bar,
+    # obs_pitch appends (pitch, pitch_rate) -- so a glide_pitch checkpoint is
+    # 19 wide while OBS_DIM is 15, and comparing to the constant rejected every
+    # such checkpoint with a message blaming a spec change that never happened.
+    # Same class of bug as the call sites general_spec.policy_flags documents:
+    # a consumer that forgot the optional blocks.
+    from .control.general_spec import obs_dim_for
+    env_cfg = cfg["env"]
+    want = obs_dim_for(vel_window_s=float(env_cfg.get("vel_window_s", 0.0)),
+                       obs_pitch=bool(env_cfg.get("obs_pitch", False)),
+                       obs_wings=bool(env_cfg.get("obs_wings", False)))
     got = int(model.observation_space.shape[0])
-    if got != OBS_DIM:
+    if got != want:
         raise SystemExit(
-            f"{src.name} was trained with obs_dim {got}; the current spec is "
-            f"{OBS_DIM} — this checkpoint predates the observation-spec change "
+            f"{src.name} was trained with obs_dim {got}; this config implies "
+            f"{want} — the checkpoint and the config disagree "
             "and cannot replay. Retrain first.")
     steps = int(src.stem.split("_")[1])
     print(f"exporting {src.name} (+ {vn.name}) without training")
