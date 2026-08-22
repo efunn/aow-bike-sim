@@ -1,0 +1,101 @@
+# TOY DIAGNOSTIC: stand still, nothing else. Not a policy to drive with.
+#
+# THE QUESTION. Holding station needs no net wheel rotation -- measured, the
+# LQR does it with 0.0 hub rpm, 0.00 m of rim travel and 1 mm of drift over
+# 15 s, using only [differential, steer] (control/linearize.py: common mode is
+# a separate longitudinal P loop, decoupled from lateral balance). Every RL
+# policy instead saws the wheel back and forth:
+#
+#   controller                      hub rpm  flips/s  rim travel   drift
+#   LQR                                 0.0     11.7      0.00 m   0.001 m
+#   general_rl_smooth_diff_og          79.3     21.8      6.37 m   0.363 m
+#   general_rl_glide_pitch_dt4e4       94.3     13.7      7.58 m   1.405 m
+#   general_rl_glide_pitch_smooth     130.8     11.9     10.52 m   0.969 m
+#
+# So: is the wheel motion the TASK's fault (a policy trained on the full
+# velocity envelope keeps a hub reflex it needs elsewhere) or the REWARD's
+# (nothing prices it)? Train on hold ALONE and see whether the hub channel
+# goes quiet on its own.
+#
+# NOTE this deliberately keeps arm 2's w_smooth: 0.005 -- i.e. chatter
+# UNPRICED -- so the result answers "does the task alone remove it", not "does
+# a smoothing penalty remove it". rl_general_glide_pitch_smooth.yaml already
+# showed that penalty relocates the violence rather than removing it (contact
+# load went UP: pen 0.61 -> 0.73 mm, peak force 7.23 -> 9.48 xW).
+#
+# HOW HOLD-ONLY IS EXPRESSED, config only, no code change:
+#   v_max 0.0        every sampled velocity command is exactly zero, and
+#                    eval_cmds(0.0) makes the eval grid velocity-zero too
+#   resample_s huge  the command never changes mid-episode; the first draw
+#                    uses first=True, whose heading step is 0, so the whole
+#                    episode is "stay where you are, keep your heading"
+#   ball_prob 0.0    no hockey ball; one variable at a time
+# The reward needs no change: with a zero reference, w_vel already prices |v|.
+#
+# The eval grid still carries +-90/180 deg heading steps, so its score mixes
+# hold with turn-in-place. Read the dpsi=0 rows, and the hub-rpm/rim-travel
+# measurement, not the headline score.
+
+algo:
+  algorithm: PPO
+  total_timesteps: 2000000
+  n_envs: 32
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 1024
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005
+  net_arch:
+  - 128
+  - 128
+  seed: 0
+  eval_every: 1000000
+env:
+  action_space: full
+  control_rate_hz: 50
+  max_episode_s: 15.0
+  v_max: 0.0
+  vel_window_s: 1.0
+  obs_pitch: true
+  v_lat_frac: 0.12
+  p_v_zero: 0.2
+  resample_s:
+  - 1000.0
+  - 1000.0
+  ball_prob: 0.0
+  ball_place_radius: 0.5
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4
+    diff_max: 40.0
+curriculum:
+  enabled: true
+  start: 0.15
+  step: 0.02
+  advance_score: 0.6
+reward:
+  w_vel: 1.5
+  w_head: 1.0
+  w_alive: 0.5
+  sigma_v: 0.35
+  sigma_psi_deg: 25.0
+  w_upright: 0.5
+  w_pitch: 2.0
+  w_effort: 0.001
+  w_smooth: 0.005
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+randomization:
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15
+  friction_frac: 0.2
+  actuator_frac: 0.15
+  disturb_force_N: 2.0
+  disturb_prob: 0.01

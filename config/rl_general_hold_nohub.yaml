@@ -1,0 +1,76 @@
+# TOY DIAGNOSTIC arm B: stand still with the hub channel PHYSICALLY REMOVED.
+#
+# Identical to rl_general_hold.yaml except action_bounds.hub_max: 0.0, which
+# makes scale_action emit exactly 0 on that channel forever. That leaves the
+# policy the same inputs the LQR balances on -- [differential, steer] -- so
+# this asks the feasibility question directly: CAN the bike hold station
+# without turning the wheel, or is some hub motion actually load-bearing?
+#
+# Arm A answers "does it stop on its own". This answers "could it".
+# If A keeps sawing and B holds fine, the motion is gratuitous and the reward
+# is what needs to change. If B cannot balance, the motion is real and the LQR
+# is getting away with something the policy cannot.
+
+algo:
+  algorithm: PPO
+  total_timesteps: 2000000
+  n_envs: 32
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 1024
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005
+  net_arch:
+  - 128
+  - 128
+  seed: 0
+  eval_every: 1000000
+env:
+  action_space: full
+  control_rate_hz: 50
+  max_episode_s: 15.0
+  v_max: 0.0
+  vel_window_s: 1.0
+  obs_pitch: true
+  v_lat_frac: 0.12
+  p_v_zero: 0.2
+  resample_s:
+  - 1000.0
+  - 1000.0
+  ball_prob: 0.0
+  ball_place_radius: 0.5
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 0.0
+    diff_max: 40.0
+curriculum:
+  enabled: true
+  start: 0.15
+  step: 0.02
+  advance_score: 0.6
+reward:
+  w_vel: 1.5
+  w_head: 1.0
+  w_alive: 0.5
+  sigma_v: 0.35
+  sigma_psi_deg: 25.0
+  w_upright: 0.5
+  w_pitch: 2.0
+  w_effort: 0.001
+  w_smooth: 0.005
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+randomization:
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15
+  friction_frac: 0.2
+  actuator_frac: 0.15
+  disturb_force_N: 2.0
+  disturb_prob: 0.01
