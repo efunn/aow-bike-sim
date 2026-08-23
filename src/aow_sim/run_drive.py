@@ -971,6 +971,15 @@ class _Axis:
 # is indistinguishable from the undisturbed bike, i.e. nothing happened.
 _PELT_SPEED = 4.0
 _PELT_STANDOFF = 0.45  # m from the aim point; enough that the roll is visible
+_PELT_STEP = 0.5       # m/s per [ or ] press
+_PELT_MAX = 8.0        # m/s; well past the topple threshold, which is ~4.5
+# [ and ] adjust the throw. They ARE MuJoCo's "cycle cameras", and that is
+# survivable here for the reason in the key-table note below: apply_camera
+# reasserts type, trackbodyid and the angles every frame in follow/overhead/
+# wheel, so the viewer's cycle is overwritten before it is ever drawn. In FREE
+# camera mode apply_camera returns early, so there a press will also nudge the
+# viewer's camera -- switch to a tracked mode if that gets annoying.
+_KEY_PELT_DOWN, _KEY_PELT_UP = ord("["), ord("]")
 
 
 def _pelt_ball(model, data, params, speed=_PELT_SPEED, side=1.0, rng=None):
@@ -1719,8 +1728,17 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                                side=pelt_side[0])
                 if j is not None:
                     print(f"BALL {'left' if pelt_side[0] > 0 else 'right'} — "
-                          f"{pelt_speed[0]:.0f} m/s ({pelt_speed[0]*3.6:.0f} km/h), "
-                          f"{j:.2f} N.s at the rear wheel")
+                          f"{pelt_speed[0]:.1f} m/s "
+                          f"({pelt_speed[0] * 3.6:.1f} km/h), {j:.3f} N.s")
+            elif k in (_KEY_PELT_DOWN, _KEY_PELT_UP) and hockey:
+                step = _PELT_STEP if k == _KEY_PELT_UP else -_PELT_STEP
+                pelt_speed[0] = min(_PELT_MAX, max(0.0, pelt_speed[0] + step))
+                mb = params["hockey"]["ball"]["mass"]
+                print(f"ball throw: {pelt_speed[0]:.1f} m/s "
+                      f"({pelt_speed[0] * 3.6:.1f} km/h, "
+                      f"{mb * pelt_speed[0]:.3f} N.s)"
+                      + ("   [0 = the ball just drops where it is]"
+                         if pelt_speed[0] == 0.0 else ""))
             elif wing is not None and k == ord("."):
                 # Shove it over, alternating sides so both get tested -- the
                 # policy is measurably worse to the left (see
@@ -1852,8 +1870,9 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         hold_help = ("\n  (TAP the arrows to step the command — hold-to-drive "
                      f"needs pyobjc;\n   {why})")
     ball_help = ("\n  1 ball-shot (RL)   0 reset ball"
-                 "\n  SPACE pelt the rear wheel with the ball "
-                 f"({_PELT_SPEED:.0f} m/s, alternating sides)") if hockey else ""
+                 "\n  SPACE roll the ball at the bike (alternating sides)"
+                 f"\n  [ / ] throw speed -/+ {_PELT_STEP} m/s "
+                 f"(0-{_PELT_MAX:.0f}, starts at {_PELT_SPEED:.1f})") if hockey else ""
     wing_help = (
         "\n  WINGS: 9 extend   4 retract   . shove it over (alternates sides)"
         "\n         Manual only — nothing deploys or hands off by itself. "
