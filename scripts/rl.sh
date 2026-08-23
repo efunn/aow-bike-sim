@@ -11,6 +11,7 @@
 #   ./scripts/rl.sh logs general            # tail -f the live training log
 #   ./scripts/rl.sh stop general            # cancel training, leave the board up
 #   ./scripts/rl.sh stop-board general      # kill the board, leave training up
+#   ./scripts/rl.sh sync                    # fast-forward to origin, keeping artifacts
 #
 # Both halves are started with nohup (+ setsid where available), so they outlive
 # the ssh session and each other. Logs are timestamped per launch and never
@@ -393,6 +394,65 @@ cmd_status() {
   [[ $any == 1 ]] || echo "(nothing running)"
 }
 
+cmd_sync() {
+  # Fast-forward this checkout to origin/main WITHOUT destroying artifacts.
+  #
+  # THE PROBLEM THIS EXISTS FOR. Training happens here, so a finished run leaves
+  # moves/<name>.{npz,yaml} UNTRACKED in this working tree. Those files get
+  # rsynced to the laptop, committed and pushed -- and then `git pull` here
+  # refuses to move, because checking out the new commit "would overwrite
+  # untracked working tree files". It is right to refuse in general; it is
+  # pointless here, because the incoming blobs ARE these files. They came from
+  # this machine in the first place.
+  #
+  # So: verify byte-identity against the incoming commit, delete only the ones
+  # that match, and leave anything that differs alone -- a file with the same
+  # name and different contents is a DIFFERENT training run and is exactly what
+  # the refusal is protecting.
+  git fetch origin -q || die "git fetch failed"
+  local target="origin/main" removed=0 kept=0
+  git rev-parse --verify -q "$target" >/dev/null || die "no $target"
+
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    git cat-file -e "$target:$f" 2>/dev/null || continue   # not incoming; ignore
+    if [[ "$(git hash-object "$f")" == "$(git rev-parse "$target:$f")" ]]; then
+      rm -f "$f"; removed=$((removed + 1))
+      echo "  identical to incoming, removed   $f"
+    else
+      kept=$((kept + 1))
+      echo "  DIFFERS from incoming, KEPT      $f"
+    fi
+  done < <(git ls-files --others --exclude-standard)
+
+  # Same argument for TRACKED files that are merely modified: if the working
+  # copy already equals the incoming blob, the edit has arrived by another
+  # route (an rsync of the same change) and discarding it loses nothing. This
+  # is the case when the fix itself is what is being pulled -- this script.
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    git cat-file -e "$target:$f" 2>/dev/null || continue
+    if [[ "$(git hash-object "$f")" == "$(git rev-parse "$target:$f")" ]]; then
+      git checkout -q -- "$f"; removed=$((removed + 1))
+      echo "  modified but identical, reverted  $f"
+    else
+      kept=$((kept + 1))
+      echo "  MODIFIED and differs, KEPT        $f"
+    fi
+  done < <(git diff --name-only)
+
+  if (( kept > 0 )); then
+    echo
+    echo "$kept file(s) differ from what is being pulled -- a different run or"
+    echo "a real local edit under the same name. Move them aside or commit them"
+    echo "by hand, then re-run. Nothing was deleted."
+    return 1
+  fi
+  echo "  reconciled $removed file(s); fast-forwarding"
+  git merge --ff-only "$target" >/dev/null || die "not a fast-forward -- resolve by hand"
+  echo "  now at $(git rev-parse --short HEAD)"
+}
+
 SUB="${1:-}"; shift || true
 case "$SUB" in
   up)         check_move "${1:-}"; cmd_up "$@" ;;
@@ -403,5 +463,6 @@ case "$SUB" in
   eta)        check_move "${1:-}"; cmd_eta "$1" ;;
   logs)       check_move "${1:-}"; tail -f "$(run_dir "$1")/logs/train-latest.log" ;;
   status)     cmd_status ;;
+  sync)       cmd_sync ;;
   *)          awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0" >&2; exit 1 ;;
 esac
