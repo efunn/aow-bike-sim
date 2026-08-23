@@ -346,6 +346,14 @@ def main() -> None:
     ap.add_argument("--ui", action="store_true",
                     help="restore the viewer's side panels (off by default: "
                          "teleop is keyboard-driven and Reset is Backspace)")
+    ap.add_argument("--linkage-config", default=None, metavar="PATH",
+                    help="four-bar geometry for --linkage (default "
+                         "config/wing_linkage_locking.yaml). "
+                         "config/wing_linkage_w75.yaml is the 75 mm-envelope "
+                         "variant -- same mechanism, bike_width 120 -> 75, "
+                         "which moves the wing panel in to +-37.5 mm and "
+                         "lengthens it 84.6 -> 107.1 mm. record.py has had "
+                         "this flag; teleop was hardcoded to the 120 mm one.")
     ap.add_argument("--linkage", action="store_true",
                     help="the four-bar wing mechanism instead of the geared "
                          "pair (config/wing_linkage_locking.yaml); same 9/4 "
@@ -359,7 +367,8 @@ def main() -> None:
     model = build_model(params, variant="full", hockey=args.hockey,
                         righting=args.wings or args.linkage,
                         wings=args.wings and not args.linkage,
-                        linkage=args.linkage)
+                        linkage=args.linkage,
+                        linkage_cfg=args.linkage_config)
     # Same lighting the recorder applies, so a teleop session and a video of
     # the same thing do not look like two different simulators.
     tune_lighting(model)
@@ -942,6 +951,75 @@ class _Axis:
         self.armed = False
 
 
+# Ball-throw defaults for the teleop disturbance. NOT in bike_params.yaml on
+# purpose: the ball's mass and radius are properties of a physical object and
+# already live there, but how hard you choose to throw it is an experiment
+# setting, and adding it to the params would move `params_digest` -- and so
+# invalidate the deploy bundle and every trained policy -- for a diagnostic.
+# Rolled-ball speed. 4.0 m/s (14 km/h) is the measured knee: it disturbs
+# without toppling. general_rl_smooth_diff_pi holding station, ball rolled into
+# a random point along the flank, 8 seeds per speed, alternating sides:
+#
+#     speed   impulse   roll peak   survived
+#     3.0     0.180      3.9 deg      8/8
+#     3.5     0.210      4.5          8/8
+#     4.0     0.240      6.2          8/8   <- 2.6x the 2.4 deg undisturbed baseline
+#     4.5     0.270     60.1          7/8
+#
+# The cliff is steep -- 4.5 topples one in eight and 5.0 topples one in four --
+# so do not nudge this up without re-running the sweep. Below 3.0 the roll peak
+# is indistinguishable from the undisturbed bike, i.e. nothing happened.
+_PELT_SPEED = 4.0
+_PELT_STANDOFF = 0.45  # m from the aim point; enough that the roll is visible
+
+
+def _pelt_ball(model, data, params, speed=_PELT_SPEED, side=1.0, rng=None):
+    """Roll the hockey ball into the side of the bike. Returns its momentum.
+
+    A REAL disturbance rather than a synthetic one: momentum arrives through
+    the contact solver over the few ms the ball is touching, instead of as a
+    force held on the chassis for a third of a second. That difference is the
+    whole point -- an 0.30 N.s impact at 20 ms upset the bike where an 2.80 N.s
+    push over 350 ms did not, because the controller gets ~4 control periods
+    during the first and ~70 during the second.
+
+    ROLLED, not thrown. It starts on the floor and travels horizontally, which
+    is what a ball actually does when it comes at you across a room, and it
+    keeps the strike low on the case side rather than lobbing into the
+    mechanism. The aim point is drawn at random along the bike's flank so
+    repeated hits are not all the same experiment.
+    """
+    try:
+        jid = int(model.body("ball").jntadr[0])
+    except Exception:
+        return None
+    q, v = int(model.jnt_qposadr[jid]), int(model.jnt_dofadr[jid])
+    r = params["hockey"]["ball"]["radius"]
+    rng = rng or np.random
+
+    cid = model.body("chassis").id
+    origin = np.array(data.xpos[cid], float)
+    R = data.body("chassis").xmat.reshape(3, 3)
+    fwd = R @ np.array([1.0, 0.0, 0.0])
+    lat = R @ np.array([0.0, side, 0.0])
+    for u in (fwd, lat):
+        u[2] = 0.0
+        u /= max(np.linalg.norm(u), 1e-9)
+
+    # Anywhere along the flank, from just behind the rear axle to the fork.
+    along = float(rng.uniform(-0.02, 0.18))
+    target = origin + along * fwd
+    target[2] = r                                   # rolling, so ball-centre high
+    start = target + _PELT_STANDOFF * lat
+    start[2] = r
+
+    data.qpos[q:q + 3] = start
+    data.qpos[q + 3:q + 7] = [1, 0, 0, 0]
+    data.qvel[v:v + 3] = -speed * lat               # straight in, no arc
+    data.qvel[v + 3:v + 6] = 0.0
+    return float(params["hockey"]["ball"]["mass"] * speed)
+
+
 def _reset_ball(model, data, params):
     """Re-park the ball at its bike-frame start pose (hockey model only), so a
     fresh shot can be attempted. No-op if the model has no ball."""
@@ -1114,6 +1192,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     slowmo = [max(1e-3, float(slowmo_x))]
     _TIME_SCALE[0] = slowmo[0]
     slowmo_shown = [None]        # last value pushed to the viewer overlay
+    pelt_speed, pelt_side = [_PELT_SPEED], [1.0]   # ball throw, alternating sides
     cam_mode = ["free"]
     cam_free_pending = [False]   # re-frame free view on the switch INTO it
     lead_armed = [True]          # heading lead clamp; a snap disarms it
@@ -1630,6 +1709,18 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             # well, and every geom in this model is group 0, so `0` ghosts the
             # floor and the whole bike out from under you. Groups 4 and 9 are
             # empty here, so toggling them does nothing visible.
+            elif k == ord(" ") and hockey:
+                # Space is MuJoCo's play/pause, which is inert under
+                # launch_passive for the same reason +/- is: this loop owns the
+                # stepping. Hockey-gated, so it costs nothing when there is no
+                # ball to throw.
+                pelt_side[0] = -pelt_side[0]
+                j = _pelt_ball(m, d, params, speed=pelt_speed[0],
+                               side=pelt_side[0])
+                if j is not None:
+                    print(f"BALL {'left' if pelt_side[0] > 0 else 'right'} — "
+                          f"{pelt_speed[0]:.0f} m/s ({pelt_speed[0]*3.6:.0f} km/h), "
+                          f"{j:.2f} N.s at the rear wheel")
             elif wing is not None and k == ord("."):
                 # Shove it over, alternating sides so both get tested -- the
                 # policy is measurably worse to the left (see
@@ -1760,7 +1851,9 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                else "no key-state backend exists for this platform")
         hold_help = ("\n  (TAP the arrows to step the command — hold-to-drive "
                      f"needs pyobjc;\n   {why})")
-    ball_help = "\n  1 ball-shot (RL)   0 reset ball" if hockey else ""
+    ball_help = ("\n  1 ball-shot (RL)   0 reset ball"
+                 "\n  SPACE pelt the rear wheel with the ball "
+                 f"({_PELT_SPEED:.0f} m/s, alternating sides)") if hockey else ""
     wing_help = (
         "\n  WINGS: 9 extend   4 retract   . shove it over (alternates sides)"
         "\n         Manual only — nothing deploys or hands off by itself. "
