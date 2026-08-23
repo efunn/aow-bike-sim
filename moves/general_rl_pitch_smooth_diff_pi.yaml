@@ -1,0 +1,58 @@
+name: general_rl_pitch_smooth_diff_pi
+type: rl
+kind: general
+policy_file: general_rl_pitch_smooth_diff_pi.npz
+params_digest: dcb067cd1e8fd25f
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.4
+vel_window_s: 0.0
+obs_pitch: true
+obs_wings: false
+act_wings: false
+wing_max_deg: 90.0
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- pitch
+- pitch_rate
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 12000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 7.323286426164088e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.869
+    track_geo: 0.864
+    vel_err: 0.141
+    head_err_deg: 2.3
+    n_eval: 20
+    drift_m: 1.376
+    steer_rest_deg: 24.4
+    speed_ratio_fwd: 1.004
+    speed_ratio_rev: 1.043
+    crab_ratio_left: 0.488
+    crab_ratio_right: 0.266
+    crab_head_err: 2.5
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.271
+  exported_from: best_model.zip
