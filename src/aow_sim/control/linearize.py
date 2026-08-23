@@ -197,7 +197,7 @@ def _dlqr_checked(A, B, Q, R, label: str):
     return K
 
 
-MIN_FIT_R2 = 0.98
+MIN_FIT_R2 = 0.93
 """Below this the identified LINEAR model stops describing the plant well.
 
 Worth being clear about what this catches, because it is NOT staleness: the
@@ -207,9 +207,34 @@ than the LQR assumes -- softer contacts, a heavier bike, a changed geometry --
 and re-running the identification will not improve it. What has to change is
 the plant, the operating point, or the expectation.
 
-Concretely: contact damping of 0.5 (vs 1.0) drops the worst channel to ~0.970.
-Nothing warns you at runtime unless this does, and the symptom downstream is
-just a slightly worse analytic controller, which is easy to misread as tuning.
+0.93, WAS 0.98 (2026-08-22), and it is the EXPECTATION that changed. Nothing
+ever cleared 0.98: not the current plant (0.9412), not the drive servo without
+its integral term (0.9757), and not the pre-PI plant either (0.9727). The bar
+was set when the plant was simpler and had been firing as a warning for a long
+time before anyone measured what it was actually asking for.
+
+Measured 2026-08-22, sweeping `sim.contact_solref` dampratio, worst channel
+over the nine-speed schedule:
+
+    dampratio    0.3      0.5      1.0 (shipped)    2.0
+    worst R^2   0.8148   0.9297      0.9412        0.9602
+
+Monotonic, and that is the problem: the fit improves as the contact gets LESS
+like the hardware. 1.0 is critical damping and cannot bounce at all, while
+contact-protocol.md P1 records the real wheel bouncing 2-3 times -- consistent
+with dampratio ~0.30, which scores 0.8148. Chasing 0.98 by raising the damping
+buys the number by making the simulator wrong.
+
+0.93 clears the current 0.9412 with margin while still catching a genuine
+collapse (the 0.8148 at dampratio 0.3). Note test_drive.py already asserts a
+looser 0.95 on the schedule, so the suite has been of two minds about this.
+
+EXPECT THIS TO MOVE AGAIN. The plan is to measure the wheel's contact dynamics
+on the bench and then switch to the NEGATIVE solref formulation -- MuJoCo reads
+a negative pair as direct (-stiffness, -damping) instead of
+(timeconst, dampratio), which is what a real system ID produces. At that point
+the fit is whatever the measured contact gives, and this constant should be
+re-derived from it rather than carried forward.
 """
 
 

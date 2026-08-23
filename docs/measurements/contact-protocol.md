@@ -51,11 +51,26 @@ this model: static penetration falls 3.85x for 1.0 → 0.5 and 10.7x for
 constrains the **product** `timeconst * dampratio`, not `timeconst` alone, so
 it cannot fix either number by itself. The static and drop tests have to be
 solved **jointly**. Concretely: a 4.5 kg reading of "about 1 mm" implies
-`timeconst ≈ 0.0035` if you assume `dampratio 1.0`, and `≈ 0.0075–0.010` at
-the 0.5 the config now ships — a factor of two to three, coming from an
-assumption rather than a measurement.
+`timeconst ≈ 0.0035` if you assume `dampratio 1.0` — which is what the config
+ships — and `≈ 0.0075–0.010` at 0.5, a factor of two to three coming from an
+assumption rather than a measurement. (An earlier version of this said 0.5 was
+shipping. It was tried and reverted; the config has been at 1.0 since.)
 
-**Consider the negative convention before measuring.** MuJoCo reads a negative
+**THE NEGATIVE CONVENTION IS THE PLAN, not an option.** Measure the contact,
+then express it as `solref = (-stiffness, -damping)` rather than fitting the
+`(timeconst, dampratio)` pair. The whole difficulty above — that a static
+reading constrains only the PRODUCT, so the two tests have to be solved jointly
+— is an artefact of the positive parameterisation. A system ID produces
+stiffness and damping directly, and the negative form takes them directly.
+
+Note what this does NOT fix: the LQR's linear fit. `MIN_FIT_R2` was lowered
+0.98 → 0.93 because no dampratio clears the old bar, and the fit gets WORSE as
+the contact gets more realistic (0.9412 at the shipped 1.0, 0.8148 at the ~0.30
+the drop test implies). Switching parameterisation changes how the number is
+expressed, not how nonlinear the contact is. Re-derive `MIN_FIT_R2` from
+whatever the measured contact gives.
+
+**The original note on the convention.** MuJoCo reads a negative
 `solref` as `(-stiffness, -damping)` directly, and its own docs recommend that
 form for system identification. Then the static test gives stiffness, the drop
 test gives damping, and neither contaminates the other — which is the clean
@@ -97,8 +112,8 @@ the target floor material. Measure how far the axle drops relative to
 unloaded. Repeat at 2–3 loads so the curve's shape is visible, not just one
 point — the contact is not linear.
 
-Model predictions below assume `dampratio = 1.0`. At the 0.5 the config now
-ships, the same deflection implies a `timeconst` roughly 2x larger.
+Model predictions below assume `dampratio = 1.0`, which is what the config
+ships. At 0.5 the same deflection implies a `timeconst` roughly 2x larger.
 
 | load | model prediction at `timeconst` = |
 |---|---|
