@@ -483,6 +483,12 @@ version's wire routing is understood.
 
 ## Tooling added
 
+- **`--linkage-config` on teleop, `--stick` on the linkage animation.**
+  `record.py` had the first; teleop was hardcoded to `wing_linkage_locking.yaml`,
+  which is why `config/wing_linkage_w75.yaml` — the 75 mm-envelope variant —
+  could not be looked at in teleop at all. `--stick` overlays the proposed
+  fixed panels on the mechanism video (`wing_linkage_w75_stick.mp4`), with the
+  caveat above about what its 2D model cannot see.
 - **A rear-wheel camera and slow motion in teleop.** `\\` now cycles
   free/follow/overhead/**wheel**; the wheel view is broadside on the rear hub
   at the same 0.45 m standoff as `wheel_slowmo`'s `side` panel, so a teleop
@@ -730,7 +736,7 @@ Two tracks. The sim track does not wait on the build.
 
 **Sim track:**
 
-1. **Point `control.general_move` at `general_rl_smooth_diff_pi`.** That
+1. **Point `control.general_move` at `general_rl_pitch_smooth_diff_pi`.** That
    policy now EXISTS — trained on the armed plant, `survive_rate 1.00` — so
    this is finally a one-line change with a real target rather than a wait.
    Outstanding for four snapshots. Re-export the deploy bundle in the same
@@ -1018,6 +1024,45 @@ two of which also command 180°; the pure-crab rows are **5.9° and 6.3°**.
 Not yet done: `control.general_move` still points at `general_rl`, and the
 deploy bundle has not been re-exported against `dcb067cd1e8fd25f`.
 
+### Then two more, and the isolation says PITCH owns everything
+
+`general_rl_glide_pitch_smooth_pi` (glide + pitch, 5M of 6M) and
+`general_rl_pitch_smooth_diff_pi` (pitch only, 12M), both on the same digest.
+
+The second exists because the first could not be read. It differs from the
+`smooth_diff` baseline in **six** places — `vel_window_s`, `resample_s`,
+`obs_pitch`, `w_pitch`, `v_lat_frac`, `total_timesteps` — so it could not say
+which knob did what. `config/rl_general_pitch_smooth_diff.yaml` is the baseline
+config with `obs_pitch` and `w_pitch` added and nothing else, checked by a
+flattened key diff returning exactly those two.
+
+| | pi (base) | gp (glide+pitch) | **p (pitch only)** |
+|---|---|---|---|
+| head_err_deg | 26.900 | 4.000 | **2.300** |
+| speed_ratio_fwd | 0.690 | 1.012 | **1.004** |
+| crab_head_err | 81.800 | 5.700 | **2.500** |
+| vel_err | 0.123 | 0.252 | **0.141** |
+| drift_m | **0.332** | 1.306 | 1.376 |
+| steer_rest_deg | 21.100 | **6.400** | 24.400 |
+
+**Pitch alone takes every headline win**, beating glide+pitch on all of them:
+heading 26.9 → 2.3°, forward speed ratio 0.69 → 1.00, crab heading 81.8 → 2.5°.
+Glide was not needed for any of it.
+
+**Pitch alone also carries the drift regression**, 1.376 against the 0.332
+baseline. The working assumption was that glide caused it; the isolation says
+otherwise, and it follows — `w_pitch` prices nose-up, and the cheapest way to
+stop pitching under a hold is to keep moving. The drift is FORWARD here and
+reads milder by eye than glide+pitch's. Next knob is `w_pitch` 2.0 → 1.0, not
+tried. Glide's one real contribution is `steer_rest_deg`, 6.4 against 24.4.
+
+**Do not compare `track` / `track_geo` across these three.** For a glide config
+`r_vel` is computed against the WINDOWED velocity, so it measures a different
+quantity — `rl_general_glide.yaml` says so in its own header. `vel_err` is kept
+instantaneous precisely so it stays comparable. `gp`'s crab ratios are also
+incomparable: it carries `v_lat_frac` 0.12 against 0.4, so it was asked for a
+third as much lateral travel.
+
 **None of the numbers above are measured.** `drive_kv 0.016016` is derived from
 the datasheet block, and is a LOWER bound — firmware KVP makes the real loop
 stiffer. `drive_ki 0.6` is the Dynamixel X-series default `KVI/KVP` ratio at an
@@ -1026,6 +1071,89 @@ assumed 1 kHz loop; `0.855` is `Ti = tau_m`. `docs/measurements/servo-protocol.m
 large-step slew matters more than that document implies, because it measures
 `input_armature` — still a `GUESS` at 3.0e-4 — and the whole bandwidth result
 is `tau = J/kv`.
+
+---
+
+## The shove is not a disturbance test
+
+Operationalising the teleop shove against a real event — being hit by a road
+hockey ball — showed the abstract one is calibrated wrong in the direction that
+flatters every policy. Same bike, same hold command:
+
+| disturbance | impulse | duration | roll peak | outcome |
+|---|---|---|---|---|
+| teleop shove, 8 N × 0.35 s | **2.80 N·s** | 350 ms | 2.4° | shrugged off |
+| ball 5 m/s thrown | **0.30 N·s** | 20 ms | 70° | fell |
+
+**A nine-times-smaller impulse knocks the bike over**, because of when it
+arrives: at 200 Hz the controller gets ~70 control periods during the shove and
+fights it the whole way, and ~4 during the impact. To match the shove's impulse
+a 60 g ball would need 129 km/h. Contact is a clean 20 ms with no wedging, and
+the control (hockey model, no disturbance) sits at 2.4° and survives.
+
+`SPACE` in teleop with `--hockey` rolls the ball into a random point along the
+flank. **4.0 m/s is measured, not chosen** — 8 seeds per speed, alternating
+sides: 3.0 → 3.9° 8/8, 3.5 → 4.5° 8/8, **4.0 → 6.2° 8/8**, 4.5 → 60.1° 7/8.
+The cliff is steep, and below 3.0 the roll peak is indistinguishable from an
+undisturbed bike. Tuned against one policy, so a better disturbance rejector
+will move the knee.
+
+**You cannot hit the bike's body.** The chassis box is a pure inertia primitive
+with no collision geometry — a first version aimed at the chassis COM and
+silently never connected at any speed. What the ball can touch is floor,
+training wheels, sticks, front tire, rollers, the wing crank/leg/foot, and now
+the case panels.
+
+Next step is the curriculum, deliberately parked until the params files are
+reconciled: tuning disturbance difficulty against a bike whose CoM is about to
+move is wasted work.
+
+---
+
+## The case sides, and where `bike_params_cad` now stands
+
+The bike gained fixed side panels — two 4 mm ABS plates per side in the stowed
+wing's own plane, which with the wing make one continuous wall. Skirt below,
+upper panel continuing the wing's silhouette rearward, both translucent so the
+rear wheel stays visible in the `wheel` camera. They also replace the hockey
+stick: `_add_hockey` builds the stick only when `case_*` is absent, so
+`bike_params.yaml` keeps `moves/ball_rl.npz` and `tests/test_ball_rl.py`
+working untouched while the CAD file gets the real part.
+
+**`case_gap` 5 mm is not a manufacturing allowance.** The wing's inner-bottom
+corner swings DOWN before clearing the panel band sideways — 26.06 mm from the
+pivot at 38.5° from vertical, leaving the band at z 67.65, i.e. **3.95 mm below
+the stowed underside**. `analysis/wing_linkage.py --stick` reports 0.0 mm and
+is wrong for this: its 2D wing is a LINE at the outer face, so it has no inner
+corner to dip. Trust it for the mechanism, not for panel clearance.
+
+The bumper is retired (commented out, not deleted) — the pads sat at |y| 40–52
+mm, outboard of the 75 mm envelope the case now sets.
+
+**`bike_params_cad.yaml` is now as close to the CAD as it gets without an
+Onshape read-back**, and is still NOT authoritative. Diffed key by key: physics
+is in sync (the actuators block was ported verbatim, comments included);
+**7 keys conflict and every one is the CAD file being better sourced** (AHRS
+mass 12 g `GUESS` → 19 g `datasheet`, pulley offset and steer-servo station
+as-drawn, wing pivot at the belt-clearance station); **nothing is lost** — the
+9 keys unique to the authoritative file are the retired bumper (6) and
+`payload.electronics`, which the CAD file decomposes into pi/u2d2/power_board.
+
+Net effect on what the controllers feel: mass 1.0162 → 1.0232 kg, CoM +5.8 mm
+up and 9.2 mm back. The individual moves largely cancel; it is not a different
+bike.
+
+**The wing-pivot warning was wrong and is retracted.** It said the 75 → 130 mm
+station left the mechanism unverified pending a self-righting re-run. The pivot's
+fore/aft station is not where the wing acts on the ground: the wings are long,
+so the contact point is set by the panel's extent, and moving the pivot in x
+slides the mechanism without moving the footprint that lifts. Re-run for a
+PANEL or pivot-HEIGHT change; not for a fore/aft one.
+
+Switching authority is one line — `DEFAULT_PARAMS` in `params.py` — plus a
+digest move, re-baselining the 115 tests keyed to `bike_params`, and lifting the
+case panels out of the linkage builder so `--hockey` has a striker without
+`--linkage`.
 
 ---
 
