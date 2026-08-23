@@ -678,7 +678,59 @@ def cmd_righting_video(cfg, out: Path, fps: int = 25, seconds: float = 7.0):
     return lk
 
 
-def cmd_video(cfg, out: Path, fps: int = 30, seconds: float = 6.0):
+PANEL_T = 4.0          # mm, ABS sheet -- same stock as the wing plate
+PANEL_CLEAR = 15.0     # mm, ground clearance under the fixed skirt
+
+
+def stick_bands(lk, travel_max: float, n: int = 241):
+    """How high a FIXED side panel may reach before the wing sweeps into it.
+
+    The panel sits in the wing's own plane (outer face at the envelope
+    half-width, `PANEL_T` thick inboard of it). The wing is a line in this
+    y-z section, so for each step of the stroke we ask how low it dips WITHIN
+    that y-band, and the skirt has to stay under the minimum of that.
+
+    Returns (skirt_top_mm, stowed_bottom_mm). The gap between them is the
+    clearance the mechanism needs and is why the fixed panel cannot simply run
+    up to the stowed wing.
+    """
+    y_out = lk.half_span
+    y_in = y_out - PANEL_T
+    lo_z = np.inf
+    for t in np.linspace(0.0, travel_max, n):
+        walk_to(lk, float(t))
+        for tag in ("right", "left"):
+            _, wd = lk.solve(tag, float(t))
+            if wd is None:
+                continue
+            a, b = lk.wing_line(tag, wd)
+            a, b = np.array(a, float), np.array(b, float)
+            # sample the segment; keep the points whose |y| is inside the band
+            for f in np.linspace(0.0, 1.0, 61):
+                q = a + f * (b - a)
+                if y_in - 1e-9 <= abs(q[0]) <= y_out + 1e-9:
+                    lo_z = min(lo_z, q[1])
+    walk_to(lk, 0.0)
+    _, wd0 = lk.solve("left", 0.0)
+    stow_lo = min(lk.wing_line("left", wd0)[0][1], lk.wing_line("left", wd0)[1][1])
+    return float(lo_z), float(stow_lo)
+
+
+def draw_stick(ax, lk, skirt_top: float):
+    """The proposed FIXED panels, in the wing's plane, both sides."""
+    import matplotlib.patches as mp
+    y_out, y_in = lk.half_span, lk.half_span - PANEL_T
+    for side in (-1, 1):
+        y0 = side * y_in if side > 0 else side * y_out
+        ax.add_patch(mp.Rectangle((min(side * y_in, side * y_out), PANEL_CLEAR),
+                                  PANEL_T, max(0.0, skirt_top - PANEL_CLEAR),
+                                  facecolor="#ff9f1c", edgecolor="#b36b00",
+                                  alpha=0.55, zorder=1.5))
+    ax.axhline(skirt_top, color="#b36b00", lw=0.9, ls="--", alpha=0.8, zorder=1.4)
+
+
+def cmd_video(cfg, out: Path, fps: int = 30, seconds: float = 6.0,
+              stick: bool = False):
     """Animate the mechanism deploying and retracting.
 
     Self-contained: this is the 2D kinematic model, not MuJoCo, so it shows
@@ -704,6 +756,15 @@ def cmd_video(cfg, out: Path, fps: int = 30, seconds: float = 6.0):
                                np.linspace(travel, 0, n - half)])
     ts, ar, al = sweep_window(lk)
     _, _, twr, tsr = torque_curve(lk, "right")
+    skirt_top = stow_lo = None
+    if stick:
+        skirt_top, stow_lo = stick_bands(lk, travel)
+        print(f"fixed-skirt clearance, in the wing's own plane "
+              f"(|y| {lk.half_span - PANEL_T:.1f}..{lk.half_span:.1f} mm):")
+        print(f"  wing dips to        {skirt_top:6.1f} mm during the stroke")
+        print(f"  stowed wing bottom  {stow_lo:6.1f} mm")
+        print(f"  -> skirt may reach  {skirt_top:6.1f} mm; the open band it "
+              f"cannot cover is {stow_lo - skirt_top:.1f} mm tall")
 
     out.parent.mkdir(parents=True, exist_ok=True)
     writer = imageio.get_writer(out, fps=fps, macro_block_size=1)
@@ -718,6 +779,8 @@ def cmd_video(cfg, out: Path, fps: int = 30, seconds: float = 6.0):
             ax.plot([lk.pivot(side)[0], lk.servo[0]],
                     [lk.pivot(side)[1], lk.servo[1]], ls=":", lw=1.1,
                     color="0.5", zorder=1)
+        if stick:
+            draw_stick(ax, lk, skirt_top)
         ax.axhline(0, color="k", lw=2)
         ax.set_aspect("equal"); ax.grid(alpha=0.25)
         ax.set_xlim(-lim, lim); ax.set_ylim(-25, lk.wing_top + 45)
@@ -1472,6 +1535,10 @@ def main() -> None:
                     help="animate deploy + retract (2D, self-contained)")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--seconds", type=float, default=6.0)
+    ap.add_argument("--stick", action="store_true",
+                    help="overlay the proposed FIXED side panels and report "
+                         "how high they may reach before the deploying wing "
+                         "sweeps into them")
     ap.add_argument("--panels", action="store_true",
                     help="stowed and deployed side by side, with a turn marker")
     ap.add_argument("--torque", action="store_true",
@@ -1541,7 +1608,7 @@ def main() -> None:
         return
     if a.video:
         cmd_video(cfg, default_out("wing_linkage", "mp4"),
-                  a.fps, a.seconds)
+                  a.fps, a.seconds, stick=a.stick)
         return
     if a.panels:
         cmd_panels(cfg, default_out("wing_linkage_panels", "png"))
