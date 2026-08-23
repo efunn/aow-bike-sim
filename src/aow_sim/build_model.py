@@ -275,21 +275,32 @@ def _add_hockey(spec: mujoco.MjSpec, chassis, p: dict) -> None:
     ball<->{floor,stick,wheels} and stick<->{floor,ball} while leaving the bike's
     own dynamic geoms non-self-colliding (see the *_CONTYPE/_CONAFF constants)."""
     hk, sim = p["hockey"], p["sim"]
-    st = hk["stick"]
-    for side, tag in ((1, "left"), (-1, "right")):
-        px, py, pz = st["pos"]
-        chassis.add_geom(
-            name=f"stick_{tag}",
-            type=mujoco.mjtGeom.mjGEOM_BOX,
-            size=[st["length"] / 2, st["thickness"] / 2, st["height"] / 2],
-            pos=[px, side * py, pz],
-            mass=st["mass"],
-            contype=STICK_CONTYPE,
-            conaffinity=STICK_CONAFF,
-            condim=sim["condim"],
-            friction=_contact_friction(sim),
-            rgba=[0.8, 0.5, 0.1, 0.35],   # translucent, for sim visibility
-        )
+    # THE STICK IS BUILT ONLY IF THE CASE SIDES ARE NOT. They are the same part
+    # in the real bike -- 4 mm ABS panels down each side -- and the stick was
+    # always a stand-in for a case that did not exist yet. Where `case_*` is
+    # configured, those panels ARE the striking surface (contype 2, which the
+    # ball's conaffinity already sees), and a second translucent slab at a
+    # different station would only get in the way of the ball.
+    #
+    # Falling back keeps bike_params.yaml, moves/ball_rl.npz and
+    # tests/test_ball_rl.py working exactly as before, since that file has no
+    # `case_*` keys.
+    if "case_thickness" not in p["righting"]["wings"]:
+        st = hk["stick"]
+        for side, tag in ((1, "left"), (-1, "right")):
+            px, py, pz = st["pos"]
+            chassis.add_geom(
+                name=f"stick_{tag}",
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=[st["length"] / 2, st["thickness"] / 2, st["height"] / 2],
+                pos=[px, side * py, pz],
+                mass=st["mass"],
+                contype=STICK_CONTYPE,
+                conaffinity=STICK_CONAFF,
+                condim=sim["condim"],
+                friction=_contact_friction(sim),
+                rgba=[0.8, 0.5, 0.1, 0.35],   # translucent, for sim visibility
+            )
 
     ball = hk["ball"]
     body = spec.worldbody.add_body(name="ball", pos=[ball["start"][0],
@@ -521,6 +532,64 @@ def derive_linkage_roof(p: dict, cfg: dict) -> dict:
     }
 
 
+def _add_case_sides(chassis, p: dict, plate_pos, plate_half, sim: dict) -> None:
+    """The two FIXED plates per side that, with the stowed wing, close the wall.
+
+    `plate_pos` / `plate_half` are the stowed wing plate's centre and
+    half-extents in CHASSIS coordinates -- the case is defined off the wing
+    rather than from its own numbers, so the three pieces cannot drift out of
+    plane with each other.
+
+    Skipped entirely when the `case_*` keys are absent, which is what keeps
+    bike_params.yaml building unchanged.
+    """
+    w = p["righting"]["wings"]
+    if "case_thickness" not in w:
+        return
+    th = w["case_thickness"]
+    clear = w["case_clearance"] - p["omni_wheel"]["outer_radius"]   # -> axle frame
+    rear_x = w["case_rear_x"]
+    gap = w.get("case_gap", 0.0)
+    m_each = w.get("case_mass", 0.015) / 2.0
+    px, py, pz = plate_pos
+    hx, _, hz = plate_half
+    wing_lo, wing_front = pz - hz, px - hx
+
+    for side in (1, -1):
+        y = side * abs(py)
+        # SKIRT: everything below the stowed wing, running the FULL length of
+        # the case -- from `case_rear_x` forward to the wing's trailing edge --
+        # not just the wing's own station. Below the wing there is nothing to
+        # clear, so there is no reason to stop where the wing starts.
+        skirt_front = px + hx
+        if wing_lo > clear and skirt_front > rear_x:
+            chassis.add_geom(
+                name=f"case_skirt_{'left' if side > 0 else 'right'}",
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=[(skirt_front - rear_x) / 2, th / 2,
+                      (wing_lo - gap - clear) / 2],
+                pos=[(skirt_front + rear_x) / 2, y, (wing_lo - gap + clear) / 2],
+                mass=m_each, contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
+                condim=sim["condim"], friction=_contact_friction(sim),
+                # Translucent: these panels sit directly between the camera and
+                # the rear wheel in the `wheel` view, and the wheel is the whole
+                # reason that view exists.
+                rgba=[0.30, 0.32, 0.38, 0.30])
+        # UPPER: the wing's silhouette continued rearward.
+        if wing_front > rear_x:
+            chassis.add_geom(
+                name=f"case_upper_{'left' if side > 0 else 'right'}",
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=[(wing_front - gap - rear_x) / 2, th / 2, hz],
+                pos=[(wing_front - gap + rear_x) / 2, y, pz],
+                mass=m_each, contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
+                condim=sim["condim"], friction=_contact_friction(sim),
+                # Translucent: these panels sit directly between the camera and
+                # the rear wheel in the `wheel` view, and the wheel is the whole
+                # reason that view exists.
+                rgba=[0.30, 0.32, 0.38, 0.30])
+
+
 def _add_wing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
     """The four-bar wing mechanism (docs/plans/wing-linkage-design-and-optimization.md).
 
@@ -631,6 +700,17 @@ def _add_wing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
             mass=w_ref["mass"], contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
             condim=sim["condim"], friction=_contact_friction(sim),
             rgba=[0.85, 0.2, 0.2, 1] if side < 0 else [0.2, 0.4, 0.8, 1])
+        if side > 0:      # once, off the left plate; the right is its mirror
+            # px is the linkage STATION; panel_offset_x is relative to it.
+            # The wing geom carries the offset because it lives in the wing
+            # body, but the case plates hang off the CHASSIS and need the
+            # absolute station -- getting this wrong put the skirt 145 mm
+            # behind the wing and silently dropped the upper panel.
+            _add_case_sides(chassis, p,
+                            (px + w_ref.get("panel_offset_x", 0.0),
+                             side * pivot_y + float(lo[0]) - side * th / 2,
+                             float(lo[1] + hi[1]) / 2),
+                            (plate_x / 2, th / 2, float(hi[1] - lo[1]) / 2), sim)
         att_local = attach0[tag] - np.array([side * pivot_y, pivot_z])
         wing.add_site(name=f"wing_{tag}_attach",
                       pos=[0.0, att_local[0], att_local[1]], size=[0.003, 0, 0])
