@@ -555,39 +555,66 @@ version's wire routing is understood.
 
 ---
 
-## Health: the LQR layer is knowingly red
+## Health: the LQR is marginally functional again
 
-`pytest` at HEAD: **37 failed, 188 passed, 2 skipped, 10 errors** in 139 s
-serial, or **~30 s** with `pytest -n 8 --dist load`. Was 7 failed / 217 passed
-/ 2 skipped before the drive plant was armed on 2026-08-21; the passed count
-has since risen 182 → 188 as tests were added for the new tooling, with no new
-failures.
+`pytest` at HEAD: **27 failed, 208 passed, 2 skipped, 0 errors**, ~32 s with
+`pytest -n 8 --dist load`. The arc this session:
+
+| | red | passed | |
+|---|---|---|---|
+| before the servo plant moved | 7 | 217 | the accepted trajopt set only |
+| after arming `drive_ki: 0.6` | **47** | 188 | 37 failed + 10 errors, all LQR |
+| after `q_roll_rate` 30, `q_steer` 5.0 | 28 | 207 | errors gone entirely |
+| after `MIN_FIT_R2` 0.98 → 0.93 | **27** | 208 | |
+
+**Two weights recovered 19 of the 20 tests that arming cost**, and the LQR now
+holds the bike at standstill at 1.17° peak roll over 40 s. Remaining:
 
 | file | red | what it is |
 |---|---|---|
-| `test_drive.py` | 19 | 7 trajopt (the old accepted set) + 12 gain-schedule/circle/heading |
-| `test_hw_odometry.py` | 12 | 2 failed + 10 errors, all downstream of the schedule |
-| `test_balance.py` | 8 | the LQR balance controller |
-| `test_pivot.py` | 4 | pivots run on the scheduled LQR |
-| `test_teleop.py` | 3 | teleop's analytic modes |
-| `test_hw_replay.py` | 1 | stale `deploy/bundle.npz` — run `python -m aow_sim.export_deploy` |
+| `test_drive.py` | 15 | 7 trajopt (the accepted set) + 8 moving cases |
+| `test_hw_odometry.py` | 7 | were 10 ERRORs; now 5 pass, 5 fail on assertions |
+| `test_teleop.py` | 2 | analytic modes |
+| `test_balance.py` | 2 | |
+| `test_hw_replay.py` | 1 | stale `deploy/bundle.npz` — one `export_deploy` away |
 
-**Only 7 of those 47 are the previously accepted set** (the trajopt `flick` /
-`flip` moves, still queued for re-authoring once the as-built mass is known).
-Everything else arrived with `drive_ki: 0.6`, and every one of them is in the
-LQR layer: the gain schedule identifies at worst R² 0.941 against the 0.98
-floor, and controllers designed on that fit fall over. **Every bare-plant test
-in `test_model.py` passes**, so this is the reference baseline being broken, not
-the physics — which is the one place the project can afford it, since RL is what
-drives and LQR is the comparison.
+**The diagnosis was not what it looked like.** The symptom was a slow
+oscillation ending in a fall; the cause was the **steer angle pinned at the
+`steer_limit_deg` clamp 86% of the time**, bang-banging between ±15.7° rather
+than steering. Roll followed at ~1° while yaw ratcheted away (1.6° → −16.6°
+over 11 s) because the bang-bang is not symmetric. The clamp exists to keep
+steering inside the region the model was identified in, so sitting on it meant
+the design was running outside its own assumptions. `q_steer` 0.5 → 5.0 prices
+the steer ANGLE and pulls the command back inside: saturation 86% → 31%, peak
+roll 60° → 1.17°.
 
-**They are deliberately NOT in `tests/expected_failures.txt`.** They are not an
-accepted cost; they are the visible price of arming a change whose
-identification half is unsolved, and registering ~47 nodeids would convert an
-open blocker into a background fact nobody looks at again. The registry will
-shout `NEWLY RED` on every run until the identification is fixed or the plant is
-disarmed. That is the intended behaviour. If it ever needs silencing, the entry
-should say exactly that and carry a date — not name 47 tests individually.
+Separately, `q_roll_rate` 6.0 → 30.0 was needed because the velocity-PI servo
+puts a pole at the origin in the actuator — 90° of phase the 8-state model does
+not carry. **De-tuning does not substitute**: `r_drive` swept 0.05 → 5000, a
+100000× range, falls at every value. Only the rate weight supplies the damping.
+Neither old weight had a recorded rationale; both were original tuning against
+a plant with no actuator dynamics at all.
+
+**`MIN_FIT_R2` 0.98 → 0.93, and the bar was the thing that was wrong.** Nothing
+ever cleared 0.98 — not the current plant (0.9412), not the servo without its
+integral term (0.9757), not the pre-PI plant (0.9727). Worse, the fit improves
+as the contact gets LESS like the hardware:
+
+| `contact_solref` dampratio | 0.3 | 0.5 | **1.0 (ships)** | 2.0 |
+|---|---|---|---|---|
+| worst R² | 0.8148 | 0.9297 | **0.9412** | 0.9602 |
+
+`contact-protocol.md` §P1 records the real wheel bouncing 2–3 times, implying
+dampratio ~0.30 — the worst-fitting value. So there is no setting that is both
+faithful and well-fitting, and raising the damping to recover the number buys
+it by making the simulator wrong. Expect the bar to move again once the contact
+is measured and re-expressed in the negative `(-stiffness, -damping)` form;
+re-derive it from the measurement rather than carrying 0.93 forward.
+
+**The remaining red is deliberately NOT in `tests/expected_failures.txt`.** The
+7 trajopt failures are the long-standing accepted set; the other 20 are open
+work, and registering them would convert an open problem into a background fact
+nobody looks at again.
 
 **Run it in parallel.** 81% of the suite's wall time is inside MuJoCo C
 (`mj_step` 56 s, `mj_forward` 4.6 s, against 13.5 s of Python, cProfile over
@@ -966,102 +993,33 @@ unbounded hidden input. Cost when it leaks: worst gain-schedule fit R² 0.9727 �
 **0.7543**. All five now call `build_model.reset_actuator_state`, which is a
 no-op at `na = 0`; that recovers **0.9412**.
 
-**OUTSTANDING, and it is the cost being paid to keep this armed.** 0.9412 is
-under the 0.98 floor, and with gains designed on that fit the LQR layer falls
-over — the 37 failed + 10 errors in the health section above. Every bare-plant
-test in `test_model.py` passes throughout, so this is the reference baseline,
-not the physics; that is what made arming affordable rather than reckless, RL
-being what actually drives. It is still a real debt, not a shrug. The
-residual is the genuine hidden-state problem: the integrator is a state the
-8-state lateral model has nowhere to put. **A missing intercept was tested as
-the explanation and disproved** — adding a constant column to the regression
-changes the fit by nothing at all. Nor is a 9th LQR state the answer: on
-hardware that integral lives inside Dynamixel firmware and the Pi cannot
-observe it, so an LQR designed on it would use a signal the bike does not have.
+**RESOLVED 2026-08-22 — it was two weights, not the identification.** This
+section previously said the fit shortfall was the cost of keeping the plant
+armed, and that the LQR layer would stay red until the identification problem
+was solved. It did not need solving. Two LQR weights recovered 19 of the 20
+tests arming had cost:
 
-So the open question is how to identify a plant whose actuator carries memory
-the controller cannot see — not a parameter, and not yet solved.
-`analysis/wheel_slowmo.py --drive-tau` predates all of this and now
-double-counts the bandwidth; prefer overriding `drive_kv`/`drive_ki`.
+  * `q_roll_rate` 6.0 → **30.0**. The integrator puts a pole at the origin in
+    the actuator — 90° of phase the 8-state model does not carry — and at 6.0
+    the LQR could not hold the bike at all. The DROOP alone is fine at 6.0, so
+    it is specifically the integral term. De-tuning does not substitute:
+    `r_drive` swept over a 100000× range falls at every value.
+  * `q_steer` 0.5 → **5.0**. The steer was pinned at its clamp 86% of the time,
+    which read as a slow oscillation and was really a saturated actuator.
 
-### The retrain landed: `general_rl_smooth_diff_pi`
+The 0.9412 fit is real and unchanged, but it was never the thing breaking the
+controller. `MIN_FIT_R2` moved 0.98 → 0.93 to stop asking for a number no
+configuration has ever reached — see the Health section for the dampratio
+sweep, and note the fit gets WORSE as the contact gets more realistic.
 
-`config/rl_general_smooth_diff.yaml` on the armed plant, 12M budget, exported
-from `best_model.zip` at 11M, digest `dcb067cd1e8fd25f`, `survive_rate 1.00`.
-**The first policy in `moves/` trained under the current physics** — every
-other export predates either the 4e-4 timestep move or the plant arming.
-
-Judged with `analysis/liftoff.py` rather than the airborne-% columns, which its
-own docstring supersedes: binary is-it-touching counts the omni's ~0.6 mm
-envelope ripple identically to a real hop. Both policies on the armed plant,
-15 s per command:
-
-| gap [mm], hold | og p99 / max / >1mm | pi p99 / max / >1mm |
-|---|---|---|
-| rear | 0.71 / 1.08 / 0.4% | **0.24 / 0.49 / 0.0%** |
-| front | 5.38 / 10.23 / 7.9% | **2.89 / 5.70 / 4.7%** |
-| front, left crab | 11.16 / 19.04 / 10.1% | **1.53 / 4.90 / 1.5%** |
-
-The rear never leaves the floor — not "less hopping", none, at below
-envelope-ripple scale. Pitch sd on hold 0.32° → 0.17°; on crab 0.58° → 0.13°
-with max 5.36° → 1.26°. Rim past the contact over a 15 s hold, 3.25 → 2.02 m.
-
-Two honest qualifications. The reversal COUNT rose (9.1 → 19.5 /s) while rim
-per reversal collapsed 24 mm → 6.9 mm: it makes many small corrections instead
-of a few large ones, and the count on its own is a misleading headline. And it
-is livelier off the line — front gap max 35 → 53 mm, pitch max 10.1° → 15.4°,
-with `corr` 0.999, so a genuine wheelie rather than a hop.
-
-**`head_err_deg` 4.3 → 26.9 is an artifact of three eval rows, not a
-regression.** Decomposed: 17 of 20 commands average **3.0°, max 6.3°** — better
-than og's 4.3° overall. The other three all combine forward speed with a 180°
-heading command, where the policy drives BACKWARD (`speed_ratio_rev` 0.992)
-instead of turning, which achieves the commanded world-frame velocity without
-rotating. A 180° turn from standstill is fine at 2.4°. `crab_head_err` 81.8 is
-the same artifact twice over: it is the mean over rows with non-zero `v_lat`,
-two of which also command 180°; the pure-crab rows are **5.9° and 6.3°**.
-
-Not yet done: `control.general_move` still points at `general_rl`, and the
-deploy bundle has not been re-exported against `dcb067cd1e8fd25f`.
-
-### Then two more, and the isolation says PITCH owns everything
-
-`general_rl_glide_pitch_smooth_pi` (glide + pitch, 5M of 6M) and
-`general_rl_pitch_smooth_diff_pi` (pitch only, 12M), both on the same digest.
-
-The second exists because the first could not be read. It differs from the
-`smooth_diff` baseline in **six** places — `vel_window_s`, `resample_s`,
-`obs_pitch`, `w_pitch`, `v_lat_frac`, `total_timesteps` — so it could not say
-which knob did what. `config/rl_general_pitch_smooth_diff.yaml` is the baseline
-config with `obs_pitch` and `w_pitch` added and nothing else, checked by a
-flattened key diff returning exactly those two.
-
-| | pi (base) | gp (glide+pitch) | **p (pitch only)** |
-|---|---|---|---|
-| head_err_deg | 26.900 | 4.000 | **2.300** |
-| speed_ratio_fwd | 0.690 | 1.012 | **1.004** |
-| crab_head_err | 81.800 | 5.700 | **2.500** |
-| vel_err | 0.123 | 0.252 | **0.141** |
-| drift_m | **0.332** | 1.306 | 1.376 |
-| steer_rest_deg | 21.100 | **6.400** | 24.400 |
-
-**Pitch alone takes every headline win**, beating glide+pitch on all of them:
-heading 26.9 → 2.3°, forward speed ratio 0.69 → 1.00, crab heading 81.8 → 2.5°.
-Glide was not needed for any of it.
-
-**Pitch alone also carries the drift regression**, 1.376 against the 0.332
-baseline. The working assumption was that glide caused it; the isolation says
-otherwise, and it follows — `w_pitch` prices nose-up, and the cheapest way to
-stop pitching under a hold is to keep moving. The drift is FORWARD here and
-reads milder by eye than glide+pitch's. Next knob is `w_pitch` 2.0 → 1.0, not
-tried. Glide's one real contribution is `steer_rest_deg`, 6.4 against 24.4.
-
-**Do not compare `track` / `track_geo` across these three.** For a glide config
-`r_vel` is computed against the WINDOWED velocity, so it measures a different
-quantity — `rl_general_glide.yaml` says so in its own header. `vel_err` is kept
-instantaneous precisely so it stays comparable. `gp`'s crab ratios are also
-incomparable: it carries `v_lat_frac` 0.12 against 0.4, so it was asked for a
-third as much lateral travel.
+**The shadow-integrator idea is shelved, and one measurement is why.** The
+reconstructed state was worth considering — the Pi commands `ω_cmd` and
+`hw/dynamixel.py` already reads `Present Velocity`, so `∫(ω_cmd − ω_meas)dt`
+needs no new sensor. But `act` has **sd 0.0 across identification rollouts**
+(that is `reset_actuator_state` working), and a zero-variance regressor is
+rank-deficient: adding the state to the identification cannot move R² by
+construction. If it is ever built, the protocol must randomise initial `act` to
+excite it, or the 9th column of `B` is fitted noise.
 
 **None of the numbers above are measured.** `drive_kv 0.016016` is derived from
 the datasheet block, and is a LOWER bound — firmware KVP makes the real loop
