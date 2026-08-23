@@ -7,6 +7,27 @@
 # authoritative until the CAD is settled, at which point THIS file becomes the
 # authoritative one and the old one is retired.
 #
+# HOW CLOSE IS IT, as of 2026-08-22. Diffed key by key against the
+# authoritative file:
+#   * PHYSICS IS IN SYNC. sim.*, the drivetrain masses/ratios/armature and the
+#     servo torque/speed figures are identical, and the actuators block was
+#     ported here verbatim (comments included) when the drive servo gained its
+#     PI loop -- two files holding the same number with different reasoning is
+#     how they drift back apart.
+#   * 7 keys CONFLICT, and every one is this file being better sourced: the
+#     AHRS mass moves 12 g GUESS -> 19 g datasheet, the pulley offset and the
+#     steer-servo station become as-drawn, the wing pivot takes the
+#     belt-clearance station.
+#   * NOTHING IS LOST. The 9 keys that exist only in the other file are the
+#     retired bumper (6) and `payload.electronics`, which this file DECOMPOSES
+#     into pi / u2d2 / power_board (3). Both are deliberate.
+#   * Net effect on the bulk properties, which is what the controllers feel:
+#     mass 1.0162 -> 1.0232 kg, CoM +5.8 mm up and 9.2 mm back. The individual
+#     moves largely cancel; this is not a different bike.
+# The servo placements here are the TENTATIVE CAD stacking (servos over each
+# other, which is what affords the narrow layout), not a read-back from
+# Onshape.
+#
 # Read by:  python -m aow_sim.cad_layout        (defaults to this file)
 #
 # NEVER pass this to `export_deploy`. `params_digest` hashes the whole
@@ -615,9 +636,43 @@ servos:
     pos: [0.165709, 0.0, 0.097798]
 
 actuators:
-  drive_kv: 0.5        # velocity-servo gain at the input shafts (placeholder for Dynamixel velocity PI)
+  # Drive velocity servo, both gains AT THE INPUT SHAFTS (i.e. after
+  # belt_ratio, so divide a servo-output measurement by belt_ratio^2):
+  #
+  #   force = drive_ki * integral(ctrl - w) dt  -  drive_kv * w
+  #
+  # drive_kv on its own is a bare-motor droop line, and the derived value is
+  # stall_torque / no_load_speed / belt_ratio^2 = 1.6 / 11.098 / 9 = 0.016016.
+  # At that value the affine actuator reproduces the whole torque-speed line
+  # by itself (max force at max command = 0.5333 = stall_torque / belt_ratio
+  # exactly), and the bandwidth comes with it for free: input_armature / kv =
+  # 18.7 ms, which IS the motor's own electromechanical time constant. The
+  # "31x too stiff" and "31x too fast" defects in
+  # docs/plans/aow-contact-approximations.md section 6b are one number, not two --
+  # a separate drive_tau knob would double-count and is deliberately absent.
+  #
+  # drive_ki is the firmware's integral term, and it is what holds position
+  # against back-drive; drive_kv alone is open-loop voltage control and the
+  # bike cannot hold station on it.
+  #
+  # BOTH ARE STILL THE PLACEHOLDER PLANT. 0.5 / 0.0 is P-only and 31x
+  # over-capable, and every general_rl* policy has learned to use capability
+  # the hardware does not have. Do not promote the derived numbers by guess:
+  # docs/measurements/servo-protocol.md section 4 measures the real stiffness
+  # and the real integral time, and section 6 maps them onto the model form.
+  # Best guesses if you want to explore first: kv 0.016016, ki 0.6 (Dynamixel
+  # X-series default KVI/KVP at a 1 kHz loop) to 0.855 (Ti = tau_m).
+  # ARMED 2026-08-21. kv is the derived bare-motor droop, not a measurement --
+  # and it is a LOWER bound, because firmware KVP makes the real loop stiffer.
+  # ki 0.6 is the Dynamixel X-series default KVI/KVP ratio at an assumed 1 kHz
+  # firmware loop; the assumed loop period is the shakiest link in it, and
+  # servo-protocol.md §4's settling_time_s measures Ti (= kv/ki) directly.
+  # Both are `GUESS` in spirit; replace them with §4, do not refine by feel.
+  drive_kv: 0.016016   # was 0.5 (placeholder). = stall_torque/no_load/belt^2
+  drive_ki: 0.6        # was 0.0 (P-only). Ti = kv/ki = 26.7 ms
   steer_kp: 2.0        # position-servo gains at the steer joint
   steer_kv: 0.05
+
 
 control:
   # Balance controller settings (tuning knobs, not measurements).
@@ -789,30 +844,36 @@ righting:
     #     python analysis/self_righting.py invert --wings
     #     python analysis/self_righting.py rest   --wings
     mass: {value: 0.045, source: design}    # shell only -- see the CoG note above
-  bumper:
-    # Side geometry that sets the resting attitude: a short capsule pad per
-    # side, sitting just proud of the drive servo it protects.
-    #
-    # The counter-intuitive result from `self_righting.py profile --sweep` and
-    # `rest`: the bare bike ALREADY settles on its side at 90.2 deg roll /
-    # 10.3 deg pitch with zero spread over every fall tried, and every wide or
-    # tall outrigger made that WORSE, not better. Rails at 60-75 mm half-span
-    # and 100-130 mm height give the inverted bike a stable stance and it ends
-    # up on its back roughly a quarter of the time (rest spread 65-115 deg).
-    # A tall narrow rail is a fulcrum, not a stop.
-    #
-    # So the pad is deliberately minimal: barely outboard of the drive servo
-    # (whose outer face is at y = 44.25 mm) and only as long as the servo, so
-    # it takes the load the servo case is currently taking without changing
-    # the energy landscape that already works. Measured spread over the same
-    # eight falls: 0.0 deg, resting at 99.6 deg roll / 10.2 deg pitch, and
-    # independent of the steer angle at the moment of the fall.
-    half_span: {value: 0.046, source: design}   # pad axis; servo face is at 0.04425
-    height: {value: 0.050, source: design}      # pad axis height above the rear axle
-    x_start: {value: 0.026, source: design}     # spans the drive servos (x = 0.045)
-    x_end: {value: 0.064, source: design}
-    radius: {value: 0.006, source: design}
-    mass: {value: 0.010, source: design}        # per side
+  # BUMPER RETIRED 2026-08-22. The pads sat at |y| 40-52 mm, OUTBOARD of the
+  # 75 mm envelope the case now sets (|y| <= 37.5), so they were the widest
+  # thing on the bike and read as misplaced in teleop. `righting=True` adds
+  # only what is PRESENT, so commenting the block out removes them cleanly.
+  # The rest-attitude findings that justified them are still in the text
+  # below -- restore the block if the case sides turn out not to do the job.
+  # bumper:
+  #   # Side geometry that sets the resting attitude: a short capsule pad per
+  #   # side, sitting just proud of the drive servo it protects.
+  #   #
+  #   # The counter-intuitive result from `self_righting.py profile --sweep` and
+  #   # `rest`: the bare bike ALREADY settles on its side at 90.2 deg roll /
+  #   # 10.3 deg pitch with zero spread over every fall tried, and every wide or
+  #   # tall outrigger made that WORSE, not better. Rails at 60-75 mm half-span
+  #   # and 100-130 mm height give the inverted bike a stable stance and it ends
+  #   # up on its back roughly a quarter of the time (rest spread 65-115 deg).
+  #   # A tall narrow rail is a fulcrum, not a stop.
+  #   #
+  #   # So the pad is deliberately minimal: barely outboard of the drive servo
+  #   # (whose outer face is at y = 44.25 mm) and only as long as the servo, so
+  #   # it takes the load the servo case is currently taking without changing
+  #   # the energy landscape that already works. Measured spread over the same
+  #   # eight falls: 0.0 deg, resting at 99.6 deg roll / 10.2 deg pitch, and
+  #   # independent of the steer angle at the moment of the fall.
+  #   half_span: {value: 0.046, source: design}   # pad axis; servo face is at 0.04425
+  #   height: {value: 0.050, source: design}      # pad axis height above the rear axle
+  #   x_start: {value: 0.026, source: design}     # spans the drive servos (x = 0.045)
+  #   x_end: {value: 0.064, source: design}
+  #   radius: {value: 0.006, source: design}
+  #   mass: {value: 0.010, source: design}        # per side
   arm:
     # The righting arm: ONE extra XC330-T181 swinging a single arm through
     # +-180 deg about a fore/aft axis, so the same arm reaches the floor on
@@ -882,9 +943,16 @@ righting:
     # dropping `drive_servo_angle_deg` swings the lower belt further forward
     # and pushes this station out with it.
     #
-    # VISUAL/PACKAGING ONLY so far — the self-righting study
-    # was optimised at 75 and has NOT been re-run, so treat the mechanism's
-    # performance as unverified at this station:
+    # RESOLVED 2026-08-22: this station does NOT need the self-righting study
+    # re-run. An earlier note here said it did, and treated the move from 75 to
+    # 130 as leaving the mechanism unverified. It does not, because the pivot's
+    # fore/aft station is not where the wing acts on the ground: the wings are
+    # long, so the contact point is set by the PANEL's extent, not by the
+    # pivot, and moving the pivot in x slides the mechanism without moving the
+    # footprint that does the lifting. The study has been run many times, and
+    # the wings recover from ~30 deg rolls comfortably enough to act as a
+    # crutch. Re-run these if the PANEL or the pivot HEIGHT changes -- those do
+    # move the footprint -- but not for a fore/aft station change:
     #     python analysis/self_righting.py invert --wings
     #     python analysis/self_righting.py rest   --wings
     pivot: {value: [0.130, 0.030, 0.0], source: design}  # [x, |y|, z]; mirrored in y
@@ -970,6 +1038,38 @@ righting:
     panel_thickness: {value: 0.004, source: design}   # ABS sheet, as `hockey.stick`
     panel_length_x: {value: 0.090, source: design}    # fore/aft extent
     panel_offset_x: {value: -0.025, source: design}   # centre, rearward of the linkage
+    # --- FIXED CASE SIDES, CAD only. Two plates per side in the WING'S OWN
+    # PLANE, so together with the stowed wing they make one continuous wall.
+    # They do not move: this is the case, not the mechanism.
+    #
+    #   skirt  below the stowed wing, from `case_clearance` up to the wing's
+    #          underside. It can go the whole way: the wing pivot sits INBOARD
+    #          of this plane, so deploying swings the wing OUT of the plane
+    #          rather than down through it -- at 10 deg of travel the lower
+    #          corner is already outboard of the panel. Measured clearance is
+    #          0.0 mm of uncoverable band:
+    #              python analysis/wing_linkage.py --config <linkage> --video --stick
+    #   upper  the wing's silhouette continued REARWARD, from the wing's
+    #          leading edge back to `case_rear_x`. Unconstrained, because the
+    #          hinge axis is X: the wing can never reach behind its own
+    #          station.
+    #
+    # Both are omitted entirely if these keys are absent, so bike_params.yaml
+    # builds exactly as before and its params_digest does not move.
+    case_thickness: {value: 0.004, source: design}   # ABS sheet, as the wing panel
+    case_clearance: {value: 0.030, source: GUESS}    # skirt underside above the floor
+    case_rear_x:    {value: -0.020, source: design}  # rearmost x of BOTH panels
+    case_mass:      {value: 0.015, source: design}   # PER SIDE, both plates
+    # Panel gap, and it is NOT just a manufacturing allowance -- the skirt
+    # needs it. As the wing deploys, its INNER-BOTTOM corner swings down before
+    # it clears the panel band sideways: that corner sits 26.06 mm from the
+    # pivot at 38.5 deg from vertical, and it leaves the band (|y| 37.5) at
+    # z = 67.65, i.e. 3.95 mm BELOW the stowed underside. 5 mm covers it.
+    #
+    # analysis/wing_linkage.py --stick reports 0.0 mm here and is WRONG for
+    # this: its 2D model is a LINE at the outer face, so it has no inner corner
+    # to dip. Trust it for the mechanism, not for panel clearance.
+    case_gap:       {value: 0.005, source: design}
     servo_mass: {value: 0.023, source: datasheet}  # the extra XC330-T181
     gearbox_mass: {value: 0.015, source: design}   # the gear train itself
     stow_deg: {value: 0.0, source: design}
