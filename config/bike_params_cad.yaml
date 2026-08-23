@@ -107,25 +107,32 @@ sim:
   # radius) into the floor while holding station. Penetration scales with the
   # square of the time constant, so this is ~16x stiffer. Raise it back toward
   # 0.02 if the solver starts complaining rather than to soften a contact.
-  # Damping ratio 0.5 (underdamped) was picked from teleop feel plus the slowmo
-  # contact study, NOT from a physical measurement -- nail it down with real
-  # bounce/settle tests when the hardware exists.
+  # SHIPS AT DAMPING 1.0 -- critical, so it cannot bounce. That is known to be
+  # wrong: contact-protocol.md P1 recorded the real wheel bouncing 2-3 times,
+  # which implies dampratio ~0.30. 0.5 was tried (picked from teleop feel plus
+  # the slowmo study, never measured) and reverted.
   #
-  # KNOWN CONSEQUENCE, accepted deliberately: at 0.5 the identified lateral
-  # model degrades (worst R^2 0.861 at -0.50 m/s, vs >=0.975 everywhere at 1.0),
-  # so the LQR gain schedule is designed against a plant its own linearity
-  # assumption is measurably violated on. That is fine for now -- the LQR is a
-  # REFERENCE baseline for "the standard modern control approach", not a
-  # controller we drive with, and the RL policy never touches it. It is left
-  # crappy on purpose until the mechanical design settles.
+  # THE FIT GETS WORSE AS THE CONTACT GETS MORE REALISTIC. Measured 2026-08-22,
+  # worst channel over the nine-speed LQR schedule:
   #
-  # Currently back at damping 1.0, where the fit is healthy (worst R^2 0.9893)
-  # -- but the underdamped model is expected to return, so the guard stays:
-  # control/linearize.py warns on every design whose fit drops under
-  # MIN_FIT_R2, and test_lqr_model_fit_and_steering fails outright. It is NOT
-  # xfailed, on purpose: a non-strict xfail would report the regression as a
-  # green run. When damping goes back down, expect both to fire, and re-tune
-  # the control.lqr weights rather than silencing either.
+  #     dampratio    0.3      0.5      1.0 (this)     2.0
+  #     worst R^2   0.8148   0.9297     0.9412       0.9602
+  #
+  # Monotonic. So there is no setting that is both faithful and well-fitting,
+  # and MIN_FIT_R2 was lowered 0.98 -> 0.93 to stop asking for one; see the
+  # rationale on that constant in control/linearize.py. Do NOT raise the
+  # damping to recover the number -- that buys it by making the simulator less
+  # like the bike.
+  #
+  # Supersedes an earlier note here claiming 0.861 at dampratio 0.5, >=0.975 at
+  # 1.0, and 0.9893 currently. All three predate the velocity-PI drive servo,
+  # which moved the fit substantially; none of them reproduce.
+  #
+  # NEXT: measure the wheel's contact dynamics on the bench, then switch to the
+  # NEGATIVE solref formulation -- MuJoCo reads a negative pair as direct
+  # (-stiffness, -damping) rather than (timeconst, dampratio), which is the
+  # form a real system ID produces. Both entries here become measurements at
+  # that point and this whole comment is replaced.
   contact_solref: [0.005, 1.0]
   # (dmin, dmax, width, midpoint, power). MuJoCo's stock default, written down
   # explicitly because it was an INVISIBLE inherited choice: nothing in this

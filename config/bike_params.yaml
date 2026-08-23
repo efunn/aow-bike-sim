@@ -59,25 +59,32 @@ sim:
   # radius) into the floor while holding station. Penetration scales with the
   # square of the time constant, so this is ~16x stiffer. Raise it back toward
   # 0.02 if the solver starts complaining rather than to soften a contact.
-  # Damping ratio 0.5 (underdamped) was picked from teleop feel plus the slowmo
-  # contact study, NOT from a physical measurement -- nail it down with real
-  # bounce/settle tests when the hardware exists.
+  # SHIPS AT DAMPING 1.0 -- critical, so it cannot bounce. That is known to be
+  # wrong: contact-protocol.md P1 recorded the real wheel bouncing 2-3 times,
+  # which implies dampratio ~0.30. 0.5 was tried (picked from teleop feel plus
+  # the slowmo study, never measured) and reverted.
   #
-  # KNOWN CONSEQUENCE, accepted deliberately: at 0.5 the identified lateral
-  # model degrades (worst R^2 0.861 at -0.50 m/s, vs >=0.975 everywhere at 1.0),
-  # so the LQR gain schedule is designed against a plant its own linearity
-  # assumption is measurably violated on. That is fine for now -- the LQR is a
-  # REFERENCE baseline for "the standard modern control approach", not a
-  # controller we drive with, and the RL policy never touches it. It is left
-  # crappy on purpose until the mechanical design settles.
+  # THE FIT GETS WORSE AS THE CONTACT GETS MORE REALISTIC. Measured 2026-08-22,
+  # worst channel over the nine-speed LQR schedule:
   #
-  # Currently back at damping 1.0, where the fit is healthy (worst R^2 0.9893)
-  # -- but the underdamped model is expected to return, so the guard stays:
-  # control/linearize.py warns on every design whose fit drops under
-  # MIN_FIT_R2, and test_lqr_model_fit_and_steering fails outright. It is NOT
-  # xfailed, on purpose: a non-strict xfail would report the regression as a
-  # green run. When damping goes back down, expect both to fire, and re-tune
-  # the control.lqr weights rather than silencing either.
+  #     dampratio    0.3      0.5      1.0 (this)     2.0
+  #     worst R^2   0.8148   0.9297     0.9412       0.9602
+  #
+  # Monotonic. So there is no setting that is both faithful and well-fitting,
+  # and MIN_FIT_R2 was lowered 0.98 -> 0.93 to stop asking for one; see the
+  # rationale on that constant in control/linearize.py. Do NOT raise the
+  # damping to recover the number -- that buys it by making the simulator less
+  # like the bike.
+  #
+  # Supersedes an earlier note here claiming 0.861 at dampratio 0.5, >=0.975 at
+  # 1.0, and 0.9893 currently. All three predate the velocity-PI drive servo,
+  # which moved the fit substantially; none of them reproduce.
+  #
+  # NEXT: measure the wheel's contact dynamics on the bench, then switch to the
+  # NEGATIVE solref formulation -- MuJoCo reads a negative pair as direct
+  # (-stiffness, -damping) rather than (timeconst, dampratio), which is the
+  # form a real system ID produces. Both entries here become measurements at
+  # that point and this whole comment is replaced.
   contact_solref: [0.005, 1.0]
   # (dmin, dmax, width, midpoint, power). MuJoCo's stock default, written down
   # explicitly because it was an INVISIBLE inherited choice: nothing in this
@@ -290,10 +297,57 @@ control:
     q_ypos: 3.0
     q_yvel: 0.2
     q_roll: 60.0
-    q_roll_rate: 6.0
+    # 30, was 6.0 (2026-08-22). The old value had no recorded rationale --
+    # unlike q_yaw/q_yaw_rate and r_drive below, it was a bare number from the
+    # original tuning, against a plant that had NO actuator dynamics at all.
+    #
+    # The velocity-PI drive servo added an integrator to the actuator, i.e. a
+    # pole at the origin and 90 deg of phase the 8-state lateral model does not
+    # represent. At 6.0 the LQR cannot hold the bike at standstill; at 30 it
+    # holds at 1.15 deg peak roll. Isolated: the DROOP alone (drive_kv 0.016,
+    # drive_ki 0) is fine at 6.0 -- it is specifically the integral term.
+    #
+    # DE-TUNING DOES NOT FIX IT. r_drive was swept 0.05 -> 5000 (a 100000x
+    # range) and it falls at every value, so this is not about control
+    # authority or aggressiveness; it is the SHAPE of the feedback, and only
+    # the rate weight supplies the missing damping.
+    #
+    # 30 is the knee, measured over an 8 s stationary hold:
+    #     q_roll_rate    rim travel   reversals/s   peak roll
+    #       6, 15        FELL
+    #      30            0.014 m         71          1.15 deg
+    #      60            0.019           99          1.13
+    #     150            0.021          151          1.14
+    #     300            0.033          311          1.39
+    # Past 30 the reversal rate climbs steeply and buys nothing -- that is the
+    # rate weight chasing noise. 14 mm of rim over 8 s is nothing; the RL
+    # policies run 2-5 METRES over 15 s.
+    q_roll_rate: 30.0
     q_yaw: 8.0          # LIGHT-ish: heading swings are intrinsic to crawl recovery;
     q_yaw_rate: 12.0    #   damp rotation (rate) over position. Heavy q_yaw (>~15)
-    q_steer: 0.5        #   rings against the steer clamp; 8/12 also tracks pivots.
+    # 5.0, was 0.5 (2026-08-22). The old value let the LQR command more steer
+    # than `steer_limit_deg` allows, so the steer angle sat pinned at the clamp
+    # 86% of the time -- bang-banging between +-15.7 deg rather than steering.
+    # Roll followed at ~1 deg while YAW ratcheted away (1.6 -> -16.6 deg over
+    # 11 s) because the bang-bang is not symmetric, and the bike went over at
+    # ~13.7 s. That reads as a slow oscillation and is really a saturated
+    # actuator.
+    #
+    # The clamp exists to keep steering inside the region the model was
+    # identified in, so sitting on it means the design is running outside its
+    # own assumptions. Pricing the steer ANGLE pulls the command back inside
+    # rather than weakening the loop:
+    #     q_steer   saturated   peak roll   40 s hold
+    #       0.5        86%        60 deg    FELL at 13.7 s
+    #       2.0        67%        1.17      held
+    #       5.0        31%        1.17      held
+    #       8.0        15%        2.14      held
+    #      12.0         1%        6.74      held
+    # 5.0 is the best roll available and cuts saturation from 86% to 31%.
+    # Raising r_steer instead also works (60.0 gives 2% saturation) but costs
+    # roll -- 4.0 deg against 1.17 -- because it weakens the whole loop rather
+    # than just the part that was asking for too much.
+    q_steer: 5.0        #   rings against the steer clamp; 8/12 also tracks pivots.
     r_drive: 0.05       # balance of authority vs. saturation margin on pushes
     r_steer: 6.0
     steer_limit_deg: 15.0   # keep steering inside the identified linear region
