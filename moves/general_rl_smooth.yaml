@@ -1,0 +1,31 @@
+name: general_rl_smooth
+type: rl
+kind: general
+policy_file: general_rl_smooth.npz
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.4
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 6000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 4.45302408724757e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.816
+    track_geo: 0.812
+    vel_err: 0.167
+    head_err_deg: 3.6
+    n_eval: 20
+    drift_m: 0.128
+    steer_rest_deg: 5.3
+    speed_ratio_fwd: 1.077
+    speed_ratio_rev: 1.006
+    crab_ratio_left: 0.21
+    crab_ratio_right: 0.3
+    crab_head_err: 5.2
+    turn_asym: 0.195
+  exported_from: best_model.zip

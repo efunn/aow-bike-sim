@@ -1,0 +1,31 @@
+name: general_rl_smooth_bouncy
+type: rl
+kind: general
+policy_file: general_rl_smooth_bouncy.npz
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.12
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 5000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 3.3760269768645657e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.733
+    track_geo: 0.714
+    vel_err: 0.277
+    head_err_deg: 5.0
+    n_eval: 20
+    drift_m: 1.629
+    steer_rest_deg: 42.9
+    speed_ratio_fwd: 0.708
+    speed_ratio_rev: 0.95
+    crab_ratio_left: 0.111
+    crab_ratio_right: 0.0
+    crab_head_err: 14.3
+    turn_asym: 0.411
+  exported_from: best_model.zip
