@@ -96,8 +96,19 @@ class GeneralEnv(gym.Env):
         self.obs_wings = bool(env.get("obs_wings", False))
         self.act_wings = bool(env.get("act_wings", False))
         self.wings = self.obs_wings or self.act_wings
+        # The co-rotating pair (build_model _add_swing_wings). An ALTERNATIVE
+        # to `wings`, never an addition -- build_spec refuses both, and so does
+        # this, loudly, because a config with both set silently builds only one
+        # and the run answers nothing about either.
+        self.obs_swing = bool(env.get("obs_swing", False))
+        self.act_swing = bool(env.get("act_swing", False))
+        self.swing = self.obs_swing or self.act_swing
+        if self.wings and self.swing:
+            raise ValueError("obs/act_wings and obs/act_swing are alternative "
+                             "mechanisms -- set one, not both")
         self.model = build_model(self.p, variant="full", hockey=self.hockey,
-                                 righting=self.wings, wings=self.wings)
+                                 righting=self.wings or self.swing,
+                                 wings=self.wings, swing=self.swing)
         self._eq = settle_upright(self.model).qpos.copy()
         self.data = mujoco.MjData(self.model)
         # Crawl-balance fallback gain from the ball-free model, as ball_env.
@@ -123,7 +134,8 @@ class GeneralEnv(gym.Env):
         self.sigma_psi = np.deg2rad(self.rw["sigma_psi_deg"])
         self.w_smooth = _per_channel(
             self.rw["w_smooth"],
-            act_dim_for(bool(env.get("act_wings", False))) if
+            act_dim_for(bool(env.get("act_wings", False)),
+                        bool(env.get("act_swing", False))) if
             env["action_space"] == "full" else 2, "w_smooth")
         # Velocity window. Lives under `env:` rather than `reward:` because it
         # changes the OBSERVATION CONTRACT, not just a weight -- and `env:` is
@@ -189,20 +201,25 @@ class GeneralEnv(gym.Env):
         self.diff_thresh = float(cur["advance_score"])
         self._diff = self.diff_start if self.cur_on else 1.0
 
-        act_dim = act_dim_for(self.act_wings) if self.full else 2
+        act_dim = act_dim_for(self.act_wings, self.act_swing) if self.full else 2
         self.action_space = spaces.Box(-1.0, 1.0, (act_dim,), np.float32)
         self.obs_dim = obs_dim_for(self.vel_window_s, self.obs_pitch,
-                                   self.obs_wings)
+                                   self.obs_wings, self.obs_swing)
         self.obs_layout = obs_layout(self.vel_window_s, self.obs_pitch,
-                                     self.obs_wings)
+                                     self.obs_wings, self.obs_swing)
         self.observation_space = spaces.Box(-np.inf, np.inf, (self.obs_dim,),
                                             np.float32)
         self._aid = {n: self.model.actuator(n).id
                      for n in ("drive_a", "drive_b", "steer")}
-        if self.wings:
-            self._aid["wings"] = self.model.actuator("wings").id
-            self._wj = self.model.joint("wing_right_joint").qposadr[0]
-            self._wd = self.model.joint("wing_right_joint").dofadr[0]
+        if self.wings or self.swing:
+            # ONE code path, two mechanisms: the actuator and joint names are
+            # the only thing that differs, and the signed clip below is the
+            # only behavioural difference.
+            act = "swing" if self.swing else "wings"
+            jnt = "swing_right_joint" if self.swing else "wing_right_joint"
+            self._aid["wings"] = self.model.actuator(act).id
+            self._wj = self.model.joint(jnt).qposadr[0]
+            self._wd = self.model.joint(jnt).dofadr[0]
         self._sj = self.model.joint("steer_joint").qposadr[0]
         self._sd = self.model.joint("steer_joint").dofadr[0]
         self._chassis = self.model.body("chassis").id
@@ -388,7 +405,7 @@ class GeneralEnv(gym.Env):
                         pitch=(s.pitch, s.pitch_rate) if self.obs_pitch else None,
                         wings=((float(self.data.qpos[self._wj]),
                                 float(self.data.qvel[self._wd]))
-                               if self.obs_wings else None))
+                               if (self.obs_wings or self.obs_swing) else None))
         return obs, s, v_cl, v_ct, psi_err, vb_lon, vb_lat
 
     # -- curriculum --------------------------------------------------------
@@ -445,7 +462,8 @@ class GeneralEnv(gym.Env):
         self._v_bar_w = self.data.qvel[:2].copy()
         # Wings start STOWED, and the integrator is seeded from the model so
         # replay (engage_general) can seed itself the same way.
-        self._wing = float(self.data.qpos[self._wj]) if self.wings else 0.0
+        self._wing = (float(self.data.qpos[self._wj])
+                      if (self.wings or self.swing) else 0.0)
         opts = options or {}
         if "difficulty" in opts:
             self.set_difficulty(opts["difficulty"])
@@ -466,14 +484,21 @@ class GeneralEnv(gym.Env):
         scaled = scale_action(action, self.bounds)
         steer_rate, hub, diff = scaled[0], scaled[1], scaled[2]
         self._steer += steer_rate * self.ctrl_dt
-        if self.act_wings:
+        if self.act_wings or self.act_swing:
             # A RATE integrated into a position target, exactly like steer,
             # because the wing servo is the same multi-turn XC330 in extended
             # position mode. UNLIKE steer it is clipped: the joint is limited,
             # and past ~96 deg the foot goes under the floor and jacks the
             # bike off its wheels instead of catching a fall.
+            # THE CLIP IS THE MECHANISM DIFFERENCE. The mirrored pair only
+            # ever deploys outward, so 0..cap is its whole reachable set. The
+            # swing pair is signed: -cap..+cap, one wing down or the other,
+            # and pinning its low end at 0 would leave a policy able to strike
+            # and right on ONE SIDE ONLY -- which would not raise, it would
+            # just quietly train half a bike.
+            lo = -self._wing_cap() if self.swing else 0.0
             self._wing = float(np.clip(self._wing + scaled[3] * self.ctrl_dt,
-                                       0.0, self._wing_cap()))
+                                       lo, self._wing_cap()))
         if not self.full:                       # feedforward: crawl balance
             s0 = extract_state(self.data, self._p0)
             diff = float(-self._K0[0] @ np.array(
@@ -550,7 +575,7 @@ class GeneralEnv(gym.Env):
                   # fall in 20 of 20 eval episodes).
                   - (self._w_wing_now()
                      * (self._wing / max(self.wing_max, 1e-9)) ** 2  # static cap: normalising by the scheduled one would divide by ~0
-                     if self.wings else 0.0)
+                     if (self.wings or self.swing) else 0.0)
                   - rw["w_effort"] * float(action @ action)
                   # Per-channel: w_smooth may be one number (broadcast, the
                   # historical behaviour) or one per action channel.
@@ -594,7 +619,8 @@ class GeneralEnv(gym.Env):
             "vel_err_win": float(np.sqrt(v_err2)),
             "v_bar_lon": float(vb_lon), "v_bar_lat": float(vb_lat),
             "pitch_deg": float(np.degrees(s.pitch)),
-            "wing_deg": float(np.degrees(self._wing)) if self.wings else 0.0,
+            "wing_deg": (float(np.degrees(self._wing))
+                         if (self.wings or self.swing) else 0.0),
             "head_err_deg": float(np.degrees(abs(psi_err))),
             "difficulty": float(self._diff),
             "fell": bool(fell),

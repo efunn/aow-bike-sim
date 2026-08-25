@@ -115,6 +115,7 @@ _OPTIONAL_BLOCKS = (
     ("vel_window", ("v_bar_lon", "v_bar_lat")),
     ("obs_pitch", ("pitch", "pitch_rate")),
     ("obs_wings", ("wing_angle", "wing_rate")),
+    ("obs_swing", ("swing_angle", "swing_rate")),
 )
 
 
@@ -129,7 +130,8 @@ OBS_NAMES_BASE = (
     "prev_steer_rate", "prev_hub", "prev_diff",
 )
 OBS_NAMES = OBS_NAMES_BASE + ("v_bar_lon", "v_bar_lat", "pitch", "pitch_rate",
-                              "wing_angle", "wing_rate")
+                              "wing_angle", "wing_rate",
+                              "swing_angle", "swing_rate")
 # Sign under the sagittal mirror. A filter is linear and time-invariant, so a
 # filtered quantity mirrors exactly like its source: v_bar_lon follows v_lon
 # (+1), v_bar_lat follows v_lat (-1). Getting these wrong does not raise --
@@ -156,13 +158,25 @@ OBS_MIRROR_PARITY = np.array([
                        #   vector cannot express -- it negates but does not
                        #   permute -- and mirror_equivariance would need a
                        #   permutation instead.
+    -1, -1,            # swing_angle, swing_rate -- THE OPPOSITE SIGN, and for
+                       #   exactly the reason the block above warns about. The
+                       #   swing pair (build_model _add_swing_wings) uses
+                       #   mirror = +1, so left = +right: one wing goes down as
+                       #   the other comes up, and mirroring the bike maps the
+                       #   observed angle to its negative. The pair is still
+                       #   CONSTRAINED to one DoF, so a flat sign vector is
+                       #   enough -- it needs a negation, not a permutation --
+                       #   but it must be -1. Copying the wings' +1 here would
+                       #   not raise; it would silently make every handedness
+                       #   number in analysis/mirror_equivariance.py wrong, on
+                       #   a mechanism whose whole job is to be side-dependent.
 ], dtype=float)
 assert len(OBS_NAMES) == len(OBS_MIRROR_PARITY)
 assert len(OBS_NAMES_BASE) == OBS_DIM
 
 
 def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False,
-               obs_wings: bool = False) -> tuple:
+               obs_wings: bool = False, obs_swing: bool = False) -> tuple:
     """The exact entry names this feature combination produces.
 
     WIDTH ALONE IS AMBIGUOUS and must not be used as the contract. With two
@@ -174,7 +188,8 @@ def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False,
     """
     on = {"vel_window": float(vel_window_s) > 0.0,
           "obs_pitch": bool(obs_pitch),
-          "obs_wings": bool(obs_wings)}
+          "obs_wings": bool(obs_wings),
+          "obs_swing": bool(obs_swing)}
     names = list(OBS_NAMES_BASE)
     for flag, block in _OPTIONAL_BLOCKS:
         if on[flag]:
@@ -194,7 +209,29 @@ def policy_flags(pol) -> dict:
     """
     return {"vel_window_s": float(getattr(pol, "vel_window_s", 0.0)),
             "obs_pitch": bool(getattr(pol, "obs_pitch", False)),
-            "obs_wings": bool(getattr(pol, "obs_wings", False))}
+            "obs_wings": bool(getattr(pol, "obs_wings", False)),
+            "obs_swing": bool(getattr(pol, "obs_swing", False))}
+
+
+def policy_env_overrides(pol) -> dict:
+    """Every env setting a loaded policy pins, as a `cfg["env"]` overlay.
+
+    `policy_flags` covers the OBSERVATION blocks; this adds the ACTION-side and
+    cap settings, so building an env that matches a policy is one call instead
+    of a hand-written dict at each call site. There were three such dicts
+    (analysis/rsa_policies.env_for and two in analysis/wheel_slowmo), each
+    listing `act_wings` and `wing_max_deg` by hand, and when `act_swing` was
+    added all three silently kept building a 3-action env for a 4-action
+    policy -- the obs width matched, so nothing raised.
+
+    Same rule as policy_flags: adding a channel should mean editing
+    `_OPTIONAL_BLOCKS`, `policy_flags` and this function, and nothing else.
+    """
+    return dict(policy_flags(pol),
+                act_wings=bool(getattr(pol, "act_wings", False)),
+                act_swing=bool(getattr(pol, "act_swing", False)),
+                obs_swing=bool(getattr(pol, "obs_swing", False)),
+                wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)))
 
 
 def obs_layout_for(pol) -> tuple:
@@ -203,20 +240,25 @@ def obs_layout_for(pol) -> tuple:
 
 
 def obs_dim_for(vel_window_s: float = 0.0, obs_pitch: bool = False,
-                obs_wings: bool = False) -> int:
+                obs_wings: bool = False, obs_swing: bool = False) -> int:
     """Observation width implied by a policy's feature flags.
 
     Prefer `obs_layout()` for the CONTRACT -- width collides (see its
     docstring). This stays for sizing an array.
     """
-    return len(obs_layout(vel_window_s, obs_pitch, obs_wings))
+    return len(obs_layout(vel_window_s, obs_pitch, obs_wings, obs_swing))
 
 
-def act_dim_for(act_wings: bool = False) -> int:
+def act_dim_for(act_wings: bool = False, act_swing: bool = False) -> int:
     """Action width. ACT_DIM (3) stays the SHARED contract with flick/ball/
     pivot; the wing channel is a general-policy-only fourth entry, appended so
     the move layout is untouched."""
-    return ACT_DIM + (1 if act_wings else 0)
+    # The two mechanisms are ALTERNATIVES, never both -- build_spec refuses to
+    # build them together -- so they share the one appended channel rather than
+    # each claiming their own. What differs is the CLIP, not the width: the
+    # mirrored pair only deploys outward (0..cap) while the swing pair is
+    # signed (-cap..+cap), which is what lets a policy choose a side.
+    return ACT_DIM + (1 if (act_wings or act_swing) else 0)
 
 
 def vel_filter_alpha(dt: float, window_s: float) -> float:

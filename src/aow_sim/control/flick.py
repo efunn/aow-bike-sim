@@ -283,6 +283,14 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         # policy commands a stroke it never trained on.
         pol.obs_wings = bool(d.get("obs_wings", False))
         pol.act_wings = bool(d.get("act_wings", False))
+        # The co-rotating pair (build_model _add_swing_wings). Same contract
+        # role as the two above, and it has to be carried HERE as well as
+        # written by the exporter: `general_spec.policy_flags` reads these off
+        # the loaded object, so a key that reaches the yaml but not the policy
+        # makes the layout guard compare a 17-wide declaration against a
+        # 15-wide "flags give", and refuse a move that is actually fine.
+        pol.obs_swing = bool(d.get("obs_swing", False))
+        pol.act_swing = bool(d.get("act_swing", False))
         pol.wing_max_deg = float(d.get("wing_max_deg", 90.0))
         pol.obs_layout = tuple(d.get("obs_layout", ()) or ())
         # The parameter set this policy was TRAINED against. "" for every move

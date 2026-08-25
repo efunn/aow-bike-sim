@@ -105,10 +105,14 @@ class _Base:
         self.aid = {n: model.actuator(n).id for n in ("drive_a", "drive_b", "steer")}
         # Present only on a wings model; every wingless model omits it and the
         # general policy's wing channel is simply unavailable there.
-        try:
-            self.aid["wings"] = model.actuator("wings").id
-        except (KeyError, ValueError):
-            pass
+        for _opt in ("wings", "swing"):
+            # Present only on the model that built that mechanism; every other
+            # model omits it and the general policy's channel is simply
+            # unavailable there.
+            try:
+                self.aid[_opt] = model.actuator(_opt).id
+            except (KeyError, ValueError):
+                pass
         # Saturate only actuators that declare a ctrlrange (steer is unlimited).
         limited = model.actuator_ctrllimited.astype(bool)
         self.lo = np.where(limited, model.actuator_ctrlrange[:, 0], -np.inf)
@@ -211,11 +215,23 @@ class LQRBalance(_Base):
         # Wings model only; None everywhere else, which is what the general
         # policy's wing flags are checked against in engage_general.
         self._wj = self._wd = None
-        try:
-            wj = model.joint("wing_right_joint")
+        # Whichever mechanism this model was built with -- `wing_right_joint`
+        # for the mirrored pair, `swing_right_joint` for the co-rotating one.
+        # They are alternatives, so at most one exists.
+        #
+        # NOTE WHY THIS MATTERS MORE THAN IT LOOKS: a miss leaves _wj as None,
+        # and `data.qpos[None]` does NOT raise -- numpy reads None as
+        # np.newaxis and hands back a 1xN array, so the failure surfaces later
+        # as "only 0-dimensional arrays can be converted to Python scalars"
+        # from a float() several frames away, with nothing pointing at the
+        # lookup that actually failed.
+        for _jn in ("wing_right_joint", "swing_right_joint"):
+            try:
+                wj = model.joint(_jn)
+            except (KeyError, ValueError):
+                continue
             self._wj, self._wd = wj.qposadr[0], wj.dofadr[0]
-        except (KeyError, ValueError):
-            pass
+            break
         self._ref_yaw = 0.0
         self.steer_frame = SteerFrame()
 

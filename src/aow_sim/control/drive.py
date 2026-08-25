@@ -349,8 +349,21 @@ class DriveController(LQRBalance):
         self._gen_obs_pitch = bool(getattr(self._gen, "obs_pitch", False))
         self._gen_obs_wings = bool(getattr(self._gen, "obs_wings", False))
         self._gen_act_wings = bool(getattr(self._gen, "act_wings", False))
+        # The co-rotating pair. Same single channel, same two observations --
+        # what differs is the actuator it drives and that its command is
+        # SIGNED, because the mechanism reaches both sides. Kept as its own
+        # flag rather than folded into the wings one so the layout guard below
+        # still refuses to load a swing policy onto a mirrored-wing bike.
+        self._gen_obs_swing = bool(getattr(self._gen, "obs_swing", False))
+        self._gen_act_swing = bool(getattr(self._gen, "act_swing", False))
+        self._gen_swing = self._gen_obs_swing or self._gen_act_swing
         self._gen_wing_max = np.deg2rad(
             float(getattr(self._gen, "wing_max_deg", 90.0)))
+        if self._gen_swing and "swing" not in self.aid:
+            raise ValueError(
+                f"moves/{name} expects the co-rotating swing wings, but this"
+                " model has no `swing` actuator -- build with"
+                " build_model(..., swing=True)")
         if (self._gen_obs_wings or self._gen_act_wings) and \
                 "wings" not in self.aid:
             raise ValueError(
@@ -441,7 +454,7 @@ class DriveController(LQRBalance):
                 vb = rotate_to_body(self._gen_v_bar_w[0],
                                     self._gen_v_bar_w[1], self._psi)
             wg = None
-            if self._gen_obs_wings:
+            if self._gen_obs_wings or self._gen_obs_swing:
                 wg = (float(data.qpos[self._wj]), float(data.qvel[self._wd]))
             obs = build_obs(s.roll, s.roll_rate, data.qvel[5],
                             float(data.qpos[self._sj]),
@@ -462,11 +475,15 @@ class DriveController(LQRBalance):
             self._gen_hold = self._gen_every
         steer_rate, hub, diff, wing_rate = self._gen_u
         self._gen_hold -= 1
-        if self._gen_act_wings:
+        if self._gen_act_wings or self._gen_act_swing:
             # Same clipped rate integration as GeneralEnv.step, at the
-            # CONTROLLER rate like the steer integrator beside it.
+            # CONTROLLER rate like the steer integrator beside it. The LOW
+            # bound is the mechanism difference and must match the env exactly
+            # -- a swing policy replayed against a 0.0 floor would lose one
+            # side of its stroke silently.
+            lo = -self._gen_wing_max if self._gen_act_swing else 0.0
             self._gen_wing = float(np.clip(
-                self._gen_wing + wing_rate * self.dt, 0.0, self._gen_wing_max))
+                self._gen_wing + wing_rate * self.dt, lo, self._gen_wing_max))
         # Integrate at the CONTROLLER rate so the commanded steer traces the
         # same ramp the training env produced in one of its longer steps.
         self._gen_steer += steer_rate * self.dt
@@ -479,6 +496,8 @@ class DriveController(LQRBalance):
         u[self.aid["steer"]] = clamp_extended(self._gen_steer)
         if self._gen_act_wings:
             u[self.aid["wings"]] = self._gen_wing
+        elif self._gen_act_swing:
+            u[self.aid["swing"]] = self._gen_wing
         return u
 
     def viz_reference(self, data) -> tuple[float, float]:
