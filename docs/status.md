@@ -1,4 +1,4 @@
-# Project status — 2026-08-22
+# Project status — 2026-08-24
 
 Midpoint snapshot. The design logs under `docs/plans/` are where decisions and
 their reasoning live; this file is the layer on top of them — what is true
@@ -455,12 +455,44 @@ workstream and it arrived immediately:
   with the same page's own elapsed-day count. Copy-paste still works and is
   quota-exempt, so exhausting the API strands nothing.
 
-  **Usage at 2026-08-21: 34 / 2500, with 53 days left in the cycle** — roughly
-  47 calls a day available, so the budget is not a live concern. It becomes one
+  **Usage at 2026-08-24: 75 / 2500, with 50 days left in the cycle** — roughly
+  48 calls a day available, so the budget is not a live concern. It becomes one
   only if something polls: `getPartStudioFeatures` reads the document's actual
   tickbox and suppression state in one call, which is genuinely useful and is
   also the endpoint that would burn a year in a week if put in a loop. The
   ground rules are in `CLAUDE.md`, "Onshape — the CAD round trip".
+
+- **Generated FeatureScript is checked before it is pushed, as of 2026-08-24.**
+  `--check` on `aow_sim.cad_layout` compiles AND RUNS the export against a
+  throwaway copy of a Part Studio's context and refuses to push if it does not
+  build. One billable call. This closes a real hole: a push *cannot* fail on
+  bad FeatureScript, because the contents endpoint takes any text at all, so a
+  broken export used to land in the document and surface as an EMPTY render
+  with no error anywhere — two calls spent to learn nothing. Verified both ways
+  on 2026-08-24: the current export runs clean, and a planted `fCuboid` ->
+  `opCuboid` typo is caught as `Function opCuboid with 3 argument(s) not found`
+  and blocks the push.
+
+  The per-feature body counts it prints are also a free consistency check
+  between the two arms of the generator: the eight geometry groups sum to 49,
+  which is exactly what the monolithic `AOW bike layout` feature builds alone.
+
+  The target is a **new empty Part Studio, `Eval Harness`**, created via the
+  API on 2026-08-24 and recorded as the `check` tab in `config/onshape.yaml`.
+  **Keep it empty** — its emptiness is the feature, since a body modelled there
+  lands in any query not scoped to `qCreatedBy(id, ...)`. Nothing is ever
+  written to it: Onshape derives the context, runs the script and discards it,
+  confirmed by building a body, counting it, and counting 0 again on the next
+  call.
+
+  The awkward part is `_eval_wrapper` in `cad_layout.py`, which has to bring
+  every top-level declaration inside one function expression — `export const`
+  passes through, `export function` becomes a `const f = function(...)`, and
+  the one `export predicate` is dropped as precondition-only — and must
+  **synthesise the 15 `definition.*` parameters**, because the bodies test them
+  as bare `if (definition.drawEnvelopes)` and an absent key is `undefined`,
+  which throws rather than reading false. So it checks that the code RUNS, not
+  that every branch matches a particular tick-box state. **Accepted.**
 
 **Two traps worth not re-learning**, both of which produced confident wrong
 answers before the user caught them from the CAD:
