@@ -187,11 +187,8 @@ def _verify_replication(params, cfg, pol, solref=(None, None), n_ctrl=5,
     video would quietly stop being of the same policy.
     """
     if pol_env:                     # match the env to the policy's obs blocks
-        from aow_sim.control.general_spec import policy_flags
-        cfg = {**cfg, "env": {**cfg["env"], **dict(
-            policy_flags(pol),
-            act_wings=bool(getattr(pol, "act_wings", False)),
-            wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)))}}
+        from aow_sim.control.general_spec import policy_env_overrides
+        cfg = {**cfg, "env": {**cfg["env"], **policy_env_overrides(pol)}}
     ref, mine = GeneralEnv(params, cfg), GeneralEnv(params, cfg)
     for e in (ref, mine):                 # validate under the physics in use
         override_solref(e.model, *solref)
@@ -733,9 +730,7 @@ def main():
             **base, "sim": {**base["sim"], "timestep": timestep}}
         c = cfg
         if pol is not None:
-            over = dict(policy_flags(pol),
-                        act_wings=bool(getattr(pol, "act_wings", False)),
-                        wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)))
+            over = policy_env_overrides(pol)
             c = {**cfg, "env": {**cfg["env"], **over}}
         e = GeneralEnv(p, c)
         override_solref(e.model, *solref)

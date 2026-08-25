@@ -78,10 +78,8 @@ def env_for(pol, params, cfg):
     a tau=1.0 average matches on width, so nothing would raise at all.
     """
     from aow_sim.control.general_env import GeneralEnv
-    from aow_sim.control.general_spec import policy_flags
-    over = dict(policy_flags(pol),
-                act_wings=bool(getattr(pol, "act_wings", False)),
-                wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)))
+    from aow_sim.control.general_spec import policy_env_overrides
+    over = policy_env_overrides(pol)
     return GeneralEnv(params, {**cfg, "env": {**cfg["env"], **over}})
 
 
