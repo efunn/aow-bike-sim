@@ -1,0 +1,202 @@
+# GENERAL POLICY + THE CO-ROTATING SWING WINGS (config/swing_wings.yaml).
+#
+# Sibling of rl_general_wings.yaml, and the diff against it is the whole point:
+#   obs_wings/act_wings -> obs_swing/act_swing   (a DIFFERENT mechanism, and a
+#                                                 different observation layout,
+#                                                 so a policy trained here can
+#                                                 never load onto a mirrored-
+#                                                 wing bike by accident)
+#   wing_max_deg 90 -> 45                        (the far wing's hard limit)
+#   the action channel is SIGNED, -cap..+cap     (general_env.step)
+#
+# WHY THIS MECHANISM WANTS RL MORE THAN THE MIRRORED PAIR DID. The geared pair
+# deploys the same way whatever side it fell on, so a scripted rule is enough.
+# The swing pair must choose a side, and the rule is not obvious: measured on
+# the model, a latched sign(roll) makes NO progress from the fallen pose
+# (111 deg, unchanged), and even a continuously updated sign(roll) makes none,
+# because past 90 deg the lever inverts. The law that works flips at 90 deg and
+# rights the bike in ~0.95 s. That sign flip is exactly the kind of thing a
+# policy learns for free, and hand-deriving it took three wrong tries.
+#
+# MIRROR PARITY IS THE TRAP HERE. general_spec's swing_angle/swing_rate entries
+# are -1, where the mirrored pair's are +1. The pair is coupled with mirror=+1
+# (left = right), so mirroring the bike negates the observed angle. Copying the
+# wings' +1 would not raise -- it would silently corrupt every handedness
+# number in analysis/mirror_equivariance.py, on the one mechanism whose whole
+# job is to be side-dependent. Check that first if left/right diverge.
+#
+#   python -m aow_sim.train_general_rl --config config/rl_general_swing.yaml \\
+#       --run-dir runs/general_swing --export-name general_swing_rl
+
+algo:
+  algorithm: PPO
+  total_timesteps: 6000000    # a general controller is a bigger task than a
+                              #   single move; expect to need the full budget
+  n_envs: 32    # was 8
+  learning_rate: 3.0e-4
+  n_steps: 512 # was 2048  -> 32 x 512 = 16384, unchanged
+  batch_size: 1024
+  n_epochs: 10
+  # gamma at 50 Hz: 1/(1-g) = 100 steps = 2.0 s of lookahead, which matches
+  # the timescale of a heading change. THE MOVES' 0.99 AT 200 Hz IS ONLY
+  # 0.5 s — far too myopic here; they get away with it because their reward
+  # is a dense per-step yaw-progress term rather than setpoint tracking.
+  # If control_rate_hz is raised back to 200, gamma must go to ~0.998.
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005        # ball_rl's lesson: 0.0 collapsed exploration
+  net_arch: [128, 128]
+  seed: 0
+  eval_every: 1000000     # BestByScore cadence [timesteps]
+
+env:
+  action_space: full
+  # 50 Hz, not the moves' 200 Hz: standard for locomotion RL, and it makes a
+  # 2.5 s maneuver 125 steps instead of 500 — far better credit assignment.
+  # Replay is ZOH at this rate, so the controller holds each action 4 physics
+  # ticks longer than a move does.
+  control_rate_hz: 50
+  max_episode_s: 15.0    # long: the policy must hold a command, not finish one
+  v_max: 1.2             # matches control.drive.v_max in bike_params.yaml
+  v_lat_frac: 0.12       # lateral command as a fraction of the speed limit
+                         #   (the rear omni makes crabbing physical); only
+                         #   opens up with curriculum difficulty
+  p_v_zero: 0.2          # chance the speed command is exactly 0 (stop is a
+                         #   first-class command, not an edge case)
+  resample_s: [1.5, 4.0] # command re-drawn as a STEP change this often
+  ball_prob: 0.25        # fraction of episodes with a ball parked nearby --
+                         #   contact robustness only, NO ball reward. Set to
+                         #   0.0 to train on the ball-free model.
+  ball_place_radius: 0.5 # ball dropped within this radius of the start pose
+  obs_swing: true        # (swing_angle, swing_rate) appended to the observation
+  act_swing: true        # ...and a 4th action channel driving them, SIGNED
+  # 45, not the mirrored pair's 90. Hard limit set by the FAR wing, which
+  # swings toward the centreline as the near one swings away: by 50 deg it is
+  # inside the drive servos. config/swing_wings.yaml has the ladder. At 45 the
+  # striking foot is already below ball centre, so nothing is given up.
+  wing_max_deg: 45.0
+  # Curriculum gate on the wing RANGE: [open_lo, open_hi] in difficulty. Below
+  # open_lo the cap is 0 and the wings are pinned stowed, so the bike MUST
+  # learn to balance on two wheels; it ramps to wing_max_deg by open_hi.
+  #
+  # REVERSED from runs 1 and 2, which had the wings available from step 0 and
+  # tried to price them away later. Both ended unable to stand without them --
+  # 20/20 falls when forced stowed -- because a policy that learns
+  # wing-dependent balance first has to UNLEARN it, and a penalty only buys the
+  # cheapest escape: run 2 deployed less (89 -> 67 deg) but let roll reach
+  # 43 deg and got caught harder (24% of weight on the feet, against 9%).
+  #
+  # Opening late means wingless balance is learned while it is the only option,
+  # and the wings arrive as an extra capability. 0.5 -> 0.8 puts the opening
+  # after the command envelope is most of the way out, so there is still
+  # curriculum left to learn to use them.
+  wing_open: [0.4, 0.6]
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4         # v_max 1.2 + margin (moves cap at 0.6-0.72 because
+                         #   they are standstill maneuvers)
+    diff_max: 40.0
+    # rad/s of wing joint rate. The stroke is 90 deg END TO END here (-45 to
+    # +45), not 0..90 as on the mirrored pair, so this crosses the full range
+    # in ~0.4 s and reaches either extreme from centre in ~0.2 s.
+    wing_rate_max: 4.0
+
+curriculum:              # the repo's first; a single scalar scaling the
+  enabled: true          #   command sampling ranges in _sample_command
+  start: 0.15            # gentle: low speed, +-30 deg heading steps, no crab
+  step: 0.02             # advance per episode that clears advance_score
+  advance_score: 0.6     # mean of (vel + heading) tracking rewards, in [0,1]
+
+reward:
+  # Bounded-POSITIVE tracking + alive bonus. Over a 15 s episode a
+  # penalty-only reward (the moves' form) makes falling early strictly
+  # rational; this removes that incentive.
+  w_vel: 1.5             # x exp(-|v_cmd - v|^2 / sigma_v^2)
+  w_head: 1.0            # x exp(-(psi_err/sigma_psi)^2)
+  w_alive: 0.5
+  sigma_v: 0.35          # [m/s] tracking tolerance scale
+  sigma_psi_deg: 25.0    # heading tolerance scale
+  w_upright: 0.5
+  # Pitch was FREE: w_upright prices roll and nothing priced pitch, so a
+  # wheelie cost nothing. Measured on general_rl_glide_og, the front wheel
+  # reaches 79 mm of clearance at 23 deg nose-up on a plain accelerate
+  # command, and 11 deg at a pure hold (analysis/liftoff.py). 0.0 keeps every
+  # policy trained before this identical; set it together with env.obs_pitch,
+  # so the penalty is not charged against a state the policy cannot see.
+  w_pitch: 0.0
+  # (theta/wing_max)^2 in [0,1], RAMPED linearly on curriculum difficulty
+  # from w_wing at 0 to w_wing_late at 1.
+  #
+  # Run 1 used a flat 0.05 and the policy simply lived on the wings: deployed
+  # at 89.4 deg with duty 1.0, and forcing them stowed made it fall in 20 of
+  # 20 eval episodes. The arithmetic says why. Over a 750-step episode a flat
+  # 0.05 costs 38 against a 50-point fall, so riding them permanently was
+  # cheaper than balancing.
+  #
+  # The late weight is derived, not chosen. A ~0.5 s save is ~25 steps of full
+  # deploy and buys back penalty_fall = 50, so it must satisfy
+  #     25*w < 50   (a genuine save still pays)      -> w < 2.0
+  #     750*w >> 50 (living on them does not)        -> w >= ~0.2
+  # 1.0 sits mid-band: a save costs 25 against the 50 it prevents, permanent
+  # deployment costs 750.
+  #
+  # Ramped rather than flat so the wings still work as training wheels while
+  # the policy is learning to track, and get expensive as the commands get
+  # hard. Tied to difficulty, not to wall-clock steps, so the weaning follows
+  # COMPETENCE rather than a timetable the policy may not be ready for.
+  w_wing: 0.05           # while the wings are opening -- exploring them is cheap
+  w_wing_late: 0.3       # once open and learned -- see the window note below
+  # The range the ramp SPANS, in difficulty. Run 3 keyed it to _diff directly
+  # while wing_open was [0.5, 0.8], so w_wing was already ~0.5 when the wings
+  # first became usable -- available exactly as they became expensive. The
+  # policy never touched them (9.5 deg peak at 700k, ~0 thereafter).
+  #
+  # With wing_open [0.4, 0.6] and this at [0.85, 1.0], and the difficulty
+  # trace from run 3 (0.41 at 1.0M, 0.60 at 1.5M, 0.86 at 2.0M), the wings are
+  # fully usable from ~1.5M while the weight stays 0.05 until ~2.0M -- about a
+  # million steps where trying them is free.
+  #
+  # 0.3 rather than 1.0 at the top: permanent deploy still costs 225 against a
+  # 50-point fall, but a ~0.5 s save costs 7.5, so occasional use stays clearly
+  # worth it. Run 2 showed 1.0 does not stop a determined crutch anyway -- it
+  # just makes the catch harder.
+  w_wing_ramp: [0.85, 1.0]
+  w_effort: 0.001
+  w_smooth: 0.005        # higher than the moves': prev_action is observable
+                         #   here, so the penalty is actually well-posed.
+                         #   One number prices all three action channels
+                         #   alike; a 3-list prices [steer_rate, hub, diff]
+                         #   separately -- see rl_general_smooth_diff.yaml.
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+
+randomization:           # as rl_flick/rl_pivot
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15        # was 0.1. The as-built payload mass (battery + Pi +
+                         #   U2D2 + buck, ~190 g of a 1.02 kg bike) is a GUESS
+                         #   until the thing is weighed, and it is a bigger
+                         #   share of the total than anything else unmeasured.
+  friction_frac: 0.2
+  # Supply voltage. The model's servo numbers are the 12 V datasheet column,
+  # but a 3S pack spans 12.6 V (full) to 9.9 V (cutoff) -> ~0.83-1.05x nominal
+  # strength. 0.15 covers that window with margin. Scales ctrlrange AND
+  # forcerange from a single draw (speed and torque both go with voltage) --
+  # see control/randomize.py. Untethered transfer depends on this.
+  actuator_frac: 0.15
+  # Contact. UNCOMMENT FOR THE NEXT RUN -- left off so this config still
+  # reproduces the policies trained before it existed. sim.contact_solref is
+  # the least-measured parameter in the model (the bench tests that would pin
+  # it are specified in docs/measurements/contact-protocol.md but not yet
+  # done), and it is the one the policies are most brittle to: holding
+  # timeconst and sweeping dampratio, eval survival is 1.00 from 1.0 down to
+  # 0.5 and then drops to 0.9 at 0.3 and 0.7 at 0.2. The drop test puts the
+  # true value near 0.3, i.e. right on the cliff edge.
+  # solref_frac: 0.4          # scales contact_solref[0], the time constant
+  # dampratio_range: [0.3, 0.8]   # absolute draw, not a fraction of nominal
+  disturb_force_N: 2.0
+  disturb_prob: 0.01
