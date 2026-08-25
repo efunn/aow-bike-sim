@@ -358,6 +358,9 @@ def main() -> None:
                     help="the four-bar wing mechanism instead of the geared "
                          "pair (config/wing_linkage_locking.yaml); same 9/4 "
                          "keys, but the actuator drives the CRANK")
+    ap.add_argument("--swing", action="store_true",
+                    help="co-rotating wing pair (config/swing_wings.yaml): one "
+                         "side down, other side tucked. 3 teleop positions.")
     ap.add_argument("--wings", action="store_true",
                     help="add the self-righting wing pair (teleop: 9 extends, "
                          "4 retracts). Nothing deploys on its own — the fallen "
@@ -365,8 +368,9 @@ def main() -> None:
     args = ap.parse_args()
     params = load_params(args.params)
     model = build_model(params, variant="full", hockey=args.hockey,
-                        righting=args.wings or args.linkage,
+                        righting=args.wings or args.linkage or args.swing,
                         wings=args.wings and not args.linkage,
+                        swing=args.swing,
                         linkage=args.linkage,
                         linkage_cfg=args.linkage_config)
     # Same lighting the recorder applies, so a teleop session and a video of
@@ -377,7 +381,8 @@ def main() -> None:
     if args.teleop:
         _teleop(model, params, eq.qpos, hockey=args.hockey,
                 general=args.general, show_ui=args.ui,
-                wings=args.wings, linkage=args.linkage, record=args.record,
+                wings=args.wings, linkage=args.linkage, swing=args.swing,
+                record=args.record,
                 slowmo_x=args.slowmo)
         return
     if args.view:
@@ -1148,7 +1153,7 @@ def _rec_write(rec, path, params, gen_name, mode):
 
 
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
-            show_ui=False, wings=False, linkage=False, record=None,
+            show_ui=False, wings=False, linkage=False, swing=False, record=None,
             slowmo_x=1.0):
     from .interactive import teleop_loop
 
@@ -1234,7 +1239,36 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # stroke instead of being fixed. A schedule tuned for one is meaningless
     # for the other -- see the rate note below.
     wing = None
-    if wings or linkage:
+    if swing:
+        # THREE positions, not two. The co-rotating pair has a signed range
+        # (+-deploy about a symmetric centre), so "extend/retract" is not the
+        # right verb -- 9 puts the RIGHT wing down, 7 the LEFT, 4 returns to
+        # the centre V. See config/swing_wings.yaml.
+        import yaml as _yaml
+        from .build_model import SWING_CFG, swing_poses
+        scfg = _yaml.safe_load(SWING_CFG.read_text())
+        dep = np.deg2rad(float(scfg["deploy_deg"]))
+        ratio = float(scfg["gear_ratio"])
+        poses = swing_poses(scfg, params["omni_wheel"]["outer_radius"])
+        print("swing wings: 9 steps RIGHT, 4 steps LEFT "
+              "(left <-> centre <-> right; double-tap to cross)")
+        for nm in ("left", "centre", "right"):
+            v = poses[nm]
+            print(f"   {nm:6s} {v['theta_deg']:+5.0f} deg at the wing"
+                  f"   down foot {v['down_foot_z'] * 1000:5.1f} mm"
+                  f"   up foot {v['up_foot_z'] * 1000:5.1f} mm")
+        wing = {"aid": model.actuator("swing").id,
+                "jadr": model.joint("swing_right_joint").qposadr[0],
+                "stow": 0.0, "deploy": dep, "deploy_left": -dep,
+                # No slew limit: the joint carries DC-motor damping, so the
+                # position actuator already cannot drive it past no-load speed.
+                # Ramping on top of that would understate the strike.
+                "rate": float("inf"), "gear": ratio, "linkage": False,
+                "swing": True, "cmd": 0.0, "target": 0.0, "pos": 0,
+                "manual": False,
+                "push_n": 0, "push_dir": 1.0, "push_force": 8.0,
+                "push_s": 0.35, "body": model.body("chassis").id}
+    elif wings or linkage:
         if linkage:
             import yaml as _yaml
             from .build_model import LINKAGE_CFG
@@ -1295,9 +1329,16 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         4th action. Stamping the teleop target over it every step leaves the
         wings stowed no matter what the policy asks for -- and a policy that
         learned to ride on them then falls over instantly, which is exactly
-        what happened the first time this was driven."""
+        what happened the first time this was driven.
+
+        `act_swing` MUST be checked here too. It is the same 4th channel on the
+        co-rotating mechanism, and omitting it reproduces the bug above
+        silently: wing_step runs after c.step and rewrites the whole ctrl
+        vector, so the policy's command is discarded and the pair sits at the
+        centre V while the policy believes it is deploying."""
         return (c.mode == "general"
-                and bool(getattr(c._gen, "act_wings", False))
+                and bool(getattr(c._gen, "act_wings", False)
+                         or getattr(c._gen, "act_swing", False))
                 and not wing["manual"])
 
     def wing_step(m, d):
@@ -1751,15 +1792,31 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 if not wing["manual"]:
                     wing["manual"] = True
                     wing["cmd"] = float(d.qpos[wing["jadr"]])   # no snap
-                    if c.mode == "general" and getattr(c._gen, "act_wings", False):
+                    if c.mode == "general" and (
+                            getattr(c._gen, "act_wings", False)
+                            or getattr(c._gen, "act_swing", False)):
                         print("wings: MANUAL override (policy no longer drives "
                               "them; re-engage the policy to hand them back)")
-                wing["target"] = wing["deploy"] if k == ord("9") else wing["stow"]
+                if wing.get("swing"):
+                    # STEP through three positions rather than latch two. The
+                    # co-rotating pair has a signed range about a symmetric
+                    # centre, so 9 walks right (left -> centre -> right) and 4
+                    # walks left. Double-tapping either one crosses the whole
+                    # range, which is what makes "swap sides" one gesture
+                    # instead of needing a third key.
+                    wing["pos"] = int(np.clip(
+                        wing["pos"] + (1 if k == ord("9") else -1), -1, 1))
+                    wing["target"] = wing["pos"] * wing["deploy"]
+                    label = {-1: "LEFT down", 0: "CENTRE", 1: "RIGHT down"}[wing["pos"]]
+                else:
+                    wing["target"] = (wing["deploy"] if k == ord("9")
+                                      else wing["stow"])
+                    label = "EXTEND" if k == ord("9") else "RETRACT"
                 turns = abs(np.degrees(wing["target"] - wing["stow"])) \
                     * wing["gear"] / 360.0
-                print(f"wings {'EXTEND' if k == ord('9') else 'RETRACT'} -> "
-                      f"{np.degrees(wing['target']):.0f}° at the wing, "
-                      f"{turns:.2f} turns at the servo"
+                print(f"{'swing wings' if wing.get('swing') else 'wings'}: "
+                      f"{label} -> {np.degrees(wing['target']):+.0f}° at the "
+                      f"wing, {turns:.2f} turns at the servo"
                       + ("  (multi-turn)" if turns > 1.0 else ""))
             elif general:
                 # -- general-mode layer: heading snaps replace the moves ----

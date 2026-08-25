@@ -972,6 +972,134 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
         s.objname = "wing_right_joint"
 
 
+SWING_CFG = Path(__file__).resolve().parents[2] / "config" / "swing_wings.yaml"
+
+
+def _add_swing_wings(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
+    """Co-rotating wing pair (build_model(..., swing=True)); the THIRD righting
+    mechanism, after `arm` and the mirrored `wings`. See config/swing_wings.yaml
+    for why the coupling sign is the whole difference.
+
+    ONE SIGN separates this from `_add_wings`: the joint equality is
+    theta_left = +1 * theta_right rather than -1. A direct gear mesh reverses,
+    which is what makes the stock pair mirrored and side-agnostic; an idler or
+    a belt does not, which makes this pair co-rotate and lets it put one wing
+    down while the other tucks up. Everything else here follows from that:
+
+      * THE RANGE IS TWO-SIDED. `_add_wings` gives each joint a one-sided range
+        (left [-deploy, 0], right [0, deploy]) because the mirrored stroke only
+        ever goes one way. Co-rotation needs +-deploy on BOTH, and getting this
+        wrong is silent: the two one-sided ranges intersect only at zero, so a
+        co-rotating pair built with them simply cannot move.
+      * THE REST POSE IS A SYMMETRIC V, at +-`rest_deg` from vertical, so the
+        centre position carries no lateral CoM offset. A co-rotating pair that
+        rested off-centre would be a standing roll bias the balance controller
+        trims out forever.
+      * THERE IS JOINT DAMPING. `_add_wings` has none, which is fine for a
+        quasi-static torque reading but not here, where the whole point of the
+        lower reduction is tip SPEED. Without b = tau_stall/w_noload referred
+        through the ratio, a position actuator drives the wing arbitrarily fast
+        and every strike number is fiction.
+    """
+    servo = p["servos"][cfg["servo"]]
+    px, py, pz = cfg["pivot"]
+    rest = np.deg2rad(float(cfg["rest_deg"]))
+    L = float(cfg["length"])
+    ratio = float(cfg["gear_ratio"])
+    deploy = float(cfg["deploy_deg"])
+    plate, sim = cfg["plate"], p["sim"]
+
+    tau = servo["stall_torque"] * ratio
+    w_wing = servo["no_load_rpm"] * 2 * np.pi / 60.0 / ratio
+
+    for side, tag in ((1, "left"), (-1, "right")):
+        wing = spec_body = chassis.add_body(
+            name=f"swing_{tag}", pos=[px, side * py, pz])
+        wing.add_joint(
+            name=f"swing_{tag}_joint",
+            type=mujoco.mjtJoint.mjJNT_HINGE,
+            axis=[1, 0, 0],
+            range=[-deploy, deploy],      # DEGREES: spec.compiler.degree is on
+            limited=mujoco.mjtLimited.mjLIMITED_TRUE,
+            damping=[tau / w_wing, 0, 0],
+        )
+        # Leg direction at rest: splayed OUTBOARD by `rest_deg` from +Z. The
+        # plate's long axis runs along it and its broad face leads the swing,
+        # which is the face that meets the ball.
+        d = np.array([0.0, side * np.sin(rest), np.cos(rest)])
+        wing.add_geom(
+            name=f"swing_{tag}_plate",
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            size=[plate["x_length"] / 2, plate["thickness"] / 2, L / 2],
+            pos=(L / 2) * d,
+            # Rotate local +Z onto the leg direction; the plate is then thin
+            # along the swing tangent and broad across it.
+            quat=_quat_z_to(d),
+            mass=float(cfg["mass"]),
+            contype=DYN_CONTYPE,
+            conaffinity=DYN_CONAFF,
+            condim=sim["condim"],
+            friction=_contact_friction(sim),
+            rgba=[0.9, 0.55, 0.1, 1],
+        )
+
+    # THE COUPLING, and the one line that defines this mechanism.
+    eq = spec.add_equality()
+    eq.type = mujoco.mjtEq.mjEQ_JOINT
+    eq.name1, eq.name2 = "swing_left_joint", "swing_right_joint"
+    eq.data[:5] = [0.0, 1.0, 0.0, 0.0, 0.0]     # +1 = co-rotate; -1 would mirror
+    eq.solref = [0.005, 1.0]
+
+    # DEFEAT THE PARENT-CHILD CONTACT FILTER. MuJoCo excludes contacts between
+    # a body and its parent, and both wings hang off the chassis -- so without
+    # explicit pairs the rising wing sweeps clean through the frame, the drive
+    # servos and the battery, and the stroke looks fine while being physically
+    # impossible. That is exactly how the first version of this mechanism ran
+    # at 45 deg past its real limit. The pairs make the model REFUSE the pose
+    # rather than leaving `deploy_deg` as a number someone has to trust.
+    for tag in ("left", "right"):
+        for other in ("chassis_box", "servo_drive_left", "servo_drive_right"):
+            if not any(g.name == other for g in chassis.geoms):
+                continue
+            pair = spec.add_pair()
+            pair.geomname1 = f"swing_{tag}_plate"
+            pair.geomname2 = other
+            pair.condim = sim["condim"]
+
+    act = spec.add_actuator(name="swing")
+    act.set_to_position(kp=cfg["servo_kp"] * ratio, kv=cfg["servo_kv"] * ratio)
+    act.trntype = mujoco.mjtTrn.mjTRN_JOINT
+    act.target = "swing_right_joint"
+    act.forcerange = [-tau, tau]
+    act.ctrlrange = [-np.deg2rad(deploy), np.deg2rad(deploy)]
+    act.ctrllimited = True
+
+    for stype, suffix in ((mujoco.mjtSensor.mjSENS_JOINTPOS, "pos"),
+                          (mujoco.mjtSensor.mjSENS_JOINTVEL, "vel")):
+        s = spec.add_sensor(name=f"swing_{suffix}")
+        s.type = stype
+        s.objtype = mujoco.mjtObj.mjOBJ_JOINT
+        s.objname = "swing_right_joint"
+
+
+def swing_poses(cfg: dict, r_rear: float) -> dict:
+    """The three teleop positions and where each puts the two feet [mm above
+    the floor]. Lives here so the model and the numbers cannot drift apart."""
+    rest = np.deg2rad(float(cfg["rest_deg"]))
+    L, pz, py = float(cfg["length"]), float(cfg["pivot"][2]), float(cfg["pivot"][1])
+    out = {}
+    for name, th in (("right", np.deg2rad(cfg["deploy_deg"])),
+                     ("centre", 0.0),
+                     ("left", -np.deg2rad(cfg["deploy_deg"]))):
+        near = pz + r_rear + L * np.cos(rest + abs(th))
+        far = pz + r_rear + L * np.cos(rest - abs(th))
+        out[name] = {"theta_deg": float(np.degrees(th)),
+                     "down_foot_z": min(near, far) if th else near,
+                     "up_foot_z": max(near, far) if th else far,
+                     "down_foot_y": py + L * np.sin(rest + abs(th))}
+    return out
+
+
 FLYWHEEL_CFG = Path(__file__).resolve().parents[2] / "config" / "flywheel.yaml"
 
 FLYWHEEL_AXIS = {"roll": [1.0, 0.0, 0.0], "yaw": [0.0, 0.0, 1.0]}
@@ -1185,6 +1313,8 @@ def build_spec(
     linkage_cfg: str | Path | None = None,
     flywheel: bool = False,
     flywheel_cfg: str | Path | None = None,
+    swing: bool = False,
+    swing_cfg: str | Path | None = None,
 ) -> mujoco.MjSpec:
     p = params or load_params()
     spec = mujoco.MjSpec()
@@ -1222,7 +1352,7 @@ def build_spec(
     # nothing above the wheels can touch anything, which is exactly right for a
     # bike that stays upright. A FALLEN bike lands on them, so the righting
     # study turns them into the outer shell they physically are.
-    shell = ((DYN_CONTYPE, DYN_CONAFF) if (righting or wings) else (0, 0))
+    shell = ((DYN_CONTYPE, DYN_CONAFF) if (righting or wings or swing) else (0, 0))
     ch = bike["chassis"]
     chassis.add_geom(
         name="chassis_box",
@@ -1377,8 +1507,8 @@ def build_spec(
                                         **derive_linkage_roof(p, lk_cfg)}}}
     # `wings` implies the righting shell, and swaps the single arm for the wing
     # pair — the bumper rails are shared, the two mechanisms never coexist.
-    if righting or wings or linkage:
-        _add_righting(spec, chassis, p, arm=not (wings or linkage))
+    if righting or wings or linkage or swing:
+        _add_righting(spec, chassis, p, arm=not (wings or linkage or swing))
     if wings:
         _add_wings(spec, chassis, p)
     if linkage:
@@ -1388,6 +1518,16 @@ def build_spec(
     if flywheel:
         _add_flywheel(spec, chassis, p,
                       yaml.safe_load(Path(flywheel_cfg or FLYWHEEL_CFG).read_text()))
+    # The co-rotating pair is an ALTERNATIVE to `wings`/`linkage`, never an
+    # addition -- building both would put four wings on the bike and
+    # double-count the mass, the same trap the linkage note above describes.
+    if swing:
+        if wings or linkage:
+            raise ValueError("swing wings are an ALTERNATIVE to wings/linkage, "
+                             "not an addition -- pick one mechanism")
+        _add_swing_wings(spec, chassis, p,
+                         yaml.safe_load(Path(swing_cfg or SWING_CFG).read_text()))
+
     return spec
 
 
@@ -1464,10 +1604,11 @@ def build_model(
     wings: bool = False, linkage: bool = False,
     linkage_cfg: str | Path | None = None,
     flywheel: bool = False, flywheel_cfg: str | Path | None = None,
+    swing: bool = False, swing_cfg: str | Path | None = None,
 ) -> mujoco.MjModel:
     return build_spec(params, variant, training_wheels, hockey, payload,
                       righting, wings, linkage, linkage_cfg,
-                      flywheel, flywheel_cfg).compile()
+                      flywheel, flywheel_cfg, swing, swing_cfg).compile()
 
 
 def main() -> None:

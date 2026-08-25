@@ -1,0 +1,143 @@
+# SWING WINGS -- a third righting/striking mechanism, alongside `arm` (one
+# limb, swings with sign(roll)) and `wings` (a mirrored pair on one servo).
+#
+# DELIBERATELY NOT IN bike_params.yaml, which is hashed whole into
+# params_digest and pins deploy/bundle.npz plus every trained move. Same
+# treatment as config/flywheel.yaml and config/wing_linkage*.yaml.
+# Read only by build_model(..., swing=True). A default build never opens it.
+#
+# WHAT MAKES IT DIFFERENT FROM `wings`: the coupling. The geared pair uses a
+# joint equality theta_left = -1 * theta_right (a direct gear mesh, which
+# reverses), so both wings deploy OUTWARD together and the stroke never has to
+# know which side the bike fell on. This one uses +1 -- an idler or a belt in
+# the real gear train instead of a direct mesh -- so the pair CO-ROTATES: one
+# wing swings down and out while the other swings up and in.
+#
+# That costs side-agnosticism (this mechanism must be told which way to go, off
+# the AHRS roll sign, exactly as `arm` is) and buys the thing the mirrored pair
+# cannot do: present ONE flat face on ONE side with the other side tucked up
+# out of the way. Deploying the mirrored pair far enough to reach a ball on the
+# right plants the left wing too, which turns the bike into a tripod.
+#
+# A CO-ROTATING FOUR-BAR EXISTS, and it is the better mechanism. See
+# config/swing_linkage.yaml and analysis/swing_linkage.py.
+#
+# An earlier version of this note said the four-bar "CANNOT be re-coupled this
+# way". What was actually measured is narrower and still true: RE-PHASING the
+# mirrored linkage does not get there -- sweeping `angle_between_first_links`
+# over 360 deg leaves it mirrored, kills the far wing's throw, or takes it
+# outside its assembly range, because the coupler length is DERIVED to close at
+# stow so re-phasing moves the very link ratios you were relying on. Getting
+# co-rotation needs the geometry re-solved, not re-phased. That has since been
+# done, in CAD (`swing-wings-geom-mock`) and traced back into this repo.
+#
+# WHY THE LINKAGE BEATS THIS GEARED PAIR, once it exists:
+#   - the rocker arc BOUNDS the rising wing instead of leaving it to a stroke
+#     limit and explicit contact pairs. It still has to be checked -- the
+#     as-drawn geometry reaches 29.4 mm from the centreline, inside the drive
+#     servos -- but it is a geometric property the optimiser can price, not a
+#     number someone has to remember;
+#   - a varying ratio, so the mechanical advantage can be spent where the load
+#     is, which a fixed reduction cannot do;
+#   - much more tucked in: 58 mm rest half-width optimised, against 104 mm here.
+#
+# This geared version stays as the SIMPLE variant -- one equality, one sign, no
+# coupler to solve -- and as the thing the RL runs in moves/general_swing*.npz
+# were actually trained against. Do not delete it to tidy up.
+
+pivot: [0.075, 0.030, 0.0]   # [x, |y|, z] chassis frame, origin = rear axle.
+                             # z = 0 puts it at axle height, 51.2 mm off the floor.
+
+# Rest bearing of each leg from +Z, splayed OUTBOARD. The pair forms a
+# symmetric V at centre, so there is no standing roll bias -- which is the one
+# thing a co-rotating pair must not get wrong, since a lateral CoM offset is a
+# bias the balance controller trims out forever.
+#
+# 60 deg is FORCED by the far wing, not preferred. Three things pull on this
+# angle and the third decides it:
+#   upright   smaller is more tucked in and narrower at rest (104 mm half-width
+#             here, against 84 mm at 30 deg);
+#   clearance smaller keeps the resting foot higher, so it grounds at a larger
+#             roll -- 60 deg grounds at 42.1 deg, still clear of the 30.9 deg
+#             recoverable set (analysis/no_return.py);
+#   far wing  THE BINDING ONE. At 30 deg the far foot sits at +39 mm at
+# the strike pose -- i.e. it has crossed the centreline and is inside the
+# chassis. Starting further outboard is what buys the stroke: at 60 deg the far
+# foot is still at -56 mm when the near one is at the ball.
+rest_deg: 60.0
+
+length: 0.085          # [m] pivot -> foot.
+
+# [deg] travel EITHER WAY from centre; the joint range is +-this, which is the
+# other break from `wings` (whose range is one-sided per side).
+#
+# 45 IS A HARD LIMIT SET BY THE FAR WING, not a preference. A co-rotating pair
+# swings one wing toward the centreline as the other swings away, so the stroke
+# ends when the rising wing reaches the chassis:
+#     theta   near foot z   far foot |y|
+#        30      51.2 mm       72.5 mm
+#        45      29.2 mm       52.0 mm   <- ball centre is 33.5 mm
+#        50      22.1 mm       44.8 mm   <- into the drive servos (|y| 15.8..44.25)
+#        80     -13.9 mm        0.9 mm   <- straight through the bike
+# At 45 the striking foot is already below ball centre, so nothing is lost.
+#
+# MuJoCo will NOT catch an over-travel on its own: it filters contacts between
+# a body and its parent, and these wings hang off the chassis, so they pass
+# clean through it. `_add_swing_wings` adds explicit contact pairs to defeat
+# that filter -- without them the first version of this config ran at 80 deg
+# and looked fine while the far wing was inside the battery.
+deploy_deg: 45.0
+
+# The striking panel. A flat plate, not a capsule: the whole point of this
+# variant is a face to hit a ball with, and a sphere-ended capsule presents a
+# point contact whose moment arm jumps around (see the `rocker_deg` note in
+# bike_params.yaml for the same problem on the geared foot).
+plate:
+  x_length: 0.060      # fore/aft extent of the face
+  thickness: 0.006
+mass: 0.020            # [kg] per wing, same as the geared pair's
+
+# Reduction from servo to wing. NOT 4:1. The geared pair's 4:1 came from a
+# QUASI-STATIC torque reading (analysis/self_righting.py::_lift ramps at
+# 0.7 rad/s "so the reading is the quasi-static torque and not an impulse"),
+# which is the worst case by construction. Measured dynamically instead --
+# step-command the stroke from the fallen pose with the servo's real force
+# limit and a DC-motor speed limit -- every ratio from 1.5:1 to 5:1 rights the
+# bike at 12 V AND at the 9.9 V pack cutoff. 1:1 works at 12 V and diverges at
+# cutoff.
+#
+# So the ratio is open, and it is chosen for TIP SPEED instead:
+#     1.5:1 -> 0.86 m/s at 12 V, 0.71 at cutoff
+#     2.0:1 -> 0.64 m/s,         0.53 at cutoff
+#     4.0:1 -> 0.32 m/s,         0.27 at cutoff
+# against moves/ball_rl.yaml's current 0.378 m/s stick shot and the ~1.0 m/s
+# wheel shot measured off the hardware videos (docs/plans/ball-shot-move.md).
+# 2:1 is the middle of the range that survives cutoff with margin.
+gear_ratio: 2.0
+
+servo: xc330_t181      # key into bike_params.yaml `servos`
+servo_kp: 30.0         # at the wing; scaled by gear_ratio like `arm`/`wings`
+servo_kv: 1.0
+
+# HOW TO DRIVE IT TO RIGHT THE BIKE. Not obvious, and getting it wrong reads as
+# "this mechanism cannot right", which is what a first pass here concluded.
+#
+# The splayed rest V is an outrigger during a fall, so this variant does NOT
+# settle on its side like the geared pair: it goes over onto its BACK, ~119 deg.
+# And past 90 deg the lever inverts -- the wing that would push the bike upright
+# below 90 pushes it further over above it. So a latched sign(roll) captured at
+# the start does nothing at all (best 111 deg, i.e. no progress), and even a
+# continuously updated sign(roll) does nothing, because the sign never changes.
+#
+# The law that works is roll-aware and flips at 90 deg:
+#
+#     theta_cmd = deploy * sign(roll) * (+1 if |roll| < 90 deg else -1)
+#
+# Measured from the settled on-its-back pose, both sides:
+#     latched sign(roll0)        best 111.5 / 111.4 deg   no progress
+#     continuous sign(roll)      best 111.5 / 111.4 deg   no progress
+#     continuous -sign(roll)     best  66.1 /  63.8 deg   off its back, on its side
+#     FLIP AT 90                 best  14.0 /  13.7 deg   UP in 0.98 / 0.93 s
+#
+# Hysteresis (flip down at 80, up at 100) changes nothing here but is the safer
+# form on hardware, where roll near 90 will chatter across the threshold.
