@@ -195,6 +195,10 @@ def _eval_episodes(env, act_fn, cmds):
         t_head = None                      # first step inside _HEAD_TOL_DEG
         v_lons, v_lats, steers = [], [], []  # tail windows, refilled as we go
         xys, oscs, wings = [], [], []
+        # Static cap, not the curriculum-scheduled one: `wing_duty` has to mean
+        # the same thing at every difficulty or the trace is not comparable
+        # across a run.
+        wing_cap_deg = float(np.degrees(getattr(env, "wing_max", 0.0)))
         # World-frame axis the LATERAL command points along, fixed for the
         # episode because psi_cmd is.
         lat_axis = np.array([-np.sin(env._psi_cmd), np.cos(env._psi_cmd)])
@@ -249,8 +253,21 @@ def _eval_episodes(env, act_fn, cmds):
             # a wings arm. A policy that discovers "deploy and lean" scores
             # well while quietly turning a righting mechanism into landing
             # gear, and the score alone cannot tell you that happened.
-            "wing_deg": float(np.mean(wings)) if wings else 0.0,
-            "wing_duty": float(np.mean(np.asarray(wings) > 60.0)) if wings else 0.0,
+            # MAGNITUDE, not the signed mean. On the mirrored pair the wing
+            # command is 0..cap so the two are identical -- this is a no-op for
+            # every existing arm. On the CO-ROTATING pair (act_swing) the
+            # command is signed, -cap..+cap, and a policy that deploys left as
+            # often as right averages to ~0: indistinguishable from never
+            # touching the wings, which is the one thing this metric exists to
+            # detect.
+            "wing_deg": float(np.mean(np.abs(wings))) if wings else 0.0,
+            # Threshold SCALED to the cap rather than hardcoded. 60 of a 90 deg
+            # stroke is two thirds, and two thirds is the thing meant ("far
+            # enough to be near the floor"); the literal 60 silently becomes
+            # unreachable on a mechanism capped at 45, pinning duty at 0.000
+            # whatever the policy does.
+            "wing_duty": (float(np.mean(np.abs(wings) > (2 / 3) * wing_cap_deg))
+                          if wings and wing_cap_deg > 0 else 0.0),
             # A turn that never got inside tolerance is censored at the episode
             # length, not dropped -- "never finished" must cost more than slow.
             "t_head_s": (t_head if t_head is not None else steps) * env.ctrl_dt,
@@ -411,9 +428,17 @@ class BestByScore(BaseCallback):
 
         m, rows = _eval_episodes(self._env, act, self.cmds)
         score = _score(m)
-        for k in ("survive_rate", "track", "track_geo", "vel_err",
-                  "head_err_deg", "drift_m", "steer_rest_deg",
-                  "speed_ratio_fwd", "speed_ratio_rev", "turn_asym"):
+        keys = ["survive_rate", "track", "track_geo", "vel_err",
+                "head_err_deg", "drift_m", "steer_rest_deg",
+                "speed_ratio_fwd", "speed_ratio_rev", "turn_asym"]
+        # Only on an arm that HAS a mechanism -- a wingless run would just get
+        # two flat zero traces. Both fields are always present in `m`
+        # (_behaviour_metrics uses .get), so this gates the RECORDING, not the
+        # computation. Without it the numbers were computed every eval and
+        # thrown away here, which is why a wings arm's board had no wing trace.
+        if getattr(self._env, "wings", False) or getattr(self._env, "swing", False):
+            keys += ["wing_deg", "wing_duty"]
+        for k in keys:
             self.logger.record(f"eval/{k}", m[k])
         self.logger.record("eval/score", score)
         if score > self.best:
@@ -577,6 +602,13 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            "obs_pitch": bool(cfg["env"].get("obs_pitch", False)),
            "obs_wings": bool(cfg["env"].get("obs_wings", False)),
            "act_wings": bool(cfg["env"].get("act_wings", False)),
+           # The co-rotating pair. MUST be written even when false: replay
+           # reads these off the move to rebuild the observation, and a flag
+           # that is merely absent reads as False -- which is how a swing
+           # policy came out declaring the 15-wide base layout while its net
+           # was 17, and failed to load with a message blaming a spec change.
+           "obs_swing": bool(cfg["env"].get("obs_swing", False)),
+           "act_swing": bool(cfg["env"].get("act_swing", False)),
            "wing_max_deg": float(cfg["env"].get("wing_max_deg", 90.0)),
            # The resulting entry names, recorded explicitly. Two optional
            # 2-entry blocks make WIDTH ambiguous (a windowed policy and a
@@ -585,7 +617,8 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            "obs_layout": list(obs_layout(
                cfg["env"].get("vel_window_s", 0.0),
                cfg["env"].get("obs_pitch", False),
-               cfg["env"].get("obs_wings", False))),
+               cfg["env"].get("obs_wings", False),
+               cfg["env"].get("obs_swing", False))),
            "action_space": cfg["env"]["action_space"],
            "trained": trained}
     with open(MOVES_DIR / f"{name}.yaml", "w") as f:
@@ -673,7 +706,8 @@ def _export_from(spec: str, params, cfg, name="general_rl"):
     env_cfg = cfg["env"]
     want = obs_dim_for(vel_window_s=float(env_cfg.get("vel_window_s", 0.0)),
                        obs_pitch=bool(env_cfg.get("obs_pitch", False)),
-                       obs_wings=bool(env_cfg.get("obs_wings", False)))
+                       obs_wings=bool(env_cfg.get("obs_wings", False)),
+                       obs_swing=bool(env_cfg.get("obs_swing", False)))
     got = int(model.observation_space.shape[0])
     if got != want:
         raise SystemExit(
