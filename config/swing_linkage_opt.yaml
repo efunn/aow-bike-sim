@@ -1,0 +1,21 @@
+bike:
+  wheel_radius: 51.2
+  bike_width: 80.0
+  bike_height: 216.2
+  ground_clearance: 61.9
+mechanism:
+  wing_pivot_x: 15.014875908401809
+  wing_pivot_z: 0.0
+  crank_length: 15.000103891528859
+  coupler_length: 44.57288555662937
+  rocker_length: 24.390328068042823
+  angle_between_cranks: 20.040531430975506
+  crank_input_angle: 180.0
+  servo_offset: 41.05658040697257
+  wing_angle_from_rocker: 15.0
+  wing_norm_offset: 5.0
+  wing_z_min: -20.0
+  wing_z_max: 80.0
+stroke:
+  crank_travel_deg: 128.0
+  goal_current_nm: 0.44

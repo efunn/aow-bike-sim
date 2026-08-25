@@ -1,0 +1,122 @@
+# The SWING linkage: a co-rotating four-bar pair on one servo.
+#
+# Traced from the `wing-linkage-straight` Part Studio (element
+# 011b691f0af4ce5194344456, document 1124c4fc2691d6f419d3156e), read back
+# through the Onshape API on 2026-08-25. Its `assignVariable` features name the
+# driving values directly, so the mapping is exact:
+#
+#     angle_between_cranks  45 deg     <- was traced as 90 from the older
+#                                         `swing-wings-geom-mock` sketch. THAT
+#                                         WAS WRONG, and every "as-drawn"
+#                                         number computed before 2026-08-25 was
+#                                         computed at the wrong crank angle.
+#     crank_length          32 mm      (was 30)
+#     coupler_length        82 mm      (was 80)
+#     rocker_length         44.5 mm
+#     base_to_rocker_x      18 mm      -> `wing_pivot_x` here
+#     servo_to_base         83.5 mm    -> `servo_offset` here
+#     input_angle           180 deg    -> `crank_input_angle` here
+#
+# NOT MODELLED, and deliberately so:
+#     linkage_mount_angle   165 deg    VESTIGIAL -- a 3D-printing feasibility
+#                                      detail, not a kinematic one. It does not
+#                                      affect the mechanism's motion, so this
+#                                      model has no equivalent and needs none.
+#     pin_diameter          1/16 in    real hinge-pin sizing, which is what a
+#     pin_support_radius    0.1 in     minimum link length should be derived
+#                                      FROM rather than guessed at (the 15 mm
+#                                      floors in `_VARS` are hand-picked).
+#
+# HOW IT DIFFERS FROM config/wing_linkage.yaml, which is the MIRRORED four-bar:
+#
+#   wing_linkage   two INDEPENDENT four-bars sharing a crank shaft, with
+#                  per-side first-link lengths (`right: 30.575, left: 31.011`)
+#                  and couplers DERIVED per side to close at stow. The two
+#                  sides are deliberately not mirror images -- that asymmetry
+#                  is what lets it spend mechanical advantage where the load
+#                  is. Both wings deploy OUTWARD together.
+#
+#   swing_linkage  ONE set of link lengths, shared by both sides. The pair is
+#                  mirror-symmetric BY CONSTRUCTION, and the mechanism
+#                  CO-ROTATES: turning the crank one way puts one wing down
+#                  and lifts the other, turning it the other way swaps them.
+#
+# The symmetry is not a simplification for its own sake -- it is the property
+# the mechanism needs. A co-rotating pair rests at the middle of its range, and
+# a rest pose that is not laterally symmetric is a standing roll bias the
+# balance controller trims out forever. Making the lengths shared means the
+# rest pose cannot be asymmetric no matter what the optimiser does with them,
+# rather than leaving symmetry as something to check afterwards.
+#
+# Consequence for the search: there is ONE monotonic window to characterise,
+# not two, because side L at crank -t is exactly side R at crank +t. The
+# optimiser therefore scores one side and gets the other for free.
+
+bike:
+  wheel_radius: 51.2        # rear omni outer radius [mm]; sketch v=0 sits here
+  bike_width: 80.0   # narrowed from 120 (2026-08-25)
+  bike_height: 216.2
+  # 61.9 is the sketch's OWN panel-bottom height, not the 71.58 inherited from
+  # wing_linkage.yaml. The panel bottom is placed at this value by derivation
+  # (SwingLinkage._derive_panel_bottom), so the two have to agree or the model
+  # stops reproducing the CAD -- with 71.58 the derived panel sat 10 mm high
+  # and `--check` failed on every sketch point.
+  #
+  # Which number is RIGHT for the bike is a separate question: 71.58 came from
+  # the mirrored linkage and may still be the intended clearance. If so, the
+  # sketch wants its panel raised rather than this value lowered.
+  ground_clearance: 61.9
+
+mechanism:
+  # --- the four-bar, per side. ONE value each: both sides share them. ---
+  wing_pivot_x: 18.0        # |y| of each wing hinge [mm]
+  wing_pivot_z: 0.0         # relative to wheel_radius, i.e. the sketch origin
+  crank_length: 32.0        # shaft -> crank tip
+  coupler_length: 82.0      # crank tip -> rocker joint
+  rocker_length: 44.5       # wing pivot -> rocker joint (the wing IS this link)
+
+  # The crank is ONE rigid body with two arms THIS FAR APART, both keyed to the
+  # servo shaft. Symmetry does not come from this number -- it comes from the
+  # shared link lengths and from the arms sitting at +-between/2, so any value
+  # here gives a symmetric rest pose.
+  #
+  # WHAT IT ACTUALLY DOES: it sets the REST SETPOINT, and nothing else that
+  # matters. Measured, holding the lengths fixed and sweeping only this angle,
+  # the far arm's minimum clearance from vertical is -0.2 deg at 20, 30, 45,
+  # 60, 75 and 90 deg alike; only the stroke length moves (136 deg at 20,
+  # 100 deg at 90). The inward limit is set by the crank/coupler collinear pose
+  # -- the input dead point -- which the LENGTHS fully determine.
+  #
+  # Hence the design procedure, and it is a good one: size the lengths with
+  # this at 90, where the stroke is shortest and the pose most exposed, so the
+  # collinear pose itself clears vertical. Then relax the angle (45 or lower)
+  # purely to place the rest setpoint, knowing the never-inward property came
+  # from the lengths and cannot be lost by moving it.
+  angle_between_cranks: 45.0
+  crank_input_angle: 180.0  # the drawn/rest pose
+
+  # Servo shaft height above wheel_radius. Not a sketch variable -- the sketch
+  # inherits the mirrored linkage's servo station so the two mechanisms can
+  # share a mount. Kept explicit here because the optimiser may move it.
+  servo_offset: 83.5
+
+  # --- the wing panel, rigid with the rocker ---
+  wing_angle_from_rocker: 15.0   # panel bearing, offset from the rocker's
+  wing_norm_offset: 5.0          # panel offset normal to the rocker [mm]
+  wing_z_min: -20.0              # panel extent along its own axis, from the
+  wing_z_max: 80.0               #   offset origin. Length = z_max - z_min.
+
+stroke:
+  # Crank travel EITHER WAY from centre. Signed, unlike the mirrored linkage's
+  # one-way `servo_travel_deg`: -t deploys one side, +t the other.
+  #
+  # 101 deg is where the panel is most nearly horizontal, i.e. where the bike
+  # ends most upright (5.3 deg of residual roll). Past that the four-bar
+  # passes its output dead point and the panel swings back -- more travel is
+  # not more righting. See `swing_linkage.py --sweep`.
+  crank_travel_deg: 101.0
+
+  # Goal current for CURRENT-BASED POSITION MODE, as torque at the servo.
+  # Carried over from wing_linkage_locking.yaml as a starting point; it has
+  # NOT been re-measured for this mechanism and the window will differ.
+  goal_current_nm: 0.44
