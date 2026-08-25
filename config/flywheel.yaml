@@ -1,0 +1,42 @@
+# Reaction-wheel / flywheel study geometry.
+#
+# DELIBERATELY NOT IN bike_params.yaml. That file is hashed whole into
+# params_digest, which pins deploy/bundle.npz and every trained move, so adding
+# an exploratory block there would invalidate all of them to answer a question
+# that has not been decided yet. Same reasoning, and the same pattern, as
+# config/wing_linkage*.yaml -- see build_model.LINKAGE_CFG.
+#
+# Read only by build_model(..., flywheel=True). A default build never opens it.
+# Study: analysis/flywheel.py.
+
+# Which body axis the wheel spins about:
+#   yaw   body +Z -- reaction torque about yaw. Agility (pivot/flick), and the
+#         free yaw-angle channel from the servo's own encoder.
+#   roll  body +X -- reaction torque about roll, i.e. straight at the unstable
+#         axis. This is the one that could take balance load off the
+#         differential.
+axis: yaw
+
+# Chassis frame, origin at the rear axle centre, +X toward the front wheel.
+# Sized from the packaging argument: y = 0 exactly (a lateral offset is a
+# standing roll bias), x near the CoM (the wheel's own mass at a moment arm
+# inflates I_yaw, which is the denominator of its own authority), z low.
+# The rear axle sits 51.2 mm off the floor, so z = 0.02 is ~71 mm up.
+pos: [0.09, 0.0, 0.02]
+
+mass: 0.100          # [kg] the wheel itself, 12% of an 853 g bike
+radius: 0.035        # [m] capped by the 80 mm rear body width, not by choice
+
+# 1.0 = all mass at the rim (I = m r^2); 0.5 = solid disc (I = m r^2 / 2).
+# Momentum goes as m r^2 and the radius is width-limited, so rim-weighting is
+# the only free factor of 2 available.
+rim_fraction: 1.0
+
+# Flywheel revs per servo rev. This is a step-UP: the servo gearbox already
+# traded away the speed a reaction wheel needs, and momentum is the whole of
+# the authority. Note it multiplies referred friction too, which is what damps
+# the free yaw channel -- actuator sizing and sensor quality are coupled.
+gear_ratio: 6.5
+
+servo: xc330_t181    # key into bike_params.yaml `servos`
+bracket_mass: 0.030  # [kg] mount plate + gear train, lumped at `pos`

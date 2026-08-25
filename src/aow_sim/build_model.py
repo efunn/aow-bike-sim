@@ -972,6 +972,131 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
         s.objname = "wing_right_joint"
 
 
+FLYWHEEL_CFG = Path(__file__).resolve().parents[2] / "config" / "flywheel.yaml"
+
+FLYWHEEL_AXIS = {"roll": [1.0, 0.0, 0.0], "yaw": [0.0, 0.0, 1.0]}
+
+
+def _add_flywheel(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
+    """A reaction wheel on the chassis (build_model(..., flywheel=True)).
+
+    Config comes from `config/flywheel.yaml`, NOT `bike_params.yaml`, because
+    that file is hashed into `params_digest` and this study has not been
+    decided. Same pattern as the wing linkage.
+
+    TWO THINGS HERE ARE EASY TO GET WRONG AND BOTH CHANGE THE ANSWER.
+
+    1. INERTIA IS SET EXPLICITLY, not derived from the geom. MuJoCo's solid
+       cylinder gives I = m r^2 / 2; a rim-weighted wheel is I = m r^2. That
+       factor of two is not cosmetic — the radius is capped by the 80 mm body
+       and momentum goes as m r^2, so rim-weighting is the only free doubling
+       on the table. Drawing the geom at the true radius and *also* getting
+       the rim inertia needs `explicitinertial`.
+
+    2. THE SPEED LIMIT IS JOINT DAMPING, not a clamp. A DC motor delivers
+       tau = tau_stall * (1 - w / w_noload), which is exactly a torque source
+       in parallel with damping b = tau_stall / w_noload. Modelled that way,
+       the momentum budget H = I w_noload enforces ITSELF: the wheel simply
+       cannot be driven past its no-load speed, and the saturation that
+       defines a reaction wheel's usefulness emerges from the physics instead
+       of from a hand-written limit that a policy could be tuned against.
+
+       Referred through a step-up ratio N (flywheel revs per servo rev):
+           tau_fw = tau_servo / N,   w_fw = w_servo * N,
+           b_fw   = tau_fw / w_fw = tau_servo / (N^2 * w_servo).
+    """
+    servo = p["servos"][cfg["servo"]]
+    axis = str(cfg["axis"]).lower()
+    if axis not in FLYWHEEL_AXIS:
+        raise ValueError(f"flywheel axis {axis!r}; expected one of {sorted(FLYWHEEL_AXIS)}")
+
+    n = float(cfg["gear_ratio"])
+    m, r = float(cfg["mass"]), float(cfg["radius"])
+    inertia_spin = m * r * r * float(cfg["rim_fraction"])
+    # Transverse inertia of a ring/disc is half the polar value; the wheel is
+    # rigid about those axes anyway, so only the spin term does any work.
+    inertia_trans = inertia_spin / 2
+
+    tau_servo = servo["stall_torque"]
+    w_servo = servo["no_load_rpm"] * 2 * np.pi / 60.0
+    tau_fw = tau_servo / n
+    w_fw = w_servo * n
+    damping = tau_fw / w_fw
+
+    # The mount and gear train are chassis mass, not wheel mass — they do not
+    # spin, so lumping them into the wheel would inflate the momentum budget.
+    chassis.add_geom(
+        name="flywheel_bracket",
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=[0.015, 0.015, 0.006],
+        pos=cfg["pos"],
+        mass=float(cfg["bracket_mass"]),
+        contype=0,
+        conaffinity=0,
+        rgba=[0.35, 0.35, 0.4, 1],
+    )
+
+    wheel = chassis.add_body(name="flywheel", pos=cfg["pos"])
+    wheel.add_joint(
+        name="flywheel_joint",
+        type=mujoco.mjtJoint.mjJNT_HINGE,
+        axis=FLYWHEEL_AXIS[axis],
+        damping=damping,
+    )
+    wheel.add_geom(
+        name="flywheel_disc",
+        type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+        size=[r, 0.004, 0],
+        quat=_quat_z_to(FLYWHEEL_AXIS[axis]),
+        mass=m,
+        contype=0,          # a reaction wheel that touches anything is a bug
+        conaffinity=0,
+        rgba=[0.85, 0.65, 0.15, 0.85],
+    )
+    wheel.explicitinertial = True
+    wheel.mass = m
+    wheel.ipos = [0.0, 0.0, 0.0]
+    wheel.inertia = ([inertia_trans, inertia_trans, inertia_spin] if axis == "yaw"
+                     else [inertia_spin, inertia_trans, inertia_trans])
+
+    act = spec.add_actuator(name="flywheel")
+    act.trntype = mujoco.mjtTrn.mjTRN_JOINT
+    act.target = "flywheel_joint"
+    act.gainprm[0] = 1.0
+    act.ctrlrange = [-tau_fw, tau_fw]
+    act.ctrllimited = True
+    act.forcerange = [-tau_fw, tau_fw]
+    act.forcelimited = True
+
+    s = spec.add_sensor(name="flywheel_vel")
+    s.type = mujoco.mjtSensor.mjSENS_JOINTVEL
+    s.objtype = mujoco.mjtObj.mjOBJ_JOINT
+    s.objname = "flywheel_joint"
+    s = spec.add_sensor(name="flywheel_pos")
+    s.type = mujoco.mjtSensor.mjSENS_JOINTPOS
+    s.objtype = mujoco.mjtObj.mjOBJ_JOINT
+    s.objname = "flywheel_joint"
+
+
+def flywheel_budget(p: dict, cfg: dict) -> dict:
+    """The four numbers that decide whether a reaction wheel is worth building,
+    without running any physics. Kept next to `_add_flywheel` so the model and
+    the arithmetic cannot drift apart."""
+    servo = p["servos"][cfg["servo"]]
+    n = float(cfg["gear_ratio"])
+    inertia = float(cfg["mass"]) * float(cfg["radius"]) ** 2 * float(cfg["rim_fraction"])
+    w_fw = servo["no_load_rpm"] * 2 * np.pi / 60.0 * n
+    tau_fw = servo["stall_torque"] / n
+    return {
+        "inertia": inertia,
+        "tau_max": tau_fw,
+        "w_max": w_fw,
+        "momentum": inertia * w_fw,       # the whole of the authority
+        "spin_up_s": inertia * w_fw / tau_fw,
+        "added_mass": float(cfg["mass"]) + float(cfg["bracket_mass"]),
+    }
+
+
 def _add_world(spec: mujoco.MjSpec, p: dict) -> None:
     sim = p["sim"]
     # Checkered floor. Not decoration: against a plain plane the bike has no
@@ -1058,6 +1183,8 @@ def build_spec(
     wings: bool = False,
     linkage: bool = False,
     linkage_cfg: str | Path | None = None,
+    flywheel: bool = False,
+    flywheel_cfg: str | Path | None = None,
 ) -> mujoco.MjSpec:
     p = params or load_params()
     spec = mujoco.MjSpec()
@@ -1256,7 +1383,11 @@ def build_spec(
         _add_wings(spec, chassis, p)
     if linkage:
         _add_wing_linkage(spec, chassis, p, lk_cfg)
-
+    # Last, so the flywheel's actuator lands after every existing one and no
+    # saved policy's action indices shift under it.
+    if flywheel:
+        _add_flywheel(spec, chassis, p,
+                      yaml.safe_load(Path(flywheel_cfg or FLYWHEEL_CFG).read_text()))
     return spec
 
 
@@ -1332,9 +1463,11 @@ def build_model(
     hockey: bool = False, payload: bool = True, righting: bool = False,
     wings: bool = False, linkage: bool = False,
     linkage_cfg: str | Path | None = None,
+    flywheel: bool = False, flywheel_cfg: str | Path | None = None,
 ) -> mujoco.MjModel:
     return build_spec(params, variant, training_wheels, hockey, payload,
-                      righting, wings, linkage, linkage_cfg).compile()
+                      righting, wings, linkage, linkage_cfg,
+                      flywheel, flywheel_cfg).compile()
 
 
 def main() -> None:
