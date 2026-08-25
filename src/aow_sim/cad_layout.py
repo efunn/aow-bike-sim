@@ -29,6 +29,7 @@ regenerated -- not edited. It is an export, not a source.
 from __future__ import annotations
 
 import argparse
+import re
 from math import cos, radians, sin
 from pathlib import Path
 
@@ -2059,6 +2060,99 @@ def _wrap(text: str, width: int) -> list[str]:
     return textwrap.wrap(" ".join(text.split()), width)
 
 
+def _block_end(lines: list[str], start: int) -> int:
+    """Index of the line closing the brace block opening at or after `start`."""
+    depth, opened = 0, False
+    for i in range(start, len(lines)):
+        depth += lines[i].count("{") - lines[i].count("}")
+        opened = opened or "{" in lines[i]
+        if opened and depth == 0:
+            return i
+    raise ValueError("unbalanced braces in generated FeatureScript")
+
+
+def _eval_wrapper(fs: str) -> str:
+    """Rewrite a whole Feature Studio into ONE bare function the eval endpoint takes.
+
+    `POST .../featurescript` wants a function EXPRESSION, so every top-level
+    declaration in the export has to be brought inside it, and each form needs
+    a different move:
+
+      `export const X = ...`      -> `const X = ...`, a statement already
+      `export function f(...) {}` -> `const f = function(...) {};`
+      `export predicate p(...)`   -> DROPPED. A predicate cannot be declared in
+                                     a function body, and ours is only ever
+                                     called from a `precondition`, which is
+                                     also dropped.
+
+    Then each feature's body is run in its own scope with a fresh `id`, so a
+    name declared twice across two features cannot collide -- a redeclaration
+    is an ERROR that aborts everything after it.
+
+    THE DEFINITION MAP IS SYNTHESISED, and that is the sharp edge here. The
+    bodies test parameters as bare `if (definition.drawEnvelopes)`, and an
+    absent key is `undefined`, which is not `false` -- it throws. So every
+    `definition.X` in the file gets a value: a length for the ones that look
+    dimensional, `true` otherwise. A parameter that is neither reads as `true`
+    and may take a branch the UI never would, so this checks that the code
+    RUNS, not that every branch matches a particular tick-box state.
+    """
+    lines = fs.splitlines()
+    first = next((i for i, l in enumerate(lines) if l.startswith("annotation {")),
+                 len(lines))
+
+    head, out, i = lines[:first], [], 0
+    while i < len(head):
+        line = head[i]
+        if line.startswith(("FeatureScript ", "import(")):
+            i += 1
+        elif line.startswith("export predicate "):
+            i = _block_end(head, i) + 1
+        elif (m := re.match(r"^export function (\w+)\(", line)):
+            end = _block_end(head, i)
+            blk = head[i:end + 1]
+            blk[0] = blk[0].replace(f"export function {m.group(1)}(",
+                                    f"const {m.group(1)} = function(", 1)
+            blk[-1] += ";"
+            out.extend(blk)
+            i = end + 1
+        else:
+            out.append(re.sub(r"^export const ", "const ", line))
+            i += 1
+
+    feats, i = [], first
+    while i < len(lines):
+        if lines[i].startswith("annotation {"):
+            m = re.search(r'"Feature Type Name"\s*:\s*"([^"]+)"', lines[i])
+            name = m.group(1) if m else f"feature {len(feats)}"
+            pre = next(k for k in range(i, len(lines))
+                       if lines[k].strip() == "precondition")
+            b0 = next(k for k in range(_block_end(lines, pre + 1) + 1, len(lines))
+                      if lines[k].strip() == "{")
+            b1 = _block_end(lines, b0)
+            feats.append((name, "\n".join(lines[b0 + 1:b1])))
+            i = b1
+        i += 1
+
+    dimensional = re.compile(r"size|len|width|height|depth|dia|rad|thick|gap",
+                             re.I)
+    params = sorted(set(re.findall(r"definition\.(\w+)", fs)))
+    dfn = ", ".join(
+        f'"{k}" : ' + ("100 * millimeter" if dimensional.search(k) else "true")
+        for k in params)
+
+    body = ["\n".join(out), f"    const definition = {{ {dfn} }};"]
+    for n, (name, fb) in enumerate(feats):
+        body.append(
+            f'    // ---- {name} ----\n'
+            f'    {{ const id = makeId("chk{n}");\n{fb}\n'
+            f'      println("OK {name} -> " ~ toString(size(evaluateQuery('
+            f'context, qBodyType(qCreatedBy(id, EntityType.BODY), '
+            f'BodyType.SOLID)))) ~ " solids");\n    }}')
+    return ("function(context is Context, queries)\n{\n" + "\n".join(body)
+            + '\n    return "ran to completion";\n}\n')
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--params", default=CAD_PARAMS,
@@ -2105,7 +2199,16 @@ def main() -> None:
                          "a COMPILE error, so on an older document it takes "
                          "the whole Feature Studio down rather than one "
                          "feature — this is the escape hatch")
+    ap.add_argument("--check", metavar="TAB|URL", nargs="?", const="",
+                    help="compile AND RUN the generated FeatureScript against a "
+                         "throwaway copy of a Part Studio's context before "
+                         "pushing, and refuse to push if it does not build. One "
+                         "call. Nothing is written to the document — the "
+                         "context Onshape builds is discarded. Defaults to the "
+                         "`check` tab in config/onshape.yaml")
     args = ap.parse_args()
+    if args.check is not None and args.format != "featurescript":
+        ap.error("--check evaluates FeatureScript; add --format featurescript")
     if args.push is not None and args.format != "featurescript":
         # Silently switching would write cad_layout.yaml while pushing .fs text,
         # leaving the on-disk copy of what was pushed simply absent.
@@ -2136,7 +2239,7 @@ def main() -> None:
         half = abs(to_cad_pos(am["pos"])[0]) + _mm(am["cyl"][1]) / 2
         print(f"  rear width {2 * half:.1f} mm (half {half:.1f})")
     print(f"  modelled mass excluding righting: {_g(total)} g")
-    if args.push is not None or args.shot is not None:
+    if args.push is not None or args.shot is not None or args.check is not None:
         _to_onshape(args, text)
 
 
@@ -2147,6 +2250,22 @@ def _to_onshape(args, text: str) -> None:
     offline export — the module reads the Keychain on first call.
     """
     from . import onshape
+
+    if args.check is not None:
+        # BEFORE the push, deliberately. A push cannot fail on bad FeatureScript
+        # — the contents endpoint takes any text — so without this a broken
+        # export lands in the document and shows up as an EMPTY render with no
+        # error anywhere. Checking first turns that into a line number.
+        url = onshape.resolve(args.check, "check")
+        reply = onshape.eval_featurescript(_eval_wrapper(text), url)
+        for line in onshape.notice_lines(reply):
+            print(f"  {line}")
+        if reply.get("console"):
+            print("".join(f"  {l}\n" for l in reply["console"].splitlines()), end="")
+        if any(n["message"]["level"] == "ERROR" for n in reply.get("notices", [])):
+            print(onshape.budget_line())
+            raise SystemExit("check FAILED — not pushing")
+        print(f"  checked OK against {url}")
 
     if args.push is not None:
         url = onshape.resolve(args.push, "feature_studio")

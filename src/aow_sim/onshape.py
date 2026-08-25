@@ -298,6 +298,58 @@ def _flatten(png: bytes, bg):
     return buf.getvalue()
 
 
+def eval_featurescript(script: str, url: str) -> dict:
+    """Compile AND RUN FeatureScript against a Part Studio. One billable call.
+
+    Onshape derives a THROWAWAY copy of the studio's context, executes the
+    script against it -- opExtrude, opBoolean, setProperty all really run --
+    returns what you measured, and discards the whole thing. Verified 2026-08-24
+    by building a body, counting it, and counting again in a second call: 0.
+
+    This is the only way to find out whether generated FeatureScript is sound
+    without pushing it and asking a human to look. A push CANNOT tell you: the
+    contents endpoint takes any text at all, so a broken export pushes happily
+    and then renders EMPTY, with no error anywhere.
+
+    Two asymmetries worth remembering:
+
+    - The script must be a BARE FUNCTION EXPRESSION. A `FeatureScript 3044;` +
+      `import(...)` preamble is a parse error; std is implicit. See
+      `cad_layout._eval_wrapper`, which does the rewrite for a whole studio.
+    - A script that fails to compile still returns 200, so unlike a failed push
+      it COSTS A CALL. Batch every question into one script.
+
+    It also compiles at the CURRENT library version rather than the target
+    studio's, so it proves the code is sound, not that it is sound in a tab
+    pinned to something older. `libraryVersion` in the reply says which.
+    """
+    did, wvm, wid, eid = parse_url(url)
+    raw, _ = _call("POST", f"/partstudios/d/{did}/{wvm}/{wid}/e/{eid}/featurescript",
+                   {"script": script, "queries": []},
+                   what=f"eval {len(script)} chars of FeatureScript",
+                   doc=did, elem=eid)
+    return json.loads(raw)
+
+
+def notice_lines(reply: dict) -> list[str]:
+    """Human-readable notices from an eval reply, worst first.
+
+    PARSE errors carry a real line and column. SEMANTIC ones report line 0 but
+    name the missing function in the message, so print the message rather than
+    sending anyone to look at line 0.
+    """
+    out = []
+    rank = {"ERROR": 0, "WARNING": 1, "INFO": 2}
+    for n in sorted(reply.get("notices", []),
+                    key=lambda n: rank.get(n["message"]["level"], 3)):
+        m = n["message"]
+        loc = (m.get("stackTrace") or [{}])[0].get("message", {})
+        where = (f" line {loc['line']} col {loc['column']}"
+                 if loc.get("line") else "")
+        out.append(f"[{m['level']}/{m['type']}]{where}: {m['message']}")
+    return out
+
+
 def budget_line(total: int | None = None) -> str:
     total = billed() if total is None else total
     start = cycle_start()

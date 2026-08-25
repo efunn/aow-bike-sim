@@ -26,6 +26,18 @@ tabs:
   # The superseded tab, kept to debug the appearance lock-out rather than
   # deleted. Nothing generated should be aimed here.
   rip: 0e4da05733a469beac9024c3
+  # Target for `--check`, which compiles and RUNS the generated FeatureScript
+  # against a throwaway copy of this tab's context. Nothing is ever written
+  # here: Onshape derives the context, executes the script, hands back what it
+  # measured and discards the whole thing.
+  #
+  # KEEP THIS TAB EMPTY. Its emptiness is the feature -- a body modelled here
+  # lands in any query not scoped to `qCreatedBy(id, ...)`, silently inflating
+  # a body count or a collision sweep. `_eval_wrapper` scopes its own queries,
+  # but a hand-written probe pasted in later will not.
+  #
+  # Created 2026-08-24 via POST /api/partstudios/d/{did}/w/{wid}, one call.
+  check: 67e6fe3d09d0157389e0dcc4
   # The real drawing -- actual parts, imported wheel geometry. cad_layout never
   # writes here; it is a --shot target only, for seeing the parts in context.
   bike: eb278418be25018fb7253dd3
