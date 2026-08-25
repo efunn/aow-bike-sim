@@ -132,7 +132,153 @@ bus pass-through, and X-series buses routinely run at 12 V and above. Connecting
 it is what lets the board→U2D2 link be an unmodified 3-pin cable.
 
 **Wiring diagram: [`untethered-wiring.svg`](untethered-wiring.svg)** — every
-component, both power domains, and the Pi's pin assignments on one page.
+component, both power domains, and the Pi's pin assignments on one page. It
+predates the 5 V servo branch below and does not show it.
+
+### OPTIONAL, NOT BUILT — a 5 V servo domain
+
+> **NOTHING IN THIS SECTION IS IN THE CURRENT DESIGN.** The self-righting
+> mechanism is driven by an **XC330-T181 on the 12 V bus**, like every other
+> servo on the bike, so there is exactly ONE power domain and none of the
+> keying, splitting or labelling below is needed to build it.
+>
+> It is kept because the option is cheap to preserve and expensive to
+> reconstruct: the analysis is done, the failure modes are known, and the parts
+> are a few dollars. If a 5 V servo is ever wanted — an XL330 somewhere, or a
+> second small actuator — this is the whole design, ready to use.
+>
+> The parts are quarantined too, in their own order section (*Optional — the
+> 5 V servo branch*), so a normal build never accidentally buys them.
+>
+> **The yaw flywheel is dropped too.** Several paragraphs below argue about
+> which servo drives it and about reading its `Present Position` as a free
+> second yaw channel. That reasoning is sound and is kept for the same reason
+> as the rest of this section, but there is no flywheel on this bike and no
+> plan for one — do not read those paragraphs as describing a live design, and
+> do not size the 12 V budget for a fifth servo.
+>
+> *(An earlier revision had this as the authoritative plan, with the XL330 as
+> the righting servo and a flywheel as the fifth. Both decisions were reversed;
+> the reasoning below still holds, it just no longer describes this bike.)*
+
+**The case it solves.** An **XL330-M288-T** is a 5 V part:
+`3.7 ~ 6.0 V (recommended 5.0 V)`. The pack is 11.1 V nominal and 12.6 V
+fresh off the charger — a bit over **twice its absolute maximum**.
+
+**Which servo goes where, and why that way round.** The two candidates are
+near-twins at the output shaft, which is the thing to notice before reasoning
+from the gearbox:
+
+| | ratio | stall | no-load | mass | rail |
+|---|---|---|---|---|---|
+| XC330-T181 | 180.62 : 1 | 0.76 N.m @ 11.1 V | 104 rpm | 23 g | 12 V |
+| XL330-M288 | 288.4 : 1 | 0.52 N.m @ 5.0 V | 103 rpm | 18 g | **5 V** |
+
+The reduction difference does **not** reach the output — both land at ~104 rpm,
+so neither choice changes flywheel top speed, and top speed is the whole of a
+reaction wheel's authority. What the split does buy:
+
+- **The flywheel takes the XC330** because 180.62:1 refers less friction back
+  to the wheel than 288.4:1 does. The free yaw channel below is damped by
+  exactly that friction, so the lower-geared servo gives the less damped, longer
+  holding signal.
+- **Righting takes the XL330** because righting is the duty that stalls *by
+  design* at the end of its stroke, and it is rare. A rare, current-capped draw
+  is what the 2 A rail can absorb; a continuously commanded flywheel is not.
+  Torque is not the constraint either way — righting needs 0.14–0.19 N.m at the
+  servo (0.57 N.m at the wing, 0.65–0.75 at the arm, over `gear_ratio: 4.0`)
+  against the XL330's 0.52 N.m stall.
+
+So there is **exactly one 5 V servo** on the bike, and everything below is
+sized for one.
+
+**The hazard is that nothing physical stops you.** The XL330 ships with the
+same `Robot Cable-X3P` every other X-series servo does, into the same
+`EHR-03` housing, on the same `1 GND / 2 VDD / 3 DATA` pinout, and X-series
+connectors pass all three straight through internally. Plug it into the
+daisy chain the way the chain is designed to be extended and it mates
+perfectly and dies on power-up. Connector compatibility without electrical
+compatibility is worse than incompatibility, because the build gives no
+warning.
+
+**Only VDD splits.** GND and DATA stay common and must — half-duplex TTL needs
+one ground reference, and every X-series part signals at 5 V logic regardless
+of what VDD is (the XC330's own spec sheet says `TTL Multidrop Bus (5V
+Logic)` at an 11.1 V VDD). So the 5 V servo is a normal bus peer; it is only
+its supply that comes from somewhere else.
+
+**Key the branch so the mistake is impossible, not merely documented.** Put a
+fourth header on the splitter board for the 5 V branch and make it a
+**different connector family** — JST **PH, 2.0 mm** (`B3B-PH-K-S`) against the
+bus's EH at 2.5 mm. A 12 V EH cable then physically cannot enter the 5 V
+branch, and no amount of tired-at-the-bench pattern-matching can override
+that. Pin 2 of that header goes to the **5 V rail output**, pins 1 and 3 to
+the same GND and DATA nodes as the rest.
+
+That costs exactly one non-stock cable: a PH pigtail at the board end,
+spliced to a cut `Robot Cable-X3P` at the servo end. Buy the PH pigtail
+pre-made and this needs no crimp tool — three soldered joints and heat shrink
+— which keeps the no-crimping property the rest of the build has.
+
+**What keying cannot fix.** The XL330's *own* socket is EH, and it has two of
+them. So keying protects the board end only; at the servo end nothing stops
+someone daisy-chaining the XL330 off an XC430. Two rules cover it: the 5 V
+servo sits at the **end** of its branch with its second socket empty and
+taped over, and the adapter cable is labelled **5 V** at both ends. This is a
+discipline mitigation, not a mechanical one, and it should be written on the
+bike rather than only here.
+
+**Budget the 5 V rail before adding the servo, because it does not fit by
+default.** The rail is a Traco **TSR 2-2450 — 2 A**, and the Pi is already on
+it. The XL330-M288 stalls at **1.47 A at 5 V**, and the righting stroke is
+*designed* to stall at the end of its travel. 1.47 A plus a Pi Zero 2 W peak
+is over the regulator. So the cap is mandatory, not prudent:
+
+- Set **Current Limit(38)** (2 bytes, 0–1750 mA) to ~700 mA. Righting needs
+  roughly 0.19 N.m of the XL330's 0.52 N.m stall, so 40 % of stall current
+  still leaves better than 2× torque margin.
+- A brownout here does not merely stall a servo — it drops the Pi, and the Pi
+  is the control loop. Treat the 5 V rail as flight-critical in a way the 12 V
+  servo rail is not.
+
+**Firmware V53 or later, and assert it at startup.** Both the XL330 and the
+XC330 carry the same note: *firmware before V53 supports 20 Indirect
+Address/Data items with indirect data at 208–227*, where V53+ has 28 at
+224–251. `hw/dynamixel.py` hardcodes the V53+ layout (`INDIRECT_DATA_1 = 224`,
+`N_INDIRECT = 28`). The item **count** is not the constraint — the block uses
+14 bytes and would fit in 20 — the **base address** is. A pre-V53 servo would
+take its goal writes into the wrong registers and every write would return
+success. Read **Firmware Version(6)** at open and refuse below 53, the same
+way `ServoBus` already asserts `latency_timer`. Servos do ship with old
+firmware.
+
+**The 12 V side is unaffected.** Everything in *Budget* — the ~4 A peak, the
+3.6 A trunk figure, the 7.5 A fuse, the "one 3S bus for all three servos" line
+in the summary table — is about the pack rail, and a 5 V servo draws none of
+it. The flywheel's XC330 does add to that rail, as a fifth servo; the 12 V
+budget was written for three and is worth re-running once the flywheel's duty
+cycle is known. Only the 5 V side changes as above, and it changes for exactly
+one servo, so the TSR 2-2450 stays.
+
+**Read every servo, including the rarely used ones.** It is tempting to leave
+the righting servo out of the 100 Hz group and poke it with individual writes —
+that would also sidestep the V53 floor for that servo, since one outside the
+group needs no indirect block. Do not. A status packet is nearly free in a
+response that already carries several, and keeping the group uniform means one
+code path and one firmware rule rather than two.
+
+The payoff is on the flywheel, which is in the same group: its
+`Present Position` is a **second, independent yaw channel**, free. Absent
+external yaw torque the chassis and the wheel exchange angular momentum, so the
+wheel's angle reports chassis yaw whatever the wheel is being commanded to do —
+a measurement that goes through neither the AHRS's magnetometer nor wheel-ground
+slip, which is exactly the pair of failure modes the existing heading path has.
+It is damped by gearbox friction and ground yaw friction rather than exact, so
+it is a cross-check and a drift bound, not a replacement. **This is the reason
+the flywheel takes the lower-geared XC330**: referred friction is the damping,
+and 180.62:1 leaks less of the signal away than 288.4:1 would. A step-up between
+servo and wheel multiplies that referred friction by the ratio, so the actuator
+sizing below and the sensor quality are not independent — check both together.
 
 ## Parts to order
 
@@ -208,19 +354,86 @@ Optional, and only if the corresponding decision goes that way:
 |---|---|---|---|---|
 | Schottky | **1N5822** (3 A, 40 V) | 3 | ~0.4 V drop ahead of the steer servo, *if* the XC330 ever misbehaves near full charge. That call is **decided as accept-it** — these are bin insurance so the fix needs no second order | [search](https://www.digikey.ca/en/products/result?keywords=1N5822) |
 
+#### Optional — the 5 V servo branch (buy only if a 5 V servo is ever added)
+
+**NOT part of the current build.** Righting is an XC330 on the 12 V bus, so
+none of this is needed to finish the bike. Listed separately, and kept out of
+the running total, so it can be added to an order deliberately rather than by
+accident. See *OPTIONAL, NOT BUILT — a 5 V servo domain* above for why each
+line is what it is; the short version is that the branch is deliberately **not**
+EH, so a 12 V bus cable cannot physically enter it.
+
+Total is a few dollars — the reason to buy it now is that it rides along on an
+order that is already happening, not that it is needed.
+
+| what | mfr PN | qty | purpose | link |
+|---|---|---|---|---|
+| Righting servo | ROBOTIS **XL330-M288-T** | 1 | 3.7–6.0 V, 0.52 N.m and 103 rpm at 5.0 V, 18 g — against the 0.14–0.19 N.m the stroke needs at the servo. Ships with its own `Robot Cable-X3P`, which is exactly the cable that must never reach the 12 V chain | [ROBOTIS](https://en.robotis.com/shop_en/item.php?it_id=902-0163-000) |
+| Keyed header | JST **B3B-PH-K-S** (PH, 2.0 mm, 3 ckt, through-hole top entry) | 4 | The splitter board's 5 V tap. PH *because* it is not EH: 2.0 mm against 2.5 mm will not mate with a bus cable. 1 in use, spares for the same desolder reason as the EH headers | [search](https://www.digikey.ca/en/products/result?keywords=B3B-PH-K-S) |
+| PH pigtail | pre-made **PHR-3** housing on 24–26 AWG flying leads, ~150 mm | 2 | Board end of the one adapter cable. **Pre-made on purpose** — `SPH-002T-P0.5` takes 24–32 AWG and wants a real JST crimp tool, and the branch does not justify buying one | [search](https://www.digikey.ca/en/products/result?keywords=PHR-3%20pre-crimped%20cable%20assembly) |
+| Spare X3P cable | ROBOTIS **Robot Cable-X3P** 180 mm | 1 pk | Cut in half to make the servo end of the adapter. Also the stock-length spare the rest of the build never budgeted | [ROBOTIS](https://en.robotis.com/shop_en/item.php?it_id=903-0249-000) |
+| Label stock | self-laminating wire markers or coloured heat shrink | 1 | The adapter gets **5 V** at both ends. Keying protects the board end only — the XL330's own sockets are EH | [search](https://www.digikey.ca/en/products/result?keywords=self%20laminating%20wire%20marker) |
+
+PH contacts are rated **2 A at 24 AWG**, comfortably over both the 700 mA
+Current Limit cap and the 1.47 A raw stall, so the branch wire is not a
+constraint — 24 AWG is simply the fattest the PH contact accepts. No extra
+wire to buy: the existing 22 AWG pigtail stock covers the board-side runs and
+the pre-made pigtail brings its own leads.
+
+#### Making your own bus cables
+
+Stock Dynamixel cables start at 180 mm. The chassis is 200 mm end to end, so
+every drop on this bike is shorter than anything ROBOTIS sells, and the
+difference has to be coiled somewhere. Coiled excess is not free: it is loop
+area next to a magnetometer, on a bus carrying 3.6 A peaks — see *Twist the
+power pair* below, which is the same problem from the other end.
+
+So: crimp them to length. All of this is the **12 V bus**, i.e. the bike as
+actually built.
+
+| what | mfr PN | qty | purpose | link |
+|---|---|---|---|---|
+| Crimp tool | ENGINEER **PA-21** (18–26 AWG) | 1 | The one that matches. **NOT the PA-09**, which is the famous one and is the wrong one here: it is 20–32 AWG and its dies are cut for SH/GH/PH/XH. Digi-Key lists `SEH-001T-P0.6` under the PA-21 | [Digi-Key forum](https://forum.digikey.com/t/engineer-pa-21-universal-crimping-tool-18-26-awg/537) |
+| Contacts | JST **SEH-001T-P0.6** | 100 | 3 per cable end, and the first dozen crimps are practice. Rated 22–26 AWG — this is why the wire plan splits 20 AWG trunk / 22 AWG drops | [search](https://www.digikey.ca/en/products/result?keywords=SEH-001T-P0.6) |
+| Housings | JST **EHR-3** (3 ckt, 2.5 mm) | 30 | The plug that enters a servo or a board header. Both ends of every cable | [detail](https://www.digikey.com/en/products/detail/jst-sales-america-inc/EHR-3/527225) |
+| Right-angle header | JST **S3B-EH** (3 ckt, 2.5 mm, THT **side entry**) | 6 | The 90° answer — see below. Lets a cable leave the splitter board flat instead of standing 12 mm proud of it | [detail](https://www.digikey.com/en/products/detail/jst-sales-america-inc/S3B-EH/926534) |
+| Wire | 22 AWG silicone, 3 colours | ~5 m | Already in the list above; the quantity goes up if drops are custom-made | — |
+
+**On 90° connectors, since it is the obvious question: they exist on the BOARD
+side only.** `S3B-EH` is the right-angle (side entry) through-hole header, and
+it is a drop-in alternative to the `B3B-EH-A` top-entry part already in the
+order — same series, same 2.5 mm pitch, same contacts, same housing. What does
+**not** exist is a right-angle *plug*: `EHR-3` is the only 3-circuit EH housing
+and it is straight, so nothing changes how a cable leaves a **servo**. The
+servo's own socket geometry is fixed and ROBOTIS does not sell an angled one.
+
+That is worth knowing before designing a mount around it. Cable exit at the
+servo is managed with strain relief and short lengths, not with a connector;
+the right angle only buys you a flatter splitter board.
+
+**Buy the pre-made cables anyway.** The stock `Robot Cable-X3P` set stays in the
+order as the fallback: a bad crimp on a shared half-duplex bus takes the whole
+chain down, and being able to swap in a known-good cable is how you find out
+that is what happened. Crimp for the final routing, not for bring-up.
+
 ### What is deliberately *not* in that list
 
-**JST crimp contacts and housings — the servos already ship with EH cables.**
-An earlier draft had `EHR-3` housings and 50× `SEH-001T-P0.6` contacts for
-building servo cables. That is work that does not need doing: every XC430 and
-XC330 comes with a 3-pin JST-EH cable, and those plug straight into the
-`B3B-EH-A` headers on the splitter board. Only two things would change that —
-stock cables too short for the as-built routing, or wanting the U2D2 pigtail
-terminated in a connector rather than soldered. **Neither is known yet, so do
-not buy for them.** And if it does come up, note that `SEH-001T-P0.6` needs a
-real JST crimp tool; hand-crimping these with generic pliers produces
-intermittent joints on the one bus every servo shares. Buying a pre-made
-Dynamixel extension cable beats crimping.
+**~~JST crimp contacts and housings~~ — REVERSED, see *Making your own bus
+cables* below.** This paragraph used to argue that the stock cables were
+enough. That held while the only reason to crimp was a hypothetical: every
+XC430 and XC330 ships with a 3-pin JST-EH cable, and those plug straight into
+the `B3B-EH-A` headers on the splitter board.
+
+It no longer holds, for the reason the paragraph itself listed first — **stock
+cables too long for the as-built routing**. Stock lengths are 180 mm and up on
+a bike whose whole chassis is 200 mm; the slack has to go somewhere, and coiled
+excess next to the AHRS is exactly what the twisted-pair note below is trying to
+avoid. Controlled short lengths are worth a crimp tool.
+
+What survives from the old argument, and is still true: `SEH-001T-P0.6`
+**needs a proper tool**. Hand-crimping these with generic pliers produces
+intermittent joints on the one bus every servo shares, which presents as a
+servo that drops off the chain under vibration and is miserable to find.
 
 **No second buck for the AHRS.** The TM151 runs off the Pi's own 5 V/3.3 V pins
 and its UART is 3.3 V TTL — no level shifter, no separate supply.
