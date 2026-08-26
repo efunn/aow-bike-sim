@@ -51,6 +51,67 @@ every tick would be both wrong and far too easy to balance against. Each axis
 is a first-order Gauss-Markov process -- stationary, with the datasheet RMS and
 a correlation time TAU.
 
+MOUNTING POSITION: WHAT THIS DOES AND DOES NOT CAPTURE. Measured 2026-08-27
+with five probe sites on ONE chassis and one trajectory, so the lever arm is
+isolated from the chaotic divergence that merely moving the 12 g sensor causes:
+
+    position                max |gyro - origin|   RMS |accel - origin|
+    origin      [0,0,0]           0.00e+00 d/s          0.0000 m/s^2
+    as-built    [.05,0,.13]       0.00e+00              9.8679
+    high mast   [.05,0,.30]       0.00e+00             21.4693
+    far forward [.20,0,.13]       0.00e+00             16.9199
+    off-axis    [.05,.10,.13]     0.00e+00             10.0061
+
+  * THE GYRO DOES NOT CARE, exactly. Angular velocity is a property of the
+    rigid body, not of where you measure it, and the model reproduces that to
+    machine precision. `roll_rate` and `yaw_rate` -- observation entries 1 and
+    2 -- are therefore mount-independent, and that is a real result.
+
+  * THE ACCELEROMETER CARES A LOT, and the arm is measured FROM THE CoM (the
+    chassis origin is not a mounting position -- it is the rear axle centre,
+    inside the wheel). Whole-bike CoM is chassis [0.083, 0, 0.073]; excess
+    specific force against a probe there, over mountable positions only:
+
+        at the CoM        [.083,0,.073]     0 mm     0.000 m/s^2
+        as built          [.05,0,.13]      66 mm     4.584
+        over rear wheel   [0,0,.066]       83 mm     5.867
+        front over steer  [.18,0,.10]     100 mm     7.090
+        high mast         [.05,0,.30]     229 mm    16.075
+
+    LINEAR IN THE ARM at ~0.070 m/s^2 per mm, which is what alpha x r and
+    omega x (omega x r) both being first order in r predicts. So the as-built
+    position is already the best realisable one -- nearer the CoM than over the
+    rear wheel -- and a mast is disqualified at more than a gravity of
+    spurious signal. This is not
+    new -- hw/odometry.py already records a tau=0.3 s accelerometer blend
+    degrading v_lon from 8.8 to 174 mm/s RMS for exactly this reason, which is
+    why the accelerometer there is a fallback and not a co-equal sensor. The
+    MuJoCo sensor sits on `ahrs_site` at the configured position, so this
+    module inherits the effect correctly WITHOUT modelling anything.
+
+  * THE ORIENTATION OUTPUT IS MOUNT-INDEPENDENT HERE, AND THAT IS A
+    LIMITATION, NOT A FINDING. `ORIENT_RMS_DEG` is applied as a fixed
+    datasheet figure whatever `bike.ahrs.pos` says. A real unit derives
+    attitude by fusing the gyro against the ACCELEROMETER AS A GRAVITY
+    REFERENCE, so lever-arm acceleration corrupts that reference and a
+    badly-placed unit should read worse than its datasheet number. The
+    datasheet says so itself: footnote [3] warns that parts without vibration
+    resistance are "susceptible to low frequency linear acceleration", and the
+    dynamic figure is quoted for "typical low-dynamic movements... indoor
+    robotic vehicles, low-speed driving". A balancing bike with the IMU on a
+    mast is not obviously inside that envelope.
+
+    So DO NOT read a flat eval result across mounting positions as evidence
+    that position is free. This module cannot see that effect by construction.
+    Deciding it needs either a fusion model or a bench measurement on the real
+    part -- see docs/plans/odometry-rewrite.md.
+
+  * THE MAGNETOMETER IS NOT MODELLED AT ALL. There is no magnetometer in the
+    MuJoCo model; yaw comes from the true quaternion plus YAW_DRIFT_DEG_PER_S.
+    So nothing here can say anything about siting the unit away from motor
+    coils or current-carrying wire, and the usual hardware practice applies
+    unchanged and unchecked.
+
 **TAU IS NOT IN THE DATASHEET AND IS A GUESS.** It is the one number here with
 no source, and the result is sensitive to it, so it is exposed as an argument
 and swept rather than buried. See docs/plans/odometry-rewrite.md for the sweep.

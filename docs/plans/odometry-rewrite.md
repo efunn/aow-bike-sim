@@ -381,6 +381,51 @@ velocity: put `ahrs_level: tm151` in the env during training and see whether
 a policy learns to distrust its attitude the way `odo` learned to distrust its
 velocity. That is a training run, not an analysis.
 
+## Mounting position: one real answer, one thing the model cannot see
+
+Asked 2026-08-27, because it had been settled "theoretically and with some
+basic tests" before and was worth checking against the sim. Five probe sites on
+ONE chassis over ONE trajectory, which isolates the lever arm from the chaotic
+divergence that merely moving the 12 g sensor causes:
+
+| position | max \|gyro − origin\| | RMS \|accel − origin\| |
+|---|---|---|
+| origin `[0,0,0]` | **0.00e+00** °/s | 0.0000 m/s² |
+| as-built `[.05,0,.13]` | **0.00e+00** | 9.87 |
+| high mast `[.05,0,.30]` | **0.00e+00** | 21.47 |
+| far forward `[.20,0,.13]` | **0.00e+00** | 16.92 |
+| off-axis `[.05,.10,.13]` | **0.00e+00** | 10.01 |
+
+**The gyro is mount-independent, exactly** — to machine precision, because
+angular velocity is a property of the rigid body. `roll_rate` and `yaw_rate`,
+observation entries 1 and 2, do not care where the unit goes. That is a real
+result and it is the one that matters most, since those are fast-loop entries.
+
+**The accelerometer cares a great deal.** The lever-arm terms `α×r` and
+`ω×(ω×r)` are the same order as gravity (against a 16.1 m/s² signal at the
+origin) and grow with the arm. Not new: `hw/odometry.py` already records a
+τ=0.3 s accelerometer blend degrading `v_lon` from 8.8 to 174 mm/s RMS for
+exactly this reason, which is why the accelerometer there is a fallback.
+
+**But the orientation output is mount-independent HERE BY CONSTRUCTION, and
+that is a limitation rather than a finding.** `sim_ahrs` applies a fixed
+datasheet RMS whatever `bike.ahrs.pos` says. A real unit fuses the gyro against
+the accelerometer AS A GRAVITY REFERENCE, so lever-arm acceleration corrupts
+that reference and a badly-placed unit should read worse than its datasheet
+number. The datasheet says as much: footnote [3] warns that parts without
+vibration resistance are "susceptible to low frequency linear acceleration",
+and the dynamic figure is quoted for "typical low-dynamic movements... indoor
+robotic vehicles, low-speed driving". A balancing bike with the IMU on a mast
+is not obviously inside that envelope.
+
+So a flat eval across mounting positions would prove nothing. Settling it needs
+a fusion model or a bench measurement on the real part. **Open.**
+
+**The magnetometer is not modelled at all** — there is none in the MuJoCo
+model, and yaw comes from the true quaternion plus a drift term. Nothing here
+can speak to siting the unit away from motor coils or current-carrying wire;
+that practice stands, unchecked by this work.
+
 ## Open questions
 
 1. Why did the FRONT constraint degrade? The docstring records a free fit
@@ -393,6 +438,14 @@ velocity. That is a training run, not an analysis.
    both sides move together. Deferred until the estimator is settled.
 3. Pitch: assumed to never change enough to matter. Confirm before spending an
    observation slot on it.
+4. Does AHRS mounting position degrade the ATTITUDE, not just the
+   accelerometer? The model cannot answer it (see above). A bench measurement
+   on the real TM151 would. **The chassis origin is not one of the arms** — it
+   is the rear axle centre, inside the wheel, and an earlier draft of this item
+   proposed it. The realisable spread is CoM `[.083,0,.073]` (0 mm from the
+   CoM) against as-built `[.05,0,.13]` (66 mm) against a deliberately bad mast
+   (229 mm) — 16 m/s² of spurious specific force between the ends, which
+   should be ample to separate. Cheap once there is a bike to mount it on.
 
 ## The sequencing was wrong, and training answered it first
 

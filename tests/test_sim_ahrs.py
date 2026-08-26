@@ -218,3 +218,70 @@ def test_the_parts_differ_in_DYNAMIC_roll_pitch_which_is_the_easy_one_to_miss():
     assert ORIENT_RMS_DEG["tm151"][:2] > ORIENT_RMS_DEG["tm171"][:2]
     # Yaw separates in BOTH blocks, and is measured to change nothing.
     assert TM171_STATIC_RMS_DEG[2] < ORIENT_RMS_DEG["tm151_static"][2]
+
+
+def test_the_gyro_does_not_care_where_it_is_mounted(params):
+    """Angular velocity is a property of the RIGID BODY, not of where you
+    measure it -- so mounting position cannot change roll_rate or yaw_rate,
+    observation entries 1 and 2.
+
+    Probes go on ONE chassis sharing ONE trajectory. Rebuilding the model per
+    position instead would move the 12 g sensor, shift the CoM, and diverge the
+    closed loop chaotically -- which reads as a large 'difference' that has
+    nothing to do with the lever arm. That confound is the reason this test is
+    written this way.
+    """
+    import mujoco
+    from aow_sim.build_model import build_spec
+
+    spec = build_spec(params)
+    chassis = spec.body("chassis")
+    places = {"origin": [0.0, 0.0, 0.0], "mast": [0.05, 0.0, 0.30],
+              "fwd": [0.20, 0.0, 0.13]}
+    for name, r in places.items():
+        chassis.add_site(name=f"p_{name}", pos=r)
+        for kind, tag in ((mujoco.mjtSensor.mjSENS_GYRO, "g"),
+                          (mujoco.mjtSensor.mjSENS_ACCELEROMETER, "a")):
+            s = spec.add_sensor()
+            s.name = f"{tag}_{name}"
+            s.type = kind
+            s.objtype = mujoco.mjtObj.mjOBJ_SITE
+            s.objname = f"p_{name}"
+    m = spec.compile()
+    d = mujoco.MjData(m)
+    d.qpos[:] = settle_upright(m).qpos
+    d.qvel[3:6] = [1.7, -0.9, 2.3]          # spin it, so a lever arm exists
+    mujoco.mj_forward(m, d)
+
+    def read(tag, name):
+        adr = m.sensor(f"{tag}_{name}").adr[0]
+        return np.array(d.sensordata[adr:adr + 3])
+
+    ref_g, ref_a = read("g", "origin"), read("a", "origin")
+    for name in ("mast", "fwd"):
+        assert np.allclose(read("g", name), ref_g, atol=1e-12), name
+    # ...and the accelerometer emphatically DOES care, which is why
+    # hw/odometry.py treats it as a fallback rather than a co-equal sensor.
+    assert not np.allclose(read("a", "mast"), ref_a, atol=1e-3)
+
+
+def test_orientation_error_is_mount_independent_BY_CONSTRUCTION(model, params):
+    """Pins a LIMITATION so it cannot be mistaken for a result.
+
+    A real AHRS fuses the gyro against the accelerometer as a gravity
+    reference, so lever-arm acceleration corrupts attitude and a badly-placed
+    unit should read worse than its datasheet figure. This module applies a
+    fixed RMS regardless of `bike.ahrs.pos`. A flat eval across mounting
+    positions is therefore NOT evidence that position is free.
+    """
+    import copy
+    from aow_sim.build_model import build_model as _bm
+    out = []
+    for pos in ([0.0, 0.0, 0.0], [0.05, 0.0, 0.30]):
+        p = copy.deepcopy(params)
+        p["bike"]["ahrs"]["pos"] = pos
+        a = SimAhrs(_bm(p), p, level="tm151", seed=42)
+        out.append(a._orient_err.copy())
+        assert a.tau_orient_s == SimAhrs(model, params, level="tm151").tau_orient_s
+    # Same seed, same error state: position is simply not an input.
+    assert np.array_equal(out[0], out[1])
