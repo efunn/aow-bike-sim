@@ -421,10 +421,59 @@ is not obviously inside that envelope.
 So a flat eval across mounting positions would prove nothing. Settling it needs
 a fusion model or a bench measurement on the real part. **Open.**
 
-**The magnetometer is not modelled at all** — there is none in the MuJoCo
-model, and yaw comes from the true quaternion plus a drift term. Nothing here
-can speak to siting the unit away from motor coils or current-carrying wire;
-that practice stands, unchecked by this work.
+### The magnetometer gives heading authority, not balance
+
+**No magnetometer is modelled** — there is none in the MuJoCo model, and yaw
+comes from the true quaternion plus a drift term. But the QUESTION it settles
+can be asked of the model directly, by injecting yaw error and roll/pitch error
+separately.
+
+The physics first. Roll and pitch are bounded by **gravity**, sensed by the
+accelerometer — and rotating about the gravity vector does not change what the
+accelerometer reads, so it says nothing about yaw. Yaw is bounded by the
+**magnetic field**, and nothing else on the bike provides an absolute heading.
+Two orthogonal references, applied to orthogonal corrections, which is why the
+datasheet quotes roll/pitch and yaw accuracy on separate rows and describes an
+"adaptive magnetic field filter" that "resists magnetic interference" rather
+than one that keeps interference out of the attitude.
+
+So the TM151 has two yaw regimes: **magnetometer-aided** (static <1.0° RMS,
+bounded) and **pure inertial** (the "Dynamic accuracy (Inertial)" row, quoted
+as a DRIFT of 3.0° every 25 minutes because nothing bounds it). Losing the
+compass moves you from the first to the second.
+
+Measured, `general_rl_odo`, injecting each axis alone:
+
+| injected | score | surv | head_deg |
+|---|---|---|---|
+| none | 0.774 | 1.00 | 25.2 |
+| TM151, all axes | 0.615 | 1.00 | 32.1 |
+| **roll/pitch only, yaw perfect** | 0.544 | **0.90** | 38.9 |
+| yaw only, 1° (datasheet) | 0.751 | 1.00 | 27.2 |
+| yaw 10° (bad magnetic siting) | 0.632 | 0.95 | 28.9 |
+| yaw 30° (compass useless) | 0.500 | **0.90** | 40.1 |
+
+**Roll/pitch alone reproduces the falls**; that is the balance channel, and it
+is the accelerometer's, not the magnetometer's. At the datasheet's 1° yaw costs
+almost nothing (0.751 against 0.774, survival intact) and what it costs is
+tracking.
+
+**But large yaw error does eventually cost falls, by an indirect route worth
+knowing.** Yaw never enters the roll loop — it is consumed only by
+`set_velocity` (body→world) and `command_to_body`. That second one is the path:
+`psi` rotates the WORLD velocity command into the body frame, so a 30° heading
+error resolves "drive forward" as partly lateral. The bike crabs while it
+believes it is going straight, crabbing spends the rear differential, and the
+differential is exactly the channel that catches roll. Balance headroom is
+consumed by a heading mistake without any sensor lying about roll.
+
+So: keep it away from the coils, and below ~10° it is a tracking problem rather
+than a stability one.
+
+**Caveat on the filter.** That the magnetometer stays out of roll/pitch is a
+property of a well-built fusion filter, not a law. One fusing both reference
+vectors symmetrically can leak magnetic error into attitude. The TM151's
+internals are not documented at that level and this cannot check them.
 
 ## Open questions
 

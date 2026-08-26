@@ -524,6 +524,11 @@ class GeneralEnv(gym.Env):
         mujoco.mj_forward(self.model, self.data)
         self._p0 = self.data.qpos[:2].copy()
         self._psi = extract_state(self.data, self._p0).yaw
+        # Seeded from TRUTH on purpose: the episode starts with the bike's
+        # heading correct and the error accumulates from there, which is what a
+        # power-on alignment gives you. `_raw_prev` must track whatever `step`
+        # differences, or the first tick would inject the whole standing error
+        # as one delta.
         self._raw_prev = self._psi
         self._place_ball(rng)
 
@@ -609,7 +614,22 @@ class GeneralEnv(gym.Env):
                 # No estimator to carry it, so the AHRS keeps its own clock --
                 # the Pi's sense rate, not the 2500 Hz physics step.
                 self._ahrs.tick(self.data, self.model.opt.timestep)
+        # HEADING COMES FROM THE AHRS TOO. `self._psi` is the bike's own notion
+        # of where it is pointing: it sets psi_err (obs 10-11) and rotates the
+        # world velocity command into the body frame (obs 8-9). On hardware it
+        # is the AHRS quaternion's yaw, so a yaw error belongs here.
+        #
+        # It was TRUTH until 2026-08-27, which made the yaw channel of the
+        # error model unobservable -- ablating yaw at 1, 10 and 30 degrees gave
+        # bit-identical eval results, which looked like "yaw does not affect
+        # balance" and was really "yaw never reached the policy". Teleop did
+        # not have the gap, because it swaps qpos[3:7] wholesale, so the two
+        # paths disagreed as well.
         cur = extract_state(self.data, self._p0).yaw
+        if self._ahrs is not None and self._ahrs._cache is not None:
+            cur = rpy_from_quat(self._ahrs.latest("ahrs_quat"))[2]
+        # Integrated as a DELTA, so an unbounded yaw drift accumulates into
+        # psi exactly as it would on the bike rather than being wrapped away.
         self._psi += np.arctan2(np.sin(cur - self._raw_prev),
                                 np.cos(cur - self._raw_prev))
         self._raw_prev = cur

@@ -285,3 +285,42 @@ def test_orientation_error_is_mount_independent_BY_CONSTRUCTION(model, params):
         assert a.tau_orient_s == SimAhrs(model, params, level="tm151").tau_orient_s
     # Same seed, same error state: position is simply not an input.
     assert np.array_equal(out[0], out[1])
+
+
+def test_yaw_error_reaches_the_policy_at_all(model, params):
+    """REGRESSION. `general_env` took only ROLL off the corrupted quaternion
+    and built `self._psi` from `extract_state` -- i.e. from truth -- so the
+    yaw channel of this error model was unobservable. Ablating yaw at 1, 10 and
+    30 degrees gave bit-identical eval results, which reads as "yaw does not
+    affect balance" and was really "yaw never arrived".
+
+    Teleop did NOT have the gap, because it swaps qpos[3:7] wholesale, so the
+    two paths silently disagreed as well.
+    """
+    from pathlib import Path
+
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+
+    cfg = _load_rl_config(Path("config/rl_general.yaml"))
+    cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
+
+    def psi_after(level, steps=60):
+        env = GeneralEnv(params, {**cfg, "env": {**cfg["env"],
+                                                 "ahrs_level": level}})
+        env.reset(seed=3)
+        for _ in range(steps):
+            env.step(np.zeros(env.action_space.shape[0], np.float32))
+        return env._psi
+
+    # A large yaw error must move the bike's own notion of heading.
+    from aow_sim import sim_ahrs as SA
+    SA.ORIENT_RMS_DEG["_yawtest"] = (0.0, 0.0, 30.0)
+    SA.YAW_DRIFT_DEG_PER_S["_yawtest"] = 0.0
+    SA.MISALIGN_DEG["_yawtest"] = 0.0
+    SA.LEVELS = tuple(set(SA.LEVELS) | {"_yawtest"})
+    try:
+        assert psi_after("none") != psi_after("_yawtest")
+    finally:
+        for d in (SA.ORIENT_RMS_DEG, SA.YAW_DRIFT_DEG_PER_S, SA.MISALIGN_DEG):
+            d.pop("_yawtest", None)
+        SA.LEVELS = tuple(x for x in SA.LEVELS if x != "_yawtest")
