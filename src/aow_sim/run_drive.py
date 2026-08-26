@@ -331,6 +331,22 @@ def main() -> None:
                          "`python analysis/teleop_review.py <path>`")
     ap.add_argument("--hockey", action="store_true",
                     help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
+    ap.add_argument("--odometry", nargs="?", const="front",
+                    choices=("front", "blend", "lon_only", "lat_only"),
+                    default=None, metavar="MODE",
+                    help="drive on the ONBOARD VELOCITY ESTIMATE instead of "
+                         "MuJoCo truth: the controller sees what hw/odometry.py "
+                         "reconstructs from the simulated encoders and AHRS, "
+                         "while physics keeps the truth. This is what the bike "
+                         "will actually feel. Expect it to be worse, and note "
+                         "the sim sensors are CLEAN (no gyro bias, no encoder "
+                         "quantisation), so it is still optimistic. "
+                         "`front` (default) is what the Pi runs today; `blend` "
+                         "is the experimental speed-aware front+roller mix; "
+                         "`lon_only` estimates v_lon and keeps TRUE v_lat; "
+                         "`lat_only` is the reverse. The per-channel modes "
+                         "isolate the blame -- headless, v_lon alone is nearly "
+                         "free and v_lat alone falls every time")
     ap.add_argument("--general", default=None, metavar="NAME",
                     help="always-on policy to drive with (moves/NAME.{yaml,npz}); "
                          "overrides control.general_move for this session")
@@ -389,7 +405,7 @@ def main() -> None:
                 wings=args.wings, linkage=args.linkage,
                 swing=args.swing or args.swing_linkage,
                 record=args.record,
-                slowmo_x=args.slowmo)
+                slowmo_x=args.slowmo, odometry=args.odometry)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1160,7 +1176,7 @@ def _rec_write(rec, path, params, gen_name, mode):
 
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
             show_ui=False, wings=False, linkage=False, swing=False, record=None,
-            slowmo_x=1.0):
+            slowmo_x=1.0, odometry=False):
     from .interactive import teleop_loop
 
     from . import policy_menu
@@ -1172,6 +1188,25 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     gen_name = [general or params["control"].get("general_move", "general_rl")]
     # cursor/entries are rebuilt on every open, so a policy exported from
     # another terminal mid-session shows up without restarting teleop.
+    # ONBOARD ESTIMATE INSTEAD OF TRUTH. Off by default: every controller in
+    # sim has always read MuJoCo ground truth, and silently changing that would
+    # make every recorded comparison incomparable.
+    odo = None
+    if odometry:
+        from .sim_odometry import SimOdometry
+        odo = SimOdometry(model, params, mode=odometry)
+        which = {
+            "front": "hw/odometry.py's estimate as the Pi runs it today",
+            "blend": "the EXPERIMENTAL speed-aware front+roller blend",
+            "lon_only": "an ESTIMATED v_lon with TRUE v_lat (expect it to feel "
+                        "close to normal)",
+            "lat_only": "a TRUE v_lon with ESTIMATED v_lat (expect it to fall)",
+        }[odometry]
+        print(f"ODOMETRY IN THE LOOP ({odometry}): driving on {which},\n"
+              "  rebuilt from the simulated encoders and AHRS. Physics still "
+              "uses the truth.\n  The sim sensors are CLEAN, so this is still "
+              "kinder than the real bike will be.")
+
     menu = {"open": False, "cursor": 0, "entries": []}
     data = _fresh(model, eq_qpos)
     c = DriveController(params, model)
@@ -1901,7 +1936,14 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                     except ValueError as e:
                         print(e)
         apply(m, d)
-        c.step(m, d)
+        if odo is None:
+            c.step(m, d)
+        else:
+            # Controller sees the ESTIMATE, physics keeps the truth. Safe to
+            # swap around this one call because drive.py makes no MuJoCo calls
+            # -- it reads `d` and writes `d.ctrl`. See sim_odometry.
+            with odo.estimated(d, m.opt.timestep):
+                c.step(m, d)
         wing_step(m, d)         # after c.step: it rewrites the whole ctrl vector
         if rec is not None:
             _rec_sample(rec, m, d, c, state, gen_name[0], params)
