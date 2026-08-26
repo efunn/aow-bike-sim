@@ -533,8 +533,25 @@ class GeneralEnv(gym.Env):
         # scored on its time average rather than punished at every instant of
         # the oscillation. At vel_window_s = 0, vb_* IS s.v_* and this is the
         # instantaneous form bit for bit.
-        v_err2 = (v_cl - vb_lon) ** 2 + (v_ct - vb_lat) ** 2
-        v_err2_inst = (v_cl - s.v_lon) ** 2 + (v_ct - s.v_lat) ** 2
+        # LONGITUDINAL ONLY WHEN THE LATERAL AXIS IS NOT OBSERVED. `vb_lat` is
+        # the bike's TRUE lateral velocity, so with obs_zero_lat set the policy
+        # was being charged (0 - v_lat_true)^2 every step for motion it cannot
+        # see -- the exact thing general_spec forbids for v_bar and prev_action:
+        # a reward may not depend on state the policy cannot observe.
+        #
+        # It is not a small tax. The bike balances by moving laterally, so
+        # v_lat_true is never near zero, and r_vel is half the curriculum score
+        # (`0.5 * (r_vel + r_head)`). Charged, it holds ep_score under
+        # diff_thresh and the curriculum crawls instead of advancing -- observed
+        # on the first general_rl_nolat run, 2026-08-26.
+        lat_scored = 0.0 if self.zero_lat else 1.0
+        v_err2 = (v_cl - vb_lon) ** 2 + lat_scored * (v_ct - vb_lat) ** 2
+        v_err2_inst = (v_cl - s.v_lon) ** 2 + lat_scored * (v_ct - s.v_lat) ** 2
+        # The FULL 2-D error, always, whatever is being scored. `vel_err` is how
+        # policies get compared across runs (analysis/chatter.py), so its
+        # meaning must not change with a training flag -- otherwise a nolat
+        # policy would look better than a crabbing one purely by measuring less.
+        v_err2_full = (v_cl - s.v_lon) ** 2 + (v_ct - s.v_lat) ** 2
         da = action - self._prev_a
         r_vel = np.exp(-v_err2 / self.sigma_v ** 2)
         r_head = np.exp(-(psi_err / self.sigma_psi) ** 2)
@@ -617,7 +634,11 @@ class GeneralEnv(gym.Env):
             # existing moves/*.yaml remain comparable; `vel_err_win` is the
             # one the reward actually argues over. Identical when the window
             # is off.
-            "vel_err": float(np.sqrt(v_err2_inst)),
+            # Comparable across every policy: both axes, always.
+            "vel_err": float(np.sqrt(v_err2_full)),
+            # What this policy is actually optimised against. Equal to vel_err
+            # unless obs_zero_lat is set, in which case it is longitudinal only.
+            "vel_err_scored": float(np.sqrt(v_err2_inst)),
             "vel_err_win": float(np.sqrt(v_err2)),
             "v_bar_lon": float(vb_lon), "v_bar_lat": float(vb_lat),
             "pitch_deg": float(np.degrees(s.pitch)),
