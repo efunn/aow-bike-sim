@@ -56,3 +56,6 @@ trained:
     wing_duty: 0.0
     turn_asym: 0.271
   exported_from: best_model.zip
+# Backfilled 2026-08-25: computed from the parameters recovered
+# from git history for this run. See docs/plans/params-digest-split.md.
+plant_digest: e1ec36bfa670217e

@@ -58,3 +58,6 @@ trained:
   exported_from: best_model.zip
 obs_swing: true
 act_swing: true
+# Backfilled 2026-08-25: computed from the parameters recovered
+# from git history for this run. See docs/plans/params-digest-split.md.
+plant_digest: e1ec36bfa670217e
