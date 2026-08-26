@@ -593,6 +593,75 @@ version's wire routing is understood.
 
 ---
 
+## Servo mounts — two custom features, screwless (2026-08-25)
+
+`aow_sim.cad_servo_mount` generates two Onshape custom features into their own
+Feature Studio (`horn_features` in `config/onshape.yaml`), separate from the
+`cad_layout` studio because that one is overwritten wholesale on every push.
+
+| feature | what it makes |
+|---|---|
+| `X330 horn pin` | 4 pins on the Phi 12 bolt circle, root reliefs, the horn well, and a standalone collar when no target part is picked |
+| `X330 case shell` | both halves of the nesting case, 2 pins per face, from one dialog |
+
+**Screwless, and the two pins are not the same pin.** The horn pin is Phi 1.4 in
+the Phi 1.6 tapping hole (0.2 diametral); the case pin is Phi 1.9 in the Phi 2
+*relief* bore of the drawing's Detail A/B (0.1). Different holes doing different
+jobs — `config/bike_params_cad.yaml` says not to unify them.
+
+**Only one of the two case hole rows is usable**, and it shapes the whole part.
+The rows sit +/-15 from the face centre, putting one 22.5 mm from the shaft axis
+and the other 7.5 — and 7.5 is inside the Phi 16 horn. So the shell wraps the far
+end and leaves the shaft end open, and `caseWrapLength` is bounded at 16.5 where
+the cap would foul the horn.
+
+**The numbers are measured, not proposed.** The horn interface is off
+`docs/robotis/XC-330.pdf`; the case interface was read back through the API off
+the working `top-case` / `bottom-case` in `dynamixel-link`. The reconstructed
+frame then agreed with the drawing on four independent dimensions — 23.00 /
+34.00 / 20.00 against 23 / 34 / 20, shaft axis 9.50 against 9.5.
+
+### How it is checked, and the hole in that
+
+Every revolved profile is a polygon emitted from Python, and the SAME polygon
+feeds `revolve_volume` to predict what the result must measure. So `--check`
+tests that Onshape's revolve, pattern and boolean did what the polygon says. It
+is **not** an independent check of the shape; that still needs eyes on the part.
+
+It caught three real bugs a render would not have: `cs.yAxis` does not exist on
+a `CoordSystem`; `opBoolean` UNION takes `tools` only, so written the
+SUBTRACTION way it unioned four pins with each other and never touched the
+target (five bodies, no error, found by volume being short by exactly four
+pins); and the well's undercut chamfer closed IN onto the floor, putting it at
+Phi 15.7 against a Phi 16 horn.
+
+**And one it structurally cannot catch.** `--check` throws away everything below
+`SPLIT_MARK` — enums, `precondition`, `defineFeature` — which is what lets it run
+without a human picking a mate connector. A doubled brace in the case dialog
+therefore reached the document intact and took every feature in the studio red
+at once, with the check still green. Two guards now: `lint_fs` rejects a literal
+brace pair locally, and `verify_studio` hits
+`GET /featurestudios/.../featurespecs` after every push, compiling the whole
+studio server-side. A push cannot fail on bad FeatureScript — the contents
+endpoint accepts any text — so without that a broken studio lands silently.
+
+**An edge filter in front of the Onshape API rejects a command in backticks**
+(shell command substitution) with a bare nginx 403 carrying no JSON, so the call
+never reaches Onshape. Narrowed by probing the push endpoint, which takes any
+text: backticks round a harmless word passed, the bare command passed, the two
+together did not. The generated header writes its regeneration command unquoted
+for that reason — do not tidy it into backticks.
+
+**Outstanding.** The case shell has not been eyeballed against the as-built
+parts; it agrees with box arithmetic and with Onshape's own measurement of it
+and nothing more. `case_pin_root_chamfer` is a GUESS carried from the horn pins
+— the geometry survey looked for cylinders and planes, and a chamfer is a cone.
+`case_wrap_length` 10 mm is a cable-clearance judgement, not a measurement.
+
+Cost: 111 API calls of the 2500/year, cycle anchored 13 October.
+
+---
+
 ## Tooling added
 
 - **`--linkage-config` on teleop, `--stick` on the linkage animation.**
