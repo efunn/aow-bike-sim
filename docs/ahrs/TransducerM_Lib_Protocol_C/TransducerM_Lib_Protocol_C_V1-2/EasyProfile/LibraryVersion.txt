@@ -1,0 +1,6 @@
+Current Library Version is
+
+	EasyProfile V1-2-2 (C Language)  -  Add Ep_Combo data structure. 
+
+
+	
