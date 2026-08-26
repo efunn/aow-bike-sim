@@ -990,6 +990,20 @@ estimate, which is what the Pi will give it, it scores **0.044 and survives
 0.15 of the grid**. Do not push it to hardware. `general_rl_odo` is the
 candidate.
 
+### Which exports match the plant (2026-08-26)
+
+**7 of 41 exports carry the current `plant_digest` `e1ec36bfa670217e`**:
+`general_rl_smooth_diff_pi`, `general_rl_pitch_smooth_diff_pi`,
+`general_rl_glide_pitch_smooth_pi`, `general_rl_odo`, `general_rl_nolat`,
+`general_swing_rl`, `general_swing_open_rl`. Another 34 have no `plant_digest`
+field at all and predate it.
+
+This supersedes the old reading that "matches the digest" and "drives well"
+pick out different policies — that was true when only the two `swing` exports
+matched, and the plant/design split plus a backfill recovered the rest. The
+good drivers now match. Judge by the export's own field, never by filename or
+mtime.
+
 ### Trained against the ONBOARD ESTIMATE (2026-08-26)
 
 | export | trained-on: score / surv | on the ESTIMATE: score / surv | notes |
@@ -1095,9 +1109,12 @@ Two tracks. The sim track does not wait on the build.
 
    The decision is not "which policy is better" — it is **whether the default
    should be the one that flies on hardware**. It IS a one-liner: repointing
-   moves neither digest (measured; see the standings section). Re-export the
-   deploy bundle in whichever pass resolves it; it is still pinned to a digest
-   two moves ago.
+   moves neither digest (measured). **The deploy bundle is no longer a
+   blocker** — re-measured 2026-08-26, `deploy/bundle.npz` carries
+   `plant_digest e1ec36bfa670217e` and `design_digest 2db6c647ff3a2d59`, both
+   matching current, and `-m deploy` plus all of `test_hw_replay.py` pass. It
+   also still carries a legacy `params_digest aa232834f462a229`, which nothing
+   checks any more.
 
    **Changing it moves nothing in the test suite either** — measured, 23/210
    both ways. Since `engage_general` now defaults to `control.general_move`
