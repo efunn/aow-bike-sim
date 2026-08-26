@@ -324,15 +324,22 @@ def test_maneuver_key_zeroes_the_speed_intent(monkeypatch, model, params,
 # -- general (always-on) policy layer --------------------------------------
 
 def _needs_general():
-    from aow_sim.control.flick import MOVES_DIR
+    """Guard on THE CONFIGURED POLICY, which is what engage_general now drives.
+
+    This used to check `general_rl` unconditionally while the controller drove
+    whatever `control.general_move` named -- so after the pointer moved, the
+    skip guard was inspecting one policy and the test another. A missing or
+    stale configured move would sail past the guard and fail inside the test.
+    """
+    from aow_sim.build_model import load_params
+    from aow_sim.control.flick import MOVES_DIR, load_move
     from aow_sim.control.general_spec import OBS_DIM
-    if not (MOVES_DIR / "general_rl.yaml").exists():
-        pytest.skip("run `python -m aow_sim.train_general_rl` first")
-    from aow_sim.control.policy import load_policy_npz
-    from aow_sim.control.flick import load_move
-    if load_move("general_rl").obs_dim != OBS_DIM:
-        pytest.skip("moves/general_rl predates the current obs spec — retrain")
-    del load_policy_npz
+    name = load_params()["control"].get("general_move", "general_rl")
+    if not (MOVES_DIR / f"{name}.yaml").exists():
+        pytest.skip(f"control.general_move names {name}, which is not exported "
+                    "— run `python -m aow_sim.train_general_rl` first")
+    if load_move(name).obs_dim != OBS_DIM:
+        pytest.skip(f"moves/{name} predates the current obs spec — retrain")
 
 
 def test_general_policy_is_the_default(monkeypatch, model, params, eq_qpos):

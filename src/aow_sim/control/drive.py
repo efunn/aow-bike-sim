@@ -330,15 +330,31 @@ class DriveController(LQRBalance):
 
     # -- general (always-on) policy ----------------------------------------
 
-    def engage_general(self, data, name: str = "general_rl") -> None:
+    def engage_general(self, data, name: str | None = None) -> None:
         """Hand the actuators to the general command-conditioned policy and
         leave them there. Unlike every command_* above this is NOT a
         maneuver: there is no horizon and no hand-back, so the only way out
         is another command_* (which re-anchors the analytic controller).
 
         The initial command is "hold what you are doing now" — current
-        heading, current velocity — so engaging never jolts the bike."""
+        heading, current velocity — so engaging never jolts the bike.
+
+        `name` defaults to `control.general_move` — THE CONFIGURED POLICY, the
+        same one run_drive, record and hw/run_bike each resolve. It used to
+        default to the literal "general_rl", which meant the config pointer had
+        no consumer here at all: every caller that did not name a policy drove
+        `general_rl` however the config was set. That is not a hypothetical
+        drift -- it made `test_general_move_replays` a test of a hardcoded file
+        rather than of the configured move, and left
+        `test_hardware_data_covers_the_general_policy` ("which is what
+        deploys") driving a policy that does not deploy.
+
+        The `"general_rl"` fallback is kept for a params dict with no
+        `control.general_move`, matching run_drive.py:1188, record.py:372 and
+        hw/run_bike.py:277."""
         from .flick import load_move
+        if name is None:
+            name = self.params["control"].get("general_move", "general_rl")
         self._gen = load_move(name)
         from .general_spec import obs_layout_for, vel_filter_alpha
         # The observation LAYOUT is a property of the policy, carried in its

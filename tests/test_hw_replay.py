@@ -109,11 +109,25 @@ def test_hardware_data_covers_the_control_path():
 
 
 def test_hardware_data_covers_the_general_policy():
-    """Same contract for the always-on RL policy, which is what deploys."""
-    if not (Path(__file__).resolve().parents[1] / "moves" / "general_rl.npz").exists():
-        pytest.skip("moves/general_rl not trained")
+    """Same contract for the always-on RL policy, which is what deploys.
 
+    "What deploys" means `control.general_move`, so this now drives whatever
+    that names rather than a hardcoded `general_rl` -- which was a different
+    policy from the configured one, and the docstring was simply wrong.
+
+    NOTE WHAT THIS DOES AND DOES NOT PROVE. Both sides are fed the SAME
+    recorded `qvel`, so it is a determinism check on the control path: given
+    identical inputs, the shim emits identical `ctrl`. It says nothing about
+    whether that velocity is TRUE or ESTIMATED, and it cannot -- an
+    obs_odometry policy passes here whichever signal it is handed. Closed-loop
+    survival on the estimate is a separate question and is not tested anywhere;
+    see docs/plans/odometry-rewrite.md.
+    """
     params = load_params()
+    name = params["control"].get("general_move", "general_rl")
+    if not (Path(__file__).resolve().parents[1] / "moves" / f"{name}.npz").exists():
+        pytest.skip(f"control.general_move names {name}, which is not exported")
+
     model = build_model(params)
     data = mujoco.MjData(model)
     sj = model.joint("steer_joint").qposadr[0]
@@ -121,12 +135,12 @@ def test_hardware_data_covers_the_general_policy():
 
     sim_ctl = DriveController(params, model)
     sim_ctl.reset(model, data)
-    sim_ctl.engage_general(data)
+    sim_ctl.engage_general(data, name=name)
     sim_ctl.set_command(v_cmd_world=[0.5, 0.0], psi_cmd=0.3)
     frames = _record(model, data, sim_ctl, 1500)
 
     def _engage(c, hd):
-        c.engage_general(hd)
+        c.engage_general(hd, name=name)
         c.set_command(v_cmd_world=[0.5, 0.0], psi_cmd=0.3)
 
     hw_ctl = DriveController(params, model)

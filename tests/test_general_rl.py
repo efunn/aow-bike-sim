@@ -382,14 +382,21 @@ def test_plot_command_branch_is_non_directional():
 
 @pytest.mark.policy
 def test_general_move_replays():
-    """If a trained general policy exists, it loads and replays without NaN."""
+    """THE CONFIGURED move loads and replays without NaN.
+
+    Named for `control.general_move` and now actually reading it. It used to
+    load `general_rl` by hand, so it passed whatever the config pointed at --
+    including at a policy that did not exist.
+    """
+    from aow_sim.build_model import load_params
     from aow_sim.control.flick import MOVES_DIR
-    if not (MOVES_DIR / "general_rl.npz").exists():
-        pytest.skip("run `python -m aow_sim.train_general_rl` first")
     from aow_sim.control.policy import load_policy_npz
-    pol = load_policy_npz(MOVES_DIR / "general_rl.npz")
+    name = load_params()["control"].get("general_move", "general_rl")
+    if not (MOVES_DIR / f"{name}.npz").exists():
+        pytest.skip(f"control.general_move names {name}, which is not exported")
+    pol = load_policy_npz(MOVES_DIR / f"{name}.npz")
     if pol.obs_dim != OBS_DIM:
-        pytest.skip("moves/general_rl predates the current obs spec — retrain")
+        pytest.skip(f"moves/{name} predates the current obs spec — retrain")
     act = pol.action(_obs())
     assert len(act) == 3 and np.all(np.isfinite(act))
 
