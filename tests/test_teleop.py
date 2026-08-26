@@ -231,7 +231,17 @@ def test_hold_ramps_to_full_speed_with_auto_repeat(monkeypatch, model,
     _hold(g, 2.0, UP)
     assert c.profile.target == pytest.approx(c.profile.v_max, abs=1e-6)
     s = extract_state(g["data"], c._ref_pos)
-    assert s.v_lon > 0.8, f"bike did not actually accelerate (v={s.v_lon:.2f})"
+    # REPORT ROLL. This assert reads as "never accelerated", and that is not
+    # the failure mode. Measured 2026-08-25: the analytic controller tracks the
+    # ramp cleanly to v_max -- 1.173 against a 1.20 target at t=1.25 s, roll
+    # inside 1.1 deg -- and then falls over at about t=1.4 s. The v_lon read at
+    # the end is a bike lying on its side, not a bike that failed to start, and
+    # without roll in the message that distinction costs an hour to find.
+    assert s.v_lon > 0.8, (
+        f"bike is not driving at the end of the hold: v={s.v_lon:.2f}, "
+        f"roll={np.degrees(s.roll):.1f} deg. A LARGE ROLL means it "
+        f"accelerated and then FELL -- a stability failure, not a command or "
+        f"actuation one; the ramp assert above already passed.")
 
 
 def test_brake_carries_through_zero_into_reverse(monkeypatch, model, params,
@@ -409,7 +419,16 @@ def test_general_mode_tracks_a_speed_command(monkeypatch, model, params,
     from aow_sim.run_drive import _command_ref
     g = _capture(monkeypatch, model, params, eq_qpos)
     c = g["c"]
-    _toggle_controller(g)
+    # NO _toggle_controller HERE. Teleop boots with the policy already
+    # engaged, so toggling LEAVES general mode -- this test used to switch
+    # itself to the analytic controller and then assert that "the policy" did
+    # not follow the command, which the policy was never asked to do. The
+    # toggle dates from when teleop booted analytic and toggling was how you
+    # entered general mode; the boot default flipped and this did not.
+    #
+    # The assert below is the guard: if the default ever flips back, this
+    # fails loudly instead of silently measuring the wrong controller.
+    assert c.mode == "general", "teleop should boot with the policy engaged"
     _idle(g, 0.2)
     _hold(g, 2.5, UP)
     _h, v_cmd = _command_ref(c, g["data"])
