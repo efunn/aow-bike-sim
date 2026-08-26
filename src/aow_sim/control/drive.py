@@ -144,10 +144,11 @@ class DriveController(LQRBalance):
         self._gen_u = None              # held action between queries
         self._gen_window_s = 0.0        # policy's velocity-window time constant
         self._gen_zero_lat = False      # trained with v_lat forced to 0?
-        # Set by run_drive when --odometry is active. The controller cannot
-        # tell truth from estimate on its own -- both arrive as data.qvel --
-        # so whoever fills qvel has to say.
+        # Set by run_drive when --odometry / --ahrs are active. The controller
+        # cannot tell truth from estimate on its own -- both arrive as
+        # data.qvel and data.qpos -- so whoever fills them has to say.
         self._odometry_active = False
+        self._ahrs_active = False
         self._gen_obs_pitch = False     # does the policy observe pitch?
         self._gen_obs_wings = False     # ...and the wings?
         self._gen_act_wings = False     # does it DRIVE the wings?
@@ -381,6 +382,24 @@ class DriveController(LQRBalance):
                   "onboard velocity ESTIMATE, and is being replayed on MuJoCo "
                   "truth.\n  Add --odometry to teleop to match training. On "
                   "hardware this is automatic.")
+        # THE INVERSE, and the one that actually bites in teleop. Turning the
+        # sensors on while driving the CONFIG DEFAULT hands a truth-trained
+        # policy a signal it has never seen. That is not a small degradation:
+        # measured on the eval grid, general_rl_smooth_diff_pi goes from
+        # 0.808 / survival 1.00 on truth to 0.044 / 0.15 on the estimate, and
+        # to 0.110 / 0.20 with a TM151 attitude. It will look broken, and the
+        # policy is not what is broken -- the pairing is.
+        if (self._odometry_active or self._ahrs_active) and not bool(
+                getattr(self._gen, "obs_odometry", False)):
+            which = " + ".join(
+                w for w, on in (("--odometry", self._odometry_active),
+                                ("--ahrs", self._ahrs_active)) if on)
+            print(f"NOTE: {which} is on, but {getattr(self._gen, 'name', '?')} "
+                  "was trained on MuJoCo TRUTH.\n  It is being handed sensors "
+                  "it has never seen and will drive badly -- this is a "
+                  "MISMATCH,\n  not a verdict on the policy. Drive an "
+                  "estimate-trained one instead:\n"
+                  "    --general general_rl_odo")
         self._gen_obs_pitch = bool(getattr(self._gen, "obs_pitch", False))
         self._gen_obs_wings = bool(getattr(self._gen, "obs_wings", False))
         self._gen_act_wings = bool(getattr(self._gen, "act_wings", False))

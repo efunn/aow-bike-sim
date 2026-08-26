@@ -62,7 +62,19 @@
 # REPLAY NEEDS BOTH FLAGS. On hardware they are automatic; in sim neither is.
 #
 #   mjpython -m aow_sim.run_drive --teleop --odometry front \
-#       --odometry-encoder counts --ahrs tm151
+#       --odometry-encoder counts --ahrs tm151 --general general_rl_odo
+#
+# NOTE THE --general. control.general_move still names
+# general_rl_smooth_diff_pi, which is TRUTH-TRAINED and collapses on these
+# sensors (0.808 -> 0.044 with odometry, 0.110 with a TM151 attitude). Teleop
+# prints a mismatch NOTE if you forget, because the bike looks broken and the
+# policy is not what is broken -- the pairing is.
+#
+# LAUNCH (on the remote box, after committing and pushing):
+#
+#   ./scripts/rl.sh sync
+#   ./scripts/rl.sh up general --config config/rl_general_odo_ahrs.yaml \
+#       --run-dir runs/general_rl_odo_ahrs --export-name general_rl_odo_ahrs
 #
 
 algo:
