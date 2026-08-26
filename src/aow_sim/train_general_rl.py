@@ -33,7 +33,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 
 from .build_model import load_params
-from .params import params_digest
+from .params import params_digest, plant_digest
 from .control.balance import extract_state
 from .control.flick import MOVES_DIR, reserve_move_name
 from .control.general_env import GeneralEnv, _load_rl_config
@@ -587,6 +587,9 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # check_move_digest) — a policy is an artifact of the
            # plant it saw, and nothing else records which that was.
            "params_digest": params_digest(params),
+           # What a policy is actually judged on: the BIKE, not the
+           # controller settings it never reads. See params.py.
+           "plant_digest": plant_digest(params),
            # control_rate_hz is part of the contract: replay must query the
            # policy at the rate it was trained at, not the controller rate.
            "control_rate_hz": cfg["env"]["control_rate_hz"],

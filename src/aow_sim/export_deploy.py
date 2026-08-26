@@ -41,7 +41,7 @@ from .control.linearize import design_all
 # onboard bundle check and the move-file check can both reach it without
 # importing a physics engine. Kept importable from here — it is the module
 # people associate with the digest, and hw/state.py used to import it here.
-from .params import params_digest  # noqa: F401
+from .params import params_digest, plant_digest, design_digest  # noqa: F401
 
 # Actuators and joints the controllers look up by name.
 ACTUATORS = ("drive_a", "drive_b", "steer")
@@ -104,7 +104,15 @@ def build_bundle(params: dict, payload: bool = True,
         "ahrs_q_mount": q_mount,
         "ahrs_mount_source": np.array(mount_source),
         # -- provenance --
+        # THREE digests, because the bundle is two artifacts. `plant_digest`
+        # covers DeployModel -- actuator ids, joint addresses, qpos_eq -- which
+        # the RL path needs and a mismatch on which is a fall. `design_digest`
+        # covers only the LQR gain-design inputs, so a stale gain schedule can
+        # warn without stopping an RL run. `params_digest` stays for tools that
+        # already read it. See docs/plans/params-digest-split.md.
         "params_digest": np.array(params_digest(params)),
+        "plant_digest": np.array(plant_digest(params)),
+        "design_digest": np.array(design_digest(params)),
         "payload": np.array(payload),
     }
 

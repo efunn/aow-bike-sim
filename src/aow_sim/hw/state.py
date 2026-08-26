@@ -119,13 +119,38 @@ def load_bundle(path: str | Path, params: dict | None = None
     if params is not None:
         # params, not export_deploy: that module imports build_model and
         # linearize, i.e. MuJoCo and scipy, neither of which exists on the Pi.
-        from ..params import params_digest
-        want, got = params_digest(params), str(d["params_digest"])
-        if want != got:
-            raise ValueError(
-                f"bundle {path} was designed for params digest {got}, but the "
-                f"loaded bike_params.yaml hashes to {want}. Re-run "
-                f"`python -m aow_sim.export_deploy`.")
+        from ..params import params_digest, plant_digest, design_digest
+        if "plant_digest" in d.files:
+            # THE PLANT HALF RAISES. This covers DeployModel -- actuator ids,
+            # joint addresses, qpos_eq -- which every controller uses, RL
+            # included. Wrong here is a fall, not a warning.
+            want, got = plant_digest(params), str(d["plant_digest"])
+            if want != got:
+                raise ValueError(
+                    f"bundle {path} was built for plant {got}, but the loaded "
+                    f"bike_params.yaml describes plant {want}. Re-run "
+                    f"`python -m aow_sim.export_deploy`.")
+            # THE DESIGN HALF ONLY WARNS. It covers the LQR gain-design inputs
+            # and nothing else. An RL policy cannot read any of them, so a
+            # stale gain schedule must not be able to stop an RL run -- which
+            # it did before the split, because run_bike loads this bundle
+            # unconditionally for DeployModel whatever controller is chosen.
+            dwant, dgot = design_digest(params), str(d["design_digest"])
+            if dwant != dgot:
+                print(f"WARNING: bundle {path} carries gains designed at "
+                      f"{dgot}, but the LQR design inputs now hash to {dwant}. "
+                      f"The plant matches, so RL is unaffected; re-export "
+                      f"before trusting the LQR.")
+        else:
+            # Pre-split bundle: only the whole-file hash to go on, so judge it
+            # the old way. Not backfilled on purpose -- see
+            # docs/plans/params-digest-split.md.
+            want, got = params_digest(params), str(d["params_digest"])
+            if want != got:
+                raise ValueError(
+                    f"bundle {path} predates the digest split and was designed "
+                    f"for params digest {got}, but bike_params.yaml now hashes "
+                    f"to {want}. Re-run `python -m aow_sim.export_deploy`.")
 
     design = LQRDesign(
         K=d["K"], qpos_eq=d["qpos_eq"], fit_r2=d["fit_r2"],

@@ -32,7 +32,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 
 from .build_model import load_params
-from .params import params_digest
+from .params import params_digest, plant_digest
 from .control.flick import MOVES_DIR, reserve_move_name
 from .control.pivot_env import PivotEnv, _load_rl_config
 from .control.pivot_spec import ActionBounds
@@ -278,6 +278,9 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="pivot_rl"):
            # check_move_digest) — a policy is an artifact of the
            # plant it saw, and nothing else records which that was.
            "params_digest": params_digest(params),
+           # What a policy is actually judged on: the BIKE, not the
+           # controller settings it never reads. See params.py.
+           "plant_digest": plant_digest(params),
            "yaw_target_deg": cfg["env"]["yaw_target_deg"],
            "max_episode_s": cfg["env"]["max_episode_s"],
            "v_max": cfg["env"]["v_max"],

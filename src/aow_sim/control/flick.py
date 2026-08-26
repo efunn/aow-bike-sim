@@ -218,18 +218,32 @@ def check_move_digest(move, params, warn=None) -> str:
     Returns "" when there is nothing to say, else the message (also emitted
     through `warn`, default `print`).
     """
-    from ..params import params_digest        # numpy-free; see that module
-    stamped = getattr(move, "params_digest", "")
+    from ..params import params_digest, plant_digest   # numpy-free; see there
     name = getattr(move, "name", "?")
-    if not stamped:
-        msg = (f"moves/{name} carries no params_digest (exported before the "
-               "field existed) — cannot tell whether it matches the current "
+    # PREFER plant_digest. A policy reads nothing out of params["control"], so
+    # judging it on the whole file failed it for LQR weights and PD gains it
+    # cannot see. Exports stamped before the split carry only the legacy field
+    # and are still judged the old way -- deliberately not backfilled, because
+    # a migration that silently blesses a stale artifact defeats the mechanism.
+    stamped_plant = getattr(move, "plant_digest", "")
+    stamped = getattr(move, "params_digest", "")
+    if stamped_plant:
+        if stamped_plant == plant_digest(params):
+            return ""
+        msg = (f"moves/{name} was trained on plant {stamped_plant}, but the "
+               f"bike now hashes to {plant_digest(params)} — this policy is an "
+               "artifact of a DIFFERENT machine. Fine for a comparison; "
+               "retrain before trusting it.")
+    elif not stamped:
+        msg = (f"moves/{name} carries no digest (exported before the field "
+               "existed) — cannot tell whether it matches the current "
                "bike_params.yaml")
     elif stamped != params_digest(params):
-        msg = (f"moves/{name} was trained at params digest {stamped}, but "
-               f"bike_params.yaml now hashes to {params_digest(params)} — "
-               "this policy is an artifact of a DIFFERENT plant. Fine for a "
-               "comparison; retrain before trusting it.")
+        msg = (f"moves/{name} predates the digest split and was trained at "
+               f"params digest {stamped}, which does not match the current "
+               f"{params_digest(params)}. NOTE this is the WHOLE-FILE hash, so "
+               "it can differ over controller settings the policy never reads; "
+               "re-export it to be judged on the plant alone.")
     else:
         return ""
     (warn or print)(msg)
@@ -293,9 +307,13 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         pol.act_swing = bool(d.get("act_swing", False))
         pol.wing_max_deg = float(d.get("wing_max_deg", 90.0))
         pol.obs_layout = tuple(d.get("obs_layout", ()) or ())
-        # The parameter set this policy was TRAINED against. "" for every move
-        # exported before the field existed. See check_move_digest.
+        # The parameter set this policy was TRAINED against. `plant_digest` is
+        # the one that means anything for a policy; `params_digest` is the
+        # legacy whole-file hash, kept so pre-split exports still get judged.
+        # Both "" for moves exported before their field existed. See
+        # check_move_digest.
         pol.params_digest = str(d.get("params_digest", ""))
+        pol.plant_digest = str(d.get("plant_digest", ""))
         pol.name = name
         return pol
     return FlickTrajectory(float(d["horizon"]),

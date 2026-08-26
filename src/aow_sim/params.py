@@ -106,3 +106,59 @@ def params_digest(params: dict) -> str:
     """
     blob = json.dumps(params, sort_keys=True, default=float).encode()
     return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def _hash(obj) -> str:
+    return hashlib.sha256(
+        json.dumps(obj, sort_keys=True, default=float).encode()).hexdigest()[:16]
+
+
+def plant_digest(params: dict) -> str:
+    """Hash of the BIKE: every top-level key except `control`.
+
+    Answers "was this trained or derived against the machine I am now running?"
+    -- the only question a trained policy can be asked, because nothing under
+    `train_*.py` or `*_env.py` reads `params["control"]` at all. The env takes
+    its control rate from the RL config, not from here.
+
+    Splitting this out of `params_digest` was not tidying. Measured 2026-08-25:
+    32 of the 44 `control` leaves are read by NOTHING that carries a digest, so
+    editing a PD gain -- or `general_move`, which is a policy name -- invalidated
+    the deploy bundle and all 39 exports. Under this hash,
+    `general_rl_smooth_diff_pi` is valid again: it differs from the current
+    parameters in exactly two leaves, `control.lqr.q_roll_rate` and
+    `control.lqr.q_steer`, and it cannot read either. Five exports recover this
+    way, and they are the current ones.
+
+    See docs/plans/params-digest-split.md.
+    """
+    return _hash({k: v for k, v in params.items() if k != "control"})
+
+
+# The control fields the LQR gain design actually reads -- linearize.py:145
+# (rate_hz), :271 and :286 (the lqr weights), :284 (the speed grid). Twelve
+# leaves of the forty-four. If linearize starts reading another one, it belongs
+# here, and a stale bundle will otherwise go unnoticed.
+DESIGN_FIELDS = ("rate_hz", "lqr", "drive.speed_grid")
+
+
+def design_digest(params: dict) -> str:
+    """Hash of the LQR DESIGN INPUTS ONLY -- deliberately not the plant.
+
+    Answers "were these gains designed against the weights I am now running?"
+    Independent of `plant_digest` on purpose: checking the two separately is
+    what lets a mismatch say WHICH half moved, instead of printing two hex
+    strings and leaving the reader to guess. A combined hash cannot do that.
+
+    Nothing an RL policy does depends on this, which is the point -- a stale
+    gain schedule must not be able to stop an RL run. See `hw/state.py`.
+    """
+    c = params.get("control") or {}
+    picked = {}
+    for f in DESIGN_FIELDS:
+        node, key = c, f
+        if "." in f:
+            head, key = f.split(".", 1)
+            node = c.get(head) or {}
+        picked[f] = node.get(key)
+    return _hash(picked)

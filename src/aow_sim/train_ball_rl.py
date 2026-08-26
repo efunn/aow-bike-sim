@@ -28,7 +28,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 
 from .build_model import load_params
-from .params import params_digest
+from .params import params_digest, plant_digest
 from .control.ball_env import BallEnv, _load_rl_config
 from .control.ball_spec import ActionBounds
 from .control.flick import MOVES_DIR, reserve_move_name
@@ -210,6 +210,9 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="ball_rl"):
            # check_move_digest) — a policy is an artifact of the
            # plant it saw, and nothing else records which that was.
            "params_digest": params_digest(params),
+           # What a policy is actually judged on: the BIKE, not the
+           # controller settings it never reads. See params.py.
+           "plant_digest": plant_digest(params),
            "max_episode_s": cfg["env"]["max_episode_s"],
            "ball_start": list(cfg["env"]["ball_start"]),
            "launch_target_deg": cfg["env"]["launch_target_deg"],
