@@ -615,6 +615,11 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # than it was trained on. Width is unchanged, so obs_layout cannot
            # catch the mismatch; this field is the only record.
            "obs_odometry": bool(cfg["env"].get("obs_odometry", False)),
+           # Which ENCODER MODEL the estimate came through: "ideal"
+           # (instantaneous joint velocity) or "counts" (4096/rev quantised,
+           # differenced, RateFilter -- the hardware path). Only meaningful
+           # with obs_odometry. Like it, invisible to obs_layout.
+           "odometry_encoder": str(cfg["env"].get("odometry_encoder", "ideal")),
            "obs_pitch": bool(cfg["env"].get("obs_pitch", False)),
            "obs_wings": bool(cfg["env"].get("obs_wings", False)),
            "act_wings": bool(cfg["env"].get("act_wings", False)),

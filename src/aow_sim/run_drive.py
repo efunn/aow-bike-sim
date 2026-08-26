@@ -331,6 +331,20 @@ def main() -> None:
                          "`python analysis/teleop_review.py <path>`")
     ap.add_argument("--hockey", action="store_true",
                     help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
+    ap.add_argument("--odometry-encoder", choices=("ideal", "counts"),
+                    default="counts", metavar="MODEL",
+                    help="how the wheel encoders are read under --odometry. "
+                         "`counts` (default) is the HARDWARE PATH: quantise the "
+                         "shaft to 4096 counts/rev, difference it, and filter "
+                         "through the same RateFilter the Pi runs -- one count "
+                         "is 0.236 mm at the wheel. `ideal` reads instantaneous "
+                         "joint velocity instead, which is what policies were "
+                         "TRAINED on; use it to A/B what quantisation costs. "
+                         "Measured 2026-08-27 it costs general_rl_odo nothing "
+                         "on the eval grid (0.771 vs 0.766, survival 1.00 "
+                         "both), but it is worth ~30 mm/s of extra v_lon error "
+                         "at standstill and in crab, where the wheel barely "
+                         "turns.")
     ap.add_argument("--odometry", nargs="?", const="front",
                     choices=("front", "blend", "lon_only", "lat_only"),
                     default=None, metavar="MODE",
@@ -405,7 +419,8 @@ def main() -> None:
                 wings=args.wings, linkage=args.linkage,
                 swing=args.swing or args.swing_linkage,
                 record=args.record,
-                slowmo_x=args.slowmo, odometry=args.odometry)
+                slowmo_x=args.slowmo, odometry=args.odometry,
+                odometry_encoder=args.odometry_encoder)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1176,7 +1191,7 @@ def _rec_write(rec, path, params, gen_name, mode):
 
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
             show_ui=False, wings=False, linkage=False, swing=False, record=None,
-            slowmo_x=1.0, odometry=False):
+            slowmo_x=1.0, odometry=False, odometry_encoder="counts"):
     from .interactive import teleop_loop
 
     from . import policy_menu
@@ -1194,7 +1209,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     odo = None
     if odometry:
         from .sim_odometry import SimOdometry
-        odo = SimOdometry(model, params, mode=odometry)
+        odo = SimOdometry(model, params, mode=odometry,
+                          encoder=odometry_encoder)
         which = {
             "front": "hw/odometry.py's estimate as the Pi runs it today",
             "blend": "the EXPERIMENTAL speed-aware front+roller blend",
@@ -1202,10 +1218,18 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                         "close to normal)",
             "lat_only": "a TRUE v_lon with ESTIMATED v_lat (expect it to fall)",
         }[odometry]
-        print(f"ODOMETRY IN THE LOOP ({odometry}): driving on {which},\n"
-              "  rebuilt from the simulated encoders and AHRS. Physics still "
-              "uses the truth.\n  The sim sensors are CLEAN, so this is still "
-              "kinder than the real bike will be.")
+        enc = {
+            "counts": (f"quantised to 4096 counts/rev and filtered through "
+                       f"RateFilter at {odo.odo_hz:g} Hz, as the Pi reads them "
+                       f"-- one count is 0.236 mm at the wheel"),
+            "ideal": ("INSTANTANEOUS joint velocity -- no quantisation, no "
+                      "lag. Optimistic, and what the policies trained on"),
+        }[odometry_encoder]
+        print(f"ODOMETRY IN THE LOOP ({odometry}, encoder={odometry_encoder}): "
+              f"driving on {which},\n  rebuilt from the simulated encoders and "
+              f"AHRS. Physics still uses the truth.\n  Encoders: {enc}.\n"
+              "  Still no gyro bias and no accelerometer noise, so this remains "
+              "kinder than the real bike.")
 
     menu = {"open": False, "cursor": 0, "entries": []}
     data = _fresh(model, eq_qpos)

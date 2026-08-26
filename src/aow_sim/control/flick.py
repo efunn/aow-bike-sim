@@ -293,6 +293,7 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         # between two different feature combinations cannot pass silently.
         pol.obs_zero_lat = bool(d.get("obs_zero_lat", False))
         pol.obs_odometry = bool(d.get("obs_odometry", False))
+        pol.odometry_encoder = str(d.get("odometry_encoder", "ideal"))
         pol.obs_pitch = bool(d.get("obs_pitch", False))
         # Wings: observed and/or driven. Both part of the obs/action contract,
         # and `wing_max_deg` is the cap replay must integrate against or the

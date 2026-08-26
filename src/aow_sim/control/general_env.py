@@ -162,8 +162,14 @@ class GeneralEnv(gym.Env):
         self._odo = None
         if self.obs_odometry:
             from ..sim_odometry import SimOdometry
-            self._odo = SimOdometry(self.model, params,
-                                    mode=env.get("odometry_mode", "front"))
+            self._odo = SimOdometry(
+                self.model, params,
+                mode=env.get("odometry_mode", "front"),
+                # "ideal" reads instantaneous joint velocity; "counts"
+                # quantises to 4096/rev and differences through RateFilter, as
+                # the Pi does. Default stays "ideal" so every policy trained
+                # before 2026-08-27 reproduces bit for bit.
+                encoder=env.get("odometry_encoder", "ideal"))
         self._vbar_alpha = vel_filter_alpha(self.ctrl_dt, self.vel_window_s)
         self._settle_steps = int(round(self.vel_window_s / self.ctrl_dt))
         # Pitch. Observed as well as penalized: charging w_pitch against a
@@ -420,8 +426,9 @@ class GeneralEnv(gym.Env):
         # reward-hacking channel, not a control problem.
         o_lon, o_lat = s.v_lon, s.v_lat
         if self._odo is not None:
-            # Stepped at the CONTROL rate, which is what runs on the Pi.
-            o_lon, o_lat = self._odo.update(self.data, self.ctrl_dt)
+            # Already advanced inside the substep loop; read the value on hold,
+            # which is what the controller sees between sense ticks on the bike.
+            o_lon, o_lat = self._odo.update(self.data, 0.0)
         v_cl, v_ct, psi_err = command_to_body(self._v_cmd_w, self._psi_cmd,
                                               self._psi)
         vb = None
@@ -554,8 +561,17 @@ class GeneralEnv(gym.Env):
             self.data.xfrc_applied[self._chassis, 1] = (
                 self._np_random.uniform(-1, 1) * self.rand["disturb_force_N"])
 
-        for _ in range(self.substeps):
+        for _k in range(self.substeps):
             mujoco.mj_step(self.model, self.data)
+            # TICK THE ESTIMATOR INSIDE THE SUBSTEP LOOP, not after it. It runs
+            # at its own rate (100 Hz, the Pi's) while the policy is queried at
+            # control_rate_hz (50), so there are two estimator ticks per policy
+            # step -- and they have to see DIFFERENT physics. Ticking after the
+            # loop would hand both the same `data`, which for the "counts"
+            # encoder means the second one differences a shaft that has not
+            # moved and reads zero.
+            if self._odo is not None:
+                self._odo.update(self.data, self.model.opt.timestep)
         cur = extract_state(self.data, self._p0).yaw
         self._psi += np.arctan2(np.sin(cur - self._raw_prev),
                                 np.cos(cur - self._raw_prev))

@@ -145,6 +145,10 @@ def main():
     ap.add_argument("--policies", nargs="+", metavar="NAME",
                     help="move names to evaluate instead of the default set; "
                          "any moves/<NAME>.yaml will do")
+    ap.add_argument("--encoder", choices=("ideal", "counts"), default=None,
+                    help="override the encoder model every odometry policy "
+                         "runs on: 'ideal' instantaneous joint velocity, "
+                         "'counts' quantised+RateFilter as the Pi reads it")
     ap.add_argument("--force-odometry", action="store_true",
                     help="run EVERY policy on the onboard velocity estimate, "
                          "including ones trained on MuJoCo truth. This is the "
@@ -165,6 +169,8 @@ def main():
         # observation and its own filter constant, so a single shared env
         # cannot serve both widths.
         pol = load_general(key)
+        if args.encoder:
+            pol.odometry_encoder = args.encoder
         if args.force_odometry:
             # Override the policy's own declaration. Deliberately a flag and
             # not the default: a policy trained on truth is OUT OF

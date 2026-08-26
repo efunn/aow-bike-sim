@@ -34,10 +34,32 @@ from contextlib import contextmanager
 
 import numpy as np
 
+from .control.steer import XC330_COUNTS_PER_RAD
+from .hw.dynamixel import CONTROL_HZ_DEFAULT, RateFilter, _pos_delta
 from .hw.odometry import VelocityEstimator, body_to_world
 
 SENSORS = ("ahrs_gyro", "ahrs_accel", "ahrs_quat",
-           "input_a_vel", "input_b_vel", "steer_pos")
+           "input_a_vel", "input_b_vel", "input_a_pos", "input_b_pos",
+           "steer_pos")
+
+# ENCODER MODELS. "ideal" reads the joint-velocity sensors: instantaneous,
+# unquantised, no lag -- a floor on the error, and what this module did
+# exclusively until 2026-08-27. "counts" reproduces the hardware path instead:
+# quantise the shaft angle to 4096 counts/rev, difference it over the tick, and
+# push that through the same `RateFilter` the Pi runs.
+#
+# ONE COUNT IS 0.236 mm OF TRAVEL AT THE WHEEL (2*pi/4096 rad at the servo,
+# times belt_ratio 3.0, times the 0.0512 m rolling radius). As a VELOCITY it is
+# worth q/T, where T is the DIFFERENCING SPAN, not the sample period -- so
+# sampling faster does not make it smaller. Measured from that arc:
+#
+#     span 10 ms -> 23.6 mm/s      span 25 ms -> 9.4 mm/s (the default)
+#     span 50 ms -> 4.7 mm/s
+#
+# against a v_max of 1200 mm/s and an estimator whose v_lat error at standstill
+# is already ~42 mm/s. So quantisation is a minor term next to slip -- which is
+# the point of measuring it rather than assuming either way.
+ENCODERS = ("ideal", "counts")
 
 
 def _rpy(quat) -> tuple[float, float, float]:
@@ -95,16 +117,42 @@ class SimOdometry:
     reproduces what was measured rather than something adjacent to it.
     """
 
-    def __init__(self, model, params: dict, mode: str = "front"):
+    def __init__(self, model, params: dict, mode: str = "front",
+                 encoder: str = "ideal", odo_hz: float = CONTROL_HZ_DEFAULT,
+                 window_ms: float = 25.0, taper: float = 0.5):
         if mode not in MODES:
             raise ValueError(f"mode must be one of {tuple(MODES)}, got {mode!r}")
+        if encoder not in ENCODERS:
+            raise ValueError(f"encoder must be one of {ENCODERS}, got {encoder!r}")
         self.mode = mode
+        self.encoder = encoder
         self.fusion, self.channels = MODES[mode]
-        self.est = VelocityEstimator(params)
+        self.params = params
+        # THE ESTIMATOR HAS ITS OWN CLOCK, and this is a fix rather than a
+        # feature. `VelocityEstimator` INTEGRATES -- it propagates v_lat on
+        # acceleration and applies a confidence-weighted correction once per
+        # tick -- so the rate it is ticked at changes what it does. Before
+        # this it inherited whatever its caller looped at: 50 Hz from
+        # GeneralEnv (`ctrl_dt`), and 2500 Hz from teleop, which passed
+        # `model.opt.timestep`. Three callers, three different estimators, none
+        # of them the Pi's 100 Hz.
+        self.odo_hz = float(odo_hz)
+        self.odo_dt = 1.0 / self.odo_hz
+        self.window_ms, self.taper = window_ms, taper
         self.adr = {}
         for name in SENSORS:
-            s = model.sensor(name)
-            self.adr[name] = (int(s.adr[0]), int(s.dim[0]))
+            sn = model.sensor(name)
+            self.adr[name] = (int(sn.adr[0]), int(sn.dim[0]))
+        self._init_state(params)
+
+    def _init_state(self, params) -> None:
+        self.est = VelocityEstimator(params)
+        self._acc = 0.0                 # unconsumed time since the last tick
+        self._last = (0.0, 0.0)         # most recent estimate, held between ticks
+        self._filt = {k: RateFilter(self.window_ms, self.taper,
+                                    1000.0 / self.odo_hz)
+                      for k in ("a", "b")}
+        self._prev_counts = {}          # k -> quantised shaft counts
 
     def _read(self, data, name):
         adr, dim = self.adr[name]
@@ -113,17 +161,54 @@ class SimOdometry:
     def reset(self, model, params) -> None:
         """Fresh filter state. The estimator integrates, so an episode that
         reuses a warmed-up filter is not the episode the bike will fly."""
-        self.est = VelocityEstimator(params)
+        self._init_state(params)
 
-    def update(self, data, dt: float) -> tuple[float, float]:
+    # -- the encoder ------------------------------------------------------
+
+    def _counts(self, data, which: str) -> int:
+        """Shaft angle -> quantised encoder counts, as the servo reports them.
+
+        `input_*_pos` is the INPUT SHAFT; the servo sits belt_ratio behind it,
+        which is what puts the encoder on the slow side and buys the aliasing
+        margin. Quantising here rather than at the input shaft is the whole
+        point -- one count is 0.236 mm at the wheel BECAUSE of that ratio.
+        """
+        rad_input = float(self._read(data, f"input_{which}_pos")[0])
+        return int(round(rad_input / self.est.belt_ratio * XC330_COUNTS_PER_RAD))
+
+    def _wheel_rates(self, data, dt: float) -> tuple[float, float]:
+        """(w_servo_a, w_servo_b) by the configured encoder model."""
+        if self.encoder == "ideal":
+            # Instantaneous joint velocity: no quantisation, no lag. A FLOOR.
+            return (float(self._read(data, "input_a_vel")[0]) / self.est.belt_ratio,
+                    float(self._read(data, "input_b_vel")[0]) / self.est.belt_ratio)
+        out = []
+        for k in ("a", "b"):
+            counts = self._counts(data, k)
+            prev = self._prev_counts.get(k)
+            self._prev_counts[k] = counts
+            if prev is None:                      # first tick: no interval yet
+                out.append(self._filt[k].peek())
+                continue
+            # Unwrapped exactly as hw/dynamixel.read does -- the hubs run in
+            # Velocity Control Mode and report a single-turn position.
+            d = _pos_delta(counts, prev)
+            raw = (d / XC330_COUNTS_PER_RAD) / dt
+            out.append(self._filt[k].update(raw))
+        return out[0], out[1]
+
+    def _advance(self, data, dt: float) -> tuple[float, float]:
         """One estimator tick from the SIMULATED sensors -> (v_lon, v_lat)."""
         roll, pitch, _ = _rpy(self._read(data, "ahrs_quat"))
-        # Input-shaft units -> servo units, the same conversion
-        # tests/test_hw_odometry.py makes; the estimator takes what the
-        # Dynamixel feedback reports.
-        wa = float(self._read(data, "input_a_vel")[0]) / self.est.belt_ratio
-        wb = float(self._read(data, "input_b_vel")[0]) / self.est.belt_ratio
+        wa, wb = self._wheel_rates(data, dt)
         steer = float(self._read(data, "steer_pos")[0])
+        if self.encoder == "counts":
+            # The steer servo is quantised too: XC330 extended position, the
+            # same 4096 counts/rev, through the steering gear ratio. It feeds
+            # tan(theta), so its resolution matters to v_lat directly.
+            ratio = float(self.params["bike"]["steering"]["gear_ratio"])
+            q = XC330_COUNTS_PER_RAD * ratio
+            steer = round(steer * q) / q
         yaw_rate = float(self._read(data, "ahrs_gyro")[2])
         if self.fusion == "front":
             return self.est.update(
@@ -139,6 +224,34 @@ class SimOdometry:
         # each where it is informative.
         w = float(np.clip(abs(v_lon) / V_REF, 0.0, 1.0)) * conf
         return float(v_lon), float(w * front + (1.0 - w) * roller)
+
+    # -- the clock --------------------------------------------------------
+
+    def update(self, data, dt: float) -> tuple[float, float]:
+        """Advance by `dt` of SIMULATED time; return the estimate on hold.
+
+        `dt` is how much time the CALLER has elapsed, not a tick period. The
+        estimator ticks at its own `odo_hz` and HOLDS its last value in
+        between, which is exactly what the controller sees on the bike: the
+        sense loop runs at 100 Hz and every reader between ticks gets the same
+        numbers. Callers may therefore loop at any rate -- teleop at the 2500 Hz
+        physics step, GeneralEnv at its 50 Hz control step -- and get the same
+        estimator either way.
+
+        A caller slower than `odo_dt` consumes the backlog in whole ticks, so
+        the filter still sees the sample count it expects rather than one giant
+        step. Leftover time carries to the next call.
+        """
+        self._acc += float(dt)
+        n = int(self._acc / self.odo_dt)
+        if n:
+            self._acc -= n * self.odo_dt
+            # Cap the catch-up: a caller that hands over a huge dt (a reset, a
+            # paused viewer) must not spin thousands of ticks on one stale
+            # `data`. Every tick would read the SAME sensor values anyway.
+            for _ in range(min(n, 4)):
+                self._last = self._advance(data, self.odo_dt)
+        return self._last
 
     def world_velocity(self, data, dt) -> np.ndarray:
         v_lon, v_lat = self.update(data, dt)

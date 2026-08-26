@@ -244,6 +244,7 @@ def policy_env_overrides(pol) -> dict:
                 obs_swing=bool(getattr(pol, "obs_swing", False)),
                 obs_zero_lat=bool(getattr(pol, "obs_zero_lat", False)),
                 obs_odometry=bool(getattr(pol, "obs_odometry", False)),
+                odometry_encoder=str(getattr(pol, "odometry_encoder", "ideal")),
                 wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)))
 
 
