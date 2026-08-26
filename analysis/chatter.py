@@ -152,6 +152,19 @@ def main():
                          "'counts' quantised + our 25 ms RateFilter as "
                          "hw/dynamixel derives it, 'reported' the XC430's own "
                          "Present Velocity (a ~50 ms boxcar, 25 ms of lag)")
+    ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171"),
+                    default=None,
+                    help="TM151 orientation/gyro error model on roll, "
+                         "roll_rate and yaw_rate: 'static' the datasheet "
+                         "static accuracy (0.5 deg RMS), 'typical' its DYNAMIC "
+                         "accuracy (1.5 deg), which is what a moving bike gets")
+    ap.add_argument("--ahrs-tau", type=float, default=2.0,
+                    help="correlation time of the orientation error [s]. NOT a "
+                         "datasheet number -- see sim_ahrs.TAU_ORIENT_S")
+    ap.add_argument("--ahrs-channels", choices=("both", "orient", "gyro"),
+                    default="both",
+                    help="attribute the damage: 'orient' corrupts only the "
+                         "attitude, 'gyro' only the rates")
     ap.add_argument("--force-odometry", action="store_true",
                     help="run EVERY policy on the onboard velocity estimate, "
                          "including ones trained on MuJoCo truth. This is the "
@@ -164,6 +177,10 @@ def main():
     params = load_params()
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
+    if args.ahrs:
+        cfg = {**cfg, "env": {**cfg["env"], "ahrs_level": args.ahrs,
+                              "ahrs_tau_s": args.ahrs_tau,
+                              "ahrs_channels": args.ahrs_channels}}
     cmds = eval_cmds(cfg["env"]["v_max"])
 
     out = {}

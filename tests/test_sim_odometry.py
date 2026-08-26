@@ -198,3 +198,22 @@ def test_explicit_filter_args_override_the_encoder_table(model, params):
     # and the table still applies when they are not given
     d = SimOdometry(model, params, encoder="counts")
     assert (d.window_ms, d.taper) == (25.0, 0.5)
+
+
+def test_first_read_does_not_outrun_the_ahrs_sample(model, params):
+    """`estimated()` reads the AHRS the instant it is entered, but the sensor
+    samples on a 100 Hz tick boundary -- so a caller stepping at the 2500 Hz
+    physics rate gets there first. This raised on the very first teleop frame.
+    """
+    import mujoco
+    from aow_sim.control.linearize import settle_upright
+    from aow_sim.sim_ahrs import SimAhrs
+
+    data = mujoco.MjData(model)
+    data.qpos[:] = settle_upright(model).qpos
+    mujoco.mj_forward(model, data)
+    ahrs = SimAhrs(model, params, level="tm151")
+    odo = SimOdometry(model, params, encoder="counts", ahrs=ahrs)
+    with odo.estimated(data, model.opt.timestep):    # must not raise
+        pass
+    assert ahrs._cache is not None

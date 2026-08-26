@@ -138,7 +138,8 @@ class SimOdometry:
 
     def __init__(self, model, params: dict, mode: str = "front",
                  encoder: str = "ideal", odo_hz: float = CONTROL_HZ_DEFAULT,
-                 window_ms: float | None = None, taper: float | None = None):
+                 window_ms: float | None = None, taper: float | None = None,
+                 ahrs=None):
         if mode not in MODES:
             raise ValueError(f"mode must be one of {tuple(MODES)}, got {mode!r}")
         if encoder not in ENCODERS:
@@ -155,6 +156,9 @@ class SimOdometry:
         # GeneralEnv (`ctrl_dt`), and 2500 Hz from teleop, which passed
         # `model.opt.timestep`. Three callers, three different estimators, none
         # of them the Pi's 100 Hz.
+        # Optional TM151 error model. None means the AHRS channels are read
+        # clean, which is what every policy before 2026-08-27 trained against.
+        self.ahrs = ahrs
         self.odo_hz = float(odo_hz)
         self.odo_dt = 1.0 / self.odo_hz
         # The encoder picks the filter; an EXPLICIT argument overrides it, so
@@ -180,6 +184,12 @@ class SimOdometry:
         self._prev_counts = {}          # k -> quantised shaft counts
 
     def _read(self, data, name):
+        # ONE PHYSICAL AHRS. When an error model is attached, its cached sample
+        # is the only source for the ahrs_* channels -- the estimator and the
+        # controller must be handed the SAME corrupted numbers, or the bike has
+        # two IMUs that disagree and the result flatters the estimator.
+        if self.ahrs is not None and name.startswith("ahrs_"):
+            return self.ahrs.latest(name)
         adr, dim = self.adr[name]
         return data.sensordata[adr:adr + dim]
 
@@ -267,6 +277,12 @@ class SimOdometry:
         the filter still sees the sample count it expects rather than one giant
         step. Leftover time carries to the next call.
         """
+        # PRIME ON THE FIRST CALL. The AHRS is sampled on a tick boundary, but
+        # a caller stepping at the physics rate reads the sensor long before
+        # the first 100 Hz tick fires -- and `estimated()` reads it
+        # immediately. Without this the very first teleop frame raises.
+        if self.ahrs is not None and self.ahrs._cache is None:
+            self.ahrs.sample(data, self.odo_dt)
         self._acc += float(dt)
         n = int(self._acc / self.odo_dt)
         if n:
@@ -275,6 +291,10 @@ class SimOdometry:
             # paused viewer) must not spin thousands of ticks on one stale
             # `data`. Every tick would read the SAME sensor values anyway.
             for _ in range(min(n, 4)):
+                # Sample the AHRS FIRST: the estimator reads gyro and accel out
+                # of that same tick, as the Pi does within one sense loop.
+                if self.ahrs is not None:
+                    self.ahrs.sample(data, self.odo_dt)
                 self._last = self._advance(data, self.odo_dt)
         return self._last
 
@@ -295,6 +315,15 @@ class SimOdometry:
         """
         true_v = data.qvel[:2].copy()
         e_lon, e_lat = self.update(data, dt)
+        # Orientation rides along, so ONE `with` gives the controller a
+        # consistent sensor suite rather than a true attitude beside an
+        # estimated velocity.
+        q0 = w0 = None
+        if self.ahrs is not None and self.ahrs.level != "none" \
+                and self.ahrs._cache is not None:
+            q0, w0 = data.qpos[3:7].copy(), data.qvel[3:6].copy()
+            data.qpos[3:7] = self.ahrs.latest("ahrs_quat")
+            data.qvel[3:6] = self.ahrs.latest("ahrs_gyro")
         _, _, yaw = _rpy(self._read(data, "ahrs_quat"))
         cy, sy = np.cos(yaw), np.sin(yaw)
         t_lon = cy * true_v[0] + sy * true_v[1]
@@ -306,3 +335,5 @@ class SimOdometry:
             yield
         finally:
             data.qvel[:2] = true_v
+            if q0 is not None:
+                data.qpos[3:7], data.qvel[3:6] = q0, w0

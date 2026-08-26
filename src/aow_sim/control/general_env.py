@@ -41,6 +41,7 @@ from .general_spec import (ACT_DIM, ActionBounds, act_dim_for, build_obs,
                            vel_filter_step, wrap_pi)
 from .linearize import settle_upright
 from .randomize import DomainRandomizer
+from ..sim_ahrs import rpy_from_quat
 
 _PARKED = np.array([100.0, 100.0])   # off-scene ball position (as ball_env)
 
@@ -159,6 +160,19 @@ class GeneralEnv(gym.Env):
         #
         # Physics is untouched: only the OBSERVATION is replaced.
         self.obs_odometry = bool(env.get("obs_odometry", False))
+        # TM151 ERROR MODEL, INDEPENDENT OF THE ODOMETRY. It corrupts roll,
+        # roll_rate and yaw_rate -- observation entries 0, 1 and 2, the FAST
+        # loop -- which a policy reads whether or not its VELOCITY comes from
+        # the estimator. Built before SimOdometry so it can be handed over as
+        # the single source for the shared ahrs_* channels.
+        # Default "none" so every policy trained before it reproduces.
+        self._ahrs = None
+        if env.get("ahrs_level", "none") != "none":
+            from ..sim_ahrs import SimAhrs
+            self._ahrs = SimAhrs(self.model, params, level=env["ahrs_level"],
+                                 tau_orient_s=float(env.get("ahrs_tau_s", 2.0)),
+                                 channels=env.get("ahrs_channels", "both"))
+        self._ahrs_acc = 0.0        # AHRS clock, used when there is no odometry
         self._odo = None
         if self.obs_odometry:
             from ..sim_odometry import SimOdometry
@@ -169,7 +183,8 @@ class GeneralEnv(gym.Env):
                 # quantises to 4096/rev and differences through RateFilter, as
                 # the Pi does. Default stays "ideal" so every policy trained
                 # before 2026-08-27 reproduces bit for bit.
-                encoder=env.get("odometry_encoder", "ideal"))
+                encoder=env.get("odometry_encoder", "ideal"),
+                ahrs=self._ahrs)
         self._vbar_alpha = vel_filter_alpha(self.ctrl_dt, self.vel_window_s)
         self._settle_steps = int(round(self.vel_window_s / self.ctrl_dt))
         # Pitch. Observed as well as penalized: charging w_pitch against a
@@ -424,6 +439,13 @@ class GeneralEnv(gym.Env):
         # be rewarded for fooling its own estimator -- driving the estimate
         # toward the command while the bike does something else -- which is a
         # reward-hacking channel, not a control problem.
+        # Orientation follows the same rule as velocity: the OBSERVATION gets
+        # the sensor, the reward keeps `s`. Entries 0, 1 and 2.
+        o_roll, o_roll_rate, o_yaw_rate = s.roll, s.roll_rate, self.data.qvel[5]
+        if self._ahrs is not None and self._ahrs._cache is not None:
+            o_roll, _pitch, _yaw = rpy_from_quat(self._ahrs.latest("ahrs_quat"))
+            g = self._ahrs.latest("ahrs_gyro")
+            o_roll_rate, o_yaw_rate = float(g[0]), float(g[2])
         o_lon, o_lat = s.v_lon, s.v_lat
         if self._odo is not None:
             # Already advanced inside the substep loop; read the value on hold,
@@ -438,7 +460,7 @@ class GeneralEnv(gym.Env):
             vb_lon, vb_lat = s.v_lon, s.v_lat
         if vb is not None:
             vb_lon, vb_lat = vb
-        obs = build_obs(s.roll, s.roll_rate, self.data.qvel[5],
+        obs = build_obs(o_roll, o_roll_rate, o_yaw_rate,
                         float(self.data.qpos[self._sj]),
                         float(self.data.qvel[self._sd]),
                         o_lon, o_lat, v_cl, v_ct, psi_err, self._prev_a,
@@ -472,6 +494,17 @@ class GeneralEnv(gym.Env):
             # The estimator INTEGRATES. An episode that inherits a warmed-up
             # filter is not the episode the bike will fly.
             self._odo.reset(self.model, self.p)
+        self._ahrs_acc = 0.0
+        if self._ahrs is not None:
+            # Same for the AHRS: its orientation error wanders and its yaw
+            # drifts, so an episode must start from a fresh draw. Seeded off
+            # the episode counter, so a rerun of the same eval is repeatable
+            # while successive episodes do not share one error trajectory.
+            # Drawn from the env's own generator, so a seeded eval repeats
+            # exactly while successive episodes get independent error
+            # trajectories. Inside the `if`, so the default path's rng stream
+            # is untouched and pre-AHRS policies still reproduce.
+            self._ahrs.reset(seed=int(rng.integers(2**31)))
         r = self.rand
         if r["enabled"]:
             roll = rng.uniform(-1, 1) * np.deg2rad(r["init_roll_deg"])
@@ -572,6 +605,10 @@ class GeneralEnv(gym.Env):
             # moved and reads zero.
             if self._odo is not None:
                 self._odo.update(self.data, self.model.opt.timestep)
+            elif self._ahrs is not None:
+                # No estimator to carry it, so the AHRS keeps its own clock --
+                # the Pi's sense rate, not the 2500 Hz physics step.
+                self._ahrs.tick(self.data, self.model.opt.timestep)
         cur = extract_state(self.data, self._p0).yaw
         self._psi += np.arctan2(np.sin(cur - self._raw_prev),
                                 np.cos(cur - self._raw_prev))

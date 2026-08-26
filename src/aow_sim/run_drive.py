@@ -331,6 +331,20 @@ def main() -> None:
                          "`python analysis/teleop_review.py <path>`")
     ap.add_argument("--hockey", action="store_true",
                     help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
+    ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171"),
+                    nargs="?", const="tm151", default="none", metavar="LEVEL",
+                    help="TM151 error model on the ATTITUDE the controller "
+                         "reads -- roll, roll_rate, yaw_rate, i.e. the fast "
+                         "loop. `typical` (the default when the flag is given "
+                         "bare) is the datasheet DYNAMIC accuracy, 1.5 deg RMS "
+                         "roll/pitch, which is what a moving bike gets; "
+                         "`static` is its 0.5 deg bench figure; `tm171` prices "
+                         "the better part in the same datasheet at 1.0 deg. "
+                         "INDEPENDENT of --odometry: this is the orientation "
+                         "path, that is the velocity path, and they can be "
+                         "turned on separately. Expect this to be the one you "
+                         "feel -- 1.5 deg RMS against a bike that holds 0.2-3.3 "
+                         "deg of roll.")
     ap.add_argument("--odometry-encoder", choices=("ideal", "counts"),
                     default="counts", metavar="MODEL",
                     help="how the wheel encoders are read under --odometry. "
@@ -420,7 +434,7 @@ def main() -> None:
                 swing=args.swing or args.swing_linkage,
                 record=args.record,
                 slowmo_x=args.slowmo, odometry=args.odometry,
-                odometry_encoder=args.odometry_encoder)
+                odometry_encoder=args.odometry_encoder, ahrs=args.ahrs)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1191,7 +1205,8 @@ def _rec_write(rec, path, params, gen_name, mode):
 
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
             show_ui=False, wings=False, linkage=False, swing=False, record=None,
-            slowmo_x=1.0, odometry=False, odometry_encoder="counts"):
+            slowmo_x=1.0, odometry=False, odometry_encoder="counts",
+            ahrs="none"):
     from .interactive import teleop_loop
 
     from . import policy_menu
@@ -1206,11 +1221,21 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # ONBOARD ESTIMATE INSTEAD OF TRUTH. Off by default: every controller in
     # sim has always read MuJoCo ground truth, and silently changing that would
     # make every recorded comparison incomparable.
+    ahrs_model = None
+    if ahrs != "none":
+        from .sim_ahrs import ORIENT_RMS_DEG, SimAhrs
+        ahrs_model = SimAhrs(model, params, level=ahrs)
+        r, _p, y = ORIENT_RMS_DEG[ahrs]
+        print(f"AHRS ERROR MODEL ({ahrs}): roll/pitch {r} deg RMS, yaw {y} deg,"
+              f"\n  on the ATTITUDE the controller reads. The bike holds "
+              f"0.2-3.3 deg of roll, so this is the same size as the signal.\n"
+              f"  Orientation error correlation time is a GUESS "
+              f"(sim_ahrs.TAU_ORIENT_S), not a datasheet number.")
     odo = None
     if odometry:
         from .sim_odometry import SimOdometry
         odo = SimOdometry(model, params, mode=odometry,
-                          encoder=odometry_encoder)
+                          encoder=odometry_encoder, ahrs=ahrs_model)
         which = {
             "front": "hw/odometry.py's estimate as the Pi runs it today",
             "blend": "the EXPERIMENTAL speed-aware front+roller blend",
@@ -1961,7 +1986,13 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                     except ValueError as e:
                         print(e)
         apply(m, d)
-        if odo is None:
+        if odo is None and ahrs_model is not None:
+            # Orientation path only. SimOdometry would normally own the AHRS
+            # clock; without it the sensor keeps its own.
+            ahrs_model.tick(d, m.opt.timestep)
+            with ahrs_model.estimated(d):
+                c.step(m, d)
+        elif odo is None:
             c.step(m, d)
         else:
             # Controller sees the ESTIMATE, physics keeps the truth. Safe to
