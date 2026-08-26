@@ -1,8 +1,8 @@
 # Splitting `params_digest` — one hash, two questions
 
-Started 2026-08-25. Status: **proposed, not implemented.** Written because the
-problem was found while auditing something else, and the fix is small but the
-reasoning behind it is not obvious from the code.
+Started 2026-08-25. Status: **IMPLEMENTED 2026-08-25**, same day. Written first
+because the problem was found while auditing something else, and the fix is
+small but the reasoning behind it is not obvious from the code.
 
 ---
 
@@ -134,9 +134,14 @@ stale. Worth reporting the differing subtree names, not just a boolean.
 
 ## Open questions
 
-1. Where do `control.flip.*` and `control.pivot.*` belong? They parameterise
-   open-loop moves. Nothing carrying a digest reads them today, but a replayed
-   move arguably depends on them.
+1. ~~Where do `control.flip.*` and `control.pivot.*` belong?~~ **RESOLVED
+   2026-08-25: neither digest, and that is correct.** They ARE read --
+   `control/drive.py:72` for the analytic flip mode, `control/pivot.py:71` for
+   the pivot -- but at RUNTIME, straight from the params file, and never baked
+   into a stamped artifact. A digest exists to catch an artifact that was built
+   against different parameters than are now loaded; a value read live from
+   those parameters cannot be stale against them. (The balance running under a
+   replayed trajopt move is the LQR, which `design_digest` already covers.)
 2. Should `design_digest` include `plant_digest`, or be independent? Included
    is simpler to reason about; independent makes the report sharper.
 3. Does anything else read `params["control"]` that this survey missed? The
@@ -148,3 +153,59 @@ stale. Worth reporting the differing subtree names, not just a boolean.
 `bike_params_cad.yaml` near-duplicating `bike_params.yaml` -- 163 shared leaves,
 of which 9 had drifted as of 2026-08-25. That is a separate problem with a
 separate fix; see the reconciliation notes in `docs/status.md`.
+
+
+---
+
+## What shipped (2026-08-25)
+
+`params.py` gains `plant_digest` (everything except `control`) and
+`design_digest` (`DESIGN_FIELDS` = `rate_hz`, `lqr`, `drive.speed_grid` --
+the twelve leaves `linearize.py` reads). Open question 2 resolved: the two are
+**independent**, not nested, because checking them separately is what lets a
+mismatch say which half moved.
+
+Stamped by `export_deploy` (all three, legacy included) and by the four
+`train_*_rl.py`. Read by `hw/state.py` and `control/flick.py`, both falling back
+to the legacy field when the new one is absent.
+
+Severity, verified end to end against a freshly exported bundle:
+
+| change | result |
+|---|---|
+| `control.general_move` | loads, silent |
+| `control.pd.roll_kp` | loads, silent |
+| `control.lqr.q_steer` | loads, **warns** — plant matches, RL unaffected |
+| `bike.ahrs.mass` | **raises** |
+
+Suite unmoved at 25 failed / 208 passed / 2 skipped.
+
+## The migration decision changed, and the reason is evidence
+
+The plan said "no backfill, the 39 keep warning". That was right when a
+backfill would have meant *guessing*. It does not have to: `bike_params.yaml`
+is tracked, so the parameters behind any stamped whole-file digest can be
+recovered exactly by walking its history and matching the hash.
+
+Done for all 39 exports. Of the 19 that carry a digest, **five have a
+plant_digest identical to today's** -- they were invalidated by controller
+settings they cannot read, exactly the defect this split exists to fix:
+
+    general_rl_smooth_diff_pi        general_swing_rl
+    general_rl_pitch_smooth_diff_pi  general_swing_open_rl
+    general_rl_glide_pitch_smooth_pi
+
+`general_rl_smooth_diff_pi` differs from the current parameters in exactly two
+leaves -- `control.lqr.q_roll_rate` and `control.lqr.q_steer` -- and reads
+neither.
+
+So a backfill of `plant_digest: e1ec36bfa670217e` into those five is not a hack
+and not a guess: it is the value those runs would have stamped. The other 34
+stay invalid, correctly -- 20 predate the digest field entirely and 14 were
+genuinely trained on a different plant.
+
+NOT APPLIED BY THE ASSISTANT, but the reason first given for that was WRONG:
+`moves/` is tracked (79 files), not gitignored -- only `runs/` and `traces/`
+are. So the backfill IS trivially revertible with `git checkout`, and the only
+thing holding it is that modifying a training artifact is the user's call. The
+command is ready to run.
