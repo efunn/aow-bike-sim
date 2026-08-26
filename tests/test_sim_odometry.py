@@ -129,7 +129,8 @@ def test_both_encoders_agree_on_ONE_trajectory(model, params):
                 vs[e].append(odo._last[0])
     mu = {e: float(np.mean(v)) for e, v in vs.items()}
     sd = {e: float(np.std(v)) for e, v in vs.items()}
-    assert mu["counts"] == pytest.approx(mu["ideal"], abs=0.010), mu
+    for e in ENCODERS:
+        assert mu[e] == pytest.approx(mu["ideal"], abs=0.015), mu
 
     # AND "counts" IS THE QUIETER OF THE TWO, which is the opposite of what
     # "adds quantisation noise" suggests, so it is pinned here rather than
@@ -163,3 +164,37 @@ def test_reset_clears_the_filters_not_just_the_estimator(model, params):
     assert odo._prev_counts == {}
     assert odo._last == (0.0, 0.0)
     assert all(f.peek() == 0.0 for f in odo._filt.values())
+
+
+def test_reported_is_the_servos_own_estimate_and_lags_three_times_ours(model,
+                                                                      params):
+    """`reported` models Present Velocity(128), which ServoBus can take
+    wholesale via velocity_source="reported". Same counts, different filter:
+    the servo smooths like a ~50 ms BOXCAR against our 25 ms / taper 0.5.
+
+    The lag ratio is the whole reason hw/dynamixel.py re-derives velocity from
+    position instead of reading the register, so it is pinned here rather than
+    left in prose. Measured closed-loop it is not free: general_rl_odo holds
+    survival 1.00 on `counts` and drops to 0.85 on `reported`.
+    """
+    ours = SimOdometry(model, params, encoder="counts")
+    servo = SimOdometry(model, params, encoder="reported")
+    lag = {k: list(o._filt.values())[0].group_delay_ms
+           for k, o in (("counts", ours), ("reported", servo))}
+    assert lag["counts"] == pytest.approx(8.3, abs=0.1)
+    assert lag["reported"] == pytest.approx(25.0, abs=0.1)
+    assert lag["reported"] > 2.5 * lag["counts"]
+    # A boxcar has no taper by definition; ours ramps to half weight.
+    assert servo.taper == 1.0 and ours.taper == 0.5
+
+
+def test_explicit_filter_args_override_the_encoder_table(model, params):
+    """The encoder picks the filter, but an explicit window/taper wins -- which
+    is what lets the lag be SWEPT without inventing an encoder name per point.
+    Silently ignoring these args would make a sweep read as a flat line."""
+    o = SimOdometry(model, params, encoder="counts", window_ms=50.0, taper=1.0)
+    assert (o.window_ms, o.taper) == (50.0, 1.0)
+    assert list(o._filt.values())[0].group_delay_ms == pytest.approx(25.0, abs=0.1)
+    # and the table still applies when they are not given
+    d = SimOdometry(model, params, encoder="counts")
+    assert (d.window_ms, d.taper) == (25.0, 0.5)

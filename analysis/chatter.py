@@ -53,6 +53,7 @@ from aow_sim.build_model import load_params
 from aow_sim.control.flick import MOVES_DIR
 from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 from aow_sim.control.policy import load_policy_npz
+from aow_sim.sim_odometry import ENCODERS
 from aow_sim.train_general_rl import _eval_episodes, _score, eval_cmds
 from rsa_policies import POLICIES, REPO, env_for, load_general
 
@@ -145,10 +146,12 @@ def main():
     ap.add_argument("--policies", nargs="+", metavar="NAME",
                     help="move names to evaluate instead of the default set; "
                          "any moves/<NAME>.yaml will do")
-    ap.add_argument("--encoder", choices=("ideal", "counts"), default=None,
+    ap.add_argument("--encoder", choices=list(ENCODERS), default=None,
                     help="override the encoder model every odometry policy "
                          "runs on: 'ideal' instantaneous joint velocity, "
-                         "'counts' quantised+RateFilter as the Pi reads it")
+                         "'counts' quantised + our 25 ms RateFilter as "
+                         "hw/dynamixel derives it, 'reported' the XC430's own "
+                         "Present Velocity (a ~50 ms boxcar, 25 ms of lag)")
     ap.add_argument("--force-odometry", action="store_true",
                     help="run EVERY policy on the onboard velocity estimate, "
                          "including ones trained on MuJoCo truth. This is the "

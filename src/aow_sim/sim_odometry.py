@@ -59,7 +59,26 @@ SENSORS = ("ahrs_gyro", "ahrs_accel", "ahrs_quat",
 # against a v_max of 1200 mm/s and an estimator whose v_lat error at standstill
 # is already ~42 mm/s. So quantisation is a minor term next to slip -- which is
 # the point of measuring it rather than assuming either way.
-ENCODERS = ("ideal", "counts")
+#
+# "reported" is the THIRD option the hardware actually offers: the XC430's own
+# Present Velocity(128) register, which `ServoBus(velocity_source="reported")`
+# takes wholesale. Same encoder counts, different filter -- the servo smooths
+# internally like a ~50 ms BOXCAR (uniform, no taper), i.e. ~25 ms of lag on a
+# bike whose fall time constant is 113 ms. That is 3x the lag of our own 25 ms
+# / taper 0.5 default, which is why hw/dynamixel.py re-derives velocity from
+# position instead of reading the register.
+#
+# Modelling it as a RateFilter at OUR tick rate is an approximation: the servo
+# runs its average on its own clock, not ours. It reproduces the span and the
+# group delay, which is what the lag argument turns on.
+ENCODERS = ("ideal", "counts", "reported")
+
+# encoder -> (window_ms, taper) for the differencing filter. taper 1.0 is a
+# uniform boxcar; 0.5 ramps to half weight at the window edge. See RateFilter.
+ENCODER_FILTER = {
+    "counts": (25.0, 0.5),      # hw/dynamixel.py's default, swept in sim
+    "reported": (50.0, 1.0),    # the servo's own internal estimate
+}
 
 
 def _rpy(quat) -> tuple[float, float, float]:
@@ -119,7 +138,7 @@ class SimOdometry:
 
     def __init__(self, model, params: dict, mode: str = "front",
                  encoder: str = "ideal", odo_hz: float = CONTROL_HZ_DEFAULT,
-                 window_ms: float = 25.0, taper: float = 0.5):
+                 window_ms: float | None = None, taper: float | None = None):
         if mode not in MODES:
             raise ValueError(f"mode must be one of {tuple(MODES)}, got {mode!r}")
         if encoder not in ENCODERS:
@@ -138,7 +157,13 @@ class SimOdometry:
         # of them the Pi's 100 Hz.
         self.odo_hz = float(odo_hz)
         self.odo_dt = 1.0 / self.odo_hz
-        self.window_ms, self.taper = window_ms, taper
+        # The encoder picks the filter; an EXPLICIT argument overrides it, so
+        # the lag can be swept without inventing a new encoder name. Defaulting
+        # these to concrete numbers would have been worse: the table would then
+        # silently lose to a default the caller never chose.
+        win, tap = ENCODER_FILTER.get(encoder, (25.0, 0.5))
+        self.window_ms = win if window_ms is None else float(window_ms)
+        self.taper = tap if taper is None else float(taper)
         self.adr = {}
         for name in SENSORS:
             sn = model.sensor(name)
@@ -202,7 +227,7 @@ class SimOdometry:
         roll, pitch, _ = _rpy(self._read(data, "ahrs_quat"))
         wa, wb = self._wheel_rates(data, dt)
         steer = float(self._read(data, "steer_pos")[0])
-        if self.encoder == "counts":
+        if self.encoder != "ideal":
             # The steer servo is quantised too: XC330 extended position, the
             # same 4096 counts/rev, through the steering gear ratio. It feeds
             # tan(theta), so its resolution matters to v_lat directly.
