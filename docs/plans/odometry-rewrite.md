@@ -290,6 +290,97 @@ transfers for v_lon, where the LQR result is most directly about the same
 signal. Do not assume it for v_lat, and do not cite the 1.5-1.7 deg number in
 a training argument without saying which controller produced it.
 
+## THE AHRS IS THE DOMINANT SENSOR RISK, not the encoder
+
+`sim_ahrs.py` puts the TM151's datasheet error on the ORIENTATION path -- roll,
+roll_rate, yaw_rate, which are observation entries 0, 1 and 2 and the fast
+loop. The velocity work above was worth 3 episodes of 20 at its worst. This is
+worth more, and it lands on a policy that never trained against it.
+
+Eval grid, 20 commands, randomization off. `general_rl_odo` on its own encoder
+model; the other two on truth velocity, so these rows isolate the AHRS:
+
+| level | part, condition | roll/pitch RMS | `general_rl_odo` | `smooth_diff_pi` | `nolat` |
+|---|---|---|---|---|---|
+| `none` | — | — | 0.766 / **1.00** | 0.808 / **1.00** | 0.780 / **1.00** |
+| `tm151_static` | ours, bench | 0.5° | 0.734 / **1.00** | 0.261 / **0.45** | 0.491 / **0.70** |
+| `tm171` | upgrade, moving | 1.0° | 0.689 / **1.00** | 0.126 / **0.25** | — |
+| `tm151` | **ours, moving** | 1.5° | 0.537 / **0.90** | 0.110 / **0.20** | 0.149 / **0.25** |
+
+Every level names a PART and a CONDITION. An earlier version called these
+`static` and `typical`, which left "is `typical` the TM151?" a fair question
+with no answer in the name. It is: `tm151` IS the part we have, at the dynamic
+accuracy a moving bike gets, and it is the row to design against.
+
+**The bench figure alone halves the standing default.** `smooth_diff_pi` goes
+from clearing the grid to 0.45 survival on the 0.5° STATIC accuracy — the
+number a stationary calibration would report. At the dynamic 1.5° it holds 0.20.
+
+**`general_rl_odo` is far more robust, and nothing trained it to be.** It holds
+1.00 through `tm171` and only loses two episodes at `typical`, while carrying
+the encoder model as well. The plausible reading is that a policy trained on a
+wrong-but-correlated velocity learned not to over-trust a sensor, and that
+transferred to a different noisy channel — but that is a hypothesis, not a
+measurement. It is also 6x quieter and saturates 1.2% of steps against 50.6%,
+so "less reactive" explains it equally well.
+
+**Orientation error is the damage, not gyro noise** (`--ahrs-channels`, at
+`tm151`):
+
+| channel | `general_rl_odo` | `smooth_diff_pi` |
+|---|---|---|
+| `gyro` only | 0.768 / 1.00 | 0.222 / 0.40 |
+| `orient` only | 0.583 / 0.95 | 0.130 / 0.25 |
+| both | 0.537 / 0.90 | 0.110 / 0.20 |
+
+That is the actionable split: orientation is what a better part fixes, and the
+`tm171` row prices it.
+
+### Which TM151 → TM171 difference actually buys that
+
+The parts differ in internal update rate (400 vs 800 Hz), gyro non-linearity
+(0.3 vs 0.2 % FS), accel misalignment (0.5 vs 0.3°), yaw (1.0 vs 0.8° static,
+3.0 vs 2.6° per 25 min) — **and in dynamic roll/pitch, 1.5 vs 1.0°**, which is
+the easy one to miss because the STATIC block is identical (<0.5° both) and
+hides it. Ablated on the grid, `general_rl_odo`:
+
+| configuration | score | surv |
+|---|---|---|
+| TM151, everything as spec | 0.537 | 0.90 |
+| TM171, everything as spec | 0.689 | 1.00 |
+| TM151 but TM171 **orientation RMS** only | **0.635** | **0.95** |
+| TM151 but TM171 yaw drift only | 0.542 | 0.90 |
+| TM151 but TM171 misalignment only | 0.519 | 0.85 |
+
+Orientation RMS carries it; yaw drift and misalignment do nothing against a
+seed noise floor of about ±0.02. Update rate is irrelevant — the Pi senses at
+100 Hz and both parts run 400 Hz or better internally. Gyro non-linearity is
+quoted as % of the ±1000°/s FULL SCALE, and the bike peaks at 22.6 / 29.8 /
+34.7 °/s, under 3.5% of it, so the deviation there is a small fraction of the
+3°/s worst case. Recorded and not modelled. For `odo` the upgrade buys back full survival
+(0.90 → 1.00). For `smooth_diff_pi` it buys almost nothing (0.20 → 0.25) —
+**you cannot buy your way out of a policy that trusts its attitude.**
+
+### The correlation time is a GUESS, and it was swept before this was believed
+
+`TAU_ORIENT_S = 2.0` has no datasheet source. Sweeping it at `tm151`:
+
+| tau | 0.1 | 0.5 | 1 | 2 | 5 | 20 | 60 |
+|---|---|---|---|---|---|---|---|
+| score | 0.514 | 0.447 | 0.506 | 0.438 | 0.503 | 0.613 | 0.624 |
+| surv | 0.85 | 0.80 | 0.85 | 0.80 | 0.85 | 0.95 | 0.95 |
+
+Flat across 0.1–5 s and only eases beyond 20 s, where the error becomes a
+near-constant offset the controller trims out. **The guess does not drive the
+conclusion**, which is the only reason the table above is quotable.
+
+### What this does NOT yet say
+
+Nothing here has retrained. The obvious next move is the one that worked for
+velocity: put `ahrs_level: tm151` in the env during training and see whether
+a policy learns to distrust its attitude the way `odo` learned to distrust its
+velocity. That is a training run, not an analysis.
+
 ## Open questions
 
 1. Why did the FRONT constraint degrade? The docstring records a free fit
