@@ -886,6 +886,16 @@ are controller-independent. So the suite measures open-loop accuracy (the
 objective that selected a worse estimator) on a trajectory from a controller
 nothing drives with.
 
+**The encoder path is now modelled and costs nothing (2026-08-27).**
+`SimOdometry` gained `encoder="counts"`: quantise the shaft to 4096 counts/rev,
+difference it, filter through the same `RateFilter` the Pi runs. One count is
+0.236 mm at the wheel. `general_rl_odo` scores 0.771 / survival 1.00 on it
+against 0.766 / 1.00 on the ideal sensor — no retraining needed. Quantisation
+costs ~30 mm/s of v_lon error at standstill and in crab, and nothing while
+driving. The estimator also has its own 100 Hz clock now, instead of inheriting
+50 Hz from training and 2500 Hz from teleop. See
+`docs/plans/odometry-rewrite.md`.
+
 **And a latent failure sits in the green half.** The four
 `test_longitudinal_odometry_tracks_truth` cases pass because the LQR drives
 gently. Same bar (30 mm/s), episodes driven by RL: `straight_0.6` goes

@@ -132,6 +132,68 @@ against the wrong signal.
    occurring. Both are cheap and both are things the current estimator does not
    know it knows.
 
+## The encoder path, closed 2026-08-27
+
+`SimOdometry` read the joint-VELOCITY sensors: instantaneous, unquantised,
+unfiltered. The Pi differences `Present Position` counts through `RateFilter`.
+That gap is now modelled (`encoder="counts"`), and it costs nothing.
+
+**One count is 0.236 mm of travel at the wheel** — 2*pi/4096 rad at the servo,
+times belt_ratio 3.0, times the 0.0512 m rolling radius. As a VELOCITY it is
+worth q/T where T is the DIFFERENCING SPAN, not the sample period, so sampling
+faster does not shrink it:
+
+| span | quantisation |
+|---|---|
+| 10 ms | 23.6 mm/s |
+| **25 ms** (the default) | **9.4 mm/s** |
+| 50 ms | 4.7 mm/s |
+
+Open-loop, per regime, `general_rl_odo` driving (RMS against truth, mm/s):
+
+| regime | v_lon ideal → counts | v_lat ideal → counts |
+|---|---|---|
+| standstill | 4.4 → **34.6** | 3.1 → 6.6 |
+| forward 0.6 | 15.4 → 16.0 | 10.9 → 11.6 |
+| reverse -0.4 | 11.1 → 16.6 | 4.5 → 5.6 |
+| crab 0.3 | 4.9 → **29.0** | 8.4 → 17.4 |
+
+Quantisation costs ~30 mm/s exactly where the wheel barely turns, and nothing
+while driving, where slip already dominates at 122 mm/s.
+
+**On the eval grid it costs NOTHING.** `general_rl_odo`, trained on the ideal
+encoder, scores **0.771 / survival 1.00 on `counts`** against 0.766 / 1.00 on
+`ideal` — and drifts LESS (0.478 m against 0.919). No retraining needed.
+
+**Because "ideal" is not the better sensor, it is the UNFILTERED one.**
+Measured on one shared trajectory, `counts` has 10.8 mm/s of spread against
+`ideal`'s 15.2: the 25 ms `RateFilter` removes more than the quantisation puts
+in. `ideal` is a floor on ERROR, not on noise, and `counts` trades variance for
+lag. That is why the eval score moves the "wrong" way.
+
+### And the estimator now has its own clock
+
+It used to inherit whatever its caller looped at — **50 Hz** from `GeneralEnv`
+(`ctrl_dt`), **2500 Hz** from teleop (which passed `model.opt.timestep`),
+against the Pi's **100 Hz**. Three callers, three different estimators, since
+`VelocityEstimator` integrates. Now it ticks at `odo_hz` (default 100) and
+holds its value in between, exactly as a reader between sense ticks does on the
+bike.
+
+**The rate turns out barely to matter**, which is the reassuring answer:
+`general_rl_odo` max roll across a 50x range of tick rates —
+
+| odo_hz | standstill | fwd 0.6 | rev -0.4 | crab 0.3 |
+|---|---|---|---|---|
+| 2500 | 0.4° | 1.8° | 0.3° | 1.0° |
+| 100 | 0.4° | 2.1° | 0.2° | 1.6° |
+| 50 | 0.4° | 2.0° | 0.3° | 1.7° |
+
+**This closes the caveat left open below.** The lag-tolerance result was
+LQR-land and explicitly not extended to a policy; it now is, measured on the
+policy that is actually velocity-sensitive. Note it says nothing about gyro
+bias or AHRS error, which remain unmodelled.
+
 ## Resolved
 
 **Does `SimOdometry` need to match the hardware's velocity SOURCE?** It reads
