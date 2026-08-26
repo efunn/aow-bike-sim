@@ -268,13 +268,20 @@ class BikeRunner:
         self.preflight_ahrs(strict=preflight)
 
         voltage = self.bus.pack_voltage()
-        print(f"pack {voltage:.1f} V — engaging general policy at "
+        # WHICH policy, from the config. This used to call engage_general with
+        # no name at all, which silently took the hardcoded "general_rl"
+        # default in DriveController.engage_general -- so the BIKE always drove
+        # general_rl no matter what control.general_move said, while teleop
+        # (run_drive.py, which does pass the name) honoured it. The two
+        # disagreed, and the one that mattered was the one nobody could see.
+        gen_name = self.params["control"].get("general_move", "general_rl")
+        print(f"pack {voltage:.1f} V — engaging general policy {gen_name} at "
               f"{1/self.dt:.0f} Hz")
 
         self.data.time = 0.0
         self._sense()
         self.ctl.reset(self.model, self.data)
-        self.ctl.engage_general(self.data)
+        self.ctl.engage_general(self.data, name=gen_name)
 
         t0 = time.monotonic()
         next_tick = t0
