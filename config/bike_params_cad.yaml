@@ -628,181 +628,6 @@ servos:
     # Phi 16 x 3 horn.
     horn_thickness: {value: 0.003, source: measured (drawing)}
     horn_diameter: {value: 0.016, source: measured (drawing)}
-    # --- HORN FASTENER INTERFACE, off the note beside the front view:
-    # "4-Phi 1.6 HOLE DP 3.0 (Max.) P.C.D Phi 12, Using M2 Tapping Screw".
-    # The [X330 IDLER] view repeats it verbatim for the back horn, so ONE
-    # table covers both ends of an idler-equipped servo. The title block reads
-    # X330, not XC330, so XL330 shares the whole block too -- the two differ
-    # in the motor, not the case.
-    #
-    # DP 3.0 is a MAXIMUM and NOT a length to design a pin to. It is where the
-    # drill stops; a pin cut to it bottoms in the hole and holds the part off
-    # the horn face, which is the exact failure the reliefs exist to prevent.
-    # Build to `horn_pin_length` and leave the rest as swarf room.
-    horn_bolt_circle: {value: 0.012, source: measured (drawing)}
-    horn_hole_dia: {value: 0.0016, source: measured (drawing)}
-    horn_hole_depth_max: {value: 0.003, source: measured (drawing)}
-    horn_hole_count: {value: 4, source: measured (drawing)}
-    # PRINT-SIDE, not part of the servo: what a 3D printed pin should be.
-    # Both are `design` because they are a printer property, not a ROBOTIS
-    # one -- re-measure them on a test coupon when the filament or the nozzle
-    # changes, and expect the clearance to be the one that moves.
-    horn_pin_clearance: {value: 0.0002, source: design (set in CAD)}  # diametral -> Phi 1.4
-    horn_pin_length: {value: 0.0026, source: design}       # < depth_max
-    # ZERO, deliberately. The proven dynamixel_wrench_with_idler part has no
-    # tip lead-in and seats fine, so the chamfer is not paying for itself; the
-    # parameter stays because a stiffer filament may want one back.
-    horn_pin_tip_chamfer: {value: 0.0, source: design}
-    # The elephant-foot relief: a groove of this depth and radial width
-    # around each pin root, cut into the seating face. A printed pin flares
-    # at its first layer; without somewhere for the flare to go it lands
-    # proud and the part rocks on four bumps instead of seating flat.
-    horn_pin_root_relief: {value: 0.0008, source: design (set in CAD)}
-    horn_pin_root_width: {value: 0.001, source: design (set in CAD)}
-    # Chamfer at the DEEP end of the relief groove, on its inner edge. Cutting
-    # the corner off the CUTTER leaves a conical flare of material where the
-    # pin meets solid part -- a gusset, so relieving the elephant foot does not
-    # leave the pin standing on a sharp unsupported step.
-    #
-    # DEEP END, not the mouth. Once the groove is cut, the pin's root is at the
-    # groove's floor, not at the horn mount plane; a chamfer at the mouth sat
-    # flush against that plane, gusseting a spot where nothing is carried.
-    horn_pin_root_chamfer: {value: 0.0006, source: design (set in CAD)}
-    # --- THE HORN WELL. A separate clearance from the pins on purpose: the
-    # pins are up against 3D print resolution at Phi 1.45, while the Phi 16
-    # well is a large-circle fit with its own problems (shrinkage, first-layer
-    # flare, the seam) and no reason to want the same number. 0.1 diametral is
-    # the value the existing dynamixel_wrench_with_idler uses -- Phi 16.1.
-    horn_bore_clearance: {value: 0.0001, source: design}
-    # Profile of the well, mouth inward to the floor: lead-in chamfer,
-    # straight bore, a 45 degree undercut chamfer opening OUTWARD, then a flat
-    # land at the wider radius running to the floor.
-    #
-    # THE CHAMFER OPENS OUT, and that is the whole point of its direction. It
-    # used to close IN onto the floor, which put the floor at Phi 15.7 against
-    # a Phi 16 horn: the horn's rim landed on a lip, and making the chamfer
-    # BIGGER drove it further into the horn. Opening outward means the number
-    # widens the relief around the horn's top edge instead.
-    #
-    # There is no separate radial step any more. At 45 degrees the radial and
-    # axial legs of the chamfer are the same number by construction, so a step
-    # parameter alongside it could only ever disagree with it.
-    #
-    # PROMOTED FROM GUESS 2026-08-25. These arrived as guesses off a verbal
-    # description; they are now the values set by hand on `X330 horn pin 1` in
-    # the wing-linkage-straight Part Studio and read back through the API. A
-    # land of ZERO is a deliberate setting, not a missing one -- the undercut
-    # chamfer runs straight onto the floor with no flat between.
-    horn_bore_mouth_chamfer: {value: 0.0006, source: design (set in CAD)}
-    horn_bore_undercut: {value: 0.0006, source: design (set in CAD)}
-    horn_bore_land: {value: 0.0, source: design (set in CAD)}
-    # How far the collar stops SHORT of the case face. The well was exactly
-    # horn_thickness deep, which lands the collar's rim flat on the case and
-    # rubs; this backs it off so the horn alone carries the part.
-    horn_case_offset: {value: 0.0004, source: design (set in CAD)}
-    # --- CASE ATTACHMENT INTERFACE. MEASURED 2026-08-25 off the working
-    # top-case / bottom-case parts in dynamixel-link, Part Studio
-    # dynamixel-wrench-with-idler, read back through the Onshape API. These are
-    # not proposals: they are what a part that already fits actually uses.
-    #
-    # The frame was reconstructed from those parts' own planes and then checked
-    # against docs/robotis/XC-330.pdf: 23.00 / 34.00 / 20.00 against a drawing
-    # that says 23 / 34 / 20, with the shaft axis landing 9.50 from the near
-    # end against a drawing that says 9.5. Four independent agreements, so the
-    # numbers below are anchored, not merely self-consistent.
-    #
-    # ONLY ONE OF THE TWO HOLE ROWS IS USABLE, and that is the whole reason the
-    # part looks the way it does. The rows sit +/-15 from the face centre,
-    # which puts one 22.5 from the shaft axis and the other 7.5 -- and 7.5 is
-    # inside the Phi 16 horn. So the far row is not a preference, it is the
-    # only row, on the horn side at least; the parts use the same row on the
-    # back face for symmetry and to clear the cable connectors.
-    case_pin_row_offset: {value: 0.015, source: measured (drawing)}
-    # THE CASE PIN IS NOT THE HORN PIN. It seats in the Phi 2 RELIEF bore of
-    # Detail A/B, not the Phi 1.6 tapping section -- Phi 1.9 in Phi 2, so 0.1
-    # diametral, against the horn pin's 0.2 in a Phi 1.6 hole. Two different
-    # holes doing two different jobs; do not unify the clearances.
-    #
-    # Length 3.0 fits the horn-side relief's 3.5 with 0.5 to spare, and the
-    # back face's 4.5 easily. That is consistent with the Detail A/B face
-    # assignment but does not prove it -- 3.0 fits either way round.
-    case_pin_dia: {value: 0.0019, source: measured (as-built)}
-    case_pin_clearance: {value: 0.0001, source: derived (2.0 bore - 1.9 pin)}
-    case_pin_length: {value: 0.003, source: measured (as-built)}
-    case_pin_count_per_face: {value: 2, source: measured (as-built)}
-    # Root relief, same idea as the horn pins but wider: Phi 4.3 round a Phi
-    # 1.9 pin is 1.2 radial, against the horn's 1.0. Depth 0.8 is the SAME
-    # number the horn feature uses, which is a good sign it is a print
-    # property rather than a per-joint choice.
-    case_pin_root_relief_dia: {value: 0.0043, source: measured (as-built)}
-    case_pin_root_relief_depth: {value: 0.0008, source: measured (as-built)}
-    # How the parts sit on the case sides: faces at +/-10.05 on a 20 mm case,
-    # so 0.05 a side. Tighter than anything else here, and it has to be --
-    # this is what stops the assembly rocking.
-    case_side_clearance: {value: 0.00005, source: measured (as-built)}
-    # The nest: top-case outer wall +/-12.35, bottom-case bore +/-12.45, so
-    # 0.1 a side over 6.8 mm of engagement. That IS the friction fit.
-    case_nest_clearance: {value: 0.0001, source: measured (as-built)}
-    case_nest_engagement: {value: 0.0068, source: measured (as-built)}
-    # The three regions along the case depth, back face toward horn face.
-    # They SUM TO THE CASE DEPTH by construction -- 2.0 + 6.8 + 14.2 = 23 --
-    # so only the first two are parameters and the top-case run is what is
-    # left over. Measured on the as-built parts and checked against that sum.
-    case_grip_length: {value: 0.002, source: measured (as-built)}
-    # Thickness of the caps over the two 20 x 34 faces. This is the ONLY
-    # extent of the model past those faces; nothing else stands proud there.
-    case_cap_thickness: {value: 0.004, source: measured (as-built)}
-    # Gap between the cap's inner face and the 20 x 34 case face. ZERO is the
-    # right default and is what has actually been printed -- the cap seats on
-    # the case face. It is a parameter only for completeness, since every
-    # other mating surface here has a clearance and this one silently did not.
-    #
-    # It does NOT change how deep the pins go: `case_pin_length` stays the
-    # depth INTO the hole, and the pin is lengthened by this so it still
-    # reaches. Otherwise raising the clearance would quietly shorten the grip.
-    case_face_clearance: {value: 0.0, source: design}
-    # How far the wrap reaches along the case, from the far end toward the
-    # shaft. The as-built parts differ here (top 13.35, bottom 9.85); one
-    # number is used for both, since the generated base is the common shell
-    # and the difference was drawn on, not designed in.
-    #
-    # 10 is a CLEARANCE, not a preference: past it the wrap starts to foul the
-    # servo cables. The as-built top-case reaches 13.35, but that part was
-    # drawn around a specific routing; 10 is the number that holds generally.
-    #
-    # A second ceiling sits above it at 16.5, where the cap would foul the
-    # Phi 16 horn. The cable limit binds first, so the dialog bound stays 16.5
-    # and this default is what keeps clear of the wiring.
-    case_wrap_length: {value: 0.010, source: design (cable clearance)}
-    # Root chamfer for the case pins. NOT measured -- the survey looked for
-    # cylinders and planes, and a chamfer is a cone, so it would not have
-    # shown up either way. Carried over from the horn pins, where it was set
-    # by hand, on the assumption that it is a print property.
-    case_pin_root_chamfer: {value: 0.0006, source: GUESS (carried from the horn pins)}
-    # Wall thicknesses of the two parts, for reference when drawing around
-    # them. Not an interface -- the user's own choice on these parts.
-    case_top_wall: {value: 0.0023, source: measured (as-built)}
-    case_bottom_wall: {value: 0.0016, source: measured (as-built)}
-    # --- STANDALONE COLLAR, built only when no target part is picked. Most of
-    # the attachment's stability is the collar latching round the OUTSIDE of
-    # the horn, so a bare ring of pins is not a usable output on its own.
-    horn_collar_outer_dia: {value: 0.020, source: design}
-    horn_collar_roof: {value: 0.002, source: design}
-    # --- CASE HOLE FASTENER INTERFACE. The pattern itself is
-    # `case_hole_pattern` below; these are the bore, off "Detail A" and
-    # "Detail B" on the same sheet. Both details show a Phi 1.6 tapping
-    # section opening out to Phi 2, and the two differ only in how far the
-    # Phi 2 runs: 3.5 against 4.5.
-    #
-    # WHICH DETAIL IS WHICH FACE IS AN INTERPRETATION, not a dimension. The
-    # leaders put A on the horn-face view and B on the back view, and that is
-    # the whole basis for the mapping below. Nothing here reads these yet --
-    # the case feature is not written -- so if it matters later, measure a
-    # real servo with a pin gauge before trusting the assignment.
-    case_hole_dia: {value: 0.0016, source: measured (drawing)}
-    case_relief_dia: {value: 0.002, source: measured (drawing)}
-    case_relief_depth_horn: {value: 0.0035, source: measured (drawing; face assignment is a GUESS)}
-    case_relief_depth_back: {value: 0.0045, source: measured (drawing; face assignment is a GUESS)}
     # See the XC430 block. Same idea, smaller case: the front view dimensions
     # 20 / 16 across and 34 / 30 down, so the pattern is 16 x 30 on the face.
     case_hole_pattern: [0.016, 0.030]
@@ -873,13 +698,18 @@ control:
     max_roll_setpoint_deg: 3.0
     x_kp: 8.0           # common-mode input [rad/s] per meter of fore/aft drift
   lqr:                  # weights for the DLQR on the identified lateral model
+    # NOT A CAD CONCERN. This block exists only because this file began as a
+    # whole-file copy of bike_params.yaml, and nothing in cad_layout reads it.
+    # It had DRIFTED: q_roll_rate 6.0 and q_steer 0.5 were the PRE-RECOVERY
+    # weights, still here after bike_params.yaml moved them to 30.0 and 5.0 --
+    # the two changes that took peak roll 60 deg -> 1.17 deg. Synced 2026-08-25.
     q_ypos: 3.0
     q_yvel: 0.2
     q_roll: 60.0
-    q_roll_rate: 6.0
+    q_roll_rate: 30.0
     q_yaw: 8.0          # LIGHT-ish: heading swings are intrinsic to crawl recovery;
     q_yaw_rate: 12.0    #   damp rotation (rate) over position. Heavy q_yaw (>~15)
-    q_steer: 0.5        #   rings against the steer clamp; 8/12 also tracks pivots.
+    q_steer: 5.0        #   rings against the steer clamp; 8/12 also tracks pivots.
     r_drive: 0.05       # balance of authority vs. saturation margin on pushes
     r_steer: 6.0
     steer_limit_deg: 15.0   # keep steering inside the identified linear region

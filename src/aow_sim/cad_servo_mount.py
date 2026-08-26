@@ -42,6 +42,10 @@ from pathlib import Path
 from .params import load_params
 
 CAD_PARAMS = "config/bike_params_cad.yaml"
+# The fastener interface lives in its own file. bike_params_cad.yaml is meant
+# to fold back into bike_params.yaml and reach MuJoCo; a pin clearance has no
+# business making that trip. See the header of servo_mounts.yaml for the split.
+MOUNT_PARAMS = "config/servo_mounts.yaml"
 OUT_FS = "docs/measurements/servo_mount.fs"
 SPLIT_MARK = "// ==== UI LAYER BELOW -- dropped by --check ===="
 
@@ -258,11 +262,28 @@ def dedupe(poly: list[tuple[float, float]], tol: float = 1e-9):
     return out
 
 
-def servo_table(params: dict) -> dict[str, dict]:
-    """The subset of `servos` that has a complete horn fastener interface."""
+def load_mounts(path: str | Path | None = None) -> dict:
+    """The fastener interface file, `{value, source}` wrappers stripped."""
+    import yaml
+    from .params import _normalize
+    return _normalize(yaml.safe_load(Path(path or MOUNT_PARAMS).read_text()))
+
+
+def servo_table(params: dict, mounts: dict | None = None) -> dict[str, dict]:
+    """Merge the servo's own envelope with our mount design, per model.
+
+    Two files on purpose. `params` (bike_params_cad.yaml) describes the PART --
+    box_size, shaft_from_end, horn_thickness, horn_diameter, case_hole_pattern
+    -- and those are physical facts the simulator legitimately wants. `mounts`
+    (servo_mounts.yaml) describes what WE are printing against it, and nothing
+    in it should ever reach MuJoCo. Merging here rather than merging the files
+    keeps that boundary visible at the one place it matters.
+    """
+    mounts = load_mounts() if mounts is None else mounts
     out = {}
     for name, key in MODELS.items():
-        spec = params["servos"].get(key, {})
+        spec = {**params["servos"].get(key, {}),
+                **mounts["servos"].get(key, {})}
         if missing := [k for k in FIELDS if k not in spec]:
             print(f"  skipping {name}: {key} lacks {', '.join(missing)}")
             continue
@@ -1260,6 +1281,7 @@ def verify_studio(text: str, target: str | None) -> bool:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--params", default=CAD_PARAMS)
+    ap.add_argument("--mounts", default=MOUNT_PARAMS)
     ap.add_argument("-o", "--output", default=OUT_FS)
     ap.add_argument("--fs-version", default="3044",
                     help="std version. A studio pinned older behaves "
@@ -1276,7 +1298,7 @@ def main() -> None:
                     help="print the check script instead of spending a call")
     args = ap.parse_args()
 
-    table = servo_table(load_params(args.params))
+    table = servo_table(load_params(args.params), load_mounts(args.mounts))
     if not table:
         raise SystemExit("no servo has a complete horn fastener interface")
     globals()["TABLE_FOR_CHECK"] = table
