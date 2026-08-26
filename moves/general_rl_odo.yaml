@@ -1,0 +1,61 @@
+name: general_rl_odo
+type: rl
+kind: general
+policy_file: general_rl_odo.npz
+params_digest: 6d7c7f61025721a1
+plant_digest: e1ec36bfa670217e
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.4
+vel_window_s: 0.0
+obs_zero_lat: false
+obs_odometry: true
+obs_pitch: false
+obs_wings: false
+act_wings: false
+obs_swing: false
+act_swing: false
+wing_max_deg: 90.0
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 9000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 3.69177891063055e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.798
+    track_geo: 0.772
+    vel_err: 0.101
+    head_err_deg: 25.6
+    n_eval: 20
+    drift_m: 0.956
+    steer_rest_deg: 0.2
+    speed_ratio_fwd: 0.62
+    speed_ratio_rev: 1.081
+    crab_ratio_left: 0.353
+    crab_ratio_right: 0.52
+    crab_head_err: 74.8
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.371
+  exported_from: best_model.zip
