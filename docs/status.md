@@ -841,15 +841,58 @@ same problem" above was itself half wrong, corrected 2026-08-26. Not one
 reports a fall, which is what made them look independent. Re-driving each
 regime under an RL policy instead of the LQR splits them:
 
-* `straight_0.6` **clears** — correlation 0.137 → 0.937. That case was
-  substantially the degraded LQR trajectory being fed through a formula that
-  needs a real `v_lon`.
-* `standstill` fails under **both**. At `v_lon = 0`, `v_lon * tan(theta)`
-  carries no lateral information whoever is driving.
+**Four of the seven are the estimator. Three are artifacts of the fixture.**
 
-Expect these to split rather than clear together. `tan coefficient 0.652,
-expected ~1` is still the one to pull first: it is a closed-form geometry
-check, so it should be derivable rather than tuned.
+| case | LQR | RL | verdict |
+|---|---|---|---|
+| `front_wheel[standstill]` | 42.2 mm/s | 44.2 | estimator |
+| `front_wheel[standstill_shoved]` | 44.9 | 58.7 | estimator |
+| `fused[standstill]` | 42.8 | — | estimator |
+| `fused[standstill_shoved]` | 46.0 | — | estimator |
+| `front_wheel[straight_0.6]` | corr 0.137 | **0.937** | fixture |
+| `constraint_coefficients` | tan 0.652 | **0.968** | fixture |
+| `beats_roller_kinematics` | 31.7 vs 53.8 | passes moving-only | mixed |
+
+The four are ONE fault: at `v_lon ≈ 0` the tan term of
+`v_lat = v_lon*tan(theta) - yaw_rate*L` vanishes and the front-wheel
+constraint is structurally blind. No controller fixes it — the rollers get
+25.9 mm/s there against the front's 44.4. **That is the one to pull first.**
+
+**RETRACTED: "the tan coefficient is the one to pull first — a geometry
+constant is off."** It is not. The fit regresses `v_lat` on
+`[v_lon*tan(theta), -yaw_rate]`, and a quasi-steady LQR trajectory satisfies
+the kinematic bicycle relation `yaw_rate ≈ v_lon*tan(theta)/L` — so the two
+regressors are the same signal up to `L` and the split between them is
+arbitrary:
+
+| pooled over | corr(r₁,r₂) | cond | tan_coef |
+|---|---|---|---|
+| LQR `straight_0.6` alone | −0.980 | 26.1 | 0.032 |
+| LQR moving only | −0.987 | 43.4 | 0.360 |
+| LQR all four (the test) | −0.648 | 10.3 | 0.652 |
+| **RL `straight_0.6` alone** | **−0.430** | **7.9** | **0.968** |
+
+Theory is 1.0. The RL policy perturbs off steady state, breaking the
+degeneracy. Same estimator, same parameters — **the test measures the
+conditioning of its own fixture.** `straight_0.6`'s correlation is the same
+kind of artifact: its RMS assertion passes (14.4 mm/s against a 20 bar) and
+only `corr > 0.90` fails, because `std(v_lat_true)` under the LQR is 9.5 mm/s,
+*smaller than the estimator's own error*. No signal to correlate against.
+
+**The file needs a redesign, not a green run.** `_episode` drives with the
+analytic LQR, and **14 of the 17 tests in `test_hw_odometry.py` ride on that
+one fixture** — only `confidence_collapses`, `wound_steer` and `body_to_world`
+are controller-independent. So the suite measures open-loop accuracy (the
+objective that selected a worse estimator) on a trajectory from a controller
+nothing drives with.
+
+**And a latent failure sits in the green half.** The four
+`test_longitudinal_odometry_tracks_truth` cases pass because the LQR drives
+gently. Same bar (30 mm/s), episodes driven by RL: `straight_0.6` goes
+6.2 → **122.0 mm/s**, i.e. 1.0% → 20.3% slip; standstill 0.9 → 39.6. All four
+would go red. `hw/odometry.py`'s headline "8.8 mm/s RMS at a 0.6 m/s cruise
+(~1.5%)" holds for the LQR and is 14x off for the policy that drives. Under
+true rolling `w*r = v_axle` exactly, so the deviation IS slip.
 
 **But do not clear them by tuning for RMS.** Open-loop accuracy against truth
 is the wrong objective and it is wrong in the dangerous direction — a
@@ -929,8 +972,16 @@ Two standing guards, both deliberate and neither an xfail:
 
 **DONE (`b2580fd`): `control.general_move` now points at
 `general_rl_smooth_diff_pi`.** It was outstanding across four snapshots. The
-cost is the one predicted: the pointer lives in `bike_params.yaml`, so
-`design_digest` moved for a change with no physical content.
+and it cost NOTHING. **Correcting a claim made here on 2026-08-26**: this
+said the pointer "lives in `bike_params.yaml`, so `design_digest` moved for a
+change with no physical content". That is false, and it was carried from
+CLAUDE.md's *Current state* section, which predates the plant/design split in
+`fd10bc4`. `plant_digest` excludes the whole `control` subtree
+(`params.py:114`) and `design_digest` covers only `rate_hz`, `lqr` and
+`drive.speed_grid` (`DESIGN_FIELDS`, `params.py:139`). `control.general_move`
+is in neither. Verified by measurement: repointing to `general_rl_odo` leaves
+both at `e1ec36bfa670217e` / `2db6c647ff3a2d59`. The comment at
+`bike_params.yaml:288` already said so.
 
 **AND IT IS ALREADY THE WRONG DEFAULT, for a reason that has nothing to do
 with driving quality** — see the odometry section. `smooth_diff_pi` is trained
@@ -1043,10 +1094,15 @@ Two tracks. The sim track does not wait on the build.
    SIM and the wrong one for the bike. `general_rl_odo` survives at 1.00.
 
    The decision is not "which policy is better" — it is **whether the default
-   should be the one that flies on hardware**, given that changing the pointer
-   moves `design_digest` again for a change with no physical content. Settle
-   what the digest is meant to cover first. Re-export the deploy bundle in
-   whichever pass resolves it; it is still pinned to a digest two moves ago.
+   should be the one that flies on hardware**. It IS a one-liner: repointing
+   moves neither digest (measured; see the standings section). Re-export the
+   deploy bundle in whichever pass resolves it; it is still pinned to a digest
+   two moves ago.
+
+   **Changing it moves nothing in the test suite either** — measured, 23/210
+   both ways. Since `engage_general` now defaults to `control.general_move`
+   the tests at least exercise the configured policy, but nothing asserts it
+   survives the estimate. There is no closed-loop odometry test at all.
 
    **The estimator itself no longer gates this.** It is unchanged and still
    fails its seven open-loop tests; a policy trained against it as-is flies

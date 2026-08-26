@@ -217,9 +217,14 @@ the two together or the metric lies.
 ## Not in scope here
 
 Deciding the default. `control.general_move` still names
-`general_rl_smooth_diff_pi`, and moving it edits `bike_params.yaml`, which
-moves `design_digest` for a change with no physical content. That is a
-separate decision with its own consequences -- see CLAUDE.md.
+`general_rl_smooth_diff_pi`, which does not survive the estimate.
+
+An earlier version of this paragraph said moving it "moves `design_digest` for
+a change with no physical content". FALSE, corrected 2026-08-26 -- that
+predates the plant/design split. `plant_digest` excludes the whole `control`
+subtree; `design_digest` covers only `rate_hz`, `lqr` and `drive.speed_grid`.
+Repointing moves NEITHER, measured. It is a one-line change; it is left here
+because it is a decision about what should drive, not because it is expensive.
 
 ## A trap worth naming
 

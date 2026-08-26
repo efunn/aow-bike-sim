@@ -83,34 +83,84 @@ tests/test_teleop.py::test_hold_ramps_to_full_speed_with_auto_repeat  # 2026-08-
 # ---------------------------------------------------------------------------
 # THE ODOMETRY ESTIMATOR, seven cases. Registered 2026-08-25.
 #
-# PARTLY A SEPARATE PROBLEM FROM THE LQR ABOVE -- amended 2026-08-26, because
-# the original "a separate problem" was half wrong and said so too confidently.
-# Re-measured by driving each regime under an RL policy instead of the LQR:
+# COUPLED TO THE LQR ABOVE, and the original "A SEPARATE PROBLEM" was wrong --
+# amended 2026-08-26 after re-running every case with the episodes driven by
+# the RL policy instead. Four of the seven are the estimator; three are
+# artifacts of the fixture. See the breakdown below.
 #
-#   straight_0.6   CLEARS under RL. correlation 0.137 -> 0.937.  <- LQR-coupled
-#   standstill     fails under BOTH.                             <- genuinely
-#                                                                   the estimator
+# THE STRUCTURAL POINT, and the reason this file cannot be trusted as a
+# verdict on the estimator: `_episode` drives with `set_speed` /
+# `command_circle`, i.e. THE ANALYTIC LQR -- which is itself nine failures deep
+# in the block above. 14 of the 17 tests in test_hw_odometry.py ride on that
+# one fixture. Only three (confidence collapse, wound steer, body_to_world) are
+# controller-independent.
 #
-# So the constraint's failure is not one fault. Where the bike is MOVING, the
-# 0.137 correlation was substantially the LQR's degraded trajectory being fed
-# through a formula that needs a real v_lon; at STANDSTILL, v_lon * tan(theta)
-# is structurally blind whoever is driving, and no controller fixes that.
-# Expect these cases to split rather than clear together.
+# That is the wrong objective twice over. It is open-loop accuracy against
+# truth, which was measured selecting a WORSE estimator (see
+# docs/plans/odometry-rewrite.md), and it is measured on a trajectory from a
+# controller nothing drives with. The file needs a redesign, not a green run.
 #
 # Checked 2026-08-25: not one of these reports a fall. The bike stays
 # up; the front-wheel lateral-velocity constraint just does not deliver.
 #
-#   tan coefficient 0.652, expected ~1        <- a geometry constant is off
+#   tan coefficient 0.652, expected ~1        <- NOT a geometry error, see below
 #   front-wheel constraint 31.7 mm/s vs 53.8  <- barely beats assuming zero
 #   standstill lateral constraint 42.2 mm/s RMS, fused 42.8 (bar is 30)
-#   straight_0.6 correlation 0.137            <- essentially uncorrelated
+#   straight_0.6 correlation 0.137            <- NOT uncorrelated, see below
 #
-# The tan coefficient is the one to pull first: it is a closed-form geometry
-# check, so it should be derivable rather than tuned, and if the geometry is
-# wrong everything downstream of it inherits the error.
+# DO NOT PULL THE TAN COEFFICIENT FIRST. This block used to say it was "the one
+# to pull first -- a closed-form geometry check, so it should be derivable
+# rather than tuned, and if the geometry is wrong everything downstream
+# inherits the error". RETRACTED 2026-08-26: the geometry is fine and that
+# advice sends you after a conditioning artifact.
+#
+# The fit regresses v_lat on [v_lon*tan(theta), -yaw_rate]. A quasi-steady LQR
+# trajectory satisfies the kinematic bicycle relation yaw_rate ~ v_lon*tan
+# (theta)/L, so THE TWO REGRESSORS ARE THE SAME SIGNAL UP TO L and the split
+# between them is arbitrary. Measured, corr(r1, r2) and the recovered
+# coefficient:
+#
+#   LQR straight_0.6 alone   corr -0.980   cond 26.1   tan_coef 0.032
+#   LQR moving only          corr -0.987   cond 43.4   tan_coef 0.360
+#   LQR all four (the test)  corr -0.648   cond 10.3   tan_coef 0.652
+#   RL  straight_0.6 alone   corr -0.430   cond  7.9   tan_coef 0.968  <- theory 1.0
+#
+# The RL policy constantly perturbs off steady state, which breaks the
+# degeneracy and recovers the textbook value. Same estimator, same parameters.
+# So this test measures the CONDITIONING OF ITS OWN FIXTURE, not the geometry.
+#
+# `straight_0.6 correlation 0.137` is the same kind of artifact. Its RMS
+# assertion PASSES (14.4 mm/s against a 20 bar) and only the corr > 0.90 line
+# fails -- because std(v_lat_true) under the LQR is 9.5 mm/s, SMALLER than the
+# estimator's own 14.4 mm/s error. There is no signal to correlate against.
+# Under RL there is 34.5 mm/s of lateral motion and the same estimator scores
+# 0.937.
+#
+# WHAT IS ACTUALLY BROKEN is the standstill set, and it is ONE fault: at
+# v_lon ~ 0 the tan term of v_lat = v_lon*tan(theta) - yaw_rate*L vanishes and
+# the front-wheel constraint is structurally blind. Unchanged under RL (42.2 ->
+# 44.2, and 44.9 -> 58.7 shoved). No controller fixes it; the rollers get
+# 25.9 mm/s there against the front's 44.4. That is the one to pull first.
 #
 # Accepted for now because nothing is being deployed to the Pi yet, so a
 # degraded onboard velocity estimate costs nothing today.
+#
+# A LATENT FAILURE SITS IN THE GREEN HALF OF THIS FILE, 2026-08-26. The four
+# `test_longitudinal_odometry_tracks_truth` cases pass, and they pass because
+# the LQR drives gently. Same estimator, same bar (30 mm/s), episodes driven by
+# the RL policy instead:
+#
+#                       LQR          RL
+#   straight_0.6     6.2 mm/s   122.0 mm/s   (1.0% slip -> 20.3%)
+#   standstill       0.9         39.6
+#   standstill_shoved 2.1        37.5
+#
+# All four would go red. hw/odometry.py's headline claim -- "8.8 mm/s RMS at a
+# 0.6 m/s cruise (~1.5%)" -- holds for the LQR and is 14x off for the policy
+# that actually drives. Under true rolling w*r = v_axle exactly, so the
+# deviation IS slip, and the RL policy works the hub differential far harder.
+# NOT registered, because it is not currently failing; recorded here so the
+# green is not mistaken for a result.
 #
 # AND BECAUSE THE COST IS NOW BOUNDED, 2026-08-26. These tests measure the
 # estimator OPEN-LOOP against truth, which is the wrong objective -- a more
