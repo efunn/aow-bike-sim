@@ -358,6 +358,10 @@ def main() -> None:
                     help="the four-bar wing mechanism instead of the geared "
                          "pair (config/wing_linkage_locking.yaml); same 9/4 "
                          "keys, but the actuator drives the CRANK")
+    ap.add_argument("--swing-linkage", action="store_true",
+                    help="co-rotating FOUR-BAR wing pair "
+                         "(config/swing_linkage.yaml); the driveable form of "
+                         "analysis/swing_linkage.py. Same 3-position teleop.")
     ap.add_argument("--swing", action="store_true",
                     help="co-rotating wing pair (config/swing_wings.yaml): one "
                          "side down, other side tucked. 3 teleop positions.")
@@ -368,9 +372,10 @@ def main() -> None:
     args = ap.parse_args()
     params = load_params(args.params)
     model = build_model(params, variant="full", hockey=args.hockey,
-                        righting=args.wings or args.linkage or args.swing,
+                        righting=(args.wings or args.linkage or args.swing
+                                  or args.swing_linkage),
                         wings=args.wings and not args.linkage,
-                        swing=args.swing,
+                        swing=args.swing, swing_linkage=args.swing_linkage,
                         linkage=args.linkage,
                         linkage_cfg=args.linkage_config)
     # Same lighting the recorder applies, so a teleop session and a video of
@@ -381,7 +386,8 @@ def main() -> None:
     if args.teleop:
         _teleop(model, params, eq.qpos, hockey=args.hockey,
                 general=args.general, show_ui=args.ui,
-                wings=args.wings, linkage=args.linkage, swing=args.swing,
+                wings=args.wings, linkage=args.linkage,
+                swing=args.swing or args.swing_linkage,
                 record=args.record,
                 slowmo_x=args.slowmo)
         return
@@ -1245,20 +1251,36 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         # right verb -- 9 puts the RIGHT wing down, 7 the LEFT, 4 returns to
         # the centre V. See config/swing_wings.yaml.
         import yaml as _yaml
-        from .build_model import SWING_CFG, swing_poses
-        scfg = _yaml.safe_load(SWING_CFG.read_text())
-        dep = np.deg2rad(float(scfg["deploy_deg"]))
-        ratio = float(scfg["gear_ratio"])
-        poses = swing_poses(scfg, params["omni_wheel"]["outer_radius"])
+        from .build_model import SWING_CFG, SWING_LINKAGE_CFG, swing_poses
+        # The FOUR-BAR and the geared pair are both driven by a `swing`
+        # actuator through three positions, but their configs differ in shape:
+        # the linkage is commanded in CRANK degrees over a signed
+        # `crank_travel_deg`, the geared pair in WING degrees over `deploy_deg`
+        # with a fixed reduction. Reading the wrong one silently commands the
+        # wrong range.
+        linkage_form = any(model.joint(j).name == "swing_crank_joint"
+                           for j in range(model.njnt))
+        if linkage_form:
+            scfg = _yaml.safe_load(SWING_LINKAGE_CFG.read_text())
+            dep = np.deg2rad(float(scfg["stroke"]["crank_travel_deg"]))
+            ratio = 1.0
+            poses = None
+        else:
+            scfg = _yaml.safe_load(SWING_CFG.read_text())
+            dep = np.deg2rad(float(scfg["deploy_deg"]))
+            ratio = float(scfg["gear_ratio"])
+        if not linkage_form:
+            poses = swing_poses(scfg, params["omni_wheel"]["outer_radius"])
         print("swing wings: 9 steps RIGHT, 4 steps LEFT "
               "(left <-> centre <-> right; double-tap to cross)")
-        for nm in ("left", "centre", "right"):
+        for nm in (() if poses is None else ("left", "centre", "right")):
             v = poses[nm]
             print(f"   {nm:6s} {v['theta_deg']:+5.0f} deg at the wing"
                   f"   down foot {v['down_foot_z'] * 1000:5.1f} mm"
                   f"   up foot {v['up_foot_z'] * 1000:5.1f} mm")
         wing = {"aid": model.actuator("swing").id,
-                "jadr": model.joint("swing_right_joint").qposadr[0],
+                "jadr": model.joint("swing_crank_joint" if linkage_form
+                                    else "swing_right_joint").qposadr[0],
                 "stow": 0.0, "deploy": dep, "deploy_left": -dep,
                 # No slew limit: the joint carries DC-motor damping, so the
                 # position actuator already cannot drive it past no-load speed.

@@ -1,4 +1,4 @@
-# Project status — 2026-08-24
+# Project status — 2026-08-25
 
 Midpoint snapshot. The design logs under `docs/plans/` are where decisions and
 their reasoning live; this file is the layer on top of them — what is true
@@ -250,6 +250,86 @@ Reproduce with `python analysis/contact_surrogates.py`.
   recommended **negative** solref convention removes the guard entirely — stiff
   pairs then diverge rather than being clamped. `(-4e4, -150)` reproduces the
   current positive pair exactly, if that conversion gets made.
+
+---
+
+## The SWING mechanisms — co-rotating, and the reason they exist
+
+Two new mechanisms and a study, all from 2026-08-25. `config/swing_wings.yaml`
+(geared), `config/swing_linkage*.yaml` (four-bar), `analysis/swing_linkage.py`,
+`analysis/swing_demo.py`. Figures at `analysis/plots/swing_linkage_*`.
+
+**The one idea:** the mirrored pair's joint equality is
+`theta_left = -1 * theta_right`, so both wings deploy outward together. Flip
+that sign to `+1` — an idler or a belt instead of a direct gear mesh — and the
+pair CO-ROTATES: one wing swings down and out while the other comes up and in.
+
+That buys the thing the mirrored pair cannot do: present ONE flat face on ONE
+side with the other tucked away, so the far side can brace the bike while a
+ball hits the near one. Deploying the mirrored pair far enough to reach a ball
+on the right plants the left wing too, and the bike becomes a four-point stance
+— measured at a frozen -0.17 deg roll, which is a parking brake, not balance.
+
+It costs side-agnosticism, and the rule is NOT obvious. The splayed rest V is an
+outrigger during a fall, so this variant lands on its BACK at ~119 deg, and past
+90 deg the lever inverts. Measured from that pose, both sides:
+
+| command | best roll reached |
+|---|---|
+| latched `sign(roll)` at stroke start | 111.5 / 111.4 deg — no progress |
+| continuously updated `sign(roll)` | 111.5 / 111.4 deg — no progress |
+| continuous `-sign(roll)` | 66.1 / 63.8 deg — off its back, on its side |
+| **flip the sign at 90 deg** | **14.0 / 13.7 deg, up in 0.98 / 0.93 s** |
+
+Two forms, and they are alternatives to each other and to everything in
+`righting`:
+
+- **geared** (`build_model(..., swing=True)`, teleop `--swing`) — two hinges,
+  one equality, one actuator. Simple, and what the RL policies were trained
+  against. Its stroke is limited to +-45 deg by the RISING wing, which reaches
+  the drive servos at 50 deg and passes through the battery at 80.
+- **four-bar** (`build_model(..., swing_linkage=True)`, teleop
+  `--swing-linkage`) — traced from the `wing-linkage-straight` Part Studio.
+  Verified against the 2D study to **0.01 mm** over the stroke and 0.01 deg on
+  the wing joint. The rocker arc bounds the rising wing geometrically rather
+  than by a configured stroke limit.
+
+`analysis/swing_linkage.py` is the design tool, built so a practical problem
+(something too weak, a calibration issue) can be expressed as a constraint and
+re-searched. It reports a HARD feasibility table — every constraint pass/fail
+with margins — separately from the objective, because the objective is a
+weighted sum of soft penalties and a soft penalty is zero AT a boundary: runs
+repeatedly read `objective 0.000` while sitting on four limits at once.
+
+**Every metric in it was wrong once**, and each is documented beside the wrong
+version so nobody re-derives it:
+
+| metric | was | is |
+|---|---|---|
+| righting | `TARGET_WING_DEG = 90` borrowed from the mirrored study | hand-off roll: the panel's angle from horizontal. The 90 works there only because its stowed wing starts flat on the ground |
+| far wing | millimetres from the centreline | ANGLE from vertical. The as-drawn sketch sits at -0.2 deg while reading 29.4 mm; the two do not rank candidates alike |
+| brace | reach the floor | finish FLAT. "Reach the floor" let a design plant its TOP edge, having rotated past horizontal |
+| protrusion | max over the stroke, then the mean of two endpoints | `max(rest, end)`. A mean lets one endpoint grow while the other shrinks at zero cost |
+| transmission | floor over the whole stroke | first 85% only. The minimum sits at 98-100% of the stroke, which is exactly where a four-bar SHOULD approach its dead point |
+| torque | computed, printed, never scored | scored against 0.45 N.m |
+
+`angle_between_cranks` sets the REST SETPOINT and nothing else that binds.
+Measured, holding the lengths and sweeping only that angle, the far wing's
+minimum clearance from vertical is -0.2 deg at 20, 30, 45, 60, 75 and 90 alike;
+only the stroke length moves. The inward limit is fixed by the crank/coupler
+collinear pose, which the LENGTHS determine. Hence the procedure: size the
+lengths so the collinear pose clears vertical, then set the angle freely.
+
+**Standing:** the hand-drawn geometry hands off at 0.0 deg and protrudes
+73.3 mm; the best feasible search result is 61.3 mm but spends the entire
+hand-off allowance and sits on two limits. Not decided, and the hand-drawn one
+is being built first.
+
+**Outstanding:** the mirror parity for the RL channel (`-1, -1` in
+`general_spec`) is unverified against a trained policy; the link-length floors
+in `_VARS` are hand-picked where the sketch now carries real `pin_diameter` and
+`pin_support_radius` to derive them from; `--check`'s sketch-point half is stale
+against the older `swing-wings-geom-mock`.
 
 ---
 
