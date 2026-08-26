@@ -112,9 +112,20 @@ isolated from the chaotic divergence that merely moving the 12 g sensor causes:
     coils or current-carrying wire, and the usual hardware practice applies
     unchanged and unchecked.
 
-**TAU IS NOT IN THE DATASHEET AND IS A GUESS.** It is the one number here with
-no source, and the result is sensitive to it, so it is exposed as an argument
-and swept rather than buried. See docs/plans/odometry-rewrite.md for the sweep.
+TAU WAS A GUESS AND IS NOW MEASURED -- 0.19 +- 0.01 s, from 300 s of a real
+TM151 sitting still (`analysis/tm151_check.py`, exponential fit r2 0.999). The
+guess was 2.0 s, so the SHAPE was right and the timescale was 10x wrong.
+
+`TAU_ORIENT_S` IS DELIBERATELY STILL 2.0. Changing it would silently reprice
+`general_rl_odo_ahrs`, which trained against 2.0 and is partly specialised to
+it: re-evaluated at 0.19 that policy goes 0.672 / survival 1.00 -> 0.570 / 0.95.
+So the constant is a TRAINING CONTRACT, not a best estimate, and moving it is a
+retraining decision rather than an edit. Pass `tau_orient_s` to evaluate at the
+measured value; see docs/status.md for the comparison.
+
+And 0.19 s is a RESTING figure. The dynamic correlation time is unmeasured, as
+is the dynamic RMS. The next run should RANDOMISE both rather than pick a
+point -- see the critical path in docs/status.md.
 """
 
 from __future__ import annotations

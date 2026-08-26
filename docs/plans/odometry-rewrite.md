@@ -475,6 +475,45 @@ property of a well-built fusion filter, not a law. One fusing both reference
 vectors symmetrically can leak magnetic error into attitude. The TM151's
 internals are not documented at that level and this cannot check them.
 
+## Trained against the whole suite, and what the real part then said
+
+`general_rl_odo_ahrs` (12M, `config/rl_general_odo_ahrs.yaml`) added the
+encoder model and a TM151 attitude error to the `odo` recipe. On the eval grid
+at `--encoder counts --ahrs tm151` it holds **survival 1.00** against `odo`'s
+0.90, score 0.672 against 0.526, and heading error **7.8° against 34.5°**. The
+transfer hypothesis this plan committed to in advance — that training on a
+wrong-but-correlated signal teaches a policy how much to believe it — holds for
+attitude as it did for velocity.
+
+It is not free. Chatter roughly doubled (1.160 against 0.566 summed per-step
+action change; 30.9% saturated against 18.3%), crab-left collapsed to 0.12 from
+0.44, and a known edge case remains: forward travel plus a 180° heading flip
+can still drop it in teleop.
+
+**Then the real part was measured and undercut the headline.** `TAU_ORIENT_S`
+was a guess at 2.0 s; 300 s of a stationary TM151 gives **0.19 ± 0.01 s**
+(r² 0.999 — the process is Gauss-Markov, the timescale was 10x wrong).
+Re-evaluated at the measured value:
+
+| policy | tau 2.0 (guess) | tau 0.19 (measured) |
+|---|---|---|
+| `general_rl_odo_ahrs` | 0.672 / **1.00** | 0.570 / **0.95** |
+| `general_rl_odo` | 0.526 / 0.90 | 0.506 / 0.90 |
+
+**Correcting this document's own earlier claim** that the tau sweep was flat
+and the guess therefore harmless: true for `general_rl_odo`, which never
+trained against the AHRS, and FALSE for `odo_ahrs`, which did and partly
+learned the timescale. It still wins at the measured tau, so the run was worth
+making — but the 1.00 is partly an artefact of training and evaluating at the
+same wrong number.
+
+**The lesson generalises past this parameter.** A policy trained against a
+single fixed value of an unmeasured constant will specialise to it, and the
+eval will not reveal that unless the constant is varied. `randomization:`
+already treats mass, friction and actuator strength this way. `ahrs_level` and
+`ahrs_tau_s` are still single points, and the DYNAMIC figures behind both are
+unmeasured — that is the next training change.
+
 ## Open questions
 
 1. Why did the FRONT constraint degrade? The docstring records a free fit

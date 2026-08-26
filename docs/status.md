@@ -1,10 +1,17 @@
-# Project status — 2026-08-25, amended 2026-08-26
+# Project status — 2026-08-25, amended 2026-08-27
 
-Midpoint snapshot. **The 2026-08-26 amendment is partial**: the odometry
-workstream, the policy standings, the critical path and the red-set numbers
-were re-measured and rewritten; everything else is still the 08-25 snapshot and
-has not been re-checked. Sections not listed here should be read at their own
-date. The design logs under `docs/plans/` are where decisions and
+Midpoint snapshot. **The amendments are partial.** Re-measured and rewritten on
+08-26 and 08-27: the odometry and AHRS workstreams, the policy standings, the
+critical path, the red-set numbers, and the digest/deploy state. Everything
+else is still the 08-25 snapshot and has NOT been re-checked — read those
+sections at their own date.
+
+**Picking this up cold?** Read *In one paragraph*, then the sensor sections
+under the policy standings, then the critical path. The short version: the
+simulator now models the sensors the bike will actually have, that turned out
+to matter enormously, and there is one policy that survives them.
+
+The design logs under `docs/plans/` are where decisions and
 their reasoning live; this file is the layer on top of them — what is true
 right now, what is next, and what is broken. It is meant to be re-written, not
 appended to.
@@ -37,10 +44,19 @@ independently optimised mechanism** (a four-bar linkage) built and measured
 alongside it. A fifth workstream opened since: **CAD**, which
 is where the bike stops being parametric and starts being drawn. It already
 pushed back — the belt geometry pinned a placeholder that had been made up, and
-the rear of the bike went from 99 mm wide to 80 mm as a result. The remaining
-open engineering question is still **the contact model**, which is the
+the rear of the bike went from 99 mm wide to 80 mm as a result. **And since 08-26 the simulator models the SENSORS, not just the plant.** The
+onboard velocity estimate and the TM151's attitude error are both in the loop
+and in training. That was not cosmetic: a policy trained on MuJoCo truth
+survives **0.15** of the eval grid on the real velocity estimate and **0.20**
+with a TM151 attitude, against 1.00 on truth. `general_rl_odo_ahrs`, trained
+against both, holds 1.00. The sensor path was the largest untested sim-to-real
+gap in the project and it is now measured, modelled and trained against —
+including against a real TM151 recorded over USB (`analysis/tm151_*.py`).
+
+The remaining open engineering questions are **the contact model**, still the
 least-known parameter in the sim and the one no policy has been randomized
-over.
+over, and the **dynamic** AHRS accuracy, which is the row that drives every
+sensor result above and is the one the datasheet bounds rather than measures.
 
 ---
 
@@ -49,7 +65,8 @@ over.
 | workstream | state | what "done" looks like | blocker |
 |---|---|---|---|
 | **Simulation & model** | Working. Parametric MJCF from `config/bike_params.yaml`, procedural omni-wheel contact meshes, **17** parameters still marked `GUESS` | Every `GUESS` replaced by a measurement or a deliberate randomization range | Physical parts to measure |
-| **Control — RL** | Working, and the primary path. Pitch is now observable and priced (`obs_pitch`, `w_pitch`) | One champion policy, symmetric left/right, exercised over the randomization ranges the hardware will actually see | Crab still one-sided; turn asymmetry stuck ~0.27–0.32 across every run |
+| **Control — RL** | Working, and the primary path. Trains against the ONBOARD SENSORS as of 08-27 (`obs_odometry`, `odometry_encoder`, `ahrs_level`), not just MuJoCo truth | One champion policy, symmetric left/right, exercised over the randomization ranges the hardware will actually see | Crab still one-sided — and `odo_ahrs` made it worse (left 0.12); turn asymmetry stuck ~0.17–0.32 |
+| **Sensor modelling** | New 08-26/27, and largely DONE. Velocity estimate, encoder quantisation + `RateFilter`, TM151 attitude/gyro/accel error, all in the loop and in training. Validated against a real TM151 over USB | The dynamic attitude figure measured rather than assumed, and the error RANDOMISED in training rather than pinned at one point | Needs a moving unit with independent attitude truth — i.e. a bike |
 | **Control — analytic (LQR)** | Reference baseline only; nothing drives with it. Fit is currently **healthy** (worst R² 0.9893) | Re-tuned once the contact model is pinned | Nothing right now — it will degrade again when contact damping moves |
 | **Hardware / untethered** | Software complete and tested in sim; nothing physical assembled | Bike balances untethered on a mat | Parts, chassis, servo homing decision |
 | **CAD** | Started 2026-08-18. Layout exports from `aow_sim.cad_layout` into Onshape; drivetrain, steering and self-righting stations pinned, electronics packing deferred | A drawn bike whose as-built numbers replace the `GUESS`es in `bike_params.yaml` | Nothing — it is the thing being worked on |
@@ -1002,11 +1019,11 @@ candidate.
 
 ### Which exports match the plant (2026-08-26)
 
-**7 of 41 exports carry the current `plant_digest` `e1ec36bfa670217e`**:
+**8 of 42 exports carry the current `plant_digest` `e1ec36bfa670217e`**:
 `general_rl_smooth_diff_pi`, `general_rl_pitch_smooth_diff_pi`,
-`general_rl_glide_pitch_smooth_pi`, `general_rl_odo`, `general_rl_nolat`,
-`general_swing_rl`, `general_swing_open_rl`. Another 34 have no `plant_digest`
-field at all and predate it.
+`general_rl_glide_pitch_smooth_pi`, `general_rl_odo`, `general_rl_odo_ahrs`,
+`general_rl_nolat`, `general_swing_rl`, `general_swing_open_rl`. Another 34
+have no `plant_digest` field at all and predate it.
 
 This supersedes the old reading that "matches the digest" and "drives well"
 pick out different policies — that was true when only the two `swing` exports
@@ -1036,6 +1053,85 @@ crab partly given up (0.35/0.52 against 0.49/0.58).
 `crab_head_err` 98.6° means it turned to face the crab direction and drove
 forward. It is also **not immune to the estimator**: it still takes `v_lon`
 from it, which costs 0.780 → 0.742 and 7x the drift.
+
+### Trained against the AHRS too — `general_rl_odo_ahrs` (2026-08-27)
+
+**The hypothesis held.** `config/rl_general_odo_ahrs.yaml` added the encoder
+model and a TM151 attitude error to `rl_general_odo.yaml` and committed in
+advance to what would count. Eval grid at `--encoder counts --ahrs tm151`:
+
+| | `general_rl_odo_ahrs` | `general_rl_odo` |
+|---|---|---|
+| score / **survival** | 0.672 / **1.00** | 0.526 / **0.90** |
+| track_geo | 0.672 | 0.585 |
+| vel_err | 0.198 | 0.272 |
+| **head_err** | **7.8°** | 34.5° |
+| drift_m | 1.287 | 1.606 |
+| steer_rest | 2.2° | 4.9° |
+
+Training on a wrong-but-correlated attitude does for roll what training on a
+wrong-but-correlated velocity did for `v_lat`. Heading error is the headline:
+**34.5° → 7.8°**, better than any estimate-trained policy has managed.
+
+Confirmed in teleop: it holds in common scenarios where `general_rl_odo` now
+falls with the AHRS in. **Known edge case: forward travel plus a 180° heading
+flip can still drop it.**
+
+**What it cost.** Chatter roughly doubled — summed per-step action change 1.160
+against 0.566, saturation 30.9% against 18.3%, and at rest 1.852 against 0.631.
+It answers attitude noise by working harder, which is the opposite of what
+`odo` did to velocity noise. And **crab left collapsed to 0.12** (from 0.44)
+while crab right holds at 1.09 — though `crab_head_err` 5.1° against 86.8° says
+it is now genuinely crabbing rather than turning to face, so the two numbers
+have to be read together. Cross-axis leakage went the other way too: crab now
+scoots forward at +0.366 m/s against −0.214.
+
+### The real TM151, measured (2026-08-27)
+
+300 s stationary on a desk at 50 Hz, via `analysis/tm151_record.py` →
+`tm151_check.py`. First real-hardware numbers in the project:
+
+| quantity | measured | `sim_ahrs` | |
+|---|---|---|---|
+| roll RMS at rest | **0.0142°** | 0.5° | 35x better than modelled |
+| pitch RMS at rest | 0.0159° | 0.5° | 31x better |
+| orientation tau | **0.19 ± 0.01 s** | 2.0 s (guess) | 10x faster, r² 0.999 |
+| gyro σ | 0.128 °/s | 0.083 | model optimistic |
+| gyro p-p over 1 s | 0.575 °/s | ≤0.5 spec | over spec |
+| yaw drift | −0.031 °/min | 0.12 (inertial) | the compass is working |
+| gyro bias | −0.00043 °/s | — | negligible |
+
+**Do not lower the model on the 35x.** One unit, room temperature, dead still;
+the datasheet bound presumably covers unit spread, temperature and mounting.
+And it says nothing about the DYNAMIC row, which is what every eval result
+above turns on. **Do not conclude the gyro is out of spec either** — a desk is
+not vibration-free, and building and fan motion is real rotation the gyro is
+right to report. Re-measure on foam before believing 0.575 > 0.5 is the part.
+
+Gauss-Markov was the right SHAPE (r² 0.999); only the timescale was wrong.
+
+### THE TAU IT TRAINED ON IS 10x WRONG, AND FOR THIS POLICY THAT MATTERS
+
+`sim_ahrs.TAU_ORIENT_S` is 2.0 s, a guess. The real part measures **0.19 s**
+(300 s at rest, exponential fit r² 0.999 — see `analysis/tm151_check.py`).
+Re-evaluating at the measured value:
+
+| policy | tau 2.0 (guess) | tau 0.19 (measured) |
+|---|---|---|
+| `general_rl_odo_ahrs` | 0.672 / **1.00** | 0.570 / **0.95** |
+| `general_rl_odo` | 0.526 / 0.90 | 0.506 / 0.90 |
+
+**This corrects a claim made here on 2026-08-27** that the tau guess "changed
+nothing". That was measured on `general_rl_odo`, which never trained against
+the AHRS — and it is still true for it (0.526 → 0.506, inside seed noise). It
+is FALSE for `odo_ahrs`, which trained at tau 2.0 and partly learned that
+timescale: at the real tau it gives back half its gain, 1.00 → 0.95 survival.
+
+It still beats `odo` at the measured tau (0.570 / 0.95 against 0.506 / 0.90),
+so the run was worth making. But **the headline 1.00 is partly an artefact of
+training and evaluating at the same wrong number**, and the next run should
+RANDOMISE tau rather than pick one — the dynamic tau is unmeasured anyway, and
+0.19 s is a resting figure.
 
 ### Live training run
 
@@ -1110,6 +1206,15 @@ Two tracks. The sim track does not wait on the build.
 
 **Sim track:**
 
+0. **Point `control.general_move` at `general_rl_odo_ahrs`, or decide not to.**
+   It is the only export that survives the sensors the bike will actually
+   have — 1.00 on the eval grid at the guessed tau, 0.95 at the measured one,
+   against `general_rl_smooth_diff_pi`'s 0.20. Repointing moves NEITHER digest
+   (measured) and moves nothing in the test suite (measured), so this is a
+   one-line change whose only cost is that the SIM default stops being the
+   sim-optimal policy. Read the two entries below before deciding; they are
+   the same question asked when there was no candidate.
+
 1. **DONE, then immediately superseded — decide what actually drives.**
    `control.general_move` was pointed at `general_rl_smooth_diff_pi` in
    `b2580fd`, closing an item outstanding for four snapshots. But that policy
@@ -1135,23 +1240,35 @@ Two tracks. The sim track does not wait on the build.
    fails its seven open-loop tests; a policy trained against it as-is flies
    anyway. Rewriting it moved off the critical path — see
    `docs/plans/odometry-rewrite.md`.
-2. **Fix the eval score before spending another long run.** `_score =
+
+   **And as of 2026-08-27 there is a candidate that survives the AHRS too**
+   (`general_rl_odo_ahrs`), so the question is no longer "which of two bad
+   options" but whether the default should track the bike or the simulator.
+
+2. **RANDOMISE the AHRS error rather than pinning it.** `odo_ahrs` trained at
+   `ahrs_tau_s` 2.0 and gives back half its gain at the measured 0.19 (see the
+   standings). `ahrs_level` is likewise one fixed RMS. Both are single points
+   standing in for a distribution nobody has measured — the dynamic figures are
+   still entirely unmeasured — and the rest of `randomization:` already works
+   this way for mass, friction and actuator strength. This is the highest-value
+   next training change and it needs no new measurement to justify.
+3. **Fix the eval score before spending another long run.** `_score =
    survive_rate × track` rose monotonically across exactly the span in which
    the 12M `smooth_bouncy_lat` run lost forward drive entirely, so `BestByScore`
    selected a policy that refuses a direction and called it the best of the
    run. Either add a directional term or gate `BestByScore` on
    `min(speed_ratio_fwd, speed_ratio_rev)` clearing a floor. **Every future run
    is exposed to this.**
-3. **Enable the contact randomization that already exists.** `solref_frac` and
+4. **Enable the contact randomization that already exists.** `solref_frac` and
    `dampratio_range` sit commented out in `config/rl_general.yaml`. It depends
    on no measurement, which is the point — it decouples the largest sim-to-real
    risk from the build timeline. The survival cliff is close: eval survival is
    1.00 from dampratio 1.0 down to 0.5, then 0.9 at 0.3 and 0.7 at 0.2, and the
    first drop test puts the true value near 0.3.
-4. **Resolve the crab question one way or the other.** Read arm 2 against its
+5. **Resolve the crab question one way or the other.** Read arm 2 against its
    own exit criterion; if pitch is controlled and crab is still flat, run the
    open-loop gait sweep instead of a third arm.
-5. **DONE — the new timestep is validated by a trained run.**
+6. **DONE — the new timestep is validated by a trained run.**
    `general_rl_glide_pitch_dt4e4` (6M, `rl_general_glide_pitch.yaml`, 34 min
    local at 32/512) scores track_geo 0.886 against the 2e-4 baseline's 0.886,
    survival 1.00 both, righting handoff intact. One seed and a different step
