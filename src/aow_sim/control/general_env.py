@@ -142,6 +142,8 @@ class GeneralEnv(gym.Env):
         # where the fields that get exported into the move yaml live. Absent
         # or 0.0 reproduces the instantaneous reward bit for bit.
         self.vel_window_s = float(env.get("vel_window_s", 0.0))
+        # See general_spec.build_obs. Pairs with v_lat_frac: 0.0.
+        self.zero_lat = bool(env.get("obs_zero_lat", False))
         self._vbar_alpha = vel_filter_alpha(self.ctrl_dt, self.vel_window_s)
         self._settle_steps = int(round(self.vel_window_s / self.ctrl_dt))
         # Pitch. Observed as well as penalized: charging w_pitch against a
@@ -401,7 +403,7 @@ class GeneralEnv(gym.Env):
                         float(self.data.qpos[self._sj]),
                         float(self.data.qvel[self._sd]),
                         s.v_lon, s.v_lat, v_cl, v_ct, psi_err, self._prev_a,
-                        v_bar=vb,
+                        zero_lat=self.zero_lat, v_bar=vb,
                         pitch=(s.pitch, s.pitch_rate) if self.obs_pitch else None,
                         wings=((float(self.data.qpos[self._wj]),
                                 float(self.data.qvel[self._wd]))

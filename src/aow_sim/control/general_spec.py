@@ -292,7 +292,8 @@ def vel_filter_step(v_bar_w, v_w, alpha: float) -> np.ndarray:
 
 def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
               v_cmd_lon, v_cmd_lat, psi_err, prev_action,
-              v_bar=None, pitch=None, wings=None) -> np.ndarray:
+              v_bar=None, pitch=None, wings=None,
+              zero_lat=False) -> np.ndarray:
     """Assemble the observation vector (length OBS_DIM, or OBS_DIM_WINDOWED
     when `v_bar` is given).
 
@@ -319,6 +320,26 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
                      w_pitch penalty is not charged against a state the policy
                      cannot see -- the same argument that put prev_action in.
                      Both come off the AHRS on hardware.
+    zero_lat       : force the MEASURED lateral entry to 0. The SLOT STAYS, so
+                     OBS_DIM is unchanged and every existing policy still
+                     loads -- a value change, not a layout change, which is why
+                     `obs_dim_for` and `obs_layout` do not know about it.
+
+                     WHY IT EXISTS. v_lat has no sensor on the bike; it is
+                     reconstructed through the driven rear wheel, which slips,
+                     and a policy trained on truth FALLS when handed that
+                     estimate -- measured 2026-08-26, every regime. But v_lat is
+                     95% linearly predictable from the other nine entries (16.2
+                     mm/s residual against the estimator's 42), and nearly all
+                     of that information sits in yaw_rate and roll_rate, which
+                     come straight off the gyro and touch no slipping surface.
+                     A policy can infer it better than we can measure it, so
+                     train with this set and there is nothing to estimate.
+
+                     Pair it with `v_lat_frac: 0.0`. Showing no lateral velocity
+                     while still rewarding lateral commands would charge the
+                     policy for a state it cannot see -- the same argument that
+                     put prev_action and pitch in the observation.
     wings          : (wing_angle, wing_rate) [rad, rad/s] of `wing_right_joint`
                      -- the driven wing; the other is mirrored onto it by an
                      equality. None for a policy that does not observe them.
@@ -327,6 +348,10 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
                      torque proxy with no sim counterpart).
     """
     pa = np.asarray(prev_action, dtype=float).reshape(-1)
+    if zero_lat:
+        v_lat = 0.0
+        if v_bar is not None:
+            v_bar = (v_bar[0], 0.0)
     obs = [
         roll, roll_rate, yaw_rate,
         np.sin(2 * steer), np.cos(2 * steer), steer_rate,

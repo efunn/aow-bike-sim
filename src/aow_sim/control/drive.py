@@ -143,6 +143,7 @@ class DriveController(LQRBalance):
         self._gen_every = 1             # controller ticks per policy query
         self._gen_u = None              # held action between queries
         self._gen_window_s = 0.0        # policy's velocity-window time constant
+        self._gen_zero_lat = False      # trained with v_lat forced to 0?
         self._gen_obs_pitch = False     # does the policy observe pitch?
         self._gen_obs_wings = False     # ...and the wings?
         self._gen_act_wings = False     # does it DRIVE the wings?
@@ -346,6 +347,7 @@ class DriveController(LQRBalance):
         # 15-16, and a width check would happily load either as the other and
         # feed the net nonsense with nothing raised.
         self._gen_window_s = float(getattr(self._gen, "vel_window_s", 0.0))
+        self._gen_zero_lat = bool(getattr(self._gen, "obs_zero_lat", False))
         self._gen_obs_pitch = bool(getattr(self._gen, "obs_pitch", False))
         self._gen_obs_wings = bool(getattr(self._gen, "obs_wings", False))
         self._gen_act_wings = bool(getattr(self._gen, "act_wings", False))
@@ -460,7 +462,8 @@ class DriveController(LQRBalance):
                             float(data.qpos[self._sj]),
                             float(data.qvel[self._sd]),
                             s.v_lon, s.v_lat, v_cl, v_ct, psi_err,
-                            self._gen_prev_a, v_bar=vb,
+                            self._gen_prev_a,
+                            zero_lat=self._gen_zero_lat, v_bar=vb,
                             pitch=((s.pitch, s.pitch_rate)
                                    if self._gen_obs_pitch else None),
                             wings=wg)

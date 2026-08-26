@@ -1,0 +1,192 @@
+# NO LATERAL VELOCITY: v_lat forced to 0 in the observation, no lateral
+# commands. Cloned from rl_general_smooth_diff.yaml, which produced
+# general_rl_smooth_diff_pi -- the current control.general_move -- so this run
+# changes exactly two things and everything else is that paradigm.
+#
+# WHY. v_lat has no sensor on the bike. It is reconstructed through the DRIVEN
+# rear wheel, which slips, and the reconstruction is what falls over: measured
+# 2026-08-26 with hw/odometry.py in the loop, a policy trained on truth and fed
+# the estimate fell in every regime, while the same policy fed an estimated
+# v_lon and a TRUE v_lat rode normally. Isolated per channel, v_lon costs at
+# most 0.3 deg of extra roll and v_lat is fatal.
+#
+# Feeding a constant 0 to a policy trained on truth is not the answer either --
+# it falls in every regime too, because that is out of distribution. The
+# question is whether a policy TRAINED without it can balance, and there is
+# good reason to think so: v_lat is 95.2% linearly predictable from the other
+# nine observation entries, residual 16.2 mm/s against the estimator's 42. It
+# is not new information, it is a consequence. Nearly all of it lives in
+# yaw_rate (R^2 0.952 -> 0.732 without it) and roll_rate (-> 0.875), which come
+# straight off the gyro and touch no slipping surface.
+#
+# So the bet: the policy infers v_lat from the gyro better than the rear wheel
+# can measure it, and the hardware stops needing an estimate it cannot make.
+#
+# THE TWO CHANGES, and they belong together:
+#   obs_zero_lat: true   the v_lat SLOT STAYS (OBS_DIM is still 15, every
+#                        existing policy still loads) and carries 0.
+#   v_lat_frac: 0.0      no lateral commands are ever drawn. Showing no lateral
+#                        velocity while still REWARDING lateral tracking would
+#                        charge the policy for a state it cannot see.
+#
+# WHAT THIS DOES NOT DO. The odometry is not in the training loop -- the policy
+# still sees a true v_lon here. That is deliberate: v_lon is the channel that
+# was nearly free, and putting the estimator in the loop is a bigger change
+# (per-env filter state, reset, determinism) worth doing on its own once this
+# question is answered. See docs/plans/odometry-rewrite.md.
+#
+# WHAT TO COMPARE IT AGAINST. general_rl_smooth_diff_pi, on the same eval grid
+# (analysis/chatter.py). The interesting numbers are survive_rate, track and
+# vel_err; crab_ratio_* and crab_head_err are expected to go to nothing and are
+# NOT a regression -- this policy is being asked not to crab.
+#
+# Per-channel w_smooth: `diff` priced separately from steer and hub.
+#
+# WHY. rl_general_smooth.yaml raised w_smooth uniformly 0.005 -> 0.05 and
+# trained moves/general_rl_smooth_og. Measured over the 20-command eval grid
+# (analysis/chatter.py), mean squared per-step action change, against the
+# three policies trained at 0.005:
+#
+#   channel   0.005 (og / general_rl / 1k)   0.05        response
+#   steer     1.52 / 1.56 / 1.47             0.41        -73%
+#   hub       0.51 / 0.86 / 0.31             0.18        -65%
+#   diff      1.27 / 1.21 / 1.63             1.23        NONE
+#
+# Steer and hub came off their bounds; `diff` did not move at all. It is not
+# that the penalty was too small to notice -- at 0.05 the diff channel alone
+# pays 0.062 of reward per step, more than steer and hub together -- it is
+# that the policy PAID it rather than give the chatter up. That is the
+# signature of load-bearing activity: diff is the channel that crawls the
+# rear contact sideways, i.e. the one that catches roll.
+#
+# Nothing else got worse for the uniform smoothing: survival stayed 1.00,
+# track_geo went 0.798 -> 0.812, and hold drift fell 0.545 -> 0.030 m. So the
+# open question is specifically about diff, and a uniform weight cannot ask
+# it -- raising the scalar further would re-price steer and hub, which have
+# already responded, and confound the two effects.
+#
+# THIS RUN. steer and hub stay at 0.05, the value known to work; diff goes to
+# 0.25 (5x), which at the currently observed chatter would cost ~0.31 of
+# reward per step, ~11% of the ~2.8 a well-tracking step earns. That is
+# comparable to the total price that bought out steer and hub, and it is
+# deliberately a big step: the point is to find out whether diff chatter is
+# giveable-up AT ALL, not to tune the cheapest weight that works.
+#
+# WHAT TO LOOK FOR. Three outcomes, all informative:
+#   * diff smooths and survival/track hold -> the chatter was slack, and the
+#     next question is how low a diff weight buys it;
+#   * diff smooths and survival or track_geo drop -> it was load-bearing, and
+#     the price of a quiet differential is measurable in falls;
+#   * diff still does not move -> it is worth more than 11% of the reward,
+#     which is a stronger version of the result already in hand.
+#
+# Compare with analysis/chatter.py (per-channel, the table above),
+# analysis/hold_spectrum.py (spectra + the contact/airborne ground truth) and
+# analysis/move_confusion.py. Note that general_rl_smooth_og also came out
+# with the WORST cross-axis leakage of any policy (crab commands scoot
+# forward at 0.34 m/s, symmetry gap 0.52) -- watch whether that follows the
+# smoothing or was particular to that run.
+#
+# Setting all three entries to the same number reproduces the scalar form bit
+# for bit, so this file is a strict generalisation of rl_general_smooth.yaml.
+#
+#   python -m aow_sim.train_general_rl --config config/rl_general_smooth_diff.yaml \
+#       --run-dir runs/general_rl_smooth_diff --export-name general_rl_smooth_diff
+#
+# General command-conditioned policy: one always-on controller tracking a
+# live (velocity vector, heading) command. See control/general_spec.py for
+# the observation contract and control/general_env.py for the episode design.
+
+algo:
+  algorithm: PPO
+  total_timesteps: 12000000   # a general controller is a bigger task than a
+                              #   single move; expect to need the full budget
+  n_envs: 32    # was 8
+  learning_rate: 3.0e-4
+  n_steps: 512 # was 2048  -> 32 x 512 = 16384, unchanged
+  batch_size: 1024
+  n_epochs: 10
+  # gamma at 50 Hz: 1/(1-g) = 100 steps = 2.0 s of lookahead, which matches
+  # the timescale of a heading change. THE MOVES' 0.99 AT 200 Hz IS ONLY
+  # 0.5 s — far too myopic here; they get away with it because their reward
+  # is a dense per-step yaw-progress term rather than setpoint tracking.
+  # If control_rate_hz is raised back to 200, gamma must go to ~0.998.
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005        # ball_rl's lesson: 0.0 collapsed exploration
+  net_arch: [128, 128]
+  seed: 0
+  eval_every: 1000000     # BestByScore cadence [timesteps]
+
+env:
+  action_space: full
+  # 50 Hz, not the moves' 200 Hz: standard for locomotion RL, and it makes a
+  # 2.5 s maneuver 125 steps instead of 500 — far better credit assignment.
+  # Replay is ZOH at this rate, so the controller holds each action 4 physics
+  # ticks longer than a move does.
+  # See general_spec.build_obs. Keeps the slot, zeroes the value.
+  obs_zero_lat: true
+  control_rate_hz: 50
+  max_episode_s: 15.0    # long: the policy must hold a command, not finish one
+  v_max: 1.2             # matches control.drive.v_max in bike_params.yaml
+  # 0.0, not 0.4: paired with obs_zero_lat below. See the header.
+  v_lat_frac: 0.0        # lateral command as a fraction of the speed limit
+                         #   (the rear omni makes crabbing physical); only
+                         #   opens up with curriculum difficulty
+  p_v_zero: 0.2          # chance the speed command is exactly 0 (stop is a
+                         #   first-class command, not an edge case)
+  resample_s: [1.5, 4.0] # command re-drawn as a STEP change this often
+  ball_prob: 0.25        # fraction of episodes with a ball parked nearby --
+                         #   contact robustness only, NO ball reward. Set to
+                         #   0.0 to train on the ball-free model.
+  ball_place_radius: 0.5 # ball dropped within this radius of the start pose
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4         # v_max 1.2 + margin (moves cap at 0.6-0.72 because
+                         #   they are standstill maneuvers)
+    diff_max: 40.0
+
+curriculum:              # the repo's first; a single scalar scaling the
+  enabled: true          #   command sampling ranges in _sample_command
+  start: 0.15            # gentle: low speed, +-30 deg heading steps, no crab
+  step: 0.02             # advance per episode that clears advance_score
+  advance_score: 0.6     # mean of (vel + heading) tracking rewards, in [0,1]
+
+reward:
+  # Bounded-POSITIVE tracking + alive bonus. Over a 15 s episode a
+  # penalty-only reward (the moves' form) makes falling early strictly
+  # rational; this removes that incentive.
+  w_vel: 1.5             # x exp(-|v_cmd - v|^2 / sigma_v^2)
+  w_head: 1.0            # x exp(-(psi_err/sigma_psi)^2)
+  w_alive: 0.5
+  sigma_v: 0.35          # [m/s] tracking tolerance scale
+  sigma_psi_deg: 25.0    # heading tolerance scale
+  w_upright: 0.5
+  w_effort: 0.001
+  # [steer_rate, hub, diff]. One number here would price all three alike
+  # (the historical form); the list is what lets `diff` be asked a separate
+  # question -- see the header. All three equal == the scalar form exactly.
+  w_smooth: [0.05, 0.05, 0.25]
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+
+randomization:           # as rl_flick/rl_pivot
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15        # was 0.1. The as-built payload mass (battery + Pi +
+                         #   U2D2 + buck, ~190 g of a 1.02 kg bike) is a GUESS
+                         #   until the thing is weighed, and it is a bigger
+                         #   share of the total than anything else unmeasured.
+  friction_frac: 0.2
+  # Supply voltage. The model's servo numbers are the 12 V datasheet column,
+  # but a 3S pack spans 12.6 V (full) to 9.9 V (cutoff) -> ~0.83-1.05x nominal
+  # strength. 0.15 covers that window with margin. Scales ctrlrange AND
+  # forcerange from a single draw (speed and torque both go with voltage) --
+  # see control/randomize.py. Untethered transfer depends on this.
+  actuator_frac: 0.15
+  disturb_force_N: 2.0
+  disturb_prob: 0.01

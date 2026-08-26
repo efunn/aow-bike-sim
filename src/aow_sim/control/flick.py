@@ -291,6 +291,7 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         # contract. Together with vel_window_s these decide the layout, and
         # `obs_layout` records the resulting entry names so a width collision
         # between two different feature combinations cannot pass silently.
+        pol.obs_zero_lat = bool(d.get("obs_zero_lat", False))
         pol.obs_pitch = bool(d.get("obs_pitch", False))
         # Wings: observed and/or driven. Both part of the obs/action contract,
         # and `wing_max_deg` is the cap replay must integrate against or the

@@ -602,6 +602,12 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # CONTRACT, not a preference: it decides whether this policy is 15
            # or 17 wide, and replay must low-pass with the same constant.
            "vel_window_s": cfg["env"].get("vel_window_s", 0.0),
+           # Zeroed lateral velocity. MUST be written even when false, for
+           # the same reason obs_swing must: replay rebuilds the observation
+           # from these flags, and one that is merely absent reads as False.
+           # It does NOT change the width, so obs_layout cannot catch a
+           # mismatch here -- this field is the only record.
+           "obs_zero_lat": bool(cfg["env"].get("obs_zero_lat", False)),
            "obs_pitch": bool(cfg["env"].get("obs_pitch", False)),
            "obs_wings": bool(cfg["env"].get("obs_wings", False)),
            "act_wings": bool(cfg["env"].get("act_wings", False)),
