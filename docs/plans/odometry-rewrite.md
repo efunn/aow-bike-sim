@@ -171,6 +171,82 @@ Measured on one shared trajectory, `counts` has 10.8 mm/s of spread against
 in. `ideal` is a floor on ERROR, not on noise, and `counts` trades variance for
 lag. That is why the eval score moves the "wrong" way.
 
+### The pen says the drift is the POLICY, not the encoder
+
+`analysis/pen_odometry.py --policy general_rl_odo --encoder ideal counts`,
+holding station 12 s (`analysis/plots/pen_odometry_odo_encoder.png`):
+
+| encoder | mode | final drift | path length |
+|---|---|---|---|
+| – | truth | 764.0 mm | 770.3 mm |
+| ideal | front | 758.5 | 771.9 |
+| ideal | lon_only | 752.8 | 772.7 |
+| counts | front | **574.9** | 946.5 |
+| counts | lon_only | 594.4 | 900.8 |
+
+**Truth drifts 764 mm too**, so the encoder is not the cause — and `counts`
+DRIFTS LESS than `ideal` while wandering more (path 946 against 772). The
+filter's smoothing costs path length and buys net displacement.
+
+The cause is a steady-state velocity error in the policy: on a zero command it
+drives away at a constant **−64 mm/s**, in a near-straight line. Reading the
+observation next to the truth settles it — on `truth` the policy SEES
+−64.2 mm/s and does not correct. It is not nulling a biased estimate; it simply
+accepts the error. On `counts` the true creep is smaller (−48.1 mm/s) because
+the estimate reads −62.9 and the policy pushes back harder against a number
+that is wrong in the helpful direction.
+
+Against the other policies, on truth: `general_rl_smooth_diff_pi` 341.8 mm with
+a 1073.9 mm path (jitters, stays put) and `general_rl_nolat` 273.1 / 329.8
+(quiet AND still). So `odo`'s drift is real and it is roughly 2.2x
+`smooth_diff_pi`'s. **That is the price of this policy**, and it is the
+`drift_m 0.956` the eval grid reports, now with a mechanism.
+
+ONE HOLD IS NOT AN EVAL, and this nearly misled: every policy survives this
+command, including the truth-trained one, which looks merely mediocre here
+(620 mm on counts) while scoring **0.010 with survival 0.05** on the
+20-command grid. The pen shows the SHAPE of a path; the grid decides.
+
+### The servo's OWN velocity estimate is not free — and the lag budget is ~20 ms
+
+`encoder="reported"` models Present Velocity(128), the register
+`ServoBus(velocity_source="reported")` takes wholesale. Same encoder counts,
+different filter: the servo smooths like a **~50 ms boxcar** (25.0 ms of group
+delay) against our 25 ms / taper 0.5 (8.3 ms). `hw/dynamixel.py` re-derives
+velocity from position specifically to avoid it, and that choice was argued
+from open-loop lag. Closed loop, on the eval grid:
+
+| encoder | filter | lag | score | surv | vel_err | drift_m | steer_rest |
+|---|---|---|---|---|---|---|---|
+| `ideal` | none | 0.0 ms | 0.766 | 1.00 | 0.103 | 0.919 | 0.5° |
+| `counts` | 25 ms / 0.5 | 8.3 ms | **0.771** | **1.00** | 0.094 | 0.478 | 1.2° |
+| `reported` | 50 ms / 1.0 | 25.0 ms | **0.573** | **0.85** | 0.228 | 1.300 | 5.6° |
+
+**Three of twenty episodes.** The design decision is now backed by a
+closed-loop number rather than by an RMS argument.
+
+Sweeping the filter span on the same encoder path finds the cliff:
+
+| lag | score | surv |
+|---|---|---|
+| 8.3 ms | 0.771 | 1.00 |
+| 12.8 | 0.761 | 1.00 |
+| 15.0 | 0.763 | 1.00 |
+| 17.2 | 0.737 | 1.00 |
+| **20.0** | 0.713 | **1.00** |
+| 21.7 | 0.676 | 0.95 |
+| 25.0 | 0.573 | 0.85 |
+| 40.0 | 0.400 | 0.70 |
+
+**Survival holds to 20 ms and first breaks at ~22.** Score decays gently below
+that (−8% from 8 to 20 ms) and falls away sharply above. So the lag budget is
+~20 ms and our 8.3 sits at less than half of it — which is the precise answer
+to "does 8 ms matter": no, and there is 2.4x of headroom before it does.
+Consistent with a 113 ms fall time constant: the cliff is at ~18% of it.
+
+One seed per point, so read the trend rather than any single row (`drift_m`
+bounces between 0.15 and 1.25 without a clean ordering).
+
 ### And the estimator now has its own clock
 
 It used to inherit whatever its caller looped at — **50 Hz** from `GeneralEnv`
