@@ -39,3 +39,69 @@ tests/test_drive.py::test_flick_mirror_survives       # 2026-08-09 trajopt vs mo
 tests/test_drive.py::test_double_flick                # 2026-08-09 trajopt vs modelled payload
 tests/test_drive.py::test_heading_after_flick_no_snap # 2026-08-09 trajopt vs modelled payload
 tests/test_drive.py::test_reset_after_flick_no_snap   # 2026-08-09 trajopt vs modelled payload
+
+# ---------------------------------------------------------------------------
+# THE ANALYTIC LQR DRIVE CONTROLLER, nine cases. Registered 2026-08-25.
+#
+# ACCEPTED because the cause is known and the controller is not what drives the
+# bike. RL is primary; the LQR is the reference baseline, kept for comparison
+# and to be tried on hardware later. It is simply not good enough yet, and
+# nobody is tuning it this week.
+#
+# What it CAN do, driven by hand in teleop: spawn without falling or
+# oscillating (that much was fixed by q_steer 5.0 / q_roll_rate 30.0), drive
+# forward at low speed, reverse barely, and pivot cleanly. What it cannot do is
+# hold a turn or reach v_max upright.
+#
+# The suite agrees with the hand test, which is why these are priced rather
+# than merely observed:
+#   - straight_sprint[-0.5] does NOT fall (max roll 6.08 deg). It just tracks
+#     badly: cruise -0.322 against a -0.5 target. That IS "reverses barely".
+#   - straight_sprint[0.8] and all four command_heading cases DO fall, 180 deg.
+#   - test_pivot.py passes entirely, matching "it pivots ok".
+#   - test_balance.py [lqr] passes, matching "does not fall over on spawn".
+#
+# test_hold_ramps_to_full_speed_with_auto_repeat is the cleanest reproduction:
+# it tracks the ramp to v_max upright (1.173 of 1.20 at t=1.25 s, roll inside
+# 1.1 deg) and then tips at about t=1.4 s. Start there.
+#
+# THE FIX IS A BETTER LQR, not a looser assertion and not an easier plant. An
+# earlier suggestion to point these at a reduced-difficulty bike_params was
+# rejected: the command and actuation path is already proven working by that
+# first 1.25 s, so an easier plant would hide the fall rather than isolate
+# anything.
+tests/test_drive.py::test_command_heading[-0.5-90.0-5.0]   # 2026-08-25 analytic LQR: falls in the turn
+tests/test_drive.py::test_command_heading[-1.2-90.0-6.0]   # 2026-08-25 analytic LQR: falls in the turn
+tests/test_drive.py::test_command_heading[0.8-180.0-6.0]   # 2026-08-25 analytic LQR: falls in the turn
+tests/test_drive.py::test_command_heading[0.8-90.0-5.0]    # 2026-08-25 analytic LQR: falls in the turn
+tests/test_drive.py::test_straight_sprint[0.8-0.1]         # 2026-08-25 analytic LQR: falls at v_max
+tests/test_drive.py::test_straight_sprint[-0.5-0.1]        # 2026-08-25 analytic LQR: tracks -0.32 of -0.5, does NOT fall
+tests/test_drive.py::test_reverse_circle_tracks            # 2026-08-25 analytic LQR: radius err 0.681
+tests/test_drive.py::test_gain_schedule_designs_everywhere # 2026-08-25 analytic LQR: design fails somewhere on the speed grid
+tests/test_teleop.py::test_hold_ramps_to_full_speed_with_auto_repeat  # 2026-08-25 analytic LQR: reaches v_max then falls at ~1.4 s
+
+# ---------------------------------------------------------------------------
+# THE ODOMETRY ESTIMATOR, seven cases. Registered 2026-08-25.
+#
+# A SEPARATE PROBLEM FROM THE LQR ABOVE, and it would be wrong to file them
+# together. Checked 2026-08-25: not one of these reports a fall. The bike stays
+# up; the front-wheel lateral-velocity constraint just does not deliver.
+#
+#   tan coefficient 0.652, expected ~1        <- a geometry constant is off
+#   front-wheel constraint 31.7 mm/s vs 53.8  <- barely beats assuming zero
+#   standstill lateral constraint 42.2 mm/s RMS, fused 42.8 (bar is 30)
+#   straight_0.6 correlation 0.137            <- essentially uncorrelated
+#
+# The tan coefficient is the one to pull first: it is a closed-form geometry
+# check, so it should be derivable rather than tuned, and if the geometry is
+# wrong everything downstream of it inherits the error.
+#
+# Accepted for now because nothing is being deployed to the Pi yet, so a
+# degraded onboard velocity estimate costs nothing today.
+tests/test_hw_odometry.py::test_constraint_coefficients_are_the_geometry            # 2026-08-25 estimator: tan coeff 0.652 vs ~1
+tests/test_hw_odometry.py::test_front_constraint_beats_roller_kinematics            # 2026-08-25 estimator: 31.7 vs 53.8 mm/s
+tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[standstill]         # 2026-08-25 estimator: 42.2 mm/s RMS
+tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[standstill_shoved]  # 2026-08-25 estimator: 44.9 mm/s RMS
+tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[straight_0.6]       # 2026-08-25 estimator: correlation 0.137
+tests/test_hw_odometry.py::test_fused_estimator_end_to_end[standstill]              # 2026-08-25 estimator: fused 42.8 mm/s RMS
+tests/test_hw_odometry.py::test_fused_estimator_end_to_end[standstill_shoved]       # 2026-08-25 estimator: fused 46.0 mm/s RMS

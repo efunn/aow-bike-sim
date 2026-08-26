@@ -738,8 +738,9 @@ Cost: 111 API calls of the 2500/year, cycle anchored 13 October.
 
 ## Health: the LQR is marginally functional again
 
-`pytest` at HEAD: **27 failed, 208 passed, 2 skipped, 0 errors**, ~32 s with
-`pytest -n 8 --dist load`. The arc this session:
+`pytest` at HEAD: **23 failed, 210 passed, 2 skipped, 0 errors**, ~32 s with
+`pytest -n 10 --dist load` (a bare `pytest` is SERIAL and takes ~145 s). The
+arc this session:
 
 | | red | passed | |
 |---|---|---|---|
@@ -753,11 +754,14 @@ holds the bike at standstill at 1.17° peak roll over 40 s. Remaining:
 
 | file | red | what it is |
 |---|---|---|
-| `test_drive.py` | 15 | 7 trajopt (the accepted set) + 8 moving cases |
-| `test_hw_odometry.py` | 7 | were 10 ERRORs; now 5 pass, 5 fail on assertions |
-| `test_teleop.py` | 2 | analytic modes |
-| `test_balance.py` | 2 | |
-| `test_hw_replay.py` | 1 | stale `deploy/bundle.npz` — one `export_deploy` away |
+| `test_drive.py` | 15 | 7 trajopt (accepted) + 8 analytic LQR |
+| `test_hw_odometry.py` | 7 | estimator quality; no falls |
+| `test_teleop.py` | 1 | analytic LQR, reaches v_max then tips |
+
+Cleared since 2026-08-22: `test_balance.py` (2) — the `[pd]` cases were deleted
+with the PD cascade's tests, LQR passes; `test_hw_replay.py` (1) — the bundle
+was re-exported; `test_teleop.py` (1) — a stale toggle meant the test measured
+the analytic controller while asserting on the policy.
 
 **The diagnosis was not what it looked like.** The symptom was a slow
 oscillation ending in a fall; the cause was the **steer angle pinned at the
@@ -792,10 +796,44 @@ it by making the simulator wrong. Expect the bar to move again once the contact
 is measured and re-expressed in the negative `(-stiffness, -damping)` form;
 re-derive it from the measurement rather than carrying 0.93 forward.
 
-**The remaining red is deliberately NOT in `tests/expected_failures.txt`.** The
-7 trajopt failures are the long-standing accepted set; the other 20 are open
-work, and registering them would convert an open problem into a background fact
-nobody looks at again.
+**All 23 are now IN `tests/expected_failures.txt`, in three groups.** This
+reverses what this section said on 2026-08-22 -- that registering them "would
+convert an open problem into a background fact nobody looks at again". Two
+things changed:
+
+- **The cause is now known.** That argument was right while the red was
+  undiagnosed. It is not a way to file an unknown; it is a way to price a
+  known cost. The LQR set was confirmed by driving it in teleop by hand, and
+  the odometry set was checked to contain no falls at all.
+- **The verdict had become noise.** `NEWLY RED` fired on eighteen tests every
+  single run, which is a verdict nobody reads -- exactly the failure the
+  registry exists to prevent. It now says `red set unchanged (23 accepted
+  failures)`, so a genuinely new failure stands out.
+
+The three groups, with separate reasons because they are separate problems:
+
+| group | n | reason |
+|---|---|---|
+| trajopt flick/flip | 7 | open-loop moves vs the modelled payload; re-author once as-built mass is known |
+| analytic LQR drive | 9 | the LQR is not good enough; RL is what drives |
+| odometry estimator | 7 | front-wheel lateral constraint does not deliver; no falls involved |
+
+**The LQR group matches the hand test exactly**, which is why it is priced
+rather than merely observed. Driven in teleop it spawns without falling or
+oscillating, drives forward at low speed, reverses barely, and pivots cleanly.
+The suite says the same thing: `test_pivot.py` passes entirely,
+`test_balance.py [lqr]` passes, `straight_sprint[-0.5]` does NOT fall (max roll
+6.08 deg) but tracks only -0.322 of a -0.5 target, and everything that asks for
+a turn or for v_max falls at 180 deg.
+
+`test_hold_ramps_to_full_speed_with_auto_repeat` is the cleanest reproduction:
+it tracks the ramp to v_max upright -- 1.173 of 1.20 at t=1.25 s, roll inside
+1.1 deg -- and tips at about t=1.4 s.
+
+**The odometry seven are NOT the same problem** and were nearly filed as if
+they were. Not one reports a fall. Pull `tan coefficient 0.652, expected ~1`
+first: it is a closed-form geometry check, so it should be derivable rather
+than tuned, and everything downstream inherits the error.
 
 **Run it in parallel.** 81% of the suite's wall time is inside MuJoCo C
 (`mj_step` 56 s, `mj_forward` 4.6 s, against 13.5 s of Python, cProfile over
