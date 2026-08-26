@@ -83,8 +83,21 @@ tests/test_teleop.py::test_hold_ramps_to_full_speed_with_auto_repeat  # 2026-08-
 # ---------------------------------------------------------------------------
 # THE ODOMETRY ESTIMATOR, seven cases. Registered 2026-08-25.
 #
-# A SEPARATE PROBLEM FROM THE LQR ABOVE, and it would be wrong to file them
-# together. Checked 2026-08-25: not one of these reports a fall. The bike stays
+# PARTLY A SEPARATE PROBLEM FROM THE LQR ABOVE -- amended 2026-08-26, because
+# the original "a separate problem" was half wrong and said so too confidently.
+# Re-measured by driving each regime under an RL policy instead of the LQR:
+#
+#   straight_0.6   CLEARS under RL. correlation 0.137 -> 0.937.  <- LQR-coupled
+#   standstill     fails under BOTH.                             <- genuinely
+#                                                                   the estimator
+#
+# So the constraint's failure is not one fault. Where the bike is MOVING, the
+# 0.137 correlation was substantially the LQR's degraded trajectory being fed
+# through a formula that needs a real v_lon; at STANDSTILL, v_lon * tan(theta)
+# is structurally blind whoever is driving, and no controller fixes that.
+# Expect these cases to split rather than clear together.
+#
+# Checked 2026-08-25: not one of these reports a fall. The bike stays
 # up; the front-wheel lateral-velocity constraint just does not deliver.
 #
 #   tan coefficient 0.652, expected ~1        <- a geometry constant is off
@@ -98,6 +111,15 @@ tests/test_teleop.py::test_hold_ramps_to_full_speed_with_auto_repeat  # 2026-08-
 #
 # Accepted for now because nothing is being deployed to the Pi yet, so a
 # degraded onboard velocity estimate costs nothing today.
+#
+# AND BECAUSE THE COST IS NOW BOUNDED, 2026-08-26. These tests measure the
+# estimator OPEN-LOOP against truth, which is the wrong objective -- a more
+# accurate blend was measured falling off the bike SOONER (see
+# docs/plans/odometry-rewrite.md). What matters is closed-loop survival, and
+# `general_rl_odo` gets 1.00 survival on the full eval grid against
+# `general_rl_smooth_diff_pi`'s 0.15 while running on this same estimator. So
+# a policy can now be flown on the estimator as it stands. Do not clear these
+# by tuning for RMS: that is the metric that would have shipped a regression.
 tests/test_hw_odometry.py::test_constraint_coefficients_are_the_geometry            # 2026-08-25 estimator: tan coeff 0.652 vs ~1
 tests/test_hw_odometry.py::test_front_constraint_beats_roller_kinematics            # 2026-08-25 estimator: 31.7 vs 53.8 mm/s
 tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[standstill]         # 2026-08-25 estimator: 42.2 mm/s RMS

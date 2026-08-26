@@ -1,7 +1,11 @@
 # Odometry in the loop, and what it takes to rewrite the estimator
 
-Started 2026-08-26. Status: **measured, not rewritten.** `sim_odometry.py` and
-`run_drive --odometry` exist; `hw/odometry.py` is untouched.
+Started 2026-08-26. Status: **measured, and FLOWN AROUND rather than
+rewritten.** `sim_odometry.py` and `run_drive --odometry` put the estimator in
+the loop; `hw/odometry.py` is unchanged in behaviour (its stale roller verdict
+was rewritten, nothing else). The estimator is still the one described below
+-- what changed is that two policies now survive it, so fixing it is no longer
+on the critical path.
 
 ---
 
@@ -105,11 +109,19 @@ against the wrong signal.
 
 1. **A closed-loop objective.** Survival and peak roll with the estimator in
    the loop, not RMS against truth. The two disagree, measured above.
-2. **A sensor-noise model.** `randomize.py` covers mass, friction and actuator
-   strength -- plant axes only. Gyro bias, accelerometer noise and encoder
-   quantisation do not exist, so the in-sim estimator is better than the bike's
-   will ever be. Needs real numbers for the TM151 and the Dynamixel encoders.
-   Until this exists, every number in this document is a floor.
+2. **A sensor-noise model -- SMALLER THAN IT FIRST LOOKED.** `randomize.py`
+   covers mass, friction and actuator strength: plant axes only. Nothing
+   models gyro bias, accelerometer noise or encoder quantisation, so the
+   in-sim estimator is better than the bike's will ever be, and every number
+   in this document is a FLOOR.
+
+   But the scope shrank twice. Encoder quantisation is already handled --
+   `RateFilter` exists precisely for it, was swept against ground truth, and
+   `DO NOT DEADBAND` in its docstring is the trap that came out of that. And
+   the closed-loop result above deflates lag. What is left is the noise that
+   feeds the FAST loop, where nothing is averaging it away: **gyro bias and
+   AHRS orientation error.** Those are the numbers to go get for the TM151;
+   the encoder side is done.
 3. **Fusion that is not self-referential.** Whatever weights the rollers has to
    account for the differential being the control input. Options not yet
    explored: use the roller estimate only where the commanded differential is
@@ -119,6 +131,26 @@ against the wrong signal.
    means skidding or stopped; an identical differential means no crabbing is
    occurring. Both are cheap and both are things the current estimator does not
    know it knows.
+
+## Resolved
+
+**Does `SimOdometry` need to match the hardware's velocity SOURCE?** It reads
+the instantaneous joint velocity; the Pi differences encoder counts through
+`RateFilter` (25 ms window, ~8 ms group delay). NO — not for the LQR. Closed
+loop, the bike balanced identically on ideal, 50-ms-averaged and differenced
+feedback: max roll 1.5-1.7 deg either way. The fast state comes from the AHRS,
+and these rates feed only slow outer loops, so the lag has nowhere to do
+damage. `hw/dynamixel.py`'s module docstring records the same result from the
+other side.
+
+**THAT RESULT IS LQR-LAND, AND DOES NOT AUTOMATICALLY EXTEND TO A POLICY.** An
+RL policy sees all 15 observation entries flat — there is no "slow outer loop"
+for a rate to be quarantined in — and ours is demonstrably velocity-sensitive
+on a fast timescale: the estimated v_lat falls over 0.8-1.3 s, and that alone
+is enough to drop a truth-trained policy (below). Lag tolerance probably
+transfers for v_lon, where the LQR result is most directly about the same
+signal. Do not assume it for v_lat, and do not cite the 1.5-1.7 deg number in
+a training argument without saying which controller produced it.
 
 ## Open questions
 
@@ -133,11 +165,61 @@ against the wrong signal.
 3. Pitch: assumed to never change enough to matter. Confirm before spending an
    observation slot on it.
 
+## The sequencing was wrong, and training answered it first
+
+Agreed earlier on 2026-08-26: tune the estimator FIRST, then decide what
+states retraining needs. **That is not what happened, and the result is better
+than the plan.** Two policies were trained against the estimator as it stands
+-- `general_rl_nolat` (never observe v_lat) and `general_rl_odo` (observe the
+ESTIMATE during training) -- and both survive it. So the estimator did not
+have to be fixed to be flown.
+
+Eval grid, 20 commands, identical seeds, randomization off
+(`analysis/chatter.py`). The left block is each policy on the signal it was
+TRAINED on; the right block is every policy on the ESTIMATE, which is the
+deployment question:
+
+| | trained-on: score / surv | on the ESTIMATE: score / surv |
+|---|---|---|
+| `general_rl_smooth_diff_pi` (truth) | 0.808 / 1.00 | **0.044 / 0.15** |
+| `general_rl_odo` | 0.772 / 1.00 | 0.772 / 1.00 |
+| `general_rl_nolat` | 0.780 / 1.00 | 0.742 / 1.00 |
+
+The standing driver loses 85% of the grid to the estimator. `odo` gives up
+0.036 of score against it on truth and keeps ALL of it on the estimate.
+
+**`nolat` is not immune, and this corrects a claim made earlier the same day.**
+It zeroes v_lat but still takes v_lon from the estimate, so it moves too:
+0.780 -> 0.742, and drift 0.211 m -> 1.546 m, a 7x. Zeroing one axis buys
+survival, not independence.
+
+**`odo` is also far quieter, by a margin nothing predicted.** Mean squared
+per-step action change summed over channels: 0.251 against `smooth_diff_pi`'s
+1.566 and `nolat`'s 1.548. At rest it is not close -- 0.003 against 2.049 and
+1.805 -- and it sits pinned to an actuator bound 1.2% of steps against 50.6%
+and 37.2%. `steer_rest` 0.2 deg against 23.1 and 3.1.
+
+This supports the reading that came out of `nolat`: the chatter was the policy
+CHASING A SIGNAL, not a smoothness penalty being too cheap
+(`rl_general_smooth_diff.yaml` raised that penalty 5x and did not move it).
+But `nolat` REMOVES the signal and stays chattery, while `odo` KEEPS it and
+goes quiet -- so "remove the signal" is not the mechanism. The better reading
+is that a policy trained on a noisy signal learns how much of it to believe,
+and one trained on a clean signal never had to.
+
+**What `odo` costs.** Crab is partly given up (`crab_ratio` 0.35/0.52 against
+`smooth_diff_pi`'s 0.49/0.58) and drift is 3x worse (0.956 m against 0.296),
+which is the v_lon position error of section 2 arriving as expected. `nolat`'s
+apparently excellent crab ratios (0.92/1.11) are an artefact: `crab_head_err`
+98.6 deg says it TURNED to face the crab direction and drove forward. Read
+the two together or the metric lies.
+
 ## Not in scope here
 
-Retraining. The obs distribution changes the moment the estimate is fed, so
-every policy retrains -- see the separate training plan. Sequencing agreed
-2026-08-26: tune the estimator FIRST, then decide what states retraining needs.
+Deciding the default. `control.general_move` still names
+`general_rl_smooth_diff_pi`, and moving it edits `bike_params.yaml`, which
+moves `design_digest` for a change with no physical content. That is a
+separate decision with its own consequences -- see CLAUDE.md.
 
 ## A trap worth naming
 

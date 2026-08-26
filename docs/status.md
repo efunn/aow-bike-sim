@@ -1,6 +1,10 @@
-# Project status — 2026-08-25
+# Project status — 2026-08-25, amended 2026-08-26
 
-Midpoint snapshot. The design logs under `docs/plans/` are where decisions and
+Midpoint snapshot. **The 2026-08-26 amendment is partial**: the odometry
+workstream, the policy standings, the critical path and the red-set numbers
+were re-measured and rewritten; everything else is still the 08-25 snapshot and
+has not been re-checked. Sections not listed here should be read at their own
+date. The design logs under `docs/plans/` are where decisions and
 their reasoning live; this file is the layer on top of them — what is true
 right now, what is next, and what is broken. It is meant to be re-written, not
 appended to.
@@ -20,9 +24,11 @@ armed and a policy has been trained on it** — the placeholder velocity servo
 was replaced by a real velocity PI, and
 `general_rl_smooth_diff_pi` is the first export trained under the current
 physics, which closes the longest-standing open sim item. It cost the LQR
-layer: the suite went 7 failed / 217 passed to **37 failed / 188 passed**, all
+layer: the suite went 7 failed / 217 passed to 37 failed / 188 passed, all
 of the new red in the reference controller and none of it in the plant (see
-Health). Two things changed shape since the last snapshot: **pitch is
+Health). **Now 23 failed / 210 passed** (re-measured 2026-08-26,
+`pytest -n 10 --dist load`), all 23 registered and the verdict reading
+`red set unchanged`. Two things changed shape since the last snapshot: **pitch is
 now observed and priced**, which closed out a long-running investigation into
 why crab does not work, and **the self-righting mechanism is now a complete,
 verified design** rather than a recommendation — a mirrored wing pair whose
@@ -830,10 +836,26 @@ a turn or for v_max falls at 180 deg.
 it tracks the ramp to v_max upright -- 1.173 of 1.20 at t=1.25 s, roll inside
 1.1 deg -- and tips at about t=1.4 s.
 
-**The odometry seven are NOT the same problem** and were nearly filed as if
-they were. Not one reports a fall. Pull `tan coefficient 0.652, expected ~1`
-first: it is a closed-form geometry check, so it should be derivable rather
-than tuned, and everything downstream inherits the error.
+**The odometry seven are PARTLY a different problem** — and the flat "NOT the
+same problem" above was itself half wrong, corrected 2026-08-26. Not one
+reports a fall, which is what made them look independent. Re-driving each
+regime under an RL policy instead of the LQR splits them:
+
+* `straight_0.6` **clears** — correlation 0.137 → 0.937. That case was
+  substantially the degraded LQR trajectory being fed through a formula that
+  needs a real `v_lon`.
+* `standstill` fails under **both**. At `v_lon = 0`, `v_lon * tan(theta)`
+  carries no lateral information whoever is driving.
+
+Expect these to split rather than clear together. `tan coefficient 0.652,
+expected ~1` is still the one to pull first: it is a closed-form geometry
+check, so it should be derivable rather than tuned.
+
+**But do not clear them by tuning for RMS.** Open-loop accuracy against truth
+is the wrong objective and it is wrong in the dangerous direction — a
+speed-aware front+roller blend measured MORE accurate offline and fell off the
+bike SOONER in three regimes of four. Select on closed-loop survival. See the
+odometry section below.
 
 **Run it in parallel.** 81% of the suite's wall time is inside MuJoCo C
 (`mj_step` 56 s, `mj_forward` 4.6 s, against 13.5 s of Python, cProfile over
@@ -905,9 +927,40 @@ Two standing guards, both deliberate and neither an xfail:
 | `general_rl_glide_og` | — | — | — | — | — | arm 1: oscillates 2×, but it is **pitch**; 23° nose-up |
 | `general_rl_glide_pitch_og` | — | — | — | — | — | arm 2: `v_lat_frac` 0.12, `w_pitch` 2.0, 19-wide obs |
 
-`control.general_move` still points at `general_rl`, which predates the contact
-change and does not reverse. **This is a one-line fix and has been outstanding
-across two snapshots.**
+**DONE (`b2580fd`): `control.general_move` now points at
+`general_rl_smooth_diff_pi`.** It was outstanding across four snapshots. The
+cost is the one predicted: the pointer lives in `bike_params.yaml`, so
+`design_digest` moved for a change with no physical content.
+
+**AND IT IS ALREADY THE WRONG DEFAULT, for a reason that has nothing to do
+with driving quality** — see the odometry section. `smooth_diff_pi` is trained
+on MuJoCo truth and scores 0.808 on the eval grid; handed the onboard velocity
+estimate, which is what the Pi will give it, it scores **0.044 and survives
+0.15 of the grid**. Do not push it to hardware. `general_rl_odo` is the
+candidate.
+
+### Trained against the ONBOARD ESTIMATE (2026-08-26)
+
+| export | trained-on: score / surv | on the ESTIMATE: score / surv | notes |
+|---|---|---|---|
+| `general_rl_smooth_diff_pi` | 0.808 / 1.00 | **0.044 / 0.15** | truth-trained; does not survive deployment |
+| `general_rl_odo` | 0.772 / 1.00 | **0.772 / 1.00** | observes the estimate during training |
+| `general_rl_nolat` | 0.780 / 1.00 | 0.742 / 1.00 | never observes `v_lat`; 12M, remote |
+
+One grid, 20 commands, identical seeds, randomization off
+(`analysis/chatter.py --force-odometry`). Both digests current
+(`plant_digest e1ec36bfa670217e`).
+
+`odo` gives up 0.036 of score on truth and keeps all of it on the estimate. It
+is also **6x quieter** — summed per-step action change 0.251 against 1.566 and
+1.548, pinned to an actuator bound 1.2% of steps against 50.6% and 37.2%, and
+at rest 0.003 against 2.049. What it costs: drift 0.956 m against 0.296, and
+crab partly given up (0.35/0.52 against 0.49/0.58).
+
+`nolat`'s crab ratios look excellent (0.92/1.11) and are an artefact —
+`crab_head_err` 98.6° means it turned to face the crab direction and drove
+forward. It is also **not immune to the estimator**: it still takes `v_lon`
+from it, which costs 0.780 → 0.742 and 7x the drift.
 
 ### Live training run
 
@@ -982,11 +1035,23 @@ Two tracks. The sim track does not wait on the build.
 
 **Sim track:**
 
-1. **Point `control.general_move` at `general_rl_pitch_smooth_diff_pi`.** That
-   policy now EXISTS — trained on the armed plant, `survive_rate 1.00` — so
-   this is finally a one-line change with a real target rather than a wait.
-   Outstanding for four snapshots. Re-export the deploy bundle in the same
-   pass; it is still pinned to a digest two moves ago.
+1. **DONE, then immediately superseded — decide what actually drives.**
+   `control.general_move` was pointed at `general_rl_smooth_diff_pi` in
+   `b2580fd`, closing an item outstanding for four snapshots. But that policy
+   is trained on MuJoCo truth and **does not survive the onboard velocity
+   estimate** (0.15 survival on the eval grid), so it is the right default for
+   SIM and the wrong one for the bike. `general_rl_odo` survives at 1.00.
+
+   The decision is not "which policy is better" — it is **whether the default
+   should be the one that flies on hardware**, given that changing the pointer
+   moves `design_digest` again for a change with no physical content. Settle
+   what the digest is meant to cover first. Re-export the deploy bundle in
+   whichever pass resolves it; it is still pinned to a digest two moves ago.
+
+   **The estimator itself no longer gates this.** It is unchanged and still
+   fails its seven open-loop tests; a policy trained against it as-is flies
+   anyway. Rewriting it moved off the critical path — see
+   `docs/plans/odometry-rewrite.md`.
 2. **Fix the eval score before spending another long run.** `_score =
    survive_rate × track` rose monotonically across exactly the span in which
    the 12M `smooth_bouncy_lat` run lost forward drive entirely, so `BestByScore`
