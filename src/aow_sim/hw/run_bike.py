@@ -43,11 +43,11 @@ import numpy as np
 from ..params import load_params
 from ..control.drive import DriveController
 from .ahrs import AhrsReader, MountCalibration
-from .dynamixel import ServoBus
+from .dynamixel import CONTROL_HZ_DEFAULT, ServoBus
 from .odometry import VelocityEstimator, body_to_world
 from .state import HardwareData, load_ahrs_mount, load_bundle
 
-CONTROL_HZ = 100.0
+CONTROL_HZ = CONTROL_HZ_DEFAULT   # see hw/dynamixel.py
 CMD_STALE_S = 0.15        # -> zero the command. PROVISIONAL, see note below
 CMD_DEAD_S = 1.0          # -> torque off
 VOLTAGE_MIN = 10.2        # 3.4 V/cell on 3S. Pack total, not per-cell — see note

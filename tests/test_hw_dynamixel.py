@@ -13,8 +13,10 @@ import pytest
 from aow_sim.build_model import load_params
 from aow_sim.control.steer import XC330_COUNTS_PER_RAD
 from aow_sim.hw.dynamixel import (CT, INDIRECT_ADDRESS_1, INDIRECT_DATA_1,
-                                  READ_BLOCK, TICK_WRAP, VEL_LSB_RAD_S,
-                                  RateFilter, ServoBus, _signed, _tick_delta_ms)
+                                  POS_WRAP, READ_BLOCK, TICK_WRAP,
+                                  VEL_LSB_RAD_S, RateFilter, ServoBus,
+                                  assert_alias_margin, _pos_delta, _signed,
+                                  _tick_delta_ms)
 
 # Register maps, unit conversions and tick math; no bike model.
 # See `pytest --markers` for what each one means.
@@ -266,3 +268,63 @@ def test_more_taps_at_one_rate_means_more_lag():
     lags = [RateFilter(n * 10.0, 0.5, 10.0).group_delay_ms for n in (1, 2, 4, 8)]
     assert lags == sorted(lags)
     assert lags[-1] > 3 * lags[0]
+
+
+# --- single-turn position unwrap (velocity-mode hubs) ----------------------
+
+def test_pos_delta_unwraps_the_single_turn_rollover():
+    """The hubs run in Velocity Control Mode, where Present Position is
+    0..4095 over ONE rotation, so a turning wheel rolls over about once a
+    second at speed. Plain subtraction reads that as a full turn backwards."""
+    assert _pos_delta(10, 5) == 5              # ordinary forward
+    assert _pos_delta(5, 10) == -5             # ordinary reverse
+    assert _pos_delta(0, 4095) == 1            # forward THROUGH the rollover
+    assert _pos_delta(4095, 0) == -1           # reverse through it
+    assert _pos_delta(100, 4000) == 196
+    assert _pos_delta(4000, 100) == -196
+    # What the bug looked like: unwrapped, one rollover is a whole revolution
+    # of phantom motion on a single sample.
+    assert 4095 - 0 == 4095 and _pos_delta(4095, 0) == -1
+
+
+def test_pos_delta_is_exact_over_a_full_sweep():
+    """Integrating the unwrapped deltas must reproduce the true travel, for
+    both directions and across many rollovers."""
+    for step in (1, 7, 37, -1, -13):
+        pos, total = 0, 0
+        for _ in range(600):
+            nxt = (pos + step) % POS_WRAP
+            total += _pos_delta(nxt, pos)
+            pos = nxt
+        assert total == step * 600, f"step {step}: {total} != {step * 600}"
+
+
+def test_half_a_turn_is_the_ambiguous_case_and_is_far_from_operation():
+    """Exactly POS_WRAP/2 is genuinely undecidable -- +2048 and -2048 are the
+    same point -- so the sign there is a convention, not a result. This is the
+    limit `assert_alias_margin` keeps the bike 40x away from; the test pins
+    that the boundary is handled without raising, not which way it falls."""
+    assert abs(_pos_delta(2048, 0)) == POS_WRAP // 2
+    assert _pos_delta(2047, 0) == 2047         # just inside: unambiguous
+    assert _pos_delta(-2047 % POS_WRAP, 0) == -2047
+
+
+def test_alias_margin_passes_at_the_rates_we_run_and_fails_when_too_slow():
+    """The margin is bought by belt_ratio and the sample rate, and vanishes
+    silently if either moves -- the symptom is a wrong-SIGN velocity at speed,
+    not an exception. So it is asserted rather than assumed."""
+    params = load_params()
+    assert assert_alias_margin(params, 100.0) > 40.0
+    assert assert_alias_margin(params, 50.0) > 20.0
+    # 2 Hz puts more than half a turn between samples: unrecoverable.
+    with pytest.raises(RuntimeError, match="aliasing margin"):
+        assert_alias_margin(params, 2.0)
+
+
+def test_only_the_velocity_mode_servos_are_unwrapped():
+    """The steer is Extended Position over +-256 turns and control/steer.py
+    winds it pi per flick ON PURPOSE. Unwrapping it would discard turns."""
+    params = load_params()
+    bus = ServoBus(params, ids=(1, 2, 3))
+    assert bus._wraps == {bus.id_a, bus.id_b}
+    assert bus.id_steer not in bus._wraps

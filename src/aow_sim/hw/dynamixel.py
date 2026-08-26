@@ -98,6 +98,14 @@ MODE_EXTENDED_POSITION = 4
 VEL_LSB_RAD_S = 0.229 * 2 * np.pi / 60.0
 VOLT_LSB = 0.1
 TICK_WRAP = 32768             # Realtime Tick is 0..32767 ms
+POS_WRAP = 4096               # Present Position is 0..4095 in VELOCITY mode
+
+# The rate the sense/actuate loop runs at. Lives HERE rather than in run_bike
+# because it is a property of the bus and its filters -- `RateFilter` quantises
+# its window to whole ticks of it, and `assert_alias_margin` is checked against
+# it. `sim_odometry` imports it so the simulated estimator ticks at the rate
+# the Pi will, instead of at whatever rate its caller happens to loop at.
+CONTROL_HZ_DEFAULT = 100.0
 
 # What every servo reports each tick, in order. Contiguous once indirected.
 READ_BLOCK = ("Realtime Tick", "Present Position", "Present Velocity")
@@ -231,6 +239,62 @@ def _tick_delta_ms(now: int, prev: int) -> int:
     return (now - prev) % TICK_WRAP
 
 
+def _pos_delta(now: int, prev: int) -> int:
+    """Shortest signed count delta, unwrapping the single-turn position.
+
+    THE HUB SERVOS WRAP AND THE STEER SERVO DOES NOT. In Velocity Control Mode
+    the X-series reports Present Position over ONE ROTATION -- Operating
+    Mode(11) value 1 is documented as "Velocity Control Mode (0 deg ~ 360 deg)",
+    the sensor is a 12-bit absolute encoder over 360 deg, and the position
+    range is "0 ~ 4,095 (1 rotation)", explicitly not used in Extended Position
+    Control Mode. So a continuously turning hub rolls 4095 -> 0 every
+    revolution, and a plain `now - prev` reads that as a full turn backwards in
+    one tick.
+
+    Choosing the SHORTEST path is unambiguous here, and the margin is why:
+    at v_max 1.2 m/s the hub turns 3.73 rev/s, and belt_ratio 3.0 puts the
+    encoder on the slow side at 1.24 rev/s, so a 100 Hz sample spans ~0.012
+    rev against the 0.5 rev aliasing limit -- 40x. `assert_alias_margin`
+    checks it rather than assuming it.
+
+    Applied ONLY to velocity-mode servos. The steer runs in Extended Position
+    Control Mode over +-256 turns and its winding is MEANINGFUL: `control/
+    steer.py` deliberately winds pi per flick and reads the multi-turn angle
+    back. Unwrapping that would silently discard turns.
+    """
+    return ((now - prev + POS_WRAP // 2) % POS_WRAP) - POS_WRAP // 2
+
+
+def assert_alias_margin(params: dict, control_hz: float,
+                        min_margin: float = 5.0) -> float:
+    """Fail loudly if the encoder could alias at top speed. Returns the margin.
+
+    `_pos_delta` picks the shortest signed path, which is correct only while
+    the shaft turns less than half a revolution between samples. That holds by
+    a wide margin today, but it is bought entirely by the belt ratio and the
+    sample rate and it DISAPPEARS SILENTLY if either moves: the symptom is not
+    an exception, it is a velocity of the wrong sign at high speed, which the
+    balance loop will act on.
+
+    Checked rather than trusted, like `assert_low_latency`. Cheap, and it runs
+    where the numbers are known.
+    """
+    v_max = float(params["control"]["drive"]["v_max"])
+    r = float(params["omni_wheel"]["outer_radius"])
+    belt = float(params["drivetrain"]["belt_ratio"])
+    rev_s = v_max / (2 * np.pi * r) / belt      # servo revs/s at top speed
+    rev_per_sample = rev_s / control_hz
+    margin = 0.5 / rev_per_sample if rev_per_sample else float("inf")
+    if margin < min_margin:
+        raise RuntimeError(
+            f"encoder aliasing margin is only {margin:.1f}x at v_max {v_max} "
+            f"m/s and {control_hz:g} Hz ({rev_per_sample:.3f} rev/sample "
+            f"against a 0.5 rev limit). _pos_delta picks the SHORTEST path, so "
+            f"below ~1x it silently reports the wrong sign. Raise control_hz, "
+            f"raise belt_ratio, or lower v_max.")
+    return float(margin)
+
+
 def assert_low_latency(port: str) -> None:
     """Raise unless the FTDI latency timer is 1 ms.
 
@@ -263,7 +327,7 @@ class ServoBus:
                  baud: int = 3_000_000, ids=(1, 2, 3),
                  velocity_source: str = "differenced",
                  window_ms: float = 25.0, taper: float = 0.5,
-                 control_hz: float = 100.0):
+                 control_hz: float = CONTROL_HZ_DEFAULT):
         self.id_a, self.id_b, self.id_steer = ids
         self.ids = tuple(ids)
         self.belt_ratio = float(params["drivetrain"]["belt_ratio"])
@@ -280,6 +344,12 @@ class ServoBus:
                           self.id_steer: "Goal Position"}
         self._port = self._packet = None
         self._prev = {}          # id -> (tick, counts)
+        # Which servos report a SINGLE-TURN position and therefore wrap. The
+        # two hubs run in Velocity Control Mode; the steer is Extended
+        # Position and its winding carries information. Keyed off the same
+        # ids `_setup_indirect` assigns the modes to, so the two cannot drift
+        # apart without this line moving too.
+        self._wraps = {self.id_a, self.id_b}
         self._fast = True
 
     # -- lifecycle ---------------------------------------------------------
@@ -435,22 +505,22 @@ class ServoBus:
             else:
                 dms = _tick_delta_ms(tick, prev[0])
                 if 0 < dms < 500:            # plausible interval
-                    # PLAIN SUBTRACTION, NO MODULAR UNWRAPPING — and here is
-                    # the margin that licenses it. Half a revolution between
-                    # samples is the aliasing limit: past that, a difference
-                    # cannot tell forward from backward. At v_max 1.2 m/s on
-                    # the 0.0512 m wheel the hub turns 3.73 rev/s, and
-                    # belt_ratio 3.0 puts the ENCODER ON THE SLOW SIDE at
-                    # 1.24 rev/s, so at 100 Hz a sample spans ~0.012 rev.
-                    # That is a 40x margin against 0.5.
+                    # UNWRAPPED for the hubs, plain for the steer -- see
+                    # `_pos_delta`. The hubs run in Velocity Control Mode and
+                    # report position over a single turn, so they roll
+                    # 4095 -> 0 about once a second at speed; the steer runs in
+                    # Extended Position Control Mode where the winding is
+                    # meaningful and must NOT be unwrapped.
                     #
-                    # It is bought entirely by the belt ratio and the sample
-                    # rate, and it DISAPPEARS SILENTLY if either moves: the
-                    # symptom is not an exception but a velocity of the wrong
-                    # sign at high speed, which the balance loop will act on.
-                    # At 50 Hz the margin is already halved to 20x. Recompute
-                    # it before changing `control_hz` or `belt_ratio`.
-                    raw = ((counts - prev[1]) / XC330_COUNTS_PER_RAD) / (dms * 1e-3)
+                    # An earlier version of this comment claimed the 40x
+                    # aliasing margin "licensed plain subtraction". Backwards:
+                    # the margin does not stop the wrap happening, it makes the
+                    # wrap UNAMBIGUOUS to undo, because the true delta
+                    # (~0.012 rev) is nowhere near the 0.5 rev limit. It
+                    # licenses the unwrap, it does not replace it.
+                    d = (_pos_delta(counts, prev[1]) if i in self._wraps
+                         else counts - prev[1])
+                    raw = (d / XC330_COUNTS_PER_RAD) / (dms * 1e-3)
                     vel_diff = filt.update(raw)
                     if i == self.id_a:
                         dt_s = dms * 1e-3
