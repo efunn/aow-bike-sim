@@ -435,6 +435,21 @@ class ServoBus:
             else:
                 dms = _tick_delta_ms(tick, prev[0])
                 if 0 < dms < 500:            # plausible interval
+                    # PLAIN SUBTRACTION, NO MODULAR UNWRAPPING — and here is
+                    # the margin that licenses it. Half a revolution between
+                    # samples is the aliasing limit: past that, a difference
+                    # cannot tell forward from backward. At v_max 1.2 m/s on
+                    # the 0.0512 m wheel the hub turns 3.73 rev/s, and
+                    # belt_ratio 3.0 puts the ENCODER ON THE SLOW SIDE at
+                    # 1.24 rev/s, so at 100 Hz a sample spans ~0.012 rev.
+                    # That is a 40x margin against 0.5.
+                    #
+                    # It is bought entirely by the belt ratio and the sample
+                    # rate, and it DISAPPEARS SILENTLY if either moves: the
+                    # symptom is not an exception but a velocity of the wrong
+                    # sign at high speed, which the balance loop will act on.
+                    # At 50 Hz the margin is already halved to 20x. Recompute
+                    # it before changing `control_hz` or `belt_ratio`.
                     raw = ((counts - prev[1]) / XC330_COUNTS_PER_RAD) / (dms * 1e-3)
                     vel_diff = filt.update(raw)
                     if i == self.id_a:

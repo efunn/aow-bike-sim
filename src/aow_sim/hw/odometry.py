@@ -12,11 +12,41 @@ Measured against sim ground truth: 8.8 mm/s RMS at a 0.6 m/s cruise (~1.5%).
 LATERAL — the front wheel's rolling constraint, NOT the rear rollers.
 
 The obvious approach is to invert the AOW's roller kinematics
-(`lat_gain(params) * (w_in_a - w_in_b)`). It does not work: the rollers are
-*designed* to slip in that axis, so the encoder reports what was commanded
-rather than what happened. Measured over upright episodes it lands between
-+0.96 and -0.20 correlation with truth depending on regime, and open-loop it
-over-predicts 2.5-3.8x.
+(`lat_gain(params) * (w_in_a - w_in_b)`). It is not chosen here, but the
+reason has CHANGED and the old reason is no longer true.
+
+    WHAT THIS SAID UNTIL 2026-08-26, AND WHY IT WAS RETIRED. "It does not
+    work: the rollers are designed to slip in that axis, so the encoder
+    reports what was commanded rather than what happened. Between +0.96 and
+    -0.20 correlation with truth depending on regime, over-predicting 2.5-3.8x
+    open-loop." That verdict predates a lot of contact-model change and does
+    not survive re-measurement. Same estimator, current contact, RL policy,
+    per-sample against truth (RMS mm/s / correlation):
+
+        regime        front constraint   roller kinematics
+        standstill      44.4 / 0.892       25.9 / 0.928
+        forward 0.6     14.4 / 0.935       23.4 / 0.852
+        reverse -0.4    27.6 / 0.815       20.8 / 0.886
+        crab left      136.6 / 0.847      100.6 / 0.812
+
+    Over-prediction is now 1.11-1.24x, not 2.5-3.8x; correlation never drops
+    below 0.81; and the rollers BEAT the front constraint at standstill and in
+    reverse — exactly where `v_lon * tan(theta)` is structurally blind,
+    because at v_lon = 0 it carries no lateral information at all.
+
+SO WHY IS THE FRONT CONSTRAINT STILL PRIMARY? Not accuracy. Measured
+2026-08-26 with each estimator IN THE LOOP, a speed-aware front+roller blend
+is MORE accurate open-loop and WORSE closed-loop in three regimes of four
+(reverse fell at 0.88 s against the front constraint's 1.19 s; crab at 0.79 s
+against 1.03 s). The likely mechanism is self-reference:
+`roller_lateral = lat_per_d * (w_a - w_b)`, and that differential is EXACTLY
+what the balance controller commands — so closing the loop makes the
+controller partly measure its own action, which no RMS figure can see.
+
+THE STANDING RULE THAT CAME OUT OF THIS: select estimators on CLOSED-LOOP
+SURVIVAL, not on RMS against truth. The two disagree, and they disagree in the
+direction that ships a regression as an improvement. See
+docs/plans/odometry-rewrite.md.
 
 The front wheel, however, is an ordinary tire and cannot slide sideways. A
 normal bicycle has that constraint at BOTH contacts, which over-determines the
@@ -40,6 +70,11 @@ standstill / straight 0.6 m/s / circles at R=0.8 and R=0.5):
     estimator                          RMS err     corr
     roller kinematics                 7-23 mm/s   -0.20..+0.96
     (*) front-wheel constraint         6.1 mm/s      +0.993
+
+(Both rows are 2026-08; neither reproduces against the current contact model.
+The 2026-08-26 re-measurement above is the live one. This block is retained
+because the free-fit argument below is what justifies having no fudge
+factors, and that argument is about STRUCTURE rather than about the numbers.)
 
 and a free least-squares fit of the same three regressors returns
 tan-coefficient 0.985 (theory: 1.0), L_eff 0.2033 m (geometric wheelbase:
@@ -112,8 +147,11 @@ class VelocityEstimator:
         return (self.mix_hub_a * wa + self.mix_hub_b * wb) * self.r_wheel
 
     def roller_lateral(self, w_servo_a: float, w_servo_b: float) -> float:
-        """No-slip roller kinematics. DIAGNOSTIC ONLY — see module docstring;
-        this is the estimator that does not work."""
+        """No-slip roller kinematics. DIAGNOSTIC ONLY, and not because it is
+        inaccurate — re-measured 2026-08-26 it beats the front constraint at
+        standstill and in reverse. It is kept out of the primary path because
+        it is a function of the COMMANDED differential, so feeding it back
+        makes the controller measure its own action. See module docstring."""
         wa = w_servo_a * self.belt_ratio
         wb = w_servo_b * self.belt_ratio
         return self.lat_per_d * (wa - wb)
