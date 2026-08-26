@@ -144,6 +144,10 @@ class DriveController(LQRBalance):
         self._gen_u = None              # held action between queries
         self._gen_window_s = 0.0        # policy's velocity-window time constant
         self._gen_zero_lat = False      # trained with v_lat forced to 0?
+        # Set by run_drive when --odometry is active. The controller cannot
+        # tell truth from estimate on its own -- both arrive as data.qvel --
+        # so whoever fills qvel has to say.
+        self._odometry_active = False
         self._gen_obs_pitch = False     # does the policy observe pitch?
         self._gen_obs_wings = False     # ...and the wings?
         self._gen_act_wings = False     # does it DRIVE the wings?
@@ -348,6 +352,19 @@ class DriveController(LQRBalance):
         # feed the net nonsense with nothing raised.
         self._gen_window_s = float(getattr(self._gen, "vel_window_s", 0.0))
         self._gen_zero_lat = bool(getattr(self._gen, "obs_zero_lat", False))
+        # A policy TRAINED on the onboard estimate, being replayed on truth, is
+        # getting a CLEANER signal than it ever saw. It will look better than it
+        # is. Not an error and deliberately not blocked -- running it both ways
+        # is how you find out whether the policy leaned on the estimator's
+        # particular error -- but it must not be silent, because nothing else
+        # can catch it: obs_odometry does not change the width, so obs_layout
+        # sees nothing wrong.
+        if (bool(getattr(self._gen, "obs_odometry", False))
+                and not self._odometry_active):
+            print(f"NOTE: {getattr(self._gen, 'name', '?')} was trained on the "
+                  "onboard velocity ESTIMATE, and is being replayed on MuJoCo "
+                  "truth.\n  Add --odometry to teleop to match training. On "
+                  "hardware this is automatic.")
         self._gen_obs_pitch = bool(getattr(self._gen, "obs_pitch", False))
         self._gen_obs_wings = bool(getattr(self._gen, "obs_wings", False))
         self._gen_act_wings = bool(getattr(self._gen, "act_wings", False))

@@ -1211,6 +1211,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     data = _fresh(model, eq_qpos)
     c = DriveController(params, model)
     c.reset(model, data)
+    c._odometry_active = odo is not None
     pending = []
     # `v` is the operator's speed INTENT and `psi` the absolute commanded
     # heading; the controller (or policy) still rate-limits how it gets there.

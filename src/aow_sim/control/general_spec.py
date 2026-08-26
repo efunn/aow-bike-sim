@@ -226,11 +226,24 @@ def policy_env_overrides(pol) -> dict:
 
     Same rule as policy_flags: adding a channel should mean editing
     `_OPTIONAL_BLOCKS`, `policy_flags` and this function, and nothing else.
+
+    `obs_zero_lat` and `obs_odometry` are carried here rather than in
+    `policy_flags` because they DO NOT CHANGE THE WIDTH -- `policy_flags` feeds
+    `obs_layout`, which is the width/name contract, and neither flag has a name
+    in it. That is exactly why they have to be listed SOMEWHERE explicit: a
+    mismatch on either one builds an env whose observation is the right shape
+    and the wrong signal, so nothing raises and the numbers are simply wrong.
+    A `nolat` policy evaluated without the flag is handed the lateral velocity
+    it was trained never to see; an `odo` policy evaluated without it is handed
+    MuJoCo truth instead of the onboard estimate, i.e. a cleaner signal than it
+    ever trained on, and scores better than it deserves.
     """
     return dict(policy_flags(pol),
                 act_wings=bool(getattr(pol, "act_wings", False)),
                 act_swing=bool(getattr(pol, "act_swing", False)),
                 obs_swing=bool(getattr(pol, "obs_swing", False)),
+                obs_zero_lat=bool(getattr(pol, "obs_zero_lat", False)),
+                obs_odometry=bool(getattr(pol, "obs_odometry", False)),
                 wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)))
 
 

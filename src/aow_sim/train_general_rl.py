@@ -608,6 +608,13 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # It does NOT change the width, so obs_layout cannot catch a
            # mismatch here -- this field is the only record.
            "obs_zero_lat": bool(cfg["env"].get("obs_zero_lat", False)),
+           # Trained with the ONBOARD ESTIMATE in the observation rather than
+           # MuJoCo truth. On hardware this needs nothing: HardwareData.qvel
+           # already carries the estimate. In SIM REPLAY it does -- teleop must
+           # be run with `--odometry`, or the policy is handed a cleaner signal
+           # than it was trained on. Width is unchanged, so obs_layout cannot
+           # catch the mismatch; this field is the only record.
+           "obs_odometry": bool(cfg["env"].get("obs_odometry", False)),
            "obs_pitch": bool(cfg["env"].get("obs_pitch", False)),
            "obs_wings": bool(cfg["env"].get("obs_wings", False)),
            "act_wings": bool(cfg["env"].get("act_wings", False)),

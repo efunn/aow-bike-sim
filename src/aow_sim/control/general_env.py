@@ -144,6 +144,26 @@ class GeneralEnv(gym.Env):
         self.vel_window_s = float(env.get("vel_window_s", 0.0))
         # See general_spec.build_obs. Pairs with v_lat_frac: 0.0.
         self.zero_lat = bool(env.get("obs_zero_lat", False))
+        # THE ONBOARD ESTIMATE, IN THE TRAINING LOOP. The policy sees what
+        # hw/odometry.py reconstructs from the simulated encoders and AHRS --
+        # what the Pi will actually hand it -- instead of MuJoCo truth.
+        #
+        # This is the version of the question that zeroing could not answer. A
+        # constant 0 carries NO information, and measured 2026-08-26 that is
+        # not enough: v_lat is 95% predictable from the other entries near a
+        # competent policy's operating point, but not during exploration, so
+        # the policy cannot infer what it needs before it can balance. The
+        # estimate is wrong but CORRELATED (0.88-0.96 by regime), which is a
+        # different thing entirely -- and training on it lets the policy learn
+        # this estimator's real error rather than meet it at deployment.
+        #
+        # Physics is untouched: only the OBSERVATION is replaced.
+        self.obs_odometry = bool(env.get("obs_odometry", False))
+        self._odo = None
+        if self.obs_odometry:
+            from ..sim_odometry import SimOdometry
+            self._odo = SimOdometry(self.model, params,
+                                    mode=env.get("odometry_mode", "front"))
         self._vbar_alpha = vel_filter_alpha(self.ctrl_dt, self.vel_window_s)
         self._settle_steps = int(round(self.vel_window_s / self.ctrl_dt))
         # Pitch. Observed as well as penalized: charging w_pitch against a
@@ -390,6 +410,18 @@ class GeneralEnv(gym.Env):
 
     def _obs(self):
         s = extract_state(self.data, self._p0)
+        # THE OBSERVATION gets the estimate; `s` stays TRUTH.
+        #
+        # Keeping them apart is the whole design. The reward is scored on `s`,
+        # so it prices what the bike ACTUALLY did; the policy is shown only
+        # what the bike can sense. Feed the estimate to both and the policy can
+        # be rewarded for fooling its own estimator -- driving the estimate
+        # toward the command while the bike does something else -- which is a
+        # reward-hacking channel, not a control problem.
+        o_lon, o_lat = s.v_lon, s.v_lat
+        if self._odo is not None:
+            # Stepped at the CONTROL rate, which is what runs on the Pi.
+            o_lon, o_lat = self._odo.update(self.data, self.ctrl_dt)
         v_cl, v_ct, psi_err = command_to_body(self._v_cmd_w, self._psi_cmd,
                                               self._psi)
         vb = None
@@ -402,7 +434,7 @@ class GeneralEnv(gym.Env):
         obs = build_obs(s.roll, s.roll_rate, self.data.qvel[5],
                         float(self.data.qpos[self._sj]),
                         float(self.data.qvel[self._sd]),
-                        s.v_lon, s.v_lat, v_cl, v_ct, psi_err, self._prev_a,
+                        o_lon, o_lat, v_cl, v_ct, psi_err, self._prev_a,
                         zero_lat=self.zero_lat, v_bar=vb,
                         pitch=(s.pitch, s.pitch_rate) if self.obs_pitch else None,
                         wings=((float(self.data.qpos[self._wj]),
@@ -429,6 +461,10 @@ class GeneralEnv(gym.Env):
         self.data.qpos[:] = self._eq
         self.data.qvel[:] = 0.0
         reset_actuator_state(self.model, self.data)
+        if self._odo is not None:
+            # The estimator INTEGRATES. An episode that inherits a warmed-up
+            # filter is not the episode the bike will fly.
+            self._odo.reset(self.model, self.p)
         r = self.rand
         if r["enabled"]:
             roll = rng.uniform(-1, 1) * np.deg2rad(r["init_roll_deg"])
