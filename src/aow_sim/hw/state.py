@@ -127,9 +127,9 @@ def load_bundle(path: str | Path, params: dict | None = None
             want, got = plant_digest(params), str(d["plant_digest"])
             if want != got:
                 raise ValueError(
-                    f"bundle {path} was built for plant {got}, but the loaded "
-                    f"bike_params.yaml describes plant {want}. Re-run "
-                    f"`python -m aow_sim.export_deploy`.")
+                    f"bundle {path} was built for plant digest {got}, but "
+                    f"the loaded bike_params.yaml has plant digest {want}. "
+                    f"Re-run `python -m aow_sim.export_deploy`.")
             # THE DESIGN HALF ONLY WARNS. It covers the LQR gain-design inputs
             # and nothing else. An RL policy cannot read any of them, so a
             # stale gain schedule must not be able to stop an RL run -- which
@@ -138,7 +138,8 @@ def load_bundle(path: str | Path, params: dict | None = None
             dwant, dgot = design_digest(params), str(d["design_digest"])
             if dwant != dgot:
                 print(f"WARNING: bundle {path} carries gains designed at "
-                      f"{dgot}, but the LQR design inputs now hash to {dwant}. "
+                      f"design digest {dgot}, but the LQR design inputs now "
+                      f"hash to {dwant}. "
                       f"The plant matches, so RL is unaffected; re-export "
                       f"before trusting the LQR.")
         else:
