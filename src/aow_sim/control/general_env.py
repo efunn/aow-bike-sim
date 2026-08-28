@@ -54,6 +54,23 @@ def _load_rl_config(path=None) -> dict:
         return yaml.safe_load(f)
 
 
+def _log_uniform(rng, rng_range):
+    """A draw from [lo, hi] uniform in the LOG, or None if there is no range.
+
+    None in, None out, and the caller passes that straight through to
+    `SimAhrs.set_error_params`, which leaves the parameter alone -- so an
+    absent config key consumes no random numbers and every run predating this
+    reproduces bit for bit.
+    """
+    if not rng_range:
+        return None
+    lo, hi = (float(x) for x in rng_range)
+    if not (lo > 0.0 and hi >= lo):
+        raise ValueError(f"log-uniform range must be 0 < lo <= hi, got "
+                         f"[{lo}, {hi}]")
+    return float(np.exp(rng.uniform(np.log(lo), np.log(hi))))
+
+
 def _per_channel(value, act_dim: int, name: str) -> np.ndarray:
     """A reward weight that may be one number or one number per action channel.
 
@@ -173,6 +190,19 @@ class GeneralEnv(gym.Env):
                                  tau_orient_s=float(env.get("ahrs_tau_s", 2.0)),
                                  channels=env.get("ahrs_channels", "both"))
         self._ahrs_acc = 0.0        # AHRS clock, used when there is no odometry
+        # THE PARAMETERS of the AHRS error, randomised per episode. The
+        # REALISATION was already fresh every episode (see reset); these are
+        # the two numbers the distribution itself is built from, and both were
+        # one fixed point. That is how `general_rl_odo_ahrs` specialised to
+        # tau 2.0 and gave back half its gain at the measured 0.19.
+        #
+        # Read off `randomization:` rather than `env:` because they are a
+        # training-time distribution, not part of the observation contract --
+        # so an eval with randomization off runs at the nominal point and
+        # every table in docs/status.md stays comparable. Absent keys leave
+        # the rng stream untouched, so pre-2026-08-28 configs reproduce.
+        self._ahrs_rms_range = self.rand.get("ahrs_orient_rms_deg_range")
+        self._ahrs_tau_range = self.rand.get("ahrs_tau_s_range")
         self._odo = None
         if self.obs_odometry:
             from ..sim_odometry import SimOdometry
@@ -505,6 +535,13 @@ class GeneralEnv(gym.Env):
             # trajectories. Inside the `if`, so the default path's rng stream
             # is untouched and pre-AHRS policies still reproduce.
             self._ahrs.reset(seed=int(rng.integers(2**31)))
+            if self.rand["enabled"]:
+                # Log-uniform, not uniform: the plausible band is ~100x wide
+                # on both axes (see sim_ahrs), and a uniform draw over that
+                # would put almost every episode at the top of the range.
+                self._ahrs.set_error_params(
+                    orient_rms_roll_deg=_log_uniform(rng, self._ahrs_rms_range),
+                    tau_orient_s=_log_uniform(rng, self._ahrs_tau_range))
         r = self.rand
         if r["enabled"]:
             roll = rng.uniform(-1, 1) * np.deg2rad(r["init_roll_deg"])

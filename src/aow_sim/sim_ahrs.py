@@ -124,8 +124,23 @@ retraining decision rather than an edit. Pass `tau_orient_s` to evaluate at the
 measured value; see docs/status.md for the comparison.
 
 And 0.19 s is a RESTING figure. The dynamic correlation time is unmeasured, as
-is the dynamic RMS. The next run should RANDOMISE both rather than pick a
-point -- see the critical path in docs/status.md.
+is the dynamic RMS.
+
+RANDOMISING THE TWO OF THEM IS WHAT `set_error_params` EXISTS FOR. Note what
+was and was not already random: every episode already drew a fresh error
+REALISATION -- noise trajectory, misalignment, orientation walk -- from ONE
+FIXED distribution, which is precisely how `general_rl_odo_ahrs` specialised to
+tau 2.0. `general_env` now draws the PARAMETERS of that distribution per
+episode too, log-uniform, when `randomization.ahrs_orient_rms_deg_range` and
+`ahrs_tau_s_range` are set. It lives there rather than in
+`control/randomize.py` because `DomainRandomizer` perturbs the MuJoCo model and
+the sensor is not in the model.
+
+The range is deliberately NOT centred on the measurements. 0.0142 deg and
+0.19 s are RESTING figures and the bike does not rest; the datasheet's dynamic
+bound is 1.5 deg. That is a ~100x span with the true moving value unmeasured
+somewhere inside it, so the range spans the whole thing log-uniformly and the
+measurement contributes a defensible FLOOR, which it did not have before.
 """
 
 from __future__ import annotations
@@ -304,7 +319,8 @@ class SimAhrs:
     def __init__(self, model, params: dict, level: str = "none",
                  seed: int = 0, tau_orient_s: float = TAU_ORIENT_S,
                  tau_bias_s: float = TAU_BIAS_S, channels: str = "both",
-                 hz: float = CONTROL_HZ_DEFAULT):
+                 hz: float = CONTROL_HZ_DEFAULT,
+                 orient_rms_deg=None):
         if level not in LEVELS:
             raise ValueError(f"level must be one of {LEVELS}, got {level!r}")
         if channels not in CHANNELS:
@@ -314,6 +330,13 @@ class SimAhrs:
         self.channels = channels
         self.tau_orient_s = float(tau_orient_s)
         self.tau_bias_s = float(tau_bias_s)
+        # The orientation RMS triple actually in force. Defaults to the
+        # datasheet row for `level`, and is an OVERRIDE rather than a new level
+        # because the caller randomising it (general_env) is drawing from a
+        # continuum, not choosing a part -- see `set_error_params`.
+        self.orient_rms_deg = (ORIENT_RMS_DEG.get(level) if orient_rms_deg
+                               is None else tuple(float(x) for x in
+                                                  orient_rms_deg))
         self.hz = float(hz)
         self._dt = 1.0 / self.hz
         self.adr = {}
@@ -321,6 +344,28 @@ class SimAhrs:
             s = model.sensor(name)
             self.adr[name] = (int(s.adr[0]), int(s.dim[0]))
         self.reset(seed)
+
+    def set_error_params(self, *, orient_rms_roll_deg=None,
+                         tau_orient_s=None) -> None:
+        """Re-point the two UNMEASURED error parameters, between episodes.
+
+        `orient_rms_roll_deg` names the ROLL/PITCH RMS and scales the whole
+        triple by the ratio to the level's own roll figure, so the part's
+        yaw:roll character is preserved rather than a third number being
+        invented. Both arguments are the parameters of the error DISTRIBUTION;
+        the realisation is redrawn by `reset` either way.
+
+        Why these two and nothing else: everything else in this module is a
+        datasheet row with a stated bound, while the dynamic orientation RMS
+        is bounded only above (<1.5 deg) and TAU_ORIENT_S is not in the
+        datasheet at all. See the module header.
+        """
+        if tau_orient_s is not None:
+            self.tau_orient_s = float(tau_orient_s)
+        if orient_rms_roll_deg is not None and self.level != "none":
+            nominal = ORIENT_RMS_DEG[self.level]
+            k = float(orient_rms_roll_deg) / nominal[0]
+            self.orient_rms_deg = tuple(k * x for x in nominal)
 
     def reset(self, seed: int = 0) -> None:
         self.rng = np.random.default_rng(seed)
@@ -349,7 +394,7 @@ class SimAhrs:
             self._cache = {"quat": quat, "gyro": gyro, "accel": accel}
             return self._cache
 
-        rms = np.deg2rad(ORIENT_RMS_DEG[self.level])
+        rms = np.deg2rad(self.orient_rms_deg)
         self._orient_err = _gm_step(self._orient_err, dt, self.tau_orient_s,
                                     rms, self.rng)
         # Yaw additionally WALKS: the datasheet quotes it as an error per unit

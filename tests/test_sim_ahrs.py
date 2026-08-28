@@ -324,3 +324,69 @@ def test_yaw_error_reaches_the_policy_at_all(model, params):
         for d in (SA.ORIENT_RMS_DEG, SA.YAW_DRIFT_DEG_PER_S, SA.MISALIGN_DEG):
             d.pop("_yawtest", None)
         SA.LEVELS = tuple(x for x in SA.LEVELS if x != "_yawtest")
+
+
+def test_error_parameters_can_be_repointed_between_episodes(model, params,
+                                                            data):
+    """`set_error_params` moves the DISTRIBUTION, not just the realisation.
+
+    The distinction is the whole reason it exists. Every episode already drew
+    a fresh error trajectory from one FIXED distribution, and that is how
+    `general_rl_odo_ahrs` specialised to tau 2.0 -- an eval at the training
+    point cannot see it. Asserted here: the RMS scales the level's whole
+    triple (so the part keeps its yaw:roll character rather than a third
+    number being invented), and the realised error tracks it.
+    """
+    a = SimAhrs(model, params, level="tm151", seed=0)
+    assert a.orient_rms_deg == ORIENT_RMS_DEG["tm151"]
+
+    a.set_error_params(orient_rms_roll_deg=0.15, tau_orient_s=0.19)
+    assert a.tau_orient_s == 0.19
+    # 0.15 / 1.5 = 0.1, applied to the whole triple including yaw's 1.0.
+    assert np.allclose(a.orient_rms_deg, (0.15, 0.15, 0.1))
+
+    def realised_roll_rms(rms_deg):
+        b = SimAhrs(model, params, level="tm151", seed=4)
+        b.set_error_params(orient_rms_roll_deg=rms_deg, tau_orient_s=0.19)
+        b.reset(seed=4)
+        roll = []
+        for _ in range(4000):
+            b.sample(data, 0.01)
+            roll.append(b._orient_err[0])
+        return float(np.rad2deg(np.std(roll)))
+
+    small, big = realised_roll_rms(0.15), realised_roll_rms(1.5)
+    # The process is stationary at the RMS it was given, to sampling error.
+    assert 0.12 < small < 0.18, small
+    assert 1.2 < big < 1.8, big
+
+
+def test_absent_ranges_leave_the_rng_stream_untouched(params):
+    """A config without the range keys must reproduce bit for bit.
+
+    `_log_uniform` returns None for an absent range and consumes no random
+    numbers, which is what lets every policy trained before 2026-08-28 be
+    re-evaluated against this code and give the same trajectory.
+    """
+    from pathlib import Path
+
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+
+    cfg = _load_rl_config(Path("config/rl_general_odo_ahrs.yaml"))
+    env = GeneralEnv(params, cfg)
+    for seed in (0, 1, 2):
+        env.reset(seed=seed)
+        assert env._ahrs.orient_rms_deg == ORIENT_RMS_DEG["tm151"]
+        assert env._ahrs.tau_orient_s == 2.0
+
+    cfg = _load_rl_config(Path("config/rl_general_odo_ahrs_rand.yaml"))
+    env = GeneralEnv(params, cfg)
+    seen = set()
+    for seed in (0, 1, 2, 3):
+        env.reset(seed=seed)
+        seen.add((env._ahrs.orient_rms_deg[0], env._ahrs.tau_orient_s))
+        lo, hi = cfg["randomization"]["ahrs_orient_rms_deg_range"]
+        assert lo <= env._ahrs.orient_rms_deg[0] <= hi
+        lo, hi = cfg["randomization"]["ahrs_tau_s_range"]
+        assert lo <= env._ahrs.tau_orient_s <= hi
+    assert len(seen) == 4, "the parameters must move between episodes"

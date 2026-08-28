@@ -1,0 +1,263 @@
+# THE SENSOR ERROR RANDOMISED, NOT PINNED. Cloned from
+# rl_general_odo_ahrs.yaml, changing exactly ONE thing: two ranges under
+# `randomization:` that make the AHRS error PARAMETERS a per-episode draw
+# instead of a fixed point.
+#
+# WHY. general_rl_odo_ahrs trained against a TM151 at ahrs_tau_s 2.0 and holds
+# survival 1.00 on the eval grid at that value. The real part measures 0.19 s
+# (300 s at rest, exponential fit r2 0.999, analysis/tm151_check.py) and at the
+# measured value the same policy gives back half its gain, 0.672 / 1.00 ->
+# 0.570 / 0.95. It learned the timescale, not just the noise.
+#
+# NOTE CAREFULLY WHAT WAS ALREADY RANDOM, because the distinction is the whole
+# point of this run:
+#
+#   error REALISATION -- noise trajectory, misalignment draw, orientation
+#                        walk                              already fresh per episode
+#   the PARAMETERS   -- ahrs_level RMS, ahrs_tau_s          ONE FIXED VALUE, every episode
+#
+# Every episode drew a different error from the SAME distribution, which is
+# exactly the shape of specialisation that an eval at the training point cannot
+# reveal. It took re-evaluating at a different tau to see it.
+#
+# THE RANGES ARE NOT CENTRED ON THE MEASUREMENTS, deliberately. Roll RMS
+# 0.0142 deg and tau 0.19 s are RESTING figures and the bike does not rest; the
+# datasheet bounds the DYNAMIC roll/pitch at 1.5 deg and says nothing about its
+# correlation time. That is a ~100x span with the true moving value unmeasured
+# somewhere inside it, so both ranges cover the whole span, log-uniform. The
+# measurement's contribution is a defensible FLOOR, which did not exist before
+# it was taken.
+#
+# WHAT TO LOOK FOR, in order:
+#   * survival across the WHOLE tau axis, not at one point. The test this run
+#     has to pass is the one general_rl_odo_ahrs fails:
+#
+#       python analysis/chatter.py --policies general_rl_odo_ahrs_rand \
+#           --encoder counts --ahrs tm151 --ahrs-tau 2.0    # 0.672 / 1.00 to beat
+#       python analysis/chatter.py --policies general_rl_odo_ahrs_rand \
+#           --encoder counts --ahrs tm151 --ahrs-tau 0.19   # 0.570 / 0.95 to beat
+#
+#     A policy that is merely as good at both ends and worse in absolute terms
+#     is still the better artifact: the second row is the one the bike flies.
+#   * whether it also fixes the TM171 inversion. Measured 2026-08-28,
+#     general_rl_odo_ahrs scores WORSE with the BETTER part at its trained tau
+#     (tm171 0.632 against tm151 0.672) and better at the measured one (0.696
+#     against 0.570). A part-quality ordering that flips sign with an unmeasured
+#     constant is not a purchasing answer; a policy trained over the range
+#     should give a monotone one.
+#   * the 180-degree heading flip, which needs the AHRS error to reproduce at
+#     all (2/6 falls with tm151, 0/6 with none). Whether widening the training
+#     distribution touches it is unknown and worth the six seeds.
+#   * the cost. Widening a distribution normally buys robustness with mean
+#     performance; if track_geo at the nominal point falls much below 0.672 the
+#     range is too wide rather than the idea being wrong.
+#
+# WHERE THE RANGES ARE READ. `randomization:`, not `env:`, because they are a
+# training-time distribution rather than part of the observation contract --
+# so an eval with randomization off runs at the nominal point and every table
+# in docs/status.md stays comparable. general_env draws them; DomainRandomizer
+# does not, because it perturbs the MuJoCo model and the sensor is not in it.
+#
+# --- inherited from rl_general_odo_ahrs.yaml, unchanged ---
+# WHY. rl_general_odo put the ONBOARD VELOCITY ESTIMATE in the observation and
+# it worked -- general_rl_odo clears the eval grid at survival 1.00 where the
+# truth-trained general_rl_smooth_diff_pi manages 0.15. But that run left two
+# things idealised, and measured 2026-08-27 the second one is the bigger risk
+# by a wide margin:
+#
+#   * THE ENCODER was read as instantaneous joint velocity -- no quantisation,
+#     no lag. Modelled properly (4096 counts/rev differenced through the same
+#     25 ms RateFilter the Pi runs), it costs general_rl_odo NOTHING: 0.771
+#     against 0.766, survival 1.00 either way. Included here because it is free
+#     and it is what the bike does, not because it is expected to matter.
+#
+#   * THE AHRS was perfect. It is not, and this is the one that hurts. The
+#     TM151's DYNAMIC roll/pitch accuracy is <1.5 deg RMS while the bike holds
+#     0.2-3.3 deg of roll -- the error is the size of the signal -- and roll,
+#     roll_rate and yaw_rate are observation entries 0, 1 and 2, the FAST loop,
+#     with nothing averaging them. Measured on policies that never trained
+#     against it:
+#
+#       level          roll/pitch  general_rl_odo  smooth_diff_pi  nolat
+#       none                -      0.766 / 1.00    0.808 / 1.00    0.780 / 1.00
+#       tm151_static     0.5 deg   0.734 / 1.00    0.261 / 0.45    0.491 / 0.70
+#       tm171            1.0 deg   0.689 / 1.00    0.126 / 0.25    -
+#       tm151            1.5 deg   0.537 / 0.90    0.110 / 0.20    0.149 / 0.25
+#
+#     The BENCH figure alone takes the standing default from clearing the grid
+#     to 0.45 survival. general_rl_odo is far more robust and nothing trained
+#     it to be -- which is precisely the hypothesis this run tests.
+#
+# THE HYPOTHESIS. Training on a wrong-but-correlated VELOCITY taught the policy
+# not to over-trust that channel, and it generalised. If that is the mechanism,
+# training on a wrong-but-correlated ATTITUDE should do the same for roll --
+# and general_rl_odo's 0.90 should come back to 1.00. If instead odo is merely
+# LESS REACTIVE (it is 6x quieter and saturates 1.2% of steps against 50.6%),
+# this run will not help and the answer is a better part or a filter.
+#
+# WHAT TO LOOK FOR, in order:
+#   * survival at --ahrs tm151 on the eval grid. Baseline to beat: 0.90.
+#   * whether it also holds at tm151_static and tm171 (it should; they are
+#     strictly easier).
+#   * steer_rest_deg. smooth_diff_pi answers AHRS noise by sawing the steer
+#     (49.6 deg at rest under tm151_static). A policy that has LEARNED the
+#     noise should stay quiet instead.
+#   * whether tracking pays for it. odo already trails on truth (0.772 vs
+#     0.808); if robustness costs another 0.05 of track that is a real price.
+#
+# THE REWARD STILL KEEPS TRUTH. Same rule as the velocity estimate, for the
+# same reason: score the policy on what it THINKS its attitude is and it can be
+# rewarded for fooling its own AHRS. `general_env._obs` corrupts only the
+# observation; `s` -- what the reward prices -- stays MuJoCo truth.
+#
+# TAU IS A GUESS -- AND THIS PARAGRAPH WAS WRONG, WHICH IS WHY THIS FILE
+# EXISTS. It read: "swept at tm151 the eval result is flat across 0.1-5 s, so
+# the run is not balanced on it". That sweep was run on general_rl_odo, which
+# never trained against an AHRS; on general_rl_odo_ahrs, which did, the same
+# move costs 0.672 / 1.00 -> 0.570 / 0.95. A flat sweep on a policy that did
+# not train on the parameter says nothing about one that did. Superseded by
+# ahrs_tau_s_range below.
+#
+# REPLAY NEEDS BOTH FLAGS. On hardware they are automatic; in sim neither is.
+#
+#   mjpython -m aow_sim.run_drive --teleop --odometry front \
+#       --odometry-encoder counts --ahrs tm151 --general general_rl_odo_ahrs_rand
+#
+# NOTE THE --general. control.general_move now names general_rl_odo_ahrs (as of
+# 2026-08-28), so the DEFAULT pairing is finally a sensor-trained one -- but it
+# is not THIS export until this run finishes and is judged. Teleop prints a
+# mismatch NOTE in both directions, because the bike looks broken and the
+# policy is not what is broken -- the pairing is.
+#
+# LAUNCH (on the remote box, after committing and pushing):
+#
+#   ./scripts/rl.sh sync
+#   ./scripts/rl.sh up general --config config/rl_general_odo_ahrs_rand.yaml \
+#       --run-dir runs/general_rl_odo_ahrs_rand \
+#       --export-name general_rl_odo_ahrs_rand
+#
+
+algo:
+  algorithm: PPO
+  total_timesteps: 12000000   # a general controller is a bigger task than a
+                              #   single move; expect to need the full budget
+  n_envs: 32    # was 8
+  learning_rate: 3.0e-4
+  n_steps: 512 # was 2048  -> 32 x 512 = 16384, unchanged
+  batch_size: 1024
+  n_epochs: 10
+  # gamma at 50 Hz: 1/(1-g) = 100 steps = 2.0 s of lookahead, which matches
+  # the timescale of a heading change. THE MOVES' 0.99 AT 200 Hz IS ONLY
+  # 0.5 s — far too myopic here; they get away with it because their reward
+  # is a dense per-step yaw-progress term rather than setpoint tracking.
+  # If control_rate_hz is raised back to 200, gamma must go to ~0.998.
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005        # ball_rl's lesson: 0.0 collapsed exploration
+  net_arch: [128, 128]
+  seed: 0
+  eval_every: 1000000     # BestByScore cadence [timesteps]
+
+env:
+  action_space: full
+  # 50 Hz, not the moves' 200 Hz: standard for locomotion RL, and it makes a
+  # 2.5 s maneuver 125 steps instead of 500 — far better credit assignment.
+  # Replay is ZOH at this rate, so the controller holds each action 4 physics
+  # ticks longer than a move does.
+  # The one change from rl_general_smooth_diff.yaml.
+  obs_odometry: true
+  odometry_mode: front   # what the Pi runs today; `blend` is the experiment
+  # The two changes from rl_general_odo.yaml.
+  odometry_encoder: counts   # 4096 counts/rev, differenced, 25 ms RateFilter
+  ahrs_level: tm151          # the part we own, at its DYNAMIC accuracy
+  # ahrs_tau_s: 2.0          # GUESS, not a datasheet number. See sim_ahrs.
+  control_rate_hz: 50
+  max_episode_s: 15.0    # long: the policy must hold a command, not finish one
+  v_max: 1.2             # matches control.drive.v_max in bike_params.yaml
+  v_lat_frac: 0.4        # lateral command as a fraction of the speed limit
+                         #   (the rear omni makes crabbing physical); only
+                         #   opens up with curriculum difficulty
+  p_v_zero: 0.2          # chance the speed command is exactly 0 (stop is a
+                         #   first-class command, not an edge case)
+  resample_s: [1.5, 4.0] # command re-drawn as a STEP change this often
+  ball_prob: 0.25        # fraction of episodes with a ball parked nearby --
+                         #   contact robustness only, NO ball reward. Set to
+                         #   0.0 to train on the ball-free model.
+  ball_place_radius: 0.5 # ball dropped within this radius of the start pose
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4         # v_max 1.2 + margin (moves cap at 0.6-0.72 because
+                         #   they are standstill maneuvers)
+    diff_max: 40.0
+
+curriculum:              # the repo's first; a single scalar scaling the
+  enabled: true          #   command sampling ranges in _sample_command
+  start: 0.15            # gentle: low speed, +-30 deg heading steps, no crab
+  step: 0.02             # advance per episode that clears advance_score
+  advance_score: 0.6     # mean of (vel + heading) tracking rewards, in [0,1]
+
+reward:
+  # Bounded-POSITIVE tracking + alive bonus. Over a 15 s episode a
+  # penalty-only reward (the moves' form) makes falling early strictly
+  # rational; this removes that incentive.
+  w_vel: 1.5             # x exp(-|v_cmd - v|^2 / sigma_v^2)
+  w_head: 1.0            # x exp(-(psi_err/sigma_psi)^2)
+  w_alive: 0.5
+  sigma_v: 0.35          # [m/s] tracking tolerance scale
+  sigma_psi_deg: 25.0    # heading tolerance scale
+  w_upright: 0.5
+  w_effort: 0.001
+  # [steer_rate, hub, diff]. One number here would price all three alike
+  # (the historical form); the list is what lets `diff` be asked a separate
+  # question -- see the header. All three equal == the scalar form exactly.
+  w_smooth: [0.05, 0.05, 0.25]
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+
+randomization:           # as rl_flick/rl_pivot
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15        # was 0.1. The as-built payload mass (battery + Pi +
+                         #   U2D2 + buck, ~190 g of a 1.02 kg bike) is a GUESS
+                         #   until the thing is weighed, and it is a bigger
+                         #   share of the total than anything else unmeasured.
+  friction_frac: 0.2
+  # Supply voltage. The model's servo numbers are the 12 V datasheet column,
+  # but a 3S pack spans 12.6 V (full) to 9.9 V (cutoff) -> ~0.83-1.05x nominal
+  # strength. 0.15 covers that window with margin. Scales ctrlrange AND
+  # forcerange from a single draw (speed and torque both go with voltage) --
+  # see control/randomize.py. Untethered transfer depends on this.
+  actuator_frac: 0.15
+  disturb_force_N: 2.0
+  disturb_prob: 0.01
+  # THE AHRS ERROR PARAMETERS, log-uniform per episode. The one change from
+  # rl_general_odo_ahrs.yaml. See the header.
+  #
+  # Roll/pitch RMS in degrees; the level's yaw figure scales with it, so the
+  # part keeps its yaw:roll character rather than a third number being
+  # invented. 0.05 is a floor near the measured resting 0.0142; 2.0 is above
+  # the datasheet's 1.5 dynamic bound, because a bound is not a measurement.
+  ahrs_orient_rms_deg_range: [0.05, 2.0]
+  # Correlation time in seconds. 0.19 measured at rest, 2.0 was the guess
+  # general_rl_odo_ahrs trained on; the range covers both with room either
+  # side. Log-uniform because the band is ~30x wide.
+  ahrs_tau_s_range: [0.1, 3.0]
+  #
+  # WHAT LOG-UNIFORM COSTS AT THE HARD END, written down because it is the one
+  # way this run can quietly fail. Fraction of episodes above a given RMS is
+  # ln(2.0/x)/ln(40):
+  #
+  #     >= 0.5 deg  (datasheet STATIC bound)     37.6%
+  #     >= 1.0 deg  (TM171 dynamic)              18.8%
+  #     >= 1.5 deg  (TM151 dynamic -- THE DESIGN CASE)   7.8%
+  #
+  # So the design case is roughly 1 episode in 13, and the median episode sees
+  # 0.32 deg -- easier than a bench calibration. That is the deliberate price
+  # of spanning an unmeasured 40x band rather than guessing its centre, and it
+  # is the FIRST thing to suspect if this policy comes back robust across tau
+  # but worse than general_rl_odo_ahrs at tm151 itself. The fix would be to
+  # raise the floor (0.3 rather than 0.05), not to abandon the log.
