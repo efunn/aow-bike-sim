@@ -1,10 +1,17 @@
-# Project status — 2026-08-25, amended 2026-08-27
+# Project status — 2026-08-25, amended 2026-08-28
 
 Midpoint snapshot. **The amendments are partial.** Re-measured and rewritten on
-08-26 and 08-27: the odometry and AHRS workstreams, the policy standings, the
-critical path, the red-set numbers, and the digest/deploy state. Everything
-else is still the 08-25 snapshot and has NOT been re-checked — read those
-sections at their own date.
+08-26, 08-27 and 08-28: the odometry and AHRS workstreams, the policy
+standings, the critical path, the red-set numbers, and the digest/deploy state.
+Everything else is still the 08-25 snapshot and has NOT been re-checked — read
+those sections at their own date.
+
+**What moved on 08-28:** `control.general_move` now points at
+`general_rl_odo_ahrs` (the default finally tracks the bike, not the
+simulator); the TM171 was priced for the policy we would actually fly and the
+part ordering turns out to FLIP SIGN with the unmeasured tau; and the AHRS
+error parameters are randomisable per episode, with a config written and the
+run not launched.
 
 **Picking this up cold?** Read *In one paragraph*, then the sensor sections
 under the policy standings, then the critical path. The short version: the
@@ -33,7 +40,7 @@ was replaced by a real velocity PI, and
 physics, which closes the longest-standing open sim item. It cost the LQR
 layer: the suite went 7 failed / 217 passed to 37 failed / 188 passed, all
 of the new red in the reference controller and none of it in the plant (see
-Health). **Now 23 failed / 210 passed** (re-measured 2026-08-26,
+Health). **Now 23 failed / 247 passed** (re-measured 2026-08-28,
 `pytest -n 10 --dist load`), all 23 registered and the verdict reading
 `red set unchanged`. Two things changed shape since the last snapshot: **pitch is
 now observed and priced**, which closed out a long-running investigation into
@@ -761,7 +768,7 @@ Cost: 111 API calls of the 2500/year, cycle anchored 13 October.
 
 ## Health: the LQR is marginally functional again
 
-`pytest` at HEAD: **23 failed, 210 passed, 2 skipped, 0 errors**, ~32 s with
+`pytest` at HEAD: **23 failed, 247 passed, 2 skipped, 0 errors**, ~40 s with
 `pytest -n 10 --dist load` (a bare `pytest` is SERIAL and takes ~145 s). The
 arc this session:
 
@@ -1010,12 +1017,18 @@ is in neither. Verified by measurement: repointing to `general_rl_odo` leaves
 both at `e1ec36bfa670217e` / `2db6c647ff3a2d59`. The comment at
 `bike_params.yaml:288` already said so.
 
-**AND IT IS ALREADY THE WRONG DEFAULT, for a reason that has nothing to do
+**AND IT WAS ALREADY THE WRONG DEFAULT, for a reason that has nothing to do
 with driving quality** — see the odometry section. `smooth_diff_pi` is trained
 on MuJoCo truth and scores 0.808 on the eval grid; handed the onboard velocity
 estimate, which is what the Pi will give it, it scores **0.044 and survives
-0.15 of the grid**. Do not push it to hardware. `general_rl_odo` is the
-candidate.
+0.15 of the grid**. Do not push it to hardware.
+
+**SUPERSEDED 2026-08-28: `control.general_move` now names
+`general_rl_odo_ahrs`**, which trained against both the velocity estimate and
+the TM151 attitude and survives 1.00 of the grid with them in. Digests
+re-checked after the edit and unmoved. `smooth_diff_pi` stays as the ceiling
+reference — 0.808 / 1.00 on truth is what perfect sensing is worth — reachable
+with `--general` for one session. Keep the number, retire the pointer.
 
 ### Which exports match the plant (2026-08-26)
 
@@ -1133,6 +1146,119 @@ training and evaluating at the same wrong number**, and the next run should
 RANDOMISE tau rather than pick one — the dynamic tau is unmeasured anyway, and
 0.19 s is a resting figure.
 
+### Pricing the TM171 — the part ordering FLIPS SIGN with the unmeasured tau (2026-08-28)
+
+The existing TM171 row (0.689 against 0.537) was measured on `general_rl_odo`,
+which never trained against an AHRS — it prices the part for a policy caught
+unprepared. Priced instead for the policy we would actually fly, on the full
+2×2 (`analysis/chatter.py --policies general_rl_odo_ahrs --encoder counts`):
+
+| `general_rl_odo_ahrs` | tau 2.0 (**trained on**) | tau 0.19 (**measured**) |
+|---|---|---|
+| `--ahrs tm151` (1.5°, what we own) | **0.672 / 1.00** | 0.570 / 0.95 |
+| `--ahrs tm171` (1.0°, the upgrade) | 0.632 / 1.00 | **0.696 / 1.00** |
+
+**The better part scores WORSE at the tau the policy trained on**, and better at
+the measured one. Survival is 1.00 in three of four cells; the single 0.95 is
+`tm151` at the measured tau, and the TM171 is what recovers it. Heading error
+moves the same way and no further: 7.8° → 12.9° at tau 2.0, 17.3° → 15.4° at
+0.19.
+
+**The purchasing answer is therefore "not yet, and not for this reason".** The
+0.04 gap at tau 2.0 is barely outside the ±0.02 seed-noise floor, but the
+0.126 gap at 0.19 is well outside it — so the effect is real and its SIGN
+depends on a constant nobody has measured in motion. A part-quality ordering
+that inverts under an unmeasured parameter is not a result you can spend money
+on. `TAU_ORIENT_S` was a training contract, and it turns out to be one the
+sensor ablations are also conditioned on.
+
+What this does answer, and it is the useful half: **the fix for sensor error
+was training against it, not spending money.** Every cell here survives at
+0.95 or better, against 0.20 for the truth-trained default. The residual the
+TM171 could buy is `track_geo`, and it is worth 0.02–0.13 depending on a number
+we do not know.
+
+**Re-ask this after `general_rl_odo_ahrs_rand`** — a policy trained over the
+tau range should give a monotone ordering, and a monotone ordering is one you
+can price. (Ablated earlier and not re-derived: orientation RMS 1.5° → 1.0°
+carries essentially all of the TM171 difference; yaw drift and misalignment do
+nothing. So this is a one-parameter question wearing a part-number label,
+which is exactly why randomising that one parameter is the prerequisite.)
+
+### The error PARAMETERS are now randomised (2026-08-28)
+
+Built, not yet trained. `sim_ahrs.SimAhrs.set_error_params` re-points the two
+unmeasured parameters, and `general_env.reset` draws them log-uniform per
+episode when `randomization.ahrs_orient_rms_deg_range` and `ahrs_tau_s_range`
+are set. Note what was and was not already random, because that distinction is
+the entire content of the change:
+
+| | randomised before? |
+|---|---|
+| error REALISATION — noise trajectory, misalignment draw, orientation walk | **yes**, fresh seed per episode |
+| the PARAMETERS — orientation RMS, `ahrs_tau_s` | **no**, one fixed value every episode |
+
+Ranges are 0.05–2.0° and 0.1–3.0 s — deliberately not centred on the
+measurements, which are RESTING figures against a datasheet DYNAMIC bound of
+1.5°, i.e. a ~100x span with the true moving value unmeasured inside it. The
+measurement contributes a defensible FLOOR, which it did not have before.
+
+**The known exposure**, written down because it is the one way the run can
+quietly fail: log-uniform over 40x puts only **7.8%** of episodes at or above
+the 1.5° design case (37.6% above 0.5°, median 0.32°). If the resulting policy
+comes back robust across tau but worse than `general_rl_odo_ahrs` at `tm151`
+itself, raise the floor to ~0.3° rather than abandoning the log.
+
+Ranges live under `randomization:`, not `env:` — a training-time distribution
+rather than part of the observation contract, so an eval with randomization off
+runs at the nominal point and every table above stays comparable. They are read
+by `general_env`, not `DomainRandomizer`, which perturbs the MuJoCo model and
+the sensor is not in the model. Absent keys consume no random numbers, so every
+config predating this reproduces bit for bit (asserted,
+`test_absent_ranges_leave_the_rng_stream_untouched`).
+
+Config is `config/rl_general_odo_ahrs_rand.yaml`; the run has NOT been
+launched.
+
+### The sensor modes are now a test (2026-08-28)
+
+`tests/test_sensor_modes.py`, marker `contact`, 5 tests in ~19 s serial. Until
+now nothing in the suite ran a policy against the sensors the bike will
+actually have, so the 0.808 → 0.044 collapse was invisible to a green run — and
+a repoint of `control.general_move` back to a truth-trained export would have
+been a completely green change.
+
+Four commands (hold, forward, reverse, 90° turn), not the full twenty: this is
+a regression guard, not a measurement. The measurement stays `chatter.py` and
+the tables above. Measured on the subset, with the asserted floor beside it:
+
+| mode / policy | surv | track_geo | asserted |
+|---|---|---|---|
+| IDEAL `smooth_diff_pi` on truth | 1.00 | 0.951 | ≥ 0.90 |
+| SENSOR `odo_ahrs` tm151 tau 2.0 | 1.00 | 0.859 | ≥ 0.78 |
+| SENSOR `odo_ahrs` tm151 tau 0.19 | 1.00 | 0.849 | ≥ 0.78 |
+| **GUARD** `smooth_diff_pi` in sensor mode | **0.25** | 0.493 | surv **≤ 0.50** |
+
+The guard row is asserted as a CEILING, not a floor: the claim is that sensor
+mode is genuinely hard, so a version of these models a truth-trained policy
+sails through is a version that is not modelling the sensors. A fifth test
+asserts only that `control.general_move` names an export declaring
+`obs_odometry` — a property of the export, not a name, so a better
+sensor-trained policy can replace it freely.
+
+**The assertion is SURVIVAL, not RMS against truth.** That was measured the
+wrong way round once already: an open-loop accuracy objective selected a WORSE
+estimator, because an estimator can be more accurate on average and worse
+exactly where the controller needs it.
+
+**What the subset does NOT resolve**: both taus survive 1.00 here, so this
+cannot see the specialisation that costs the policy 1.00 → 0.95 on the full
+grid. That is the honest limit of a 4-command guard, and it is what
+`general_rl_odo_ahrs_rand` addresses rather than this file.
+
+**Still deferred**, per the 08-27 decision: nothing here disturbs the bike or
+looks at the contact, so it inherits the eval grid's blind spots wholesale.
+
 ### Live training run
 
 Last read 2026-08-14 at 6.01 M steps (`rl_general.yaml` with `v_lat_frac` 0.12
@@ -1206,14 +1332,20 @@ Two tracks. The sim track does not wait on the build.
 
 **Sim track:**
 
-0. **Point `control.general_move` at `general_rl_odo_ahrs`, or decide not to.**
-   It is the only export that survives the sensors the bike will actually
-   have — 1.00 on the eval grid at the guessed tau, 0.95 at the measured one,
-   against `general_rl_smooth_diff_pi`'s 0.20. Repointing moves NEITHER digest
-   (measured) and moves nothing in the test suite (measured), so this is a
-   one-line change whose only cost is that the SIM default stops being the
-   sim-optimal policy. Read the two entries below before deciding; they are
-   the same question asked when there was no candidate.
+0. **DONE 2026-08-28 — `control.general_move` now names
+   `general_rl_odo_ahrs`.** The pointer tracks the BIKE rather than the
+   simulator, closing a question open for five snapshots. It is the only export
+   that survives the sensors the bike will actually have — 1.00 on the eval
+   grid at the guessed tau, 0.95 at the measured one, against
+   `general_rl_smooth_diff_pi`'s 0.20. Both digests re-checked after the edit
+   and unmoved (`plant e1ec36bfa670217e`, `design 2db6c647ff3a2d59`).
+
+   `general_rl_smooth_diff_pi` is kept as the **ceiling reference**, 0.808 /
+   1.00 on truth — what is on the table if the sensing were perfect — in the
+   same role `--ahrs tm171` plays for a better part. Keep the number, retire
+   the pointer. `--general general_rl_smooth_diff_pi` still gets it for one
+   session. The two entries below are the same question asked when there was
+   no candidate.
 
 1. **DONE, then immediately superseded — decide what actually drives.**
    `control.general_move` was pointed at `general_rl_smooth_diff_pi` in
@@ -1245,13 +1377,21 @@ Two tracks. The sim track does not wait on the build.
    (`general_rl_odo_ahrs`), so the question is no longer "which of two bad
    options" but whether the default should track the bike or the simulator.
 
-2. **RANDOMISE the AHRS error rather than pinning it.** `odo_ahrs` trained at
-   `ahrs_tau_s` 2.0 and gives back half its gain at the measured 0.19 (see the
-   standings). `ahrs_level` is likewise one fixed RMS. Both are single points
-   standing in for a distribution nobody has measured — the dynamic figures are
-   still entirely unmeasured — and the rest of `randomization:` already works
-   this way for mass, friction and actuator strength. This is the highest-value
-   next training change and it needs no new measurement to justify.
+2. **RANDOMISE the AHRS error rather than pinning it — BUILT 2026-08-28, run
+   not launched.** `odo_ahrs` trained at `ahrs_tau_s` 2.0 and gives back half
+   its gain at the measured 0.19 (see the standings); `ahrs_level` was likewise
+   one fixed RMS. Both are now per-episode log-uniform draws — see "The error
+   PARAMETERS are now randomised" above for the ranges and the known exposure.
+   `config/rl_general_odo_ahrs_rand.yaml`, 12 M steps, launch with
+
+   ```sh
+   ./scripts/rl.sh up general --config config/rl_general_odo_ahrs_rand.yaml \
+       --run-dir runs/general_rl_odo_ahrs_rand \
+       --export-name general_rl_odo_ahrs_rand
+   ```
+
+   It also gates the TM171 purchasing question, whose answer currently flips
+   sign with tau.
 3. **Fix the eval score before spending another long run.** `_score =
    survive_rate × track` rose monotonically across exactly the span in which
    the 12M `smooth_bouncy_lat` run lost forward drive entirely, so `BestByScore`
