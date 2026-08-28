@@ -114,18 +114,40 @@ policy leans on hardest, and it is the headline result of this whole protocol.
 The model allows **full stall torque at every speed**. A real DC motor's
 available torque falls linearly to zero at no-load speed. This tests which.
 
+**CORRECTION (2026-08-28). THIS SECTION ASKED FOR A REGISTER THE DRIVE SERVO
+DOES NOT HAVE.** Step 3 read "record steady `Present Velocity` and `Present
+Current`", and the `kt` below is 1.6/1.4, i.e. the XC430-W150's own number — so
+the section is unambiguously written for the drive servo. **The XC430 has no
+`Present Current` register at all.** Its address 126 is `Present Load`, a
+signed percentage of max torque in 0.1% units; `Present Current` (1.0 mA) is
+the XC330-T181's register at the same address and width. The XC430 doc has zero
+mentions of `Present Current` or `Current Limit`; the XC330 has fifteen of the
+latter and supports current-based control. So the XC330 MEASURES amps and the
+XC430 INFERS a percentage, and as written this test could not be run.
+
+**The repair is a simplification.** The lever arm already applies a KNOWN
+torque, so current was only ever a convenience for reading torque back. Drop it
+and use the lever arm directly:
+
 1. Command `Goal Velocity` = maximum.
 2. Apply increasing load torque via the lever arm, in steps, letting each
    settle.
-3. At each step record steady `Present Velocity` and `Present Current`.
-
-Torque = `kt` x current, with `kt` = stall_torque / stall_current = 1.143 N·m/A
-at the servo output (verify this from your own stall measurement rather than
-assuming the datasheet). Plot torque against speed.
+3. At each step record the applied torque (from the lever arm and the hung
+   mass) and steady `Present Velocity`. Plot torque against speed.
+4. Record `Present Load`(126) at each step as well. It is not needed for the
+   plot — it is CALIBRATED BY it, which is the more valuable output: a
+   lever-arm torque against a reported percentage is the only way to turn
+   `Present Load` into N·m, and nothing else on this bike can do it.
 
 A straight line from stall at zero to zero at no-load speed confirms the droop
 and means the flat `forcerange` is wrong. Anything flatter means the firmware
 is current-limiting differently and the model is closer than feared.
+
+`kt` = stall_torque / stall_current = 1.143 N·m/A at the XC430's output is kept
+here as the datasheet-implied value, and is now only needed if you measure
+current EXTERNALLY (bench supply readout or an inline shunt). Verify it from
+your own stall measurement rather than assuming the datasheet. For the XC330,
+kt = 0.80/0.88 = 0.909 N·m/A and `Present Current` gives it to you directly.
 
 ## 4. Droop and integral action → does `drive_kv` need to stay stiff
 

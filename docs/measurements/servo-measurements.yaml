@@ -26,8 +26,12 @@ s2_reversal:
   falls_apart_above_hz: null
 
 s3_torque_speed:
-  kt_measured_Nm_per_A: null    # datasheet implies 1.143 at the servo output
-  points: []                    # [{speed_rad_s, current_A, torque_Nm}]
+  # NOTE 2026-08-28: torque comes from the LEVER ARM, not from current -- the
+  # XC430 has no Present Current register. See the correction in the protocol.
+  kt_measured_Nm_per_A: null    # only if current is measured EXTERNALLY
+  points: []                    # [{speed_rad_s, torque_Nm, present_load_pct}]
+  load_pct_per_Nm: null         # float -- the Present Load calibration this
+                                #   test yields, and its most valuable output
   droop_confirmed: null         # true -> flat forcerange is wrong
 
 s4_droop:
