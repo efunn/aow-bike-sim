@@ -177,6 +177,54 @@ of them may stand in for the set.
   * cost: re-bases every score, AND it is a term whose units are not obviously
     commensurable with a bounded [0,1] tracking reward.
 
+**SERVO LOAD IS A FOURTH CANDIDATE, and the only one measurable on hardware.**
+Noted 2026-08-28. The XC430/XC330 control table carries:
+
+    addr  XC430-W150 (drive x2)          XC330-T181
+    124   Present PWM                    Present PWM, 0.113 %
+    126   Present Load, -1000..1000,     Present Current, 1.0 mA
+          0.1 % of max torque
+
+**THE CONTROL TABLES DIFFER AT 126, AND THE TWO SIGNALS ARE DIFFERENT IN KIND**
+-- corrected 2026-08-28, an earlier version of this section quoted
+`Present Load` for both. The XC430 doc has ZERO mentions of `Present Current`
+or `Current Limit` against the XC330's 15, so the XC330 has real current
+sensing and current-based control while the XC430 does not. Its "Load" is a
+DERIVED ESTIMATE -- a scale-free percentage of max torque, likely computed from
+PWM -- where the XC330 reports MEASURED milliamps, convertible to torque
+through the motor constant. That asymmetry is why the internal filter is hard
+to pin on the drive servo and largely moot on the steering one, and it is not a
+naming difference.
+
+124/126/128/132 are contiguous, so the indirect block goes from 10 bytes to 14
+of `N_INDIRECT` 28 -- same single SyncRead, no extra round trip, no added lag.
+**It does NOT break `READ_BLOCK`'s uniformity** -- corrected 2026-08-28, an
+earlier version of this paragraph said it would. 126 is the SAME ADDRESS AND
+WIDTH on both models, so the indirect map is byte-identical and one SyncRead
+still serves every servo; the per-model part is a SCALE CONSTANT at decode
+time, exactly as `VEL_LSB_RAD_S` already is. Indirect addressing would also let
+a dummy register pad a genuine misalignment into a common virtual layout, so
+even a real divergence here is cheap.
+
+Why it matters more than the sim-only candidates: rim travel, peak contact
+force and airborne fraction cannot be measured on the bike. Servo load can. So
+it is the only proposal here that could VALIDATE the sim's contact numbers
+against hardware rather than merely score them -- and the contact model is the
+least-measured parameter in the sim.
+
+What it is NOT: a contact force. It measures ACTUATOR EFFORT, so it is a good
+proxy for "holds station by sawing the wheel seven metres" (which is what C is
+actually about) and a poor one for peak contact load.
+
+**The internal filter is unknown and that is a solved genre of problem here,
+twice over.** `hw/dynamixel.py` already declines to trust `Present
+Velocity(128)` because someone characterised it as "roughly a 50 ms boxcar" and
+re-estimated velocity from position instead; and `analysis/tm151_check.py`
+turned a guessed 2.0 s orientation tau into a measured 0.19 (r2 0.999) from a
+300 s capture. Same move: command a known step, log Load at 100 Hz, fit.
+Recording `Present PWM` in the same block is the cheap control -- if Load is
+merely a filtered PWM, one regression says so and hands over the filter.
+
 ### D. Randomization on, or a second randomized score
 
 From §3. Selection currently optimises nominal-model performance while
