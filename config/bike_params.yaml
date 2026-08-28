@@ -296,7 +296,23 @@ control:
   #
   # Same obs/act contract as general_rl: obs_pitch/obs_wings/act_wings all off,
   # 50 Hz, `full` action space, v_max 1.2. A drop-in.
-  general_move: general_rl_smooth_diff_pi   # which always-on policy teleop drives with, as
+  #
+  # 2026-08-28: REPOINTED to general_rl_odo_ahrs. The pointer now tracks the
+  # BIKE rather than the simulator, which is the decision that had been open
+  # for five snapshots. general_rl_smooth_diff_pi is trained on MuJoCo truth
+  # and does not survive the sensors the bike will actually have -- 0.20 of the
+  # eval grid with a TM151 attitude, 0.15 with the onboard velocity estimate,
+  # against 1.00 on truth. general_rl_odo_ahrs trained against both and holds
+  # 1.00 (0.95 at the measured tau).
+  #
+  # smooth_diff_pi is NOT retired: it is the CEILING REFERENCE, 0.808 / 1.00 on
+  # truth, which is what "how much is on the table if the sensing were perfect"
+  # costs to know. Keep the number, retire the pointer. `--general
+  # general_rl_smooth_diff_pi` still gets it for one session.
+  #
+  # It moves NEITHER digest (measured) and moves nothing in the test suite
+  # (measured, 23/210 both ways).
+  general_move: general_rl_odo_ahrs   # which always-on policy teleop drives with, as
                         #   moves/<name>.{yaml,npz}. Point it at a second
                         #   export (e.g. general_rl_prev) to A/B two trained
                         #   policies without renaming files; `run_drive
