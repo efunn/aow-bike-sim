@@ -69,17 +69,56 @@ Four glide arms, selection score 0.886 / 0.898 / 0.915 / 0.902 — a spread of
 "Holds station" and "holds station by sawing the wheel seven metres" are the
 same number today.
 
-### The survival factor mostly carries no information
+### The survival factor saturates IN-DISTRIBUTION, and only there
 
-On truth, essentially every policy in the standings survives 1.00, so `_score`
-collapses to `track_geo` alone. The multiplication only starts doing work once
-something is already visibly broken.
+**This section has been wrong twice; the corrections are kept because each
+looked right.** First it said "survival carries no information". Then it said
+that holds "on truth". Both are too loose. The actual condition is
+IN-DISTRIBUTION: a CONVERGED policy evaluated in the mode it was TRAINED for
+survives 1.00, whatever that mode is.
 
-**The exception, and it is instructive:** in SENSOR mode survival discriminates
-strongly — 0.15 / 0.20 / 0.90 / 0.95 / 1.00 across the policies measured
-2026-08-27/28. The factor is not badly designed; the nominal-conditions grid
-simply never puts anything under enough stress to exercise it. That is an
-argument for a harder grid, not for a different formula.
+Read the standings column header — it is "trained-on", not "on truth":
+
+    policy               evaluated in its own training mode      surv
+    smooth_diff_pi       truth                                   1.00
+    odo                  the odometry estimate                   1.00
+    nolat                truth, no v_lat                         1.00
+    odo_ahrs             estimate + tm151                        1.00
+
+Every collapse in those tables -- 0.044 / 0.15, 0.110 / 0.20, 0.537 / 0.90 --
+is an OUT-OF-DISTRIBUTION evaluation.
+
+Where the factor does real work:
+
+  * OUT OF DISTRIBUTION, e.g. a truth-trained policy in sensor mode.
+  * DURING TRAINING, at any difficulty not yet mastered. Measured live on
+    `general_rl_odo_ahrs_rand`, eval at the nominal point:
+
+        steps   survive  track_geo   score
+        1M         0.10      0.244   0.024
+        2M         0.45      0.354   0.159
+        3M         0.35      0.314   0.110
+
+    Survival dominates throughout and the 2M -> 3M regression is survival-led.
+    `BestByScore` correctly declined 3M.
+
+**WHY THIS MATTERS FOR THE FIX, and it is not a detail.** "Make the grid
+harder" is too loose to act on, because an out-of-distribution evaluation is a
+TRANSFER TEST, NOT A SELECTION CRITERION. Selecting checkpoints against a
+distribution makes that distribution in-distribution by construction, and
+survival saturates again — this is precisely what happened when `odo_ahrs`
+trained against the TM151 and then scored 1.00 against it.
+
+What is needed is something hard INSIDE the training distribution. There is
+already an exact instance of that, unexploited:
+
+    randomization.disturb_prob      0.01
+    randomization.disturb_force_N   2.0
+
+The policy trains with disturbance pokes. The eval runs with randomization
+off. **So it is never once evaluated on a disturbance it was trained to
+handle.** That is option B below, and this is the argument for putting it above
+the others.
 
 ### The mechanism behind the reverse trap (from §2.6, and it generalises)
 
@@ -109,12 +148,18 @@ which preserves the separation between "what selects" and "what diagnoses".
   * does NOT address contact, disturbance, or hesitancy.
   * smallest change that fixes a failure we have actually been bitten by twice.
 
-### B. A disturbance arm
+### B. A disturbance arm  — REORDERED TO FIRST after the in-distribution finding
 
-`analysis/kick_recovery.py` already measures it. It needs to become a
-SELECTION criterion rather than a report. This is the highest-value addition on
-the critical path, because it is the only one that tests the property the bike
-is actually for.
+`analysis/kick_recovery.py` already measures it. It needs to become a SELECTION
+criterion rather than a report.
+
+This is now the leading candidate, not merely the highest-value one. It is the
+only proposal here that makes the score discriminate WITHOUT relying on an
+out-of-distribution evaluation — the policy already trains against pokes
+(`disturb_prob` 0.01, `disturb_force_N` 2.0) and is never evaluated on one. So
+it asks a question the policy was trained to answer and is not currently asked,
+which is exactly the shape a selection criterion needs and a transfer test does
+not have.
 
   * cost: eval time. Episodes already run to termination and a competent policy
     costs the full grid; adding a disturbance arm adds commands.
@@ -196,7 +241,10 @@ artifact is a score that artifact should not carry.
    question.
 2. Decide the re-basing question above. Everything else is blocked on it and
    nothing else should start first.
-3. **A** — smallest real fix, addresses a failure seen twice.
-4. **B** — highest value, largest design question (separate factor vs folded in).
+3. **B** — the only candidate that discriminates in-distribution. Largest
+   design question (separate factor vs folded into `track_geo`), but it is the
+   one that changes what selection can see.
+4. **A** — smallest real fix, addresses a failure seen twice.
 5. **C** and **D** — both want a measurement or a convention that does not
-   exist yet.
+   exist yet. Note that **D is a transfer test, not a selection criterion**,
+   by the argument above; it belongs alongside the score, never inside it.
