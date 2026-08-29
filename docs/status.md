@@ -1,10 +1,10 @@
-# Project status — 2026-08-25, amended 2026-08-28
+# Project status — 2026-08-25, amended 2026-08-29
 
 Midpoint snapshot. **The amendments are partial.** Re-measured and rewritten on
-08-26, 08-27 and 08-28: the odometry and AHRS workstreams, the policy
-standings, the critical path, the red-set numbers, and the digest/deploy state.
-Everything else is still the 08-25 snapshot and has NOT been re-checked — read
-those sections at their own date.
+08-26, 08-27, 08-28 and 08-29: the odometry and AHRS workstreams, the policy
+standings, the eval metrics, the critical path, the red-set numbers, and the
+digest/deploy state. Everything else is still the 08-25 snapshot and has NOT
+been re-checked — read those sections at their own date.
 
 **What moved on 08-28:** `control.general_move` now points at
 `general_rl_odo_ahrs` (the default finally tracks the bike, not the
@@ -17,6 +17,19 @@ taus. **Both follow-ups have now landed and the tau question is answered:**
 answer is that the error's SIZE matters and its CORRELATION TIME does not —
 see "The tau question, answered". `general_rl_odo_ahrs_rand2` is the best
 policy at the measured tau and is nearly tau-invariant.
+
+**What moved on 08-29, and it is the more important half.** The eval metrics
+were rebuilt: they were LAST-STEP samples, and then — worse — a whole-grid
+median that **cannot see a failure affecting fewer than half the commands**.
+They are now reported per command family. That immediately exposed something
+the old numbers had hidden for the entire sensor workstream: **the odo/ahrs
+line cannot turn around.** It does not fall trying; it drives backwards at
+~0.8 m/s and declines to turn, which satisfies the velocity half of the
+command exactly. It is **not** the sensors — the same policy on MuJoCo truth
+behaves identically — it is `obs_pitch`, which the sensor line inherited as
+`false` by omission from a pre-pitch config and has never had. Pitch is what
+solved the flicks on the old policies. One-line config queued; see "The
+odo/ahrs line cannot turn around".
 
 **This file is the handoff.** There is no separate `HANDOFF-*.md` any more —
 `docs/plans/HANDOFF-2026-08-28.md` was the last one and is superseded by this.
@@ -41,9 +54,14 @@ Every truth-trained policy falls in four episodes out of five. `odo_ahrs` is
 the best at the tau it trained on; **`odo_ahrs_rand2` is the best at the tau
 the bike actually has, and is the only one that barely moves between the two**
 (spread 0.009 against `odo_ahrs`'s 0.102). `control.general_move` still names
-`odo_ahrs` — moving it is a decision, not a formality, because `odo_ahrs`
-holds heading far better (7.8° against 46.7° at tau 2.0) while `rand2` wins on
-score, velocity error and drift. `odo_ahrs_rand` is the WEAKEST, not a
+`odo_ahrs`, and **the case for keeping it there is much weaker than it looked**:
+it rested on heading, where `odo_ahrs` read 7.8° against `rand2`'s 46.7° at
+tau 2.0 — and that column is a mean of LAST-STEP samples. On whole-episode
+statistics `rand2` wins score, survival, velocity error, drift, typical
+heading (7.4° against 8.1°) and time-to-heading (1.15 s against 1.40 s);
+`odo_ahrs` keeps a tighter worst-case excursion once settled (14.2° against
+17.0°) and much lower chatter. A real split, not the lopsided heading
+advantage the last-step mean implied. See "Typical vs worst" below. `odo_ahrs_rand` is the WEAKEST, not a
 co-equal — see the randomisation section for why that run failed.
 
 **Every row here is `--encoder counts`, and that is load-bearing.**
@@ -1349,18 +1367,31 @@ in twenty. Four independent reasons this is not an artefact of the grid:
    And `odo_ahrs`'s one flip is a `dpsi 180` command, which is already
    recorded below as an edge case it can fail independent of tau — it lands
    exactly where the policy was already marginal.
-4. **The heading gap is two episodes, not a trend.** `odo_ahrs` reads 7.8° at
-   tau 2.0 and 17.3° at 0.19, but the MEDIAN is 5.5° against 5.3° — unchanged.
-   The mean is moved by one episode that never turned around at all (172°
-   final error) plus the fall. `head_err_deg` is the error at the LAST step of
-   the episode, not a time average, so a single abandoned command moves a
-   20-episode mean by ~9°.
+4. **The heading gap is an artefact of the metric, and it INVERTS when the
+   metric is fixed.** `odo_ahrs` reads 7.8° at tau 2.0 and 17.3° at 0.19 — but
+   `head_err_deg` is the error at the LAST STEP of an episode, so a
+   20-command mean of it is a mean of twenty single samples, and one abandoned
+   command moves it by ~9°. On the whole-episode median (`head_err_med`) the
+   same policy reads **10.1° at tau 2.0 against 8.1° at 0.19** — slightly
+   BETTER at the measured value. The mean is moved by one episode that never
+   turned around at all (172° final error) plus the fall.
+
+   (An earlier version of this section quoted "median 5.5° vs 5.3°". That was
+   the median ACROSS COMMANDS of the same last-step samples — a robust
+   aggregate of the wrong quantity. The 10.1/8.1 above is the median over the
+   episodes themselves. The conclusion did not change; the numbers did.)
 
    **That abandoned episode is cmd 5 (`v_lon 0.80, dpsi 180`), and it is the
    worst episode for EVERY policy in the table at BOTH taus** — 171–180° of
-   final error in all ten cells. Nothing turns around from 0.8 m/s on a 180°
-   command. It is a shared blind spot of the whole family, not a tau effect
-   and not specific to `odo_ahrs`, and it should not be read as one.
+   final error in all ten cells. It is a shared blind spot of the whole
+   SENSOR-TRAINED family, not a tau effect and not specific to `odo_ahrs`.
+
+   **It is not a limit of the bike, and an earlier version of this line said
+   "nothing turns around from 0.8 m/s on a 180° command", which is wrong.**
+   `general_rl_pitch_smooth_diff_pi`, on MuJoCo truth, completes cmd 5 at a
+   **2.1° median** and both `fwd + crab + 180` commands at ~2°. The manoeuvre
+   is available in the plant; the AHRS-trained policies have lost it. See "The
+   ideal-sensor reference" below.
 
 **The model stays and `TAU_ORIENT_S` moves to the measurement: 2.0 → 0.19.**
 An error that jumps independently every control step is not what a fusion
@@ -1407,6 +1438,268 @@ The dynamic correlation time is unmeasured, as is the dynamic RMS — and the
 RMS is the half that matters. `rand2`'s narrow span (RMS 0.3–2.0°, tau
 0.1–0.6 s) is the current answer to that ignorance and is the reason it
 generalises across tau at no cost.
+
+### The eval metrics were single samples, then they were blind (2026-08-28)
+
+Two defects, found one after the other, both in REPORTING only — the reward
+reads `psi_err` every step, and `_score` is `survive_rate × track_geo` where
+`track` is already an episode mean (`general_env.py:775`). Selection was never
+affected. Every human decision read off these tables was.
+
+**One: the values were last-step samples.** `head_err_deg`, `vel_err` and
+`drift_m` on a row are the values at the LAST STEP of the episode, so a grid
+aggregate is a mean of twenty single samples and any one abandoned command
+hijacks it. `_eval_episodes` now carries the whole-episode series.
+
+**Two, and worse: the whole-grid median is blind by construction.** A median
+over 20 commands cannot see a failure affecting fewer than 10 of them, because
+the middle two never reach the tail of the sorted list. The grid holds exactly
+6 large turns, so **no whole-grid median can ever report a large-turn
+failure** — and none did:
+
+| policy | hold (1) | straight (2) | crab (2) | turn≤90 (8) | turn≥170 (6) | ALL (20) |
+|---|---|---|---|---|---|---|
+| `odo_ahrs` | 4.8° | 6.8° | 16.3° | 5.4° | **65.7°** | 8.1° |
+| `odo_ahrs_rand` | 12.1° | 1.6° | 32.9° | 5.3° | **100.8°** | 10.9° |
+| `odo_ahrs_tau019` | 9.9° | 4.1° | 10.3° | 3.7° | **156.7°** | 11.1° |
+| `odo_ahrs_rand2` | 8.2° | 2.7° | 8.0° | 3.6° | **152.1°** | **7.4°** |
+
+The ALL column INVERTS the ranking on the axis that matters: `rand2` has the
+best whole-grid median and is second worst on large turns.
+
+**The fix is a `by_family` block** beside the whole-grid scalars, not in place
+of them — `n_eval`, `survive_rate`, `track` and `track_geo` are untouched, so
+this re-bases nothing and every metrics block already in `moves/*.yaml` stays
+comparable. Five families that PARTITION the grid, ~20 numbers against the
+~160 of the full metric × command matrix. **Implemented** —
+`train_general_rl.FAMILIES` and `_by_family`, reported by
+`analysis/chatter.py` and written into every future export's metrics block.
+The argument is item **F** of `docs/plans/eval-score-rewrite.md`.
+
+| family | n | what it is |
+|---|---|---|
+| `hold` | 1 | v = 0, dpsi = 0 — the only place drift is defined |
+| `spin` | 2 | v = 0, in-place ±90 |
+| `cruise` | 9 | moving, \|dpsi\| < 170 |
+| `crab` | 2 | \|v_lat\| > 0.1 |
+| `turn_big` | 6 | \|dpsi\| ≥ 170 |
+
+Per family: `survive_rate`, `t_head_s` (over the members that ask for a
+heading change), `head_err_tail`, `vel_err_med`; plus `drift_m` and
+`drift_overshoot` on `hold`.
+
+**`spin` exists because it fell through every predicate in the first draft**
+and was invisible — and it is the family where the policies differ most
+(`rand2` reads 52° there against ~2° on the same 90° turn while moving). Two
+invariants now guard that, on integer counts rather than the rounded rates:
+families must cover every command exactly once, and their surviving-episode
+counts must sum to the grid's.
+
+**What survives the reduction, and what does not.** `head_err_med` restates
+`t_head_s` on turns and tracks `head_err_tail` at a steady 2–2.5× elsewhere.
+`vel_err_tail` spreads 19% across policies against `vel_err_med`'s 67%.
+`drift_max` equalled `drift_m` exactly in 3 of 4 policies and `drift_sd` sat
+at 0.267–0.315 × `drift_m` in all four — the ratio for a linear ramp — so both
+are replaced by `drift_overshoot` (peak minus final), the same information
+with a null value of zero. `t_head_s` and `head_err_tail` look redundant and
+are not: `odo_ahrs` and `rand` arrive at large turns at 6.73 s and 6.78 s
+while holding them at 14.7° and 105.0° — `rand` touches 10° once and wanders
+back off.
+
+**READ `survive_rate` WITH `t_head_s`, NEVER ALONE.** On `turn_big`,
+`odo_ahrs` reads 0.83 / 6.73 s / 14.7° and `rand2` reads 1.00 / 15.00 s /
+152.3°: `odo_ahrs` attempts the turn, completes it, and falls on 1 of 6;
+`rand2` never turns at all — it drives BACKWARDS at ~0.8 m/s, which
+satisfies the world-frame velocity command exactly (`vel_err_med` 0.091)
+while abandoning the heading (175.6°), and therefore never falls.
+**Survival bought by refusal** — the pattern `track_geo`'s geometric mean was
+introduced to defeat at the grid level, reappearing inside a family.
+
+**Consequence for `control.general_move`.** It names `odo_ahrs`, and the case
+for that has now been read three ways in one day: the last-step mean said
+`odo_ahrs` held heading far better (17.3° against 33.8°); the whole-episode
+median said `rand2` swept everything but chatter (8.1° against 7.4°); per
+family it is a trade again, and a different one from the first.
+Indistinguishable on `cruise` and `crab`; `odo_ahrs` clearly better on `spin`
+(2.40 s against 5.17 s) and the only one that completes a large turn
+(`head_err_tail` 14.7° against 152.3°); `rand2` holds less than half the drift
+(0.664 m against 1.584 m) and never falls. On `turn_big` the question is
+whether a 1-in-6 fall while turning around is worse than never turning around,
+which is a decision and not a metric. **OUTSTANDING: whether
+`control.general_move` should name `rand2` instead.** It is a one-line config
+edit and moves neither digest.
+
+**The 180° turnaround is not a limit of the bike**, and an earlier version of
+this file said it was — see "The ideal-sensor reference" below.
+
+Eight figures per arm, one per metric, in `analysis/plots/`:
+[heading median](../analysis/plots/per_command_head_err_med.png) and
+[time to heading](../analysis/plots/per_command_t_head_s.png) for the four
+AHRS policies; the same two with `_ideal` for the truth pair
+([heading](../analysis/plots/per_command_head_err_med_ideal.png),
+[t_head](../analysis/plots/per_command_t_head_s_ideal.png)). Every figure
+stamps its own sensor configuration, because two runs differing only in
+`--ahrs` are otherwise identical in every label. **The charts are what made
+the family structure visible** — the aggregates could not have shown it.
+
+### The odo/ahrs line cannot turn around, and it is `obs_pitch` (2026-08-29)
+
+**The finding.** Every policy on the sensor line — `odo`, `odo_ahrs`,
+`tau019`, `rand`, `rand2` — fails the three moving 180° commands, and **not by
+falling**. It drives BACKWARDS at ~0.8 m/s and declines to turn. `rand2` on
+`(0.804, 0, 180)`: `vel_err_med` **0.091** with a heading error of **175.6°**
+and `v_ach` **−0.843**. The command is a world-frame velocity vector plus a
+heading, so reversing satisfies the velocity half *exactly* while abandoning
+the other — and `track` is `0.5 × (r_vel + r_head)`, so that is half marks
+with none of the risk of a 180° turn. It is the mirror of the failure
+`general-rl-improvements.md` §2.6 records, a policy banking what it can get
+and skipping what it cannot.
+
+**It is not the sensors.** `rand2` run on MuJoCo truth behaves identically on
+`turn_big` — `t_head` 15.00 s and `head_err_tail` 152.8°, against 15.00 s and
+152.3° with the TM151 — while every other family improves as expected. Perfect
+sensors change nothing about this manoeuvre.
+
+**It is not the training budget either.** `turn_big` commands completed
+(reached 10° and survived), all on truth:
+
+| policy | `obs_pitch` | steps | completed | `v_ach` on the 3 moving |
+|---|---|---|---|---|
+| `smooth_diff_pi` | false | 11M | 3/6 | −0.85, −0.76, −0.69 |
+| `pitch_smooth_diff_pi` | **true** | 12M | **6/6** | +0.79, +0.70, +0.65 |
+| `glide_pitch_smooth_pi` | **true** | **5M** | **6/6** | +0.81, +0.58, +0.60 |
+| `nolat` | false | 9M | 3/6 | −0.82, −0.70, −0.76 |
+
+Perfect separation on `obs_pitch`, and **the sign of `v_ach` is the tell**:
+pitch policies turn round and drive forward, pitchless ones reverse. 5M steps
+with pitch beat 11M without.
+
+**This is a rediscovery, not a discovery** — pitch is what solved the flicks on
+the old policies, and eight configs in the `glide_pitch` / `pitch_smooth_diff`
+family carry `obs_pitch: true`.
+
+**THE MECHANISM: without pitch, the manoeuvre ends the episode.**
+`analysis/reverse_flip.py` sets up the case the eval grid cannot — reverse
+until the speed is established, then snap the heading 180°, which is what the
+teleop `8` key does. Peak pitch over the manoeuvre:
+
+| policy | −0.50 | −0.84 | −1.02 | −1.20 m/s |
+|---|---|---|---|---|
+| `odo_ahrs` | 13.0° | **86.9° FELL** | **85.7° FELL** | **81.8° FELL** |
+| `odo_ahrs_rand2` | 7.2° | 31.9° | **87.6° FELL** | fell before the snap |
+| `smooth_diff_pi` | 16.8° | 50.0° | **82.7° FELL** | fell, 61° roll |
+| `pitch_smooth_diff_pi` | 7.8° | **9.1°** | **14.5°** | **23.0°** — never falls |
+
+**80–90° of pitch is the bike going over backwards.** Every policy without
+`obs_pitch` flips above ~0.84 m/s of reverse; the one with it never exceeds
+23° at any reverse speed up to `v_max`. So the pitchless policies are not
+failing to turn — **they have correctly learned that attempting it from a
+reverse ends the episode**, and the reversing-with-a-175°-heading-error
+behaviour the eval reports is the AVOIDANCE, not the failure.
+
+The eval grid cannot see this: its 180° commands start from REST, so the bike
+never reaches the reversing state that triggers the flip. It was found in
+teleop — hold reverse, press `8` — and only then reproduced headlessly.
+
+**How it was lost.** The sensor workstream forked off `rl_general.yaml`, the
+pre-pitch trunk, rather than off the pitch line, and inherited
+`obs_pitch: false` BY OMISSION — `rl_general_odo.yaml`,
+`rl_general_odo_ahrs.yaml` and `rl_general_odo_ahrs_rand2.yaml` never mention
+it. **Nothing flagged it for the whole sensor workstream**, because the
+whole-grid eval median cannot see a failure in 3 of 20 commands. That is the
+same blindness "The eval metrics were single samples" is about, and this is
+what it cost.
+
+**A blocker found while queueing the run: `obs_pitch` was reading MuJoCo
+truth.** `_obs` decoded the corrupted AHRS quaternion, **discarded its pitch
+component**, and fed the policy `s.pitch` from the model — so an `obs_pitch`
+policy read the TM151 for roll and perfect truth for pitch. The gyro's middle
+axis is the pitch rate and was likewise never read. Measured before the fix:
+obs roll 0.000° from the AHRS and 15.07° from truth; obs pitch **0.000° from
+truth** and 0.827° from the AHRS. Fixed 2026-08-29 — both now come from the
+sensor, `obs_layout` is unchanged so it is not a spec change, and the reward
+keeps `s` as it always did.
+
+**Nothing measured changes**: every `obs_pitch` policy in the standings trained
+and was evaluated at `ahrs_level: none`, and the whole odo/ahrs line has
+`obs_pitch: false`. What it changes is the queued run, which would otherwise
+have trained against a perfect pitch signal the bike does not have — in the one
+workstream whose entire point is removing those. Guarded by
+`test_every_orientation_channel_in_the_obs_comes_from_the_sensor`, which
+asserts each orientation entry is closer to the sensor than to truth, so it
+cannot be defeated by the error model getting quieter.
+
+**Queued: `config/rl_general_odo_ahrs_pitch.yaml`.** `obs_pitch: true` and
+**18M steps against `rand2`'s 12M**; `w_pitch` left at 0.0 so the observation
+stays a single variable. Observation 15 → 17 wide (pitch, pitch_rate),
+measured. Both working configs carry `w_pitch: 2.0` as well, so the penalty
+demonstrably does not suppress the manoeuvre; the dependency runs one way
+(`obs_pitch` is required BY `w_pitch`, not the reverse), so observing without
+charging is legal.
+
+**The budget is from the learning curves, not a hedge.** Steps to reach
+difficulty 0.95, read off `curriculum/difficulty`:
+
+| clean sensors | | dirty sensors | |
+|---|---|---|---|
+| `smooth_diff_pi` | 2.61M | `odo` | 4.29M |
+| `pitch_smooth_diff_pi` | 2.16M | `odo_ahrs` | 7.67M |
+| `glide_pitch_smooth_pi` | 1.56M | `odo_ahrs_rand` | 8.03M |
+| | | `odo_ahrs_rand2` | 7.23M |
+
+**The sensor runs take ~3× longer to reach full difficulty** — getting off the
+0.15 floor alone costs them 0.95–1.26M against 0.39–0.52M. The consequence is
+the budget split: `rand2` spent 7.23M of its 12M on the ramp and got **4.8M at
+full difficulty**, while `pitch_smooth_diff_pi` spent 2.16M and got **9.8M**.
+Twice the exposure — and full difficulty is where the 180° commands live,
+which is the behaviour this arm exists to recover. 7.5M of ramp plus ~10M at
+full difficulty is ~17.5M.
+
+Independently: **`rand` and `rand2` both recorded their best `eval/score` at
+12.0M** — the last eval, still climbing when the budget ran out. (`odo_ahrs`
+peaked at 6M and `odo` at 9M, so those had headroom; the two most recent did
+not.) Over-running is cheap: `BestByScore` exports the best checkpoint by
+score, not the last. What that does NOT protect against is the `2.7` failure
+in `general-rl-improvements.md` — score rising while chatter doubles, which
+`_score` cannot see — so **check `dsteer²` on the export, not just the
+score.**
+
+```sh
+./scripts/rl.sh up general --config config/rl_general_odo_ahrs_pitch.yaml \
+    --run-dir runs/general_rl_odo_ahrs_pitch \
+    --export-name general_rl_odo_ahrs_pitch
+```
+
+**The bar is not score.** `rand2` completes 0 of the 3 moving reversals;
+anything above 0 confirms it. Score should barely move — 3 commands in 20 — so
+read `by_family.turn_big`, and read `survive_rate` WITH `t_head_s`. If flicks
+do not come back, the next arm adds `w_pitch: 2.0` and matches the working
+configs exactly — and it now has a specific rationale rather than a matching
+one: `w_pitch` prices the wheelie that ends the episode.
+
+### The ideal-sensor reference — what the eval looks like with no sensors
+
+`analysis/per_command.py --policies general_rl_smooth_diff_pi
+general_rl_pitch_smooth_diff_pi --ahrs none --encoder ideal --tag ideal`. Both
+are truth-trained, both carry the current `plant_digest`, and with `--ahrs
+none` and no `obs_odometry` the controller reads MuJoCo truth for velocity AND
+attitude. **A ceiling, not a hardware-achievable number.** By family, against
+the best sensor-trained policy:
+
+| family | metric | `smooth_diff_pi` | `pitch_smooth_diff_pi` | `rand2` (sensors) |
+|---|---|---|---|---|
+| cruise | `t_head` / `head_tail` | 0.47 s / 2.4° | 0.58 s / 3.6° | 0.80 s / 8.1° |
+| crab | `vel_err_med` | 0.348 | 0.345 | 0.404 |
+| turn_big | `t_head` / `head_tail` | 8.09 s / 80.5° | **1.60 s / 5.1°** | 15.00 s / 152.3° |
+| hold | `drift_m` | **0.296 m** | 1.267 m | 0.664 m |
+
+The sensor cost on `cruise` is real but modest — roughly 1.7× on time-to-
+heading and 3× on held heading. **On `turn_big` it is not a sensor cost at
+all**, per the section above.
+
+Note the two truth policies are not ranked, they trade: `smooth_diff_pi` holds
+a quarter of the other's drift while `pitch_smooth_diff_pi` is the one that
+can reverse.
 
 ### Teleop: an AHRS tau flag, and a reset bug (2026-08-28)
 
