@@ -338,10 +338,18 @@ except reading the two together.
     rounded `survive_rate` fired a false positive on the first run —
     `turn_big`'s 5/6 rounds to 0.833 and weights back to 0.9499 against
     0.9500.
-  * STILL OPEN: `cruise` computes `t_head_s` over 6 of its 9 members, so one
-    cell has a different denominator from its row. `t_head_n` is reported
-    beside it so the reader can see that; the alternative is a sixth family
-    splitting straight-line (n=2) from moving-turn (n=6).
+  * CLOSED 2026-08-29: `cruise` computes `t_head_s` over 6 of its 9 members
+    (the straight members reach 10° on the first step), so one cell has a
+    different denominator from its row. `t_head_n` is reported beside it. A
+    sixth family splitting straight from moving-turn was considered and is NOT
+    warranted — within `cruise`, straight against turning gives `vel_err_med`
+    ratios of 1.02 / 1.15 / 0.81 / 0.94 and `head_err_tail` ratios of
+    0.69 / 1.62 / 0.86 / 0.99 across the four AHRS policies. **The direction is
+    not consistent**, which is the test: every split that earned its place —
+    `turn_big` against `cruise`, `crab` against `cruise`, `spin` against moving
+    turns — had the same sign for every policy. These do not, so it is noise.
+    Survival stays over all 9, which is the number that has to be 1.00 anyway;
+    a break there is findable per command.
 
 ## The re-basing decision — this is the actual blocker
 
@@ -378,8 +386,9 @@ artifact is a score that artifact should not carry.
 1. ~~**E** — free, no re-basing, immediately useful for the 180-degree flip
    question.~~ DONE 2026-08-28.
 2. ~~**F** — also free and also unblocked, and what makes every other
-   comparison in this doc readable.~~ DONE 2026-08-29. Only the `cruise`
-   denominator question is left open.
+   comparison in this doc readable.~~ DONE 2026-08-29, `cruise` denominator
+   question included: measured and closed, no sixth family. **Nothing under F
+   is outstanding.**
 3. Decide the re-basing question above. Everything else is blocked on it and
    nothing else should start first.
 4. **B** — the only candidate that discriminates in-distribution. Largest

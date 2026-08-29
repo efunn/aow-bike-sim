@@ -64,7 +64,9 @@ Read-only apart from stdout: loads moves/*.npz and writes nothing.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import mujoco
@@ -183,17 +185,29 @@ def section_error(args):
           "under-errors at tau 2.0 (0.75° of 1.42°).")
 
 
-def section_grid(args):
-    """Score, survival and heading for every policy at every tau."""
+def _one_cell(job):
+    """One (policy, tau) cell, in a worker process.
+
+    The job space is 2-D here -- policies x taus -- and every cell is
+    independent, so all of them run at once rather than one policy at a time.
+    Built inside the worker because a MuJoCo model does not pickle. NOT
+    parallelised over commands, for the seeding reason in `run_grid`.
+    """
+    name, tau, encoder = job
     params = load_params()
     cfg = base_cfg()
-    cmds = eval_cmds(cfg["env"]["v_max"])
-    out = {}
-    for tau in args.taus:
-        for name in args.policies:
-            pol = policy_for(name, args.encoder)
-            out[(name, tau)] = run_grid(pol, env_for(pol, params,
-                                                     ahrs_cfg(cfg, tau)), cmds)
+    pol = policy_for(name, encoder)
+    return ((name, tau), run_grid(pol, env_for(pol, params, ahrs_cfg(cfg, tau)),
+                                  eval_cmds(cfg["env"]["v_max"])))
+
+
+def section_grid(args):
+    """Score, survival and heading for every policy at every tau."""
+    cmds = eval_cmds(base_cfg()["env"]["v_max"])
+    jobs = [(n, t, args.encoder) for t in args.taus for n in args.policies]
+    with ProcessPoolExecutor(max_workers=min(len(jobs),
+                                             os.cpu_count() or 1)) as ex:
+        out = dict(ex.map(_one_cell, jobs))
 
     w = max(len(n) for n in args.policies) + 2
     enc = args.encoder or "each policy's own (NOT COMPARABLE)"

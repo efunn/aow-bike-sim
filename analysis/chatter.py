@@ -46,6 +46,8 @@ Read-only apart from stdout: loads moves/*.npz and writes nothing.
 from __future__ import annotations
 
 import argparse
+import os
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
@@ -123,6 +125,32 @@ def rollout_grid(pol, env, cmds):
     return m, rows, A, per
 
 
+def _one_policy(job):
+    """One policy's whole grid, in a worker process.
+
+    Everything is built HERE: a MuJoCo model does not pickle, so the parent
+    can only hand over strings and floats. Parallelised over POLICIES and
+    deliberately not over commands -- `_eval_episodes` seeds each episode
+    `10_000 + k` on the index WITHIN the list it is handed, so splitting the
+    commands across workers would silently re-seed every episode and produce
+    numbers matching no other table in the project.
+    """
+    name, encoder, force_odo, ahrs, tau, channels = job
+    params = load_params()
+    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
+    if ahrs:
+        cfg = {**cfg, "env": {**cfg["env"], "ahrs_level": ahrs,
+                              "ahrs_tau_s": tau, "ahrs_channels": channels}}
+    pol = load_general(name)
+    if encoder:
+        pol.odometry_encoder = encoder
+    if force_odo:
+        pol.obs_odometry = True
+    return name, rollout_grid(pol, env_for(pol, params, cfg),
+                              eval_cmds(cfg["env"]["v_max"]))
+
+
 def cross_axis(rows):
     """Behavioural counterpart to the confusion matrix's `cross_axis_rms`:
     longitudinal and lateral are independent commands, so a pure command on
@@ -187,21 +215,21 @@ def main():
                               "ahrs_channels": args.ahrs_channels}}
     cmds = eval_cmds(cfg["env"]["v_max"])
 
-    out = {}
-    for key in names:
-        # One env PER POLICY: a velocity-windowed policy needs a 17-wide
-        # observation and its own filter constant, so a single shared env
-        # cannot serve both widths.
-        pol = load_general(key)
-        if args.encoder:
-            pol.odometry_encoder = args.encoder
-        if args.force_odometry:
-            # Override the policy's own declaration. Deliberately a flag and
-            # not the default: a policy trained on truth is OUT OF
-            # DISTRIBUTION here, so these rows answer "does it survive
-            # deployment", not "how good is it".
-            pol.obs_odometry = True
-        out[key] = rollout_grid(pol, env_for(pol, params, cfg), cmds)
+    # One env PER POLICY: a velocity-windowed policy needs a wider observation
+    # and its own filter constant, so a single shared env cannot serve both.
+    # That makes the policies independent, so they run in parallel -- one
+    # process each. `--force-odometry` overrides a policy's own declaration
+    # and is deliberately a flag: a truth-trained policy is OUT OF
+    # DISTRIBUTION under it, so those rows answer "does it survive
+    # deployment", not "how good is it".
+    jobs = [(k, args.encoder, args.force_odometry, args.ahrs, args.ahrs_tau,
+             args.ahrs_channels) for k in names]
+    done = {}
+    with ProcessPoolExecutor(max_workers=min(len(jobs),
+                                             os.cpu_count() or 1)) as ex:
+        for name, res in ex.map(_one_policy, jobs):
+            done[name] = res
+    out = {k: done[k] for k in names}   # requested order, not completion order
 
     w = f"{max(len(k) for k in out) + 2}"
 
