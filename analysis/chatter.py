@@ -215,6 +215,37 @@ def main():
               f"{m['head_err_deg']:>10.1f}{m['drift_m']:>9.3f}"
               f"{m['steer_rest_deg']:>11.1f}")
 
+    # PER FAMILY, because the whole-grid median is blind by construction: it
+    # cannot see a failure affecting fewer than half the commands, and the
+    # grid holds exactly 6 large turns. One table per family, policies as
+    # rows -- the same shape as the by_family block in moves/*.yaml.
+    print("\nBY COMMAND FAMILY. surv is a RATE within the family; read it "
+          "WITH t_head,\nbecause high survival means competence OR refusal "
+          "-- a policy that declines a\nturn cannot fall doing it. t_head is "
+          "seconds to first get inside 10 deg, over\nthe family members that "
+          "ask for a heading change (n_t of them).")
+    fams = list(next(iter(out.values()))[0]["by_family"])
+    for fam in fams:
+        n = next(iter(out.values()))[0]["by_family"][fam]["n"]
+        print(f"\n  {fam}  (n={n})")
+        head = (f"  {'policy':{w}}{'surv':>7}{'t_head':>9}{'n_t':>5}"
+                f"{'head_tail':>11}{'vel_med':>9}")
+        if fam == "hold":
+            head += f"{'drift_m':>9}{'overshoot':>11}"
+        print(head)
+        for k, (m, *_) in out.items():
+            f = m["by_family"][fam]
+            line = (f"  {k:{w}}{f['survive_rate']:>7.2f}"
+                    + (f"{f['t_head_s']:>8.2f}s{f['t_head_n']:>5}"
+                       if "t_head_s" in f else f"{'-':>9}{'-':>5}")
+                    + f"{f['head_err_tail']:>10.1f}°{f['vel_err_med']:>9.3f}")
+            if fam == "hold":
+                line += f"{f['drift_m']:>9.3f}{f['drift_overshoot']:>11.3f}"
+            print(line)
+    print("\n  drift is hold-only and the grid has exactly one hold command, "
+          "so it is ONE\n  episode. overshoot is peak minus final: 0 means it "
+          "left and kept going,\n  > 0 means it wandered out and came back.")
+
     def cells(values, fmt):
         """One cell per CHANNEL, "-" where this policy has no such channel."""
         return "".join(f"{values[i]:>10{fmt}}" if i < len(values)

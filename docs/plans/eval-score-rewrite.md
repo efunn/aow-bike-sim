@@ -234,7 +234,7 @@ untethered transfer depends on `randomization.actuator_frac` et al.
     is the property that makes numbers comparable across months. Probably wants
     to be a SECOND score reported alongside, not a replacement.
 
-### E. Surface `t_head_s` rather than averaging it away
+### E. Surface `t_head_s` rather than averaging it away — DONE 2026-08-28
 
 Already recorded per command (`_HEAD_TOL_DEG` 10.0, saturating at episode
 length when never reached). Paired with `fell` it separates the three failure
@@ -252,6 +252,96 @@ modes an operator can see by hand at teleop `[8]`:
   * **Do this one first regardless of the rest**, because it is free and it
     turns a teleop impression into a number, which is the move that §2.5
     already proved out once.
+
+**DONE, and it paid immediately.** `t_head_s` is now in the metrics dict, and
+it INVERTS the ordering the other numbers give: `general_rl_odo` arrives
+fastest (0.87 s) and then holds worst (28.7° in the settled window), while
+`general_rl_odo_ahrs` arrives slowest but one (1.40 s) and holds tightest
+(14.2°). Arrive-fast-then-wander against arrive-slow-hold-tight is a
+behavioural split no single number was showing.
+
+It also cannot be aggregated naively, which is what led to **F** below: 6 of
+the 20 commands have `dpsi 0`, so `t_head` fires on the first step and a
+median over all 20 is really the 4th-5th smallest of the 14 turners. It is now
+reported over turning commands only, split small (`t_head_s`, 45/90) and large
+(`t_head_big_s`, ≥170) because those are bimodal — 0.5–3 s against 5–15 s or
+never — and one median sits in the empty middle between them.
+
+### F. A PER-FAMILY metrics block — the aggregate is blind by construction — DONE 2026-08-29
+
+Found while doing **E**, and it is the same defect one level up. **A median
+over 20 commands cannot see a failure affecting fewer than 10 of them.** The
+grid has exactly 6 large turns, so no whole-grid median can EVER report a
+large-turn failure. Measured, `head_err_med` at tau 0.19:
+
+| policy | hold (1) | straight (2) | crab (2) | turn≤90 (8) | turn≥170 (6) | ALL (20) |
+|---|---|---|---|---|---|---|
+| `odo_ahrs` | 4.8 | 6.8 | 16.3 | 5.4 | **65.7** | 8.1 |
+| `odo_ahrs_rand` | 12.1 | 1.6 | 32.9 | 5.3 | **100.8** | 10.9 |
+| `odo_ahrs_tau019` | 9.9 | 4.1 | 10.3 | 3.7 | **156.7** | 11.1 |
+| `odo_ahrs_rand2` | 8.2 | 2.7 | 8.0 | 3.6 | **152.1** | **7.4** |
+
+The ALL column INVERTS the ranking on the axis that matters: `rand2` has the
+best whole-grid median and is the second worst on large turns. Every
+conclusion drawn from "rand2 holds heading better" came from that column.
+
+**Shipped** as `train_general_rl.FAMILIES` and `_by_family`: a `by_family`
+block under `metrics`, five families that PARTITION the grid, ~20 numbers
+against the ~160 of the full metric x command matrix. Top-level `n_eval`,
+`survive_rate`, `track`, `track_geo` are untouched, so **this did not re-base
+`_score` and was not blocked on the decision below.** `analysis/chatter.py`
+prints one table per family; every future export carries the block, and
+policies exported before it get one by re-running the eval.
+
+Families: `hold` (1), `spin` (2, in-place ±90), `cruise` (9), `crab` (2),
+`turn_big` (6). `spin` exists because it fell through every predicate in the
+first draft — and it is the family where `rand2` reads 52° against ~2° on the
+same turn while moving, so the gap it was hiding was the largest one.
+
+Which metrics survive the reduction, and why the others do not:
+
+  * `head_err_med` — DROP. On turns it restates `t_head_s`; on hold/cruise it
+    tracks `head_err_tail` at a steady ~2–2.5x for every policy.
+  * `vel_err_tail` — DROP. 19% spread across policies against `vel_err_med`'s
+    67%; the tail is dominated by the worst single sample.
+  * `drift_max`, `drift_sd` — DROP, REPLACED by `drift_overshoot` = peak minus
+    final. `drift_max` equalled `drift_m` exactly in 3 of 4 policies (drift
+    grows monotonically), and `drift_sd` sat at 0.267–0.315 x `drift_m` in all
+    4 — the ratio for a linear ramp. The overshoot is the same information
+    with a null value of zero.
+  * `t_head_s` and `head_err_tail` are BOTH kept, and look redundant but are
+    not. `odo_ahrs` and `rand` arrive at large turns at 6.73 s and 6.78 s —
+    indistinguishable — while holding them at 14.7° and 105.0°. `rand`
+    touches 10° once and wanders back off.
+
+Two invariants worth asserting, each catching a different bug: `sum(n_f) ==
+n_eval` (a command falling through every predicate is invisible — this fired
+once already), and `sum(survive_rate_f * n_f) / n_eval == survive_rate` (a
+predicate that double-counts, or a rate on the wrong denominator).
+
+**Survival is a RATE per family, not a count.** Families are sizes 1, 2, 9, 2,
+6, so `fell: 1` would mean a 6x different thing in `turn_big` than in `crab`.
+
+**READ `survive_rate` WITH `t_head_s`, NEVER ALONE**, because a high family
+survival means competence OR refusal. On `turn_big`, `odo_ahrs` attempts the
+turn, arrives in 6.73 s and falls on 1 of 6; `rand2` never turns at all —
+it drives BACKWARDS at ~0.8 m/s (`vel_err_med` 0.091 with a heading error of
+175.6°), which satisfies the world-frame velocity command exactly while
+abandoning the heading, and therefore never falls. That is survival bought by
+refusal — the pattern `track_geo`'s geometric mean was introduced to defeat at
+the grid level, reappearing inside a family. Nothing in the schema catches it
+except reading the two together.
+
+  * cost, as built: a reduction over rows `_eval_episodes` already builds. No
+    extra simulation, no re-basing, no change to `_score`.
+  * the invariants are on INTEGER COUNTS, not the stored rates. Checking the
+    rounded `survive_rate` fired a false positive on the first run —
+    `turn_big`'s 5/6 rounds to 0.833 and weights back to 0.9499 against
+    0.9500.
+  * STILL OPEN: `cruise` computes `t_head_s` over 6 of its 9 members, so one
+    cell has a different denominator from its row. `t_head_n` is reported
+    beside it so the reader can see that; the alternative is a sixth family
+    splitting straight-line (n=2) from moving-turn (n=6).
 
 ## The re-basing decision — this is the actual blocker
 
@@ -285,14 +375,17 @@ artifact is a score that artifact should not carry.
 
 ## Order of work, if this gets picked up
 
-1. **E** — free, no re-basing, immediately useful for the 180-degree flip
-   question.
-2. Decide the re-basing question above. Everything else is blocked on it and
+1. ~~**E** — free, no re-basing, immediately useful for the 180-degree flip
+   question.~~ DONE 2026-08-28.
+2. ~~**F** — also free and also unblocked, and what makes every other
+   comparison in this doc readable.~~ DONE 2026-08-29. Only the `cruise`
+   denominator question is left open.
+3. Decide the re-basing question above. Everything else is blocked on it and
    nothing else should start first.
-3. **B** — the only candidate that discriminates in-distribution. Largest
+4. **B** — the only candidate that discriminates in-distribution. Largest
    design question (separate factor vs folded into `track_geo`), but it is the
    one that changes what selection can see.
-4. **A** — smallest real fix, addresses a failure seen twice.
-5. **C** and **D** — both want a measurement or a convention that does not
+5. **A** — smallest real fix, addresses a failure seen twice.
+6. **C** and **D** — both want a measurement or a convention that does not
    exist yet. Note that **D is a transfer test, not a selection criterion**,
    by the argument above; it belongs alongside the score, never inside it.

@@ -112,6 +112,118 @@ def eval_cmds(v_max: float) -> list[tuple[float, float, float]]:
             for a, b, d in _mirrored_grid()]
 
 
+# The command families the per-family metrics block is reported over. They
+# must PARTITION the grid -- every command in exactly one, n's summing to
+# n_eval -- and that is asserted, not assumed: in the first draft `spin` did
+# not exist and the in-place +-90 commands fell through every predicate,
+# invisible. That is the family where the policies differ most.
+#
+# The predicate argument is row["cmd"] = (v_lon, v_lat, dpsi_DEGREES). Order
+# of the keys is display order; the predicates are mutually exclusive on their
+# own, so nothing depends on evaluation order.
+#
+# WHY THESE FIVE. A family earns its place by separating policies that the
+# neighbouring families do not: turn_big against everything (65.7 deg against
+# 5.4 for general_rl_odo_ahrs), crab against cruise (3x on velocity error),
+# spin against moving turns (52 deg against ~2 on the same 90 deg turn for
+# general_rl_odo_ahrs_rand2), and hold because it is the only place drift is
+# defined at all. Straight-line and moving-turn commands are NOT separated:
+# they measured 6.8 against 5.4 deg and 0.124 against 0.147 m/s across four
+# policies, which is no separation.
+FAMILIES = {
+    "hold":     lambda c: c[0] == 0 and c[1] == 0 and abs(c[2]) <= 1,
+    "spin":     lambda c: c[0] == 0 and c[1] == 0 and 1 < abs(c[2]) < 170,
+    "cruise":   lambda c: abs(c[0]) > 0.1 and abs(c[1]) < 0.1 and abs(c[2]) < 170,
+    "crab":     lambda c: abs(c[1]) > 0.1 and abs(c[2]) < 170,
+    "turn_big": lambda c: abs(c[2]) >= 170,
+}
+
+
+def _by_family(rows: list[dict]) -> dict:
+    """Per-family metrics. THE POINT IS THAT THE WHOLE-GRID MEDIAN IS BLIND.
+
+    A median over 20 commands cannot see a failure affecting fewer than 10 of
+    them, because the middle two never reach the tail of the sorted list. The
+    grid holds exactly 6 large turns, so no whole-grid median can EVER report
+    a large-turn failure -- and one did not: `general_rl_odo_ahrs_rand2` has
+    the BEST whole-grid heading median of four policies (7.4 deg) and the
+    second WORST on large turns (152.1). See docs/plans/eval-score-rewrite.md
+    section F.
+
+    Survival is a RATE here, not a count: the families are sizes 1, 2, 9, 2
+    and 6, so a count would mean a 6x different thing in `turn_big` than in
+    `crab`. It reuses the top-level key name rather than inventing
+    `fell_rate`, which makes the aggregate a checkable identity -- asserted
+    below.
+
+    READ `survive_rate` WITH `t_head_s`, NEVER ALONE. A high family survival
+    means competence OR refusal, and only the arrival time separates them: on
+    `turn_big`, `odo_ahrs` attempts the turn, arrives in 6.73 s and falls on 1
+    of 6, while `rand2` never turns at all -- it drives BACKWARDS at
+    ~0.8 m/s, which satisfies the world-frame velocity command exactly while
+    abandoning the heading, and therefore never falls. Survival bought by refusal is the pattern
+    `track_geo`'s geometric mean was introduced to defeat at the grid level,
+    reappearing one level down.
+    """
+    out, covered, survivors = {}, 0, 0
+    for name, pred in FAMILIES.items():
+        sel = [r for r in rows if pred(r["cmd"])]
+        if not sel:
+            continue
+        covered += len(sel)
+        survivors += sum(not r["fell"] for r in sel)
+        fam = {
+            "n": len(sel),
+            "survive_rate": round(sum(not r["fell"] for r in sel) / len(sel), 3),
+        }
+        # Time-to-heading only exists where a heading change was ASKED FOR.
+        # In `cruise` that is a subset of the family (the moving turns), so
+        # this cell has a different denominator from its row -- deliberate,
+        # and the alternative is a sixth family with n=2.
+        turners = [r for r in sel if abs(r["cmd"][2]) > 1]
+        if turners:
+            fam["t_head_s"] = _med([r["t_head_s"] for r in turners], 2)
+            fam["t_head_n"] = len(turners)
+        fam["head_err_tail"] = _med([r["head_err_tail"] for r in sel], 1)
+        fam["vel_err_med"] = _med([r["vel_err_med"] for r in sel], 3)
+        if name == "hold":
+            # Drift is only meaningful against a stationary command, and the
+            # grid holds exactly one -- so these are ONE episode, not a
+            # median. `drift_overshoot` replaces the `drift_max` and
+            # `drift_sd` this block briefly carried: max equalled the final
+            # value exactly in 3 of 4 policies (drift grows monotonically),
+            # and sd sat at 0.267-0.315 x final in all four, the ratio for a
+            # linear ramp. Peak-minus-final is the same information with a
+            # null value of zero, so a non-zero reading MEANS something:
+            # the bike wandered out and came back rather than leaving.
+            fam["drift_m"] = round(float(sel[0]["drift_m"]), 3)
+            fam["drift_overshoot"] = round(
+                float(sel[0].get("drift_max", sel[0]["drift_m"])
+                      - sel[0]["drift_m"]), 3)
+        out[name] = fam
+
+    # The two invariants, ON INTEGER COUNTS. Checking the stored
+    # `survive_rate` instead is a false positive waiting to happen: it is
+    # rounded to 3 dp, so turn_big's 5/6 -> 0.833 and the weighted sum lands
+    # at 0.9499 against a grid 0.9500. Counts do not round.
+    if covered != len(rows):
+        raise AssertionError(
+            f"command families cover {covered} of {len(rows)} commands -- one "
+            f"falls through every predicate in FAMILIES and is invisible")
+    total = sum(not r["fell"] for r in rows)
+    if survivors != total:
+        raise AssertionError(
+            f"families count {survivors} surviving episodes against {total} "
+            f"in the grid -- a predicate is double-counting")
+    return out
+
+
+def _med(values, ndigits):
+    """Median of a possibly-empty selection. NaN rather than an exception, so
+    a caller running a reduced grid gets a blank cell instead of a crash."""
+    return round(float(np.median(values)), ndigits) if values else float("nan")
+
+
 def _score(m: dict) -> float:
     """Snapshot-selection score (higher is better): survival x tracking.
 
@@ -195,6 +307,14 @@ def _eval_episodes(env, act_fn, cmds):
         t_head = None                      # first step inside _HEAD_TOL_DEG
         v_lons, v_lats, steers = [], [], []  # tail windows, refilled as we go
         xys, oscs, wings = [], [], []
+        # WHOLE-EPISODE series, deliberately NOT truncated to the tail like
+        # the windows above. The `head_err_deg` / `vel_err` / `drift_m` a row
+        # has always carried are the values at the LAST STEP -- one sample --
+        # so a 20-command mean of them is a mean of twenty single samples, and
+        # one command the policy abandoned moves it by ~9 deg. These are what
+        # let the same rows report a median and a worst case instead. 15 s at
+        # 50 Hz is 750 floats a series; the cost is nothing.
+        heads, vels, drifts = [], [], []
         # Static cap, not the curriculum-scheduled one: `wing_duty` has to mean
         # the same thing at every difficulty or the trace is not comparable
         # across a run.
@@ -219,6 +339,9 @@ def _eval_episodes(env, act_fn, cmds):
             oscs.append(float(np.hypot(s.v_lon - info.get("v_bar_lon", s.v_lon),
                                        s.v_lat - info.get("v_bar_lat", s.v_lat))))
             wings.append(float(info.get("wing_deg", 0.0)))
+            heads.append(float(info.get("head_err_deg", 180.0)))
+            vels.append(float(info.get("vel_err", 9.9)))
+            drifts.append(float(np.hypot(s.e_lon, s.e_lat)))
             del v_lons[:-tail], v_lats[:-tail], steers[:-tail]
             del xys[:-tail], oscs[:-tail], wings[:-tail]
         s = extract_state(env.data, env._p0)
@@ -239,6 +362,27 @@ def _eval_episodes(env, act_fn, cmds):
             "vel_err": float(info.get("vel_err", 9.9)),
             "head_err_deg": float(info.get("head_err_deg", 180.0)),
             "drift_m": float(np.hypot(s.e_lon, s.e_lat)),
+            # The same three quantities over the WHOLE episode. The keys
+            # above stay last-step so every metrics block already written
+            # into moves/*.yaml remains comparable -- same convention as
+            # `vel_err` vs `vel_err_win` in general_env.
+            "head_err_med": float(np.median(heads)) if heads else 180.0,
+            "vel_err_med": float(np.median(vels)) if vels else 9.9,
+            # WORST EXCURSION ONCE SETTLED, over the same _TAIL_S window the
+            # speed and steer numbers use. NOT a whole-episode max: both
+            # commands are STEPS applied at t=0, so head_err starts at |dpsi|
+            # (180 on the 180 commands) and vel_err starts at |v_cmd| (up to
+            # 1.2) no matter how good the policy is. A whole-episode max
+            # measures the command, not the response -- measured at 180.0 for
+            # every policy in the set, which is what retired it.
+            "head_err_tail": float(np.max(heads[-tail:])) if heads else 180.0,
+            "vel_err_tail": float(np.max(vels[-tail:])) if vels else 9.9,
+            "drift_max": float(np.max(drifts)) if drifts else 0.0,
+            # SD about the episode's own mean. Read WITH drift_max/drift_m:
+            # a bike rocking back and forth has drift_max well above its
+            # final drift, while one leaving steadily has the two nearly
+            # equal, and the SD says how big the excursion is either way.
+            "drift_sd": float(np.std(drifts)) if drifts else 0.0,
             "steer_deg": float(np.degrees(np.mean(steers))) if steers else 0.0,
             "v_ach": float(np.mean(v_lons)) if v_lons else 0.0,
             # Achieved LATERAL speed. Without it a crab command is scored only
@@ -287,6 +431,13 @@ def _eval_episodes(env, act_fn, cmds):
          "head_err_deg": round(float(np.mean([r["head_err_deg"] for r in rows])), 1),
          "n_eval": n}
     m.update(_behaviour_metrics(rows))
+    # PER-FAMILY, beside the whole-grid scalars rather than in place of them:
+    # `_score` reads survive_rate and track_geo, and re-basing it is a
+    # separate and currently blocked decision. Everything above is unchanged,
+    # so every metrics block already written into moves/*.yaml stays
+    # comparable.
+    m["by_family"] = _by_family(rows)
+
     return m, rows
 
 
@@ -348,6 +499,19 @@ def _behaviour_metrics(rows: list[dict]) -> dict:
     return {
         "drift_m": round(float(np.mean([r["drift_m"] for r in hold])), 3)
                    if hold else float("nan"),
+        # Drift is measured on the HOLD command only, and the 20-command grid
+        # contains exactly one -- so these are one episode, not twenty, and
+        # the time series is the only thing that can say anything about
+        # consistency. `drift_max` well above `drift_m` means it wandered out
+        # and came back; the two nearly equal means it left and kept going.
+        # .get, for the same reason the wing fields below use it: this is a
+        # pure function and callers hand it minimal row dicts.
+        "drift_max": round(float(np.mean([r.get("drift_max", r["drift_m"])
+                                          for r in hold])), 3)
+                     if hold else float("nan"),
+        "drift_sd": round(float(np.mean([r.get("drift_sd", 0.0)
+                                         for r in hold])), 3)
+                    if hold else float("nan"),
         "steer_rest_deg": round(float(np.mean([r["steer_deg"] for r in hold])), 1)
                           if hold else float("nan"),
         "speed_ratio_fwd": round(ratio(fwd), 3),

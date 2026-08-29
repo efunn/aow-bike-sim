@@ -201,20 +201,22 @@ def section_grid(args):
           f"randomization off,\n--ahrs tm151, encoder {enc}.\n")
     print(f"{'policy':{w}}" + "".join(f"{'tau ' + str(t):>30}"
                                       for t in args.taus))
-    print(f"{'':{w}}" + "".join(f"{'score':>8}{'surv':>7}{'head':>8}{'med':>7}"
+    print(f"{'':{w}}" + "".join(f"{'score':>8}{'surv':>7}{'head':>8}{'big':>7}"
                                 for _ in args.taus))
     for name in args.policies:
         line = f"{name:{w}}"
         for tau in args.taus:
-            m, rows = out[(name, tau)]
-            head = np.array([r["head_err_deg"] for r in rows])
+            m, _rows = out[(name, tau)]
             line += (f"{_score(m):>8.3f}{m['survive_rate']:>7.2f}"
-                     f"{head.mean():>7.1f}°{np.median(head):>6.1f}°")
+                     f"{m['head_err_deg']:>7.1f}°"
+                     f"{m['by_family']['turn_big']['head_err_tail']:>6.1f}°")
         print(line)
-    print("\n`med` is the MEDIAN final heading error and is the honest column. "
-          "`head_err_deg`\nis the error at the LAST step of an episode, not a "
-          "time average, so one command\nthe policy gave up on moves a "
-          "20-episode mean by several degrees.")
+    print("\n`head` is the mean of each episode's LAST-STEP heading error and "
+          "is hijacked by\nany single command the policy gave up on. `big` is "
+          "the settled-window heading\nerror on the SIX large-turn commands -- "
+          "the family a whole-grid median cannot\nsee, and where these policies "
+          "actually differ. Full breakdown:\nanalysis/chatter.py, or "
+          "docs/plans/eval-score-rewrite.md section F.")
 
     spread = {n: abs(_score(out[(n, args.taus[0])][0])
                      - _score(out[(n, args.taus[-1])][0]))
