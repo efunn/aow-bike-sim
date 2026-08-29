@@ -1629,53 +1629,100 @@ workstream whose entire point is removing those. Guarded by
 asserts each orientation entry is closer to the sensor than to truth, so it
 cannot be defeated by the error model getting quieter.
 
-**Queued: `config/rl_general_odo_ahrs_pitch.yaml`.** `obs_pitch: true` and
-**18M steps against `rand2`'s 12M**; `w_pitch` left at 0.0 so the observation
-stays a single variable. Observation 15 → 17 wide (pitch, pitch_rate),
-measured. Both working configs carry `w_pitch: 2.0` as well, so the penalty
-demonstrably does not suppress the manoeuvre; the dependency runs one way
-(`obs_pitch` is required BY `w_pitch`, not the reverse), so observing without
-charging is legal.
+**RAN 2026-08-29, AND IT DID NOT WORK.** `general_rl_odo_ahrs_pitch`,
+`obs_pitch: true` alone against `rand2`, 18M steps: **survive_rate 0.60**
+against 1.00, `track_geo` 0.432 against 0.663, and `by_family.turn_big`
+`t_head_s` still **15.0** — it never turns around. Worse everywhere, not
+merely unhelpful.
 
-**The budget is from the learning curves, not a hedge.** Steps to reach
-difficulty 0.95, read off `curriculum/difficulty`:
+**Read it as undertraining, not a verdict.** Steps to difficulty 0.95:
 
-| clean sensors | | dirty sensors | |
-|---|---|---|---|
-| `smooth_diff_pi` | 2.61M | `odo` | 4.29M |
-| `pitch_smooth_diff_pi` | 2.16M | `odo_ahrs` | 7.67M |
-| `glide_pitch_smooth_pi` | 1.56M | `odo_ahrs_rand` | 8.03M |
-| | | `odo_ahrs_rand2` | 7.23M |
+| `rand2` (15 obs) | 7.23M of 12M | 4.8M at full difficulty |
+|---|---|---|
+| `..._pitch` (17 obs) | **~16M of 18M** | **~2M at full difficulty** |
+| truth-trained runs | 1.6–2.6M | ~10M |
 
-**The sensor runs take ~3× longer to reach full difficulty** — getting off the
-0.15 floor alone costs them 0.95–1.26M against 0.39–0.52M. The consequence is
-the budget split: `rand2` spent 7.23M of its 12M on the ramp and got **4.8M at
-full difficulty**, while `pitch_smooth_diff_pi` spent 2.16M and got **9.8M**.
-Twice the exposure — and full difficulty is where the 180° commands live,
-which is the behaviour this arm exists to recover. 7.5M of ramp plus ~10M at
-full difficulty is ~17.5M.
+Two extra observation entries **more than doubled the ramp**, and `eval/score`
+was still climbing at the final eval — the exported checkpoint is 18.0M, the
+last one. The 18M budget was derived assuming a ~7.5M ramp; that assumption
+was wrong.
 
-Independently: **`rand` and `rand2` both recorded their best `eval/score` at
-12.0M** — the last eval, still climbing when the budget ran out. (`odo_ahrs`
-peaked at 6M and `odo` at 9M, so those had headroom; the two most recent did
-not.) Over-running is cheap: `BestByScore` exports the best checkpoint by
-score, not the last. What that does NOT protect against is the `2.7` failure
-in `general-rl-improvements.md` — score rising while chatter doubles, which
-`_score` cannot see — so **check `dsteer²` on the export, not just the
-score.**
+**A sign bug was found and fixed, and it is NOT why the arm failed.**
+`general_env` fed `obs` pitch from `rpy_from_quat`, which is MINUS
+`extract_state`'s convention (balance.py:84), so pitch and pitch_rate were
+both inverted. **Both together**, so the pair stayed coherent — the rate is
+still the derivative of the angle — and a network absorbs a consistent sign
+flip in its first layer. The arm was a fair test in sim. It was a DEPLOYMENT
+bug: `hw/state.set_orientation` writes the AHRS quaternion into `qpos` and
+lets `extract_state` negate it, so the bike would have produced the opposite
+sign to what the policy trained on. Guarded now by
+`test_every_orientation_channel_in_the_obs_comes_from_the_sensor`, which
+asserts the SIGN as well as the source — the original version only checked
+"closer to the sensor than to truth", which a negated channel passes trivially
+by being far from both.
+
+### What the pitch channel is actually for (2026-08-29)
+
+`analysis/pitch_ablation.py` takes the one policy that CAN do the reversal and
+perturbs only its pitch pair, everything else at MuJoCo truth:
+
+| pitch pair | −0.50 | −0.84 | −1.02 | −1.20 m/s | eval grid |
+|---|---|---|---|---|---|
+| normal | 7.8° | 9.1° | 14.5° | 23.0° | 0.866 / 1.00 |
+| **blanked** | 31.4° | **86.4° FELL** | **85.4° FELL** | **84.3° FELL** | 0.816 / 0.95 |
+| **noisy (1.42°)** | 6.9° | 7.7° | 16.4° | 22.1° | 0.676 / 0.95 |
+
+**Blanking brings the backflip back** — same weights, same sensors, one
+channel zeroed, and the same 84–86° as the policies that never had pitch.
+The eval grid barely notices (0.866 → 0.816), which is the signature of a
+NARROW purpose: blanking a general-regulation input would wreck ordinary
+driving. **Noise does not** bring it back; it costs general performance and
+not the flip protection.
+
+**The operative band is 2–8°, not the 80–90° of the flip.** Asking the policy
+for its action twice at every step, once with the real pitch pair and once
+blanked, and binning by the pitch at that step:
+
+| \|pitch\| | 0–1° | 1–2° | 3–5° | 5–8° | 8–20° |
+|---|---|---|---|---|---|
+| mean \|Δaction\| | 0.154 | 1.10 | 1.14 | 1.31 | 1.46 |
+
+Saturated at the full action range by 5–8°, and the policy never lets pitch
+exceed ~22°. **It is catching the front wheel on the way up.** 97% of steps
+sit in the idle band, which is why removing pitch costs so little on the grid.
+
+**That band is where the sensor is worst.** True pitch RMS is 0.481° against
+a 1.418° TM151 error, so the idle band is 3× more noise than signal and the
+onset band is an SNR of 1.4–5.6 — not the ~60 the 80–90° framing implies.
+Detection survives it measurably, because it is a repeated-sample decision
+over the ~0.1–0.5 s the onset takes and the response saturates by 5–8°, so the
+policy only needs "above ~3°". **A low-pass filter on pitch would be actively
+harmful** — it would clean the idle band at the cost of lagging the onset,
+which is the one thing the channel is for.
+
+**Queued: `config/rl_general_odo_ahrs_pitch_w.yaml`** — `obs_pitch: true` AND
+`w_pitch: 2.0`, 20M steps, matching what both truth-trained flicking configs
+carry. The penalty is now chosen on evidence rather than by matching: it
+biases the policy OUT of the 2–8° band rather than requiring it to resolve
+pitch inside it at SNR ~2, which is a different and more robust mechanism than
+the first arm had.
 
 ```sh
-./scripts/rl.sh up general --config config/rl_general_odo_ahrs_pitch.yaml \
-    --run-dir runs/general_rl_odo_ahrs_pitch \
-    --export-name general_rl_odo_ahrs_pitch
+./scripts/rl.sh up general --config config/rl_general_odo_ahrs_pitch_w.yaml \
+    --run-dir runs/general_rl_odo_ahrs_pitch_w \
+    --export-name general_rl_odo_ahrs_pitch_w
 ```
 
-**The bar is not score.** `rand2` completes 0 of the 3 moving reversals;
-anything above 0 confirms it. Score should barely move — 3 commands in 20 — so
-read `by_family.turn_big`, and read `survive_rate` WITH `t_head_s`. If flicks
-do not come back, the next arm adds `w_pitch: 2.0` and matches the working
-configs exactly — and it now has a specific rationale rather than a matching
-one: `w_pitch` prices the wheelie that ends the episode.
+**Read `curriculum/difficulty` before the score.** If the ramp repeats at ~16M,
+20M buys only 4M at full difficulty and the result is inconclusive whatever
+`w_pitch` did. Bar is unchanged: `rand2` and the first arm both complete 0 of
+the 3 moving reversals, so anything above 0 confirms it — read
+`by_family.turn_big`, and read `survive_rate` WITH `t_head_s`.
+
+**What is now given up:** the first arm was meant to be the single-variable
+test of `obs_pitch` alone. It failed for budget reasons, so that test was
+never really run, and this arm changes two things at once. If it works we will
+not know whether observing alone would have sufficed.
 
 ### The ideal-sensor reference — what the eval looks like with no sensors
 

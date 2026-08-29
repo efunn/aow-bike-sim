@@ -1,138 +1,65 @@
-# RAN 2026-08-29, AND IT DID NOT WORK. general_rl_odo_ahrs_pitch came back at
+# obs_pitch + w_pitch ON THE SENSOR LINE. Two lines changed from
+# rl_general_odo_ahrs_rand2.yaml, and a budget bump. This is the SECOND arm;
+# the first (rl_general_odo_ahrs_pitch.yaml, obs_pitch alone) ran 18M and did
+# not restore the reversal.
+#
+# WHAT THE FIRST ARM RETURNED, 2026-08-29. general_rl_odo_ahrs_pitch:
 # survive_rate 0.60 against rand2's 1.00, track_geo 0.432 against 0.663, and
-# by_family.turn_big t_head_s still 15.0 -- it never turns around.
+# by_family.turn_big t_head_s still 15.0 -- it never turns around. It is worse
+# everywhere, not merely unhelpful.
 #
-# READ IT AS UNDERTRAINING, NOT A VERDICT. Steps to difficulty 0.95: rand2
-# 7.23M, this 16M of its 18M. Two extra observation entries more than DOUBLED
-# the ramp, leaving ~2M at full difficulty against rand2's 4.8M, and
-# eval/score was still climbing at the final eval (the exported checkpoint is
-# 18.0M, the last one). The 18M figure below was derived assuming a ~7.5M
-# ramp; that assumption was wrong.
+# WHY THAT IS UNDERTRAINING AND NOT A VERDICT. Steps to difficulty 0.95:
+# rand2 7.23M, this arm ~16M of its 18M. Two extra observation entries more
+# than DOUBLED the ramp, leaving ~2M steps at full difficulty against rand2's
+# 4.8M and the truth-trained runs' ~10M, and eval/score was still climbing at
+# the last eval (best model exported from 18.0M, the final one). The 18M
+# budget was derived assuming a ~7.5M ramp; it was not.
 #
-# A sign bug in general_env fed this run INVERTED pitch and pitch_rate. Both
+# A SIGN BUG WAS ALSO FOUND AND FIXED, AND IT IS NOT WHY THE ARM FAILED.
+# general_env fed obs pitch from rpy_from_quat, which is MINUS extract_state's
+# convention (balance.py:84), so pitch and pitch_rate were both inverted. Both
 # were inverted together, so the pair stayed coherent and a network absorbs a
-# consistent sign flip -- this was still a fair test in sim. It was a
-# DEPLOYMENT bug and is fixed; see the successor config.
+# consistent sign flip in its first layer -- the arm was a fair test in sim.
+# It was a DEPLOYMENT bug: hw/state.set_orientation writes the AHRS quaternion
+# into qpos and lets extract_state negate it, so the bike would have produced
+# the opposite sign to what that policy trained on. Fixed, and guarded by
+# test_every_orientation_channel_in_the_obs_comes_from_the_sensor, which now
+# asserts the sign and not only the source.
 #
-# SUCCEEDED BY config/rl_general_odo_ahrs_pitch_w.yaml -- w_pitch: 2.0 and 20M.
+# WHY w_pitch: 2.0 NOW, measured rather than matched. analysis/pitch_ablation.py
+# takes the one policy that CAN do the reversal and perturbs only its pitch
+# pair, everything else at truth:
 #
-# ---------------------------------------------------------------------------
+#   normal   -0.50: 7.8 deg   -0.84:  9.1   -1.02: 14.5   -1.20: 23.0    0.866/1.00
+#   blank           31.4       86.4 FELL     85.4 FELL     84.3 FELL     0.816/0.95
+#   noisy            6.9        7.7          16.4          22.1          0.676/0.95
 #
-# obs_pitch: true ON THE SENSOR LINE. One line changed from
-# rl_general_odo_ahrs_rand2.yaml, and it is a REGRESSION FIX, not a new idea.
+# Blanking the channel brings the backflip back at the same speeds and the
+# same 84-86 deg as the policies that never had pitch, while costing the eval
+# grid almost nothing -- a NARROW purpose, not general regulation. And the
+# operative band is 2-8 deg, not the 80-90 of the flip: asking the policy
+# twice at every step, the action difference is 0.154 of a bound below 1 deg,
+# 1.10 by 1-2 deg, and saturated by 5-8. It catches the front wheel on the way
+# up.
 #
-# WHAT WAS FOUND, 2026-08-29. The odo/ahrs line cannot turn around. Every
-# policy in it -- odo, odo_ahrs, tau019, rand, rand2 -- fails the moving 180
-# commands, and NOT by falling: it drives BACKWARDS at ~0.8 m/s and declines
-# to turn. general_rl_odo_ahrs_rand2 on (0.804, 0, 180) reads vel_err 0.091
-# with a heading error of 175.6 deg and v_ach -0.843. The command is a
-# world-frame velocity vector plus a heading, so reversing satisfies the
-# velocity half exactly while abandoning the other, and `track` is
-# 0.5 * (r_vel + r_head) -- half marks, none of the risk.
+# That band is where the sensor is worst. True pitch RMS is 0.481 deg against
+# a 1.418 deg TM151 error, so the idle band is 3x more noise than signal and
+# the onset band is an SNR of 1.4-5.6. The measurement above says detection
+# survives it -- but a PENALTY does not need detection at all: w_pitch biases
+# the policy out of the band rather than requiring it to resolve pitch inside
+# it. That is a different and more robust mechanism than the first arm had,
+# and it is what both truth-trained flicking configs carry.
 #
-# IT IS THE OBSERVATION, NOT THE SENSORS AND NOT THE BUDGET. On MuJoCo truth,
-# turn_big commands completed (reached 10 deg and survived), 2026-08-29:
+# 20M STEPS. If the ramp repeats at ~16M this still only buys 4M at full
+# difficulty and the result will be inconclusive -- read
+# curriculum/difficulty before reading the score.
 #
-#   policy                          obs_pitch  steps  completed  v_ach moving
-#   general_rl_smooth_diff_pi         false      11M     3/6      -0.85 -0.76 -0.69
-#   general_rl_pitch_smooth_diff_pi   true       12M     6/6      +0.79 +0.70 +0.65
-#   general_rl_glide_pitch_smooth_pi  true        5M     6/6      +0.81 +0.58 +0.60
-#   general_rl_nolat                  false       9M     3/6      -0.82 -0.70 -0.76
+# BAR: rand2 completes 0 of the 3 moving reversals; so did the first arm.
+# Anything above 0 confirms it. 3 commands in 20, so read by_family.turn_big,
+# and read survive_rate WITH t_head_s -- a policy that declines the turn
+# cannot fall doing it.
 #
-# Perfect separation on obs_pitch, and the SIGN OF v_ach is the tell: pitch
-# policies turn round and drive forward, pitchless ones reverse. Training
-# length is ruled out within this set -- 5M with pitch beat 11M without.
-# Sensor accuracy is ruled out as sufficient -- all four ran on truth and two
-# still failed. And this is not a new discovery so much as a rediscovery:
-# pitch is what solved the flicks on the old policies, and eight configs in
-# the glide_pitch/pitch_smooth_diff family carry obs_pitch: true.
-#
-# HOW IT WAS LOST. The sensor workstream forked off rl_general.yaml, the
-# pre-pitch trunk, rather than off the pitch line, and inherited
-# obs_pitch: false BY OMISSION -- rl_general_odo.yaml, rl_general_odo_ahrs.yaml
-# and rl_general_odo_ahrs_rand2.yaml never mention it. Nothing flagged it,
-# because the whole-grid eval median cannot see a failure in 3 of 20 commands.
-#
-# THE MECHANISM, and it is not "pitch helps". WITHOUT PITCH THE MANOEUVRE ENDS
-# THE EPISODE. analysis/reverse_flip.py sets up the case the eval grid cannot
-# -- reverse until the speed is established, then snap the heading 180, which
-# is what the teleop `8` key does -- and records the peak pitch:
-#
-#   policy                            -0.50   -0.84    -1.02    -1.20  m/s
-#   general_rl_odo_ahrs               13.0    86.9 X   85.7 X   81.8 X
-#   general_rl_odo_ahrs_rand2          7.2    31.9     87.6 X   (fell first)
-#   general_rl_smooth_diff_pi         16.8    50.0     82.7 X   11.3 X
-#   general_rl_pitch_smooth_diff_pi    7.8     9.1     14.5     23.0
-#
-# 80-90 deg of pitch is the bike over backwards. Every policy without
-# obs_pitch flips above ~0.84 m/s of reverse; the one with it never exceeds 23
-# deg at any reverse speed up to v_max and never falls. So the pitchless
-# policies are not failing to turn -- they have correctly learned that
-# attempting it from a reverse ends the episode, and the reversing-with-a-175-
-# deg-heading-error behaviour the eval sees is the AVOIDANCE, not the failure.
-#
-# The eval grid cannot see any of this: its 180 commands start from REST, so
-# the bike never reaches the reversing state that triggers the flip.
-#
-# THE PITCH THE POLICY SEES IS THE SENSOR'S, as of 2026-08-29 and not before.
-# `_obs` used to decode the corrupted AHRS quaternion and DISCARD its pitch,
-# feeding s.pitch from the model instead -- so obs_pitch meant "TM151 roll,
-# perfect truth pitch". Training this arm against that would have produced a
-# policy leaning on a signal the bike does not have, which is the exact defect
-# this workstream exists to remove. Both pitch and pitch_rate now come from
-# the sensor. Guarded by
-# test_every_orientation_channel_in_the_obs_comes_from_the_sensor.
-#
-# WHY obs_pitch ALONE, without w_pitch. Both working configs carry
-# obs_pitch: true AND w_pitch: 2.0, so the penalty demonstrably does not
-# suppress the manoeuvre. But the dependency runs one way -- obs_pitch is
-# REQUIRED BY w_pitch, not the reverse -- so observing without charging is
-# legal, and it keeps this to ONE variable against rand2. If flicks do not
-# come back, the next arm adds w_pitch: 2.0 and matches the working configs
-# exactly -- and it now has a specific rationale rather than a matching one:
-# w_pitch prices the wheelie that ends the episode, which is exactly the event
-# reverse_flip.py measures.
-#
-# 18M STEPS, NOT 12M, AND THE CURVES SAY WHY. Steps to reach difficulty 0.95,
-# from curriculum/difficulty in runs/*/PPO_*:
-#
-#   CLEAN  smooth_diff_pi         2.61M      DIRTY  odo             4.29M
-#   CLEAN  pitch_smooth_diff_pi   2.16M      DIRTY  odo_ahrs        7.67M
-#   CLEAN  glide_pitch_smooth_pi  1.56M      DIRTY  odo_ahrs_rand   8.03M
-#                                            DIRTY  odo_ahrs_rand2  7.23M
-#
-# The sensor runs take ~3x longer to reach full difficulty -- getting off the
-# 0.15 floor alone costs them 0.95-1.26M against 0.39-0.52M. The consequence
-# is the BUDGET SPLIT: rand2 spent 7.23M of its 12M on the ramp and got 4.8M
-# at full difficulty, while pitch_smooth_diff_pi spent 2.16M and got 9.8M.
-# Twice the exposure -- and full difficulty is where the 180 commands live,
-# which is the behaviour this arm exists to recover. 7.5M of ramp plus ~10M at
-# full difficulty is ~17.5M; 18M rounds it.
-#
-# Second, independent: general_rl_odo_ahrs_rand and _rand2 both recorded their
-# BEST eval/score at 12.0M -- the last eval, still climbing when the budget
-# ran out. (odo_ahrs peaked at 6M and odo at 9M, so those had headroom; the
-# two most recent did not.) Note this arm adds two observation entries, which
-# historically slows the ramp rather than speeding it.
-#
-# The risk of over-running is low: BestByScore exports the best checkpoint by
-# score, not the last, so a longer budget costs wall clock and not quality.
-# What it does NOT protect against is the `2.7` failure in
-# general-rl-improvements.md -- score rising while chatter doubles, which
-# _score cannot see. Check dsteer^2 on the export, not just the score.
-#
-# THE BAR. rand2 completes 0 of the 3 moving reversals. Anything above 0 is
-# the hypothesis confirmed. Score is expected to move little either way --
-# 3 of 20 commands -- so DO NOT read this arm on score alone; read
-# by_family.turn_big, and read survive_rate WITH t_head_s, because a policy
-# that declines the turn cannot fall doing it.
-#
-# Observation goes 15 -> 17 wide, measured (pitch and pitch_rate). NOT 19 --
-# that is the glide_pitch arm, which had other options on. Width is not the
-# contract anyway: the move yaml records obs_layout and replay compares it
-# element-wise, so a policy trained here will not load against a 15-wide env.
-#
-# ---- everything below is rl_general_odo_ahrs_rand2.yaml, unchanged ---------
+# ---- everything below is rl_general_odo_ahrs_pitch.yaml, unchanged ---------
 #
 # THE RANGES, TIGHTENED ONTO THE MEASUREMENT. Second attempt at randomising
 # the AHRS error parameters, after rl_general_odo_ahrs_rand failed.
@@ -270,10 +197,10 @@
 
 algo:
   algorithm: PPO
-  total_timesteps: 18000000   # 12M -> 18M. NOT a hedge: the sensor runs spend
+  total_timesteps: 20000000   # 18M -> 20M. See the header: the first arm's
                               #   most of the budget on the curriculum RAMP,
-                              #   and the behaviour this arm is chasing only
-                              #   exists at full difficulty. See the header.
+                              #   ramp took ~16M, not the ~7.5M the 18M
+                              #   figure assumed.
   n_envs: 32    # was 8
   learning_rate: 3.0e-4
   n_steps: 512 # was 2048  -> 32 x 512 = 16384, unchanged
@@ -343,6 +270,11 @@ reward:
   sigma_v: 0.35          # [m/s] tracking tolerance scale
   sigma_psi_deg: 25.0    # heading tolerance scale
   w_upright: 0.5
+  # THE SECOND LINE THIS ARM CHANGES. Prices the wheelie that ends the
+  # episode, which analysis/reverse_flip.py measures directly. REQUIRES
+  # obs_pitch, set above -- charging for state the policy cannot see is a
+  # known defect.
+  w_pitch: 2.0
   w_effort: 0.001
   # [steer_rate, hub, diff]. One number here would price all three alike
   # (the historical form); the list is what lets `diff` be asked a separate
