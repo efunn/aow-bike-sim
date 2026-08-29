@@ -265,11 +265,11 @@ def main() -> int:
         elif t[-1] < 100 * tau:
             note += (f"  <- CAPTURE TOO SHORT: want ~{100*tau:.0f} s "
                      f"for tau {tau:.1f}")
-    print(f"  {'roll error tau [s]  <- THE GUESS':32}{tau_s:>12}"
+    print(f"  {'roll error tau [s]':32}{tau_s:>12}"
           f"{TAU_ORIENT_S:>12.2f}  {note}")
     if tau is not None and abs(tau - TAU_ORIENT_S) < 2 * tau_sd:
-        print(f"  {'':32}{'':12}{'':12}  the 2.0 s guess is inside "
-              f"2 sigma of this -- consistent, not confirmed")
+        print(f"  {'':32}{'':12}{'':12}  sim_ahrs.TAU_ORIENT_S "
+              f"({TAU_ORIENT_S:g} s) is inside 2 sigma of this measurement")
 
     drift = float(np.polyfit(t, np.unwrap(np.radians(rpy[:, 2])) * 180 / np.pi,
                              1)[0]) * 60.0
@@ -299,7 +299,7 @@ def main() -> int:
 
     ax[1].plot(lags, ac, lw=1.2, label="measured roll-error autocorrelation")
     ax[1].plot(lags, np.exp(-lags / TAU_ORIENT_S), "r--", lw=1.0,
-               label=f"sim_ahrs GUESS, tau={TAU_ORIENT_S} s")
+               label=f"sim_ahrs.TAU_ORIENT_S, tau={TAU_ORIENT_S} s")
     if tau:
         ax[1].plot(lags, np.exp(-lags / tau), "g-", lw=1.0,
                    label=f"measured tau={tau:.2f} s")
@@ -323,7 +323,7 @@ def main() -> int:
     f, P = _welch(roll_err, hz)
     ax[3].loglog(f, P, lw=0.9, label="roll error")
     ax[3].axvline(1 / (2 * np.pi * TAU_ORIENT_S), color="r", ls="--", lw=0.9,
-                  label=f"corner of the tau={TAU_ORIENT_S} s guess")
+                  label=f"corner of tau={TAU_ORIENT_S} s")
     if tau:
         ax[3].axvline(1 / (2 * np.pi * tau), color="g", ls="--", lw=0.9,
                       label=f"corner of the measured tau={tau:.2f} s")

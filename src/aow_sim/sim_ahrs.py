@@ -116,12 +116,23 @@ TAU WAS A GUESS AND IS NOW MEASURED -- 0.19 +- 0.01 s, from 300 s of a real
 TM151 sitting still (`analysis/tm151_check.py`, exponential fit r2 0.999). The
 guess was 2.0 s, so the SHAPE was right and the timescale was 10x wrong.
 
-`TAU_ORIENT_S` IS DELIBERATELY STILL 2.0. Changing it would silently reprice
-`general_rl_odo_ahrs`, which trained against 2.0 and is partly specialised to
-it: re-evaluated at 0.19 that policy goes 0.672 / survival 1.00 -> 0.570 / 0.95.
-So the constant is a TRAINING CONTRACT, not a best estimate, and moving it is a
-retraining decision rather than an edit. Pass `tau_orient_s` to evaluate at the
-measured value; see docs/status.md for the comparison.
+`TAU_ORIENT_S` IS NOW THE MEASUREMENT, 0.19. It was held at 2.0 for a while on
+the grounds that it was a TRAINING CONTRACT rather than a best estimate --
+moving it silently reprices `general_rl_odo_ahrs`, which trained against 2.0
+and goes 0.672 / survival 1.00 -> 0.570 / 0.95 when re-evaluated at 0.19.
+
+That repricing is now measured rather than feared, and it is small: across
+five policies a 10x move in tau costs at most 0.102 of score, and the policy
+that never trained against an AHRS at all flips MORE eval episodes across tau
+(four) than the one accused of specialising to it (one). The correlation time
+is not a live risk -- see `analysis/ahrs_tau.py` and docs/status.md, "The tau
+question, answered". So the constant is now simply the number the part has.
+
+NOTHING WAS RETRAINED FOR THIS. The four AHRS policies stand as exported and
+are re-scored at the new default. `config/rl_general_odo_ahrs.yaml` pins
+`ahrs_tau_s: 2.0` explicitly so the policy that trained at the guess stays
+reproducible from its own config; the randomised configs draw from a range and
+never touched this default.
 
 And 0.19 s is a RESTING figure. The dynamic correlation time is unmeasured, as
 is the dynamic RMS.
@@ -222,13 +233,17 @@ TM171_STATIC_RMS_DEG = (0.5, 0.5, 0.8)
 
 GRAVITY = 9.81
 
-# Correlation time of the orientation error, seconds. NOT A DATASHEET NUMBER.
-# Chosen as a plausible middle for a gravity-corrected fusion filter and swept
-# rather than trusted. Too short and the error is effectively white, which the
-# controller averages away; too long and it is a constant offset, which it
-# trims out. The damage is in between, which is exactly why this is a GUESS
-# that has to be reported alongside any result that depends on it.
-TAU_ORIENT_S = 2.0
+# Correlation time of the orientation error, seconds. MEASURED: 0.19 +- 0.01
+# from 300 s of a real TM151 at rest, exponential fit r2 0.999
+# (`analysis/tm151_check.py`). Still not a datasheet number, and still a
+# RESTING one -- the dynamic value is unmeasured.
+#
+# The shape of the cost was predicted before it was measured and held up: too
+# short and the error is effectively white, which the controller averages
+# away; too long and it is a constant offset, which it trims out; the damage
+# is a shallow bump in between. `analysis/ahrs_tau.py` measures the whole
+# curve. It was 2.0 (a guess) until 2026-08-28.
+TAU_ORIENT_S = 0.19
 
 # Correlation time of the gyro bias. Also a GUESS. Bias instability is a
 # flicker process; a long-tau Gauss-Markov is the usual tractable stand-in.

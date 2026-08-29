@@ -53,6 +53,7 @@ from aow_sim.build_model import load_params
 from aow_sim.control.flick import MOVES_DIR
 from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 from aow_sim.control.policy import load_policy_npz
+from aow_sim.sim_ahrs import TAU_ORIENT_S
 from aow_sim.sim_odometry import ENCODERS
 from aow_sim.train_general_rl import _eval_episodes, _score, eval_cmds
 from rsa_policies import POLICIES, REPO, env_for, load_general
@@ -158,9 +159,12 @@ def main():
                          "roll_rate and yaw_rate: 'static' the datasheet "
                          "static accuracy (0.5 deg RMS), 'typical' its DYNAMIC "
                          "accuracy (1.5 deg), which is what a moving bike gets")
-    ap.add_argument("--ahrs-tau", type=float, default=2.0,
-                    help="correlation time of the orientation error [s]. NOT a "
-                         "datasheet number -- see sim_ahrs.TAU_ORIENT_S")
+    ap.add_argument("--ahrs-tau", type=float, default=TAU_ORIENT_S,
+                    help="correlation time of the orientation error [s]. "
+                         "Defaults to the MEASURED sim_ahrs.TAU_ORIENT_S "
+                         "(0.19); it was 2.0, a guess, until 2026-08-28, so "
+                         "tables older than that were taken at 2.0. The effect "
+                         "is small either way -- see analysis/ahrs_tau.py")
     ap.add_argument("--ahrs-channels", choices=("both", "orient", "gyro"),
                     default="both",
                     help="attribute the damage: 'orient' corrupts only the "

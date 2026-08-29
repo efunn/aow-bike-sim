@@ -185,9 +185,10 @@ class GeneralEnv(gym.Env):
         # Default "none" so every policy trained before it reproduces.
         self._ahrs = None
         if env.get("ahrs_level", "none") != "none":
-            from ..sim_ahrs import SimAhrs
+            from ..sim_ahrs import TAU_ORIENT_S, SimAhrs
             self._ahrs = SimAhrs(self.model, params, level=env["ahrs_level"],
-                                 tau_orient_s=float(env.get("ahrs_tau_s", 2.0)),
+                                 tau_orient_s=float(env.get("ahrs_tau_s",
+                                                            TAU_ORIENT_S)),
                                  channels=env.get("ahrs_channels", "both"))
         self._ahrs_acc = 0.0        # AHRS clock, used when there is no odometry
         # THE PARAMETERS of the AHRS error, randomised per episode. The

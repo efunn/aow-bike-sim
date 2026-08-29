@@ -111,7 +111,11 @@ env:
   # The two changes from rl_general_odo.yaml.
   odometry_encoder: counts   # 4096 counts/rev, differenced, 25 ms RateFilter
   ahrs_level: tm151          # the part we own, at its DYNAMIC accuracy
-  # ahrs_tau_s: 2.0          # GUESS, not a datasheet number. See sim_ahrs.
+  ahrs_tau_s: 2.0            # PINNED, and no longer the default: this is
+                            # what general_rl_odo_ahrs trained against,
+                            # and sim_ahrs.TAU_ORIENT_S is now the
+                            # measured 0.19. Kept so the export stays
+                            # reproducible from its own config.
   control_rate_hz: 50
   max_episode_s: 15.0    # long: the policy must hold a command, not finish one
   v_max: 1.2             # matches control.drive.v_max in bike_params.yaml
