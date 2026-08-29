@@ -1,0 +1,62 @@
+name: general_rl_odo_ahrs_tau019
+type: rl
+kind: general
+policy_file: general_rl_odo_ahrs_tau019.npz
+params_digest: e1c0d8822373309b
+plant_digest: e1ec36bfa670217e
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.4
+vel_window_s: 0.0
+obs_zero_lat: false
+obs_odometry: true
+odometry_encoder: counts
+obs_pitch: false
+obs_wings: false
+act_wings: false
+obs_swing: false
+act_swing: false
+wing_max_deg: 90.0
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 12000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 5.198787966786966e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.598
+    track_geo: 0.542
+    vel_err: 0.224
+    head_err_deg: 32.0
+    n_eval: 20
+    drift_m: 1.564
+    steer_rest_deg: 5.1
+    speed_ratio_fwd: 0.562
+    speed_ratio_rev: 1.027
+    crab_ratio_left: 0.465
+    crab_ratio_right: 0.622
+    crab_head_err: 67.3
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.172
+  exported_from: best_model.zip

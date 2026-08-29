@@ -9,14 +9,49 @@ those sections at their own date.
 **What moved on 08-28:** `control.general_move` now points at
 `general_rl_odo_ahrs` (the default finally tracks the bike, not the
 simulator); the TM171 was priced for the policy we would actually fly and the
-part ordering turns out to FLIP SIGN with the unmeasured tau; and the AHRS
-error parameters are randomisable per episode, with a config written and the
-run not launched.
+part ordering turns out to FLIP SIGN with the unmeasured tau; the AHRS error
+parameters were made randomisable per episode, trained
+(`general_rl_odo_ahrs_rand`, 12M) — **and that run FAILED**, losing on both
+taus. **Both follow-ups have now landed and the tau question is answered:**
+`..._tau019` (pinned at the measurement) and `..._rand2` (narrow span). The
+answer is that the error's SIZE matters and its CORRELATION TIME does not —
+see "The tau question, answered". `general_rl_odo_ahrs_rand2` is the best
+policy at the measured tau and is nearly tau-invariant.
 
-**Picking this up cold?** Read *In one paragraph*, then the sensor sections
-under the policy standings, then the critical path. The short version: the
-simulator now models the sensors the bike will actually have, that turned out
-to matter enormously, and there is one policy that survives them.
+**This file is the handoff.** There is no separate `HANDOFF-*.md` any more —
+`docs/plans/HANDOFF-2026-08-28.md` was the last one and is superseded by this.
+Read *In one paragraph*, then the sensor sections under the policy standings,
+then the critical path.
+
+The short version: the simulator now models the sensors the bike will actually
+have, and that turned out to matter enormously. **The split is not one good
+policy against the rest — it is TRAINED-AGAINST-THE-SENSORS against not.**
+On the eval grid at `--encoder counts --ahrs tm151`:
+
+| policy | trained against | tau 2.0 | tau 0.19 |
+|---|---|---|---|
+| `smooth_diff_pi` | MuJoCo truth | 0.110 / **0.20** | — |
+| `odo` | velocity estimate only | 0.526 / **0.90** | 0.506 / 0.90 |
+| `odo_ahrs` | estimate + attitude, tau 2.0 | **0.672** / **1.00** | 0.570 / 0.95 |
+| `odo_ahrs_tau019` | estimate + attitude, tau 0.19 | 0.563 / 1.00 | 0.551 / 1.00 |
+| `odo_ahrs_rand` | + attitude randomised, WIDE | 0.480 / **0.85** | 0.457 / 0.75 |
+| `odo_ahrs_rand2` | + attitude randomised, narrow | 0.654 / 1.00 | **0.663** / **1.00** |
+
+Every truth-trained policy falls in four episodes out of five. `odo_ahrs` is
+the best at the tau it trained on; **`odo_ahrs_rand2` is the best at the tau
+the bike actually has, and is the only one that barely moves between the two**
+(spread 0.009 against `odo_ahrs`'s 0.102). `control.general_move` still names
+`odo_ahrs` — moving it is a decision, not a formality, because `odo_ahrs`
+holds heading far better (7.8° against 46.7° at tau 2.0) while `rand2` wins on
+score, velocity error and drift. `odo_ahrs_rand` is the WEAKEST, not a
+co-equal — see the randomisation section for why that run failed.
+
+**Every row here is `--encoder counts`, and that is load-bearing.**
+`general_rl_odo` predates the `odometry_encoder` field, so a grid that does
+not force the encoder scores it on `ideal` — instantaneous joint velocity, no
+quantisation, no RateFilter — and it comes out at 0.649 / 1.00 at tau 0.19,
+apparently beating every AHRS-trained policy. That is a different bike, not a
+result. `analysis/ahrs_tau.py` forces the encoder for this reason.
 
 The design logs under `docs/plans/` are where decisions and
 their reasoning live; this file is the layer on top of them — what is true
@@ -56,7 +91,13 @@ onboard velocity estimate and the TM151's attitude error are both in the loop
 and in training. That was not cosmetic: a policy trained on MuJoCo truth
 survives **0.15** of the eval grid on the real velocity estimate and **0.20**
 with a TM151 attitude, against 1.00 on truth. `general_rl_odo_ahrs`, trained
-against both, holds 1.00. The sensor path was the largest untested sim-to-real
+against both, holds 1.00 — and a first attempt to make that robustness general
+by RANDOMISING the sensor error parameters over a WIDE range
+(`general_rl_odo_ahrs_rand`) came back worse on both taus. Narrowing the range
+fixed it: `general_rl_odo_ahrs_rand2` is the best policy at the measured tau
+and is nearly tau-invariant, so the answer is to span the constant TIGHTLY,
+not to identify it. The sensor path was the
+largest untested sim-to-real
 gap in the project and it is now measured, modelled and trained against —
 including against a real TM151 recorded over USB (`analysis/tm151_*.py`).
 
@@ -1030,12 +1071,15 @@ re-checked after the edit and unmoved. `smooth_diff_pi` stays as the ceiling
 reference — 0.808 / 1.00 on truth is what perfect sensing is worth — reachable
 with `--general` for one session. Keep the number, retire the pointer.
 
-### Which exports match the plant (2026-08-26)
+### Which exports match the plant (2026-08-26, re-counted 08-28)
 
-**8 of 42 exports carry the current `plant_digest` `e1ec36bfa670217e`**:
+**11 of 45 exports carry the current `plant_digest` `e1ec36bfa670217e`**
+(re-counted 2026-08-28, after `..._tau019` and `..._rand2` landed):
 `general_rl_smooth_diff_pi`, `general_rl_pitch_smooth_diff_pi`,
 `general_rl_glide_pitch_smooth_pi`, `general_rl_odo`, `general_rl_odo_ahrs`,
-`general_rl_nolat`, `general_swing_rl`, `general_swing_open_rl`. Another 34
+`general_rl_odo_ahrs_rand`, `general_rl_odo_ahrs_tau019`,
+`general_rl_odo_ahrs_rand2`, `general_rl_nolat`, `general_swing_rl`,
+`general_swing_open_rl`. Another 34
 have no `plant_digest` field at all and predate it.
 
 This supersedes the old reading that "matches the digest" and "drives well"
@@ -1125,6 +1169,11 @@ Gauss-Markov was the right SHAPE (r² 0.999); only the timescale was wrong.
 
 ### THE TAU IT TRAINED ON IS 10x WRONG, AND FOR THIS POLICY THAT MATTERS
 
+**Superseded in part — see "The tau question, answered" below.** The table
+here is still correct; the CONCLUSION drawn from it ("for this policy that
+matters") turned out to overstate a 1-in-20 effect. Kept as written because it
+is the record of a correction, and the correction was itself corrected.
+
 `sim_ahrs.TAU_ORIENT_S` is 2.0 s, a guess. The real part measures **0.19 s**
 (300 s at rest, exponential fit r² 0.999 — see `analysis/tm151_check.py`).
 Re-evaluating at the measured value:
@@ -1185,40 +1234,243 @@ carries essentially all of the TM171 difference; yaw drift and misalignment do
 nothing. So this is a one-parameter question wearing a part-number label,
 which is exactly why randomising that one parameter is the prerequisite.)
 
-### The error PARAMETERS are now randomised (2026-08-28)
+### Randomising the AHRS error parameters — TRIED, AND IT FAILED (2026-08-28)
 
-Built, not yet trained. `sim_ahrs.SimAhrs.set_error_params` re-points the two
-unmeasured parameters, and `general_env.reset` draws them log-uniform per
-episode when `randomization.ahrs_orient_rms_deg_range` and `ahrs_tau_s_range`
-are set. Note what was and was not already random, because that distinction is
-the entire content of the change:
+**The mechanism works and the run lost.** Keep the mechanism; do not repeat the
+ranges.
+
+`sim_ahrs.SimAhrs.set_error_params` re-points the two unmeasured parameters,
+and `general_env.reset` draws them log-uniform per episode when
+`randomization.ahrs_orient_rms_deg_range` and `ahrs_tau_s_range` are set. Note
+what was and was not already random, because that distinction is the entire
+content of the change:
 
 | | randomised before? |
 |---|---|
 | error REALISATION — noise trajectory, misalignment draw, orientation walk | **yes**, fresh seed per episode |
 | the PARAMETERS — orientation RMS, `ahrs_tau_s` | **no**, one fixed value every episode |
 
-Ranges are 0.05–2.0° and 0.1–3.0 s — deliberately not centred on the
-measurements, which are RESTING figures against a datasheet DYNAMIC bound of
-1.5°, i.e. a ~100x span with the true moving value unmeasured inside it. The
-measurement contributes a defensible FLOOR, which it did not have before.
+**The verdict.** `general_rl_odo_ahrs_rand`, 12M steps against
+`config/rl_general_odo_ahrs_rand.yaml` (RMS 0.05–2.0°, tau 0.1–3.0 s). One
+grid, identical seeds, randomization off, `--encoder counts --ahrs tm151`:
 
-**The known exposure**, written down because it is the one way the run can
-quietly fail: log-uniform over 40x puts only **7.8%** of episodes at or above
-the 1.5° design case (37.6% above 0.5°, median 0.32°). If the resulting policy
-comes back robust across tau but worse than `general_rl_odo_ahrs` at `tm151`
-itself, raise the floor to ~0.3° rather than abandoning the log.
+| | tau 2.0 | tau 0.19 |
+|---|---|---|
+| `general_rl_odo_ahrs` | **0.672 / 1.00** | **0.570 / 0.95** |
+| `general_rl_odo_ahrs_rand` | 0.480 / 0.85 | 0.457 / 0.75 |
 
-Ranges live under `randomization:`, not `env:` — a training-time distribution
-rather than part of the observation contract, so an eval with randomization off
-runs at the nominal point and every table above stays comparable. They are read
-by `general_env`, not `DomainRandomizer`, which perturbs the MuJoCo model and
-the sensor is not in the model. Absent keys consume no random numbers, so every
-config predating this reproduces bit for bit (asserted,
+Worse at both taus and worse on SURVIVAL at both, on twice the steps. It *did*
+flatten the score across tau — spread 0.102 → 0.023 — so it is genuinely less
+tau-sensitive, **by being uniformly worse rather than by being robust.**
+Survival degrades more in relative terms (0.85 → 0.75) than the specialised
+policy's (1.00 → 0.95).
+
+**Why, and it was predicted in the config header rather than diagnosed after.**
+Log-uniform over a 40x band puts the MEDIAN episode at **0.32°** and only
+**7.8%** at or above the 1.5° design case. It trained mostly on a sensor
+cleaner than the one it flies. The old header said: *"if the policy comes back
+robust across tau but worse than `general_rl_odo_ahrs` at `tm151` itself, raise
+the floor to ~0.3° rather than abandoning the log."* That is exactly what
+happened.
+
+**And `_score` could not see the damage.** It rose monotonically to the final
+checkpoint — 0.302, 0.410, 0.444, 0.541, 0.579 — while steering chatter
+doubled (`dsteer²` 1.183 against 0.535). `_score` is survival × tracking and
+prices neither chatter nor rest behaviour, so `BestByScore` exported the last
+checkpoint with no way to know. This is the `eval-score-rewrite.md` argument
+reproducing itself on a fresh run, and it is the strongest evidence for it yet.
+
+**A caveat on `steer_rest_deg`, because it misled once already.** It reads 41.7°
+for `_rand` against 2.2°, but it is `mean(|steer|)` over the tail of a SINGLE
+hold episode — the 20-command grid contains exactly one `(0,0,0)`. It therefore
+cannot distinguish a fixed offset from a symmetric saw. Teleop shows the wheel
+mostly pointing straight, which together with the doubled `dsteer²` says
+OSCILLATION, not a cocked wheel. **Read it with `dsteer²`, never alone**, and do
+not quote it as evidence of a resting offset.
+
+**What survives the failure, and is worth keeping:** the ranges live under
+`randomization:`, not `env:` — a training-time distribution rather than part of
+the observation contract, so an eval with randomization off runs at the nominal
+point and every table above stays comparable. They are read by `general_env`,
+not `DomainRandomizer`, which perturbs the MuJoCo model and the sensor is not
+in the model. Absent keys consume no random numbers, so every config predating
+this reproduces bit for bit (asserted,
 `test_absent_ranges_leave_the_rng_stream_untouched`).
 
-Config is `config/rl_general_odo_ahrs_rand.yaml`; the run has NOT been
-launched.
+### The tau question, answered (2026-08-28)
+
+Both configured follow-ups landed. One grid for all five policies —
+`analysis/ahrs_tau.py`, 20 commands, identical seeds, randomization off,
+`--encoder counts --ahrs tm151`:
+
+| policy | trained at tau | eval tau 2.0 | eval tau 0.19 | spread |
+|---|---|---|---|---|
+| `odo_ahrs` | 2.0 (guess) | **0.672 / 1.00** | 0.570 / 0.95 | 0.102 |
+| `odo_ahrs_tau019` | 0.19 (measured) | 0.563 / 1.00 | 0.551 / 1.00 | 0.012 |
+| `odo_ahrs_rand` | 0.1–3.0 (wide) | 0.480 / 0.85 | 0.457 / 0.75 | 0.023 |
+| `odo_ahrs_rand2` | 0.1–0.6 (narrow) | 0.654 / 1.00 | **0.663 / 1.00** | **0.009** |
+| `odo` | never saw an AHRS | 0.526 / 0.90 | 0.506 / 0.90 | 0.020 |
+
+**Against the bars written before the runs.** `tau019`'s bar was *beat 0.570 /
+0.95 at tau 0.19*: it returned **0.551 / 1.00** — missed on score, met on
+survival. Pinning the constant at its measured value bought robustness and
+paid for it in tracking; it is not an improvement. `rand2`'s bar was the
+specialised policy at both taus: it returned **0.654 / 1.00** and **0.663 /
+1.00** — just under at tau 2.0, comfortably over at 0.19, which is the number
+the bike has. **`rand2` is the run that worked**, and it had the better
+training eval of the two as well (its own export block: `track_geo` 0.659
+against `tau019`'s 0.542, `vel_err` 0.175 against 0.224).
+
+**THE CONCLUSION: the AHRS error's SIZE matters enormously and its
+CORRELATION TIME does not.** Training against the error at all is worth ~0.15
+of score and 27° of heading (`odo_ahrs` against `odo`). Moving tau by 10x,
+across four policies, moves score by at most 0.102 and survival by one episode
+in twenty. Four independent reasons this is not an artefact of the grid:
+
+1. **tau cannot change the error's size.** `_gm_step` is a *stationary*
+   Gauss-Markov process — the innovation carries `sqrt(1-a²)` precisely so the
+   standing deviation stays at the level's RMS for every tau. Measured, held
+   still, 60 s at 50 Hz: RMS is flat at ~1.45° from tau 1e-5 to 60 s while the
+   mean step-to-step change goes 1.67° → 0.03°. tau sets the wander rate, full
+   stop.
+2. **Both ends of the range are benign**, as `sim_ahrs.py:236` predicted before
+   any of this was measured: white noise the loop averages away at one end, an
+   offset it trims out at the other. The cost is a shallow interior bump, not a
+   monotone.
+3. **The policy that never saw an AHRS flips MORE episodes than the one
+   accused of specialising.** Per-command, `odo_ahrs` disagrees with itself
+   across tau on exactly one command (cmd 19, a `dpsi 180`) — while
+   `general_rl_odo`, which never trained against an AHRS at all and therefore
+   cannot have learned a timescale, flips **four**, and `odo_ahrs_rand` flips
+   **six**. If these flips measured learned tau specialisation, that ordering
+   would be impossible. They measure marginal episodes moving under a
+   different noise realisation.
+
+   And `odo_ahrs`'s one flip is a `dpsi 180` command, which is already
+   recorded below as an edge case it can fail independent of tau — it lands
+   exactly where the policy was already marginal.
+4. **The heading gap is two episodes, not a trend.** `odo_ahrs` reads 7.8° at
+   tau 2.0 and 17.3° at 0.19, but the MEDIAN is 5.5° against 5.3° — unchanged.
+   The mean is moved by one episode that never turned around at all (172°
+   final error) plus the fall. `head_err_deg` is the error at the LAST step of
+   the episode, not a time average, so a single abandoned command moves a
+   20-episode mean by ~9°.
+
+   **That abandoned episode is cmd 5 (`v_lon 0.80, dpsi 180`), and it is the
+   worst episode for EVERY policy in the table at BOTH taus** — 171–180° of
+   final error in all ten cells. Nothing turns around from 0.8 m/s on a 180°
+   command. It is a shared blind spot of the whole family, not a tau effect
+   and not specific to `odo_ahrs`, and it should not be read as one.
+
+**The model stays and `TAU_ORIENT_S` moves to the measurement: 2.0 → 0.19.**
+An error that jumps independently every control step is not what a fusion
+filter does, the model costs nothing, and 0.19 s has an r² of 0.999 behind it.
+The constant was held at 2.0 as a TRAINING CONTRACT — moving it silently
+reprices `odo_ahrs` — and that repricing is now measured rather than feared:
+0.672 / 1.00 → 0.570 / 0.95 by default, the largest tau sensitivity in the set
+and still one episode in twenty. tau was carried as a live risk to every
+sensor result and it is not one, so the constant is now simply the number the
+part has.
+
+**Nothing was retrained for it.** The four AHRS policies stand as exported and
+are re-scored at the new default. Three consequences to know:
+
+- `config/rl_general_odo_ahrs.yaml` now **pins `ahrs_tau_s: 2.0` explicitly**.
+  It previously relied on the fallback, so moving the default would have
+  silently changed what a re-run of that config trains — the export would no
+  longer be reproducible from its own config. The randomised configs draw from
+  a range and never read the default at all.
+- `general_env` no longer hardcodes `2.0` as its fallback; it reads
+  `TAU_ORIENT_S`.
+- `analysis/chatter.py --ahrs-tau` defaults to `TAU_ORIENT_S` too, so **a
+  chatter table taken after 2026-08-28 is at tau 0.19 unless it says
+  otherwise, and every table in this file dated before that is at 2.0.**
+  Where both are quoted the column headers say which.
+
+**What none of this rests on: a hand-flown demonstration. There isn't one.**
+Every number above is fixed-seed episodes on the eval grid. Attempts to find a
+teleop case failed — the commands that separate the taus are the same ones
+these policies drop at either tau, and `--ahrs-tau 0.19` versus `2.0` is not
+distinguishable by feel. Treat any single flipped episode as an anecdote; the
+seed-noise floor on `score` is about ±0.02, and one episode in twenty is 0.05
+of survival.
+
+**A trap this run walked into, recorded so the next one does not.**
+`general_rl_odo` predates the `odometry_encoder` field, so a grid that does
+not force the encoder silently scores it on `ideal` and it comes out at 0.649
+/ 1.00 at tau 0.19 — apparently the best policy in the set. It is being run on
+a different bike. `analysis/ahrs_tau.py` takes `--encoder` and defaults it to
+`counts` for exactly this reason, and prints which encoder produced the table.
+
+**Still open, and not answered by any of this:** 0.19 s is a RESTING figure.
+The dynamic correlation time is unmeasured, as is the dynamic RMS — and the
+RMS is the half that matters. `rand2`'s narrow span (RMS 0.3–2.0°, tau
+0.1–0.6 s) is the current answer to that ignorance and is the reason it
+generalises across tau at no cost.
+
+### Teleop: an AHRS tau flag, and a reset bug (2026-08-28)
+
+**`run_drive --teleop --ahrs-tau SECONDS`.** Teleop built its `SimAhrs` with
+the module default, so a policy trained at 0.19 was flown at 2.0 with nothing
+saying so. The flag threads a value through `_teleop` into the constructor and
+the startup banner now prints the tau ACTUALLY IN FORCE, calling it a guess
+only when it is the default — a banner that names the wrong constant is worse
+than no banner. `--ahrs-tau 0` is rejected at the parser (`_gm_step` computes
+`exp(-dt/tau)` in plain floats and raises `ZeroDivisionError`); the message
+points at 1e-5 for the white-noise limit. `record.py` builds no `SimAhrs` and
+needed nothing.
+
+The flag exists so the banner can be honest, NOT because tau is a live risk —
+see the section above. Expect no felt difference between 0.19 and 2.0.
+
+**A viewer reset left the heading command standing — in ANALYTIC mode.**
+Backspace rewinds the pose, but `state["psi"]` is operator intent and survives
+it, so the leftover `state["psi"] - state["psi_sent"]` delta reached
+`command_heading` on the next frame and put the analytic controller straight
+into an ARC — a bike that should drive forward from the start pose curved away
+instead. `ensure_mode` now re-anchors the command on the same rewind test the
+trail uses, deferred ONE FRAME because `c._psi` is only re-read from the
+rewound data when `_Base.step` notices the rewind (`balance.py:131`); zeroing
+on the frame the rewind is seen would anchor to the pre-reset heading, which
+is the bug rather than the fix. Covered by
+`test_viewer_reset_re_anchors_the_heading_command`, which fails without it.
+
+**And the one that was actually reported, in GENERAL mode: `c._psi` was
+stale.** Four live captures with `AOW_RESET_DEBUG=1`, every one the same
+shape — bike back at `+0.0°`, the controller still holding the heading it had
+when Backspace was pressed, and `c.mode` still `general`:
+
+| capture | bike_yaw | `c._psi` | `_gen_psi_cmd` | `state["psi"]` |
+|---|---|---|---|---|
+| 1 | +0.0° | **+50.9°** | +171.3° | +171.3° |
+| 2 | +0.0° | **+55.2° → +55.7°** | +50.9° | +50.9° |
+| 3 | +0.0° | **−112.2°** | +190.0° | +190.0° |
+
+`c._psi` is what everything else is anchored to, and it is only re-read from
+the rewound data by `_Base.step`'s own check (`balance.py:131`). On the real
+viewer that had not run by the time `ensure_mode` did — `mode` is still
+`general` in all three, so the re-engage path never fired either. Capture 2 is
+the mechanism in one line: `c._psi` moves +55.2 → +55.7 across two frames,
+tracking the rewound bike incrementally while carrying a constant offset. It
+is an unwrapped accumulator absorbing the rewind as a permanent bias rather
+than resetting through it. So the command came back pointing wherever the bike
+happened to be facing — which is why arrows recover roughly forward and the
+`6`/`7`/`8` snaps flip it to reverse.
+
+`ensure_mode` now calls `c.reset(m, d)` itself on the rewind it detects,
+before anchoring. Covered by
+`test_viewer_reset_re_reads_the_heading_from_the_rewound_data`, which asserts
+after a SINGLE frame — the harness resets synchronously, so `_Base.step` gets
+its chance on the next frame and the command comes right by itself. **That is
+how two earlier attempts at this test passed against broken code**, and why
+the first fix (deferring the re-anchor by one frame to let `_Base.step` do the
+re-read) was exactly backwards: correct in the harness, wrong in the viewer.
+
+**Confirmed fixed on a live session** — four resets, including two with speed
+still on, every one reading `c._psi +0.0  gen_cmd +0.0  state_psi +0.0
+v +0.00` with the bike at `+0.0`. The `AOW_RESET_DEBUG` instrumentation that
+found it has been removed; it was three lines gated on an env var, and the
+captures it produced are the tables above.
 
 ### The sensor modes are now a test (2026-08-28)
 
@@ -1377,21 +1629,33 @@ Two tracks. The sim track does not wait on the build.
    (`general_rl_odo_ahrs`), so the question is no longer "which of two bad
    options" but whether the default should track the bike or the simulator.
 
-2. **RANDOMISE the AHRS error rather than pinning it — BUILT 2026-08-28, run
-   not launched.** `odo_ahrs` trained at `ahrs_tau_s` 2.0 and gives back half
-   its gain at the measured 0.19 (see the standings); `ahrs_level` was likewise
-   one fixed RMS. Both are now per-episode log-uniform draws — see "The error
-   PARAMETERS are now randomised" above for the ranges and the known exposure.
-   `config/rl_general_odo_ahrs_rand.yaml`, 12 M steps, launch with
+2. **DONE AND IT FAILED — randomising the AHRS error lost to pinning it.**
+   `general_rl_odo_ahrs_rand` is worse at both taus and worse on survival at
+   both, on twice the steps (0.480/0.85 and 0.457/0.75 against 0.672/1.00 and
+   0.570/0.95). See "Randomising the AHRS error parameters" above for the
+   diagnosis — the range was centred wrong, and `_score` could not see the
+   damage it did.
+
+   **Both follow-up runs have now landed and the question is closed** — see
+   "The tau question, answered". `..._rand2` (the narrow span) is the one that
+   worked: 0.663 / 1.00 at the measured tau against `odo_ahrs`'s 0.570 / 0.95,
+   and a score spread across tau of 0.009 against 0.102. `..._tau019` (pinning
+   the measured value) bought survival and lost tracking, and is not an
+   improvement. The commands that produced them:
 
    ```sh
-   ./scripts/rl.sh up general --config config/rl_general_odo_ahrs_rand.yaml \
-       --run-dir runs/general_rl_odo_ahrs_rand \
-       --export-name general_rl_odo_ahrs_rand
+   ./scripts/rl.sh up general --config config/rl_general_odo_ahrs_tau019.yaml \
+       --run-dir runs/general_rl_odo_ahrs_tau019 \
+       --export-name general_rl_odo_ahrs_tau019
+   ./scripts/rl.sh up general --config config/rl_general_odo_ahrs_rand2.yaml \
+       --run-dir runs/general_rl_odo_ahrs_rand2 \
+       --export-name general_rl_odo_ahrs_rand2
    ```
 
-   It also gates the TM171 purchasing question, whose answer currently flips
-   sign with tau.
+   Run the second ONLY if the first does not settle it. Randomising is the
+   fallback for a parameter that stays unknown, not the default — and the
+   TM171 purchasing question, whose answer currently flips sign with tau, is
+   gated on whichever one wins.
 3. **Fix the eval score before spending another long run.** `_score =
    survive_rate × track` rose monotonically across exactly the span in which
    the 12M `smooth_bouncy_lat` run lost forward drive entirely, so `BestByScore`
