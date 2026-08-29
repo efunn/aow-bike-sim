@@ -317,6 +317,21 @@ def fastest_circle(model, params, eq_qpos, radius,
     return best
 
 
+def _ahrs_tau(text: str) -> float:
+    """A strictly positive correlation time.
+
+    tau = 0 is the white-noise limit in prose but a ZeroDivisionError in
+    `_gm_step`, which computes exp(-dt/tau) in plain floats. Reject it here
+    with the workaround rather than special-casing the shared error model.
+    """
+    tau = float(text)
+    if tau <= 0.0:
+        raise argparse.ArgumentTypeError(
+            f"--ahrs-tau must be > 0, got {tau:g}. For the white-noise limit "
+            f"pass something far below the 0.02 s control step, e.g. 1e-5.")
+    return tau
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--params", default=None)
@@ -345,6 +360,19 @@ def main() -> None:
                          "turned on separately. Expect this to be the one you "
                          "feel -- 1.5 deg RMS against a bike that holds 0.2-3.3 "
                          "deg of roll.")
+    ap.add_argument("--ahrs-tau", type=_ahrs_tau, default=None, metavar="SECONDS",
+                    help="orientation error correlation time [s] under --ahrs. "
+                         "Default is sim_ahrs.TAU_ORIENT_S, which is now "
+                         "the MEASURED 0.19 (it was 2.0, a guess, until "
+                         "2026-08-28). Changes the "
+                         "error's TIMESCALE ONLY, never its size -- the "
+                         "process is stationary at the level's RMS for every "
+                         "tau. Do not expect to FEEL the difference: the "
+                         "measured effect is one episode in twenty on the "
+                         "eval grid and nothing at all by hand (see "
+                         "analysis/ahrs_tau.py). This exists so the banner "
+                         "can tell the truth about what is flying, not "
+                         "because tau is a live risk.")
     ap.add_argument("--odometry-encoder", choices=("ideal", "counts"),
                     default="counts", metavar="MODEL",
                     help="how the wheel encoders are read under --odometry. "
@@ -434,7 +462,8 @@ def main() -> None:
                 swing=args.swing or args.swing_linkage,
                 record=args.record,
                 slowmo_x=args.slowmo, odometry=args.odometry,
-                odometry_encoder=args.odometry_encoder, ahrs=args.ahrs)
+                odometry_encoder=args.odometry_encoder, ahrs=args.ahrs,
+                ahrs_tau=args.ahrs_tau)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1206,7 +1235,7 @@ def _rec_write(rec, path, params, gen_name, mode):
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
             show_ui=False, wings=False, linkage=False, swing=False, record=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
-            ahrs="none"):
+            ahrs="none", ahrs_tau=None):
     from .interactive import teleop_loop
 
     from . import policy_menu
@@ -1223,14 +1252,21 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # make every recorded comparison incomparable.
     ahrs_model = None
     if ahrs != "none":
-        from .sim_ahrs import ORIENT_RMS_DEG, SimAhrs
-        ahrs_model = SimAhrs(model, params, level=ahrs)
+        from .sim_ahrs import ORIENT_RMS_DEG, TAU_ORIENT_S, SimAhrs
+        tau = TAU_ORIENT_S if ahrs_tau is None else ahrs_tau
+        ahrs_model = SimAhrs(model, params, level=ahrs, tau_orient_s=tau)
         r, _p, y = ORIENT_RMS_DEG[ahrs]
+        # Print the tau ACTUALLY IN FORCE and call it a guess only when it is
+        # the default: a policy trained at one tau and flown at another gives
+        # back gain, and a banner that names the wrong one hides exactly that.
+        why = ("sim_ahrs.TAU_ORIENT_S, measured on the part"
+               if ahrs_tau is None else "from --ahrs-tau")
         print(f"AHRS ERROR MODEL ({ahrs}): roll/pitch {r} deg RMS, yaw {y} deg,"
               f"\n  on the ATTITUDE the controller reads. The bike holds "
               f"0.2-3.3 deg of roll, so this is the same size as the signal.\n"
-              f"  Orientation error correlation time is a GUESS "
-              f"(sim_ahrs.TAU_ORIENT_S), not a datasheet number.")
+              f"  Orientation error correlation time is {tau:g} s ({why}) -- "
+              f"the RMS above\n  is what you will feel; the correlation time "
+              f"measurably is not.")
     odo = None
     if odometry:
         from .sim_odometry import SimOdometry
@@ -1302,6 +1338,9 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     cam_mode = ["free"]
     cam_free_pending = [False]   # re-frame free view on the switch INTO it
     lead_armed = [True]          # heading lead clamp; a snap disarms it
+    # Viewer-reset (backspace) detection, the same rewind test the trail
+    # uses. Acted on IMMEDIATELY -- see `ensure_mode` for why not deferred.
+    t_prev = [0.0]
     view = [None]              # the viewer handle, once teleop_loop hands it over
     chassis_id = model.body("chassis").id
     hub_id = model.body("aow_hub").id
@@ -1554,14 +1593,46 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         else:
             gen_name[0] = prev          # keep driving what was working
 
-    def ensure_mode(d):
+    def ensure_mode(m, d):
         """Re-assert the operator's intent after anything resets the
         controller. The viewer's reset rewinds data.time, which makes
         _Base.step call DriveController.reset -> command_line, silently
         dropping the policy; without this the bike comes back under the
-        analytic controller every time you rewind."""
+        analytic controller every time you rewind.
+
+        The rewind also has to CLEAR THE COMMAND. The pose comes back but
+        `state` is operator intent and survives it, so a heading snap (6/7/8)
+        taken before a reset left the bike at the start pose with a 90/180 deg
+        command still standing, and it turned straight back around instead of
+        facing forward.
+
+        THE CONTROLLER IS RESET HERE RATHER THAN WAITING FOR `_Base.step` TO
+        NOTICE. `c._psi` is the heading everything else is anchored to, and it
+        is only re-read from the rewound data by that check (balance.py:131)
+        -- which, on the real threaded viewer, has NOT run by the time this
+        does. Measured on live sessions: bike back at +0.0 deg with `c._psi`
+        still holding +50.9, +55.7, -112.2 on different resets, and `c.mode`
+        still "general", so the re-engage path below never fired either.
+        `c._psi` is an unwrapped accumulator, so it absorbs the rewind as a
+        permanent offset instead of resetting through it -- one capture caught
+        it moving +55.2 -> +55.7 across two frames, tracking the rewound bike
+        while carrying the old bias. Anchoring the command on that is the
+        reported fault: the heading comes back pointing wherever the bike
+        happened to be facing, up to a full 180 deg.
+
+        An earlier version deferred this by one frame to let `_Base.step` do
+        the re-read. That works in `tests/test_teleop.py`, where the reset is
+        synchronous between frames, and does not work in the viewer, where it
+        is not. Do not reintroduce the deferral.
+        """
+        rewound = d.time < t_prev[0]
+        t_prev[0] = float(d.time)
+        if rewound:
+            c.reset(m, d)           # re-read _psi from the REWOUND data
         if state["want_general"] and c.mode != "general":
             engage(d, quiet=True)
+        if rewound:
+            zero_command(d)         # ...then anchor on the fresh heading
 
     def lead_now():
         """Signed heading command lead over the bike, wrapped to +-180."""
@@ -1742,7 +1813,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
 
     def step(m, d):
         apply_camera(d)
-        ensure_mode(d)          # survive viewer resets before reading keys
+        ensure_mode(m, d)       # survive viewer resets before reading keys
         while pending:
             k = pending.pop(0)
             if rec is not None:

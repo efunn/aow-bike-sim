@@ -777,3 +777,82 @@ def test_slowmo_badge_formats_without_trailing_zeros():
         v = FakeView()
         _draw_slowmo_badge(v, factor, [None])
         assert v.texts[0][2] == want
+
+
+def test_viewer_reset_re_anchors_the_heading_command(monkeypatch, model,
+                                                    params, eq_qpos):
+    """Backspace rewinds the POSE; the command is operator intent and does not
+    rewind with it.
+
+    The analytic path is where this shows: nothing else re-anchors it there.
+    `_Base.step` notices the rewind and calls `command_line`, which points the
+    path at the bike again -- and then teleop's own leftover
+    `state["psi"] - state["psi_sent"]` delta arrives on the next frame and
+    puts the controller straight back into an ARC, so a bike that should be
+    driving forward from the start pose curves away instead.
+
+    General mode never had this: `ensure_mode` re-engages after the rewind and
+    `engage` already calls `zero_command`. Kept as one test because the fix is
+    in the shared path.
+    """
+    g = _capture(monkeypatch, model, params, eq_qpos, analytic=True)
+    c, m, d = g["c"], g["model"], g["data"]
+    _hold(g, 2.5, UP)
+    _hold(g, 2.5, LEFT)
+
+
+    # What the viewer's own reset does: rewind the clock and the state.
+    mujoco.mj_resetData(m, d)
+    d.qpos[:] = eq_qpos
+    mujoco.mj_forward(m, d)
+    _idle(g, 0.05)
+
+    assert c.mode == "line", \
+        f"the reset left a stale heading delta -- controller went to {c.mode!r}"
+    lead = abs(float(np.arctan2(np.sin(c._psi_path_target - c._psi),
+                                np.cos(c._psi_path_target - c._psi))))
+    assert lead < np.deg2rad(1.0), \
+        f"heading command still leads the bike by {np.degrees(lead):.1f} deg"
+
+
+
+def test_viewer_reset_re_reads_the_heading_from_the_rewound_data(
+        monkeypatch, model, params, eq_qpos):
+    """The command must be anchored on the bike's ACTUAL heading, in ONE frame.
+
+    The reported fault, from a live session with AOW_RESET_DEBUG=1: bike back
+    at +0.0 deg, `c._psi` still holding +50.9 (and +55.7, and -112.2 on other
+    resets), `c.mode` still "general". Nothing had re-read the heading from
+    the rewound data, so anchoring the command on `c._psi` pointed it wherever
+    the bike happened to be facing when Backspace was pressed -- up to a full
+    180 deg.
+
+    Asserted after a SINGLE step, deliberately. The harness resets
+    synchronously, so `_Base.step` gets its chance on the next frame and the
+    command comes right by itself -- which is exactly how the first two
+    attempts at this test passed against broken code. One frame, and no
+    dependence on another component having noticed.
+    """
+    g = _capture(monkeypatch, model, params, eq_qpos)
+    c, m, d = g["c"], g["model"], g["data"]
+    if c.mode != "general":
+        pytest.skip("snap keys are general-mode only and no policy is exported")
+    _hold(g, 2.0, UP)
+    _tap(g, ord("8"), settle=0.05)
+    _idle(g, 2.0)
+    assert abs(c._psi) > np.deg2rad(10), "the bike never turned; test is vacuous"
+
+    mujoco.mj_resetData(m, d)      # exactly what the viewer's Backspace does
+    mujoco.mj_forward(m, d)
+    g["step"](m, d)                # ONE frame
+
+    yaw = float(np.arctan2(d.xmat[1].reshape(3, 3)[1, 0],
+                           d.xmat[1].reshape(3, 3)[0, 0]))
+    assert abs(c._psi - yaw) < np.deg2rad(2.0), (
+        f"c._psi is stale: {np.degrees(c._psi):.1f} deg with the bike at "
+        f"{np.degrees(yaw):.1f} deg")
+    lead = abs(float(np.arctan2(np.sin(c._gen_psi_cmd - yaw),
+                                np.cos(c._gen_psi_cmd - yaw))))
+    assert lead < np.deg2rad(2.0), (
+        f"heading command is {np.degrees(lead):.1f} deg off the bike's actual "
+        f"heading after the reset")
