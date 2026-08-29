@@ -212,14 +212,31 @@ def test_every_orientation_channel_in_the_obs_comes_from_the_sensor(params):
                                         "psi_cmd_rel": 0.0, "difficulty": 1.0})
     zero = np.zeros(env.action_space.shape[0], np.float32)
     err = {k: [0.0, 0.0] for k in ("roll", "pitch")}
+    series = {k: [] for k in ("roll", "pitch", "roll_truth", "pitch_truth")}
     for _ in range(200):
         obs, *_ = env.step(zero)
         s = extract_state(env.data, env._p0)
-        a_roll, a_pitch, _yaw = rpy_from_quat(env._ahrs.latest("ahrs_quat"))
+        a_roll, a_pitch_textbook, _yaw = rpy_from_quat(env._ahrs.latest("ahrs_quat"))
+        # NEGATED: extract_state reports pitch as arcsin(R[2,0]), MINUS the
+        # textbook ZYX pitch rpy_from_quat returns (balance.py:84). Comparing
+        # against the un-negated value is how a sign flip in _obs would pass
+        # this test while feeding the policy the wrong convention.
+        a_pitch = -a_pitch_textbook
         for k, truth, sensor in (("roll", s.roll, a_roll),
                                  ("pitch", s.pitch, a_pitch)):
             err[k][0] += abs(obs[lay.index(k)] - truth)
             err[k][1] += abs(obs[lay.index(k)] - sensor)
+            series[k].append(obs[lay.index(k)])
+            series[k + "_truth"].append(truth)
+
+    # A SIGN FLIP IS NOT CAUGHT by "closer to the sensor than to truth" alone
+    # -- a negated channel is far from both. Assert the sign explicitly.
+    for k in ("roll", "pitch"):
+        c = np.corrcoef(np.array(series[k]), np.array(series[k + "_truth"]))[0, 1]
+        assert c > 0.2, (
+            f"obs `{k}` is ANTI-correlated with the true value (corr {c:+.3f})"
+            f" -- the sensor convention is inverted relative to extract_state,"
+            f" which is what hw/state.set_orientation feeds on the bike.")
 
     for k, (to_truth, to_sensor) in err.items():
         assert to_sensor < to_truth, (

@@ -475,7 +475,17 @@ class GeneralEnv(gym.Env):
         o_roll, o_roll_rate, o_yaw_rate = s.roll, s.roll_rate, self.data.qvel[5]
         o_pitch, o_pitch_rate = s.pitch, s.pitch_rate
         if self._ahrs is not None and self._ahrs._cache is not None:
-            o_roll, o_pitch, _yaw = rpy_from_quat(self._ahrs.latest("ahrs_quat"))
+            o_roll, _p_textbook, _yaw = rpy_from_quat(self._ahrs.latest("ahrs_quat"))
+            # NEGATE THE PITCH. `extract_state` reports pitch as
+            # arcsin(R[2,0]), which is MINUS the textbook ZYX pitch that
+            # `rpy_from_quat` returns, so that nose-up reads positive
+            # (balance.py:84). Roll and yaw agree between the two; pitch does
+            # not. Taking rpy_from_quat's pitch directly -- which this did
+            # from 2026-08-29 until the same day -- feeds the policy the
+            # OPPOSITE SIGN to every other policy's convention and to what
+            # hw/state.set_orientation produces on the bike, which writes the
+            # AHRS quaternion into qpos and lets extract_state negate it.
+            o_pitch = -_p_textbook
             g = self._ahrs.latest("ahrs_gyro")
             o_roll_rate, o_yaw_rate = float(g[0]), float(g[2])
             # PITCH GOES THROUGH THE SENSOR TOO. It did not until 2026-08-29:
@@ -487,7 +497,10 @@ class GeneralEnv(gym.Env):
             # was likewise unused. Found by asking where obs pitch came from,
             # one config edit before a 12M-step run would have trained against
             # it. obs_layout is unchanged, so this is not a spec change.
-            o_pitch_rate = float(g[1])
+            # ...and the rate for the same reason: pitch_rate is -qvel[4]
+            # (balance.py:91), body +Y pointing LEFT, so the raw gyro's middle
+            # axis is also inverted relative to the observation's convention.
+            o_pitch_rate = -float(g[1])
         o_lon, o_lat = s.v_lon, s.v_lat
         if self._odo is not None:
             # Already advanced inside the substep loop; read the value on hold,
