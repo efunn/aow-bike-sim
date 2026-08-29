@@ -180,3 +180,51 @@ def test_the_configured_default_is_a_sensor_trained_policy(params):
     assert getattr(pol, "obs_odometry", False), (
         f"control.general_move names {name!r}, which was trained on MuJoCo "
         "truth. See test_sensor_mode_catches_a_truth_trained_policy.")
+
+
+def test_every_orientation_channel_in_the_obs_comes_from_the_sensor(params):
+    """No observation entry may read MuJoCo truth while an AHRS is configured.
+
+    `obs_pitch` did exactly that until 2026-08-29: `_obs` decoded the corrupted
+    quaternion, DISCARDED its pitch component, and fed the policy `s.pitch`
+    from the model — a perfect signal the bike does not have, in the one
+    workstream whose entire point is to remove those. Roll was routed
+    correctly, so nothing looked wrong. It was found by asking where obs pitch
+    came from, one config edit before a 12M-step run would have trained
+    against it.
+
+    Asserted as "closer to the sensor than to truth" rather than on an
+    absolute error, so it cannot be defeated by the error model getting
+    quieter — the point is WHICH SOURCE the entry follows, not how noisy it is.
+    """
+    import numpy as np
+
+    from aow_sim.control.balance import extract_state
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    from aow_sim.sim_ahrs import rpy_from_quat
+
+    cfg = _load_rl_config(REPO / "config" / "rl_general_odo_ahrs_pitch.yaml")
+    env = GeneralEnv(params, cfg)
+    lay = env.obs_layout
+    assert "pitch" in lay, "config no longer sets obs_pitch; test is vacuous"
+
+    obs, _ = env.reset(seed=3, options={"v_cmd": (0.5, 0.0),
+                                        "psi_cmd_rel": 0.0, "difficulty": 1.0})
+    zero = np.zeros(env.action_space.shape[0], np.float32)
+    err = {k: [0.0, 0.0] for k in ("roll", "pitch")}
+    for _ in range(200):
+        obs, *_ = env.step(zero)
+        s = extract_state(env.data, env._p0)
+        a_roll, a_pitch, _yaw = rpy_from_quat(env._ahrs.latest("ahrs_quat"))
+        for k, truth, sensor in (("roll", s.roll, a_roll),
+                                 ("pitch", s.pitch, a_pitch)):
+            err[k][0] += abs(obs[lay.index(k)] - truth)
+            err[k][1] += abs(obs[lay.index(k)] - sensor)
+
+    for k, (to_truth, to_sensor) in err.items():
+        assert to_sensor < to_truth, (
+            f"obs `{k}` tracks MuJoCo TRUTH, not the AHRS: mean error "
+            f"{np.degrees(to_truth / 200):.3f} deg against truth and "
+            f"{np.degrees(to_sensor / 200):.3f} deg against the sensor. An "
+            f"observation entry reading truth while an AHRS is configured is "
+            f"a signal the bike will not have.")

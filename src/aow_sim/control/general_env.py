@@ -473,10 +473,21 @@ class GeneralEnv(gym.Env):
         # Orientation follows the same rule as velocity: the OBSERVATION gets
         # the sensor, the reward keeps `s`. Entries 0, 1 and 2.
         o_roll, o_roll_rate, o_yaw_rate = s.roll, s.roll_rate, self.data.qvel[5]
+        o_pitch, o_pitch_rate = s.pitch, s.pitch_rate
         if self._ahrs is not None and self._ahrs._cache is not None:
-            o_roll, _pitch, _yaw = rpy_from_quat(self._ahrs.latest("ahrs_quat"))
+            o_roll, o_pitch, _yaw = rpy_from_quat(self._ahrs.latest("ahrs_quat"))
             g = self._ahrs.latest("ahrs_gyro")
             o_roll_rate, o_yaw_rate = float(g[0]), float(g[2])
+            # PITCH GOES THROUGH THE SENSOR TOO. It did not until 2026-08-29:
+            # the quaternion was decoded and the pitch component DISCARDED
+            # (`_pitch`), so an obs_pitch policy read MuJoCo truth for pitch
+            # while reading the corrupted TM151 for roll -- a perfect signal
+            # the bike does not have, in the one workstream whose entire point
+            # is to remove those. The gyro's middle axis is the pitch rate and
+            # was likewise unused. Found by asking where obs pitch came from,
+            # one config edit before a 12M-step run would have trained against
+            # it. obs_layout is unchanged, so this is not a spec change.
+            o_pitch_rate = float(g[1])
         o_lon, o_lat = s.v_lon, s.v_lat
         if self._odo is not None:
             # Already advanced inside the substep loop; read the value on hold,
@@ -496,7 +507,7 @@ class GeneralEnv(gym.Env):
                         float(self.data.qvel[self._sd]),
                         o_lon, o_lat, v_cl, v_ct, psi_err, self._prev_a,
                         zero_lat=self.zero_lat, v_bar=vb,
-                        pitch=(s.pitch, s.pitch_rate) if self.obs_pitch else None,
+                        pitch=(o_pitch, o_pitch_rate) if self.obs_pitch else None,
                         wings=((float(self.data.qpos[self._wj]),
                                 float(self.data.qvel[self._wd]))
                                if (self.obs_wings or self.obs_swing) else None))
