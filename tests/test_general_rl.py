@@ -912,3 +912,84 @@ def test_wings_off_builds_the_wingless_model():
     assert not env.wings and env.model.nu == 3
     assert all("wing" not in env.model.joint(i).name
                for i in range(env.model.njnt))
+
+
+def test_drift_is_decomposed_in_the_commanded_heading_frame():
+    """`drift_m` is a hypot, so it cannot say WHICH failure the drift is.
+
+    Backing out from under itself and sliding sideways are different problems
+    with different fixes and identical `drift_m`. The decomposition is in the
+    COMMANDED-heading frame (+lon along the command, +lat to its left), which
+    is fixed for the episode -- `s.e_lon`/`s.e_lat` are in the live bike-yaw
+    frame and rotate with the thing being measured.
+    """
+    from aow_sim.train_general_rl import _behaviour_metrics
+
+    def hold_row(lon, lat):
+        return {"cmd": (0.0, 0.0, 0), "v_ach": 0.0, "t_head_s": 1.0,
+                "drift_m": float(np.hypot(lon, lat)), "drift_lon": lon,
+                "drift_lat": lat, "steer_deg": 0.0, "track": 0.5,
+                "fell": False, "vel_err": 0.0, "head_err_deg": 0.0,
+                "steps": 750}
+
+    back = _behaviour_metrics([hold_row(-0.9, 0.0)])
+    side = _behaviour_metrics([hold_row(0.0, 0.9)])
+    # Identical under the old metric...
+    assert back["drift_m"] == pytest.approx(side["drift_m"])
+    # ...and distinguishable under the new one.
+    assert back["drift_lon"] == pytest.approx(-0.9)
+    assert back["drift_bearing_deg"] == pytest.approx(180.0)
+    assert side["drift_lat"] == pytest.approx(0.9)
+    assert side["drift_bearing_deg"] == pytest.approx(90.0)
+
+
+def test_drift_decomposition_tolerates_rows_without_it():
+    """`_behaviour_metrics` is pure and callers hand it minimal row dicts."""
+    from aow_sim.train_general_rl import _behaviour_metrics
+    m = _behaviour_metrics([{"cmd": (0.0, 0.0, 0), "v_ach": 0.0,
+                             "t_head_s": 1.0, "drift_m": 0.4, "steer_deg": 0.0,
+                             "track": 0.5, "fell": False, "vel_err": 0.0,
+                             "head_err_deg": 0.0, "steps": 750}])
+    assert m["drift_m"] == pytest.approx(0.4)
+    assert m["drift_lon"] == 0.0 and m["drift_lat"] == 0.0
+
+
+def test_speed_ratio_ignores_commands_that_require_a_turn():
+    """Drive direction is only measurable where no turn is commanded.
+
+    A command is a world velocity plus a heading, so the velocity half is
+    satisfied body-forward (yaw = psi_cmd) OR body-backward (yaw = psi_cmd +
+    180). `general_rl_cmd_curriculum2` on (0.804, 0, -90) turned LEFT +87 deg
+    and reversed, landing within 3 deg of the commanded direction -- a heading
+    failure the old selector scored as -1.009, i.e. as a refusal to drive
+    forward. Six positive rows and three such rows cancelled to +0.027.
+    """
+    from aow_sim.train_general_rl import _behaviour_metrics
+
+    def row(cmd, v_ach):
+        return {"cmd": cmd, "v_ach": v_ach, "t_head_s": 1.0, "drift_m": 0.0,
+                "steer_deg": 0.0, "track": 0.5, "fell": False,
+                "vel_err": 0.0, "head_err_deg": 0.0, "steps": 750}
+
+    m = _behaviour_metrics([
+        row((0.0, 0.0, 0), 0.0),
+        row((0.8, 0.0, 0), 0.8),      # straight forward, on target
+        row((0.8, 0.0, -90), -0.8),   # turned the wrong way and reversed
+        row((-0.5, 0.0, 0), -0.5),    # straight reverse, on target
+        row((-0.5, 0.0, 90), 0.5),    # ditto, on the reverse side
+    ])
+    assert m["speed_ratio_fwd"] == pytest.approx(1.0), "the -90 row must not count"
+    assert m["speed_ratio_rev"] == pytest.approx(1.0), "nor the +90 one"
+
+
+def test_the_eval_env_has_no_ball():
+    """`ball_prob` is training DR and was leaking into the eval, scoring five
+    of twenty commands against an obstacle the metrics never mention."""
+    pytest.importorskip("gymnasium")
+    from aow_sim.build_model import load_params
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    from aow_sim.train_general_rl import _eval_cfg
+    cfg = _load_rl_config("config/rl_general_cmd_curriculum2.yaml")
+    assert cfg["env"]["ball_prob"] > 0.0, "the fixture wants a ball to remove"
+    env = GeneralEnv(load_params(), rl_cfg=_eval_cfg(cfg), seed=0)
+    assert env.ball_prob == 0.0 and env.hockey is False

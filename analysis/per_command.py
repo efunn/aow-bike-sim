@@ -161,6 +161,19 @@ METRICS = {
                  "Read WITH drift_max against drift_m: peak well above final "
                  "means it wandered out and came back, the two nearly equal "
                  "means it left and kept going."),
+    # WHICH WAY it went. `drift_m` is a hypot, so a bike backing out from
+    # under itself and one sliding sideways read identically -- two different
+    # failures with two different fixes. Resolved in the COMMANDED-heading
+    # frame, fixed for the episode, NOT the live bike-yaw frame those e_lon /
+    # e_lat come in: a decomposition that rotates with the thing it measures
+    # cannot report the case where the heading is what went wrong.
+    "drift_lon": ("m", "drift ALONG the commanded heading (+ = forward)",
+                  "Read WITH drift_overshoot: a large |drift_lon| with a "
+                  "large overshoot is out-and-back along the command axis; "
+                  "with overshoot ~0 it left in that direction and stayed."),
+    "drift_lat": ("m", "drift ACROSS the commanded heading (+ = left)",
+                  "A handed policy shows one sign here across every command, "
+                  "which no magnitude metric can express."),
 }
 
 
@@ -203,8 +216,20 @@ def order_and_labels(cmds):
 
 
 def _cfg_for(ahrs, tau):
+    """The eval env's config: randomization off, no ball.
+
+    NO BALL, matching `train_general_rl._eval_cfg`. `ball_prob` is contact
+    -robustness DR for TRAINING and it was leaking into every read-only
+    measurement here -- a quarter of episodes had a ball parked within
+    `ball_place_radius`, deterministic per command (the seed is `10_000 + k`)
+    but arbitrary as to WHICH commands got one. It went unnoticed until one
+    rolled through the `spin +170` panel of an eval video. Shared by
+    `eval_video.py`, so the clips and the bars are the same episodes the
+    metrics describe.
+    """
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
+    cfg = {**cfg, "env": {**cfg["env"], "ball_prob": 0.0}}
     if ahrs != "none":
         cfg = {**cfg, "env": {**cfg["env"], "ahrs_level": ahrs,
                               "ahrs_tau_s": tau, "ahrs_channels": "both"}}

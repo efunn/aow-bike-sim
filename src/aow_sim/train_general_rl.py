@@ -308,7 +308,15 @@ def _eval_cfg(cfg: dict) -> dict:
     """
     env = {**cfg["env"],
            "max_episode_s": float(cfg["env"].get("eval_episode_s",
-                                                 _EVAL_EPISODE_S))}
+                                                 _EVAL_EPISODE_S)),
+           # NO BALL. `ball_prob` is contact-robustness DR for training, and
+           # it had been leaking into the eval: a quarter of episodes had a
+           # ball parked within `ball_place_radius`, deterministic per command
+           # (the seed is `10_000 + k`) but arbitrary as to WHICH commands got
+           # one. So five of twenty rows were scored against an obstacle the
+           # metrics do not mention -- visible only when one rolled through
+           # the `spin +170` panel of an eval video.
+           "ball_prob": 0.0}
     return {**cfg, "env": env,
             "randomization": {**cfg["randomization"], "enabled": False}}
 
@@ -350,6 +358,7 @@ def _eval_episodes(env, act_fn, cmds):
         # World-frame axis the LATERAL command points along, fixed for the
         # episode because psi_cmd is.
         lat_axis = np.array([-np.sin(env._psi_cmd), np.cos(env._psi_cmd)])
+        lon_axis = np.array([np.cos(env._psi_cmd), np.sin(env._psi_cmd)])
         while not done:
             obs, _r, term, trunc, info = env.step(act_fn(obs))
             done = term or trunc
@@ -390,6 +399,22 @@ def _eval_episodes(env, act_fn, cmds):
             "vel_err": float(info.get("vel_err", 9.9)),
             "head_err_deg": float(info.get("head_err_deg", 180.0)),
             "drift_m": float(np.hypot(s.e_lon, s.e_lat)),
+            # WHERE it drifted to, not just how far. `drift_m` is a hypot, so
+            # it throws away the one thing that says WHICH FAILURE this is: a
+            # bike backing out from under itself and one sliding sideways read
+            # identically. `general_rl_cmd_curriculum` holds at 0.93 m and
+            # `..._pitch_w` at 0.18 m, and the magnitudes alone do not say that
+            # the first is almost pure reverse.
+            #
+            # Resolved in the COMMANDED-heading frame, which is fixed for the
+            # episode -- NOT `s.e_lon` / `s.e_lat`, which are in the live
+            # bike-yaw frame. Under a hold the bike is supposed to keep its
+            # heading, but a decomposition that rotates with the thing it is
+            # measuring cannot report the case where it does not. Same axis
+            # convention as `v_lat_net` above: +lon along the command,
+            # +lat to its left.
+            "drift_lon": float((env.data.qpos[:2] - env._p0) @ lon_axis),
+            "drift_lat": float((env.data.qpos[:2] - env._p0) @ lat_axis),
             # The same three quantities over the WHOLE episode. The keys
             # above stay last-step so every metrics block already written
             # into moves/*.yaml remains comparable -- same convention as
@@ -479,8 +504,26 @@ def _behaviour_metrics(rows: list[dict]) -> dict:
         return [r for r in rows if pred(r["cmd"])]
 
     hold = by(lambda c: c[0] == 0 and c[1] == 0 and c[2] == 0)
-    fwd = by(lambda c: c[0] > 0.1)
-    rev = by(lambda c: c[0] < -0.1)
+    # DRIVE DIRECTION IS ONLY MEASURABLE WHERE NO TURN IS COMMANDED. A command
+    # is a world-frame velocity plus a heading, and the velocity half is
+    # satisfied either body-forward (yaw = psi_cmd) or body-backward
+    # (yaw = psi_cmd + 180) -- so `v_ach`'s sign is decided by which way the
+    # policy TURNED, not by whether it will drive forward.
+    #
+    # Measured on `general_rl_cmd_curriculum2`, command (0.804, 0, -90): it
+    # turned LEFT +87 deg and reversed at -0.697, putting its world velocity
+    # within 3 deg of the command. That is a heading failure, and the old
+    # selector scored it -1.009 as though the policy refused to drive forward.
+    # Six of its nine forward rows read +0.79..+0.97 and three read
+    # -0.98..-1.16, which cancelled to `speed_ratio_fwd` +0.027 -- a policy
+    # that drives forward fine, reported as one that does not.
+    #
+    # `abs(c[2]) < 1` keeps only the straight-ahead commands, where forward is
+    # the cheap answer and reversing costs a 180 deg heading error for no
+    # saving. Handedness on the turning commands is `turn_asym`'s job, and the
+    # +-180 group's is `by_family.turn_big`.
+    fwd = by(lambda c: c[0] > 0.1 and abs(c[2]) < 1)
+    rev = by(lambda c: c[0] < -0.1 and abs(c[2]) < 1)
     crab_l = by(lambda c: c[1] > 0.1)
     crab_r = by(lambda c: c[1] < -0.1)
     crab = crab_l + crab_r
@@ -543,6 +586,22 @@ def _behaviour_metrics(rows: list[dict]) -> dict:
     return {
         "drift_m": round(float(np.mean([r["drift_m"] for r in hold])), 3)
                    if hold else float("nan"),
+        # WHICH WAY it drifted, in the commanded-heading frame: +lon is the
+        # direction the bike was pointed, +lat is to its left. `drift_m` is a
+        # hypot and cannot distinguish backing out from sliding sideways --
+        # two different failures with two different fixes. `drift_bearing_deg`
+        # is the same information as one angle: 0 straight ahead, +-180
+        # straight back, +90 to the left.
+        "drift_lon": round(float(np.mean([r.get("drift_lon", 0.0)
+                                          for r in hold])), 3)
+                     if hold else float("nan"),
+        "drift_lat": round(float(np.mean([r.get("drift_lat", 0.0)
+                                          for r in hold])), 3)
+                     if hold else float("nan"),
+        "drift_bearing_deg": round(float(np.degrees(np.arctan2(
+            np.mean([r.get("drift_lat", 0.0) for r in hold]),
+            np.mean([r.get("drift_lon", 0.0) for r in hold])))), 1)
+                             if hold else float("nan"),
         # Drift is measured on the HOLD command only, and the 20-command grid
         # contains exactly one -- so these are one episode, not twenty, and
         # the time series is the only thing that can say anything about
@@ -635,7 +694,8 @@ class BestByScore(BaseCallback):
         m, rows = _eval_episodes(self._env, act, self.cmds)
         score = _score(m)
         keys = ["survive_rate", "track", "track_geo", "vel_err",
-                "head_err_deg", "drift_m", "steer_rest_deg",
+                "head_err_deg", "drift_m", "drift_lon", "drift_lat",
+                "steer_rest_deg",
                 "speed_ratio_fwd", "speed_ratio_rev", "turn_asym"]
         # Only on an arm that HAS a mechanism -- a wingless run would just get
         # two flat zero traces. Both fields are always present in `m`
