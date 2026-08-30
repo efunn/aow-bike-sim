@@ -346,6 +346,47 @@ something that did". §4.4.
 **`Dict` observation space with `MultiInputPolicy`** — rejected on plumbing
 cost for no capability. §4.2.
 
+**Moving the REWARD onto the sensed view instead** — rejected, and it is the
+obvious cheap alternative to §5's ~120 lines, so it is written down before
+someone re-proposes it. It attacks the same problem from §2 — the critic is
+asked to predict a return its input does not contain — by closing the gap from
+the other end: score the reward on `o_roll`/`o_lon`/`o_lat` rather than on `s`,
+and the residual disappears with no code beyond a few lines in
+`general_env.step`.
+
+`pollen-robotics/microduck_rl` states it as a hard invariant (`AGENTS.md`): *"If
+an obs is remapped to a sensor view (backlash encoder, bias), any tracking
+REWARD on the same quantity must measure the same view — otherwise the policy is
+punished for correcting what it sees."* They apply it to encoder bias and to a
+backlash hinge the real encoder reads through, and feed the *unbiased* joint
+position to the critic only.
+
+**It is right for their case and wrong for ours, and the discriminator is
+whether the obs↔truth gap is correctable by the policy.** Their two examples are
+static unobservable offsets: a per-joint encoder bias and gear play are constants
+no policy can perceive or undo, so reward-on-truth is pure advantage noise with
+no upside — nothing is being protected. Ours is a *dynamic estimator* with its
+own lag and correlated error, and there the gap is partly a function of what the
+policy does: an AHRS-scored reward can be satisfied by exciting the estimator
+rather than by balancing the bike. That is the failure `_obs` was written to
+prevent ("THE OBSERVATION gets the estimate; `s` stays TRUTH"), and it is
+load-bearing. §1.
+
+So both changes remove the same noise term, and only one of them keeps the
+anti-gaming property. That is the whole argument for paying §5's code cost
+rather than taking the free version.
+
+The rule does yield one CHECK worth running, though, in the narrow form where
+their case and ours coincide: is there any quantity our reward scores that
+differs from the actor's observation by a per-episode CONSTANT the policy can
+neither perceive nor correct? §2's table is exactly that list — mass, friction
+and actuator-strength scales, AHRS orientation RMS and correlation time — and
+those are the terms this plan hands to the critic. An unobservable *constant*
+has no dynamic component for the policy to game, so for those specifically the
+two approaches are equivalent in safety and the critic route wins only on not
+touching the reward. Where the two diverge is the AHRS's dynamic error, which is
+the part we must keep scoring on truth.
+
 **An observation HISTORY for the actor** (stack the last 5–10 frames) —
 deferred, and it is a genuinely different change: it moves `obs_layout`, the
 move yaml, `control/policy.py`'s replay, `drive.py` and the hardware path,
