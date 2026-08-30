@@ -485,10 +485,26 @@ def _behaviour_metrics(rows: list[dict]) -> dict:
     crab_r = by(lambda c: c[1] < -0.1)
     crab = crab_l + crab_r
 
-    def ratio(sel):     # achieved / commanded longitudinal speed
+    def ratio(sel):     # achieved / commanded longitudinal speed, SIGNED
+        """Signed fraction of the commanded speed achieved.
+
+        The lower clip was 0.0, which floored every wrong-direction policy at
+        exactly 0.000 and threw away the one number that says WHAT it is doing
+        instead. `general_rl_cmd_curriculum` read `speed_ratio_fwd` 0.000 at
+        all twenty of its evals; the value underneath was about -0.4, i.e. it
+        reverses at 40% of the speed it was told to go forward. "Achieves
+        nothing" and "drives the other way at half throttle" are different
+        failures with different fixes, and the floor made them identical.
+
+        Still clipped, at +-1.5: a near-zero command in the denominator would
+        otherwise let one row dominate the mean. Negative now means WRONG
+        DIRECTION, which is why `policy_menu`'s `r > 0.5` test still reads
+        correctly -- it prints the number beside REFUSES, and that number is
+        now informative.
+        """
         if not sel:
             return float("nan")
-        return float(np.mean([np.clip(r["v_ach"] / r["cmd"][0], 0.0, 1.5)
+        return float(np.mean([np.clip(r["v_ach"] / r["cmd"][0], -1.5, 1.5)
                               for r in sel]))
 
     def crab_ratio(sel):  # achieved / commanded LATERAL speed, per side
