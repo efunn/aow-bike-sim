@@ -1,10 +1,11 @@
-# Project status — 2026-08-25, amended 2026-08-29
+# Project status — 2026-08-25, amended 2026-08-30
 
 Midpoint snapshot. **The amendments are partial.** Re-measured and rewritten on
-08-26, 08-27, 08-28 and 08-29: the odometry and AHRS workstreams, the policy
-standings, the eval metrics, the critical path, the red-set numbers, and the
-digest/deploy state. Everything else is still the 08-25 snapshot and has NOT
-been re-checked — read those sections at their own date.
+08-26, 08-27, 08-28, 08-29 and 08-30: the odometry and AHRS workstreams, the
+policy standings, the eval metrics, the command distribution, the critical
+path, the red-set numbers, and the digest/deploy state. Everything else is
+still the 08-25 snapshot and has NOT been re-checked — read those sections at
+their own date.
 
 **What moved on 08-28:** `control.general_move` now points at
 `general_rl_odo_ahrs` (the default finally tracks the bike, not the
@@ -30,6 +31,17 @@ behaves identically — it is `obs_pitch`, which the sensor line inherited as
 `false` by omission from a pre-pitch config and has never had. Pitch is what
 solved the flicks on the old policies. One-line config queued; see "The
 odo/ahrs line cannot turn around".
+
+**What moved on 08-30: the COMMAND side, which nobody had audited.** Every
+amendment above changed what the policy senses. This one measured what it is
+asked to do, and the sampler does not contain the thing the grid scores — the
+eval's `hold` command has probability **zero** at every difficulty the
+curriculum visits, and the family mix inverts as difficulty rises rather than
+staying put. Eval episodes are also now **5 s rather than 15**, which makes
+every `eval_*` number recorded before today non-comparable. Both are written
+up in "The command distribution" below. A curriculum arm
+(`config/rl_general_cmd_curriculum.yaml`) exists and **has not been run** —
+nothing in the standings reflects it.
 
 **This file is the handoff.** There is no separate `HANDOFF-*.md` any more —
 `docs/plans/HANDOFF-2026-08-28.md` was the last one and is superseded by this.
@@ -63,6 +75,11 @@ heading (7.4° against 8.1°) and time-to-heading (1.15 s against 1.40 s);
 17.0°) and much lower chatter. A real split, not the lopsided heading
 advantage the last-step mean implied. See "Typical vs worst" below. `odo_ahrs_rand` is the WEAKEST, not a
 co-equal — see the randomisation section for why that run failed.
+
+**Every row here was measured over 15 s episodes**, which is no longer what an
+eval runs — see "The command distribution". The table stays internally
+comparable (one length throughout) and is NOT comparable to anything measured
+from 08-30 on. Re-run rather than mix.
 
 **Every row here is `--encoder counts`, and that is load-bearing.**
 `general_rl_odo` predates the `odometry_encoder` field, so a grid that does
@@ -161,6 +178,82 @@ collision), and the "linearization takes minutes" belief that justified caching
 the LQR design was wrong by two orders of magnitude (`fff1c96` — it is 0.39 s
 for a single design, 2.0 s with the gain schedule, and every in-sim path
 re-derives it on startup, so it can never be stale).
+
+---
+
+## The command distribution — what training never sampled (2026-08-30)
+
+Every sensor arm changed what the policy *sees*. Nobody had looked at what it
+is *asked to do*. Measured against `general_rl_odo_ahrs_pitch_w`'s own 20M-step
+run, the legacy sampler draws `v_lon` (20% zeroed), a lateral term and a
+heading step, each from its own difficulty-scaled range — so the family a
+command lands in is a **side effect of three ramps interacting**:
+
+| share of draws | d=0.15 | d=0.5 | d=1.0 | eval grid |
+|---|---|---|---|---|
+| in place, ~no turn | 14.1% | 5.6% | 1.4% | 5% |
+| in place, turning | 24.1% | 13.4% | 3.6% | 10% |
+| in place, about-face | 0.0% | 0.0% | 0.2% | **15%** |
+| moving straight | 61.8% | 47.7% | 14.9% | 45% |
+| moving with lateral | 0.0% | 33.3% | **75.7%** | 10% |
+| moving, about-face | 0.0% | 0.0% | 4.1% | 15% |
+
+**The mix inverts.** Straight-line cruise goes 62% → 15% while anything with a
+lateral component goes 0% → 76%, because `v_lat` is a *dither on every draw*
+rather than an occasional crab command — at `v_lat_frac: 0.4` it is ±0.48 m/s
+at full difficulty. **And the in-place families starve** for the same reason:
+hold, spin and about-face all need `v_lat ≈ 0`, which is exactly what the
+sampler stops producing. The eval's `hold` command — every component exactly
+zero, and the only place `drift_m` is defined at all — is **5% of the score and
+0% of the experience**, at every difficulty. `p_v_zero: 0.2` does not reach it:
+it zeroes `v_lon` alone, so what it actually samples is "stop, crab sideways,
+and turn to face somewhere else".
+
+**An earlier reading of this was wrong and is retracted.** `hold_spectrum.py`'s
+airborne columns were used to argue holding is intrinsically hard; those columns
+are the ones `liftoff.py` supersedes as *"actively misleading"* (the rear omni's
+0.6 mm envelope ripple reads as a wheelie). The LQR holds standstill at 1.17°
+peak roll over 40 s and `drive.speed_grid` starts at 0.0, so holding is a solved
+linear problem. The sawing every policy does under a hold command is an
+out-of-distribution symptom, not evidence of difficulty.
+
+**Episode lengths, both ends.** `gamma: 0.99` at 50 Hz is 2.0 s of lookahead
+(1/(1−γ) = 100 steps), and the discounted mass a critic has seen by time T is
+1 − γ^(T/dt):
+
+| segment | horizons | mass seen |
+|---|---|---|
+| 1.5 s (old `resample_s` floor) | 0.75 | **53%** |
+| 4.0 s (old ceiling) | 2.0 | 87% |
+| 6.0 s | 3.0 | 95% |
+| 15 s (old eval) | 7.5 | 99.95% |
+
+The old floor spilled the critic's window past the command change for nearly
+half its mass while the policy was told the command is stationary. And the eval
+held one command for 15 s — 7 horizons of a regime no training command reaches
+— with `_TAIL_S` reading seconds 13–15 specifically.
+
+**Changed.** Eval episodes are now 5 s (`_EVAL_EPISODE_S`, override with
+`env.eval_episode_s`), so the tail window lands at 3–5 s. **Outstanding: every
+`eval_*` in an existing `moves/*.yaml` was measured at 15 s and is not
+comparable — re-run rather than mix.** The saving is incidental: eval is a
+single `GeneralEnv` stepped serially, ~11 s of sim per pass measured at 1,311
+steps/s, 20 passes a run.
+
+**Also measured, not yet acted on:** training resets are ±2° roll / ±5° yaw
+with full randomization and 59% of episodes end in a fall (`success_rate` 0.41
+at 20M); the eval resets clean at 0.5° with randomization off and survives 90%.
+Both numbers are right; they are not the same bike. Read `eval/survive_rate` as
+a clean-room figure.
+
+**The arm.** `config/rl_general_cmd_curriculum.yaml` replaces the mix with four
+explicit weights (`cmd_families`), drops the lateral command entirely
+(`v_lat_frac: 0.0` — crab stays in the eval, deliberately unrepresented),
+widens `resample_s` to `[2.0, 6.0]`, and starts the curriculum at 0 with a pure
+hold stage that ramps out. Opt-in: absent `cmd_families`, the sampler is the
+legacy one bit for bit. **Not yet run.** Watch `curriculum/difficulty` before
+reward — if it sticks near 0 the hold stage is not clearing `advance_score`
+and everything downstream is moot.
 
 ---
 
