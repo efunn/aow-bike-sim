@@ -423,6 +423,56 @@ def test_signed_magnitude_is_two_sided_and_shaped():
     assert np.mean(np.abs(lean)) > np.mean(np.abs(flat)) + 15.0
 
 
+def test_hold_max_keeps_a_motion_command_in_the_mix_at_difficulty_zero():
+    """`hold_max` < 1 is what stops difficulty 0 being a pure standstill.
+
+    Arm 1 ran at 100% hold there, learned a hold drifting backwards at
+    0.192 m/s, and that scores `0.5*(exp(-(0.192/0.35)^2) + 1) = 0.87` against
+    `advance_score: 0.6` -- so the gate certified it and forward motion never
+    appeared in 20M steps. With `straight` in the mix from step 0, clearing the
+    gate needs hub in both directions.
+    """
+    fam = {**_FAMILIES, "hold_max": 0.4,
+           "straight": {"onset": 0.0, "full": 0.0, "weight": 1.5}}
+    env = _env(cmd_families=fam, v_lat_frac=0.0)
+    env.reset(seed=0)
+    at_zero = _draw_families(env, 0.0)
+    assert at_zero["hold"] == pytest.approx(0.4, abs=0.02)
+    assert at_zero["straight"] == pytest.approx(0.6, abs=0.02)
+    # and the d=1 end is untouched by the new knob
+    assert _draw_families(env, 1.0)["hold"] == pytest.approx(0.1, abs=0.02)
+
+
+def test_hold_max_defaults_to_one_so_arm_one_is_unchanged():
+    env = _env(cmd_families=_FAMILIES, v_lat_frac=0.0)
+    env.reset(seed=0)
+    assert env.families["hold_max"] == 1.0
+    assert _draw_families(env, 0.0)["hold"] == 1.0
+
+
+def test_speed_ratio_is_signed_so_a_reversing_policy_is_legible():
+    """The floor at 0.0 made every wrong-direction policy read exactly 0.000.
+
+    `general_rl_cmd_curriculum` reported `speed_ratio_fwd` 0.000 at all twenty
+    evals; underneath it was reversing at ~40% of the commanded forward speed.
+    "Achieves nothing" and "drives the other way" need different fixes.
+    """
+    from aow_sim.train_general_rl import _behaviour_metrics
+
+    def row(cmd, v_ach):
+        return {"cmd": cmd, "v_ach": v_ach, "t_head_s": 1.0, "drift_m": 0.0,
+                "steer_deg": 0.0, "track": 0.5, "fell": False,
+                "vel_err": 0.0, "head_err_deg": 0.0, "steps": 750}
+
+    m = _behaviour_metrics([
+        row((0.0, 0.0, 0), 0.0),
+        row((0.8, 0.0, 0), -0.32),   # told forward, drives BACKWARD
+        row((-0.5, 0.0, 0), -0.5),   # reverse on target
+    ])
+    assert m["speed_ratio_fwd"] == pytest.approx(-0.4)
+    assert m["speed_ratio_rev"] == pytest.approx(1.0)
+
+
 def test_the_family_arm_config_is_wired_end_to_end():
     """The shipped arm must actually select the family sampler."""
     from aow_sim.build_model import load_params

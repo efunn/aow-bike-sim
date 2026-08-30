@@ -151,6 +151,9 @@ class GeneralEnv(gym.Env):
         fam = env.get("cmd_families")
         self.families = None if fam is None else {
             "hold_min": float(fam["hold_min"]),
+            # 1.0 -- a pure-hold difficulty 0 -- is arm 1's behaviour, kept as
+            # the default so that config still describes the run it trained.
+            "hold_max": float(fam.get("hold_max", 1.0)),
             "hold_decay": float(fam["hold_decay"]),
             **{k: (float(fam[k]["onset"]), float(fam[k]["full"]),
                    float(fam[k]["weight"]))
@@ -380,19 +383,36 @@ class GeneralEnv(gym.Env):
         76% while straight-line cruise went 62% -> 15%, and the eval grid's
         in-place families (v_lon 0 AND v_lat 0) were never drawn at all.
 
-        `hold` ramps OUT -- every command is a hold at difficulty 0, decaying
-        to `hold_min`. The other three ramp IN over their own `[onset, full]`
-        windows and share whatever budget hold leaves, in proportion to their
-        `weight`. Before any of them has opened, hold takes the whole budget
-        regardless of `hold_min`, so the early stage is a pure standstill.
+        `hold` ramps OUT, from `hold_max` at difficulty 0 down to `hold_min`.
+        The other three ramp IN over their own `[onset, full]` windows and
+        share whatever budget hold leaves, in proportion to their `weight`.
+
+        `hold_max: 1.0` makes difficulty 0 a PURE standstill stage. Arm 1 ran
+        that way and it is what broke it: the policy learned a hold that
+        drifts backwards at 0.19 m/s, which scores
+        `0.5*(exp(-(0.19/0.35)^2) + 1.0) = 0.87` against `advance_score: 0.6`
+        -- so the gate certified it, the curriculum advanced, and the negative
+        hub bias became structural. Forward motion never appeared in 20M
+        steps. Keeping some `straight` in the mix from step 0 means clearing
+        the gate REQUIRES producing both hub signs, which the bias cannot do.
+
+        A family with `full <= onset` is open at full weight from the start
+        (`d >= full` is tested first), which is how `straight` is asked for at
+        difficulty 0 without inventing a separate knob.
         """
         f = self.families
-        p_hold = f["hold_min"] + (1.0 - f["hold_min"]) * (1.0 - self._diff) ** f["hold_decay"]
+        p_hold = f["hold_min"] + (f["hold_max"] - f["hold_min"]) * (
+            1.0 - self._diff) ** f["hold_decay"]
         raw = []
         for key in ("turn_in_place", "straight", "moving_turn"):
             onset, full, weight = f[key]
-            span = max(full - onset, 1e-9)
-            raw.append(weight * float(np.clip((self._diff - onset) / span, 0.0, 1.0)))
+            if self._diff >= full:
+                frac = 1.0
+            elif self._diff <= onset:
+                frac = 0.0
+            else:
+                frac = (self._diff - onset) / (full - onset)
+            raw.append(weight * frac)
         total = sum(raw)
         if total <= 0.0:
             return 1.0, 0.0, 0.0, 0.0
