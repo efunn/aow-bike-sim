@@ -284,6 +284,34 @@ def _resume_vecnormalize(venv, resume: bool, ckpts: list[Path], vn_path: Path):
 _TAIL_S = 2.0        # steady-state window at the end of an episode [s]
 _HEAD_TOL_DEG = 10.0  # "the turn is done" threshold for turn timing
 
+# Eval episodes are SHORTER than training ones, and the reason is the discount
+# horizon, not cost. `gamma: 0.99` at 50 Hz is 1/(1-g) = 100 steps = 2.0 s of
+# lookahead, and no training command outlives `resample_s`'s ceiling -- so a
+# 15 s eval held one command for ~7 horizons of a regime training never
+# presents, and `_TAIL_S` read the LAST 2 s of exactly that. At 5 s the tail
+# window lands at 3-5 s, inside the training distribution.
+#
+# NOT COMPARABLE ACROSS THE CHANGE: every `eval_*` number recorded in an
+# existing moves/*.yaml was measured over 15 s. Re-run rather than compare.
+# `env.eval_episode_s` overrides, so 15.0 restores the old measurement.
+_EVAL_EPISODE_S = 5.0
+
+
+def _eval_cfg(cfg: dict) -> dict:
+    """The training config as the EVAL env wants it.
+
+    Two changes, in one place because three call sites want both and a fourth
+    will: randomization off (so repeating a command adds nothing), and the
+    shorter episode above. The training `max_episode_s` is deliberately NOT
+    the eval's -- they answer different questions, and sharing the key made
+    the eval silently inherit whatever the curriculum wanted.
+    """
+    env = {**cfg["env"],
+           "max_episode_s": float(cfg["env"].get("eval_episode_s",
+                                                 _EVAL_EPISODE_S))}
+    return {**cfg, "env": env,
+            "randomization": {**cfg["randomization"], "enabled": False}}
+
 
 def _eval_episodes(env, act_fn, cmds):
     """One episode per command point; per-command rows plus aggregates. The
@@ -581,9 +609,7 @@ class BestByScore(BaseCallback):
         if self.eval_freq <= 0 or self.n_calls % self.eval_freq != 0:
             return True
         if self._env is None:      # lazily built; randomization off
-            ecfg = {**self.cfg,
-                    "randomization": {**self.cfg["randomization"], "enabled": False}}
-            self._env = GeneralEnv(self.params, ecfg)
+            self._env = GeneralEnv(self.params, _eval_cfg(self.cfg))
         vn = self.model.get_vec_normalize_env()
 
         def act(obs):
@@ -704,8 +730,7 @@ def _eval(params, cfg, npz_path):
     -> metrics for the move file."""
     from .control.policy import load_policy_npz
     pol = load_policy_npz(npz_path)
-    ecfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
-    env = GeneralEnv(params, ecfg)
+    env = GeneralEnv(params, _eval_cfg(cfg))
 
     # Scales in channel order; the 4th is present only for a wing policy and
     # is sliced off below for any env that does not have the channel.
@@ -821,8 +846,7 @@ def _scan_checkpoints(params, cfg, every=1):
                   key=lambda p: int(p.stem.split("_")[1]))[::every]
     if not zips:
         raise SystemExit(f"no checkpoints in {ckpt}")
-    ecfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
-    env = GeneralEnv(params, ecfg)
+    env = GeneralEnv(params, _eval_cfg(cfg))
     # track_geo / fwd / rev / asym are the columns that separate checkpoints the
     # blended `track` ranked equally: a policy that abandons reverse or turns
     # one-handed shows up here and nowhere else.
