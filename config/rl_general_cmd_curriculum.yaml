@@ -1,0 +1,195 @@
+# THE COMMAND CURRICULUM ARM. Cloned from rl_general_odo_ahrs.yaml, changing
+# WHAT IS COMMANDED rather than what is sensed. Three sensor arms in a row
+# moved the observation; this one leaves it alone (bar `obs_pitch`) and
+# rebuilds the command distribution, because measured 2026-08-30 the old one
+# does not contain the thing the eval grid scores.
+#
+# WHAT WAS MEASURED, against general_rl_odo_ahrs_pitch_w's own 20M-step run.
+# The legacy sampler draws v_lon (20% zeroed), a lateral term, and a heading
+# step, each from its own difficulty-scaled range. The family a command lands
+# in is therefore a SIDE EFFECT of three ramps interacting, and it moves a
+# long way across the curriculum:
+#
+#   share of draws        d=0.15   d=0.5   d=1.0    eval grid
+#   in place, ~no turn      14.1%    5.6%    1.4%        5%
+#   in place, turning       24.1%   13.4%    3.6%       10%
+#   in place, about-face     0.0%    0.0%    0.2%       15%
+#   moving straight         61.8%   47.7%   14.9%       45%
+#   moving with lateral      0.0%   33.3%   75.7%       10%
+#   moving, about-face       0.0%    0.0%    4.1%       15%
+#
+# Two things fall out of that table. THE MIX INVERTS -- straight-line cruise
+# goes 62% -> 15% while anything with a lateral component goes 0% -> 76%,
+# because `v_lat` is a DITHER ON EVERY DRAW rather than an occasional crab
+# command, and at v_lat_frac 0.4 it is +-0.48 m/s at full difficulty. And THE
+# IN-PLACE FAMILIES STARVE, for the same reason: hold, spin and about-face all
+# need v_lat ~ 0, which is exactly what the sampler stops producing. The eval
+# grid's `hold` command -- every component exactly zero, and the only place
+# `drift_m` is defined at all -- has probability ZERO at every difficulty the
+# curriculum visits. It is 5% of the score and 0% of the experience.
+#
+# THE CHANGE. `cmd_families` makes the mix an explicit four-way weight, and
+# the lateral command is dropped entirely (v_lat_frac 0.0) so those four
+# PARTITION the space. Crab stays in the EVAL, deliberately unrepresented in
+# training: it has never worked, the negative result is written up in
+# docs/status.md ("a sustained pure crab is not physically available at
+# standstill"), and carrying it here confounds a curriculum test with a
+# manoeuvre we already know the reward forbids.
+#
+# HOLD RAMPS OUT, not in. Every command at difficulty 0 is a hold, decaying to
+# `hold_min` -- so the run opens by learning to stand still, which the analytic
+# LQR does at 1.17 deg peak roll over 40 s (docs/status.md) and no RL policy
+# here has ever been asked to do. The other three ramp IN over their own
+# windows: straight first, then turning in place, then the combination.
+#
+# MAGNITUDES ARE SIGNED DRAWS WITH A FLOOR. `p_head_zero` and `p_v_zero` are
+# families now, so a magnitude allowed near zero would re-sample the
+# neighbouring family under a different name -- the legacy uniform spent ~6% of
+# its heading draws below 10 deg doing exactly that. Density goes as |x|^1,
+# which puts mean speed at 0.81 m/s and mean turn at 120 deg against the eval
+# grid's 0.83 and 111. See general_env._signed_magnitude for why no smooth
+# density reaches the grid's 33% about-faces, and why that is fine.
+#
+# RESAMPLE 1.5-4.0 -> 2.0-6.0 s. gamma 0.99 at 50 Hz is 1/(1-g) = 2.0 s of
+# lookahead, so the old FLOOR was 0.75 of a discount horizon: the critic's
+# window spilled past the command change for nearly half its mass while the
+# policy was told the command is a stationary input. The new floor is exactly
+# one horizon and the ceiling three, where 95% of the discounted mass is in --
+# past which 6 s and infinity are the same thing to the value function.
+#
+# EVALS ARE NOW 5 s, not 15 (train_general_rl._EVAL_EPISODE_S). Same argument
+# from the other end: no training command outlives 6 s, and `_TAIL_S` used to
+# read seconds 13-15. eval_* numbers here are NOT comparable to those in
+# moves/*.yaml written before this.
+#
+# obs_pitch WITHOUT w_pitch. The pitch arm established the observation is
+# cheap and the penalty is the contentious half; this run needs pitch in the
+# state so the reversal behaviour is representable, and adding a second new
+# pressure would confound the curriculum result.
+#
+# ahrs_tau_s 0.19, PINNED -- the MEASURED value (0.19 +- 0.01 s, r^2 0.999),
+# not the 2.0 guess general_rl_odo_ahrs carried. Pinned rather than spanned
+# only to keep this arm a one-variable test; docs/status.md is clear that
+# spanning it tightly (as rand2 does) is the end state, and that is the
+# follow-up run, not this one.
+
+algo:
+  algorithm: PPO
+  total_timesteps: 20000000   # a general controller is a bigger task than a
+                              #   single move; expect to need the full budget
+  n_envs: 32    # was 8
+  learning_rate: 3.0e-4
+  n_steps: 512 # was 2048  -> 32 x 512 = 16384, unchanged
+  batch_size: 1024
+  n_epochs: 10
+  # gamma at 50 Hz: 1/(1-g) = 100 steps = 2.0 s of lookahead, which matches
+  # the timescale of a heading change. THE MOVES' 0.99 AT 200 Hz IS ONLY
+  # 0.5 s — far too myopic here; they get away with it because their reward
+  # is a dense per-step yaw-progress term rather than setpoint tracking.
+  # If control_rate_hz is raised back to 200, gamma must go to ~0.998.
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005        # ball_rl's lesson: 0.0 collapsed exploration
+  net_arch: [128, 128]
+  seed: 0
+  eval_every: 1000000     # BestByScore cadence [timesteps]
+
+env:
+  action_space: full
+  # 50 Hz, not the moves' 200 Hz: standard for locomotion RL, and it makes a
+  # 2.5 s maneuver 125 steps instead of 500 — far better credit assignment.
+  # Replay is ZOH at this rate, so the controller holds each action 4 physics
+  # ticks longer than a move does.
+  # The one change from rl_general_smooth_diff.yaml.
+  obs_odometry: true
+  odometry_mode: front   # what the Pi runs today; `blend` is the experiment
+  # The two changes from rl_general_odo.yaml.
+  odometry_encoder: counts   # 4096 counts/rev, differenced, 25 ms RateFilter
+  ahrs_level: tm151          # the part we own, at its DYNAMIC accuracy
+  ahrs_tau_s: 0.19           # PINNED at the MEASURED value (see the header).
+  obs_pitch: true            # in the state; no w_pitch penalty this run.
+  control_rate_hz: 50
+  max_episode_s: 15.0    # long: the policy must hold a command, not finish one
+  v_max: 1.2             # matches control.drive.v_max in bike_params.yaml
+  v_lat_frac: 0.0        # DROPPED -- see the header. Crab stays in the eval.
+  p_v_zero: 0.2          # unread under cmd_families; the families own the mix
+  resample_s: [2.0, 6.0] # >= one discount horizon (2.0 s at gamma .99, 50 Hz)
+
+  # The command mix, explicit. Weights are shares of whatever `hold` leaves,
+  # each ramped in linearly over its own [onset, full] window; before any has
+  # opened, hold takes everything. Resulting mix, measured:
+  #
+  #     d      hold  in-place  straight  moving turn   mean|v|  mean|step|
+  #   0.00   100.0%      0.0%      0.0%         0.0%      --         --
+  #   0.20    56.3%     11.7%     32.0%         0.0%    0.33 m/s    31 deg
+  #   0.50    21.4%     20.9%     32.2%        25.5%    0.51 m/s    64 deg
+  #   1.00     9.9%     20.3%     29.9%        39.9%    0.81 m/s   120 deg
+  #
+  # against the eval grid's 6 / 31 / 19 / 44. Close, and deliberately not
+  # equal: the grid is a DISCRIMINATOR chosen to separate policies, not a
+  # model of what an operator does.
+  cmd_families:
+    hold_min: 0.10       # floor, reached as d -> 1
+    hold_decay: 3.0      # p_hold = min + (1-min)*(1-d)^decay -- 76% at d=0.1
+    straight:      {onset: 0.00, full: 0.30, weight: 1.5}
+    turn_in_place: {onset: 0.05, full: 0.45, weight: 1.0}
+    moving_turn:   {onset: 0.20, full: 0.70, weight: 2.0}
+  cmd_v_lo: 0.1          # [m/s] floor on a non-zero speed command
+  cmd_step_lo_deg: 10.0  # floor on a non-zero heading step
+  cmd_v_exponent: 1.0    # density ~ |x|^k on [lo, hi]; 1.0 = linear
+  cmd_step_exponent: 1.0
+  ball_prob: 0.25        # fraction of episodes with a ball parked nearby --
+                         #   contact robustness only, NO ball reward. Set to
+                         #   0.0 to train on the ball-free model.
+  ball_place_radius: 0.5 # ball dropped within this radius of the start pose
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4         # v_max 1.2 + margin (moves cap at 0.6-0.72 because
+                         #   they are standstill maneuvers)
+    diff_max: 40.0
+
+curriculum:              # the repo's first; a single scalar scaling the
+  enabled: true          #   command sampling ranges in _sample_command
+  start: 0.0             # 0, not 0.15: difficulty 0 is now a PURE HOLD stage
+                         #   rather than a slow-and-gentle one
+  step: 0.02             # advance per episode that clears advance_score
+  advance_score: 0.6     # mean of (vel + heading) tracking rewards, in [0,1]
+
+reward:
+  # Bounded-POSITIVE tracking + alive bonus. Over a 15 s episode a
+  # penalty-only reward (the moves' form) makes falling early strictly
+  # rational; this removes that incentive.
+  w_vel: 1.5             # x exp(-|v_cmd - v|^2 / sigma_v^2)
+  w_head: 1.0            # x exp(-(psi_err/sigma_psi)^2)
+  w_alive: 0.5
+  sigma_v: 0.35          # [m/s] tracking tolerance scale
+  sigma_psi_deg: 25.0    # heading tolerance scale
+  w_upright: 0.5
+  w_effort: 0.001
+  # [steer_rate, hub, diff]. One number here would price all three alike
+  # (the historical form); the list is what lets `diff` be asked a separate
+  # question -- see the header. All three equal == the scalar form exactly.
+  w_smooth: [0.05, 0.05, 0.25]
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+
+randomization:           # as rl_flick/rl_pivot
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15        # was 0.1. The as-built payload mass (battery + Pi +
+                         #   U2D2 + buck, ~190 g of a 1.02 kg bike) is a GUESS
+                         #   until the thing is weighed, and it is a bigger
+                         #   share of the total than anything else unmeasured.
+  friction_frac: 0.2
+  # Supply voltage. The model's servo numbers are the 12 V datasheet column,
+  # but a 3S pack spans 12.6 V (full) to 9.9 V (cutoff) -> ~0.83-1.05x nominal
+  # strength. 0.15 covers that window with margin. Scales ctrlrange AND
+  # forcerange from a single draw (speed and torque both go with voltage) --
+  # see control/randomize.py. Untethered transfer depends on this.
+  actuator_frac: 0.15
+  disturb_force_N: 2.0
+  disturb_prob: 0.01

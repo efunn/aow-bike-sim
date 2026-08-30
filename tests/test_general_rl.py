@@ -273,6 +273,170 @@ def test_curriculum_widens_command_range():
     assert h_lo <= np.deg2rad(30.0) + 1e-6     # gentle heading steps at diff 0
 
 
+def test_p_v_zero_alone_cannot_produce_the_eval_grids_hold():
+    """`p_v_zero` zeroes v_lon only, so its draws are not the HOLD command.
+
+    train_general_rl's eval grid carries a `hold` family -- v_lon, v_lat and
+    the heading step all exactly zero -- and it is the only family where drift
+    is defined. This pins WHY that command needs its own draw: at any live
+    difficulty the lateral term is a continuous variate and the heading step
+    is another, so a zero-forward draw still crabs and still turns.
+    """
+    env = _env(p_v_zero=1.0, p_cmd_hold=0.0)
+    env.reset(seed=0)
+    env.set_difficulty(0.15)      # the shipped curriculum `start`
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        env._psi = 0.0
+        env._sample_command(rng)
+        assert np.linalg.norm(env._v_cmd_w) > 0.0, (
+            "a zero-forward draw came out as a full hold, which would make "
+            "p_cmd_hold redundant -- check v_lat_frac and the difficulty")
+
+
+def test_p_cmd_hold_draws_the_eval_grids_hold_command():
+    """`p_cmd_hold` produces exactly (0, 0) velocity and freezes the heading.
+
+    Freezing rather than re-anchoring is the contract: `drive.set_command`
+    leaves `_gen_psi_cmd` alone when the operator releases the stick, so the
+    trained idle state must be "converge to the last commanded heading and
+    stay there", not "adopt whatever heading I happen to have".
+    """
+    env = _env(p_cmd_hold=1.0)
+    env.reset(seed=0)
+    env.set_difficulty(1.0)       # hardest case: crab and +-pi both wide open
+    rng = np.random.default_rng(0)
+
+    env._psi_cmd = 0.7            # a command the bike has not reached yet
+    for psi in (0.0, 0.3, -1.2):
+        env._psi = psi
+        env._sample_command(rng)
+        assert np.all(env._v_cmd_w == 0.0)
+        assert env._psi_cmd == 0.7, "the heading command must not be re-anchored"
+
+    # At reset there is no previous command to freeze, so it anchors.
+    env._psi = 0.42
+    env._sample_command(rng, first=True)
+    assert np.all(env._v_cmd_w == 0.0)
+    assert env._psi_cmd == pytest.approx(0.42)
+
+
+def test_p_cmd_hold_defaults_off_so_existing_configs_are_unchanged():
+    """Every config written before the knob must describe the run it trained."""
+    env = _env()
+    assert env.p_cmd_hold == 0.0
+    assert env.families is None, "the family sampler must be opt-in too"
+
+
+# -- the family sampler (cmd_families) ------------------------------------
+
+_FAMILIES = {"hold_min": 0.10, "hold_decay": 3.0,
+             "straight":      {"onset": 0.00, "full": 0.30, "weight": 1.5},
+             "turn_in_place": {"onset": 0.05, "full": 0.45, "weight": 1.0},
+             "moving_turn":   {"onset": 0.20, "full": 0.70, "weight": 2.0}}
+
+
+def _fam_env(**over):
+    return _env(cmd_families=_FAMILIES, v_lat_frac=0.0, **over)
+
+
+def _draw_families(env, d, n=8000, seed=0):
+    """Classify n draws at difficulty `d` into the four cells."""
+    rng = np.random.default_rng(seed)
+    env.set_difficulty(d)
+    counts = dict(hold=0, in_place=0, straight=0, moving_turn=0)
+    for _ in range(n):
+        env._psi = env._psi_cmd = 0.0
+        env._sample_family_command(rng)
+        moving = np.linalg.norm(env._v_cmd_w) > 0.0
+        turning = env._psi_cmd != 0.0
+        counts["moving_turn" if (moving and turning) else "straight" if moving
+               else "in_place" if turning else "hold"] += 1
+    return {k: v / n for k, v in counts.items()}
+
+
+def test_the_four_families_partition_the_command_space():
+    """With the lateral command dropped, every draw is exactly one family.
+
+    That is what makes the weights readable against the eval grid: its
+    sixteen non-crab commands split 1 / 5 / 3 / 7 across these same cells.
+    A non-zero `v_lat_frac` would break the partition silently.
+    """
+    env = _fam_env()
+    env.reset(seed=0)
+    for d in (0.0, 0.3, 0.7, 1.0):
+        assert sum(_draw_families(env, d).values()) == pytest.approx(1.0)
+
+
+def test_hold_ramps_out_and_the_others_ramp_in():
+    """Difficulty 0 is a PURE hold stage; hold decays to its floor at d=1."""
+    env = _fam_env()
+    env.reset(seed=0)
+    lo, hi = _draw_families(env, 0.0), _draw_families(env, 1.0)
+
+    assert lo["hold"] == 1.0, "difficulty 0 must be nothing but holds"
+    assert hi["hold"] == pytest.approx(_FAMILIES["hold_min"], abs=0.02)
+    # Each of the other three is absent at d=0 and present at d=1.
+    for k in ("straight", "in_place", "moving_turn"):
+        assert lo[k] == 0.0 and hi[k] > 0.1, k
+    # `straight` opens first and `moving_turn` last -- the onsets, observed.
+    mid = _draw_families(env, 0.15)
+    assert mid["straight"] > 0.0 and mid["moving_turn"] == 0.0
+
+
+def test_family_magnitudes_respect_their_floors():
+    """A non-zero draw is never small enough to impersonate its neighbour.
+
+    Without floors a 2 deg "turn in place" is a hold and a 0.01 m/s "straight"
+    is one too, which would put the families back to overlapping -- the exact
+    failure the explicit mix exists to remove.
+    """
+    env = _fam_env()
+    env.reset(seed=0)
+    env.set_difficulty(1.0)
+    rng = np.random.default_rng(1)
+    for _ in range(4000):
+        env._psi = env._psi_cmd = 0.0
+        env._sample_family_command(rng)
+        speed = float(np.linalg.norm(env._v_cmd_w))
+        step = abs(env._psi_cmd)
+        assert speed == 0.0 or speed >= env.v_lo - 1e-9
+        assert step == 0.0 or step >= env.step_lo - 1e-9
+
+
+def test_signed_magnitude_is_two_sided_and_shaped():
+    """Sign is a coin flip; the density leans on the exponent, not the range.
+
+    Exponent 0 is the flat draw the legacy sampler used. Raising it must move
+    mass toward the ceiling -- that is the whole reason it exists, since a
+    widening uniform dilutes its own large-turn tail as the span grows.
+    """
+    from aow_sim.control.general_env import GeneralEnv
+    rng = np.random.default_rng(0)
+    flat = np.array([GeneralEnv._signed_magnitude(rng, 10.0, 180.0, 0.0)
+                     for _ in range(20000)])
+    lean = np.array([GeneralEnv._signed_magnitude(rng, 10.0, 180.0, 1.0)
+                     for _ in range(20000)])
+    for x in (flat, lean):
+        assert np.mean(x > 0) == pytest.approx(0.5, abs=0.02)
+        assert np.all(np.abs(x) >= 10.0 - 1e-9) and np.all(np.abs(x) <= 180.0)
+    assert np.mean(np.abs(lean)) > np.mean(np.abs(flat)) + 15.0
+
+
+def test_the_family_arm_config_is_wired_end_to_end():
+    """The shipped arm must actually select the family sampler."""
+    from aow_sim.build_model import load_params
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    cfg = _load_rl_config("config/rl_general_cmd_curriculum.yaml")
+    assert cfg["env"]["v_lat_frac"] == 0.0, "the partition needs no lateral"
+    assert cfg["curriculum"]["start"] == 0.0, "d=0 is the pure-hold stage"
+    assert "w_pitch" not in cfg["reward"] and cfg["env"]["obs_pitch"] is True
+    # This arm reads the onboard estimate, so the env needs real params.
+    env = GeneralEnv(load_params(), rl_cfg=cfg, seed=0)
+    assert env.families is not None
+    assert env.resample_s == (2.0, 6.0)
+
+
 # -- trainer / replay -----------------------------------------------------
 
 def test_eval_cmds_scale_with_v_max():

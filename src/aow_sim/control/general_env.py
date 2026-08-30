@@ -141,6 +141,25 @@ class GeneralEnv(gym.Env):
         self.v_max = float(env["v_max"])
         self.v_lat_frac = float(env["v_lat_frac"])
         self.p_v_zero = float(env["p_v_zero"])
+        # Optional, defaulting OFF so every config written before it keeps
+        # describing the run it trained. See `_sample_command`: `p_v_zero`
+        # alone cannot produce the eval grid's `hold` command.
+        self.p_cmd_hold = float(env.get("p_cmd_hold", 0.0))
+        # THE FAMILY SAMPLER, opt-in. Absent, `_sample_command` takes the
+        # legacy path bit for bit, so every config written before this one
+        # still describes the run it trained. See `_family_weights`.
+        fam = env.get("cmd_families")
+        self.families = None if fam is None else {
+            "hold_min": float(fam["hold_min"]),
+            "hold_decay": float(fam["hold_decay"]),
+            **{k: (float(fam[k]["onset"]), float(fam[k]["full"]),
+                   float(fam[k]["weight"]))
+               for k in ("turn_in_place", "straight", "moving_turn")},
+        }
+        self.v_lo = float(env.get("cmd_v_lo", 0.1))
+        self.step_lo = np.deg2rad(float(env.get("cmd_step_lo_deg", 10.0)))
+        self.v_exponent = float(env.get("cmd_v_exponent", 1.0))
+        self.step_exponent = float(env.get("cmd_step_exponent", 1.0))
         self.resample_s = tuple(env["resample_s"])
         self.ball_prob = float(env.get("ball_prob", 0.0))
         self.ball_radius = float(env.get("ball_place_radius", 0.5))
@@ -351,39 +370,180 @@ class GeneralEnv(gym.Env):
         by_meas = 1.0 - abs(float(v_meas)) / max(self.hub_idle_v_scale, 1e-9)
         return float(np.clip(min(by_cmd, by_meas), 0.0, 1.0))
 
+    def _family_weights(self) -> tuple[float, float, float, float]:
+        """(hold, turn_in_place, straight, moving_turn), summing to 1.
+
+        THE MIX IS A PARAMETER HERE, NOT A SIDE EFFECT. Under the legacy
+        sampler the family a draw lands in falls out of three envelope ramps
+        interacting, and measured that is not a small effect: across the
+        curriculum the share of commands with a lateral component went 0% ->
+        76% while straight-line cruise went 62% -> 15%, and the eval grid's
+        in-place families (v_lon 0 AND v_lat 0) were never drawn at all.
+
+        `hold` ramps OUT -- every command is a hold at difficulty 0, decaying
+        to `hold_min`. The other three ramp IN over their own `[onset, full]`
+        windows and share whatever budget hold leaves, in proportion to their
+        `weight`. Before any of them has opened, hold takes the whole budget
+        regardless of `hold_min`, so the early stage is a pure standstill.
+        """
+        f = self.families
+        p_hold = f["hold_min"] + (1.0 - f["hold_min"]) * (1.0 - self._diff) ** f["hold_decay"]
+        raw = []
+        for key in ("turn_in_place", "straight", "moving_turn"):
+            onset, full, weight = f[key]
+            span = max(full - onset, 1e-9)
+            raw.append(weight * float(np.clip((self._diff - onset) / span, 0.0, 1.0)))
+        total = sum(raw)
+        if total <= 0.0:
+            return 1.0, 0.0, 0.0, 0.0
+        share = (1.0 - p_hold) / total
+        return (p_hold, *(r * share for r in raw))
+
+    @staticmethod
+    def _signed_magnitude(rng, lo: float, hi: float, exponent: float) -> float:
+        """+-|x| with |x| drawn from a density proportional to |x|**exponent
+        on [lo, hi]. Sign is a coin flip.
+
+        A FLOOR AND A SHAPE, and both earn their place. The floor is what
+        keeps a family honest: with `straight` and `turn_in_place` drawn as
+        their own families, a magnitude allowed near zero re-samples the
+        neighbouring family under a different name -- a 2 deg "turn" is a
+        straight command, and the legacy uniform spent ~6% of its heading
+        draws below 10 deg doing exactly that.
+
+        The shape is what stops a widening uniform diluting its own tail.
+        Measured against the eval grid's twelve turn commands (45x2, 90x6,
+        170x2, 180x2, i.e. 33% about-face): a flat draw over +-180 gives 5.9%
+        of turns at >=170 deg, exponent 1 gives 10.9%, and its mean magnitude
+        (120 deg) lands close to the grid's 111. No smooth density reaches
+        33% without starving small turns -- exponent 4 gets 24.9% and leaves
+        0.4% below 60 deg against the grid's 17% -- because the grid is three
+        discrete magnitudes chosen to SEPARATE POLICIES, not a distribution to
+        imitate. Exponent 1 is the honest default; an about-face BUCKET is the
+        answer if that regime needs more than the tail of a density.
+        """
+        u = rng.random()
+        k = exponent + 1.0
+        mag = (lo ** k + u * (hi ** k - lo ** k)) ** (1.0 / k)
+        return float(mag if rng.random() < 0.5 else -mag)
+
+    def _sample_family_command(self, rng, first=False) -> None:
+        """The family sampler: pick a family, then draw within it.
+
+        The four families PARTITION the command space once the lateral
+        component is out (`v_lat_frac: 0.0`), which is what makes the weights
+        readable against the eval grid -- its sixteen non-crab commands split
+        1 / 5 / 3 / 7 across exactly these cells.
+        """
+        p_hold, p_tip, p_str, _ = self._family_weights()
+        u = rng.random()
+        d = self._diff
+        v_hi = self.v_max * (0.25 + 0.75 * d)
+        step_hi = self.step_lo + (np.pi - self.step_lo) * d
+
+        # Cumulative edges, in the family order the weights are returned in.
+        c_hold = p_hold
+        c_tip = c_hold + p_tip
+        c_str = c_tip + p_str
+        want_v = u >= c_tip                      # straight, or moving turn
+        want_step = (c_hold <= u < c_tip) or u >= c_str   # in place, or moving
+
+        # `max(hi, lo)` guards the low end of the curriculum, where the ramped
+        # ceiling can still be under the floor -- the draw then collapses to
+        # the floor rather than inverting the interval.
+        v_lon = (self._signed_magnitude(rng, self.v_lo, max(v_hi, self.v_lo),
+                                        self.v_exponent) if want_v else 0.0)
+        # `first` forces a zero heading step, as the legacy path does: an
+        # episode opens with the target on the bike's own heading.
+        step = (self._signed_magnitude(rng, self.step_lo, max(step_hi, self.step_lo),
+                                       self.step_exponent)
+                if (want_step and not first) else 0.0)
+
+        if v_lon == 0.0 and step == 0.0:
+            # A hold, and the same freeze rule as the legacy path: `psi_cmd`
+            # stays where it was, because `drive.set_command` touches
+            # `_gen_psi_cmd` only when the operator moves the stick. At reset
+            # there is no previous command to freeze, so anchor.
+            self._v_cmd_w = np.zeros(2)
+            if first:
+                self._psi_cmd = self._psi
+            return
+        psi_cmd = self._psi + step
+        c, s = np.cos(psi_cmd), np.sin(psi_cmd)
+        self._v_cmd_w = np.array([c * v_lon, s * v_lon])
+        self._psi_cmd = psi_cmd
+
     def _sample_command(self, rng, first=False):
         """Draw a fresh (world velocity, heading) command as a STEP change.
 
         Scaled by the curriculum difficulty: at _diff = 0 the commands are
         gentle (small speed, small heading step); at 1 they span the full
-        envelope including reverse, lateral crab, and +-180 deg snaps."""
+        envelope including reverse, lateral crab, and +-180 deg snaps.
+
+        A FULL HOLD -- every component exactly zero -- is drawn separately,
+        because the ordinary path CANNOT produce one. `p_v_zero` zeroes
+        v_lon alone; v_lat is a continuous draw that vanishes only at
+        _diff == 0 or v_lat_frac == 0, and the heading step is continuous
+        too. With the shipped curriculum (`start: 0.15`) neither is ever
+        exactly zero, so what `p_v_zero` actually samples is "stop, crab
+        sideways, and turn to face somewhere else" -- not what a released
+        stick asks for. Meanwhile train_general_rl's eval grid carries a
+        `hold` family that is the only place drift is defined at all, and
+        `p_cmd_hold` is what puts that command in the training distribution.
+
+        `cmd_families` replaces all of the above with an explicit four-way
+        mix -- see `_sample_family_command`. This path is what every config
+        written before it uses, and is kept unchanged for that reason.
+        """
+        if self.families is not None:
+            self._sample_family_command(rng, first=first)
+            self._schedule_resample(rng)
+            return
         d = self._diff
         v_lim = self.v_max * (0.25 + 0.75 * d)
-        if rng.random() < self.p_v_zero:
-            v_lon_w = 0.0
+        if rng.random() < self.p_cmd_hold:
+            # psi_cmd is deliberately LEFT WHERE IT WAS rather than
+            # re-anchored to the current heading. `drive.set_command` touches
+            # _gen_psi_cmd only when the operator moves the stick, so
+            # releasing it freezes the last commanded heading and lets
+            # psi_err decay as the bike converges -- which trains the
+            # converging transient AND the standstill it settles into.
+            # Re-anchoring would train an event hardware cannot produce.
+            # At reset there is no previous command to freeze, so anchor.
+            self._v_cmd_w = np.zeros(2)
+            if first:
+                self._psi_cmd = self._psi
         else:
-            v_lon_w = float(rng.uniform(-v_lim, v_lim))
-        # Lateral command only opens up with difficulty (crab / pivot-glide).
-        v_lat_w = float(rng.uniform(-1, 1) * self.v_lat_frac * v_lim * d)
-        # Heading: a step relative to the CURRENT heading, growing to +-pi.
-        span = np.deg2rad(30.0) + (np.pi - np.deg2rad(30.0)) * d
-        step = 0.0 if first else float(rng.uniform(-span, span))
-        psi_cmd = self._psi + step
-        # The velocity command is expressed in the world frame, anchored on
-        # the heading the operator is asking for (drive "forward" = along the
-        # commanded heading, not the current one).
-        c, s = np.cos(psi_cmd), np.sin(psi_cmd)
-        self._v_cmd_w = np.array([c * v_lon_w - s * v_lat_w,
-                                  s * v_lon_w + c * v_lat_w])
-        self._psi_cmd = psi_cmd
+            if rng.random() < self.p_v_zero:
+                v_lon_w = 0.0
+            else:
+                v_lon_w = float(rng.uniform(-v_lim, v_lim))
+            # Lateral command only opens up with difficulty (crab/pivot-glide).
+            v_lat_w = float(rng.uniform(-1, 1) * self.v_lat_frac * v_lim * d)
+            # Heading: a step relative to the CURRENT heading, growing to +-pi.
+            span = np.deg2rad(30.0) + (np.pi - np.deg2rad(30.0)) * d
+            step = 0.0 if first else float(rng.uniform(-span, span))
+            psi_cmd = self._psi + step
+            # The velocity command is expressed in the world frame, anchored on
+            # the heading the operator is asking for (drive "forward" = along
+            # the commanded heading, not the current one).
+            c, s = np.cos(psi_cmd), np.sin(psi_cmd)
+            self._v_cmd_w = np.array([c * v_lon_w - s * v_lat_w,
+                                      s * v_lon_w + c * v_lat_w])
+            self._psi_cmd = psi_cmd
+        self._schedule_resample(rng)
+
+    def _schedule_resample(self, rng) -> None:
+        """When the next step change lands, and the filter's flush marker.
+
+        NOTE the velocity filter state itself is deliberately NOT reset here:
+        it is a property of the bike's motion, not of the command. Resetting
+        it would be a hidden state jump the policy cannot see in its own
+        observation, and there is no "resample" event on hardware at all (the
+        operator just moves a stick), so drive.py could never match it.
+        """
         self._next_resample = self._step + max(
             1, round(float(rng.uniform(*self.resample_s)) / self.ctrl_dt))
-        # Marks the start of the velocity filter's flush window (see step()).
-        # NOTE the filter state itself is deliberately NOT reset here: it is a
-        # property of the bike's motion, not of the command. Resetting it
-        # would be a hidden state jump the policy cannot see in its own
-        # observation, and there is no "resample" event on hardware at all
-        # (the operator just moves a stick), so drive.py could never match it.
         self._resample_step = self._step
 
     def _place_ball(self, rng):
