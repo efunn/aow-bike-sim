@@ -39,9 +39,11 @@ eval's `hold` command has probability **zero** at every difficulty the
 curriculum visits, and the family mix inverts as difficulty rises rather than
 staying put. Eval episodes are also now **5 s rather than 15**, which makes
 every `eval_*` number recorded before today non-comparable. Both are written
-up in "The command distribution" below. A curriculum arm
-(`config/rl_general_cmd_curriculum.yaml`) exists and **has not been run** —
-nothing in the standings reflects it.
+up in "The command distribution" below. The first curriculum arm has since run
+20M steps and **failed in a new way — it will not drive forward at all**, which
+is diagnosed in the same section along with the one-line arm 2 that tests the
+cause. `speed_ratio_fwd` is now signed, and was flattering every policy while
+it was floored at zero.
 
 **This file is the handoff.** There is no separate `HANDOFF-*.md` any more —
 `docs/plans/HANDOFF-2026-08-28.md` was the last one and is superseded by this.
@@ -251,9 +253,67 @@ explicit weights (`cmd_families`), drops the lateral command entirely
 (`v_lat_frac: 0.0` — crab stays in the eval, deliberately unrepresented),
 widens `resample_s` to `[2.0, 6.0]`, and starts the curriculum at 0 with a pure
 hold stage that ramps out. Opt-in: absent `cmd_families`, the sampler is the
-legacy one bit for bit. **Not yet run.** Watch `curriculum/difficulty` before
-reward — if it sticks near 0 the hold stage is not clearing `advance_score`
-and everything downstream is moot.
+legacy one bit for bit. Watch `curriculum/difficulty` before reward.
+
+### Arm 1 ran, and it failed: the pure-hold stage kills forward motion
+
+20M steps, difficulty reached 1.0 by 13M, survival healthy (`eval/survive_rate`
+0.85–0.95). **`eval/speed_ratio_fwd` was 0.000 at all twenty evals** while
+`speed_ratio_rev` sat at 0.85–1.28. In teleop the bike ignores forward and
+reverses. On the export, the hub action is negative under *every* command:
+
+| command | hub action | v_lon | pen: net travel over 5 s |
+|---|---|---|---|
+| hold | −0.487 | −0.192 | 0.93 m |
+| forward +0.80 | **−0.258** | **−0.334** | **1.67 m BACKWARD**, `wander` 1.2 |
+| reverse −0.50 | −0.651 | −0.644 | 3.23 m |
+
+`general_rl_odo_ahrs_pitch_w` under the same commands: −0.223 / **+0.219** /
+−0.502, holding at −0.037 m/s. Signed per-command ratios put arm 1 negative on
+**all nine** forward commands, including the two pure straight-line ones where
+no turn can be blamed; pitch_w is positive on five and negative on four (its
+four are the `turn_big` reversals documented above).
+
+**It is not the plumbing, and that was tested rather than assumed.** The
+command chain is symmetric (35.1% forward / 35.3% reverse, timestep-weighted);
+obs slot 8 carries the right sign; and a four-way probe of command sign against
+actual velocity gives `vel_err` 0.086 when they agree and 0.83–0.91 when they
+oppose — **byte-identical numbers for arm 1's config and pitch_w's**. Same code
+trained both, and one drives forward.
+
+**The mechanism is the advance gate.** Arm 1's hold drifts backwards at
+0.192 m/s, which at `sigma_v` 0.35 scores `r_vel = 0.74`; with heading held the
+episode scores `track = 0.87` against `advance_score: 0.6`. A mediocre hold
+clears the bar with 45% margin, so the curriculum certified it and every later
+stage inherited the bias. Escape is then impossible: under a +0.8 command at
+v = −0.33 the velocity reward is `exp(−(1.13/0.35)²) ≈ 3e-5` against 0.0055 for
+standing still — 0.005 of difference on an episode return near 900.
+
+**Note the stage did not even buy holding.** Arm 1 holds at 0.192 m/s drift
+against pitch_w's 0.037 — 5.2× worse, over the same 5 s pen run — and pitch_w
+was never given a hold command at all.
+
+**Outstanding — arm 1 moved six variables at once** (family sampler,
+`curriculum.start` 0.15→0, `v_lat_frac` 0.4→0, `resample_s`, `ahrs_tau_s`
+2.0→0.19, `obs_pitch` without `w_pitch`), so one run cannot attribute the
+failure. The mechanism above fits the arithmetic but is not isolated.
+**Arm 2 (`config/rl_general_cmd_curriculum2.yaml`) is the one-line
+discriminator:** `hold_max: 0.40` makes difficulty 0 a 40% hold / 60% straight
+mix, so clearing the gate requires hub in both directions. If forward returns
+it is the hold stage; if not, the next cut is `curriculum.start` back to 0.15
+with the sampler kept.
+
+**Also queued, independent of which rung wins:** the velocity reward has no
+gradient outside about ±0.7 m/s, which is what makes this failure unrecoverable
+rather than slow. A bounded linear term would trap no policy this way.
+
+**`speed_ratio_fwd` is now SIGNED** (clip floor 0.0 → −1.5). The floor read
+every wrong-direction policy as exactly 0.000 and threw away the one number
+that says what it is doing instead. It also flattered the metric generally:
+pitch_w's four reversing rows used to count as zero rather than as negatives,
+so its published 0.642 was inflated. **Outstanding: `speed_ratio_fwd` numbers
+recorded before this are not comparable, and neither are those from before the
+15 s → 5 s change.**
 
 ---
 
