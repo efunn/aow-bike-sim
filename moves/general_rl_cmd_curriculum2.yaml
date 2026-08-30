@@ -1,0 +1,100 @@
+name: general_rl_cmd_curriculum2
+type: rl
+kind: general
+policy_file: general_rl_cmd_curriculum2.npz
+params_digest: e1c0d8822373309b
+plant_digest: e1ec36bfa670217e
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.0
+vel_window_s: 0.0
+obs_zero_lat: false
+obs_odometry: true
+odometry_encoder: counts
+obs_pitch: true
+obs_wings: false
+act_wings: false
+obs_swing: false
+act_swing: false
+wing_max_deg: 90.0
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- pitch
+- pitch_rate
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 20000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 8.759547318049066e-07
+  metrics:
+    survive_rate: 1.0
+    track: 0.621
+    track_geo: 0.577
+    vel_err: 0.202
+    head_err_deg: 40.1
+    n_eval: 20
+    drift_m: 0.137
+    drift_max: 0.259
+    drift_sd: 0.069
+    steer_rest_deg: 26.7
+    speed_ratio_fwd: 0.042
+    speed_ratio_rev: 1.056
+    crab_ratio_left: 0.449
+    crab_ratio_right: 0.714
+    crab_head_err: 71.1
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.425
+    by_family:
+      hold:
+        n: 1
+        survive_rate: 1.0
+        head_err_tail: 10.8
+        vel_err_med: 0.151
+        drift_m: 0.137
+        drift_overshoot: 0.121
+      spin:
+        n: 2
+        survive_rate: 1.0
+        t_head_s: 1.28
+        t_head_n: 2
+        head_err_tail: 10.9
+        vel_err_med: 0.137
+      cruise:
+        n: 9
+        survive_rate: 1.0
+        t_head_s: 1.08
+        t_head_n: 6
+        head_err_tail: 7.2
+        vel_err_med: 0.168
+      crab:
+        n: 2
+        survive_rate: 1.0
+        head_err_tail: 21.1
+        vel_err_med: 0.405
+      turn_big:
+        n: 6
+        survive_rate: 1.0
+        t_head_s: 5.0
+        t_head_n: 6
+        head_err_tail: 155.7
+        vel_err_med: 0.171
+  exported_from: best_model.zip
