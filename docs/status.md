@@ -307,6 +307,54 @@ with the sampler kept.
 gradient outside about ±0.7 m/s, which is what makes this failure unrecoverable
 rather than slow. A bounded linear term would trap no policy this way.
 
+### KNOWN ISSUE: handedness on swept turns (2026-08-30)
+
+`general_rl_cmd_curriculum2` executes `(0.804, 0, +90)` by turning left and
+driving forward, and `(0.804, 0, −90)` by turning **left anyway** (+87°) and
+reversing at −0.697 — which lands its world velocity within 3° of the command,
+so the velocity half is satisfied exactly and only the heading is abandoned.
+`turn_asym` 0.369 against `odo_ahrs_pitch_w`'s 0.168 is the same fact.
+
+**Confirmed in teleop, and a ramped heading command does not fix it** — the
+preference survives a swept turn as well as a step. Accepted for now: it is a
+training problem, not an eval one, and no arm is queued against it.
+
+**Queued: `config/rl_general_cmd_curriculum2b.yaml`** — `algo.seed` 0 → 1 and
+nothing else. Every conclusion on this line has come from one run per arm, and
+`asymmetric-actor-critic.md` §7 argues the seed floor is the binding constraint
+on judging any change at all: if the spread across seeds is the size of the
+effect, no single-run comparison means anything. `speed_ratio_fwd` −0.426 →
++0.841 is either `hold_max` working or one lucky draw, and nothing so far
+separates those. It also exercises the new eval instrumentation end to end.
+
+```sh
+./scripts/rl.sh up general --config config/rl_general_cmd_curriculum2b.yaml \
+    --run-dir runs/general_rl_cmd_curriculum2b \
+    --export-name general_rl_cmd_curriculum2b
+```
+
+**Read it against a RE-SCORED seed-0 export, not against the block recorded in
+`moves/general_rl_cmd_curriculum2.yaml`** — that one was measured with the ball
+in and the wide ratio selector.
+
+**What WAS fixed is the eval reporting it as something else.** A command is a
+world velocity plus a heading, so the velocity half is satisfiable body-forward
+(yaw = `psi_cmd`) or body-backward (`psi_cmd` + 180°) — `v_ach`'s sign is
+decided by which way the policy turned, not by whether it will drive forward.
+`speed_ratio_fwd`/`rev` now select only `|dpsi| < 1°` (2 forward rows, 1
+reverse; the 9 turning rows are excluded and covered by `turn_asym` and
+`by_family`). Before the change, six rows at +0.79…+0.97 and three at
+−0.98…−1.16 cancelled to **+0.027** — a policy that drives forward fine,
+reported as one that does not.
+
+**And the eval had a ball in it.** `ball_prob: 0.25` is training DR that was
+never masked for evaluation, so five of twenty commands were scored against an
+obstacle the metrics never mention — deterministic per command, arbitrary as to
+which. Now zeroed in both `train_general_rl._eval_cfg` and
+`analysis/per_command._cfg_for` (shared by `eval_video.py`, so the clips and
+the bar charts match the metrics). **Outstanding: every eval number recorded
+before today includes it.**
+
 **`speed_ratio_fwd` is now SIGNED** (clip floor 0.0 → −1.5). The floor read
 every wrong-direction policy as exactly 0.000 and threw away the one number
 that says what it is doing instead. It also flattered the metric generally:
