@@ -2,19 +2,30 @@
 
 Companion data sheet: `servo-measurements.yaml` (same section numbering).
 
-Everything here calibrates **the drive actuator model**, which today is two
-config lines and one absence:
+Everything here calibrates **the drive actuator model**:
 
 ```yaml
 actuators:
-  drive_kv: 0.5        # torque per rad/s of velocity error, at the input shaft
-  # (no bandwidth limit exists — the model has no actuator dynamics at all)
+  drive_kv: 0.016016   # torque per rad/s of velocity error, at the input shaft
+  drive_ki: 0.6        # firmware integral term; Ti = kv/ki = 26.7 ms
 ```
 
-Status: **both are placeholders and both are wrong by ~31x in the same
-direction.** `mujoco-modeling-decisions.md` deferred this as "placeholder for
-Dynamixel velocity-PI emulation at the real control rate (later phase, after
-testbed system-ID)". This is that system-ID, specified.
+**CORRECTED 2026-09-01. The paragraph that stood here was stale by ten days and
+was believed twice.** It read `drive_kv: 0.5`, "no bandwidth limit exists", and
+"both are placeholders and both are wrong by ~31x". All three were fixed by
+commit b0a97a3 on **2026-08-22** ("model: enable the velocity-PI drive plant —
+kv 0.016016, ki 0.6"), which `docs/status.md` records correctly; only this file
+was left behind. The stale 31x claim was then read off this page and repeated in
+`analysis/servo_reversal.py` and `servo-measurements.yaml` before anyone checked
+it against the config. Per CLAUDE.md: state belongs in `status.md`, and a number
+in a protocol doc is state.
+
+What is true now: `drive_kv` 0.016016 is the derived bare-motor droop and a
+LOWER bound (firmware KVP makes the real loop stiffer), `drive_ki` 0.6 is a
+guess from the X-series default KVI/KVP at an assumed 1 kHz loop, and the
+model's own settling constant is `input_armature / drive_kv` = 18.7 ms. This
+protocol exists to replace the two guesses with measurements, not to fix a 31x
+error that no longer exists.
 
 Servos: 2x **XC430-W150** in velocity mode (`MODE_VELOCITY = 1`), driving the
 input shafts through a `belt_ratio` of 3. `hw/dynamixel.py` already talks to
@@ -30,10 +41,14 @@ and runs **6.37 m of rim** past the contact patch while the bike moves 0.35 m.
 Full derivation in `docs/plans/aow-contact-approximations.md` §6b; the two
 defects, both from the datasheet block in `bike_params.yaml`:
 
-| | model | hardware | ratio |
+| | model BEFORE b0a97a3 | model NOW | measured 2026-09-01 |
 |---|---|---|---|
-| velocity-loop stiffness | `drive_kv` 0.5 | bare-motor droop `kt·ke/R / belt²` = 0.0160 | **31x** |
-| velocity-loop settling | `J/kv` = 0.60 ms | `tau_m = J·R/(kt·ke)` = 18.7 ms | **31x** |
+| velocity-loop stiffness | `drive_kv` 0.5 | 0.016016 | not yet — this is §4 |
+| velocity-loop settling | `J/kv` = 0.60 ms | `J/kv` = 18.7 ms | 13.6-14.1 ms open loop (PWM mode); **25.3 ms closed loop at the factory KVP 100**; 11 ms floor at KVP >= 400 |
+
+The 31x row that used to be here compared the OLD model against the hardware and
+is kept only as the left column. The current model at 18.7 ms sits between the
+bare motor and the factory-gain closed loop, which is the right neighbourhood.
 
 Neither can be fixed by editing a number — §6b records both single-parameter
 attempts and why each broke the suite. **What the fix needs is exactly what
