@@ -1,7 +1,7 @@
-# Project status — 2026-08-25, amended 2026-08-30
+# Project status — 2026-08-25, amended 2026-09-01
 
 Midpoint snapshot. **The amendments are partial.** Re-measured and rewritten on
-08-26, 08-27, 08-28, 08-29 and 08-30: the odometry and AHRS workstreams, the
+08-26, 08-27, 08-28, 08-29, 08-30 and 09-01: the odometry and AHRS workstreams, the
 policy standings, the eval metrics, the command distribution, the critical
 path, the red-set numbers, and the digest/deploy state. Everything else is
 still the 08-25 snapshot and has NOT been re-checked — read those sections at
@@ -44,6 +44,18 @@ up in "The command distribution" below. The first curriculum arm has since run
 is diagnosed in the same section along with the one-line arm 2 that tests the
 cause. `speed_ratio_fwd` is now signed, and was flattering every policy while
 it was floored at zero.
+
+**What moved on 09-01: THE SERVOS BECAME PHYSICAL.** First hardware of the
+project — four bare servos on a U2D2, no bike. Stage 0b of
+`first-physical-test.md` is done, and two of its answers were not what the sim
+assumed. See "The servo bench" below. Three things worth carrying forward from
+it: (a) `servo-protocol.md` had been **stale for ten days** and its 31x claim
+was believed twice before anyone checked it against `bike_params.yaml` — the
+drive plant was fixed in b0a97a3 on 08-22 and only that page did not know; (b)
+the drive lag is the **firmware velocity loop, not the motor**, and Velocity P
+Gain moves it 9x, so drive bandwidth is a control-table line we own rather than
+a hardware ceiling to model around; (c) a single faulty servo produced two
+confident wrong generalisations, which is now a durable note in CLAUDE.md.
 
 **This file is the handoff.** There is no separate `HANDOFF-*.md` any more —
 `docs/plans/HANDOFF-2026-08-28.md` was the last one and is superseded by this.
@@ -153,7 +165,7 @@ sensor result above and is the one the datasheet bounds rather than measures.
 | **Control — RL** | Working, and the primary path. Trains against the ONBOARD SENSORS as of 08-27 (`obs_odometry`, `odometry_encoder`, `ahrs_level`), not just MuJoCo truth | One champion policy, symmetric left/right, exercised over the randomization ranges the hardware will actually see | Crab still one-sided — and `odo_ahrs` made it worse (left 0.12); turn asymmetry stuck ~0.17–0.32 |
 | **Sensor modelling** | New 08-26/27, and largely DONE. Velocity estimate, encoder quantisation + `RateFilter`, TM151 attitude/gyro/accel error, all in the loop and in training. Validated against a real TM151 over USB | The dynamic attitude figure measured rather than assumed, and the error RANDOMISED in training rather than pinned at one point | Needs a moving unit with independent attitude truth — i.e. a bike |
 | **Control — analytic (LQR)** | Reference baseline only; nothing drives with it. Fit is currently **healthy** (worst R² 0.9893) | Re-tuned once the contact model is pinned | Nothing right now — it will degrade again when contact damping moves |
-| **Hardware / untethered** | Software complete and tested in sim; nothing physical assembled | Bike balances untethered on a mat | Parts, chassis, servo homing decision |
+| **Hardware / untethered** | **First physical measurements taken 09-01** — four servos on a bench, stage 0b done. Bus layer (`DynamixelBus`, `IndirectMap`, per-model control tables) built and validated at 500 Hz on 4 servos. Still nothing assembled | Bike balances untethered on a mat | Parts and chassis; the drivetrain station is now the next thing that unblocks anything |
 | **CAD** | Started 2026-08-18. Layout exports from `aow_sim.cad_layout` into Onshape; drivetrain, steering and self-righting stations pinned, electronics packing deferred | A drawn bike whose as-built numbers replace the `GUESS`es in `bike_params.yaml` | Nothing — it is the thing being worked on |
 
 ---
@@ -180,6 +192,125 @@ collision), and the "linearization takes minutes" belief that justified caching
 the LQR design was wrong by two orders of magnitude (`fff1c96` — it is 0.39 s
 for a single design, 2.0 s with the gain schedule, and every in-sim path
 re-derives it on startup, so it can never be stale).
+
+---
+
+## The servo bench — first hardware, and two surprises (2026-09-01)
+
+Four bare servos (2x XC430-W150 ids 101/102, 2x XC330-T181 ids 103/104) on a
+U2D2 at 3 Mbps, 12 V brick. **No wheel, no belt, no load** — every number below
+is the servo's own rotor and gearbox and is therefore an UPPER BOUND on what
+the drivetrain will do. `rig: bare_shaft` is a field in
+`servo-measurements.yaml`, not a comment.
+
+### Stage 0b, the reversal test — envelope 15 Hz
+
+`analysis/servo_reversal.py`, both drive servos simultaneously. At full
+amplitude:
+
+| f | achieved/commanded | via `Present Velocity` | pwm p95 |
+|---|---|---|---|
+| 5 Hz | 0.99 | 0.91 | 0.97 |
+| 10 Hz | 0.82 | 0.56 | 0.92 |
+| 15 Hz | 0.64 | 0.36 | 0.87 |
+| 25 Hz | 0.37 | 0.16 | 0.73 |
+| 40 Hz | 0.23 | 0.08 | 0.57 |
+
+The ratio is the SAME at amplitude 0.25, 0.50 and 1.00, which is what makes it
+a first-order lag rather than a slew limit — a slew limit would penalise the
+large amplitudes. The `Present Velocity` column is the servo's internal filter
+measured for the first time (2.9x extra attenuation at 40 Hz); `RateFilter`'s
+docstring had only a simulation-derived guess for it.
+
+### Where the lag comes from — the firmware, and we own the knob
+
+`analysis/servo_modes.py lag-origin`. PWM mode (Operating Mode 16) removes the
+velocity loop entirely, then a Velocity P Gain sweep moves tau 9x:
+
+| | tau |
+|---|---|
+| PWM mode, no loop | ~12-14 ms — the motor's own `tau_m` |
+| velocity, KVP 25 | ~50-90 ms |
+| **velocity, KVP 100 (factory default)** | **~26-30 ms** |
+| velocity, KVP 400+ | ~9-19 ms |
+
+**At the factory gain the closed loop is SLOWER than the bare motor.** Above
+KVP 400 it beats the motor by driving harder and asymptotes near 11 ms. So the
+drive bandwidth is not a fixed property to model and accept — it is a
+control-table line, worth ~2.3x, and nobody has ever changed it.
+
+These fit ±25% run to run; the ORDERING is what repeats. The mode comparison
+below repeats tightly by contrast, and the yaml says which is which.
+
+### The sim was already right, and the doc was wrong
+
+`input_armature / drive_kv` = 3.0e-4 / 0.016016 = **18.7 ms**, since b0a97a3 on
+08-22. Measured: 13.6-14.1 ms bare motor, 25.3 ms closed loop at factory gain.
+18.7 sits between them.
+
+`servo-protocol.md` still opened with `drive_kv: 0.5`, "no bandwidth limit
+exists", and "both are wrong by ~31x" — all fixed ten days earlier. That page
+was then read and the 31x claim repeated into a new analysis script and into
+`servo-measurements.yaml` before anyone checked the config. **A number in a
+protocol document is state**, and this is the second time that has cost
+something. Corrected in all three places, each with a note saying what it used
+to say.
+
+### Control modes are structurally different, not one with a clamp
+
+`analysis/servo_modes.py modes`, both XC330s, 2x2 against the derivative gain
+because **writing Operating Mode RESETS the position gains** to per-mode
+defaults (mode 3 -> P900/D0, mode 5 -> P700/D1400). The first comparison did
+not know that and compared the gains as much as the modes.
+
+Ratio achieved/commanded, both units:
+
+| mode | D | 1°/10Hz | 1°/20Hz | 5°/10Hz | 5°/20Hz |
+|---|---|---|---|---|---|
+| 3 position | 0 | — | 0.16 | 0.63 | 0.22 |
+| 3 position | 1400 | 0.36 | 0.13 | 0.37 | 0.19 |
+| 5 current-based | 0 | **16.1** | **16.7** | 2.45 | 4.16 |
+| 5 current-based | 1400 | 1.19 | 0.97 | 0.94 | 0.51 |
+
+Mode 5 at D=0 is violently unstable — a 1° command gives ~16° at 0.6 A — while
+mode 3 at identical gains is fine, and D=1400 makes mode 3 WORSE while being
+what makes mode 5 work. Different plants. Mode 3 is amplitude-invariant
+(linear); mode 5 tracks BETTER as amplitude shrinks, which is what regulating
+BUS current predicts (`I_bus = duty*I_phase`, so `duty ~ sqrt(I_cmd)`). That
+last claim survived gain equalisation; the raw magnitudes did not.
+
+Relevant because `Present Current` on the XC330 also fails a consistency check:
+implied stall 10-11 A against a 0.88 A datasheet, and non-monotonic in duty.
+**R6 (reported current vs PWM at stall) is a prerequisite** before any current
+number from this part is used quantitatively.
+
+### The bus layer, and one servo that lied
+
+`hw/control_tables/` vendors ROBOTIS's own `.model` files verbatim;
+`control_table.py` parses them; `IndirectMap` + `DynamixelBus` build a map from
+register NAMES and install it in ONE SyncWrite (0.06 ms for four servos, down
+from 8 ms). Frame rate 500 Hz unpaced — the FTDI latency timer, not Return
+Delay Time. New `hardware` pytest marker, skipped unless `AOW_DXL_PORT` is set.
+
+**An XC330 on firmware 50 accepts every Indirect Address write, echoes them all
+back correctly, and returns an all-zero data window** — silent in both
+directions, no error anywhere. It cost four runs looking like a different
+problem each time, and produced a second wrong generalisation (that the SDK's
+plain `GroupSyncRead` truncates the last servo) that was only retracted after
+re-measuring on healthy units. `MIN_FIRMWARE` refuses it at discovery. The
+XC430's own "firmware 50" is a different numbering and is fine.
+
+### Outstanding
+
+- Everything here is a **bare shaft**: no stiction anywhere. The small-signal
+  regime on a LOADED servo is a stiction limit cycle, a different question.
+- **The stage-1 drivetrain station** is what turns these upper bounds into
+  answers. Nothing about the trained policies should be concluded before it.
+- R6 stall calibration before any current number is quantitative.
+- Steer channel: every `general_rl*` export flips the steer action sign 15-32
+  times/s while the joint achieves 1-20% of no-load. `analysis/chatter.py` now
+  reports both columns. Not yet diagnosed, and not yet priced against the
+  15 Hz envelope above.
 
 ---
 
@@ -2305,8 +2436,13 @@ Two tracks. The sim track does not wait on the build.
 7. **Weigh everything** at assembly.
 8. **Known-circle drive** for front tire lateral stiffness. Needs a driving
    bike, so it lands after first balance.
-9. **Bench: loop timing** at 1/2/3 Mbps, `latency_timer` 16 vs 1. Gate: p99
-   tick jitter < 1 ms at 100 Hz.
+9. ~~**Bench: loop timing**~~ **DONE 09-01.** 3 Mbps, FTDI latency 2 ms, four
+   servos: 500 Hz unpaced ceiling, and a paced 250 Hz run holds a median 4.0 ms
+   servo-tick delta (p95 5.0, max 6). The gate was p99 tick jitter < 1 ms at
+   100 Hz and is comfortably met with 5x headroom. The ceiling is the FTDI
+   latency timer, not Return Delay Time — zeroing RDT changed nothing, because
+   fastSyncRead takes every status packet in one response. Drop the timer to
+   1 ms if more is ever wanted.
 10. **Bench: AHRS** at 460800 baud, quaternion against known orientations,
    age-of-data at the tick. Expect no data for ~3 s after power-on — ~30 s if
    the unit is still on its factory static-boot default.
