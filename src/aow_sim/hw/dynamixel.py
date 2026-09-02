@@ -19,12 +19,31 @@ Result per tick: one FastSyncRead (all three status packets in ONE response
 packet, instead of one round trip per servo) and one SyncWrite (broadcast, no
 status packets at all — which is why there is no "fast" write instruction).
 
-CONVENIENTLY, XC430-W150 AND XC330-T181 HAVE IDENTICAL CONTROL TABLES for
-everything used here — same Operating Mode(11), Torque Enable(64), Goal
-Velocity(104), Goal Position(116), Realtime Tick(120), Present Velocity(128),
-Present Position(132), Present Input Voltage(144), and the same Indirect
-Address 1(168) / Indirect Data 1(224). So one table serves both and no
-per-model massaging is needed. Verified against docs/robotis/*.html.
+THE CONTROL TABLES ARE PER MODEL AND LIVE IN `control_table.py`. An earlier
+version of this file carried a nine-entry hand-typed `CT` and claimed the
+XC430-W150 and XC330-T181 "have identical control tables for everything used
+here". True of those nine registers, and false as soon as a bench test wants a
+tenth:
+
+  * **Address 126 is the same address and width on both and means different
+    things** — `Present Load` (duty-derived, 0.1% of max torque) on the XC430,
+    `Present Current` (measured mA) on the XC330. Byte-identical in an indirect
+    map, different units at decode time.
+  * The XC430 has a SECOND indirect block at 578/634; the XC330 does not
+    (probed: `rc=0 err=0` vs `rc=0 err=7` at address 578). So a single SyncWrite
+    across a mixed bus uses block 1 only, and block 1 is 28 bytes for reads and
+    writes together. `IndirectMap` enforces that budget.
+
+`CT` survives below as a compatibility alias over the shared subset. New code
+should take a `ControlTable` from `control_table.table_for(model_number)` and
+let the bus discover what it is talking to.
+
+THE GENERIC LAYER IS `DynamixelBus` + `IndirectMap`; `ServoBus` IS ONE CALLER.
+The bench tests in `docs/plans/first-physical-test.md` each want a different
+slice of the control table logged at a different rate, so the indirect map is
+built from a list of register names rather than hard-coded, and applied in ONE
+SyncWrite over the whole address block. `ServoBus` is then just the bike's
+particular choice of map plus its unit conversions.
 
 TIMING COMES FROM THE SERVOS, NOT FROM `sleep`. Realtime Tick(120) is the
 servo's own millisecond clock, sampled at the instant it read its encoder.
@@ -72,28 +91,51 @@ from pathlib import Path
 import numpy as np
 
 from ..control.steer import XC330_COUNTS_PER_RAD, clamp_extended
+from .control_table import (INDIRECT_ADDRESS_1, INDIRECT_DATA_1,  # noqa: F401
+                            N_INDIRECT, ControlTable, Register, table_by_name,
+                            table_for)
 
 PROTOCOL = 2.0
 
-# --- X-series control table: name -> (address, size). Identical on XC430-W150
-# and XC330-T181 for every item used here.
-CT = {
-    "Return Delay Time":     (9, 1),      # EEPROM; default 250 = 500 us (!)
-    "Operating Mode":        (11, 1),     # write with torque disabled
-    "Torque Enable":         (64, 1),
-    "Goal Velocity":         (104, 4),
-    "Goal Position":         (116, 4),
-    "Realtime Tick":         (120, 2),
-    "Present Velocity":      (128, 4),
-    "Present Position":      (132, 4),
-    "Present Input Voltage": (144, 2),
-}
-INDIRECT_ADDRESS_1 = 168      # 2 bytes per entry, 28 entries -> 168..223
-INDIRECT_DATA_1 = 224         # 1 byte per entry, 28 entries -> 224..251
-N_INDIRECT = 28
+# --- Compatibility alias over the shared subset. DERIVED from the vendored
+# per-model tables rather than hand-typed, so it cannot drift from them; the
+# assertion below is what makes "shared" a checked claim instead of a comment.
+# New code should use `control_table.table_for(...)`.
+_SHARED = ("Return Delay Time", "Operating Mode", "Torque Enable",
+           "Goal Velocity", "Goal Position", "Realtime Tick",
+           "Present Velocity", "Present Position", "Present Input Voltage")
+CT = {n: (table_by_name("xc430_w150")[n].address,
+          table_by_name("xc430_w150")[n].size) for n in _SHARED}
+assert CT == {n: (table_by_name("xc330_t181")[n].address,
+                  table_by_name("xc330_t181")[n].size) for n in _SHARED}, \
+    "XC430 and XC330 disagree on a register CT claims is shared"
 
+# Minimum firmware per model, by table stem.
+#
+# XC330-T181 needs >= 53, and 53 is EXACT rather than conservative: ROBOTIS's
+# own release notes give 53 as the revision that added indirect addressing, it
+# is the latest XC330 firmware, and no 51 or 52 was ever published. So the floor
+# is really "53 or nothing" and there is no lower version to discover.
+#
+# The failure below it is silent in both directions, which is why this is a hard
+# refusal rather than a warning: firmware 50 accepts every Indirect Address
+# write AND ECHOES THEM ALL BACK CORRECTLY, then leaves the Indirect DATA window
+# permanently ZERO. An address-only read-back passes; every frame is zeros; no
+# call anywhere returns an error. Measured 2026-09-01 on id 104 at fw 50 against
+# id 103 at fw 53, same part number, then confirmed fixed by the update.
+#
+# THE XC430 HAS ITS OWN FIRMWARE NUMBERING and is deliberately absent from this
+# table. XC430-W150 at "firmware 50" is the LATEST XC430 build and is unrelated
+# to the XC330's 50 -- indirect addressing works on it. Do not add a floor for
+# it by pattern-matching the number.
+MIN_FIRMWARE = {"xc330_t181": 53}
+
+MODE_CURRENT = 0
 MODE_VELOCITY = 1
+MODE_POSITION = 3
 MODE_EXTENDED_POSITION = 4
+MODE_CURRENT_POSITION = 5     # current-based position, the self-righting mode
+MODE_PWM = 16
 
 VEL_LSB_RAD_S = 0.229 * 2 * np.pi / 60.0
 VOLT_LSB = 0.1
@@ -314,6 +356,535 @@ def assert_low_latency(port: str) -> None:
             f"docs/plans/untethered-setup.md).")
 
 
+class IndirectMap:
+    """An allocation of indirect block 1, built from register NAMES.
+
+    Indirect addressing is what lets one SyncRead cover registers that are not
+    contiguous, and one SyncWrite hit a DIFFERENT register on each servo. Entry
+    N is a 2-byte pointer at ``168 + 2*(N-1)`` naming the source address of ONE
+    byte, which then appears at ``224 + (N-1)``.
+
+    Two things this class exists to get right:
+
+    * **The whole block is one pool.** Upstream's ``Indirect Address Write`` /
+      ``Indirect Address Read`` entries are a naming convention, not a hardware
+      partition — the labels are ignored here and entries are allocated in the
+      order they are added. Reads first, then writes, so each is a contiguous
+      span in the data area and each needs exactly one group transfer.
+    * **Block 1 only, 28 bytes for reads and writes together.** The XC430 has a
+      second block at 578/634 and the XC330 does not, so a mixed bus cannot use
+      it in a single SyncWrite. The budget is checked in :meth:`apply`.
+
+    A spec is either a register NAME (same on every servo) or a dict mapping
+    servo id to name — which is how you point one slot at ``Present Load`` on
+    an XC430 and ``Present Current`` on an XC330, or at ``Goal Velocity`` on
+    the drives and ``Goal Position`` on the steer. Widths must agree across
+    servos or the slots would not line up, and that is checked.
+
+        imap = (IndirectMap(bus.tables)
+                .read("Realtime Tick").read("Present Position")
+                .read("Present Velocity").read("Present PWM")
+                .read({101: "Present Load", 103: "Present Current"}, label="torque")
+                .write({101: "Goal Velocity", 103: "Goal Position"}))
+        bus.apply_map(imap)
+    """
+
+    def __init__(self, tables: dict):
+        self.tables = dict(tables)
+        self.ids = tuple(self.tables)
+        self._reads: list = []      # (label, {id: Register})
+        self._writes: list = []
+
+    # -- building ----------------------------------------------------------
+
+    def _resolve(self, spec, label):
+        if isinstance(spec, str):
+            per_id = {i: self.tables[i][spec] for i in self.ids}
+            label = label or spec
+        else:
+            missing = set(self.ids) - set(spec)
+            if missing:
+                raise KeyError(
+                    f"indirect spec {spec} does not name a register for "
+                    f"id(s) {sorted(missing)}; every servo on the bus needs "
+                    f"one or the slot cannot line up")
+            per_id = {i: self.tables[i][spec[i]] for i in self.ids}
+            label = label or "/".join(sorted({r.name for r in per_id.values()}))
+        sizes = {r.size for r in per_id.values()}
+        if len(sizes) != 1:
+            raise ValueError(
+                f"{label}: registers differ in width across servos "
+                f"({ {i: (r.name, r.size) for i, r in per_id.items()} }). "
+                f"Indirect slots are per-byte, so a mixed width would put "
+                f"different fields at the same offset.")
+        return label, per_id
+
+    def read(self, spec, label: str | None = None) -> "IndirectMap":
+        """Add a register to the per-frame READ block. Chainable."""
+        self._reads.append(self._resolve(spec, label))
+        return self
+
+    def write(self, spec, label: str | None = None) -> "IndirectMap":
+        """Add a register to the per-frame WRITE block. Chainable."""
+        self._writes.append(self._resolve(spec, label))
+        return self
+
+    # -- geometry ----------------------------------------------------------
+
+    @property
+    def read_len(self) -> int:
+        return sum(next(iter(p.values())).size for _, p in self._reads)
+
+    @property
+    def write_len(self) -> int:
+        return sum(next(iter(p.values())).size for _, p in self._writes)
+
+    @property
+    def n_bytes(self) -> int:
+        return self.read_len + self.write_len
+
+    @property
+    def read_addr(self) -> int:
+        return INDIRECT_DATA_1
+
+    @property
+    def write_addr(self) -> int:
+        return INDIRECT_DATA_1 + self.read_len
+
+    def _offsets(self, entries, base) -> dict:
+        out, off = {}, base
+        for label, per_id in entries:
+            out[label] = off - base
+            off += next(iter(per_id.values())).size
+        return out
+
+    @property
+    def read_offsets(self) -> dict:
+        """label -> byte offset within the read block."""
+        return self._offsets(self._reads, INDIRECT_DATA_1)
+
+    @property
+    def write_offsets(self) -> dict:
+        return self._offsets(self._writes, self.write_addr)
+
+    def register(self, dxl_id: int, label: str) -> Register:
+        """The Register this servo has behind a label — the decode key."""
+        for lbl, per_id in self._reads + self._writes:
+            if lbl == label:
+                return per_id[dxl_id]
+        raise KeyError(f"no indirect slot labelled {label!r}; have "
+                       f"{[l for l, _ in self._reads + self._writes]}")
+
+    @property
+    def read_labels(self) -> tuple:
+        return tuple(lbl for lbl, _ in self._reads)
+
+    def address_bytes(self, dxl_id: int) -> list:
+        """The full indirect-ADDRESS payload for one servo, little-endian.
+
+        ``2 * n_bytes`` bytes starting at :data:`INDIRECT_ADDRESS_1`, which is
+        what makes the whole setup a single SyncWrite.
+        """
+        out = []
+        for _, per_id in self._reads + self._writes:
+            reg = per_id[dxl_id]
+            for k in range(reg.size):
+                src = reg.address + k
+                out += [src & 0xFF, (src >> 8) & 0xFF]
+        return out
+
+    # -- applying ----------------------------------------------------------
+
+    def apply(self, port, packet) -> None:
+        """Write the whole map to every servo in ONE SyncWrite.
+
+        Torque must be off: the indirect address entries are refused while a
+        servo is torqued, and a refusal here is silent in its consequences —
+        every later read would address whatever was there before.
+        """
+        from dynamixel_sdk import GroupSyncWrite
+
+        if self.n_bytes > N_INDIRECT:
+            raise RuntimeError(
+                f"indirect block 1 holds {N_INDIRECT} bytes; this map needs "
+                f"{self.n_bytes} ({self.read_len} read + {self.write_len} "
+                f"write). Drop a register, or narrow one — the XC330 has no "
+                f"second block, so a mixed bus cannot spill into 578/634.")
+        writer = GroupSyncWrite(port, packet, INDIRECT_ADDRESS_1,
+                                2 * self.n_bytes)
+        for i in self.ids:
+            if not writer.addParam(i, self.address_bytes(i)):
+                raise RuntimeError(f"indirect SyncWrite refused id {i}")
+        rc = writer.txPacket()
+        if rc != 0:
+            raise RuntimeError(f"indirect SyncWrite failed: rc={rc}")
+
+    def verify(self, port, packet) -> None:
+        """Read the indirect address block back and compare it byte for byte.
+
+        A SyncWrite is a BROADCAST and returns no status packets — which is why
+        it costs ~0.03 ms for the whole bus, and why nothing about it is
+        confirmed. It is worth paying the read-back once at the start of a long
+        capture, where the alternative is discovering it in the analysis.
+
+        This checks the address pointers only. A servo whose firmware does not
+        implement indirect addressing at all echoes the pointers back correctly
+        and still returns an all-zero data window — that case is caught at
+        discovery by the firmware floor in :data:`MIN_FIRMWARE`, not here.
+        """
+        for i in self.ids:
+            want = self.address_bytes(i)
+            for k in range(len(want) // 2):
+                raw, rc, err = packet.read2ByteTxRx(
+                    port, i, INDIRECT_ADDRESS_1 + 2 * k)
+                if rc != 0 or err != 0:
+                    raise RuntimeError(
+                        f"indirect verify id={i} entry {k + 1}: rc={rc} err={err}")
+                got = [raw & 0xFF, (raw >> 8) & 0xFF]
+                if got != want[2 * k:2 * k + 2]:
+                    raise RuntimeError(
+                        f"indirect map did not stick: id={i} entry {k + 1} "
+                        f"points at {raw}, expected "
+                        f"{want[2 * k] | (want[2 * k + 1] << 8)}")
+
+
+class DynamixelBus:
+    """A bus of X-series servos, addressed by register NAME.
+
+    The generic layer: no bike, no belt ratios, no filters. It discovers what
+    each id is from its Model Number(0), resolves names through that model's
+    own control table, and gives one FastSyncRead / one SyncWrite per frame
+    over whatever :class:`IndirectMap` it was handed.
+
+    Every bench test in `docs/plans/first-physical-test.md` wants a different
+    slice of the control table, so nothing here is baked in.
+
+        with DynamixelBus("/dev/ttyUSB0", ids=(101, 102, 103, 104)) as bus:
+            bus.write(101, "Profile Velocity", 0)     # no trajectory generator
+            bus.apply_map(IndirectMap(bus.tables)
+                          .read("Realtime Tick").read("Present Position"))
+            for row in bus.capture(seconds=5.0, rate_hz=250):
+                ...
+    """
+
+    def __init__(self, port: str = "/dev/ttyUSB0", baud: int = 3_000_000,
+                 ids=(), protocol: float = PROTOCOL):
+        self.port_name, self.baud, self.protocol = port, baud, protocol
+        self.ids = tuple(ids)
+        self.tables: dict = {}
+        self._port = self._packet = None
+        self._map = self._reader = self._writer = None
+        self._fast = True
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def open(self) -> "DynamixelBus":
+        from dynamixel_sdk import PacketHandler, PortHandler
+
+        assert_low_latency(self.port_name)
+        self._port = PortHandler(self.port_name)
+        if not self._port.openPort():
+            raise RuntimeError(f"cannot open {self.port_name}")
+        if not self._port.setBaudRate(self.baud):
+            raise RuntimeError(f"cannot set {self.baud} baud on {self.port_name}")
+        self._packet = PacketHandler(self.protocol)
+        self.discover()
+        return self
+
+    def close(self) -> None:
+        if self._port is not None:
+            self._port.closePort()
+            self._port = None
+
+    def __enter__(self):
+        return self.open()
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def discover(self, ids=None) -> dict:
+        """Read Model Number(0) from each id and load its control table.
+
+        Discovery rather than configuration: a servo swapped between rigs, or
+        a bench wired in a different order, announces what it is instead of
+        being silently mis-decoded. Model Number is at address 0 on every
+        X-series part, so this needs no table to bootstrap.
+        """
+        ids = tuple(ids) if ids is not None else self.ids
+        tables = {}
+        for i in ids:
+            raw, rc, err = self._packet.read2ByteTxRx(self._port, i, 0)
+            if rc != 0 or err != 0:
+                raise RuntimeError(
+                    f"id {i} did not answer a Model Number read "
+                    f"(rc={rc} err={err}). Check power, baud ({self.baud}) "
+                    f"and wiring before anything else.")
+            ct = table_for(raw)
+            floor = MIN_FIRMWARE.get(ct.name)
+            if floor is not None:
+                fw, rc, err = self._packet.read1ByteTxRx(self._port, i, 6)
+                if rc != 0 or err != 0:
+                    raise RuntimeError(
+                        f"id {i}: Firmware Version read failed (rc={rc} err={err})")
+                if fw < floor:
+                    raise RuntimeError(
+                        f"id {i} is a {ct.name} on firmware {fw}; this code "
+                        f"needs >= {floor}. Firmware 50 accepts and echoes back "
+                        f"every Indirect Address write and then leaves the "
+                        f"Indirect DATA window permanently ZERO, so every frame "
+                        f"from it would be zeros with no error anywhere. Update "
+                        f"it in Dynamixel Wizard.")
+            tables[i] = ct
+        self.ids, self.tables = ids, tables
+        return tables
+
+    def scan(self, lo: int = 0, hi: int = 253) -> dict:
+        """Ping sweep -> {id: model number}. For bring-up, not for loops."""
+        found = {}
+        for i in range(lo, hi + 1):
+            raw, rc, err = self._packet.read2ByteTxRx(self._port, i, 0)
+            if rc == 0 and err == 0:
+                found[i] = raw
+        return found
+
+    # -- named register access --------------------------------------------
+
+    def _rw(self, size: int, write: bool):
+        p = self._packet
+        return {(1, False): p.read1ByteTxRx, (2, False): p.read2ByteTxRx,
+                (4, False): p.read4ByteTxRx, (1, True): p.write1ByteTxRx,
+                (2, True): p.write2ByteTxRx, (4, True): p.write4ByteTxRx}[(size, write)]
+
+    def read_raw(self, dxl_id: int, name: str) -> int:
+        reg = self.tables[dxl_id][name]
+        raw, rc, err = self._rw(reg.size, False)(self._port, dxl_id, reg.address)
+        if rc != 0 or err != 0:
+            raise RuntimeError(f"read id={dxl_id} {name}: rc={rc} err={err}")
+        return raw
+
+    def read(self, dxl_id: int, name: str) -> float:
+        """Read one register, decoded to physical units by that model's table."""
+        return self.tables[dxl_id][name].decode(self.read_raw(dxl_id, name))
+
+    def write_raw(self, dxl_id: int, name: str, raw: int) -> None:
+        reg = self.tables[dxl_id][name]
+        rc, err = self._rw(reg.size, True)(self._port, dxl_id, reg.address, raw)
+        if rc != 0 or err != 0:
+            raise RuntimeError(f"write id={dxl_id} {name}={raw}: rc={rc} err={err}")
+
+    def write(self, dxl_id: int, name: str, value: float) -> None:
+        """Write one register in physical units (raw counts if it has no unit)."""
+        self.write_raw(dxl_id, name, self.tables[dxl_id][name].encode(value))
+
+    def write_all(self, name: str, value: float, ids=None) -> None:
+        for i in (ids if ids is not None else self.ids):
+            self.write(i, name, value)
+
+    def torque(self, on: bool, ids=None) -> None:
+        """Torque Enable across the bus in ONE SyncWrite.
+
+        Address 64, one byte, identical on every model here -- so this needs no
+        indirection and no per-servo round trip. It was four `write1ByteTxRx`
+        calls, which is four request/response pairs at ~2 ms each and was most
+        of `apply_map`'s cost.
+        """
+        from dynamixel_sdk import GroupSyncWrite
+
+        ids = tuple(ids) if ids is not None else self.ids
+        regs = {i: self.tables[i]["Torque Enable"] for i in ids}
+        addrs = {r.address for r in regs.values()}
+        if len(addrs) != 1:                      # cannot happen on X-series
+            for i in ids:                        # ... but do not assume it
+                self.write_raw(i, "Torque Enable", int(bool(on)))
+            return
+        writer = GroupSyncWrite(self._port, self._packet, addrs.pop(), 1)
+        for i in ids:
+            if not writer.addParam(i, [int(bool(on))]):
+                raise RuntimeError(f"torque SyncWrite refused id {i}")
+        rc = writer.txPacket()
+        if rc != 0:
+            raise RuntimeError(f"torque SyncWrite failed: rc={rc}")
+
+    def prepare(self, ids=None, return_delay: int = 0,
+                zero_profiles: bool = True) -> None:
+        """The settings every bench test wants, applied with torque off.
+
+        * **Return Delay Time 0.** The factory default is 250, in units of
+          2 us — 500 us before the servo answers. At 3 Mbps a whole read/write
+          frame is only ~330 us of wire time, so the default delay is LONGER
+          THAN THE DATA TRANSFER and caps the achievable rate on its own.
+        * **Profile Velocity and Profile Acceleration 0.** Non-zero profiles
+          make the servo run its own trajectory generator, so a step command
+          measures that generator rather than the control loop. This is the
+          single most likely way to get a confidently wrong answer out of any
+          of the bench tests.
+        """
+        ids = tuple(ids) if ids is not None else self.ids
+        self.torque(False, ids)
+        for i in ids:
+            self.write_raw(i, "Return Delay Time", return_delay)
+            if zero_profiles:
+                self.write_raw(i, "Profile Acceleration", 0)
+                self.write_raw(i, "Profile Velocity", 0)
+
+    # -- per-frame I/O -----------------------------------------------------
+
+    def apply_map(self, imap: IndirectMap, verify: bool = False) -> IndirectMap:
+        """Install an indirect map and build the group handlers.
+
+        TWO packets for the whole bus, mixed models included: one SyncWrite to
+        drop torque (Torque Enable is address 64 on every model here) and one
+        SyncWrite carrying each servo's own address block. Measured 0.06 ms
+        total for 4 servos -- it was 8 ms when the torque-off was four separate
+        `write1ByteTxRx` round trips, which is where that cost lived, not in
+        the map.
+
+        `verify=True` reads the block back; see :meth:`IndirectMap.verify` for
+        when that is worth 2*n round trips.
+        """
+        from dynamixel_sdk import GroupSyncRead, GroupSyncWrite
+
+        self.torque(False)
+        imap.apply(self._port, self._packet)
+        if verify:
+            imap.verify(self._port, self._packet)
+        self._map = imap
+        if imap.read_len:
+            self._reader = GroupSyncRead(self._port, self._packet,
+                                         imap.read_addr, imap.read_len)
+            for i in imap.ids:
+                if not self._reader.addParam(i):
+                    raise RuntimeError(f"SyncRead refused id {i}")
+            # Fast by DEFAULT, with the plain path as a working fallback.
+            #
+            # RETRACTION, kept because the wrong version was load-bearing for a
+            # while. This block once refused to fall back at all, on a measured
+            # `txRxPacket rc=0 lengths {101: 14, 102: 14, 103: 14, 104: 2}` --
+            # the last servo truncated with a success return code. That servo
+            # was an XC330 on FIRMWARE 50, which does not populate the indirect
+            # data window at all (see MIN_FIRMWARE). Re-measured 2026-09-01
+            # with all four servos on good firmware, three trials each: both
+            # paths return complete 14-byte buffers for every id, on the
+            # indirect block and on a direct one. The SDK was fine; the servo
+            # was not.
+            #
+            # Fast remains the default on its own merits -- all status packets
+            # come back in ONE response instead of one `readRx` per servo, so
+            # the frame stays uniform as servos are added -- and both were ~2 ms
+            # here anyway, because the FTDI latency timer dominates.
+            #
+            # DO NOT FLIP `_fast` ON A LIVE READER. Switching after a
+            # fastSyncRead leaves the group buffer in the other layout and the
+            # next plain read raises IndexError from `getData`. Build a new bus.
+            self._fast = hasattr(self._reader, "fastSyncRead")
+        if imap.write_len:
+            self._writer = GroupSyncWrite(self._port, self._packet,
+                                          imap.write_addr, imap.write_len)
+        return imap
+
+    def read_frame(self, decode: bool = True) -> dict:
+        """One FastSyncRead -> ``{id: {label: value}}``.
+
+        Fast because all status packets come back in ONE response packet
+        instead of a round trip per servo. Values are decoded through each
+        servo's OWN register — which is the point of the per-model tables, and
+        why the same slot can be milliamps on one servo and percent on another.
+        """
+        rc = (self._reader.fastSyncRead() if self._fast
+              else self._reader.txRxPacket())
+        if rc != 0:
+            raise RuntimeError(f"SyncRead failed: rc={rc}")
+        imap, out = self._map, {}
+        offs = imap.read_offsets
+        for i in imap.ids:
+            if not self._reader.isAvailable(i, imap.read_addr, imap.read_len):
+                raise RuntimeError(f"no data for id {i}")
+            row = {}
+            for label in imap.read_labels:
+                reg = imap.register(i, label)
+                raw = self._reader.getData(i, imap.read_addr + offs[label],
+                                           reg.size)
+                row[label] = reg.decode(raw) if decode else raw
+            out[i] = row
+        return out
+
+    def write_frame(self, values: dict, encode: bool = True) -> None:
+        """One SyncWrite of ``{id: value}`` through the map's write slots.
+
+        Indirection routes the same bytes to a different register per servo,
+        which is what makes it one transfer rather than a BulkWrite.
+        """
+        imap = self._map
+        width = imap.write_len
+        self._writer.clearParam()
+        for i, v in values.items():
+            reg = imap.register(i, imap._writes[0][0])
+            raw = reg.encode(v) if encode else int(v) & 0xFFFFFFFF
+            self._writer.addParam(i, [(raw >> (8 * k)) & 0xFF
+                                      for k in range(width)])
+        rc = self._writer.txPacket()
+        if rc != 0:
+            raise RuntimeError(f"SyncWrite failed: rc={rc}")
+
+    # -- capture -----------------------------------------------------------
+
+    def capture(self, seconds: float, rate_hz: float = 250.0,
+                command=None, warn_overrun: bool = True) -> list:
+        """Run a fixed-rate loop, returning one row per frame.
+
+        ``command(t, row) -> {id: value}`` is called after each read and its
+        result, if any, goes out as the frame's SyncWrite — so a test supplies
+        its waveform as a function of time and reads back what happened, with
+        no bespoke loop per test.
+
+        **Timing truth is the servo's Realtime Tick, not the host clock.** The
+        host paces the loop, but ``t_host`` is only recorded for diagnosis;
+        every row carries each servo's own tick, sampled at the instant it read
+        its encoder and immune to bus jitter and host scheduling. Map
+        ``"Realtime Tick"`` into the read block or the rows carry no usable
+        time base — checked below rather than discovered in the analysis.
+        """
+        import time
+
+        if "Realtime Tick" not in self._map.read_labels:
+            raise RuntimeError(
+                "capture() needs 'Realtime Tick' in the read block — it is the "
+                "only timing source immune to bus and host jitter. Add "
+                ".read('Realtime Tick') to the map.")
+        dt = 1.0 / float(rate_hz)
+        rows, overruns = [], 0
+        t0 = time.perf_counter()
+        # RELATIVE to t0, like `t_host` below. It was briefly initialised to the
+        # absolute `t0` instead, which made the first slack ~t0 seconds and the
+        # loop sleep for hours; the `min(slack, dt)` clamp is belt-and-braces so
+        # an arithmetic slip can never again turn into a hang rather than an
+        # error. A pacing loop that stalls looks exactly like a wiring fault.
+        next_t = 0.0
+        while True:
+            t_host = time.perf_counter() - t0
+            if t_host >= seconds:
+                break
+            state = self.read_frame()
+            row = {"t_host": t_host, "servos": state}
+            if command is not None:
+                out = command(t_host, state)
+                if out:
+                    self.write_frame(out)
+                    row["command"] = dict(out)
+            rows.append(row)
+            next_t += dt
+            slack = min(next_t - (time.perf_counter() - t0), dt)
+            if slack > 0:
+                time.sleep(slack)
+            else:
+                overruns += 1
+                next_t = time.perf_counter() - t0
+        if overruns and warn_overrun:
+            print(f"WARNING: {overruns}/{len(rows)} frames overran "
+                  f"{rate_hz:g} Hz; the tick deltas in the rows are the truth.")
+        return rows
+
+
 class ServoBus:
     """The three servos as one device.
 
@@ -327,7 +898,8 @@ class ServoBus:
                  baud: int = 3_000_000, ids=(1, 2, 3),
                  velocity_source: str = "differenced",
                  window_ms: float = 25.0, taper: float = 0.5,
-                 control_hz: float = CONTROL_HZ_DEFAULT):
+                 control_hz: float = CONTROL_HZ_DEFAULT,
+                 models: dict | None = None):
         self.id_a, self.id_b, self.id_steer = ids
         self.ids = tuple(ids)
         self.belt_ratio = float(params["drivetrain"]["belt_ratio"])
@@ -351,6 +923,14 @@ class ServoBus:
         # apart without this line moving too.
         self._wraps = {self.id_a, self.id_b}
         self._fast = True
+        # The bike's servos, declared so the indirect map can be built (and
+        # unit-tested) without a bus present. `open()` replaces these with what
+        # the hardware actually reports and raises if the two disagree, which
+        # is how a miswired bench gets caught before it produces numbers.
+        self.models = dict(models) if models else {
+            self.id_a: "xc430_w150", self.id_b: "xc430_w150",
+            self.id_steer: "xc330_t181"}
+        self.tables = {i: table_by_name(m) for i, m in self.models.items()}
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -378,37 +958,29 @@ class ServoBus:
         self._configure_modes()
         self.torque(True)
 
-    def _setup_indirect(self) -> None:
-        """Point indirect entries at the registers we care about.
+    def _build_map(self) -> IndirectMap:
+        """The bike's indirect layout, as an :class:`IndirectMap`. No I/O.
 
-        Read block is identical on every servo. The write block deliberately
-        is NOT: each servo maps its own goal register to the same indirect
-        data address, which is what collapses the write to one SyncWrite.
+        Read block is the same registers on every servo. The write block
+        deliberately is NOT: each servo maps its OWN goal register to the same
+        indirect data address, which is what collapses three different goals
+        into one SyncWrite. Written directly this would need a BulkWrite.
+
+        Pure so it can be checked without a bus — see `tests/test_hw_dynamixel.py`.
         """
-        next_addr, next_data, used = INDIRECT_ADDRESS_1, INDIRECT_DATA_1, 0
-
-        self.read_addr, self.read_len = next_data, 0
-        self.read_offsets = {}
+        imap = IndirectMap({i: self.tables[i] for i in self.ids})
         for name in READ_BLOCK:
-            src, size = CT[name]
-            self.read_offsets[name] = next_data - self.read_addr
-            for k in range(size):
-                for i in self.ids:
-                    self._write(i, next_addr + 2 * k, 2, src + k)
-            next_addr += 2 * size
-            next_data += size
-            self.read_len += size
-            used += size
+            imap.read(name)
+        imap.write({i: self.goal_item[i] for i in self.ids}, label="goal")
+        self.read_addr, self.read_len = imap.read_addr, imap.read_len
+        self.read_offsets = imap.read_offsets
+        self.write_addr, self.write_len = imap.write_addr, imap.write_len
+        self._map = imap
+        return imap
 
-        self.write_addr, self.write_len = next_data, 4      # one 4-byte goal
-        for k in range(4):
-            for i in self.ids:
-                src, _ = CT[self.goal_item[i]]
-                self._write(i, next_addr + 2 * k, 2, src + k)
-        used += 4
-        if used > N_INDIRECT:
-            raise RuntimeError(f"indirect block 1 holds {N_INDIRECT} bytes, "
-                               f"need {used}")
+    def _setup_indirect(self) -> None:
+        """Build the map and install it in ONE SyncWrite. Torque must be off."""
+        self._build_map().apply(self._port, self._packet)
 
     def _configure_modes(self) -> None:
         """Modes live in EEPROM and need torque off, which open() guarantees.

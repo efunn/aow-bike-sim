@@ -12,54 +12,42 @@ import pytest
 
 from aow_sim.build_model import load_params
 from aow_sim.control.steer import XC330_COUNTS_PER_RAD
+from aow_sim.hw.control_table import (MODEL_NUMBERS, table_by_name,
+                                      table_for)
 from aow_sim.hw.dynamixel import (CT, INDIRECT_ADDRESS_1, INDIRECT_DATA_1,
-                                  POS_WRAP, READ_BLOCK, TICK_WRAP,
-                                  VEL_LSB_RAD_S, RateFilter, ServoBus,
-                                  assert_alias_margin, _pos_delta, _signed,
-                                  _tick_delta_ms)
+                                  N_INDIRECT, POS_WRAP, READ_BLOCK,
+                                  TICK_WRAP, VEL_LSB_RAD_S, IndirectMap,
+                                  RateFilter, ServoBus, assert_alias_margin,
+                                  _pos_delta, _signed, _tick_delta_ms)
 
 # Register maps, unit conversions and tick math; no bike model.
 # See `pytest --markers` for what each one means.
 pytestmark = pytest.mark.pure
 
 
-class FakePacket:
-    """Records register writes instead of putting them on a wire."""
-
-    def __init__(self):
-        self.writes = []          # (dxl_id, address, width, value)
-
-    def _w(self, width):
-        def fn(port, dxl_id, address, value):
-            self.writes.append((dxl_id, address, width, value))
-            return 0, 0
-        return fn
-
-    def __getattr__(self, name):
-        for width in (1, 2, 4):
-            if name == f"write{width}ByteTxRx":
-                return self._w(width)
-        raise AttributeError(name)
-
-
 @pytest.fixture
 def bus():
+    """A bus with its indirect map built but nothing on a wire.
+
+    `_build_map` is deliberately pure — the map is now installed in ONE
+    SyncWrite, so intercepting individual register writes would test the
+    transport instead of the layout. `IndirectMap.address_bytes` IS the
+    payload, so asserting on it checks the same bytes more directly.
+    """
     b = ServoBus(load_params(), ids=(1, 2, 3))
-    b._packet = FakePacket()
-    b._port = object()
-    b._setup_indirect()
+    b._build_map()
     return b
 
 
 def _indirect_map(bus, dxl_id):
-    """-> {indirect data address: source register address} for one servo."""
-    out = {}
-    for i, addr, width, value in bus._packet.writes:
-        if i != dxl_id or not (INDIRECT_ADDRESS_1 <= addr < INDIRECT_DATA_1):
-            continue
-        slot = (addr - INDIRECT_ADDRESS_1) // 2       # 0-based indirect entry
-        out[INDIRECT_DATA_1 + slot] = value
-    return out
+    """-> {indirect data address: source register address} for one servo.
+
+    Decoded straight out of the SyncWrite payload: entry k is a little-endian
+    source address at 168 + 2k, and surfaces as one byte at 224 + k.
+    """
+    payload = bus._map.address_bytes(dxl_id)
+    return {INDIRECT_DATA_1 + k: payload[2 * k] | (payload[2 * k + 1] << 8)
+            for k in range(len(payload) // 2)}
 
 
 def test_read_block_maps_the_intended_registers_contiguously(bus):
@@ -328,3 +316,116 @@ def test_only_the_velocity_mode_servos_are_unwrapped():
     bus = ServoBus(params, ids=(1, 2, 3))
     assert bus._wraps == {bus.id_a, bus.id_b}
     assert bus.id_steer not in bus._wraps
+
+
+# --- per-model control tables -------------------------------------------
+# Added 2026-09-01 with the bench rigs. The old hand-typed CT could not
+# express a register that means different things on the two models, and 126
+# is exactly that.
+
+def test_the_shared_subset_really_is_shared():
+    """`CT` is derived from the XC430 table and asserted equal to the XC330's.
+
+    If a re-fetch of the vendored tables ever breaks that, the import fails
+    loudly rather than the bike addressing the wrong register.
+    """
+    a, b = table_by_name("xc430_w150"), table_by_name("xc330_t181")
+    for name, (addr, size) in CT.items():
+        assert (a[name].address, a[name].size) == (addr, size)
+        assert (b[name].address, b[name].size) == (addr, size)
+
+
+def test_address_126_diverges_between_the_models():
+    """Same address, same width, different meaning and different units."""
+    a, b = table_by_name("xc430_w150"), table_by_name("xc330_t181")
+    assert a["Present Load"].address == b["Present Current"].address == 126
+    assert a["Present Load"].size == b["Present Current"].size == 2
+    assert a["Present Load"].unit_name == "frac_max_torque"
+    assert b["Present Current"].unit_name == "A"
+    # The XC430 genuinely has no current registers at all.
+    assert "Present Current" not in a and "Current Limit" not in a
+    assert "Current Limit" in b
+
+
+def test_model_numbers_match_the_hardware_probe():
+    """Read off IDs 101-104 on 2026-09-01, not copied from a datasheet."""
+    assert MODEL_NUMBERS == {1070: "xc430_w150", 1210: "xc330_t181"}
+    assert table_for(1070).name == "xc430_w150"
+    assert table_for(1210).name == "xc330_t181"
+
+
+def test_unknown_model_number_names_the_fix():
+    with pytest.raises(KeyError, match="unknown Model Number"):
+        table_for(9999)
+
+
+def test_signed_registers_decode_negative():
+    ct = table_by_name("xc330_t181")
+    assert ct.decode("Present Current", 0xFFFF) == pytest.approx(-0.001)
+    assert ct["Present Position"].decode(0xFFFFFFFF) < 0
+
+
+# --- IndirectMap ---------------------------------------------------------
+
+def _tables():
+    return {101: table_by_name("xc430_w150"), 103: table_by_name("xc330_t181")}
+
+
+def test_one_slot_can_be_a_different_register_per_model():
+    """The reason the map takes a dict: 126 is Load on one and Current on the
+    other, so the slot is byte-identical and the DECODE is not."""
+    m = (IndirectMap(_tables()).read("Realtime Tick")
+         .read({101: "Present Load", 103: "Present Current"}, label="torque"))
+    assert m.register(101, "torque").name == "Present Load"
+    assert m.register(103, "torque").name == "Present Current"
+    # Same offset, same source address, on both servos.
+    assert m.address_bytes(101)[4:] == m.address_bytes(103)[4:] == [126, 0, 127, 0]
+    assert m.read_offsets["torque"] == 2
+
+
+def test_mixed_widths_are_refused():
+    """A slot whose width differs across servos would put different fields at
+    the same offset, and every later decode would be quietly wrong."""
+    with pytest.raises(ValueError, match="differ in width"):
+        IndirectMap(_tables()).read({101: "Present PWM",
+                                     103: "Present Position"})
+
+
+def test_a_spec_missing_a_servo_is_refused():
+    with pytest.raises(KeyError, match="does not name a register"):
+        IndirectMap(_tables()).read({101: "Present Load"})
+
+
+def test_block_budget_is_enforced_and_names_the_overflow():
+    """28 bytes for reads and writes together — the XC330 has no second block,
+    so a mixed bus cannot spill into 578/634."""
+    m = IndirectMap(_tables())
+    for name in ("Present Position", "Present Velocity", "Velocity Trajectory",
+                 "Position Trajectory", "Goal Position", "Goal Velocity",
+                 "Profile Velocity", "Profile Acceleration"):
+        m.read(name)
+    assert m.n_bytes > N_INDIRECT
+    with pytest.raises(RuntimeError, match="second block"):
+        m.apply(None, None)
+
+
+def test_reads_then_writes_are_each_one_contiguous_span():
+    m = (IndirectMap(_tables()).read("Realtime Tick").read("Present Position")
+         .write({101: "Goal Velocity", 103: "Goal Position"}, label="goal"))
+    assert m.read_addr == INDIRECT_DATA_1
+    assert m.read_len == 6 and m.write_len == 4
+    assert m.write_addr == INDIRECT_DATA_1 + m.read_len
+    assert m.n_bytes == 10
+
+
+def test_velocity_limit_shares_the_velocity_lsb():
+    """It is a velocity register but upstream's [unit info] does not cover it.
+
+    Left as raw counts it decodes to ~460 where the truth is ~11 rad/s, which
+    silently defeats any amplitude clamp written against it — analysis/
+    servo_reversal.py had exactly that bug before torque was ever enabled.
+    """
+    for stem in ("xc430_w150", "xc330_t181"):
+        ct = table_by_name(stem)
+        assert ct["Velocity Limit"].unit == ct["Present Velocity"].unit
+        assert ct["Velocity Limit"].unit_name == "rad/s"
