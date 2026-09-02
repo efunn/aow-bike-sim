@@ -234,3 +234,97 @@ s5_hold_at_zero:
 
 s6_conclusion:
   model_form: null              # which row of the protocol's table
+
+# --------------------------------------------------------------------------
+# XL330-M288-T bench study, 2026-09-01. NOT A BIKE PART.
+#
+# WHY IT IS IN THIS FILE. `docs/plans/first-physical-test.md` station C plans to
+# drive the self-righting linkage with an XC330 in CURRENT-BASED POSITION MODE
+# (Operating Mode 5), and R5 asks how that mode differs from plain position
+# control. Nothing in the repo knew. The XL330-M288-T is the same X330 body and
+# the actuator Rhoban/bam identifies, so it is the one part where our numbers
+# and theirs are directly comparable -- and it was the pair on the bench.
+#
+# Improvised rig: a 3D-printed bar stopping the horn at ~70 deg, in friction-fit
+# holes. It walked under repeated impact and eventually came off, which is why
+# every number here is ONE RUN unless stated. See `rig_note` at the end.
+xl330_m288_current_modes:
+  date: 2026-09-01
+  part: XL330-M288-T          # model number 1200, firmware 53
+  vin_V: 5.2                  # NOT the bike's 12 -- this part is a 5 V servo
+  reproduce:
+    - python analysis/servo_stall.py   --port <port> --id 150 --direction cw
+    - python analysis/servo_cascade.py --port <port> --id 150 --stop-deg 70
+
+  # ---- 1. the current controller in isolation (Operating Mode 0) ----------
+  current_loop:
+    # It IS a real regulator: Present Current == Goal Current EXACTLY, to the
+    # milliamp, at 20/40/60/80/100/150/200/300/450 mA. Above ~100 mA at NO LOAD
+    # it cannot, but that is supply voltage, not the loop: duty saturates at
+    # 1.000 and the shaft pins at the no-load speed.
+    tracks_setpoint_exactly: true
+    unit_confirmed_mA: 1.0
+    rise_time_63pct_ms: [13, 30]
+    # WHAT IT REGULATES is neither of BAM's two models. Fitted at a true stall
+    # (|drift| 0-1 counts, 24 C), two runs in OPPOSITE directions:
+    #     I_reported = (vin/R) * (alpha*duty + (1-alpha)*duty^2)
+    # alpha = 1 is BAM commit 1cbb14b (pure phase, linear).
+    # alpha = 0 is BAM commit c3cbf89 (pure bus, sqrt) -- marked UNTESTED there.
+    blend_alpha: 0.158        # run1 0.156+-0.009, run2 0.161+-0.009
+    blend_R_ohm: 3.57         # run1 3.54+-0.05,   run2 3.60+-0.05
+    blend_r2: 0.9996          # max residual 33 mV against a 29 mV noise floor
+    forced_pure_phase_r2: 0.861
+    forced_pure_bus_r2: 0.968     # BAM's revision is much closer than their original
+    # CORROBORATION FROM INDEPENDENT DATA: BAM fit R = 2.5-3.5 ohm for this part
+    # from pendulum trajectories via CMA-ES. The blend gives 3.57 from a static
+    # stall sweep. Pure phase would give 6.86, which is nowhere near it.
+
+  # ---- 2. what each position mode COMMANDS -------------------------------
+  # Held against the stop at a known, MEASURED error (the bar is compliant, so
+  # the error is `Present Position - Goal Position`, never the assumed stop).
+  #   mode 3: PID output IS the PWM duty        -> read Present PWM
+  #   mode 5: PID output is a CURRENT SETPOINT  -> read Present Current
+  position_modes:
+    k3_duty_per_Kp_rad: 2.855e-3     # R2 0.99982, n=11
+    k5_A_per_Kp_rad:    2.525e-3     # R2 0.99898, n=12
+    # THE RESULT. Same number, different downstream unit:
+    #     k3 * 885  = 2.5267 PWM counts / (Kp*rad)     885 = PWM full scale
+    #     k5 * 1000 = 2.5250 mA         / (Kp*rad)    1000 = mA per A
+    #     ratio 1.0007
+    # The position PID emits ONE value; mode 3's inverter reads it as PWM
+    # counts and mode 5's current controller reads it as milliamps. The command
+    # computation does not differ between the modes at all.
+    same_pid_output_different_unit: true
+    ratio_counts_to_mA: 1.0007
+    # Which gives a DERIVATION for the constant BAM carries as a bare literal:
+    #   voltage  (4096/2pi)/(256*885)  = 2.877e-3 duty  -> measured 2.855e-3, 0.8%
+    #   current  (4096/2pi)/(256*1000) = 2.546e-3 A     -> measured 2.525e-3, 0.9%
+    #   BAM's    0.016/pi              = 5.093e-3 A     -> 2.02x the measurement
+    # It also confirms BAM's EMPIRICAL KP_DIVISOR of 256 against the manual's
+    # 128: 128 would predict 5.755e-3 duty, 2.02x what was measured.
+    bam_current_error_gain_too_big_by: 2.02
+
+  # ---- 3. is mode 5's inner loop the same controller as mode 0? -----------
+  # The blend above, with NO new parameters, predicting mode-5 current from
+  # mode-5 duty: residuals 1.0-3.3 mA at working duty (0.047-0.129), growing to
+  # 5-9 mA only below duty 0.01 where the reading is a few LSBs.
+  mode5_inner_loop_is_the_mode0_controller: true
+
+  outstanding:
+    - ONE RUN for the position-mode constants; the stall blend has two, in
+      opposite directions. Everything wants a replicate on a rigid rig.
+    - XL330-M288-T at 5.2 V. The bike's part is an XC330-T181 at 12 V, same
+      body and gearbox family but a different winding. Do not carry kt, R or
+      the absolute constants across without re-measuring; the STRUCTURE
+      (same PID output, two units; blend inner loop) should carry.
+    - Only the second XL330 (id 151) is untested, so alpha could still be a
+      unit calibration rather than a part property.
+  rig_note: >-
+    A 3D-printed bar in friction-fit holes. The first version of
+    servo_cascade.py parked at 110 deg and stepped straight to each target with
+    Profile Velocity 0, i.e. no trajectory shaping, so the horn slewed 40 deg
+    into the stop fourteen times. The bar walked 70 -> 65.5 deg across the
+    sweep and finally came out of its holes. The DATA survived (drift 0 while
+    measuring, and the fit uses measured position, so a stop that moved between
+    points is harmless) but the rig did not. The script now parks 2 deg off the
+    stop and walks the approach in.

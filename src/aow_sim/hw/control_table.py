@@ -41,6 +41,7 @@ TABLE_DIR = Path(__file__).parent / "control_tables"
 # IDs 101/102 report 1070 and 103/104 report 1210 (2026-09-01, fw 50/53).
 MODEL_NUMBERS = {
     1070: "xc430_w150",
+    1200: "xl330_m288",
     1210: "xc330_t181",
 }
 
@@ -93,6 +94,23 @@ _OVERRIDES = {
         # calibrate against a known hanging load at steady speeds before
         # trusting anything dynamic. source: datasheet + docs/plans/eval-score-rewrite.md
         "Present Load":      (0.001, "frac_max_torque", True),
+    },
+    # XL330-M288-T. Register map is IDENTICAL to the XC330-T181 -- the vendored
+    # files differ only in that upstream declines to give a current unit for
+    # this part ("raw", 1.0) where it gives the XC330 a value in N.m. It is the
+    # same 1.0 mA/LSB; the N.m figure upstream carries for the XC330 is that
+    # multiplied by an assumed torque constant, which is exactly why this file
+    # keeps the electrical unit and leaves kt to bike_params.yaml.
+    #
+    # Not a bike part. Present because BAM (Rhoban/bam) identifies this exact
+    # actuator, so it is the one servo where our measurements and theirs can be
+    # compared directly. Runs at 5 V, not the bike's 12 -- read Present Input
+    # Voltage rather than assuming.
+    "xl330_m288": {
+        **_COMMON,
+        "Present Current":   (0.001, "A", True),
+        "Goal Current":      (0.001, "A", True),
+        "Current Limit":     (0.001, "A", False),
     },
     "xc330_t181": {
         **_COMMON,

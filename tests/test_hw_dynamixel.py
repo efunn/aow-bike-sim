@@ -348,10 +348,16 @@ def test_address_126_diverges_between_the_models():
 
 
 def test_model_numbers_match_the_hardware_probe():
-    """Read off IDs 101-104 on 2026-09-01, not copied from a datasheet."""
-    assert MODEL_NUMBERS == {1070: "xc430_w150", 1210: "xc330_t181"}
-    assert table_for(1070).name == "xc430_w150"
-    assert table_for(1210).name == "xc330_t181"
+    """Read off the bus on 2026-09-01, not copied from a datasheet.
+
+    101/102 -> 1070, 103/104 -> 1210, and 150/151 -> 1200 (XL330-M288-T, a
+    bench part rather than a bike one: it is the actuator Rhoban/bam identifies,
+    so it is where our numbers and theirs can be compared directly).
+    """
+    assert MODEL_NUMBERS == {1070: "xc430_w150", 1200: "xl330_m288",
+                             1210: "xc330_t181"}
+    for number, stem in MODEL_NUMBERS.items():
+        assert table_for(number).name == stem
 
 
 def test_unknown_model_number_names_the_fix():
