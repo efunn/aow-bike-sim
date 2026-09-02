@@ -209,6 +209,112 @@ already specifies it.
 
 ---
 
+## The three servo mockups — the test list per station
+
+Added 2026-09-01, from a session evaluating **BAM** (`Rhoban/bam`, "Better
+Actuator Models") as a candidate framework for the servo models, alongside
+hand-rolled alternatives. Three bench stations are planned, one per servo role:
+**rear drive** (XC430-W150 x2, velocity mode), **steering** (XC330-T181,
+extended position mode) and **self-righting** (XC330-T181, current-based
+position mode, driving the four-bar).
+
+Unlike the rest of this document, part of this section IS new measurement
+design: `servo-protocol.md` covers the drive station only, and there is no
+written protocol for the steering or self-righting servos. Tests marked
+**[new]** are not in `docs/measurements/` yet and should move there once run.
+
+### Instrumentation, common to all three stations
+
+1. **Set `Profile Velocity` (112) and `Profile Acceleration` (108) to 0** before
+   any test. Non-zero profiles make the servo run its own trajectory generator,
+   and every result below becomes a measurement of that instead.
+2. Log against **`Realtime Tick` (120)**, the servo's own clock, in the same
+   SyncRead as the data. Host `time.time()` around a read burst carries a
+   systematic offset between when a command went out and the timestamp it is
+   filed under — several ms at 1 Mbps with a handful of reads per iteration.
+3. Read **Present Position (132), Velocity (128), PWM (124) and 126** in one
+   indirect block. The 126 decode differs per model (XC430 `Present Load`,
+   0.1% of max torque; XC330 `Present Current`, 1.0 mA) — see stage 0b.
+4. **Sweep the firmware gain rather than picking one**, and hold one gain value
+   out of the fit entirely. Borrowed from BAM's `--validation_kp`: a model that
+   fits every gain you recorded except the one you withheld has been shown to
+   generalise; one fitted to a single gain has not. Cheap to do at capture
+   time, impossible to add afterwards.
+5. **Record the pack/supply voltage with every run.** kt is voltage
+   independent; no-load speed and stall torque are not.
+
+### Station A — rear drive (XC430, velocity mode, belt_ratio 3, omni wheel)
+
+`servo-protocol.md` sections 1-6 already specify D1 and D2. D3-D6 are additions
+from the BAM review.
+
+| id | test | procedure | determines |
+|---|---|---|---|
+| D1 | velocity step response | wheel free, step `Goal Velocity` to 2, 5, 10, 20, 50, 100% of no-load, hold 1 s, return. Fit first-order per step | closed-loop bandwidth (small steps); slew limit (large). `servo-protocol.md` §1 |
+| D2 | reversal square wave | square wave on `Goal Velocity` at 5/10/15/25 Hz, sweeping amplitude; log achieved swing | the reversal envelope. `servo-protocol.md` §2, stage 0b above |
+| D3 **[new]** | steady-torque hold | `Goal Velocity` = 0, apply a known steady torque (string over the rim, hanging mass). Watch the steady state | **whether the velocity loop has an integrator at all.** Position holds → integral action, and the droop gives `drive_ki`. Constant creep → P-only, and the slope gives `drive_kv`. Both config values are currently placeholders |
+| D4 **[new]** | dual coast-down | spin up, then decay twice: (i) torque OFF, (ii) torque ON with `Goal Velocity` 0 | **separates viscous friction from back-EMF damping.** Both are torque proportional to −velocity and are otherwise unidentifiable on an inertia-only rig. (i) is friction alone, (ii) is friction + back-EMF; subtract. This is BAM's `lift_and_drop` trick, which a wheel gets for free |
+| D5 **[new]** | added-inertia coast-down | repeat D4(i) with a disc of computed inertia bolted on | separates `J` from `b`; gives `input_armature` |
+| D6 **[new]** | bare disc vs omni wheel | run D1-D5 twice: once with a plain disc of similar inertia, once with the real wheel through the belt | **separates the servo's own friction from the wheel's.** The difference is `roller_joint_damping` / `roller_joint_frictionloss` / `hub_joint_*`. Fitting only with the wheel on puts the roller losses inside the servo model, where they follow the servo to every other use |
+
+Build the mount to take both a plain disc and the wheel — that is a fixture
+decision to make before cutting metal, not after.
+
+**BAM does not cover this station.** Its actuator classes implement a position
+control law only; there is no velocity-mode `compute_control`, and its
+`Pendulum` testbench assumes a gravity bias a wheel does not have. D1-D6 are
+four numbers from six tests and need no optimizer.
+
+### Station B — steering (XC330, extended position mode, gear_ratio 1.0)
+
+No written protocol exists for this station. All **[new]**.
+
+Motivating observation, recorded as fact rather than as a problem: across
+eleven `general_rl*` exports measured on the eval grid's hold command
+(randomization off, one seed each), the steer action saturates its ±8 rad/s
+bound 23-96% of the time and **changes sign 15-32 times per second** at a 50 Hz
+control rate, while the achieved joint rate stays at 1-20% of the XC330's
+no-load speed. Whether the hardware reproduces that is S1.
+
+| id | test | procedure | determines |
+|---|---|---|---|
+| S1 | square-wave sweep | front wheel in the air. Position square wave at ±5°, ±10°, ±20°, at 1, 2, 5, 10, 20 Hz. Log achieved angle **and phase** | the achievable steer bandwidth, and the phase lag at each point. The sim's frictionless joint has effectively none |
+| S2 | breakaway hysteresis | ramp `Goal Position` slowly one way until the joint breaks free; note the position error at breakaway. Reverse. Repeat at several firmware Position P Gains | **the Coulomb friction band, measured directly** — the loop width is friction ÷ effective gain, no model and no fit. Running it across gains gives the friction and the gain scaling from one dataset |
+| S3 | static torque vs error | hang a known torque off the steer arm, log steady-state position error, at several Position P Gains | **the effective stiffness in N·m/rad** — i.e. what `actuators.steer_kp` should be. Nothing in the repo currently derives that number from anything, and there is no mapping between the sim's gain and the firmware's |
+| S4 | loaded repeat | repeat S2 and S3 with the front wheel on the ground under load | the contact reaction through the trail (12.9 mm at rake 15°, `fork_offset` 0) |
+| S5 | free-swing decay | lay the bike on its side so the **steer axis is horizontal**; the fork + front wheel is then a pendulum about it. Torque off, displace, log the decay | the steer joint's inertia and friction together. `steer_joint` currently has no armature, damping or frictionloss in the model at all (`build_model.py:1607-1612`) |
+
+### Station C — self-righting (XC330, current-based position mode, four-bar)
+
+No written protocol exists. All **[new]**. This is the station where the load is
+large, slow, and driven from the motor side — the regime BAM's load-dependent
+and Stribeck terms exist for — and also the one where a measured torque curve
+answers the design question without any actuator model in the path.
+
+| id | test | procedure | determines |
+|---|---|---|---|
+| R1 | quasi-static torque curve, lifting | drive the mechanism pose by pose through the stroke against the real bike mass (or a dummy with the correct inertia **about the tipping edge**). Measure torque at the servo with a lever arm and a load cell or hanging scale | τ(θ) over the stroke, end to end, with gearbox friction included |
+| R2 | same, lowering | repeat R1 driving the mechanism back down | **the load-dependent friction, measured.** The difference between the lift and lower curves at the same pose is the friction asymmetry directly — BAM fits this as `load_friction_motor` vs `load_friction_external` (0.228 vs 0.107 on its XL330), and here it is a subtraction |
+| R3 | breakaway from the fallen pose | from rest, in the attitude the bike actually lands in, ramp current until the mechanism moves | the static breakaway torque at maximum external load and zero velocity — the pose where friction and Stribeck coincide |
+| R4 | stroke at speed | run the full stroke at operating speed, logging `Present Current` and `Realtime Tick` | the dynamic/viscous contribution, as the gap from the R1 curve |
+| R5 | control-mode comparison | with `Current Limit` set high enough never to bind: position mode vs current-based position mode, same PD gains. (a) steady-state sag under a known load, **approaching the setpoint from both directions and averaging**; (b) small-step response | **which control law the sim needs for this actuator.** (a) isolates the static error→torque map, (b) isolates loop dynamics. Differing sags → a gain/scaling difference; matching sags with differing steps → an inner-loop lag the map cannot express |
+| R6 | bus-current calibration | at stall (output blocked), step `Goal Position` through a series of known offsets; log `Present Current` against `Present PWM` | the current-reporting scale. At stall `I_phase = duty·vin/R`, so if the reported current is **bus** current it goes as `duty²·vin/R` and the plot is a parabola whose coefficient gives `vin/R`; if phase current, a straight line giving `1/R` directly |
+
+R5(a) needs the both-directions averaging because the load sits near the
+stiction threshold — BAM's fitted `friction_base` for the XL330 is
+0.012-0.019 N·m — so a single-direction reading measures the deadband edge
+rather than the centre.
+
+### What this changes about tooling
+
+`analysis/` gets a reader for the captured logs; nothing here requires BAM to
+be adopted. The two things worth taking from it regardless of framework are the
+torque-off segment (D4) and the held-out gain (instrumentation note 4). If BAM
+is adopted later, every test above produces data it can consume, so the
+decision does not have to be made before the rigs are built.
+
+---
+
 ## Explicitly NOT first: the self-righting wings
 
 They are a complete, verified DESIGN, and they are operated separately from the
@@ -219,6 +325,11 @@ need `RECOVER_DEG` re-derived at whatever envelope the linkage settles at.
 
 None of that is unblocked by printing them early, and printing them early costs
 the most filament of anything here.
+
+**Amended 2026-09-01:** this still holds for the FLIGHT wings. Station C above
+is a separate thing — a bench mockup of the servo and linkage on a fixture,
+sized to measure τ(θ) and the breakaway torque, not a printed pair of wings on
+the bike. The two are not in competition for the printer.
 
 ---
 
