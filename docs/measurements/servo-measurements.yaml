@@ -258,26 +258,66 @@ xl330_m288_current_modes:
 
   # ---- 1. the current controller in isolation (Operating Mode 0) ----------
   current_loop:
-    # It IS a real regulator: Present Current == Goal Current EXACTLY, to the
-    # milliamp, at 20/40/60/80/100/150/200/300/450 mA. Above ~100 mA at NO LOAD
-    # it cannot, but that is supply voltage, not the loop: duty saturates at
-    # 1.000 and the shaft pins at the no-load speed.
+    # IT IS A REAL REGULATOR. Present Current == Goal Current EXACTLY, to the
+    # milliamp, at 20/40/60/80/100/150/200/300/450 mA. On a FREE shaft it stops
+    # tracking above ~100 mA, but that is supply voltage and not the loop: duty
+    # saturates at 1.000 and the shaft pins at no-load speed. At a held output
+    # nothing saturates until far higher.
     tracks_setpoint_exactly: true
     unit_confirmed_mA: 1.0
-    rise_time_63pct_ms: [13, 30]
-    # WHAT IT REGULATES is neither of BAM's two models. Fitted at a true stall
-    # (|drift| 0-1 counts, 24 C), two runs in OPPOSITE directions:
-    #     I_reported = (vin/R) * (alpha*duty + (1-alpha)*duty^2)
-    # alpha = 1 is BAM commit 1cbb14b (pure phase, linear).
-    # alpha = 0 is BAM commit c3cbf89 (pure bus, sqrt) -- marked UNTESTED there.
-    blend_alpha: 0.158        # run1 0.156+-0.009, run2 0.161+-0.009
-    blend_R_ohm: 3.57         # run1 3.54+-0.05,   run2 3.60+-0.05
-    blend_r2: 0.9996          # max residual 33 mV against a 29 mV noise floor
-    forced_pure_phase_r2: 0.861
-    forced_pure_bus_r2: 0.968     # BAM's revision is much closer than their original
-    # CORROBORATION FROM INDEPENDENT DATA: BAM fit R = 2.5-3.5 ohm for this part
-    # from pendulum trajectories via CMA-ES. The blend gives 3.57 from a static
-    # stall sweep. Pure phase would give 6.86, which is nowhere near it.
+    # 12-30 ms, but on a FREE shaft at 5 ms sampling, so the current rise is
+    # entangled with the shaft accelerating and it is 2.4-6 samples. Order of
+    # magnitude only. analysis/servo_step.py is the proper version and has not
+    # produced an answer yet -- see `outstanding`.
+    rise_time_63pct_ms: [12, 30]
+
+    # WHAT IT REGULATES -- REPORTED, NOT MODELLED. At a true stall (|drift| 0-1
+    # counts, 24 C), two runs in OPPOSITE directions, nine levels 20-450 mA, the
+    # apparent resistance seen from the duty side is NOT constant:
+    #
+    #     450 mA -> 6.01 ohm      120 mA -> 10.11      30 mA -> 15.17
+    #     260 mA -> 7.46          50 mA  -> 13.68      20 mA -> 15.15
+    #
+    # Against BAM's two models, one parameter each. `drift` is the spread of
+    # d^p*vin/I: a model is right only if that is FLAT, and it is what R2 hides,
+    # because R2 on absolute current is dominated by the large-current end.
+    #
+    #   range      model                          R      R2     worst   drift
+    #   20-450 mA  phase I=(vin/R)*d   (1cbb14b)  7.11   0.913   113%   2.5x
+    #   20-450 mA  bus   I=(vin/R)*d^2 (c3cbf89)  2.97   0.983    70%   3.5x
+    #   >=100 mA   phase                          6.87   0.869    47%   1.7x
+    #   >=100 mA   bus                            2.99   0.973    21%   1.3x
+    #
+    # Neither is flat over the full sweep and they fail in OPPOSITE directions.
+    # Restricted to >=100 mA the bus model is clearly the better of the two, and
+    # its R = 2.99 sits inside BAM's own 2.49-3.45 fitted independently from
+    # pendulum trajectories. Below ~100 mA this servo will not move a bare shaft
+    # at all, so that upper range is arguably the only one a torque model needs.
+    #
+    # GUESS AT THE MECHANISM, untested: discontinuous conduction. At low duty
+    # and low current the winding current can fall to zero during each PWM
+    # off-period, which changes the duty-to-average-current relationship and
+    # inflates apparent resistance -- confined to low current, and it would
+    # explain why both limiting models misbehave there and converge higher up.
+    #
+    # WHY IT MIGHT MATTER FOR RL: the error is systematic and monotonic in
+    # current, not noise. A policy trained against a single fitted R sees more
+    # torque-per-command at low current than the hardware gives, in a region it
+    # can sit in indefinitely (holding position, trimming about a setpoint).
+    # That is the kind of mismatch an aggregate fit metric will not show.
+    #
+    # NOT A MECHANISM, and recorded so it is not re-proposed: two 2-parameter
+    # forms absorb the drift equally well, I=(vin/R)(a*d+(1-a)d^2) with a=0.158
+    # and I=(vin/R)(d-d0)^2 with d0=-0.069, and NEITHER is interpretable. The
+    # first was briefly written up here as a "blend" of phase and bus current; a
+    # shunt sits in ONE place and the phase/bus distinction is about WHEN the
+    # firmware samples it, not a mixture. The second's "deadtime" comes out
+    # negative, i.e. effective duty exceeding reported duty, which it cannot be.
+    apparent_R_drift_full_sweep: {phase: 2.5, bus: 3.5}
+    apparent_R_drift_above_100mA: {phase: 1.7, bus: 1.3}
+    bus_model_R_ohm_above_100mA: 2.99    # BAM's pendulum fit: 2.49-3.45
+    better_model_above_100mA: bus        # c3cbf89; NOT correct, just better
+    mechanism_known: false
 
   # ---- 2. what each position mode COMMANDS -------------------------------
   # Held against the stop at a known, MEASURED error (the bar is compliant, so
@@ -291,34 +331,62 @@ xl330_m288_current_modes:
     #     k3 * 885  = 2.5267 PWM counts / (Kp*rad)     885 = PWM full scale
     #     k5 * 1000 = 2.5250 mA         / (Kp*rad)    1000 = mA per A
     #     ratio 1.0007
-    # The position PID emits ONE value; mode 3's inverter reads it as PWM
-    # counts and mode 5's current controller reads it as milliamps. The command
-    # computation does not differ between the modes at all.
+    # The position PID emits ONE value, and what differs is which block
+    # CONSUMES it -- the inverter is the final stage in BOTH modes:
+    #     mode 3  PID -> Limiter -> Inverter          (read as PWM counts)
+    #     mode 5  PID -> Limiter -> Current Ctrl -> Inverter  (read as mA)
+    # In mode 5 the current controller generates its own PWM for the inverter
+    # downstream; it does not replace it. The command COMPUTATION does not
+    # differ between the modes at all.
     same_pid_output_different_unit: true
     ratio_counts_to_mA: 1.0007
     # Which gives a DERIVATION for the constant BAM carries as a bare literal:
     #   voltage  (4096/2pi)/(256*885)  = 2.877e-3 duty  -> measured 2.855e-3, 0.8%
     #   current  (4096/2pi)/(256*1000) = 2.546e-3 A     -> measured 2.525e-3, 0.9%
-    #   BAM's    0.016/pi              = 5.093e-3 A     -> 2.02x the measurement
-    # It also confirms BAM's EMPIRICAL KP_DIVISOR of 256 against the manual's
-    # 128: 128 would predict 5.755e-3 duty, 2.02x what was measured.
-    bam_current_error_gain_too_big_by: 2.02
+    #   BAM HEAD error_gain = 0.01     A/(Kp*rad)       -> 3.96x the measurement
+    # CORRECTED: an earlier version of this block said BAM's constant was
+    # 0.016/pi = 5.093e-3, i.e. 2.02x. That value is from commit beaa3f7 and was
+    # changed to 0.01 by be5ea69; it was read out of a `git show` diff and
+    # quoted as current. Check HEAD, not a commit body.
+    #
+    # SEPARATELY, and unaffected by that error because it rests on the VOLTAGE
+    # mode constant which was measured directly: BAM's EMPIRICAL KP_DIVISOR of
+    # 256 is confirmed against the manual's 128, which would predict 5.755e-3
+    # duty against a measured 2.855e-3. (An earlier note here read significance
+    # into both ratios being 2.02; one of them was the stale number above, so
+    # there is no shared factor to explain.)
+    bam_current_error_gain_too_big_by: 3.96
 
   # ---- 3. is mode 5's inner loop the same controller as mode 0? -----------
-  # The blend above, with NO new parameters, predicting mode-5 current from
-  # mode-5 duty: residuals 1.0-3.3 mA at working duty (0.047-0.129), growing to
-  # 5-9 mA only below duty 0.01 where the reading is a few LSBs.
-  mode5_inner_loop_is_the_mode0_controller: true
+  # CONSISTENT WITH IT, not demonstrated. The mode-5 duties measured against the
+  # stop are 0.047-0.129, i.e. entirely inside the low-duty region where section
+  # 1's apparent resistance is drifting hardest -- so a single-R model of either
+  # flavour under-predicts them by the same amount it under-predicts mode 0
+  # there. That is what "the position PID feeds the same current controller"
+  # would look like, but it inherits section 1's unresolved model and cannot be
+  # separated from it. The clean version needs the current model settled first.
+  mode5_inner_loop_is_the_mode0_controller: consistent_but_not_shown
 
   outstanding:
-    - ONE RUN for the position-mode constants; the stall blend has two, in
+    - ONE RUN for the position-mode constants; the stall sweep has two, in
       opposite directions. Everything wants a replicate on a rigid rig.
+    - CURRENT-LOOP STEP RESPONSE unresolved. analysis/servo_step.py is written
+      and gated but has not produced an answer. At 2 ms sampling tau came out
+      8-12 ms with no amplitude trend (argues linear) while the fitted delay
+      grew 2.2 -> 4.3 ms with amplitude (argues rate-limited), on first-order
+      fits of only R2 0.94-0.99, and the 200-450 mA points were rejected on
+      clamp slip. Needs `--reps 40` for resolution and a fixture holding
+      ~0.16 N.m. The `duty_pk` column added afterwards is what separates "the
+      drive railed so error magnitude had nothing to act on" from "the loop
+      does not scale its output with error magnitude" -- two explanations that
+      give identical rise times and cannot be told apart from settled duty.
     - XL330-M288-T at 5.2 V. The bike's part is an XC330-T181 at 12 V, same
       body and gearbox family but a different winding. Do not carry kt, R or
-      the absolute constants across without re-measuring; the STRUCTURE
-      (same PID output, two units; blend inner loop) should carry.
-    - Only the second XL330 (id 151) is untested, so alpha could still be a
-      unit calibration rather than a part property.
+      the absolute constants across without re-measuring. The STRUCTURE (one
+      PID output read in two units; a shared inner current controller) should
+      carry; the current model itself is unresolved either way.
+    - Only one XL330 was swept at stall, so the apparent-resistance curve could
+      carry a unit-to-unit component.
   rig_note: >-
     A 3D-printed bar in friction-fit holes. The first version of
     servo_cascade.py parked at 110 deg and stepped straight to each target with
