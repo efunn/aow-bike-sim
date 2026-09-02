@@ -7,8 +7,8 @@
 
 meta:
   servo: XC430-W150
-  pack_voltage_V: null      # RECORD IT -- no-load speed scales with this
-  date: null
+  pack_voltage_V: 11.9      # 12 V brick, measured at the servo
+  date: 2026-09-01
   profile_velocity: 0       # must be 0, see the protocol
   profile_acceleration: 0
 
@@ -19,11 +19,92 @@ s1_step_response:
   command_latency_ms: null  # bus + firmware, ADDITIVE to tau
   per_step: []              # [{target_frac, tau_ms, slew_rad_s2}]
 
+  # WHERE THE LAG COMES FROM. Measured 2026-09-01, bare shaft, via the square
+  # wave of s2 rather than a step -- swing(f) = S_inf*tanh(1/(4*f*tau)) fits
+  # tau from the amplitude roll-off, which needs no edge detection.
+  #
+  # It is NOT a transport or PWM-startup delay. A dead time produces phase lag
+  # with NO amplitude attenuation; what is measured is amplitude attenuation
+  # following a first-order law, and the fitted tau moves 9x with a FIRMWARE
+  # GAIN. The bus + firmware round trip is ~2 ms, an order of magnitude short.
+  tau_origin:
+    # REPRODUCE:  python analysis/servo_modes.py --port <port> --ids 101,102 lag-origin
+    #
+    # RUN-TO-RUN SPREAD IS REAL AND IS NOT SMALL. Two independent runs of the
+    # same sweep: PWM mode 13.6/14.1 then 11.5/11.7 ms; KVP 1600 10.9/11.6 then
+    # 18.8/13.9 ms. The tanh fit is over five frequencies of a square wave and
+    # the high-gain response is not clean, so treat every number below as
+    # +-25% and read the ORDERING, which is stable across runs and units:
+    #   soft gain (KVP 25-50)  >>  factory (100)  >  bare motor (PWM)  ~  KVP 400+
+    # Averaging more runs is the fix if a tighter number is ever needed.
+    # PWM mode (Operating Mode 16) removes the velocity loop entirely: duty
+    # straight to the bridge, so this is the motor's own electromechanical
+    # constant tau_m = J*R/(kt*ke).
+    pwm_mode_tau_ms: {id_101: 13.6, id_102: 14.1}
+    # Velocity mode, sweeping Velocity P Gain(78). Factory default is 100.
+    # Velocity I Gain(76) left at its default 1920 throughout.
+    velocity_mode_tau_ms:
+      - {kvp: 25,   id_101: 97.6, id_102: 45.8}
+      - {kvp: 50,   id_101: 59.6, id_102: 38.2}
+      - {kvp: 100,  id_101: 25.2, id_102: 25.4}   # FACTORY DEFAULT
+      - {kvp: 400,  id_101: 15.2, id_102: 10.4}
+      - {kvp: 1600, id_101: 10.9, id_102: 11.6}
+    # THE CONSEQUENCE. At the factory gain the closed loop is SLOWER than the
+    # bare motor (25 vs 14 ms) -- KVP 100 is soft. Above ~400 the loop beats
+    # the motor's own constant by driving harder, asymptoting near 11 ms. So
+    # the drive bandwidth is not a fixed hardware property to be modelled and
+    # accepted: it is a control-table line we own, worth ~2.3x.
+    default_kvp: 100
+    tau_at_default_ms: 25.3
+    tau_floor_ms: 11.0        # KVP >= 400; further gain buys nothing
+    unit_spread_note: >-
+      101 and 102 agree within 1% at KVP >= 100 and diverge badly below it
+      (97.6 vs 45.8 ms at KVP 25). Low gain is where unit-to-unit variation
+      shows up, which is an argument against running the loop soft.
+
 s2_reversal:
   # the headline: can the hardware do what the sim policy does?
   # sim reference: 21.8 reversals/s, 6.37 m of rim per 15 s
-  per_frequency: []         # [{hz, amplitude_frac, pp_achieved_frac, rim_m_per_s}]
-  falls_apart_above_hz: null
+  #
+  # MEASURED 2026-09-01 -- BARE SHAFT, NOT THE DRIVETRAIN. Two XC430-W150
+  # (ids 101/102) on a 12 V brick, no wheel and no belt, so this is the servo's
+  # own rotor + gearbox inertia only. The bike's drive sees the omni wheel
+  # through belt_ratio 3 and reflected wheel inertia is what makes a reversal
+  # expensive, so every number here is an UPPER BOUND. Re-run on the stage-1
+  # drivetrain station before drawing any conclusion about the policies.
+  #   command:  python analysis/servo_reversal.py --port <port> \
+  #                 --freqs 5 10 15 25 40 --save traces/servo/reversal_bare_260901.npz
+  #   raw:      traces/servo/reversal_bare_260901.npz (gitignored, Dropbox-synced)
+  rig: bare_shaft           # bare_shaft | drivetrain_station
+  date: 2026-09-01
+  sample_rate_hz: 500
+  # pp_achieved_frac is peak-to-peak shaft velocity over the commanded 2A,
+  # from DIFFERENCED Present Position. vel_reported_frac is the same thing from
+  # the servo's own Present Velocity, which is heavily filtered -- the gap
+  # between the two columns IS that filter, and it widens with frequency.
+  per_frequency:
+    - {hz: 5,  amplitude_frac: 1.00, pp_achieved_frac: 0.99, vel_reported_frac: 0.91, pwm_p95: 0.97}
+    - {hz: 10, amplitude_frac: 1.00, pp_achieved_frac: 0.82, vel_reported_frac: 0.56, pwm_p95: 0.92}
+    - {hz: 15, amplitude_frac: 1.00, pp_achieved_frac: 0.64, vel_reported_frac: 0.36, pwm_p95: 0.87}
+    - {hz: 25, amplitude_frac: 1.00, pp_achieved_frac: 0.37, vel_reported_frac: 0.16, pwm_p95: 0.73}
+    - {hz: 40, amplitude_frac: 1.00, pp_achieved_frac: 0.23, vel_reported_frac: 0.08, pwm_p95: 0.57}
+  # AMPLITUDE-INVARIANT: pp_achieved_frac was the same at 0.25, 0.50 and 1.00
+  # amplitude at every frequency, to within a few percent. That is the evidence
+  # for a first-order lag rather than a slew-rate limit -- a slew limit would
+  # penalise the LARGE amplitudes, and it does not. Amplitude 0.10 sat on the
+  # encoder quantisation floor (0.77 rad/s at 500 Hz) and carries no signal.
+  amplitude_invariant: true
+  falls_apart_above_hz: 15        # highest frequency holding pp_achieved >= 0.5
+  # swing_ratio = tanh(1/(4*f*tau)) fitted over the 19 unquantised conditions.
+  tau_measured_ms: 22.0           # spread 19.8-26.1 across conditions and units
+  # CORRECTED 2026-09-01: an earlier version of this block carried
+  # tau_in_sim_ms 0.60, read off a stale paragraph in servo-protocol.md that
+  # predated commit b0a97a3 (2026-08-22, drive_kv 0.5 -> 0.016016). The sim has
+  # had 18.7 ms for ten days. The measurement CONFIRMS that fix rather than
+  # exposing a 31x error, which is a different and much less dramatic claim.
+  tau_predicted_ms: 18.7          # tau_m = J*R/(kt*ke), from the protocol
+  tau_in_sim_ms: 18.7             # input_armature / drive_kv, since b0a97a3
+  unit_spread: negligible         # ids 101 and 102 agreed within a few percent
 
 s3_torque_speed:
   # NOTE 2026-08-28: torque comes from the LEVER ARM, not from current -- the
@@ -38,6 +119,114 @@ s4_droop:
   integral_action: null         # true -> drive_kv must stay stiff
   kv_measured_Nm_per_rad_s: null   # at the SERVO OUTPUT; /belt^2 for input shaft
   settling_time_s: null
+
+# XC330-T181 (steering / self-righting part), no load, PWM mode, 2026-09-01.
+# Not part of the drive protocol -- recorded here because the rig was up.
+xc330_no_load:
+  # REPRODUCE:  python analysis/servo_modes.py --port <port> --ids 103,104 no-load
+  # The script runs the consistency check itself and prints the verdict; it does
+  # not require the reader to spot the non-monotonicity by eye.
+  rig: bare_shaft
+  id: 103
+  # Speed is linear in duty above 0.15 and extrapolates to 11.8 rad/s at duty
+  # 1.0, against the 113 rpm = 11.83 rad/s datasheet no-load. The mechanical
+  # side of the datasheet is confirmed.
+  speed_vs_duty:
+    - {duty: 0.05, omega_rad_s: 0.511, current_A: 0.016}
+    - {duty: 0.15, omega_rad_s: 1.722, current_A: 0.030}
+    - {duty: 0.25, omega_rad_s: 2.909, current_A: 0.046}
+    - {duty: 0.40, omega_rad_s: 4.648, current_A: 0.067}
+    - {duty: 0.60, omega_rad_s: 7.082, current_A: 0.081}
+    - {duty: 0.80, omega_rad_s: 9.458, current_A: 0.069}
+    - {duty: 1.00, omega_rad_s: 11.776, current_A: 0.027}
+  no_load_speed_rad_s: 11.8       # datasheet 11.83 -- confirmed
+  # CURRENT IS NOT USABLE AS PHASE CURRENT. Fitting duty*vin = kt*w + I*R over
+  # the rows above gives R = 0.838 ohm, i.e. a stall current of vin/R = 14.3 A
+  # against the datasheet's 0.88 A -- a 16x inconsistency. The reading is also
+  # NON-MONOTONIC in duty (peaks at 0.081 A at duty 0.6, falls to 0.027 at duty
+  # 1.0), which no phase current at rising speed does. Independent support for
+  # the bus-current reading of Present Current: I_bus = duty * I_phase.
+  # => R6 (reported current vs PWM at stall) is a PREREQUISITE before any
+  #    current number from this part is used quantitatively.
+  current_is_phase_current: false
+  naive_R_fit_ohm: 0.838          # kept as the evidence, NOT as a parameter
+
+r5_control_mode_comparison:
+  # Plain position (Operating Mode 3) vs current-based position (5), BOTH units,
+  # bare shaft, firmware 53, 2026-09-01. Square wave centred at 180 deg.
+  #
+  # REPRODUCE:  python analysis/servo_modes.py --port <port> --ids 103,104 modes
+  # Re-run 2026-09-01 through the promoted script: mode 5 D0 gave 16.07/15.68/
+  # 16.79/16.25 against 16.14/15.97/16.79/16.53, and mode 5 D1400 gave
+  # 1.19/1.23/1.01/0.96 against 1.19/1.19/1.01/0.92. This study repeats tightly,
+  # unlike tau_origin above.
+  #
+  # TWO TRAPS, BOTH OF WHICH PRODUCED A WRONG ANSWER FIRST:
+  #
+  # 1. WRITING Operating Mode RESETS THE POSITION GAINS to per-mode defaults:
+  #        mode 3 -> P 900, D 0
+  #        mode 4 -> P 900, D 0
+  #        mode 5 -> P 700, D 1400
+  #    So gains must be written AFTER the mode and read back. The first version
+  #    of this block compared mode 4 at P900/D0 against mode 5 at P700/D1400 and
+  #    attributed the whole difference to the mode; most of it was the D gain.
+  # 2. Mode 3 is a 0..4095 COUNT RANGE, so a wave centred on 0 has its entire
+  #    negative half refused as out of range -- which reads as a servo that does
+  #    not move, not as an error. Both modes are centred at 180 deg here.
+  #
+  # Extended position (4) is avoided: it unwinds from its multi-turn rest at the
+  # start of a run and pollutes the first condition.
+  date: 2026-09-01
+  rig: bare_shaft
+  loaded: false
+  gains_reset_on_mode_write: true
+  # ratio = achieved / commanded peak-to-peak, mean of ids 103 and 104.
+  matrix:
+    - {mode: 3, P: 800, D: 0,    amp_deg: 1, hz: 20, ratio: 0.16, I_p95_A: 0.016}
+    - {mode: 3, P: 800, D: 0,    amp_deg: 5, hz: 10, ratio: 0.63, I_p95_A: 0.112}
+    - {mode: 3, P: 800, D: 0,    amp_deg: 5, hz: 20, ratio: 0.22, I_p95_A: 0.086}
+    - {mode: 3, P: 800, D: 1400, amp_deg: 1, hz: 10, ratio: 0.36, I_p95_A: 0.017}
+    - {mode: 3, P: 800, D: 1400, amp_deg: 1, hz: 20, ratio: 0.13, I_p95_A: 0.018}
+    - {mode: 3, P: 800, D: 1400, amp_deg: 5, hz: 10, ratio: 0.37, I_p95_A: 0.095}
+    - {mode: 3, P: 800, D: 1400, amp_deg: 5, hz: 20, ratio: 0.19, I_p95_A: 0.100}
+    - {mode: 5, P: 800, D: 0,    amp_deg: 1, hz: 10, ratio: 16.1, I_p95_A: 0.546}
+    - {mode: 5, P: 800, D: 0,    amp_deg: 1, hz: 20, ratio: 16.7, I_p95_A: 0.613}
+    - {mode: 5, P: 800, D: 0,    amp_deg: 5, hz: 10, ratio: 2.45, I_p95_A: 0.677}
+    - {mode: 5, P: 800, D: 0,    amp_deg: 5, hz: 20, ratio: 4.16, I_p95_A: 0.703}
+    - {mode: 5, P: 800, D: 1400, amp_deg: 1, hz: 10, ratio: 1.19, I_p95_A: 0.141}
+    - {mode: 5, P: 800, D: 1400, amp_deg: 1, hz: 20, ratio: 0.97, I_p95_A: 0.221}
+    - {mode: 5, P: 800, D: 1400, amp_deg: 5, hz: 10, ratio: 0.94, I_p95_A: 0.365}
+    - {mode: 5, P: 800, D: 1400, amp_deg: 5, hz: 20, ratio: 0.51, I_p95_A: 0.520}
+
+  findings:
+    # A 1 deg command producing 16 deg of motion at 0.6 A is a violent limit
+    # cycle, and mode 3 at the SAME gains is perfectly stable. So the two modes
+    # are not one controller with a current clamp bolted on -- mode 5's plant
+    # needs derivative action to be stable at all, which is presumably why its
+    # factory default carries D 1400 and mode 3's carries D 0.
+    mode_5_unstable_without_D: true
+    # Same gain, opposite effect: D 1400 makes mode 3 WORSE (0.63 -> 0.37 at
+    # 5 deg/10 Hz) and is what makes mode 5 work. Different plants.
+    D_helps_mode_5_hurts_mode_3: true
+    # At matched P800/D1400, mode 5 tracks 3.3x better at 1 deg/10 Hz and 7.5x
+    # better at 1 deg/20 Hz, drawing ~12x the current.
+    mode_5_stiffer_at_matched_gains: true
+    # THE CLAIM THAT SURVIVED GAIN EQUALISATION, and the one that matters:
+    # mode 3 is AMPLITUDE-INVARIANT (0.36 at 1 deg vs 0.37 at 5 deg, 10 Hz;
+    # 0.13 vs 0.19 at 20 Hz) -- a linear system, ratio set by frequency alone.
+    # Mode 5 is AMPLITUDE-DEPENDENT and stiffer as the error shrinks (1.19 vs
+    # 0.94 at 10 Hz; 0.97 vs 0.51 at 20 Hz). A nonlinear error->torque map whose
+    # gain rises toward zero error is what the bus-current hypothesis predicts:
+    # the firmware regulates I_bus = duty * I_phase, so duty ~ sqrt(I_cmd) at
+    # stall. Rhoban/bam's XL330CurrentActuator infers that from |duty| ~
+    # sqrt(|error|) in position-mode logs and marks it UNTESTED; this is
+    # independent evidence by a mechanism they did not test.
+    mode_3_amplitude_invariant: true
+    mode_5_amplitude_dependent: true
+  # SCOPE. Bare shaft, so no stiction anywhere. The small-amplitude regime on a
+  # LOADED servo is a stiction limit cycle whose character is set by loop gain
+  # against a Coulomb band -- a different question. Re-run against the R1/R2
+  # load fixture before applying any of this to the self-righting mechanism.
 
 s5_hold_at_zero:
   holds: null                   # false -> low drive_kv is not viable
