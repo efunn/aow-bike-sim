@@ -1,0 +1,103 @@
+name: general_rl_cmd_curriculum2b
+type: rl
+kind: general
+policy_file: general_rl_cmd_curriculum2b.npz
+params_digest: e1c0d8822373309b
+plant_digest: e1ec36bfa670217e
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.0
+vel_window_s: 0.0
+obs_zero_lat: false
+obs_odometry: true
+odometry_encoder: counts
+obs_pitch: true
+obs_wings: false
+act_wings: false
+obs_swing: false
+act_swing: false
+wing_max_deg: 90.0
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- pitch
+- pitch_rate
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 17000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 6.994142995875308e-07
+  metrics:
+    survive_rate: 0.9
+    track: 0.62
+    track_geo: 0.541
+    vel_err: 0.192
+    head_err_deg: 24.3
+    n_eval: 20
+    drift_m: 0.496
+    drift_lon: 0.494
+    drift_lat: -0.042
+    drift_bearing_deg: -4.9
+    drift_max: 0.496
+    drift_sd: 0.138
+    steer_rest_deg: 15.9
+    speed_ratio_fwd: 1.102
+    speed_ratio_rev: 1.108
+    crab_ratio_left: 0.281
+    crab_ratio_right: 1.012
+    crab_head_err: 55.0
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.275
+    by_family:
+      hold:
+        n: 1
+        survive_rate: 1.0
+        head_err_tail: 15.2
+        vel_err_med: 0.177
+        drift_m: 0.496
+        drift_overshoot: 0.0
+      spin:
+        n: 2
+        survive_rate: 1.0
+        t_head_s: 0.9
+        t_head_n: 2
+        head_err_tail: 13.4
+        vel_err_med: 0.196
+      cruise:
+        n: 9
+        survive_rate: 0.889
+        t_head_s: 0.62
+        t_head_n: 6
+        head_err_tail: 7.3
+        vel_err_med: 0.159
+      crab:
+        n: 2
+        survive_rate: 0.5
+        head_err_tail: 32.9
+        vel_err_med: 0.395
+      turn_big:
+        n: 6
+        survive_rate: 1.0
+        t_head_s: 3.23
+        t_head_n: 6
+        head_err_tail: 84.5
+        vel_err_med: 0.244
+  exported_from: best_model.zip
