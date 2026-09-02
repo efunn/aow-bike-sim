@@ -24,6 +24,16 @@ bound. A policy can have low per-step change while sitting saturated (smooth
 but maxed out), and high per-step change while never reaching a bound, so
 neither number substitutes for the other.
 
+SIGN FLIPS AND THE ACHIEVED JOINT RATE were added 2026-09-01, because
+saturation alone reads the same for a channel held at +1 all episode and a
+channel alternating +1/-1 every other step. Every general policy does the
+LATTER on steer -- pinned to the bound 23-96% of the time while flipping sign
+15-32 times a second -- and the joint meanwhile achieves only 1-20% of the
+XC330's no-load speed. That is not a servo at its limit, it is a command
+dithering near the control loop's Nyquist frequency, and telling the two apart
+is what the reversal envelope in docs/measurements/servo-protocol.md section 2
+is measured against.
+
 MIXED WIDTHS. A policy trained with `act_wings` emits FOUR channels, not three,
 and the set here contains both kinds. Each policy is normalized by its own
 `ActionBounds.to_list()[:act_dim]`; the wing column prints "-" for the
@@ -98,7 +108,7 @@ def act_scale(pol) -> np.ndarray:
     return scale
 
 
-def rollout_grid(pol, env, cmds):
+def rollout_grid(pol, env, cmds, params):
     """Run the eval grid, keeping every normalized action alongside the
     per-command metrics. Actions are recorded as a fraction of their bound,
     i.e. what the network emits before scale_action, so the channels share one
@@ -106,17 +116,34 @@ def rollout_grid(pol, env, cmds):
 
     `A` is (steps, this policy's width) — ragged across a mixed policy set, so
     every consumer reads its width off the array rather than assuming three.
+
+    THE ACHIEVED STEER RATE IS RECORDED TOO, because a saturated action does not
+    mean a saturated joint. Every general policy pins the steer channel to its
+    bound most of the time AND alternates sign, so the commanded RATE is
+    bang-bang while the integrated command — and the joint — only creep. The
+    saturation table below cannot tell those apart; `flips/s` and this can.
+    Summarised into `m` rather than returned, so the tuple every caller unpacks
+    is unchanged.
     """
     scale = act_scale(pol)
-    acts = []
+    acts, rates = [], []
 
     def act(obs):
         a = np.asarray(pol.action(obs), float) / scale
         acts.append(a)
+        rates.append(float(env.data.qvel[env._sd]))
         return a[:env.action_space.shape[0]]
 
     m, rows = _eval_episodes(env, act, cmds)
     A = np.array(acts)
+    # Steer joint rate against the XC330's own no-load speed. gear_ratio is
+    # servo rotation per steer rotation, so the servo turns that much faster.
+    no_load = (params["servos"]["xc330_t181"]["no_load_rpm"] * 2 * np.pi / 60
+               / float(params["bike"]["steering"]["gear_ratio"]))
+    r = np.abs(np.asarray(rates))
+    m["ctrl_dt"] = float(env.ctrl_dt)
+    m["steer_rate_med_frac"] = float(np.median(r) / no_load)
+    m["steer_rate_p95_frac"] = float(np.percentile(r, 95) / no_load)
     # Per-episode slices, so a per-step difference never straddles a reset.
     i, per = 0, {}
     for r in rows:
@@ -148,7 +175,7 @@ def _one_policy(job):
     if force_odo:
         pol.obs_odometry = True
     return name, rollout_grid(pol, env_for(pol, params, cfg),
-                              eval_cmds(cfg["env"]["v_max"]))
+                              eval_cmds(cfg["env"]["v_max"]), params)
 
 
 def cross_axis(rows):
@@ -298,6 +325,39 @@ def main():
         sat = np.abs(A) > 0.98
         print(f"{k:{w}}" + cells(sat.mean(0), ".1%")
               + f"{sat.any(1).mean():>9.1%}")
+
+    # SATURATION AND CHATTER ARE DIFFERENT FAILURES and the tables above cannot
+    # separate them: a channel pinned to +1 for a whole episode and a channel
+    # alternating +1/-1 every other step both read as ~100% saturated. The sign
+    # flip rate is what tells them apart. At 50 Hz the ceiling is 50 flips/s
+    # (one every step) and 25/s is one every other step, so a policy sitting in
+    # the high twenties is dithering at a substantial fraction of the fastest
+    # the control loop can express.
+    _dt = next(iter(out.values()))[0]["ctrl_dt"]
+    print("\naction sign flips per second, by channel "
+          f"(ceiling is {1 / _dt:.0f}/s, a flip EVERY step; "
+          f"{0.5 / _dt:.0f}/s is every other step)")
+    print(f"{'policy':{w}}" + "".join(f"{c:>10}" for c in CHANNELS))
+    for k, (m, _r, _A, per) in out.items():
+        # Per EPISODE, so a flip is never counted across a reset.
+        flips = np.zeros(next(iter(per.values())).shape[1])
+        steps = 0
+        for seg in per.values():
+            if len(seg) > 1:
+                flips += (np.diff(np.sign(seg), axis=0) != 0).sum(0)
+                steps += len(seg) - 1
+        print(f"{k:{w}}" + cells(flips / (steps * m["ctrl_dt"]), ".1f"))
+
+    print("\nACHIEVED steer joint rate, as a fraction of the XC330's no-load "
+          "speed")
+    print(f"{'policy':{w}}{'median':>10}{'p95':>10}")
+    for k, (m, *_) in out.items():
+        print(f"{k:{w}}{m['steer_rate_med_frac']:>10.1%}"
+              f"{m['steer_rate_p95_frac']:>10.1%}")
+    print("  A policy can saturate the steer RATE command while the joint "
+          "barely moves:\n  the command alternates faster than the joint can "
+          "follow, so the integral of\n  the rate stays small. Read this "
+          "against the saturation and flips tables.")
 
     print("\nsum-squared per-step action change, by command family")
     print(f"{'policy':{w}}" + "".join(f"{f:>9}" for f in FAMILIES))
