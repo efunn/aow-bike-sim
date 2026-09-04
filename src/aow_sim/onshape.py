@@ -229,6 +229,32 @@ def push_feature_studio(text: str, url: str) -> int:
     return billed()
 
 
+def create_feature_studio(name: str, cfg: str = DOC_CFG) -> tuple[str, str]:
+    """Make a new Feature Studio tab; return (element id, browser URL). One call.
+
+    Both generated studios that already exist were created by a POST typed at a
+    prompt and recorded only in a config/onshape.yaml comment. Same call, kept
+    where the next person needing one will find it.
+
+    The new tab arrives with a `FeatureScript <n>;` header of its own, and that
+    version comes from the DOCUMENT rather than from the current std -- so a
+    generator emitting a number it picked can disagree with the tab it pushes
+    into. Everything generated for this document is on 3044, which is what the
+    two existing studios compile at.
+    """
+    import yaml
+    d = yaml.safe_load(Path(cfg).read_text())
+    raw, _ = _call("POST", f"/featurestudios/d/{d['document']}/w/{d['workspace']}",
+                   {"name": name}, what=f"create Feature Studio tab {name!r}",
+                   doc=d["document"])
+    got = json.loads(raw)
+    eid = got.get("id") or got.get("elementId")
+    if not eid:
+        raise OnshapeError(f"no element id in the reply: {sorted(got)}")
+    return eid, (f"https://cad.onshape.com/documents/{d['document']}"
+                 f"/w/{d['workspace']}/e/{eid}")
+
+
 def shaded_view(url: str, out: Path, width: int = 1600, height: int = 1200,
                 view: str = "isometric", edges: bool = True,
                 bg: str | None = "white") -> tuple[Path, int]:
