@@ -12,10 +12,69 @@ mechanism:
   angle_between_cranks: 20.040531430975506
   crank_input_angle: 180.0
   servo_offset: 41.05658040697257
+  wing_angle_mode: fixed
   wing_angle_from_rocker: 15.0
   wing_norm_offset: 5.0
   wing_z_min: -20.0
   wing_z_max: 80.0
+
+clearance:
+  # THE COUPLER LINK'S WIDTH: the margin the two couplers must keep where they
+  # pass, at the deployed limit. THE interference the link lengths actually
+  # control. `_opt` passes them within 2.89 mm, the built hand-drawn geometry
+  # within 14.32.
+  #
+  # `pin_support_radius` in the Part Studio is 0.1 in = 2.54 mm, so a boss is
+  # ~5 mm across and two passing each other need ~5 mm centre to centre. 4.0 is
+  # that, less a little -- set it from the real part.
+  coupler_width_mm: 4.0
+  link_gap_mm: 4.0          # floor for the FULL pair check (--check only)
+
+  # Which fore/aft plane each member sits in. Members sharing a plane are
+  # checked against each other; members in different planes cannot touch,
+  # however close they look in this front view.
+  #
+  # PER-MEMBER, NOT PER-SIDE. The two cranks share a plane and the two couplers
+  # share a different one, so crank-vs-opposite-coupler is free -- it crosses
+  # on every geometry here and does not matter -- while coupler-vs-opposite-
+  # coupler is a genuine interference, which is what `coupler_width_mm` is the
+  # margin for. This replaced a `cross_side` boolean that said "the two
+  # four-bars are staggered from each other" and so skipped the coupler pair.
+  #
+  # `all` = the member spans every plane. The panel is 90 mm deep in CAD
+  # against links a few mm thick, so it is not in a plane in any useful sense.
+  planes: {crank: 0, coupler: 1, rocker: 2, panel: all}
+
+  # THE PANEL'S OWN WIDTH, added to every keep-out half-width below. This is a
+  # front view and the panel is a line in it, so its width has to enter as
+  # extra keep-out rather than as panel geometry.
+  wing_width_mm: 0.0
+
+  # Volume the PANEL may not enter: |y| <= half_width, z ABOVE THE FLOOR.
+  # Panel only -- the crank shaft sits ON the centreline and its arms sweep
+  # through any box wide enough to describe the chassis.
+  #
+  # 32.0 is MEASURED: 64 mm across the outside edges of the servo pulleys. It
+  # supersedes an 18.0 derived from the `shape: box` entries of
+  # docs/measurements/cad_layout.yaml, which missed the CYLINDERS.
+  #
+  # BOTH z FACES ARE LIVE CONSTRAINTS, and a search will escape through either.
+  # Measured: `_flat` takes its clearance by passing UNDER z_lo at z = 80.0,
+  # and `_vertical` by passing OVER z_hi at z = 189.0 against a box ending at
+  # 190. Use `null` for a face the chassis does not actually stop at.
+  panel_keepout:
+    - name: chassis_core
+      half_width: 32.0
+      z_lo: 80.0
+      z_hi: null              # UNBOUNDED ABOVE. Was 190.0, and that face was
+                              # doing real work: swing_linkage_vertical took
+                              # its clearance by passing OVER it at z = 189.0.
+                              # Nothing physical stops the panel there, so the
+                              # box should not either. Closing it cost the
+                              # vertical_rest optimum 0.7 mm and left it on the
+                              # transmission floor; `fixed` and `flat_deploy`
+                              # never used the ceiling and are unchanged.
+
 stroke:
   crank_travel_deg: 128.0
   goal_current_nm: 0.44

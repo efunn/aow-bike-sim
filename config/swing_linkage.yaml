@@ -52,6 +52,26 @@
 # not two, because side L at crank -t is exactly side R at crank +t. The
 # optimiser therefore scores one side and gets the other for free.
 
+# THIS FILE IS A RESULT, NOT A QUESTION. It carries a full mechanism, because
+# build_model.py reads it as one and drives it. Four different kinds of thing
+# live in it and the difference matters when you want to ASK something:
+#
+#   INPUT      `bike`, `limits`, `clearance`, and the panel features in
+#              `mechanism` -- wing_angle_mode, wing_pivot_z, wing_norm_offset,
+#              wing_z_max. These are the constraints.
+#   SEARCHED   wing_pivot_x, crank_length, coupler_length, rocker_length,
+#              angle_between_cranks, servo_offset. `--optimize` OVERWRITES
+#              these, so their value here is a seed for the "start:" line and
+#              nothing else.
+#   DERIVED    wing_z_min always, and wing_angle_from_rocker under
+#              wing_angle_mode vertical_rest / flat_deploy. Overwritten on load
+#              and written back, so a saved config carries the resolved number.
+#   OUTPUT     stroke.crank_travel_deg, written by `--save`.
+#
+# TO POSE A NEW QUESTION, START FROM config/swing_linkage_constraints.yaml --
+# same schema, INPUT rows only, nothing the search decides. Everything omitted
+# falls back to the module defaults in analysis/swing_linkage.py.
+
 bike:
   wheel_radius: 51.2        # rear omni outer radius [mm]; sketch v=0 sits here
   bike_width: 80.0   # narrowed from 120 (2026-08-25)
@@ -93,7 +113,10 @@ mechanism:
   # purely to place the rest setpoint, knowing the never-inward property came
   # from the lengths and cannot be lost by moving it.
   angle_between_cranks: 45.0
-  crank_input_angle: 180.0  # the drawn/rest pose
+  # DEAD KEY, kept only because the Part Studio names it. Nothing in this repo
+  # reads `crank_input_angle` -- not this study, not build_model, not the
+  # hardware path. The rest pose is crank travel 0 by definition here.
+  crank_input_angle: 180.0
 
   # Servo shaft height above wheel_radius. Not a sketch variable -- the sketch
   # inherits the mirrored linkage's servo station so the two mechanisms can
@@ -101,10 +124,113 @@ mechanism:
   servo_offset: 83.5
 
   # --- the wing panel, rigid with the rocker ---
+  #
+  # ONE POSE CAN BE PINNED, NOT TWO. The rocker swings by a fixed amount
+  # between rest and the deployed toggle -- a pure link-length property -- so
+  # choosing the panel's attitude when parked FIXES what it is at full
+  # deployment, and vice versa. The three modes are that choice:
+  #
+  # fixed          `wing_angle_from_rocker` below is used as written, and both
+  #                attitudes are whatever the link lengths make them -- here a
+  #                splayed V, 18.8 deg outboard of vertical at rest.
+  # vertical_rest  DERIVED so the panels stand VERTICAL at rest, the same way
+  #                `wing_z_min` is derived so the panel bottom sits at ground
+  #                clearance. The stroke then swings the rising wing INWARD
+  #                over the chassis instead of merely less-outward, and the
+  #                rest envelope stops paying for the panel's own splay.
+  # flat_deploy    DERIVED so the panel is FLAT at the deployed toggle. Then
+  #                hand-off roll is 0 by construction, the commanded stroke IS
+  #                the toggle, and the study's fourth angle -- the travel that
+  #                lays the panel flat, which under the other two modes can
+  #                fall short of the toggle -- disappears. Measured: 66.3 mm
+  #                against `fixed`'s 65.3, so it costs 1.0 mm of width, and it
+  #                returns 0.446 N.m of peak torque against 0.494.
+  #
+  # The derived value is written BACK into `wing_angle_from_rocker` on load, so
+  # a config saved out of `--optimize` carries the resolved number.
+  # build_model.py reads that key as a plain number and knows nothing about
+  # modes -- without the write-back the sim and this study would model
+  # different mechanisms from one file.
+  wing_angle_mode: fixed
   wing_angle_from_rocker: 15.0   # panel bearing, offset from the rocker's
   wing_norm_offset: 5.0          # panel offset normal to the rocker [mm]
   wing_z_min: -20.0              # panel extent along its own axis, from the
   wing_z_max: 80.0               #   offset origin. Length = z_max - z_min.
+
+clearance:
+  # THE COUPLER LINK'S WIDTH: the margin the two couplers must keep where they
+  # pass, at the deployed limit. THE interference the link lengths actually
+  # control. `_opt` passes them within 2.89 mm, the built hand-drawn geometry
+  # within 14.32.
+  #
+  # `pin_support_radius` in the Part Studio is 0.1 in = 2.54 mm, so a boss is
+  # ~5 mm across and two passing each other need ~5 mm centre to centre. 4.0 is
+  # that, less a little -- set it from the real part.
+  coupler_width_mm: 4.0
+  link_gap_mm: 4.0          # floor for the FULL pair check (--check only)
+
+  # Which fore/aft plane each member sits in. Members sharing a plane are
+  # checked against each other; members in different planes cannot touch,
+  # however close they look in this front view.
+  #
+  # PER-MEMBER, NOT PER-SIDE. The two cranks share a plane and the two couplers
+  # share a different one, so crank-vs-opposite-coupler is free -- it crosses
+  # on every geometry here and does not matter -- while coupler-vs-opposite-
+  # coupler is a genuine interference, which is what `coupler_width_mm` is the
+  # margin for. This replaced a `cross_side` boolean that said "the two
+  # four-bars are staggered from each other" and so skipped the coupler pair.
+  #
+  # `all` = the member spans every plane. The panel is 90 mm deep in CAD
+  # against links a few mm thick, so it is not in a plane in any useful sense.
+  planes: {crank: 0, coupler: 1, rocker: 2, panel: all}
+
+  # THE PANEL'S OWN WIDTH, added to every keep-out half-width below. This is a
+  # front view and the panel is a line in it, so its width has to enter as
+  # extra keep-out rather than as panel geometry.
+  wing_width_mm: 0.0
+
+  # Volume the PANEL may not enter: |y| <= half_width, z ABOVE THE FLOOR.
+  # Panel only -- the crank shaft sits ON the centreline and its arms sweep
+  # through any box wide enough to describe the chassis.
+  #
+  # 32.0 is MEASURED: 64 mm across the outside edges of the servo pulleys. It
+  # supersedes an 18.0 derived from the `shape: box` entries of
+  # docs/measurements/cad_layout.yaml, which missed the CYLINDERS.
+  #
+  # BOTH z FACES ARE LIVE CONSTRAINTS, and a search will escape through either.
+  # Measured: `_flat` takes its clearance by passing UNDER z_lo at z = 80.0,
+  # and `_vertical` by passing OVER z_hi at z = 189.0 against a box ending at
+  # 190. Use `null` for a face the chassis does not actually stop at.
+  panel_keepout:
+    - name: chassis_core
+      half_width: 32.0
+      z_lo: 80.0
+      z_hi: null              # UNBOUNDED ABOVE. Was 190.0, and that face was
+                              # doing real work: swing_linkage_vertical took
+                              # its clearance by passing OVER it at z = 189.0.
+                              # Nothing physical stops the panel there, so the
+                              # box should not either. Closing it cost the
+                              # vertical_rest optimum 0.7 mm and left it on the
+                              # transmission floor; `fixed` and `flat_deploy`
+                              # never used the ceiling and are unchanged.
+
+    # NOT ENABLED, and a real decision rather than an oversight. The two drive
+    # belts run at |y| 26.5 +- 4.5 over z(floor) 58.6..105.3, but span fore/aft
+    # 0..85 and so overlap only 25 mm of the panel's 90 mm depth -- trimming
+    # the panel's lower front corner may beat keeping the whole panel out.
+    # - name: drive_belts
+    #   half_width: 31.0
+    #   z_lo: 55.0
+    #   z_hi: 107.0
+
+limits:
+  torque_nm: 0.55
+  transmission_deg: 30.0
+  far_inboard_deg: 5.0
+  handoff_window_deg: 6.0
+  ground_clear_deg: 35.9
+  max_half_width_mm: null
+  rest_off_vertical_deg: null
 
 stroke:
   # Crank travel EITHER WAY from centre. Signed, unlike the mirrored linkage's
