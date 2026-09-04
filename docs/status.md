@@ -805,6 +805,29 @@ left out of it deliberately. The mirror parity for the RL channel (`-1, -1` in
 `general_spec`) is unverified against a trained policy; `--check`'s sketch-point
 half is stale against the older `swing-wings-geom-mock`.
 
+**The geometry now goes into CAD as a DRIVEABLE sketch.** `aow_sim.cad_swing_linkage`
+emits a Feature Studio holding one custom feature, `AOW swing linkage`: pick a
+plane, type a crank input, and it draws the pair at that pose. Insert it several
+times on one plane at different inputs and the overlay is the motion study, with
+no assembly and no mates. Every `mechanism` number is a dialog field, defaulted
+from a config through `SwingLinkage` rather than off the yaml -- `wing_z_min` is
+always derived and never written back, so `swing_linkage_smaller.yaml`'s -20.0
+is the as-drawn value against the -27.08 the study actually uses.
+
+The four-bar is solved in FeatureScript, so it is a SECOND implementation of the
+circle-circle branch rule. `--check` is what keeps the two honest: one billable
+call runs the port on Onshape and diffs every joint, crank tip, panel foot and
+panel top against `analysis/swing_linkage.py` at seven crank inputs on both
+sides. All 56 agree to the printed digit, and the sketch builds 17 edges.
+Nothing has been pushed to a studio yet -- it needs its own Feature Studio tab,
+since a push overwrites one wholesale and `cad_layout` and `cad_servo_mount` own
+the two that exist.
+
+Two Onshape facts fell out of that check and are recorded in the generated
+source: `newSketch` handed a plane QUERY on a datum plane draws nothing at all
+and reports no error, and `evPlane` wants the FACE a datum plane owns rather
+than its body.
+
 **The reasoning is not here.** Every constraint, every metric that was wrong
 once, the four-bar identities the closed forms rest on, and the objective's
 rung structure live in `analysis/swing_linkage.py`'s docstrings, beside the code
