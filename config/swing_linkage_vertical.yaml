@@ -1,0 +1,116 @@
+# The VERTICAL-REST swing linkage: panels stand straight up when parked, and
+# the stroke swings the rising wing INWARD over the chassis.
+#
+# Reproduce (this file is its own seed -- the one key that differs from
+# config/swing_linkage.yaml is mechanism.wing_angle_mode: vertical_rest):
+#     python analysis/swing_linkage.py --config config/swing_linkage_vertical.yaml \
+#         --optimize --seed 1 --iters 400 --save <out>.yaml
+# All five of seeds 1-5 return this to 0.01 mm. Run several rather than trusting
+# one -- differential evolution is chaotic in the objective.
+#
+# ON RECORD BECAUSE IT DOES NOT WIN, re-checked against the corrected 32 mm
+# chassis keep-out and the coupler-width constraint:
+#
+#     |                          | compact (splayed) | this (vertical)  |
+#     |--------------------------|-------------------|------------------|
+#     | rest half-width          |          65.3 mm  |         72.2 mm  |
+#     | commanded stroke         |          115.0 deg|        142.0 deg |
+#     | worst transmission       |          55.7 deg |  30.0, on the floor |
+#     | peak servo torque        |         0.494 N.m |  0.550, on the budget |
+#     | coupler-coupler          |    4.00, on limit |         9.23 mm  |
+#
+# 6.2 mm wider, and it spends the whole torque budget to get there. The upright
+# pose needs a longer stroke -- 141.5 deg against 115.0 -- and pays for it at
+# the servo; at a 0.45 N.m budget the vertical search finds nothing feasible at
+# all. A vertical panel has no foot tucked inboard, so at equal MAX width it is
+# wider on average: the splay was doing work.
+#
+# It is NOT worse everywhere. It keeps 10.57 mm between the couplers where the
+# compact design is on its 4.00 mm limit, which is real buildability the width
+# number does not show.
+#
+# The gain is real against a FIXED linkage: verticalising the built geometry
+# without touching a link length takes it 73.3 -> 47.8 mm. The splayed optimum
+# only overtakes once the lengths are re-searched.
+#
+# NOT CLOSED: the argument for vertical was never only width. docs/status.md
+# records that the splayed rest V is the outrigger making this variant land on
+# its back at ~119 deg and need a sign flip at 90. Standing the panels up
+# should weaken that, and nothing in this 2D study measures it. Wants a sim run.
+#
+# wing_angle_from_rocker below is the RESOLVED value for these link lengths; it
+# is re-derived on load and comes out identical, and build_model.py derives it
+# too, so the sim and the study agree to 0.00 deg.
+#
+# RE-SEARCHED 2026-09-03 against an UNBOUNDED keep-out ceiling. The previous
+# 71.5 mm result took its clearance by passing OVER a box that ended at z = 190,
+# which nothing physical stops it at. Closing that face cost 0.7 mm and put the
+# design on the transmission floor as well: it is now on THREE limits.
+
+bike:
+  wheel_radius: 51.2
+  bike_width: 80.0
+  bike_height: 216.2
+  ground_clearance: 61.9
+mechanism:
+  wing_angle_mode: vertical_rest
+  wing_pivot_z: 0.0
+  wing_norm_offset: 5.0
+  wing_z_max: 80.0
+  wing_pivot_x: 15.000000071504532
+  crank_length: 41.847096935266016
+  coupler_length: 101.12587167846137
+  rocker_length: 65.55605953653895
+  angle_between_cranks: 26.476803677240653
+  servo_offset: 82.06204081621262
+  wing_z_min: -20.0
+  wing_angle_from_rocker: 52.75168912287944
+limits:
+  torque_nm: 0.55
+  transmission_deg: 30.0
+  # -25, NOT the +5 this file used to carry. A vertical panel crosses vertical
+  # on the first degree of stroke, so an OUTBOARD margin is unsatisfiable here
+  # and the constant changes job: it becomes an allowance INBOARD, i.e. how far
+  # the rising wing may lean in over the chassis. This geometry was searched
+  # against -25 all along -- the +5 was inert, because `_budgets` overwrote any
+  # configured value with the mode default before ever reading the file.
+  far_inboard_deg: -25.0
+  handoff_window_deg: 6.0
+  ground_clear_deg: 35.9
+  max_half_width_mm: null
+  rest_off_vertical_deg: null
+clearance:
+  coupler_width_mm: 4.0
+  link_gap_mm: 4.0
+  wing_width_mm: 0.0
+  planes:
+    crank: 0
+    coupler: 1
+    rocker: 2
+    panel: all
+  panel_keepout:
+  - name: chassis_core
+    half_width: 32.0
+    z_lo: 80.0
+    z_hi: null
+bounds:
+  wing_pivot_x:
+  - 15.0
+  - 40.0
+  crank_length:
+  - 15.0
+  - 60.0
+  coupler_length:
+  - 30.0
+  - 140.0
+  rocker_length:
+  - 15.0
+  - 90.0
+  angle_between_cranks:
+  - 20.0
+  - 170.0
+  servo_offset:
+  - 20.0
+  - 160.0
+stroke:
+  crank_travel_deg: 142.0

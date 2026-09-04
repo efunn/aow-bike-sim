@@ -678,7 +678,10 @@ Reproduce with `python analysis/contact_surrogates.py`.
 
 Two new mechanisms and a study, all from 2026-08-25. `config/swing_wings.yaml`
 (geared), `config/swing_linkage*.yaml` (four-bar), `analysis/swing_linkage.py`,
-`analysis/swing_demo.py`. Figures at `analysis/plots/swing_linkage_*`.
+`analysis/swing_demo.py`. Figures at `analysis/plots/swing_linkage_*`. The
+four-bar variants: the hand-drawn `swing_linkage.yaml` (BUILT), `_opt` and
+`_margin` from the first searches, and `_compact` / `_vertical` from
+2026-09-03 — see the standing note at the end of this section.
 
 **The one idea:** the mirrored pair's joint equality is
 `theta_left = -1 * theta_right`, so both wings deploy outward together. Flip
@@ -733,26 +736,80 @@ version so nobody re-derives it:
 | protrusion | max over the stroke, then the mean of two endpoints | `max(rest, end)`. A mean lets one endpoint grow while the other shrinks at zero cost |
 | transmission | floor over the whole stroke | first 85% only. The minimum sits at 98-100% of the stroke, which is exactly where a four-bar SHOULD approach its dead point |
 | torque | computed, printed, never scored | scored against 0.45 N.m |
+| protrusion, again | the panel's TOP corner (`top_extents`) | max over BOTH panel ends (`panel_extents`). Top-only is a proxy that holds while the rest pose is a splayed V and breaks under `vertical_rest`, where the rising panel's top comes IN while its foot goes OUT |
+| interference | not checked at all | `min_link_gap`: every non-adjacent pair of drawn members, both sweep directions |
+| chassis | `far_inboard_deg`, an angle | still the angle for the LEAN, plus `panel_keepout_gap` for whether the volume is occupied. The angle was never a clearance check and cannot become one |
+| `--max-half` | accepted, unpacked, never read — a no-op flag since the first version | scored as a hard cap on `stow_half_width` |
+| stroke, reach, brace | walked the whole assembly range at 2° | three closed-form toggle angles plus the panel-flat pose |
+| torque | `np.gradient` over a uniform 1° grid | exact four-bar velocity ratio at a point, peak by golden section |
+| sweep direction | both, on the argument that ±t see different pairs | one. They see the same pairs REFLECTED, and both sides are already evaluated at every +t |
+| keep-out width | 18 mm, from the `shape: box` entries of cad_layout.yaml | 32 mm, measured. The derivation missed the CYLINDERS — the servo pulleys' outer edges |
 
 `angle_between_cranks` sets the REST SETPOINT and nothing else that binds.
 Measured, holding the lengths and sweeping only that angle, the far wing's
 minimum clearance from vertical is -0.2 deg at 20, 30, 45, 60, 75 and 90 alike;
 only the stroke length moves. The inward limit is fixed by the crank/coupler
-collinear pose, which the LENGTHS determine. Hence the procedure: size the
-lengths so the collinear pose clears vertical, then set the angle freely.
+collinear pose, which the LENGTHS determine.
 
-**Standing:** the hand-drawn geometry hands off at 0.0 deg and protrudes
-73.3 mm; the best feasible search result is 61.3 mm but spends the entire
-hand-off allowance and sits on two limits. Not decided, and the hand-drawn one
-is being built first.
+**The study stopped sweeping (2026-09-03).** Every kinematic question is now
+answered at closed-form crank angles — rest, the rising wing's folded toggle,
+the deploying wing's extended toggle, and the travel that lays the panel flat.
+**22x faster**: 44.6 -> 1.3 ms per objective evaluation, 810 -> 47 four-bar
+solves. Peak servo torque is the one thing with no shortcut (31 of those 47) —
+it is an interior maximum and no single pose stands in for it. `--check` walks
+every metric at 0.25 deg and prints the disagreement.
 
-**Outstanding:** the mirror parity for the RL channel (`-1, -1` in
-`general_spec`) is unverified against a trained policy; the link-length floors
-in `_VARS` are hand-picked where the sketch now carries real `pin_diameter` and
-`pin_support_radius` to derive them from; `--check`'s sketch-point half is stale
-against the older `swing-wings-geom-mock`.
+Three rest poses via `mechanism.wing_angle_mode`, and **one pose can be pinned,
+not two** — the rocker's swing between rest and the toggle is a link-length
+property, so choosing the parked attitude fixes the deployed one:
 
----
+| mode | pins | hand-off roll |
+|---|---|---|
+| `fixed` | neither; the config's angle is used | whatever falls out |
+| `vertical_rest` | panels upright when parked | whatever falls out |
+| `flat_deploy` | panel flat at the deployed toggle | **0 by construction** |
+
+**Standing.** Comparisons need a common panel: `wing_z_max` is a panel-axis
+coordinate, not a height, so the same number is a different length of wing on
+every linkage. Re-searched with `panel_span_mode: length` at 100 mm, four seeds
+each, all converging to spread 0.000:
+
+| | built (hand-drawn) | `fixed` | `flat_deploy` | `vertical_rest` |
+|---|---|---|---|---|
+| rest half-width, own panel | 73.3 mm | 65.3 | 66.3 | 72.2 |
+| **rest half-width, 100 mm panel** | — | 65.8 | **65.0** | 67.9 |
+| peak servo torque | 0.510 | 0.494 | 0.446 | 0.550 |
+| feasibility | 7/8 (far wing) | 8/8 | 8/8 | 8/8 |
+
+The hand-drawn geometry is **built and works** — it self-rights the weight of
+the righting assembly; the whole bike is untested. It is also the only one
+holding margin everywhere: 2.06 mm of chassis clearance and 10.98 mm between
+couplers, where the searched results sit on two or three limits at once.
+`flat_deploy` is the one to build next if width matters.
+
+**Vertical rest does not pay.** It was meant to trade a wider swing for a
+narrower parked envelope; on a fair panel it is 2.9 mm wider and spends the
+whole torque budget. The gain is real only against a FIXED linkage —
+verticalising the built geometry without touching a link length takes it
+73.3 -> 47.8 mm — and evaporates once the lengths are re-searched.
+
+**Outstanding.** The width argument was never the whole argument for vertical
+rest: the splayed V is the outrigger that makes this variant land on its back at
+~119 deg and need the 90 deg sign flip, and nothing in a 2D kinematic study sees
+it. That wants a sim run. `_compact` sits AT the hand-picked 15 mm
+`wing_pivot_x` floor, where the Part Studio carries `pin_diameter` 1/16 in and
+`pin_support_radius` 0.1 in to derive it from. `clearance.wing_width_mm` is a
+0.0 placeholder. The keep-out is projected from `cad_layout.yaml`, which is the
+simulator's belief and not a measured chassis; the drive belts at |y| 26.5 are
+left out of it deliberately. The mirror parity for the RL channel (`-1, -1` in
+`general_spec`) is unverified against a trained policy; `--check`'s sketch-point
+half is stale against the older `swing-wings-geom-mock`.
+
+**The reasoning is not here.** Every constraint, every metric that was wrong
+once, the four-bar identities the closed forms rest on, and the objective's
+rung structure live in `analysis/swing_linkage.py`'s docstrings, beside the code
+they govern. `config/swing_linkage_constraints.yaml` is the annotated input
+schema. This section carries only what moves.
 
 ## The wing LINKAGE — a second mechanism, and a real alternative
 
