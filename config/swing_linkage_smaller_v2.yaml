@@ -1,0 +1,63 @@
+bike:
+  wheel_radius: 51.2
+  bike_width: 80.0
+  bike_height: 216.2
+  ground_clearance: 50.0
+mechanism:
+  wing_angle_mode: flat_deploy
+  wing_pivot_z: -10.0
+  wing_norm_offset: 15.0
+  wing_z_max: 92.88469099981361
+  panel_span_mode: length
+  panel_length_mm: 100.0
+  wing_pivot_x: 5.00000213113693
+  crank_length: 20.353899227784915
+  coupler_length: 45.897182397255875
+  rocker_length: 32.94120380322837
+  angle_between_cranks: 36.27883336479782
+  servo_offset: 29.999999579319287
+  wing_z_min: -20.0
+  wing_angle_from_rocker: 32.08991783985283
+limits:
+  torque_nm: 0.55
+  transmission_deg: 20.0
+  far_inboard_deg: -15.0
+  handoff_window_deg: 6.0
+  ground_clear_deg: 35.9
+  max_half_width_mm: null
+  rest_off_vertical_deg: null
+clearance:
+  coupler_width_mm: 8.0
+  link_gap_mm: 4.0
+  wing_width_mm: 5.0
+  planes:
+    crank: 0
+    coupler: 1
+    rocker: 2
+    panel: all
+  panel_keepout:
+  - name: chassis_core
+    half_width: 35.0
+    z_lo: 50.0
+    z_hi: null
+bounds:
+  wing_pivot_x:
+  - 5.0
+  - 40.0
+  crank_length:
+  - 10.0
+  - 60.0
+  coupler_length:
+  - 10.0
+  - 140.0
+  rocker_length:
+  - 10.0
+  - 90.0
+  angle_between_cranks:
+  - 0.0
+  - 170.0
+  servo_offset:
+  - 10.0
+  - 30.0
+stroke:
+  crank_travel_deg: 132.1

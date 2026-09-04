@@ -1,0 +1,159 @@
+# A CONSTRAINTS-ONLY input to `analysis/swing_linkage.py --optimize`.
+#
+#     python analysis/swing_linkage.py \
+#         --config config/swing_linkage_constraints.yaml \
+#         --optimize --seed 1 --iters 400 --save config/my_result.yaml
+#
+# Copy it, edit the numbers, point --optimize at it. Nothing here is a link
+# length: every value is something the mechanism must SATISFY, and the six
+# lengths are what the search decides. That is the difference between this file
+# and the ones beside it -- swing_linkage_compact.yaml and friends are RESULTS,
+# full mechanisms that build_model can drive, carrying a searched geometry that
+# this file deliberately does not.
+#
+# Omitted keys fall back to the module defaults in analysis/swing_linkage.py,
+# which are what the figures in docs/status.md were produced against.
+# Precedence: command-line flag > this file > module default.
+#
+# Run SEVERAL SEEDS. Differential evolution is chaotic in the objective and a
+# pinned seed is not a durable recipe -- seed 0 stalls on a boundary local
+# optimum here while seeds 1-7 all return the same answer to five decimals.
+
+bike:
+  wheel_radius: 51.2        # LOAD-BEARING: the sketch frame's v=0 sits here, so
+                            # this converts sketch heights to heights above the
+                            # floor, places the derived panel bottom, and puts
+                            # the CoM where the torque calculation needs it.
+  bike_width: 80.0          # COSMETIC -- one dashed reference line on the sweep
+  bike_height: 216.2        # COSMETIC -- the chassis box in the righting video.
+                            # Neither is read by any metric or constraint.
+  ground_clearance: 50.0    # LOAD-BEARING despite reading like a note. The
+                            # panel's lower edge is DERIVED to sit here, which
+                            # sets wing_z_min and therefore the panel's LENGTH,
+                            # and so its keep-out clearance and its reach.
+
+mechanism:
+  # Features of the PART, not of the search. The six link lengths are absent on
+  # purpose -- supply them only if you want a particular starting geometry on
+  # the "start:" line, because --optimize overwrites them anyway.
+  #
+  # ONE POSE CAN BE PINNED, NOT TWO. The rocker's swing between rest and the
+  # deployed toggle is fixed by the link lengths, so choosing the panel's
+  # parked attitude fixes its deployed one and vice versa:
+  #   fixed          use wing_angle_from_rocker as written (default 15.0)
+  #   vertical_rest  derive it so the panels stand upright when parked
+  #   flat_deploy    derive it so the panel is flat at the deployed toggle, and
+  #                  hand-off roll is then 0 by construction
+  # Under the two derived modes wing_angle_from_rocker is neither free nor
+  # searched: it is solved from the link lengths and written back on load.
+  wing_angle_mode: flat_deploy
+  wing_pivot_z: -10.0       # hinge height in the SKETCH frame, i.e. relative to
+                            # wheel_radius. 0.0 puts the hinges on the axle
+                            # line, 51.2 mm above the floor.
+  wing_norm_offset: 15.0     # panel offset normal to the rocker [mm]
+  wing_z_max: 80.0          # NOT A HEIGHT. A panel-axis coordinate: the TOP of
+                            # the panel measured from the panel origin along the
+                            # panel's own direction. The BOTTOM comes from
+                            # bike.ground_clearance, so panel LENGTH is the
+                            # difference -- 86.8 mm as configured, which leaves
+                            # the top 142.7 mm above the floor at rest, ABOVE
+                            # the 123.5 mm CoM rather than below it.
+  panel_span_mode: length
+  panel_length_mm: 100.0
+
+limits:
+  # Every budget the search scores against. Omit any line for the module
+  # default; null means unconstrained where that is meaningful.
+  torque_nm: 0.55           # peak servo torque anywhere in the stroke. The
+                            # XC330-T181 gives 0.76 N.m at 11.1 V and ~0.66 at
+                            # the 9.9 V pack cutoff. THE ONLY ROW --optimize can
+                            # drop, with --skip-torque; every other row here is
+                            # always scored.
+  transmission_deg: 30.0    # worst coupler-to-rocker angle over the first 85%
+                            # of the stroke. The last 15% is exempt on purpose:
+                            # that is where a four-bar SHOULD approach its
+                            # toggle, and the toggle is what makes the deployed
+                            # pose hold with little or no servo current.
+  far_inboard_deg: -15.0    # margin the RISING wing keeps OUTBOARD of vertical.
+                            # NEGATIVE is an allowance inboard, which is what
+                            # wing_angle_mode: vertical_rest needs (-25 there by
+                            # default). This bounds the LEAN. What bounds the
+                            # collision is clearance.panel_keepout below, and
+                            # the two are not substitutes.
+  handoff_window_deg: 6.0   # roll the bike may be left at when the stroke ends.
+                            # Under flat_deploy this is 0.000000 by
+                            # construction, so the row can never bind -- it is
+                            # still evaluated and still reported.
+  ground_clear_deg: 35.9    # roll before a PARKED wing touches the floor. STILL
+                            # LIVE under flat_deploy, which pins the deployed
+                            # attitude and lets the parked one fall out. 30.9 is
+                            # the largest lean the policy can still save
+                            # (analysis/no_return.py), plus 5.
+  max_half_width_mm: null   # hard cap on the parked envelope. null = uncapped,
+                            # which is honest: there is no width the bike must
+                            # fit inside, only a protrusion worth minimising --
+                            # and minimising it IS the objective.
+  rest_off_vertical_deg: null   # tolerance on the parked panel angle. Leave
+                                # null under vertical_rest, which derives it to
+                                # zero anyway.
+
+clearance:
+  coupler_width_mm: 8.0     # the margin the two couplers must keep where they
+                            # pass, at the deployed limit. THE interference the
+                            # link lengths actually control.
+  link_gap_mm: 4.0          # floor for the FULL pair audit, --check only
+  wing_width_mm: 5.0        # the panel's own width, added to every keep-out
+                            # half-width below. This is a front view and the
+                            # panel is a LINE in it, so its width has to enter
+                            # as extra keep-out rather than as panel geometry.
+
+  # Which fore/aft plane each member sits in. Members sharing a plane are
+  # checked against each other; members in different planes cannot touch,
+  # however close they look in this front view.
+  #
+  # PER-MEMBER, NOT PER-SIDE. The two cranks share a plane and the two couplers
+  # share a different one, so crank-vs-opposite-coupler is free -- it crosses on
+  # every geometry in this repo and does not matter -- while
+  # coupler-vs-opposite-coupler is a real interference, which is what
+  # coupler_width_mm is the margin for.
+  #
+  # `all` = the member spans every plane. The panel is 90 mm deep in CAD against
+  # links a few mm thick, so it is not in a plane in any useful sense.
+  planes: {crank: 0, coupler: 1, rocker: 2, panel: all}
+
+  panel_keepout:
+    # Volume the PANEL may not enter: |y| <= half_width, z ABOVE THE FLOOR.
+    # Panel only -- the crank shaft sits ON the centreline and its arms sweep
+    # through any box wide enough to describe the chassis.
+    #
+    # 32.0 is MEASURED: 64 mm across the outside edges of the servo pulleys.
+    #
+    # BOTH z FACES ARE LIVE and a search WILL escape through either. Measured on
+    # the tracked results: swing_linkage_flat takes its clearance by passing
+    # UNDER z_lo at z = 80.0, and swing_linkage_vertical by passing OVER z_hi at
+    # z = 189.0 against a box ending at 190. Use null for a face the chassis
+    # does not really stop at -- an unbounded face is safer than a fictional one.
+    - name: chassis_core
+      half_width: 35.0
+      z_lo: 50.0
+      z_hi: null              # UNBOUNDED ABOVE. Was 190.0, and that face was
+                              # doing real work: swing_linkage_vertical took
+                              # its clearance by passing OVER it at z = 189.0.
+                              # Nothing physical stops the panel there, so the
+                              # box should not either.
+
+bounds:
+  # Search bounds for the six link lengths. Omit the block, or any line in it,
+  # to take the module defaults in _VARS.
+  #
+  # THESE ARE CONSTRAINTS TOO, and they were invisible from outside the study
+  # until now: swing_linkage_compact.yaml sits exactly ON the 15 mm
+  # wing_pivot_x floor, so the number decides its answer. The floors are
+  # hand-picked, not derived -- the Part Studio carries pin_diameter 1/16 in
+  # and pin_support_radius 0.1 in to size them from.
+  wing_pivot_x:         [5.0, 40.0]
+  crank_length:         [10.0, 60.0]
+  coupler_length:       [10.0, 140.0]
+  rocker_length:        [10.0, 90.0]
+  angle_between_cranks: [0.0, 170.0]
+  servo_offset:         [10.0, 50.0]
