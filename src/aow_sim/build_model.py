@@ -1040,6 +1040,47 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
         a = np.deg2rad(base + travel_deg)
         return np.array([np.cos(a), np.sin(a)])
 
+    def rest_joint(side):
+        """Rocker joint at rest: the circle-circle intersection FURTHER from
+        the centreline. The inboard branch folds the rocker through the
+        chassis, and a four-bar that starts on the wrong branch cannot be
+        driven onto the right one -- it is assembled differently, not merely
+        posed differently."""
+        pivot = np.array([side * pivot_y, pivot_z])
+        c = servo + crank_len * arm_dir(side, 0.0)
+        d = c - pivot
+        L = float(np.linalg.norm(d))
+        a_ = (rocker_len ** 2 - coupler_len ** 2 + L ** 2) / (2 * L)
+        h_ = np.sqrt(max(rocker_len ** 2 - a_ ** 2, 0.0))
+        base_pt = pivot + a_ * d / L
+        perp = np.array([-d[1], d[0]]) / L
+        return pivot, max([base_pt + h_ * perp, base_pt - h_ * perp],
+                          key=lambda q: abs(q[0]))
+
+    # `wing_angle_mode: vertical_rest` DERIVES the panel bearing so the panels
+    # stand vertical at rest, exactly as `wing_z_min` below is derived so the
+    # panel bottom sits at ground clearance. Reproduced here rather than read
+    # from the file for the same reason: analysis/swing_linkage.py resolves it
+    # too, and a hand-written config that has not been through that study's
+    # `--save` carries the UNRESOLVED `wing_angle_from_rocker` -- so a builder
+    # that only read the number would model a splayed mechanism while the study
+    # modelled a vertical one, from one file, silently.
+    mode = m_.get("wing_angle_mode", "fixed")
+    if mode in ("vertical_rest", "flat_deploy"):
+        # `flat_deploy` pins the panel FLAT at the deployed toggle instead of
+        # upright at rest. The study resolves both into the same key, and a
+        # saved config carries the number -- this is the fallback for a
+        # hand-written config that has not been through `--save`, and for
+        # `vertical_rest` it is exact. For `flat_deploy` the toggle solve lives
+        # in the study; a config using it must be saved from there.
+        if mode == "vertical_rest":
+            pv, j0 = rest_joint(-1)
+            r0 = j0 - pv
+            rest = np.arctan2(r0[1], r0[0]) - np.pi / 2.0
+    elif mode != "fixed":
+        raise ValueError(f"wing_angle_mode: expected 'fixed', 'vertical_rest' "
+                         f"or 'flat_deploy', got {mode!r}")
+
     crank = chassis.add_body(name="swing_crank", pos=[px, servo[0], servo[1]])
     crank.add_joint(name="swing_crank_joint", type=mujoco.mjtJoint.mjJNT_HINGE,
                     axis=[1, 0, 0])
@@ -1055,21 +1096,8 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
             rgba=[0.5, 0.2, 0.6, 1])
 
     for side, tag in ((-1, "right"), (1, "left")):
-        pivot = np.array([side * pivot_y, pivot_z])
-        # Rocker joint at rest: the circle-circle intersection FURTHER from the
-        # centreline. The inboard branch folds the rocker through the chassis,
-        # and a four-bar that starts on the wrong branch cannot be driven onto
-        # the right one -- it is assembled differently, not merely posed
-        # differently.
+        pivot, joint0 = rest_joint(side)
         c = servo + tips[tag]
-        d = c - pivot
-        L = float(np.linalg.norm(d))
-        a_ = (rocker_len ** 2 - coupler_len ** 2 + L ** 2) / (2 * L)
-        h_ = np.sqrt(max(rocker_len ** 2 - a_ ** 2, 0.0))
-        base_pt = pivot + a_ * d / L
-        perp = np.array([-d[1], d[0]]) / L
-        joint0 = max([base_pt + h_ * perp, base_pt - h_ * perp],
-                     key=lambda q: abs(q[0]))
 
         coup = crank.add_body(name=f"swing_coupler_{tag}",
                               pos=[0.0, tips[tag][0], tips[tag][1]])
