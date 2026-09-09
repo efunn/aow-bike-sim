@@ -1009,6 +1009,19 @@ def main():
     ap.add_argument("--config", default=None)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--timesteps", type=int, default=None, help="override total")
+    # SEED OVERRIDE, so a seed sweep needs no per-seed config copy. It reaches
+    # `_make_vecenv` (the env reset streams) and PPO itself -- exactly what
+    # `algo.seed` feeds; this only changes where the number comes from.
+    #
+    # WHY IT IS WORTH HAVING. The turn personality -- which way a policy
+    # resolves a turn, body-forward or reversed out -- is set by the SEED and
+    # not by the config: rl_general_cmd_curriculum2 and _2b differ only in
+    # `algo.seed` and resolve 33% vs 71% of their turns forward. Sweeping that
+    # wants N launches of ONE config, not N configs. See
+    # docs/plans/eval-score-rewrite.md "The turn personality", and
+    # `scripts/rl.sh seeds`.
+    ap.add_argument("--seed", type=int, default=None, metavar="N",
+                    help="override algo.seed for this run")
     ap.add_argument("--export-from", default=None, metavar="STEPS|PATH",
                     help="export an existing checkpoint instead of training")
     ap.add_argument("--export-name", default="general_rl", metavar="NAME",
@@ -1036,6 +1049,11 @@ def main():
     params = load_params()
     cfg = _load_rl_config(args.config)
     a = cfg["algo"]
+    if args.seed is not None:
+        # Rebound before either consumer reads it: `_make_vecenv` below and
+        # PPO's own `seed=` further down both take `a["seed"]`.
+        a = {**a, "seed": args.seed}
+        print(f"seed override: algo.seed -> {args.seed}")
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     ckpt = RUN_DIR / "checkpoints"
 

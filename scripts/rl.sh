@@ -4,6 +4,8 @@
 # their pids under runs/, and kills them.
 #
 #   ./scripts/rl.sh up general              # board + training, then disconnect
+#   ./scripts/rl.sh seeds general 4         # seeds 0-3, serial, one board
+#   ./scripts/rl.sh seeds general 2-11      # seeds 2..11 (skip ones already run)
 #   ./scripts/rl.sh board general           # dashboard only (outlives training)
 #   ./scripts/rl.sh train general --resume  # extra args go straight to the trainer
 #   ./scripts/rl.sh status                  # what is up, and on which port
@@ -54,7 +56,15 @@ check_move() {
   [[ -n "$(port_for "$1")" ]] || die "unknown move '$1' (want: $MOVES)"
 }
 
-run_dir()  { echo "$REPO/runs/$1_rl"; }
+# RUN_TAG namespaces the BOOKKEEPING dir (pidfiles + launch logs) so several
+# runs of the same move can be up at once -- which is what `seeds` needs. It is
+# NOT the trainer's --run-dir; those have always been separate (the trainer
+# writes wherever --run-dir says, this is only where the pid and the launch log
+# live). Every subcommand honours it:
+#
+#     RUN_TAG=seed0 ./scripts/rl.sh logs general
+#     RUN_TAG=seed0 ./scripts/rl.sh stop general
+run_dir()  { echo "$REPO/runs/$1_rl${RUN_TAG:+_$RUN_TAG}"; }
 pid_file() { echo "$(run_dir "$1")/.$2.pid"; }   # $2 = train | board
 
 activate_env() {
@@ -231,6 +241,133 @@ cmd_train() {
   echo "training     -> aow_sim.train_${move}_rl ${*:-(config defaults)}, pid $(pid_of "$move" train)"
   echo "                log: $log"
   echo "                eta: ./scripts/rl.sh eta $move     cancel: ./scripts/rl.sh stop $move"
+}
+
+# Launch the SAME config at N different seeds, ONE AFTER ANOTHER, under one
+# board. Serial by design.
+#
+# WHY SERIAL. One PPO run already fits a box, because its two phases do not
+# overlap: during COLLECTION the n_envs SubprocVecEnv workers are busy and the
+# main process idles; during the UPDATE the main process is in torch and every
+# worker is blocked at the barrier (`scripts/bench_update.py` documents this).
+# Run two seeds at once and the phases are unsynchronised, so one seed's torch
+# update lands on top of the other's MuJoCo workers -- bench_update.py measures
+# that collision at 2-8x slowdown, non-monotonic across a thread sweep.
+#
+# Serial avoids all of it, and avoids the thing that would otherwise have to
+# come with it: PPO's rollout buffer is `n_envs x n_steps` and every config here
+# is built around 16384, so sharing a box between seeds would mean editing BOTH
+# in the same edit (32/512 -> 8/2048 for four seeds) -- changing the algorithm
+# to buy parallelism. Serial keeps every seed on the exact shape the configs
+# were tuned at, which is also the only way the runs stay comparable to each
+# other and to everything already in moves/.
+#
+# The cost is wall-clock: N seeds take N x one run. That is the trade.
+#
+# ONE BOARD FOR ALL SEEDS. tensorboard serves a PARENT directory and renders
+# each subdirectory as its own run, so pointing it at <base>/ overlays every
+# seed on one dashboard -- including the ones that have not started yet, which
+# appear as they go.
+#
+# WHY SEEDS AT ALL. Directional personality -- which way a policy resolves a
+# turn -- is set by the seed, not the config: rl_general_cmd_curriculum2 and
+# _2b differ only in `algo.seed` and resolve 33% vs 71% of their turns forward.
+# One run per config cannot tell a real effect from a lucky draw. See
+# docs/plans/eval-score-rewrite.md, "The turn personality".
+cmd_seeds() {
+  local move=$1 spec=$2; shift 2
+  # <N> means seeds 0..N-1; <A-B> means seeds A..B inclusive. The range form
+  # exists because seeds already spent are not worth re-spending: seeds 0 and 1
+  # are `general_rl_cmd_curriculum2` and `_2b`, so a follow-up sweep starts at 2
+  # and its exports do not collide with them.
+  local lo hi
+  if [[ "$spec" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+    lo="${BASH_REMATCH[1]}"; hi="${BASH_REMATCH[2]}"
+    (( hi >= lo )) || die "empty seed range '$spec'"
+  elif [[ "$spec" =~ ^[0-9]+$ ]] && (( spec >= 1 )); then
+    lo=0; hi=$(( spec - 1 ))
+  else
+    die "usage: $0 seeds <move> <N|A-B> [--config ...] [--run-dir BASE] [--export-name NAME]"
+  fi
+  local n=$(( hi - lo + 1 ))
+
+  # --run-dir and --export-name become the BASE for per-seed names; anything
+  # else passes through to the trainer untouched.
+  local base="" name="" ; local -a rest=()
+  while (( $# )); do
+    case "$1" in
+      --run-dir)       base="$2"; shift 2 ;;
+      --run-dir=*)     base="${1#--run-dir=}"; shift ;;
+      --export-name)   name="$2"; shift 2 ;;
+      --export-name=*) name="${1#--export-name=}"; shift ;;
+      --seed|--seed=*) die "seeds sets --seed itself; drop it" ;;
+      *) rest+=("$1"); shift ;;
+    esac
+  done
+  base="${base:-runs/${move}_seeds}"
+  name="${name:-${move}_seed}"
+  local tag; tag="$(basename "$base")"
+
+  # Which config the trainer will actually read, for the ETA below.
+  local cfg_file="config/rl_${move}.yaml" j
+  local -a argv=("${rest[@]+"${rest[@]}"}")
+  for ((j = 0; j < ${#argv[@]}; j++)); do
+    case "${argv[j]}" in
+      --config)   cfg_file="${argv[j+1]:-$cfg_file}" ;;
+      --config=*) cfg_file="${argv[j]#--config=}" ;;
+    esac
+  done
+
+  activate_env
+  # Board FIRST and on the PARENT, before any run dir exists -- tensorboard
+  # picks up subdirectories as they appear, so it need not wait for seed 0.
+  LOGDIR="$base" cmd_board "$move"
+  echo
+
+  # ONE detached supervisor runs the whole chain, so the sweep survives the ssh
+  # session as a unit and `stop` cancels the REST of it rather than just the
+  # seed currently running. Built with printf %q so a config path with a space
+  # cannot split.
+  local q_move q_base q_name q_rest="" a
+  printf -v q_move '%q' "$move"; printf -v q_base '%q' "$base"
+  printf -v q_name '%q' "$name"
+  for a in ${rest[@]+"${rest[@]}"}; do printf -v a '%q' "$a"; q_rest+=" $a"; done
+
+  local chain="for i in \$(seq $lo $hi); do
+      echo \"=== seed \$i of $lo..$hi : \$(date '+%F %T') ===\"
+      python -u -m aow_sim.train_${move}_rl --seed \"\$i\" \\
+        --run-dir $q_base/seed\$i --export-name ${q_name}\$i$q_rest || {
+          echo \"seed \$i FAILED -- continuing with the rest\" >&2; }
+    done
+    echo \"=== sweep done : \$(date '+%F %T') ===\""
+
+  local log
+  RUN_TAG="$tag" log="$(RUN_TAG="$tag" start "$move" train "seeds" -- bash -c "$chain")"
+
+  # ETA. 2500 steps/s is MEASURED, not assumed: derived from checkpoint mtimes
+  # across general_rl_cmd_curriculum, _2 and _2b on the Threadripper (16C/32T),
+  # which agree at 2514 / 2496 / 2518 steps/s -- 20M steps = 2.2 h per run. It
+  # is a per-box constant; on a different machine read `./scripts/rl.sh eta`
+  # once seed $lo is under way and rescale.
+  local steps eta_h
+  steps="$(awk '/^algo:/{a=1} a&&/^[ \t]+total_timesteps:/{print $2; exit}' "$cfg_file" 2>/dev/null)"
+  if [[ -n "$steps" ]]; then
+    eta_h="$(awk -v s="$steps" -v n="$n" 'BEGIN{printf "%.1f", s*n/2500/3600}')"
+    echo "sweep        -> $n seeds, SERIAL, seed $lo..$hi"
+    echo "                ${steps} steps each, ~$(awk -v s="$steps" 'BEGIN{printf "%.1f", s/2500/3600}') h per seed"
+    echo "                ~${eta_h} h total at 2500 steps/s (measured on the 16C/32T box)"
+  else
+    echo "sweep        -> $n seeds, SERIAL, seed $lo..$hi"
+  fi
+  echo "                each: $base/seed<i>, export ${name}<i>"
+  echo "                pid $(RUN_TAG="$tag" pid_of "$move" train)  (one supervisor for the chain)"
+  echo "                log: $log"
+  echo
+  echo "board        -> $(board_url "${PORT:-$(port_for "$move")}")  (all seeds, one dashboard)"
+  echo "watch        -> RUN_TAG=$tag ./scripts/rl.sh logs $move"
+  echo "cancel ALL   -> RUN_TAG=$tag ./scripts/rl.sh stop $move"
+  echo "compare      -> python analysis/per_command.py --metrics v_ach \\"
+  echo "                  --policies ${name}${lo} ${name}$(( lo + 1 )) --tag seedsweep"
 }
 
 cmd_up() {
@@ -456,6 +593,7 @@ cmd_sync() {
 SUB="${1:-}"; shift || true
 case "$SUB" in
   up)         check_move "${1:-}"; cmd_up "$@" ;;
+  seeds)      check_move "${1:-}"; cmd_seeds "$@" ;;
   train)      check_move "${1:-}"; cmd_train "$@" ;;
   board)      check_move "${1:-}"; cmd_board "$1" ;;
   stop)       check_move "${1:-}"; stop "$1" train ;;
