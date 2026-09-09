@@ -409,6 +409,105 @@ artifact is a score that artifact should not carry.
 
 ---
 
+## The turn personality — a behaviour the world-frame command CANNOT score
+
+Added 2026-09-09. Not a defect in `_score`'s weighting; a blind spot in the
+COMMAND, which no reweighting can fix.
+
+### The mechanism
+
+A command is a **world-frame velocity plus a heading**. On a turn that has two
+equally valid answers:
+
+- turn to `psi_cmd` and drive **body-forward**, or
+- turn to `psi_cmd + 180` and **reverse out**.
+
+Both put the world velocity vector on the commanded direction. `vel_err` is
+`|v_cmd - v_actual|` in the WORLD frame, so it scores them identically — not
+approximately, *identically by construction*. Nothing downstream of a world-frame
+command can tell them apart.
+
+**`v_ach` can, because it is BODY frame.** `control/balance.py:80-83` rotates
+world `qvel` into the bike-yaw frame:
+
+```python
+yaw = np.arctan2(R[1, 0], R[0, 0])
+to_yaw = np.array([[c, s], [-s, c]])
+v_lon, v_lat = to_yaw @ data.qvel[:2]
+```
+
+so `v_ach = mean(v_lon)` and its **sign** is the answer: `+` turned and drove
+forward, `-` turned the other way and reversed out.
+
+**This is also why `speed_ratio_fwd`/`_rev` cannot be used for it.** Those are
+restricted to the straight-ahead commands (`abs(dpsi) < 1`) precisely because
+the sign is ambiguous everywhere else — on a straight command, reversing costs
+a 180 deg heading error for no saving, so the sign means something. A policy can
+read `speed_ratio_fwd` **0.831** and still reverse out of two thirds of its
+turns. The two axes are nearly independent.
+
+### Measured
+
+`general_rl_cmd_curriculum2` vs `..._2b`, one grid, `--encoder counts --ahrs
+tm151 --ahrs-tau 0.19`. **These two differ by `algo.seed: 0 -> 1` and nothing
+else** — same config, same `plant_digest`, same `hold_max`.
+
+| command | seed 0 | seed 1 |
+|---|---|---|
+| `hold` | **0.01** | 0.16 |
+| `fwd 0.8 +90` | +0.72 | +0.92 |
+| `fwd 0.8 -90` | **-0.80** | **+0.92** |
+| `fwd 0.8 +180` | **-0.81** | **+0.94** |
+| turns resolved forward | **33%** | **71%** |
+
+Seed 0 is **handed**: it noses through a left turn and reverses out of the
+mirrored right one. Seed 1 noses through both. Both sit essentially still on
+`hold`, so this is not a competence difference.
+
+    python analysis/per_command.py --policies general_rl_cmd_curriculum2 \
+        general_rl_cmd_curriculum2b --metrics v_ach --tag seed0_vs_seed1
+
+`v_ach` is now a metric in `per_command.METRICS`. It is in `SIGNED` alongside
+`drift_lon`/`drift_lat`, which suppresses the hardcoded "lower is better" in the
+chart title and draws a zero line — for these three the sign IS the result and
+"lower is better" reads the chart backwards.
+
+### What to do about it — NOT a gate
+
+The tempting move is to floor `BestByScore` on a directional term. **Do not.**
+Two reasons:
+
+1. **It would reject a personality, not a fault.** Both resolutions satisfy the
+   command. A policy that reverses out of right-hand turns is a character, and
+   `policy_menu` (`,` in teleop) already exists to switch between characters
+   live.
+2. **The failure it was meant to catch has a different cause.** Arm 1
+   (`general_rl_cmd_curriculum`) re-measures at `speed_ratio_fwd` **-0.421** —
+   genuinely driving backwards on a STRAIGHT command, which is a real fault, not
+   a turn preference. Its cause was the curriculum (`hold_max: 1.0`), and
+   `hold_max: 0.40` fixed it (-0.421 -> +0.831). A score gate would have hidden
+   a curriculum bug behind a filter.
+
+**The plan instead:** get one good general policy first, then **scour the
+options for personalities** — sweep seeds and configs, measure `v_ach` per
+command, and keep the interesting ones as selectable characters rather than
+collapsing each run to one champion. `scripts/rl.sh seeds` exists for the
+sweeping half.
+
+### A caution on measurement
+
+The recorded `metrics:` blocks in `moves/*.yaml` are **not comparable across
+policies** — different grids (n_eval 12 vs 20), different episode lengths (15 s
+before 08-30, 5 s after) and different code. The signed `ratio` landed 08-30, so
+every earlier export has its wrong-direction values FLOORED at 0.000. Reading
+down that column across policies compares different quantities, and doing so
+produced a confident wrong conclusion during this investigation
+(`cmd_curriculum2` appears to read 0.042 forward; on one grid it is 0.831).
+`rl_general_cmd_curriculum2b.yaml`'s own header warns about exactly this.
+**Re-run with `per_command.py` rather than reading the yaml blocks.**
+
+---
+
 ## The command distribution, 2026-08-30 — moved here from docs/status.md
 
 Moved verbatim 2026-09-08. The score and the sampler are the same problem

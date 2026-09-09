@@ -128,6 +128,10 @@ HAND_COLOR = {1: "#227722", -1: "#bb5500", 0: "0.35"}
 
 # metric key -> (axis label, title, footnote). Lower is better for all of
 # them, so that is said once in the title rather than stored per metric.
+# Metrics whose SIGN carries the meaning. A bar chart of these is read across
+# the zero line, not from the bottom, and "lower is better" is simply wrong.
+SIGNED = {"v_ach", "drift_lon", "drift_lat"}
+
 METRICS = {
     "t_head_s": ("seconds", "time to first get inside 10 deg of the commanded "
                             "heading",
@@ -171,6 +175,26 @@ METRICS = {
                   "Read WITH drift_overshoot: a large |drift_lon| with a "
                   "large overshoot is out-and-back along the command axis; "
                   "with overshoot ~0 it left in that direction and stayed."),
+    # HOW A TURN GETS RESOLVED, which no other metric here can see. A command
+    # is a WORLD-frame velocity plus a heading, so a turn has two equally valid
+    # answers: turn to psi_cmd and drive body-FORWARD, or turn to psi_cmd+180
+    # and drive body-BACKWARD. Both put the world velocity on the commanded
+    # vector, and `vel_err_med` scores them identically.
+    #
+    # Which one a policy picks is a stable PERSONALITY, and it varies by SEED
+    # rather than by config: general_rl_cmd_curriculum2 and ..._2b differ only
+    # in `algo.seed` (0 vs 1) and resolve 33% vs 71% of their turns forward.
+    #
+    # This is why `speed_ratio_fwd`/`_rev` cannot be used for it -- those are
+    # restricted to the straight-ahead commands (`abs(dpsi) < 1`) precisely
+    # because the sign is ambiguous everywhere else. A policy can read
+    # speed_ratio_fwd 0.831 and still reverse out of two thirds of its turns.
+    "v_ach": ("m/s", "achieved BODY-frame longitudinal velocity "
+                     "(+ = drove forward)",
+              "On a turning command the SIGN is the whole story: + means it "
+              "turned and drove forward, - means it turned the other way and "
+              "reversed out. Both satisfy the command. Read it per command, "
+              "not as a mean -- averaging the two answers cancels them."),
     "drift_lat": ("m", "drift ACROSS the commanded heading (+ = left)",
                   "A handed policy shows one sign here across every command, "
                   "which no magnitude metric can express."),
@@ -347,8 +371,18 @@ def plot(metric, out, idx, labels, spans, args):
         t.set_color(HAND_COLOR[hand_of(deg(k))])
 
     ax.set_ylabel(f"{metric}  [{unit}]")
-    ax.set_title(f"{title}   —   lower is better; hatched + ▼ = fell, "
+    # "lower is better" is FALSE for the signed metrics, where the sign is the
+    # result and the magnitude is not a score at all: v_ach + and - are two
+    # valid ways to satisfy the same command, and drift_lon/_lat report a
+    # DIRECTION. Saying "lower is better" over a signed axis reads the chart
+    # backwards -- the same failure mode as naming a stiffness knob
+    # `dampratio`. Guidance is per metric.
+    sense = ("the SIGN is the result, not the magnitude"
+             if metric in SIGNED else "lower is better")
+    ax.set_title(f"{title}   —   {sense}; hatched + ▼ = fell, "
                  f"episode ended early", fontsize=11, pad=32)
+    if metric in SIGNED:
+        ax.axhline(0.0, color="0.35", lw=1.0, zorder=1)
     # Pinned upper-left rather than "best": matplotlib put it centre-top,
     # on the group annotations. hold/spin are the lowest bars on every
     # metric, so the top-left corner is reliably free.
