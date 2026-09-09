@@ -1,5 +1,22 @@
 # Odometry in the loop, and what it takes to rewrite the estimator
 
+> **Status: the MODELLING is done; the REWRITE deliberately never happened.**
+> Two different things, and it is worth keeping them apart:
+>
+> - **Done.** `sim_odometry.py` and `sim_ahrs.py` put the onboard estimate and
+>   the TM151 attitude error in the loop and in training; policies trained
+>   against them (`general_rl_odo`, `..._odo_ahrs`, `..._rand2`) survive the eval
+>   grid at 1.00 where truth-trained policies score 0.20. That was the largest
+>   sim-to-real gap in the project and it is closed.
+> - **Not done, on purpose.** `hw/odometry.py` is unchanged in behaviour. It
+>   still fails **seven open-loop tests**, all registered in
+>   `tests/expected_failures.txt` with reasons — the estimator's lateral channel
+>   is genuinely poor (42-46 mm/s RMS at standstill). A policy trained against it
+>   as-is flies anyway, which is what moved the rewrite off the critical path.
+>
+> So: nothing is blocked, and the seven red tests are an ACCEPTED cost, not an
+> oversight. Revisit only if a closed-loop failure traces back to the estimator.
+
 Started 2026-08-26. Status: **measured, and FLOWN AROUND rather than
 rewritten.** `sim_odometry.py` and `run_drive --odometry` put the estimator in
 the loop; `hw/odometry.py` is unchanged in behaviour (its stale roller verdict

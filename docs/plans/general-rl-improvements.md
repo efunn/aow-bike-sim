@@ -1,5 +1,10 @@
 # Ideas for general RL policy improvements
 
+> **Status: REFERENCE, not a plan.** A collected body of measured findings about
+> the general policy, cited from eight places in the repo. Individual items carry
+> their own SHIPPED markers. Read it before proposing an RL change; do not treat
+> the unshipped items as a queue.
+
 Candidate work on `general_rl` — the always-on command-conditioned controller
 (`control/general_spec.py`, `control/general_env.py`, `train_general_rl.py`).
 Collected 2026-08-05/06 while benchmarking a 10M-step run on the 32-thread
@@ -51,7 +56,7 @@ episode, not `penalty_fall`. The explicit knob is ~5% of the real penalty.
 
 **Reverse is genuinely harder** **[reasoned]**. Rolling backwards inverts the
 sign of the steer→lateral-acceleration relation that stabilises a two-wheeler.
-`sharper-turns-stage-1.md` independently reaches the same conclusion from the
+`old/sharper-turns-stage-1.md` independently reaches the same conclusion from the
 analytic side ("reversed caster degrades the straight-line model fastest").
 The rear omni offers an escape a real bike lacks, but the front caster still
 flips. A policy that avoids reverse has learned something true about the plant.

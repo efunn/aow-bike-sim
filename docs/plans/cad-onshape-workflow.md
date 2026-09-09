@@ -1,11 +1,17 @@
 # Text to CAD: the Onshape / FeatureScript workflow
 
+> **Status: ACTIVE reference for the round trip; the RECORD is frozen at
+> 2026-08-19.** The workflow, the API-quota budget and the two traps still hold
+> and are the thing to read before touching Onshape. Three weeks of CAD have
+> happened since (servo mounts, the swing linkage, a Feature Studio tab); that
+> work is recorded in `docs/status.md`, not here.
+
 How `aow_sim.cad_layout` gets the simulator's geometry into a drawn bike, what
 the platform will and will not let us do, and the things that cost a day to
 find out. Started 2026-08-18; this section of the record covers up to
 2026-08-19.
 
-The export itself is `docs/measurements/cad_layout.fs`, generated. Never edit
+The export itself is `docs/cad/cad_layout.fs`, generated. Never edit
 it — the regeneration command is in its header.
 
 ---
@@ -103,7 +109,7 @@ suffix the helper appends. Ugly, stable, left alone.
 by Variable features; `setVariable` from a custom feature lands there, and
 `setQueryVariable` does not. The queries surface only where they are
 consumable. There is no browser, so the generated `.fs` is the index —
-`grep setQueryVariable docs/measurements/cad_layout.fs`.
+`grep setQueryVariable docs/cad/cad_layout.fs`.
 
 `--no-query-vars` regenerates without them. Worth knowing why the flag exists:
 an unknown function in FeatureScript is a **compile** error, which takes down
@@ -419,3 +425,304 @@ Also worth having written down:
   FeatureScript source.
 - The drive-servo mount is a proposal, not a decision — see
   `analysis/servo_mount.py`, four tags: `cage`, `spine`, `sleeve`, `plate`.
+
+---
+
+## The CAD record to 2026-09-03 — moved here from docs/status.md
+
+Moved verbatim 2026-09-08: the layout export, the servo mounts, the case
+sides, and where `bike_params_cad.yaml` stands. The workflow above is how to
+drive Onshape; this is what has been drawn with it.
+
+### CAD — the bike stops being parametric
+
+Started 2026-08-18. Drawn in Onshape; `python -m aow_sim.cad_layout` exports the
+component layout from the parameters, as YAML for reading and as a FeatureScript
+Feature Studio for Onshape. Both are **exports** — generated, never edited, with
+the regeneration command in the header.
+
+`config/bike_params_cad.yaml` is a scratch copy of `bike_params.yaml` that the
+CAD work edits freely. It eventually becomes the authoritative one. **Never pass
+it to `export_deploy`**: `params_digest` hashes the whole tree, so a bundle built
+from a diverged file carries a digest no bike matches, and refusing that is the
+entire point of the check. Keeping the work here is also why none of it has
+moved the digest — `deploy/bundle.npz` and all 23 `moves/*.npz` are still valid.
+
+**What CAD has already sent back into the model.** This is the value of the
+workstream and it arrived immediately:
+
+- **`input_pulley_offset` was made up.** Its own comment said so — "placeholder
+  until the mount/pulley design is done" — and nothing derived from it. Pinned
+  from real belt geometry (9 mm HTD5M, 45T/15T on the 370 mm belts bought,
+  centre distance 107.35 mm from the belt equation) it becomes 7.5 mm, the
+  minimum a 9 mm belt allows over a 33 mm wheel. **Rear width 99 → 80 mm.**
+  It reached 75 briefly, on the wheel clearance alone. The belt plane is now
+  **derived as the larger of two clearances** — the pulley missing the wheel
+  (24.0) and the drive-servo mount plate missing the pulley (26.5) — and the
+  mount binds. Every millimetre of plate or of plate-to-pulley gap is two on
+  the bike, and the servos themselves do not move for any of it. The 3 mm that bought is what makes the two servo cases
+  symmetric about the centreline (±17.0), which is what lets a single flat plate
+  on one side of the bike bolt to both of them.
+- **The drive-servo mount is drawn, and it set the width.** A plate on EACH
+  side takes both servos — they face opposite ways, so one plane per side meets
+  one horn-side face and one back face — on the 22 x 40 case pattern with M2.5
+  machine screws, sixteen in all. The P.C.D 16 on the horn side is on the
+  ROTATING horn and there is no idler by default, so 22 x 40 is the only static
+  pattern common to both faces. The second plate cost NOTHING in width: the
+  belt plane had already been pushed out to clear the first. A four-walled
+  sleeve joins them and carries the torque in bearing, so the sixteen screws
+  only retain; one of its six faces is the ceiling in the print and gets
+  deleted in CAD, which face depending on the build axis. `AOW mount` and
+  `AOW planes` are their own features in the Feature Studio, hence their own
+  tickboxes.
+- **The servo gap is now zero.** The 2 mm was clearance for a packing solve in
+  which nothing located the cases; the sleeve does, so a gap between them was
+  slop. Separation re-solved 16.35 -> 15.2563 deg, and it has a closed form now
+  that the cases are parallel. The fit clearance moved to the sleeve cavity,
+  where FDM shrinkage actually lives.
+- **The Onshape workflow is written down** in
+  `docs/plans/cad-onshape-workflow.md`: what the platform will and will not
+  name, how query variables replace naming, why a regenerated Feature Studio
+  can be pasted over the old one safely, the API quota, and the three separate
+  ways a ROBOTIS datasheet depth turned out not to be a face.
+- **Seven planes are exported**, being where CAD actually starts. One is the
+  fork's datum: it holds the axle direction and the raked steering axis at
+  once, so it is the front view tilted back by 15 deg. Four are the belt runs,
+  two per side — NOT mirror images, because the servos straddle 45 deg rather
+  than sharing it. Two are prospective BUILD planes added 2026-08-21: the
+  fork's datum offset 8 mm along its own normal, and the rear motor+dropout's,
+  which lies in the lower servo's long outer face with its normal on the
+  mount's tangential axis (135 deg), so the part builds up-and-rearward off a
+  face that already exists rather than off a datum nobody can point at. All
+  derived, none eyeballed.
+- **The belts are solids now, and each side carries both of them.** Eight
+  prisms: the four real runs (104.66 x 9 x 3.6 mm, inner face on the tangent
+  line, opaque near-black) plus each run mirrored onto the other side
+  (translucent magenta, its own suppressible feature node). A plane has no
+  thickness and no ends, so it could never be checked against; the mirror
+  exists because the 15.256 deg of straddle makes the two sides' keep-outs
+  differ, and a chainstay that is the same part on both sides must clear both.
+
+  The corridor arithmetic, in the frame that matters: measured as an angular
+  station about the rear axle, each belt hull occupies 205.700 deg and the
+  symmetric free window is **155.478 to 294.522 deg**, 139.044 wide, centred on
+  exactly 225 = `drive_servo_angle_deg` + 180 (ray-sampled to confirm). In
+  RUN-ANGLE — a different frame, 90 deg away — the bands are left 24.522 to
+  50.222 and right 39.778 to 65.478, and they OVERLAP by 10.444 deg, so there
+  is no threading between the two belts. Recorded, not drawn: a drawn sector
+  would wrongly exclude a chainstay that ducks under both belts.
+- **The steer servo was 10.17 mm off the steering axis**, which direct drive at
+  `gear_ratio: 1.0` does not permit. Its position is now solved, not chosen.
+- **The TM151 is 40 × 34 × 12.6 mm and 19 g**, against the 30 × 30 × 12 mm / 12 g
+  placeholders the sim still carries.
+- **The drive servos' separation is a solved 2D packing problem** — two
+  rectangles free to rotate about their own shafts, separating-axis tested —
+  not a guess. Now 15.2563° with the gap closed, and reducible to a closed form
+  because the two cases ended up parallel; the alternatives are tabled in the
+  config.
+- **The self-righting linkage moved 75 → 130 mm** to clear the drive belts and
+  then the servo cases. **`analysis/linkage_through_belt.py` (2026-08-21) says
+  most of that is recoverable, and cheaply.** The belt is genuinely what binds
+  today — belt-limited minimum station 123.5 mm, so ~6.5 mm of the 130 is
+  margin — but delete the belts and the floor is 109.0, set by the mount
+  sleeve. Sweeping tooth counts and belt lengths with the servo cases carried
+  radially along with the centre distance:
+
+  | change | station | won | ratio | top speed |
+  |---|---|---|---|---|
+  | as built, 45T/15T on 370 mm | 123.5 | — | 3.00 | 1.06 |
+  | **same pulleys, 340 mm belt** | 111.0 | 12.5 | 3.00 | **unchanged** |
+  | **36T/12T on a 310 mm belt** | 105.0 | 18.5 | 3.00 | **unchanged** |
+  | 32T/12T on a 290 mm belt | 98.0 | 25.5 | 2.67 | 0.94 |
+  | 28T/12T on a 280 mm belt | 96.0 | 27.5 | 2.33 | 0.82 |
+
+  It saturates at 96 mm — below ratio 2.33 nothing more is won, because that is
+  where the servo cases meet the rear wheel rather than where the belt runs
+  out. **Not adopted, and nothing is changed by it.** Smaller pulleys at the
+  same ratio, closer together, is the free lunch and the thing to check first;
+  the cases are translated rather than re-solved, so any shortlist entry wants
+  re-deriving through `cad_layout` before it is believed.
+
+- **The Feature Studio pushes over the API now.** `--push` and `--shot` on
+  `aow_sim.cad_layout`, one billable call each, with the document and tab ids
+  in `config/onshape.yaml` and API keys in the macOS Keychain — never in this
+  checkout, which is Dropbox-synced, where gitignored is not un-synced. Every
+  call is logged with what it did (`python -m aow_sim.onshape --log`). The
+  annual quota is 2500 and the cycle is anchored to **13 Oct**, not January and
+  not the "Tracking start date" the usage page shows — that field disagreed
+  with the same page's own elapsed-day count. Copy-paste still works and is
+  quota-exempt, so exhausting the API strands nothing.
+
+  **Usage at 2026-08-24: 75 / 2500, with 50 days left in the cycle** — roughly
+  48 calls a day available, so the budget is not a live concern. It becomes one
+  only if something polls: `getPartStudioFeatures` reads the document's actual
+  tickbox and suppression state in one call, which is genuinely useful and is
+  also the endpoint that would burn a year in a week if put in a loop. The
+  ground rules are in `CLAUDE.md`, "Onshape — the CAD round trip".
+
+- **Generated FeatureScript is checked before it is pushed, as of 2026-08-24.**
+  `--check` on `aow_sim.cad_layout` compiles AND RUNS the export against a
+  throwaway copy of a Part Studio's context and refuses to push if it does not
+  build. One billable call. This closes a real hole: a push *cannot* fail on
+  bad FeatureScript, because the contents endpoint takes any text at all, so a
+  broken export used to land in the document and surface as an EMPTY render
+  with no error anywhere — two calls spent to learn nothing. Verified both ways
+  on 2026-08-24: the current export runs clean, and a planted `fCuboid` ->
+  `opCuboid` typo is caught as `Function opCuboid with 3 argument(s) not found`
+  and blocks the push.
+
+  The per-feature body counts it prints are also a free consistency check
+  between the two arms of the generator: the eight geometry groups sum to 49,
+  which is exactly what the monolithic `AOW bike layout` feature builds alone.
+
+  The target is a **new empty Part Studio, `Eval Harness`**, created via the
+  API on 2026-08-24 and recorded as the `check` tab in `config/onshape.yaml`.
+  **Keep it empty** — its emptiness is the feature, since a body modelled there
+  lands in any query not scoped to `qCreatedBy(id, ...)`. Nothing is ever
+  written to it: Onshape derives the context, runs the script and discards it,
+  confirmed by building a body, counting it, and counting 0 again on the next
+  call.
+
+  The awkward part is `_eval_wrapper` in `cad_layout.py`, which has to bring
+  every top-level declaration inside one function expression — `export const`
+  passes through, `export function` becomes a `const f = function(...)`, and
+  the one `export predicate` is dropped as precondition-only — and must
+  **synthesise the 15 `definition.*` parameters**, because the bodies test them
+  as bare `if (definition.drawEnvelopes)` and an absent key is `undefined`,
+  which throws rather than reading false. So it checks that the code RUNS, not
+  that every branch matches a particular tick-box state. **Accepted.**
+
+**Two traps worth not re-learning**, both of which produced confident wrong
+answers before the user caught them from the CAD:
+
+- **A 2D projection is not an interference.** The battery reads as overlapping
+  the drive pulley by 13 mm in side view and clears it by 1.00 mm in 3D — the
+  pack is 35 mm wide and the pulleys start at 18.5 mm, so they never share
+  lateral space.
+- **The roof is a cylinder, so its constraint is radial.** "Stay below the roof
+  axis" is a *sufficient* condition, not the real one, and using it understated
+  the battery's headroom by 36 mm.
+
+**Outstanding.** `bike_params_cad.yaml` still has the drive servos at their old
+`[45, 30, 75]` — `cad_layout` derives the real position every run and prints it
+but does not write it back, so a MuJoCo model built from that file is not yet
+the layout the CAD shows. Electronics packing is deferred until the tethered
+version's wire routing is understood.
+
+---
+
+### Servo mounts — two custom features, screwless (2026-08-25)
+
+`aow_sim.cad_servo_mount` generates two Onshape custom features into their own
+Feature Studio (`horn_features` in `config/onshape.yaml`), separate from the
+`cad_layout` studio because that one is overwritten wholesale on every push.
+
+| feature | what it makes |
+|---|---|
+| `X330 horn pin` | 4 pins on the Phi 12 bolt circle, root reliefs, the horn well, and a standalone collar when no target part is picked |
+| `X330 case shell` | both halves of the nesting case, 2 pins per face, from one dialog |
+
+**Screwless, and the two pins are not the same pin.** The horn pin is Phi 1.4 in
+the Phi 1.6 tapping hole (0.2 diametral); the case pin is Phi 1.9 in the Phi 2
+*relief* bore of the drawing's Detail A/B (0.1). Different holes doing different
+jobs — `config/bike_params_cad.yaml` says not to unify them.
+
+**Only one of the two case hole rows is usable**, and it shapes the whole part.
+The rows sit +/-15 from the face centre, putting one 22.5 mm from the shaft axis
+and the other 7.5 — and 7.5 is inside the Phi 16 horn. So the shell wraps the far
+end and leaves the shaft end open, and `caseWrapLength` is bounded at 16.5 where
+the cap would foul the horn.
+
+**The numbers are measured, not proposed.** The horn interface is off
+`docs/robotis/XC-330.pdf`; the case interface was read back through the API off
+the working `top-case` / `bottom-case` in `dynamixel-link`. The reconstructed
+frame then agreed with the drawing on four independent dimensions — 23.00 /
+34.00 / 20.00 against 23 / 34 / 20, shaft axis 9.50 against 9.5.
+
+#### How it is checked, and the hole in that
+
+Every revolved profile is a polygon emitted from Python, and the SAME polygon
+feeds `revolve_volume` to predict what the result must measure. So `--check`
+tests that Onshape's revolve, pattern and boolean did what the polygon says. It
+is **not** an independent check of the shape; that still needs eyes on the part.
+
+It caught three real bugs a render would not have: `cs.yAxis` does not exist on
+a `CoordSystem`; `opBoolean` UNION takes `tools` only, so written the
+SUBTRACTION way it unioned four pins with each other and never touched the
+target (five bodies, no error, found by volume being short by exactly four
+pins); and the well's undercut chamfer closed IN onto the floor, putting it at
+Phi 15.7 against a Phi 16 horn.
+
+**And one it structurally cannot catch.** `--check` throws away everything below
+`SPLIT_MARK` — enums, `precondition`, `defineFeature` — which is what lets it run
+without a human picking a mate connector. A doubled brace in the case dialog
+therefore reached the document intact and took every feature in the studio red
+at once, with the check still green. Two guards now: `lint_fs` rejects a literal
+brace pair locally, and `verify_studio` hits
+`GET /featurestudios/.../featurespecs` after every push, compiling the whole
+studio server-side. A push cannot fail on bad FeatureScript — the contents
+endpoint accepts any text — so without that a broken studio lands silently.
+
+**An edge filter in front of the Onshape API rejects a command in backticks**
+(shell command substitution) with a bare nginx 403 carrying no JSON, so the call
+never reaches Onshape. Narrowed by probing the push endpoint, which takes any
+text: backticks round a harmless word passed, the bare command passed, the two
+together did not. The generated header writes its regeneration command unquoted
+for that reason — do not tidy it into backticks.
+
+**Outstanding.** The case shell has not been eyeballed against the as-built
+parts; it agrees with box arithmetic and with Onshape's own measurement of it
+and nothing more. `case_pin_root_chamfer` is a GUESS carried from the horn pins
+— the geometry survey looked for cylinders and planes, and a chamfer is a cone.
+`case_wrap_length` 10 mm is a cable-clearance judgement, not a measurement.
+
+Cost: 111 API calls of the 2500/year, cycle anchored 13 October.
+
+---
+
+### The case sides, and where `bike_params_cad` now stands
+
+The bike gained fixed side panels — two 4 mm ABS plates per side in the stowed
+wing's own plane, which with the wing make one continuous wall. Skirt below,
+upper panel continuing the wing's silhouette rearward, both translucent so the
+rear wheel stays visible in the `wheel` camera. They also replace the hockey
+stick: `_add_hockey` builds the stick only when `case_*` is absent, so
+`bike_params.yaml` keeps `moves/ball_rl.npz` and `tests/test_ball_rl.py`
+working untouched while the CAD file gets the real part.
+
+**`case_gap` 5 mm is not a manufacturing allowance.** The wing's inner-bottom
+corner swings DOWN before clearing the panel band sideways — 26.06 mm from the
+pivot at 38.5° from vertical, leaving the band at z 67.65, i.e. **3.95 mm below
+the stowed underside**. `analysis/wing_linkage.py --stick` reports 0.0 mm and
+is wrong for this: its 2D wing is a LINE at the outer face, so it has no inner
+corner to dip. Trust it for the mechanism, not for panel clearance.
+
+The bumper is retired (commented out, not deleted) — the pads sat at |y| 40–52
+mm, outboard of the 75 mm envelope the case now sets.
+
+**`bike_params_cad.yaml` is now as close to the CAD as it gets without an
+Onshape read-back**, and is still NOT authoritative. Diffed key by key: physics
+is in sync (the actuators block was ported verbatim, comments included);
+**7 keys conflict and every one is the CAD file being better sourced** (AHRS
+mass 12 g `GUESS` → 19 g `datasheet`, pulley offset and steer-servo station
+as-drawn, wing pivot at the belt-clearance station); **nothing is lost** — the
+9 keys unique to the authoritative file are the retired bumper (6) and
+`payload.electronics`, which the CAD file decomposes into pi/u2d2/power_board.
+
+Net effect on what the controllers feel: mass 1.0162 → 1.0232 kg, CoM +5.8 mm
+up and 9.2 mm back. The individual moves largely cancel; it is not a different
+bike.
+
+**The wing-pivot warning was wrong and is retracted.** It said the 75 → 130 mm
+station left the mechanism unverified pending a self-righting re-run. The pivot's
+fore/aft station is not where the wing acts on the ground: the wings are long,
+so the contact point is set by the panel's extent, and moving the pivot in x
+slides the mechanism without moving the footprint that lifts. Re-run for a
+PANEL or pivot-HEIGHT change; not for a fore/aft one.
+
+Switching authority is one line — `DEFAULT_PARAMS` in `params.py` — plus a
+digest move, re-baselining the 115 tests keyed to `bike_params`, and lifting the
+case panels out of the linkage builder so `--hockey` has a striker without
+`--linkage`.
+
+---

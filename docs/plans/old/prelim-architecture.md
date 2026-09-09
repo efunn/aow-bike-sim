@@ -1,4 +1,9 @@
 # Preliminary Architecture
+
+> **Status: SUPERSEDED — 2026-07-30.** `mujoco-modeling-decisions.md` opens by
+> answering the open questions raised here, and is the live record.
+> Retired to `old/` 2026-09-08 — kept as the first-principles starting point.
+
 - MuJoCo physics model of an active omni wheel (AOW) RC bike
 - model the entire omni-wheel accurately for now; later, we can try approximations to simplify the simulation
 - goal is to first balance the bike and perform basic maneuvers; more advanced maneuvers (divided into agility (e.g. doing drift turns) and gameplay (e.g. hitting a ball)) are the next target

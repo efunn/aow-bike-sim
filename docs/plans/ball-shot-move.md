@@ -1,5 +1,10 @@
 # concept and approach for hitting a ball
 
+> **Status: DONE and parked.** The move works (`moves/ball_rl.npz`,
+> `tests/test_ball_rl.py`) and `docs/status.md` lists it under "Explicitly not
+> being worked on" — not because it failed, but because it is not on the critical
+> path to a balancing bike.
+
 This move starts from a standstill some distance behind and to the side of a road hockey ball. The bike accelerates and turns to hit the ball as hard and accurately as possible; the bike is able to recover from missed shots.
 
 ## bike physical changes
@@ -53,7 +58,7 @@ Two different rigs, and they are easy to mix up:
   **none of these clips show any controller in this repo.**
 - **`original_bike/`, 3 clips** — the donor intact: a red "SOUL GTS / RS300"
   sportbike with rider figure, i.e. the HC-802 clone named in
-  `prelim-architecture.md`. Stock everything, kept for reference.
+  `old/prelim-architecture.md`. Stock everything, kept for reference.
 
 | clip | s | ball | operator | behaviour | outcome |
 |---|---|---|---|---|---|

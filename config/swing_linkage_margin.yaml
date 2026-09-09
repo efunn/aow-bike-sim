@@ -56,7 +56,7 @@ clearance:
   #
   # 32.0 is MEASURED: 64 mm across the outside edges of the servo pulleys. It
   # supersedes an 18.0 derived from the `shape: box` entries of
-  # docs/measurements/cad_layout.yaml, which missed the CYLINDERS.
+  # docs/cad/cad_layout.yaml, which missed the CYLINDERS.
   #
   # BOTH z FACES ARE LIVE CONSTRAINTS, and a search will escape through either.
   # Measured: `_flat` takes its clearance by passing UNDER z_lo at z = 80.0,

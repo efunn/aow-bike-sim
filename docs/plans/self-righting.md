@@ -1,5 +1,17 @@
 # Falling over, and getting back up
 
+> **Status: DESIGN COMPLETE in sim; the MECHANISM is being taken forward by hand.**
+> The analysis here — where recovery stops being possible, the fall cases, the
+> hand-off window — stands and is the reference. Four training runs established
+> the general policy should *not* drive the wings.
+>
+> The mechanism itself has moved on from what this document describes: the
+> current direction is an **asymmetric output from a symmetric layout**, rather
+> than the symmetric output from an asymmetric layout analysed here. That work
+> and its open questions live in `wing-linkage-design-and-optimization.md`.
+>
+> Build order is unchanged: **deliberately last**, after the bike balances.
+
 Study for a possible fourth servo: a symmetric mechanism that stands the bike
 back up after it falls. Status: **analysis only, nothing decided, nothing
 ordered (2026-08).** Everything below is measured in sim against the current
@@ -774,3 +786,64 @@ pinion against the 30 mm disc.
   **`general_rl` recovers 30–50% less lean to the left than to the right.**
   Fixing that widens the recoverable set, raises the safe hand-off threshold,
   and reduces how often the mechanism is needed in the first place.
+
+---
+
+## State as of 2026-08-25 — moved here from docs/status.md
+
+Moved verbatim 2026-09-08. Superseded in part by the direction recorded in
+`wing-linkage-design-and-optimization.md`; kept because the sim verification
+and the fall cases are still the reference.
+
+### Self-righting — now a design, not a recommendation
+
+`docs/plans/self-righting.md` part 4–5. The mechanism is a **mirrored wing pair
+on one XC330**, and everything about its geometry now derives from two numbers
+you can measure on the finished bike.
+
+**The gear train is the reversal.** The two wing gears mesh each other directly
+and the servo drives one of them, so the mirror-symmetric deployment comes out
+of the gear train itself — the separate idler the original sketch worried about
+is gone. It also decouples the reduction from the stance: equal discs on pivots
+`2·pivot_y` apart means `r_disc = pivot_y` *whatever the ratio*, so
+`bike_width ≥ 4·pivot_y` independent of the reduction. Width is bought with
+pivot spacing, and narrow wins — at a 35 mm half-span (140 mm wide) the roof
+becomes the widest thing on the bike and side falls perch on it, spread 86°.
+
+**The envelope is derived, not tuned.** `params.derive_righting()` computes
+`roof.radius`, `roof.height`, `wings.crank_length` and `wings.length` from
+`bike_width` (120 mm) and `bike_height` (165 mm above the rear axle), so the
+stowed wing tips sit exactly *on* the roof surface. That tangency is the whole
+point: tips on the rolling envelope cannot prop the bike up, tips outside it
+become outriggers and caught it at 154°. Pinned by
+`test_righting_envelope_is_derived_and_tangent`.
+
+**The roof earns its place.** The bare bike's inverted "shelf" is 2.69 mm of
+CoM height — about 27 mJ — against falls that arrive with 75–300 mJ. It is a
+rounding error, and the inverted state is reachable on purpose (reverse at
+speed, then a 180 flip). A capsule ridge along +X replaces the flat-topped AHRS
+as the top of the bike; roll becomes unstable while pitch stays neutral, which
+is what a ridge should do.
+
+| | current design |
+|---|---|
+| reduction | 4:1 |
+| peak servo torque | **0.520 N·m — 0.79 of the 9.9 V stall** |
+| servo travel | 1.08 turns → **extended-position mode required** |
+| gear fit | disc 30 mm, pinion 7.50 mm, ceiling **5:1** |
+| inverted drops recovered | **10/10** across 160–200° roll, 0–15° pitch |
+| ordinary side falls | rest spread **0.5°** |
+| deploy stroke | 0.63 s (scheduled rate, 3.2× faster than flat 0.7 rad/s) |
+| retract | 0.57 s |
+| current draw | 0.57 A peak, 0.20 mAh per attempt |
+| mass | +143 g (+14.1%), and CoM moves **down** 124.3 → 123.5 mm |
+
+The deploy rate is scheduled on how far over the bike is, because torque peaks
+at the **end** of the stroke (0.52 N·m inside 20° of upright) against only
+0.13–0.15 N·m through the 20–60° middle — the mechanism is cheap while levering
+and expensive while catching the bike as it arrives. Fast through the middle,
+easing into the finish, is 3.2× quicker at a slightly *lower* peak.
+
+Still `GUESS`: `min_pinion_radius`, which the 5:1 ceiling hangs entirely off.
+
+---

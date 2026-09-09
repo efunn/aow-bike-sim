@@ -27,7 +27,7 @@ defineFeature. --check keeps the top half and throws the bottom away, which is
 the only reason the feature can be exercised without a human picking a mate
 connector. Keep new geometry above the line and new dialog below it.
 
-    python -m aow_sim.cad_servo_mount -o docs/measurements/servo_mount.fs
+    python -m aow_sim.cad_servo_mount -o docs/cad/servo_mount.fs
     python -m aow_sim.cad_servo_mount --check
     python -m aow_sim.cad_servo_mount --push horn_features
 """
@@ -46,7 +46,7 @@ CAD_PARAMS = "config/bike_params_cad.yaml"
 # to fold back into bike_params.yaml and reach MuJoCo; a pin clearance has no
 # business making that trip. See the header of servo_mounts.yaml for the split.
 MOUNT_PARAMS = "config/servo_mounts.yaml"
-OUT_FS = "docs/measurements/servo_mount.fs"
+OUT_FS = "docs/cad/servo_mount.fs"
 SPLIT_MARK = "// ==== UI LAYER BELOW -- dropped by --check ===="
 
 # Which yaml servo key backs which FeatureScript enum value. XL330 is not a

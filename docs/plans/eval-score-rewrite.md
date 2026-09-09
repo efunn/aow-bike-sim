@@ -1,5 +1,13 @@
 # Fixing the eval score
 
+> **Status: OPEN — half landed, 2026-09-08.** The geometric mean over commands
+> and the per-family reporting shipped; the **directional gate did not**.
+> `train_general_rl._score` is still `survive_rate * track_geo`
+> (`train_general_rl.py:243`), and `speed_ratio_fwd` is computed but marked
+> "Diagnostic only, deliberately not in `_score`". This is critical-path item 3
+> and ranked risk #2 in `docs/status.md`: every future long run is exposed to a
+> policy trading away a direction, which has cost 12M steps once already.
+
 The selection score is the thing that decides which checkpoint becomes a
 `moves/*.npz`, and which of two runs was better. It is currently too narrow to
 do either job well. This doc collects what is measured, what the mechanism
@@ -398,3 +406,193 @@ artifact is a score that artifact should not carry.
 6. **C** and **D** — both want a measurement or a convention that does not
    exist yet. Note that **D is a transfer test, not a selection criterion**,
    by the argument above; it belongs alongside the score, never inside it.
+
+---
+
+## The command distribution, 2026-08-30 — moved here from docs/status.md
+
+Moved verbatim 2026-09-08. The score and the sampler are the same problem
+seen from two ends: this measures what training was ASKED to do, while the
+rest of this document is about how the result was SCORED.
+
+### The command distribution — what training never sampled (2026-08-30)
+
+Every sensor arm changed what the policy *sees*. Nobody had looked at what it
+is *asked to do*. Measured against `general_rl_odo_ahrs_pitch_w`'s own 20M-step
+run, the legacy sampler draws `v_lon` (20% zeroed), a lateral term and a
+heading step, each from its own difficulty-scaled range — so the family a
+command lands in is a **side effect of three ramps interacting**:
+
+| share of draws | d=0.15 | d=0.5 | d=1.0 | eval grid |
+|---|---|---|---|---|
+| in place, ~no turn | 14.1% | 5.6% | 1.4% | 5% |
+| in place, turning | 24.1% | 13.4% | 3.6% | 10% |
+| in place, about-face | 0.0% | 0.0% | 0.2% | **15%** |
+| moving straight | 61.8% | 47.7% | 14.9% | 45% |
+| moving with lateral | 0.0% | 33.3% | **75.7%** | 10% |
+| moving, about-face | 0.0% | 0.0% | 4.1% | 15% |
+
+**The mix inverts.** Straight-line cruise goes 62% → 15% while anything with a
+lateral component goes 0% → 76%, because `v_lat` is a *dither on every draw*
+rather than an occasional crab command — at `v_lat_frac: 0.4` it is ±0.48 m/s
+at full difficulty. **And the in-place families starve** for the same reason:
+hold, spin and about-face all need `v_lat ≈ 0`, which is exactly what the
+sampler stops producing. The eval's `hold` command — every component exactly
+zero, and the only place `drift_m` is defined at all — is **5% of the score and
+0% of the experience**, at every difficulty. `p_v_zero: 0.2` does not reach it:
+it zeroes `v_lon` alone, so what it actually samples is "stop, crab sideways,
+and turn to face somewhere else".
+
+**An earlier reading of this was wrong and is retracted.** `hold_spectrum.py`'s
+airborne columns were used to argue holding is intrinsically hard; those columns
+are the ones `liftoff.py` supersedes as *"actively misleading"* (the rear omni's
+0.6 mm envelope ripple reads as a wheelie). The LQR holds standstill at 1.17°
+peak roll over 40 s and `drive.speed_grid` starts at 0.0, so holding is a solved
+linear problem. The sawing every policy does under a hold command is an
+out-of-distribution symptom, not evidence of difficulty.
+
+**Episode lengths, both ends.** `gamma: 0.99` at 50 Hz is 2.0 s of lookahead
+(1/(1−γ) = 100 steps), and the discounted mass a critic has seen by time T is
+1 − γ^(T/dt):
+
+| segment | horizons | mass seen |
+|---|---|---|
+| 1.5 s (old `resample_s` floor) | 0.75 | **53%** |
+| 4.0 s (old ceiling) | 2.0 | 87% |
+| 6.0 s | 3.0 | 95% |
+| 15 s (old eval) | 7.5 | 99.95% |
+
+The old floor spilled the critic's window past the command change for nearly
+half its mass while the policy was told the command is stationary. And the eval
+held one command for 15 s — 7 horizons of a regime no training command reaches
+— with `_TAIL_S` reading seconds 13–15 specifically.
+
+**Changed.** Eval episodes are now 5 s (`_EVAL_EPISODE_S`, override with
+`env.eval_episode_s`), so the tail window lands at 3–5 s. **Outstanding: every
+`eval_*` in an existing `moves/*.yaml` was measured at 15 s and is not
+comparable — re-run rather than mix.** The saving is incidental: eval is a
+single `GeneralEnv` stepped serially, ~11 s of sim per pass measured at 1,311
+steps/s, 20 passes a run.
+
+**Also measured, not yet acted on:** training resets are ±2° roll / ±5° yaw
+with full randomization and 59% of episodes end in a fall (`success_rate` 0.41
+at 20M); the eval resets clean at 0.5° with randomization off and survives 90%.
+Both numbers are right; they are not the same bike. Read `eval/survive_rate` as
+a clean-room figure.
+
+**The arm.** `config/rl_general_cmd_curriculum.yaml` replaces the mix with four
+explicit weights (`cmd_families`), drops the lateral command entirely
+(`v_lat_frac: 0.0` — crab stays in the eval, deliberately unrepresented),
+widens `resample_s` to `[2.0, 6.0]`, and starts the curriculum at 0 with a pure
+hold stage that ramps out. Opt-in: absent `cmd_families`, the sampler is the
+legacy one bit for bit. Watch `curriculum/difficulty` before reward.
+
+#### Arm 1 ran, and it failed: the pure-hold stage kills forward motion
+
+20M steps, difficulty reached 1.0 by 13M, survival healthy (`eval/survive_rate`
+0.85–0.95). **`eval/speed_ratio_fwd` was 0.000 at all twenty evals** while
+`speed_ratio_rev` sat at 0.85–1.28. In teleop the bike ignores forward and
+reverses. On the export, the hub action is negative under *every* command:
+
+| command | hub action | v_lon | pen: net travel over 5 s |
+|---|---|---|---|
+| hold | −0.487 | −0.192 | 0.93 m |
+| forward +0.80 | **−0.258** | **−0.334** | **1.67 m BACKWARD**, `wander` 1.2 |
+| reverse −0.50 | −0.651 | −0.644 | 3.23 m |
+
+`general_rl_odo_ahrs_pitch_w` under the same commands: −0.223 / **+0.219** /
+−0.502, holding at −0.037 m/s. Signed per-command ratios put arm 1 negative on
+**all nine** forward commands, including the two pure straight-line ones where
+no turn can be blamed; pitch_w is positive on five and negative on four (its
+four are the `turn_big` reversals documented above).
+
+**It is not the plumbing, and that was tested rather than assumed.** The
+command chain is symmetric (35.1% forward / 35.3% reverse, timestep-weighted);
+obs slot 8 carries the right sign; and a four-way probe of command sign against
+actual velocity gives `vel_err` 0.086 when they agree and 0.83–0.91 when they
+oppose — **byte-identical numbers for arm 1's config and pitch_w's**. Same code
+trained both, and one drives forward.
+
+**The mechanism is the advance gate.** Arm 1's hold drifts backwards at
+0.192 m/s, which at `sigma_v` 0.35 scores `r_vel = 0.74`; with heading held the
+episode scores `track = 0.87` against `advance_score: 0.6`. A mediocre hold
+clears the bar with 45% margin, so the curriculum certified it and every later
+stage inherited the bias. Escape is then impossible: under a +0.8 command at
+v = −0.33 the velocity reward is `exp(−(1.13/0.35)²) ≈ 3e-5` against 0.0055 for
+standing still — 0.005 of difference on an episode return near 900.
+
+**Note the stage did not even buy holding.** Arm 1 holds at 0.192 m/s drift
+against pitch_w's 0.037 — 5.2× worse, over the same 5 s pen run — and pitch_w
+was never given a hold command at all.
+
+**Outstanding — arm 1 moved six variables at once** (family sampler,
+`curriculum.start` 0.15→0, `v_lat_frac` 0.4→0, `resample_s`, `ahrs_tau_s`
+2.0→0.19, `obs_pitch` without `w_pitch`), so one run cannot attribute the
+failure. The mechanism above fits the arithmetic but is not isolated.
+**Arm 2 (`config/rl_general_cmd_curriculum2.yaml`) is the one-line
+discriminator:** `hold_max: 0.40` makes difficulty 0 a 40% hold / 60% straight
+mix, so clearing the gate requires hub in both directions. If forward returns
+it is the hold stage; if not, the next cut is `curriculum.start` back to 0.15
+with the sampler kept.
+
+**Also queued, independent of which rung wins:** the velocity reward has no
+gradient outside about ±0.7 m/s, which is what makes this failure unrecoverable
+rather than slow. A bounded linear term would trap no policy this way.
+
+#### KNOWN ISSUE: handedness on swept turns (2026-08-30)
+
+`general_rl_cmd_curriculum2` executes `(0.804, 0, +90)` by turning left and
+driving forward, and `(0.804, 0, −90)` by turning **left anyway** (+87°) and
+reversing at −0.697 — which lands its world velocity within 3° of the command,
+so the velocity half is satisfied exactly and only the heading is abandoned.
+`turn_asym` 0.369 against `odo_ahrs_pitch_w`'s 0.168 is the same fact.
+
+**Confirmed in teleop, and a ramped heading command does not fix it** — the
+preference survives a swept turn as well as a step. Accepted for now: it is a
+training problem, not an eval one, and no arm is queued against it.
+
+**Queued: `config/rl_general_cmd_curriculum2b.yaml`** — `algo.seed` 0 → 1 and
+nothing else. Every conclusion on this line has come from one run per arm, and
+`asymmetric-actor-critic.md` §7 argues the seed floor is the binding constraint
+on judging any change at all: if the spread across seeds is the size of the
+effect, no single-run comparison means anything. `speed_ratio_fwd` −0.426 →
++0.841 is either `hold_max` working or one lucky draw, and nothing so far
+separates those. It also exercises the new eval instrumentation end to end.
+
+```sh
+./scripts/rl.sh up general --config config/rl_general_cmd_curriculum2b.yaml \
+    --run-dir runs/general_rl_cmd_curriculum2b \
+    --export-name general_rl_cmd_curriculum2b
+```
+
+**Read it against a RE-SCORED seed-0 export, not against the block recorded in
+`moves/general_rl_cmd_curriculum2.yaml`** — that one was measured with the ball
+in and the wide ratio selector.
+
+**What WAS fixed is the eval reporting it as something else.** A command is a
+world velocity plus a heading, so the velocity half is satisfiable body-forward
+(yaw = `psi_cmd`) or body-backward (`psi_cmd` + 180°) — `v_ach`'s sign is
+decided by which way the policy turned, not by whether it will drive forward.
+`speed_ratio_fwd`/`rev` now select only `|dpsi| < 1°` (2 forward rows, 1
+reverse; the 9 turning rows are excluded and covered by `turn_asym` and
+`by_family`). Before the change, six rows at +0.79…+0.97 and three at
+−0.98…−1.16 cancelled to **+0.027** — a policy that drives forward fine,
+reported as one that does not.
+
+**And the eval had a ball in it.** `ball_prob: 0.25` is training DR that was
+never masked for evaluation, so five of twenty commands were scored against an
+obstacle the metrics never mention — deterministic per command, arbitrary as to
+which. Now zeroed in both `train_general_rl._eval_cfg` and
+`analysis/per_command._cfg_for` (shared by `eval_video.py`, so the clips and
+the bar charts match the metrics). **Outstanding: every eval number recorded
+before today includes it.**
+
+**`speed_ratio_fwd` is now SIGNED** (clip floor 0.0 → −1.5). The floor read
+every wrong-direction policy as exactly 0.000 and threw away the one number
+that says what it is doing instead. It also flattered the metric generally:
+pitch_w's four reversing rows used to count as zero rather than as negatives,
+so its published 0.642 was inflated. **Outstanding: `speed_ratio_fwd` numbers
+recorded before this are not comparable, and neither are those from before the
+15 s → 5 s change.**
+
+---

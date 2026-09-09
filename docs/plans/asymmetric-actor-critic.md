@@ -1,5 +1,14 @@
 # A privileged critic for the general policy
 
+> **Status: PARKED — a cover-our-bases option, not a queued change.** Nothing is
+> committed to: no config carries the flag, no run has been launched, and §7
+> argues it cannot be evaluated until the seed floor is measured.
+>
+> The reason to keep it written down is that observability in this model is
+> already reasonably well understood, so a privileged critic is the kind of thing
+> worth being able to say "we tried it and it didn't help" about — later, if a
+> sensor-side result goes unexplained. It is not a lead worth following now.
+
 Candidate change to `train_general_rl.py` and `control/general_env.py`: give
 PPO's **value function** the simulator's true state, while the **policy** keeps
 seeing exactly what the Pi will hand it. Collected 2026-08-29 after asking

@@ -1,5 +1,10 @@
 # general concept for a fast and tight 180 degree turn
 
+> **Status: CONCEPT ONLY — never implemented, parked 2026-07-19.** No code
+> implements this move; `mujoco-modeling-decisions.md` records the goal and the
+> reasoning about why the midline turn is hard. Nothing is blocked on it.
+> Retired to `old/` 2026-09-08.
+
 This move takes advantage of the 360 degree steering, turning the bike 180 degrees along its midline, instead of pivoting around the front wheel.
 
 ## rough manual steps

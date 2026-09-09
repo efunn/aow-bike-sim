@@ -1,5 +1,29 @@
 # Possible linkage mechanism for rocker wing deployment
 
+> **Status: ACTIVE side project, and the live home for the righting mechanism.**
+>
+> **Direction (2026-09-08).** The mechanism has moved to an **asymmetric output
+> from a symmetric layout**, away from the symmetric-output/asymmetric-layout
+> form in `self-righting.md`. The asymmetric one is preferred on the geometry.
+>
+> **Open, and treated as unsettled: the dynamic / torque-output analysis.** The
+> static τ(θ) story is not trusted enough to design against on its own. The plan
+> is deliberately empirical — build something, then use MuJoCo to work out how to
+> rock and leverage the bike upright within the real power output, rather than
+> resolving it analytically first. Expect ad-hoc analyses and sim runs against
+> this doc rather than a single optimisation pass.
+>
+> **Incomplete as a record.** The swing-linkage work of 2026-09-02/03 —
+> three-angle optimisation (22x faster), the constraint configs, the 65 mm
+> flat-deploy result, "vertical rest still does not pay", and the driveable
+> Onshape sketch feature — is currently written up only in `docs/status.md`.
+> Pulling it down into this file is outstanding.
+>
+> Tools: `analysis/wing_linkage.py`, `analysis/swing_linkage.py`,
+> `analysis/swing_demo.py`, `src/aow_sim/cad_swing_linkage.py`. Figures in
+> `analysis/plots/`. Station C of `first-physical-test.md` is the bench protocol
+> for measuring τ(θ) on the real thing.
+
 The current design uses a gear train to rotate the wings around a point near the base of the bike. Here, we explore the possibility of using a linkage mechanism (in effect, a 4-bar linkage for each wing, both driven by the same servo) to drive the wings instead. They still rotate around a similar point near the base of the bike.
 
 # General organization
@@ -228,3 +252,253 @@ is quasi-static — no impact from the wing meeting the floor, no inertia.
 > 0.66), and the CoM dropped 128.4 → 126.0 mm.
 
 Outputs live in `traces/linkage_*`.
+
+---
+
+## The mechanisms as of 2026-09-03 — moved here from docs/status.md
+
+Moved verbatim 2026-09-08. This is the design record for the swing mechanism
+and the four-bar linkage that status.md had been carrying. Dates in the text
+are the dates the work was done.
+
+### The SWING mechanisms — co-rotating, and the reason they exist
+
+Two new mechanisms and a study, all from 2026-08-25. `config/swing_wings.yaml`
+(geared), `config/swing_linkage*.yaml` (four-bar), `analysis/swing_linkage.py`,
+`analysis/swing_demo.py`. Figures at `analysis/plots/swing_linkage_*`. The
+four-bar variants: the hand-drawn `swing_linkage.yaml` (BUILT), `_opt` and
+`_margin` from the first searches, and `_compact` / `_vertical` from
+2026-09-03 — see the standing note at the end of this section.
+
+**The one idea:** the mirrored pair's joint equality is
+`theta_left = -1 * theta_right`, so both wings deploy outward together. Flip
+that sign to `+1` — an idler or a belt instead of a direct gear mesh — and the
+pair CO-ROTATES: one wing swings down and out while the other comes up and in.
+
+That buys the thing the mirrored pair cannot do: present ONE flat face on ONE
+side with the other tucked away, so the far side can brace the bike while a
+ball hits the near one. Deploying the mirrored pair far enough to reach a ball
+on the right plants the left wing too, and the bike becomes a four-point stance
+— measured at a frozen -0.17 deg roll, which is a parking brake, not balance.
+
+It costs side-agnosticism, and the rule is NOT obvious. The splayed rest V is an
+outrigger during a fall, so this variant lands on its BACK at ~119 deg, and past
+90 deg the lever inverts. Measured from that pose, both sides:
+
+| command | best roll reached |
+|---|---|
+| latched `sign(roll)` at stroke start | 111.5 / 111.4 deg — no progress |
+| continuously updated `sign(roll)` | 111.5 / 111.4 deg — no progress |
+| continuous `-sign(roll)` | 66.1 / 63.8 deg — off its back, on its side |
+| **flip the sign at 90 deg** | **14.0 / 13.7 deg, up in 0.98 / 0.93 s** |
+
+Two forms, and they are alternatives to each other and to everything in
+`righting`:
+
+- **geared** (`build_model(..., swing=True)`, teleop `--swing`) — two hinges,
+  one equality, one actuator. Simple, and what the RL policies were trained
+  against. Its stroke is limited to +-45 deg by the RISING wing, which reaches
+  the drive servos at 50 deg and passes through the battery at 80.
+- **four-bar** (`build_model(..., swing_linkage=True)`, teleop
+  `--swing-linkage`) — traced from the `wing-linkage-straight` Part Studio.
+  Verified against the 2D study to **0.01 mm** over the stroke and 0.01 deg on
+  the wing joint. The rocker arc bounds the rising wing geometrically rather
+  than by a configured stroke limit.
+
+`analysis/swing_linkage.py` is the design tool, built so a practical problem
+(something too weak, a calibration issue) can be expressed as a constraint and
+re-searched. It reports a HARD feasibility table — every constraint pass/fail
+with margins — separately from the objective, because the objective is a
+weighted sum of soft penalties and a soft penalty is zero AT a boundary: runs
+repeatedly read `objective 0.000` while sitting on four limits at once.
+
+**Every metric in it was wrong once**, and each is documented beside the wrong
+version so nobody re-derives it:
+
+| metric | was | is |
+|---|---|---|
+| righting | `TARGET_WING_DEG = 90` borrowed from the mirrored study | hand-off roll: the panel's angle from horizontal. The 90 works there only because its stowed wing starts flat on the ground |
+| far wing | millimetres from the centreline | ANGLE from vertical. The as-drawn sketch sits at -0.2 deg while reading 29.4 mm; the two do not rank candidates alike |
+| brace | reach the floor | finish FLAT. "Reach the floor" let a design plant its TOP edge, having rotated past horizontal |
+| protrusion | max over the stroke, then the mean of two endpoints | `max(rest, end)`. A mean lets one endpoint grow while the other shrinks at zero cost |
+| transmission | floor over the whole stroke | first 85% only. The minimum sits at 98-100% of the stroke, which is exactly where a four-bar SHOULD approach its dead point |
+| torque | computed, printed, never scored | scored against 0.45 N.m |
+| protrusion, again | the panel's TOP corner (`top_extents`) | max over BOTH panel ends (`panel_extents`). Top-only is a proxy that holds while the rest pose is a splayed V and breaks under `vertical_rest`, where the rising panel's top comes IN while its foot goes OUT |
+| interference | not checked at all | `min_link_gap`: every non-adjacent pair of drawn members, both sweep directions |
+| chassis | `far_inboard_deg`, an angle | still the angle for the LEAN, plus `panel_keepout_gap` for whether the volume is occupied. The angle was never a clearance check and cannot become one |
+| `--max-half` | accepted, unpacked, never read — a no-op flag since the first version | scored as a hard cap on `stow_half_width` |
+| stroke, reach, brace | walked the whole assembly range at 2° | three closed-form toggle angles plus the panel-flat pose |
+| torque | `np.gradient` over a uniform 1° grid | exact four-bar velocity ratio at a point, peak by golden section |
+| sweep direction | both, on the argument that ±t see different pairs | one. They see the same pairs REFLECTED, and both sides are already evaluated at every +t |
+| keep-out width | 18 mm, from the `shape: box` entries of cad_layout.yaml | 32 mm, measured. The derivation missed the CYLINDERS — the servo pulleys' outer edges |
+
+`angle_between_cranks` sets the REST SETPOINT and nothing else that binds.
+Measured, holding the lengths and sweeping only that angle, the far wing's
+minimum clearance from vertical is -0.2 deg at 20, 30, 45, 60, 75 and 90 alike;
+only the stroke length moves. The inward limit is fixed by the crank/coupler
+collinear pose, which the LENGTHS determine.
+
+**The study stopped sweeping (2026-09-03).** Every kinematic question is now
+answered at closed-form crank angles — rest, the rising wing's folded toggle,
+the deploying wing's extended toggle, and the travel that lays the panel flat.
+**22x faster**: 44.6 -> 1.3 ms per objective evaluation, 810 -> 47 four-bar
+solves. Peak servo torque is the one thing with no shortcut (31 of those 47) —
+it is an interior maximum and no single pose stands in for it. `--check` walks
+every metric at 0.25 deg and prints the disagreement.
+
+Three rest poses via `mechanism.wing_angle_mode`, and **one pose can be pinned,
+not two** — the rocker's swing between rest and the toggle is a link-length
+property, so choosing the parked attitude fixes the deployed one:
+
+| mode | pins | hand-off roll |
+|---|---|---|
+| `fixed` | neither; the config's angle is used | whatever falls out |
+| `vertical_rest` | panels upright when parked | whatever falls out |
+| `flat_deploy` | panel flat at the deployed toggle | **0 by construction** |
+
+**Standing.** Comparisons need a common panel: `wing_z_max` is a panel-axis
+coordinate, not a height, so the same number is a different length of wing on
+every linkage. Re-searched with `panel_span_mode: length` at 100 mm, four seeds
+each, all converging to spread 0.000:
+
+| | built (hand-drawn) | `fixed` | `flat_deploy` | `vertical_rest` |
+|---|---|---|---|---|
+| rest half-width, own panel | 73.3 mm | 65.3 | 66.3 | 72.2 |
+| **rest half-width, 100 mm panel** | — | 65.8 | **65.0** | 67.9 |
+| peak servo torque | 0.510 | 0.494 | 0.446 | 0.550 |
+| feasibility | 7/8 (far wing) | 8/8 | 8/8 | 8/8 |
+
+The hand-drawn geometry is **built and works** — it self-rights the weight of
+the righting assembly; the whole bike is untested. It is also the only one
+holding margin everywhere: 2.06 mm of chassis clearance and 10.98 mm between
+couplers, where the searched results sit on two or three limits at once.
+`flat_deploy` is the one to build next if width matters.
+
+**Vertical rest does not pay.** It was meant to trade a wider swing for a
+narrower parked envelope; on a fair panel it is 2.9 mm wider and spends the
+whole torque budget. The gain is real only against a FIXED linkage —
+verticalising the built geometry without touching a link length takes it
+73.3 -> 47.8 mm — and evaporates once the lengths are re-searched.
+
+**Outstanding.** The width argument was never the whole argument for vertical
+rest: the splayed V is the outrigger that makes this variant land on its back at
+~119 deg and need the 90 deg sign flip, and nothing in a 2D kinematic study sees
+it. That wants a sim run. `_compact` sits AT the hand-picked 15 mm
+`wing_pivot_x` floor, where the Part Studio carries `pin_diameter` 1/16 in and
+`pin_support_radius` 0.1 in to derive it from. `clearance.wing_width_mm` is a
+0.0 placeholder. The keep-out is projected from `cad_layout.yaml`, which is the
+simulator's belief and not a measured chassis; the drive belts at |y| 26.5 are
+left out of it deliberately. The mirror parity for the RL channel (`-1, -1` in
+`general_spec`) is unverified against a trained policy; `--check`'s sketch-point
+half is stale against the older `swing-wings-geom-mock`.
+
+**The geometry now goes into CAD as a DRIVEABLE sketch.** `aow_sim.cad_swing_linkage`
+emits a Feature Studio holding one custom feature, `AOW swing linkage`: pick a
+plane, type a crank input, and it draws the pair at that pose. Insert it several
+times on one plane at different inputs and the overlay is the motion study, with
+no assembly and no mates. Every `mechanism` number is a dialog field, defaulted
+from a config through `SwingLinkage` rather than off the yaml -- `wing_z_min` is
+always derived and never written back, so `swing_linkage_smaller.yaml`'s -20.0
+is the as-drawn value against the -27.08 the study actually uses.
+
+The four-bar is solved in FeatureScript, so it is a SECOND implementation of the
+circle-circle branch rule. `--check` is what keeps the two honest: one billable
+call runs the port on Onshape and diffs every joint, crank tip, panel foot and
+panel top against `analysis/swing_linkage.py` at seven crank inputs on both
+sides. All 56 agree to the printed digit, and the sketch builds 17 edges.
+Nothing has been pushed to a studio yet -- it needs its own Feature Studio tab,
+since a push overwrites one wholesale and `cad_layout` and `cad_servo_mount` own
+the two that exist.
+
+Two Onshape facts fell out of that check and are recorded in the generated
+source: `newSketch` handed a plane QUERY on a datum plane draws nothing at all
+and reports no error, and `evPlane` wants the FACE a datum plane owns rather
+than its body.
+
+**The reasoning is not here.** Every constraint, every metric that was wrong
+once, the four-bar identities the closed forms rest on, and the objective's
+rung structure live in `analysis/swing_linkage.py`'s docstrings, beside the code
+they govern. `config/swing_linkage_constraints.yaml` is the annotated input
+schema. This section carries only what moves.
+
+### The wing LINKAGE — a second mechanism, and a real alternative
+
+`docs/plans/wing-linkage-design-and-optimization.md`, `analysis/wing_linkage.py`,
+`config/wing_linkage*.yaml`. Figures in `analysis/plots/wing_linkage_*`, with
+`--tag _opt` / `_lock` marking which config drew each one.
+
+A four-bar per wing, both on one servo, as an alternative to the gear train.
+Gears give a rigidly mirrored pair and a fixed ratio; a linkage gives a ratio
+that VARIES through the stroke, which is the point — the deployed pose can be
+put at the crank's input-side dead point, where the wing cannot backdrive the
+servo.
+
+The geometry is optimised in a standalone 2D study, then built in MuJoCo
+(`build_model(..., linkage=True)`, closed with `mjEQ_CONNECT` site
+constraints), driven by the same `RightingSequencer`, and available in teleop
+(`run_drive --teleop --linkage`).
+
+| | geared 2:1 | linkage |
+|---|---|---|
+| peak servo torque (2D) | 0.339 N·m | 0.541 N·m |
+| MuJoCo eight-fall set | 8/8 | **8/8 across 0.38–0.50 N·m** |
+| holds deployed pose | continuous current | **free — MA ≈ 52** |
+| current-based position mode | **0/8, somersaults** | **8/8, 0.35 s** |
+| total bike height | 216.2 mm | 216.2 mm |
+| peak pin loads | — | coupler 21.7 N, **wing pivot 32.4 N** |
+
+**The linkage's case is not peak torque, where gears win.** It is that it needs
+no commanded trajectory: cap the current, command the endpoint, and the toggle
+decelerates the wing into the end pose by itself. Gears under the same command
+throw the bike clean over — 0/8 — and need a tuned rate schedule to be safe,
+which is a thing that must be re-tuned whenever mass or contact moves.
+
+**The goal current is a WINDOW, not a minimum**, and this is the single most
+important operational fact about it. Too little cannot lift the bike; too much
+throws it past upright, because the four-bar's self-limiting only bleeds off so
+much and the short wing has little inertia to absorb the rest:
+
+    0.34 -> 1/8     0.38..0.50 -> 8/8     0.54 -> 7/8     0.62 -> 0/8
+
+Configured at **0.44 N·m**, the middle of that window rather than an edge. The
+geared pair has no such ceiling — there, more torque is simply more margin.
+
+#### What the optimiser taught, mostly by cheating
+
+Every constraint in `analysis/wing_linkage.py` exists because a search walked
+through the gap where it wasn't, and **every wrong answer passed its own
+numeric test and was caught by looking at a picture**:
+
+* scoring raw wing rotation → wings folding 180° *through* the bike;
+* scoring `|angle|` → a wing driven 90° INBOARD, scoring a perfect zero, and
+  dipping 55 mm below the floor on the way;
+* scoring each wing's best pose separately → forgetting there is only one
+  servo, so only the simultaneous pose is reachable;
+* torque-only → parking in an output-side dead point, where the load happens to
+  be near zero so it costs nothing on the metric while being the least
+  buildable part of the design.
+
+Render the mechanism before believing the objective.
+
+#### Drivers vs driven
+
+Three tiers, recorded in the config files as well as the plan doc. **You
+choose** `bike_width`, `bike_height`, `wheel_radius`. **The optimiser searches**
+nine mechanism variables. **Driven, never hand-edited**: both coupler lengths
+(whatever closes the four-bar at stow — which is why the two sides come out
+asymmetric on their own, an OUTPUT and not an input), wing length, stow offset,
+servo travel, goal current, and the roof geometry.
+
+`bike_height` now means the roof CREST in every file. It previously meant the
+wing top in the linkage config alone, which made that bike a roof-radius taller
+and got mis-reported as the linkage "forcing a taller roof". Fixing it shortened
+the wing 181 → 84.6 mm, dropped the fall-set requirement from 0.66 N·m to the
+0.38–0.50 window, and collapsed the two roof derivations into one rule.
+
+#### Not decided
+
+The linkage is **not** a replacement for the geared pair. Both are built, both
+pass the fall set, and the choice is a real trade: gears have more torque margin
+and a simpler part count; the linkage has a self-locking deployed pose and needs
+no trajectory. Nothing downstream depends on the answer, so it can wait for the
+mechanical design.

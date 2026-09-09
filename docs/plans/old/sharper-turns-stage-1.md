@@ -1,5 +1,13 @@
 # Sharper Turns Beyond the Linear Range (stage 1: feedforward-carried turns)
 
+> **Status: SUPERSEDED — the driving path changed.** The feedforward-carried turn
+> work landed in `control/drive.py`, but `drive.py` is now part of the analytic
+> LQR *reference baseline*; the bike is driven by `general_rl*` policies, which
+> learn their own turn envelope. `general-rl-improvements.md` reaches the same
+> conclusion independently from the RL side.
+> Retired to `old/` 2026-09-08. Stage 2 (identification about turning equilibria)
+> was never triggered and is not queued.
+
 ## Context
 
 Teleop/command turns are stable but gentle: line-mode turns clamp *absolute* steer at 15° and cap turn rate at `0.7·v·tan(15°)/L` (≈0.86 rad/s at 0.8 m/s → R ≈ 0.93 m). Meanwhile **circle mode already operates far outside the linear range** — the envelope search tracked R ≈ 0.30 m at 0.5 m/s (≈34° absolute steer) — because it clamps only the ±15° feedback *correction around* the kinematic feedforward, keeping the *deviation from equilibrium* inside the identified model's validity while the equilibrium itself moves. Stage 1 unifies heading turns with that proven structure and measures the new envelope, forward **and reverse** (user: reverse matters equally). Stage 2 — identification about *turning* equilibria (2D speed × curvature schedule) — is recorded with explicit trigger criteria, expected to be needed mainly for sharp reverse (reversed caster degrades the straight-line model fastest).

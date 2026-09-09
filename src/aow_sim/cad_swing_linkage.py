@@ -73,7 +73,7 @@ sys.path.insert(0, str(ROOT / "analysis"))
 from swing_linkage import SwingLinkage          # noqa: E402
 
 CONFIG = "config/swing_linkage_smaller.yaml"
-OUT_FS = "docs/measurements/swing_linkage.fs"
+OUT_FS = "docs/cad/swing_linkage.fs"
 SPLIT_MARK = "// ==== UI LAYER BELOW -- dropped by --check ===="
 
 # Tabs another generator owns. A push overwrites a studio's whole contents, so

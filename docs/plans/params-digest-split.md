@@ -1,5 +1,11 @@
 # Splitting `params_digest` — one hash, two questions
 
+> **Status: IMPLEMENTED 2026-08-25, same day.** Kept in `plans/` rather than
+> retired to `old/` because it is the reference explanation for a live mechanism:
+> five `moves/*.yaml`, `params.py`, `export_deploy.py` and `hw/state.py` all point
+> at it. **There are two digests** — `plant_digest` and `design_digest` — and this
+> is where the difference is written down.
+
 Started 2026-08-25. Status: **IMPLEMENTED 2026-08-25**, same day. Written first
 because the problem was found while auditing something else, and the fix is
 small but the reasoning behind it is not obvious from the code.

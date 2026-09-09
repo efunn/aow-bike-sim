@@ -1,6 +1,6 @@
 """Emit the component layout in CAD coordinates, for drawing the real bike.
 
-    python -m aow_sim.cad_layout            # -> docs/measurements/cad_layout.yaml
+    python -m aow_sim.cad_layout            # -> docs/cad/cad_layout.yaml
 
 WHY THIS EXISTS: `config/bike_params.yaml` is the simulator's frame — **+X
 forward, +Y left, +Z up**, metres, kilograms. The CAD model is drawn in the
@@ -38,9 +38,9 @@ from .params import DEFAULT_PARAMS, load_params
 CAD_PARAMS = "config/bike_params_cad.yaml"
 # The 75 mm-envelope solve, not the 120 mm one the sim still builds.
 LINKAGE_CFG = "config/wing_linkage_w75.yaml"
-OUT = "docs/measurements/cad_layout.yaml"
-OUT_FS = "docs/measurements/cad_layout.fs"
-OUT_PNG = "docs/measurements/cad_layout.png"
+OUT = "docs/cad/cad_layout.yaml"
+OUT_FS = "docs/cad/cad_layout.fs"
+OUT_PNG = "docs/cad/cad_layout.png"
 
 # Belt colours, RGBA 0-1. The REAL runs are near-black rubber and opaque; the
 # MIRRORED ones are a hue nothing else in the layout uses, at low alpha. A
@@ -1434,7 +1434,7 @@ import(path : "onshape/std/variable.fs", version : "{ver}.0");
 // {axle} mm above the floor when the bike is upright.
 //
 // Exported from the simulator (config/bike_params.yaml). Most entries are
-// `design` or `GUESS` — see docs/measurements/cad_layout.yaml for the
+// `design` or `GUESS` — see docs/cad/cad_layout.yaml for the
 // provenance of every number, which is deliberately NOT duplicated here.
 //
 // !! The version number on the two lines above must match your document. The

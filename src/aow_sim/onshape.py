@@ -296,7 +296,7 @@ def _flatten(png: bytes, bg):
     pixel (0, 0, 0, 0). That is not a setting and not a preference: every
     viewer picks its own backdrop, so the same file reads white in one and
     black in another. For a figure tracked in the repo that is a bug, because
-    two people looking at `docs/measurements/cad_layout.png` disagree about
+    two people looking at `docs/cad/cad_layout.png` disagree about
     what it shows.
 
     Pillow is imported lazily and its absence is not fatal — it arrives with

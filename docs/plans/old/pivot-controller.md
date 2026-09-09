@@ -1,5 +1,12 @@
 # Pivot Controller (crawl pivot about the front contact)
 
+> **Status: BUILT — 2026-07-18.** `control/pivot.py`, `control/pivot_env.py`,
+> `run_pivot.py`, `train_pivot_rl.py` and `config/rl_pivot.yaml` all exist; the
+> move was later re-authored as an RL policy. The lesson it exists to preserve —
+> yaw-position feedback must stay light or the loop rings against the steer clamp
+> — is restated in `mujoco-modeling-decisions.md`.
+> Retired to `old/` 2026-09-08.
+
 ## Context
 
 The stationary LQR balance controller is committed and settles toy-like (1 oscillation) after the yaw-rate-damping fix. Next performance goal: **pivot in place** — turn the bike's heading while balanced, the toy's "steer, then fall into the pivot with rear-wheel movement." User decision: implement the **crawl pivot** (rear wheel crawls an arc around the stationary front contact; differential drive does the work; steering stays small) — the direct extension of the current machinery. The steer-90° pivot (about the rear contact, minimum-diameter trick) is a recorded follow-up once heading command exists.

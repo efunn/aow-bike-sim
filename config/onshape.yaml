@@ -59,3 +59,31 @@ tabs:
   # The real drawing -- actual parts, imported wheel geometry. cad_layout never
   # writes here; it is a --shot target only, for seeing the parts in context.
   bike: eb278418be25018fb7253dd3
+  # Hand-drawn Part Studio the SWING linkage was traced from, read back through
+  # the API on 2026-08-25. Its `assignVariable` features name the driving values
+  # directly, which is how config/swing_linkage.yaml's numbers were derived --
+  # and how the crank angle was found to be 45 deg rather than the 90 traced
+  # earlier from `swing-wings-geom-mock`. Nothing generated is ever pushed here.
+  # Listed 2026-09-08; it had been recorded only in a comment in
+  # config/swing_linkage.yaml.
+  wing_linkage_straight: 011b691f0af4ce5194344456
+
+# ---------------------------------------------------------------------------
+# OTHER DOCUMENTS TOUCHED, none of them driven by this repo's generators.
+#
+# Added 2026-09-08. They existed only in ~/.local/state/aow/onshape_calls.jsonl,
+# which is outside the repo and outside Dropbox -- so the ids were one `rm` away
+# from being unrecoverable. Nothing here is a --push target; `resolve()` only
+# ever reads the `tabs:` block above.
+other_documents:
+  # Scratch document, 2026-08-24, 25 calls in one evening. Where the eval
+  # harness was PROVEN: build a body, count it, count again in a second call
+  # (0 -> 1 -> 0), which is what established that the endpoint derives a
+  # throwaway context. Also where the undocumented custom-feature `insert` was
+  # worked out -- five 400s in a row, then the "envelope form" that worked.
+  # A sandbox, not a design. Kept because re-deriving either result costs calls.
+  eval_harness_scratch: 8b9c6e8eb742abd7ad24af7d
+  # Read-only, 2026-08-25, 3 calls: list tabs, list parts, one eval. A
+  # Dynamixel bracket/link library browsed for reference geometry. Never
+  # written to, and not ours -- treat as read-only.
+  dynamixel_link: dfa36634c6c344faf47a020f

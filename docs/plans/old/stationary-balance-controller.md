@@ -1,5 +1,13 @@
 # Stationary Balance Controller (baseline)
 
+> **Status: BUILT — 2026-07-18.** Everything specified here exists:
+> `control/balance.py` (`LQRBalance`, `PDCascade`), `control/linearize.py`,
+> `run_balance.py`, `tests/test_balance.py`, and the `control:` block in
+> `config/bike_params.yaml`. The LQR became the reference baseline rather than
+> the driver — RL drives — and the PD cascade is legacy and untested (CLAUDE.md).
+> Retired to `old/` 2026-09-08 — kept for the control mapping and the
+> linearization rationale, not as a plan.
+
 ## Context
 
 The AOW bike model is geometry-complete with measured wheel parameters, a bench-verified differential drivetrain (hub = mean of ring gears; opposed inputs → pure lateral crawl at the rear contact), and a passing test suite. Next milestone from the performance goals: **balance while standing still, minimizing rear-wheel drift**.

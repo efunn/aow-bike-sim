@@ -1,5 +1,15 @@
 # The first physical test — what to build, in what order
 
+> **Status: ACTIVE — this is the build order for the current phase.**
+> Stage 0b (servo reversal, the go/no-go) **DONE 2026-09-01** — see
+> `docs/status.md` "The servo bench". Stage 0a became actionable 2026-09-08 when
+> the Digi-Key order landed: weigh the electronics stack, retire two `GUESS`es,
+> ten minutes. Stage 0c (contact calibration) is **unstarted and every field in
+> `contact-measurements.yaml` is still 0.0** — read the protocol's own CORRECTION
+> before taking a reading. **Stage 1, the drivetrain station, is the next thing
+> that unblocks anything** (five `GUESS`es, and it is the load fixture
+> `servo-protocol.md` §3/§4 need).
+
 Written 2026-08-28. The question this answers: which parts and subassemblies
 unlock the most sim uncertainty per unit of build effort.
 
@@ -342,3 +352,129 @@ checked in the two ways it could be most wrong.
 
 If only one thing gets done: **0b**. It is the only test on this page whose
 result could mean "stop training and change the reward".
+
+---
+
+## The servo bench, 2026-09-01 — moved here from docs/status.md
+
+Moved verbatim 2026-09-08. This is the result of stage 0b above: the first
+physical measurements of the project.
+
+### The servo bench — first hardware, and two surprises (2026-09-01)
+
+Four bare servos (2x XC430-W150 ids 101/102, 2x XC330-T181 ids 103/104) on a
+U2D2 at 3 Mbps, 12 V brick. **No wheel, no belt, no load** — every number below
+is the servo's own rotor and gearbox and is therefore an UPPER BOUND on what
+the drivetrain will do. `rig: bare_shaft` is a field in
+`servo-measurements.yaml`, not a comment.
+
+#### Stage 0b, the reversal test — envelope 15 Hz
+
+`analysis/servo_reversal.py`, both drive servos simultaneously. At full
+amplitude:
+
+| f | achieved/commanded | via `Present Velocity` | pwm p95 |
+|---|---|---|---|
+| 5 Hz | 0.99 | 0.91 | 0.97 |
+| 10 Hz | 0.82 | 0.56 | 0.92 |
+| 15 Hz | 0.64 | 0.36 | 0.87 |
+| 25 Hz | 0.37 | 0.16 | 0.73 |
+| 40 Hz | 0.23 | 0.08 | 0.57 |
+
+The ratio is the SAME at amplitude 0.25, 0.50 and 1.00, which is what makes it
+a first-order lag rather than a slew limit — a slew limit would penalise the
+large amplitudes. The `Present Velocity` column is the servo's internal filter
+measured for the first time (2.9x extra attenuation at 40 Hz); `RateFilter`'s
+docstring had only a simulation-derived guess for it.
+
+#### Where the lag comes from — the firmware, and we own the knob
+
+`analysis/servo_modes.py lag-origin`. PWM mode (Operating Mode 16) removes the
+velocity loop entirely, then a Velocity P Gain sweep moves tau 9x:
+
+| | tau |
+|---|---|
+| PWM mode, no loop | ~12-14 ms — the motor's own `tau_m` |
+| velocity, KVP 25 | ~50-90 ms |
+| **velocity, KVP 100 (factory default)** | **~26-30 ms** |
+| velocity, KVP 400+ | ~9-19 ms |
+
+**At the factory gain the closed loop is SLOWER than the bare motor.** Above
+KVP 400 it beats the motor by driving harder and asymptotes near 11 ms. So the
+drive bandwidth is not a fixed property to model and accept — it is a
+control-table line, worth ~2.3x, and nobody has ever changed it.
+
+These fit ±25% run to run; the ORDERING is what repeats. The mode comparison
+below repeats tightly by contrast, and the yaml says which is which.
+
+#### The sim was already right, and the doc was wrong
+
+`input_armature / drive_kv` = 3.0e-4 / 0.016016 = **18.7 ms**, since b0a97a3 on
+08-22. Measured: 13.6-14.1 ms bare motor, 25.3 ms closed loop at factory gain.
+18.7 sits between them.
+
+`servo-protocol.md` still opened with `drive_kv: 0.5`, "no bandwidth limit
+exists", and "both are wrong by ~31x" — all fixed ten days earlier. That page
+was then read and the 31x claim repeated into a new analysis script and into
+`servo-measurements.yaml` before anyone checked the config. **A number in a
+protocol document is state**, and this is the second time that has cost
+something. Corrected in all three places, each with a note saying what it used
+to say.
+
+#### Control modes are structurally different, not one with a clamp
+
+`analysis/servo_modes.py modes`, both XC330s, 2x2 against the derivative gain
+because **writing Operating Mode RESETS the position gains** to per-mode
+defaults (mode 3 -> P900/D0, mode 5 -> P700/D1400). The first comparison did
+not know that and compared the gains as much as the modes.
+
+Ratio achieved/commanded, both units:
+
+| mode | D | 1°/10Hz | 1°/20Hz | 5°/10Hz | 5°/20Hz |
+|---|---|---|---|---|---|
+| 3 position | 0 | — | 0.16 | 0.63 | 0.22 |
+| 3 position | 1400 | 0.36 | 0.13 | 0.37 | 0.19 |
+| 5 current-based | 0 | **16.1** | **16.7** | 2.45 | 4.16 |
+| 5 current-based | 1400 | 1.19 | 0.97 | 0.94 | 0.51 |
+
+Mode 5 at D=0 is violently unstable — a 1° command gives ~16° at 0.6 A — while
+mode 3 at identical gains is fine, and D=1400 makes mode 3 WORSE while being
+what makes mode 5 work. Different plants. Mode 3 is amplitude-invariant
+(linear); mode 5 tracks BETTER as amplitude shrinks, which is what regulating
+BUS current predicts (`I_bus = duty*I_phase`, so `duty ~ sqrt(I_cmd)`). That
+last claim survived gain equalisation; the raw magnitudes did not.
+
+Relevant because `Present Current` on the XC330 also fails a consistency check:
+implied stall 10-11 A against a 0.88 A datasheet, and non-monotonic in duty.
+**R6 (reported current vs PWM at stall) is a prerequisite** before any current
+number from this part is used quantitatively.
+
+#### The bus layer, and one servo that lied
+
+`hw/control_tables/` vendors ROBOTIS's own `.model` files verbatim;
+`control_table.py` parses them; `IndirectMap` + `DynamixelBus` build a map from
+register NAMES and install it in ONE SyncWrite (0.06 ms for four servos, down
+from 8 ms). Frame rate 500 Hz unpaced — the FTDI latency timer, not Return
+Delay Time. New `hardware` pytest marker, skipped unless `AOW_DXL_PORT` is set.
+
+**An XC330 on firmware 50 accepts every Indirect Address write, echoes them all
+back correctly, and returns an all-zero data window** — silent in both
+directions, no error anywhere. It cost four runs looking like a different
+problem each time, and produced a second wrong generalisation (that the SDK's
+plain `GroupSyncRead` truncates the last servo) that was only retracted after
+re-measuring on healthy units. `MIN_FIRMWARE` refuses it at discovery. The
+XC430's own "firmware 50" is a different numbering and is fine.
+
+#### Outstanding
+
+- Everything here is a **bare shaft**: no stiction anywhere. The small-signal
+  regime on a LOADED servo is a stiction limit cycle, a different question.
+- **The stage-1 drivetrain station** is what turns these upper bounds into
+  answers. Nothing about the trained policies should be concluded before it.
+- R6 stall calibration before any current number is quantitative.
+- Steer channel: every `general_rl*` export flips the steer action sign 15-32
+  times/s while the joint achieves 1-20% of no-load. `analysis/chatter.py` now
+  reports both columns. Not yet diagnosed, and not yet priced against the
+  15 Hz envelope above.
+
+---

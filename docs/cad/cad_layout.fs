@@ -9,7 +9,7 @@ import(path : "onshape/std/variable.fs", version : "3044.0");
 // 51.2 mm above the floor when the bike is upright.
 //
 // Exported from the simulator (config/bike_params.yaml). Most entries are
-// `design` or `GUESS` — see docs/measurements/cad_layout.yaml for the
+// `design` or `GUESS` — see docs/cad/cad_layout.yaml for the
 // provenance of every number, which is deliberately NOT duplicated here.
 //
 // !! The version number on the two lines above must match your document. The

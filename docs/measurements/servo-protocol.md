@@ -1,5 +1,12 @@
 # Drive Servo Velocity-Loop Measurement Protocol
 
+> **Status: ACTIVE, partially filled.** §2 (the reversal test) ran 2026-09-01 on
+> four bare servos and is the project's first hardware. §§3-4 need the drivetrain
+> station as a load fixture — `first-physical-test.md` stage 1. Data goes in
+> `servo-measurements.yaml`. This page was **stale for ten days once already**
+> (its 31x drive claim outlived the fix in b0a97a3); check it against
+> `config/bike_params.yaml` before believing a number here.
+
 Companion data sheet: `servo-measurements.yaml` (same section numbering).
 
 Everything here calibrates **the drive actuator model**:

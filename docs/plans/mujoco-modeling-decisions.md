@@ -1,6 +1,11 @@
 # MuJoCo Modeling Decisions
 
-Answers to the open questions in `prelim-architecture.md`, and the rationale
+> **Status: REFERENCE, not a plan.** The standing record of why the model is
+> built the way it is, cited from eleven places including `README.md` and
+> `build_model.py`. Amend it when a modelling decision changes; it is not a
+> to-do list.
+
+Answers to the open questions in `old/prelim-architecture.md`, and the rationale
 behind the builder in `src/aow_sim/build_model.py`. Status: implemented and
 tested with placeholder parameters (2026-07).
 
@@ -266,7 +271,7 @@ feedforwards.
 
 ## Agility: 180-degree swap-ends flip ("flip" mode, 2026-07-19)
 
-Goal (`docs/plans/agility-turn-180-move.md`): rotate 180 about the *midline*,
+Goal (`docs/plans/old/agility-turn-180-move.md`): rotate 180 about the *midline*,
 lateral deviation <= 0.5 L "at any point". Implemented as a `DriveController`
 mode: pre-steer the front to ~90 deg (frees it to roll laterally), hold while
 the rear crawl feedback tracks a radius-L/2 circle about the captured center

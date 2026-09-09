@@ -1,5 +1,11 @@
 # Simplified AOW contact models — survey and measurements
 
+> **Status: PARTLY LANDED.** The survey's conclusion ("no, but") stands, and
+> `sim.timestep 4.0e-4` + `sim.mesh_segments 64` shipped and were validated by a
+> trained run. **§6b's two drive-plant fixes are still blocked** — they are
+> critical-path item 8 in `docs/status.md`, and they need the Dynamixel
+> velocity-PI emulation that `mujoco-modeling-decisions.md` deferred.
+
 `docs/plans/mujoco-modeling-decisions.md` closes its known-simplifications
 section with:
 
@@ -577,3 +583,73 @@ prep for a port rather than a CPU optimisation.
    `general_wings_rl` sits at **100% wing saturation with 0.000 per-step
    change**, which is the "total crutch" of the wings1 run showing up as a
    number rather than a description.
+
+---
+
+## Where the survey landed — moved here from docs/status.md
+
+Moved verbatim 2026-09-08.
+
+### Simplified contact models — surveyed, and the answer is "no, but"
+
+`docs/plans/aow-contact-approximations.md` (2026-08-15) closes the "fast
+approximation models deferred" item in `mujoco-modeling-decisions.md`.
+Reproduce with `python analysis/contact_surrogates.py`.
+
+- **No contact surrogate is worth building.** Swapping the 16 cone meshes for
+  primitives buys 10–20%; deleting the whole roller multibody buys 1.7–2.0×
+  and is the hard ceiling, because the cost is DOFs and equality rows, not
+  collision geometry. The two textbook reductions are both unavailable: a
+  ball wheel drops the toppling lever arm from `h_com` to `h_com − R` (−42%),
+  and MuJoCo's anisotropic friction is world-locked on a flat floor
+  (`t1 = [0,1,0]` at every wheel yaw), so the LeKiwi capsule trick does not
+  survive a steering bike. Mark it **rejected**, not deferred.
+- **Policies do not depend on roller detail.** `general_rl_smooth_stiff`,
+  unmodified weights, eval grid, rear wheel swapped: survival 1.00 on every
+  scheme, tracking within 5.5%, ordered by ride roughness. The blind spot the
+  survey was looking for is not there.
+- **The speedup was in `sim.timestep`, and it is now taken: 2.0e-4 → 4.0e-4,
+  with `mesh_segments` 32 → 64.** Contact statistics are converged from 5e-5
+  clear through 6e-4, so the contact never bound it — **the LQR's
+  finite-amplitude system ID does.** Worst fit R² runs 0.9748 (2e-4) → 0.9727
+  (4e-4) → 0.9408 (6e-4, collapsing at +0.80 m/s alone), and
+  `test_gain_schedule` floors it at 0.95. So 6e-4 is off the table despite
+  scoring fine on every policy eval — no eval can see this bound.
+- **`mesh_segments: 32` was bouncing the front tyre off its own facets** —
+  17.5% of a 0.5 m/s run off the ground at a 0.26 mm swing, against 0.2% at 64
+  segments for ~3% of step time. Pure numerics, unlike the rear wheel's 8-fold
+  ripple, which is measured real geometry (`omni-wheel-protocol.md` §1) and
+  does not move with tessellation at all.
+- **What the change cost, all checked rather than assumed:** red set unmoved at
+  7 failed / 217 passed (suite 262 s → 161 s), eval grid 0.764 → 0.760 at
+  survival 1.00 (29.4 s → 16.9 s), righting sequence / fall attitudes /
+  inverted drops / hockey all unchanged, deploy bundle re-exported
+  (`7af0ce42dfc91154`). Every `moves/*` export trained before it warns on load.
+- **GATED NOW: a policy trained at 4e-4 matches the 2e-4 baseline.**
+  `general_rl_glide_pitch_dt4e4`, 6M steps on unmodified
+  `config/rl_general_glide_pitch.yaml`, scores **track_geo 0.886 / survive
+  1.00** against `general_rl_glide_pitch_og`'s identical 0.886 at 2e-4.
+  Head error improved 4.7° → 2.6°; crab stayed symmetric (.242/.245 vs
+  .248/.262). The righting handoff still catches the bike on both mechanisms
+  (arm 81°/1.12 s, wings 88°/0.61 s — same as the pre-change baselines).
+  Two caveats worth keeping: the budgets differ (baseline 4M, this 6M), and
+  it is ONE seed. `drift_m` regressed 0.588 → 1.392 and `turn_asym` 0.102 →
+  0.153; both are underdetermined in the reward, so treat them as noise until
+  a second seed disagrees.
+- **`contact_solref` outweighs all of it**: at fixed geometry it swings contact
+  loss 53% → 0% and peak load 5×. Still a `GUESS`. Also worth widening the
+  randomizer's `dampratio_range` above 1.0 — it currently samples only the
+  bouncy half, and overdamped is where filled TPU plausibly lives.
+- **`timestep` and `contact_solref` are ONE decision, not two.** MuJoCo's
+  `refsafe` (on by default) silently raises a positive `timeconst` to
+  `2 × timestep`, so past `dt = timeconst/2` the sim stops modelling the
+  contact that was configured — at `timeconst 0.005` that is `dt = 2.5e-3`, and
+  static sink is bit-exact at every step below it. Well before that, peak force
+  drifts once there are fewer than ~10 steps per contact time constant (the
+  shipped pair sits at 12.5). **Two live consequences:** if the bench lands on
+  a stiffer contact the timestep ceiling drops with it, and switching to the
+  recommended **negative** solref convention removes the guard entirely — stiff
+  pairs then diverge rather than being clamped. `(-4e4, -150)` reproduces the
+  current positive pair exactly, if that conversion gets made.
+
+---

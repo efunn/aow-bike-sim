@@ -1,5 +1,27 @@
 # Untethered setup
 
+> **Status: ACTIVE. The SBC section is deliberately not being reconciled yet
+> (2026-09-08).**
+>
+> - **The Pi Zero 2 W is still the design target**, and the CAD is deliberately
+>   left alone. Electronics packing is the hard part of the layout and is not
+>   worth micro-adjusting while the component set can still swap; everything in
+>   this document about form factor, mass and port budget stands as the target.
+> - **A Raspberry Pi 3 is on hand as a stand-in** — same SoC family, bought to
+>   prove the stack runs on embedded Linux at all, not to fly. Either board is
+>   *1 power + 2 USB* to the bike, so the swap is incremental by construction.
+> - **Bring-up starts on the laptop**, with the Pi as a later drop-in. Nothing in
+>   §"Software architecture" cares which host runs it.
+> - **The AHRS should support BOTH transports** — USB serial (which the Pi 3's
+>   extra ports make easy) and the GPIO UART this document specs. Treat §"AHRS
+>   mounting calibration" and the wiring SVG as the pins variant, not the only
+>   variant.
+> - **No pack and no charger yet, and that blocks nothing.** §"Bench power — the
+>   same bike, tethered" is the umbilical path and exists precisely to decouple
+>   the battery order from getting started. **Start there, not at §"Power".**
+>   Verification steps 1-2 need no pack; step 5 (the LVC failsafe) is the one
+>   test a bench brick cannot stand in for.
+
 Transition from the umbilical (12 V/5 A brick, U2D2 to a laptop) to a
 self-contained bike. Decisions below; ordering can proceed in parallel with
 tethered testing and RL training. Status: decided, nothing ordered (2026-08).
