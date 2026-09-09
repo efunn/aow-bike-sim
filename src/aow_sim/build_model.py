@@ -77,6 +77,62 @@ def _contact_friction(sim: dict) -> list[float]:
     return [sim["friction_sliding"], sim["friction_torsional"], 0.0001]
 
 
+# The three things that actually touch the ground, and which have no business
+# sharing one contact: compliant TPU rollers, a different-material front tire
+# whose contact carries the odometry estimator's whole lateral channel, and
+# rigid printed righting parts that arrive as an impact.
+#
+# HOW A PART GETS ITS OWN CONTACT. MuJoCo combines a contact pair by rule:
+# `solref`/`solimp` by solmix-weighted average, `friction` by elementwise MAX
+# (both verified 2026-09-09). Neither lets a soft geom win against a hard one --
+# an average is not the softer value. `geom_priority` is the knob that does: when
+# two geoms differ in priority, the HIGHER one dictates every contact parameter
+# and no combination happens at all. So each part below is given priority 1
+# against the floor's 0.
+#
+# THIS IS CURRENTLY A BIT-EXACT NO-OP, DELIBERATELY. With every part resolving
+# to the same global values, dictation and combination agree -- max(x, x) == x
+# and avg(x, x) == x -- so the physics is unchanged and `plant_digest` does not
+# move. `tests/test_contact_parts.py` pins both halves.
+#
+# OVERRIDES ARE OPTIONAL AND ABSENT FROM bike_params.yaml ON PURPOSE. Adding a
+# `sim.contact_parts` block moves `plant_digest`, which makes every export in
+# moves/ provisional -- so the block stays unwritten until someone means it. The
+# code path exists now; the physics change is a separate, deliberate act.
+#
+#     sim:
+#       contact_parts:
+#         front_tire:  {solref: [0.002, 1.0], friction_sliding: 1.3}
+#         righting:    {solref: [0.001, 1.0]}
+CONTACT_PARTS = ("roller", "front_tire", "righting")
+
+
+def _part_contact(sim: dict, part: str) -> dict:
+    """Contact kwargs for one ground-touching part.
+
+    Returns the global values unless `sim.contact_parts.<part>` overrides them,
+    plus `priority=1` so the part dictates the contact rather than averaging
+    into it. `part` must be one of CONTACT_PARTS -- an unknown name is a typo
+    that would otherwise silently fall back to the globals and look like it
+    worked.
+    """
+    if part not in CONTACT_PARTS:
+        raise KeyError(f"{part!r} is not a contact part; expected one of "
+                       f"{CONTACT_PARTS}")
+    over = (sim.get("contact_parts") or {}).get(part) or {}
+    friction = list(_contact_friction(sim))
+    if "friction_sliding" in over:
+        friction[0] = over["friction_sliding"]
+    if "friction_torsional" in over:
+        friction[1] = over["friction_torsional"]
+    return {
+        "condim": sim["condim"],
+        "friction": friction,
+        "solref": list(over.get("solref", sim["contact_solref"])),
+        "priority": 1,
+    }
+
+
 def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
     """Omni wheel assembly + input shafts + couplings + drive actuators.
 
@@ -158,8 +214,7 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
                 mass=roller["pair_mass"] / 2,
                 contype=DYN_CONTYPE,
                 conaffinity=DYN_CONAFF,
-                condim=sim["condim"],
-                friction=_contact_friction(sim),
+                **_part_contact(sim, "roller"),
                 rgba=[0.15, 0.15, 0.15, 1],
             )
 
@@ -297,8 +352,7 @@ def _add_hockey(spec: mujoco.MjSpec, chassis, p: dict) -> None:
                 mass=st["mass"],
                 contype=STICK_CONTYPE,
                 conaffinity=STICK_CONAFF,
-                condim=sim["condim"],
-                friction=_contact_friction(sim),
+                condim=sim["condim"], friction=_contact_friction(sim),
                 rgba=[0.8, 0.5, 0.1, 0.35],   # translucent, for sim visibility
             )
 
@@ -369,8 +423,7 @@ def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True) -> No
                 mass=b["mass"],
                 contype=DYN_CONTYPE,
                 conaffinity=DYN_CONAFF,
-                condim=sim["condim"],
-                friction=_contact_friction(sim),
+                condim=sim["condim"], friction=_contact_friction(sim),
                 rgba=[0.9, 0.75, 0.2, 1],
             )
 
@@ -570,7 +623,7 @@ def _add_case_sides(chassis, p: dict, plate_pos, plate_half, sim: dict) -> None:
                       (wing_lo - gap - clear) / 2],
                 pos=[(skirt_front + rear_x) / 2, y, (wing_lo - gap + clear) / 2],
                 mass=m_each, contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
-                condim=sim["condim"], friction=_contact_friction(sim),
+                **_part_contact(sim, "righting"),
                 # Translucent: these panels sit directly between the camera and
                 # the rear wheel in the `wheel` view, and the wheel is the whole
                 # reason that view exists.
@@ -583,7 +636,7 @@ def _add_case_sides(chassis, p: dict, plate_pos, plate_half, sim: dict) -> None:
                 size=[(wing_front - gap - rear_x) / 2, th / 2, hz],
                 pos=[(wing_front - gap + rear_x) / 2, y, pz],
                 mass=m_each, contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
-                condim=sim["condim"], friction=_contact_friction(sim),
+                **_part_contact(sim, "righting"),
                 # Translucent: these panels sit directly between the camera and
                 # the rear wheel in the `wheel` view, and the wheel is the whole
                 # reason that view exists.
@@ -698,7 +751,7 @@ def _add_wing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
                  float(lo[0]) - side * th / 2,
                  float(lo[1] + hi[1]) / 2],
             mass=w_ref["mass"], contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
-            condim=sim["condim"], friction=_contact_friction(sim),
+            **_part_contact(sim, "righting"),
             rgba=[0.85, 0.2, 0.2, 1] if side < 0 else [0.2, 0.4, 0.8, 1])
         if side > 0:      # once, off the left plate; the right is its mirror
             # px is the linkage STATION; panel_offset_x is relative to it.
@@ -869,8 +922,7 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
                 mass=mass,
                 contype=DYN_CONTYPE,
                 conaffinity=DYN_CONAFF,
-                condim=sim["condim"],
-                friction=_contact_friction(sim),
+                **_part_contact(sim, "righting"),
                 rgba=[0.85, 0.2, 0.2, 1],
             )
         # The foot. A bare SPHERE is a point contact, and a point contact is
@@ -897,8 +949,7 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
                 mass=m_foot,
                 contype=DYN_CONTYPE,
                 conaffinity=DYN_CONAFF,
-                condim=sim["condim"],
-                friction=_contact_friction(sim),
+                **_part_contact(sim, "righting"),
                 rgba=[0.85, 0.2, 0.2, 1],
             )
         else:
@@ -919,8 +970,7 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
                     mass=m_foot / n,
                     contype=DYN_CONTYPE,
                     conaffinity=DYN_CONAFF,
-                    condim=sim["condim"],
-                    friction=_contact_friction(sim),
+                    **_part_contact(sim, "righting"),
                     rgba=[0.85, 0.2, 0.2, 1],
                 )
         # The driven gear, fixed to the wing and centred on its pivot. Drawn
@@ -1145,7 +1195,7 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
             pos=[0.0, mid[0], mid[1]],
             quat=_quat_z_to([0.0, float(w_hat[0]), float(w_hat[1])]),
             mass=w_ref["mass"], contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
-            condim=sim["condim"], friction=_contact_friction(sim),
+            **_part_contact(sim, "righting"),
             rgba=[0.85, 0.2, 0.2, 1] if side < 0 else [0.2, 0.4, 0.8, 1])
         att = joint0 - pivot
         wing.add_site(name=f"swing_wing_{tag}_attach",
@@ -1249,8 +1299,7 @@ def _add_swing_wings(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
             mass=float(cfg["mass"]),
             contype=DYN_CONTYPE,
             conaffinity=DYN_CONAFF,
-            condim=sim["condim"],
-            friction=_contact_friction(sim),
+            **_part_contact(sim, "righting"),
             rgba=[0.9, 0.55, 0.1, 1],
         )
 
@@ -1665,8 +1714,7 @@ def build_spec(
         mass=fw["mass"],
         contype=DYN_CONTYPE,
         conaffinity=DYN_CONAFF,
-        condim=p["sim"]["condim"],
-        friction=_contact_friction(p["sim"]),
+        **_part_contact(p["sim"], "front_tire"),
         rgba=[0.15, 0.15, 0.15, 1],
     )
 
