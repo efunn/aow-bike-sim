@@ -1,5 +1,16 @@
 # Omni Wheel Measurement Protocol
 
+> **Status: HALF MEASURED.** §§1-6 (envelope, cones, masses, gear ratios) were
+> filled from the 2026-07-17 teardown and are in `bike_params.yaml` with
+> `source: measured`. **§7 (empirical calibration) is entirely 0.0** — the
+> spin-downs and the servo step need the wheel-only testbed, which is exactly
+> `first-physical-test.md` **stage 1, the drivetrain station**, and is the next
+> thing on the build track. Five `GUESS` parameters are waiting on it.
+>
+> (An older line in `docs/status.md` said the `--variant testbed` model has "no
+> physical counterpart under this plan". That was written before
+> `first-physical-test.md` and is wrong: stage 1 *is* its physical counterpart.)
+
 Companion data-entry sheet: `omni-wheel-measurements.yaml` (same section
 numbering — open it side by side and fill in raw values in mm/g as you measure).
 

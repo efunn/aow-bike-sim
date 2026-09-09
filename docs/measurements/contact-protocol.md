@@ -1,5 +1,28 @@
 # Contact Model Measurement Protocol
 
+> **Status: CORRECT and CURRENT — but nothing has been measured.** Every field in
+> `contact-measurements.yaml` is still 0.0, and that is the only thing wrong here.
+>
+> The document was fixed on 2026-08-22 (`c1b8a8d`): the CORRECTION at the top is
+> in place, the withdrawn "timeconst 0.020 is ruled out" claim is marked
+> withdrawn, and **the negative `solref` convention is written down as THE PLAN
+> rather than an option**. Its §P0 table was re-checked against
+> `analysis/contact_calibration.py` on 2026-09-08 and agrees to within the
+> timestep change (3.60 vs 3.78, 0.37 vs 0.389, 1.95 vs 1.982 mm).
+> `docs/status.md`'s ranked risk #8 — "the contact protocol docs are stale" — is
+> itself the stale claim, and is retired in the status rewrite.
+>
+> **Running this on SEVERAL floors?** `docs/plans/floors-and-the-contact-model.md`
+> is the layer on top: same three tests, once per surface, recorded in
+> `floor-measurements.yaml`, with the spread across surfaces setting the
+> randomization range. It also carries the solref/solimp history and the
+> per-geom blocker.
+>
+> **Read §P0's CORRECTION before taking any reading**: `timeconst` sets damping
+> AND stiffness, `dampratio` sets stiffness only, so a static reading fixes only
+> the PRODUCT and P0 and P1 must be solved jointly — unless you switch to
+> negative `solref` first, which is the point of switching.
+
 Companion data sheet: `contact-measurements.yaml` (same section numbering).
 Extends §7 of `omni-wheel-protocol.md`, whose item 6 already flagged that
 contact softness needs calibrating; this is that item, worked out.

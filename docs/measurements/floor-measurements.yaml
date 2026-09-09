@@ -1,0 +1,92 @@
+# Per-SURFACE contact measurements. One block per floor the bike will drive on.
+#
+# Protocol: docs/measurements/contact-protocol.md (P0, P0b, P1) -- unchanged,
+# just run once per surface. Plan and rationale:
+# docs/plans/floors-and-the-contact-model.md
+#
+# Units are in each key's suffix:
+#   _mm = millimetres (float), _n = newtons, _kg = kilograms,
+#   _deg = degrees, _fps = frames per second (int).
+# 0 / 0.0 / "" means NOT YET MEASURED. Leave it rather than guessing.
+#
+# WHY SEVERAL SURFACES. The mean sets the nominal; the SPREAD sets the
+# randomization range (see the plan doc section 6). A policy trained across the
+# measured span drives on any of these floors, which is strictly better than
+# picking one and hoping -- and it is the only thing that retires ranked risk #1
+# in docs/status.md.
+#
+# READ THIS BEFORE ENTERING A NUMBER. `dampratio` sets STIFFNESS ONLY, as
+# 1/dampratio^2 -- lowering it makes the contact STIFFER, not softer. A static
+# reading fixes only the PRODUCT timeconst*dampratio, so P0 and P1 must be
+# solved JOINTLY per surface. Label every result by its SINK IN MM, which is
+# unambiguous, rather than by the raw pair, which is not.
+
+meta:
+  wheel: "rear omni wheel, TPU rollers"
+  # The whole point of P0 referencing the AXLE: keeps frame flex out of the
+  # reading. Note the roll phase too -- the 8-fold envelope ripple is ~0.6 mm of
+  # REAL geometry (omni-wheel-protocol.md section 1) and will otherwise be read
+  # as compliance.
+  roll_phase: ""             # str -- e.g. "single roller in contact"
+  notes: ""
+
+# ---------------------------------------------------------------------------
+# One block per surface. Copy the template, do not rename the fields.
+#
+# `id` is what everything else refers to. `backing` matters as much as the top
+# material: a mat on concrete and the same mat on joists are different floors.
+surfaces:
+
+  - id: reference_wood
+    material: "wood -- smooth cutting board"
+    backing: ""              # str -- what is underneath, and how rigid
+    temperature_c: 0.0
+    clean: true
+    date: ""
+    # --- P0, static load-deflection -------------------------------------
+    p0_static:
+      unloaded_reference_mm: 0.0
+      points: []             # [{load_kg, deflection_mm}], 2-3 of them
+    # --- P0b, incline slide ----------------------------------------------
+    p0b_incline:
+      # BLOCK THE ROTATION or this measures rolling resistance instead.
+      slide_angle_deg: []    # [float] -- repeat trials, keep them all
+      mu_derived: 0.0        # tan(mean angle)
+    # --- P1, drop rebound -------------------------------------------------
+    p1_drop:
+      camera_fps: 0
+      drops: []              # [{drop_height_mm, rebound_1_mm, rebound_2_mm,
+                             #   audible_bounces}]
+    # --- solved JOINTLY from p0 + p1 --------------------------------------
+    derived:
+      sink_at_bike_weight_mm: 0.0   # the legible label for this surface
+      solref_stiffness: 0.0         # NEGATIVE form: solref = [-k, -b]
+      solref_damping: 0.0
+      # The positive-form equivalent, for comparison against the shipped
+      # [0.005, 1.0] only. Do not fit in this parameterisation.
+      timeconst_equiv_s: 0.0
+      dampratio_equiv: 0.0
+
+  # - id: carpet_low_pile
+  #   material: ""
+  #   ... copy the block above
+
+# ---------------------------------------------------------------------------
+# Filled once at least two surfaces are done. This is what goes into
+# config/rl_general.yaml's `randomization:` block -- see the plan doc section 6.
+across_surfaces:
+  n_surfaces: 0
+  mu_min: 0.0
+  mu_max: 0.0
+  mu_mean: 0.0
+  friction_frac_suggested: 0.0     # from the SPREAD, not the mean
+  sink_min_mm: 0.0
+  sink_max_mm: 0.0
+  solref_frac_suggested: 0.0
+  dampratio_range_suggested: [0.0, 0.0]
+  notes: >
+    The sim currently applies ONE contact to every geom -- rear rollers, front
+    tire, righting wings, case panels alike (see the plan doc section 4). Until
+    that is split per geom, a per-surface number has nowhere to go: MuJoCo
+    combines a contact pair by solmix-weighted average, so "compliant TPU on
+    rigid wood" cannot be expressed by setting floor and roller separately.
