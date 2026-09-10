@@ -62,9 +62,20 @@ DEFAULT_POLICIES = ("general_rl_odo_ahrs",
                     "general_rl_odo_ahrs_tau019",
                     "general_rl_odo_ahrs_rand2")
 
-# Colour-blind-safe trio, and deliberately not a rainbow: these are compared
+# Colour-blind-safe, and deliberately not a rainbow: these are compared
 # pairwise far more often than they are read as a sequence.
-COLORS = ("#4477aa", "#ee6677", "#228833", "#ccbb44", "#66ccee")
+#
+# THE FIRST FIVE ARE FROZEN. Every tracked figure in analysis/plots/ was drawn
+# with them, and CLAUDE.md requires a tracked figure to be reproducible at the
+# name it is tracked under -- reordering would silently recolour all of them on
+# the next regeneration. Extensions go on the END.
+#
+# Extended 2026-09-09 from 5 to 12 for the seed sweeps. `COLORS[j % len]` wraps
+# SILENTLY, so at 5 entries a 12-policy chart drew seeds 0, 5 and 10 in the
+# same blue and looked fine. `plot` now refuses rather than wrapping.
+COLORS = ("#4477aa", "#ee6677", "#228833", "#ccbb44", "#66ccee",
+          "#aa3377", "#ee8866", "#44aa99", "#882255", "#999933",
+          "#555555", "#bbbbbb")
 
 # Subsections WITHIN a family, in plot order. The families themselves come
 # from train_general_rl.FAMILIES -- imported, never restated, so a chart and a
@@ -337,6 +348,13 @@ def plot(metric, out, idx, labels, spans, args):
     x = np.arange(len(idx_v))
     width = 0.8 / n
 
+    # Refuse rather than wrap: two policies sharing a colour is a chart that
+    # reads as a result and is not one.
+    if n > len(COLORS):
+        raise SystemExit(
+            f"{n} policies but only {len(COLORS)} distinct colours -- add to "
+            f"COLORS or split the comparison. Refusing to draw two policies "
+            f"in the same colour.")
     fig, ax = plt.subplots(figsize=(max(12.0, 0.66 * len(idx_v) + 1.1 * n), 5.6))
     for j, name in enumerate(names):
         rows = out[name]
@@ -415,13 +433,64 @@ def plot(metric, out, idx, labels, spans, args):
     return path
 
 
+def summary(out) -> None:
+    """One row per policy: character, competence, and whether it stood still.
+
+    WHY A TABLE AND NOT A CHART. The per-command bars are a detail view and stop
+    being readable somewhere past five policies -- a 12-seed sweep is 240 bars.
+    What a sweep actually asks is "how do these seeds DISTRIBUTE", which is one
+    row each.
+
+    THE TWO COLUMNS ARE THE WHOLE POINT, and separating them is what stopped a
+    directional gate being added to BestByScore:
+
+      turns fwd     CHARACTER. On a turning command the world-frame velocity is
+                    satisfied either body-forward or body-reversed, so both
+                    answers are correct and the split is a personality. Seeds
+                    with the same config land at 33%, 71%, 0%.
+      straight fwd  COMPETENCE. On a straight command reversing costs a 180 deg
+                    heading error for no saving, so a policy that does it is
+                    BROKEN, not characterful. `general_rl_cmd_curriculum` and
+                    `personality2` both read 0 here.
+
+    A gate on direction cannot tell those apart and would discard both.
+
+    Commands the policy FELL on are excluded from both ratios -- an episode that
+    ended early has no settled velocity to take a sign from -- so read the
+    denominators, which is why they are printed rather than a percentage alone.
+    """
+    print(f"\n  {'policy':<28}{'turns fwd':>11}{'straight fwd':>14}"
+          f"{'hold v':>9}{'fell':>7}")
+    print("  " + "-" * 69)
+    for name, rows in out.items():
+        turns = [r for r in rows if abs(r["cmd"][2]) > 1
+                 and abs(r["cmd"][0]) > 0.1 and not r["fell"]]
+        fwd_t = [r for r in turns if r["v_ach"] > 0]
+        st = [r for r in rows if r["cmd"][0] > 0.1
+              and abs(r["cmd"][2]) < 1 and not r["fell"]]
+        st_ok = [r for r in st if r["v_ach"] > 0]
+        hold = next((r["v_ach"] for r in rows if r["cmd"][0] == 0
+                     and r["cmd"][1] == 0 and r["cmd"][2] == 0), float("nan"))
+        print(f"  {name[:28]:<28}{f'{len(fwd_t)}/{len(turns)}':>11}"
+              f"{f'{len(st_ok)}/{len(st)}':>14}{hold:>9.2f}"
+              f"{sum(r['fell'] for r in rows):>7}")
+    print("\n  turns fwd    = turning commands resolved body-FORWARD (character)")
+    print("  straight fwd = forward commands actually driven forward (competence)")
+    print("  hold v       = body velocity on the pure hold command, m/s")
+    print("  fell counts ALL 20; the two ratios exclude the commands it fell on.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--policies", nargs="+", metavar="NAME",
                     default=list(DEFAULT_POLICIES))
     ap.add_argument("--metrics", nargs="+", choices=list(METRICS),
-                    default=list(METRICS))
+                    default=None,
+                    help="default: every metric, unless --summary is given")
+    ap.add_argument("--summary", action="store_true",
+                    help="one row per policy instead of the per-command bars. "
+                         "Pass --metrics as well to get both.")
     ap.add_argument("--encoder", default="counts",
                     choices=("counts", "ideal", "reported", ""),
                     help="force every policy onto ONE encoder model; \"\" "
@@ -442,11 +511,20 @@ def main():
     print(f"eval: {len(args.policies)} policies in parallel, one process "
           f"each, --encoder {args.encoder} --ahrs {args.ahrs} --ahrs-tau "
           f"{args.ahrs_tau:g}")
+    # --summary alone means the table alone: drawing all twelve charts for a
+    # 12-seed sweep is minutes of matplotlib nobody asked for. Naming --metrics
+    # explicitly still gets both.
+    metrics = args.metrics if args.metrics is not None \
+        else ([] if args.summary else list(METRICS))
+
     cmds, out = run(args.policies, args.encoder, args.ahrs, args.ahrs_tau)
-    idx, labels, spans = order_and_labels(cmds)
-    PLOTS.mkdir(exist_ok=True)
-    for metric in args.metrics:
-        print("wrote", plot(metric, out, idx, labels, spans, args))
+    if args.summary:
+        summary(out)
+    if metrics:
+        idx, labels, spans = order_and_labels(cmds)
+        PLOTS.mkdir(exist_ok=True)
+        for metric in metrics:
+            print("wrote", plot(metric, out, idx, labels, spans, args))
 
 
 if __name__ == "__main__":
