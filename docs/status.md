@@ -86,6 +86,7 @@ parked or reference — read that before the body.
 | `untethered-setup.md` | the physical bike: power, wiring, onboard software, Pi setup, verification. The umbilical path is §"Bench power" |
 | `sensor-workstream.md` | the odometry/AHRS arc and the full policy standings — why sensor-trained policies win 1.00 to 0.20 |
 | `eval-score-rewrite.md` | how policies are SCORED, why the early numbers hid a failure, and the command-distribution audit |
+| `seed-sweep-and-personalities.md` | **the 12-seed sweep**: determinism, the failure taxonomy, why reverse is easier, early abort detection, and the options not taken |
 | `general-rl-improvements.md` | collected RL findings. Reference, not a queue |
 | `mujoco-modeling-decisions.md` | why the model is built the way it is. Reference |
 | `odometry-rewrite.md` | the estimator itself, and why rewriting it was skipped |
@@ -302,9 +303,14 @@ every field in `contact-measurements.yaml` is still 0.0.
    stiff is the cliff. The error came from trusting the parameter's NAME over
    `contact-protocol.md`'s own CORRECTION, which states the formulas plainly.
 
-2. **The eval score cannot see a policy trading away a direction.** Demonstrated
-   once, at a cost of 12M steps. `_score` is still `survive_rate × track_geo`;
-   `speed_ratio_fwd` is computed and deliberately excluded. Item 4 above.
+2. **A third of training runs silently produce a policy that drives BACKWARDS
+   when told forward** — measured 2026-09-10 across 12 seeds: 4 broken, 1
+   partial, 7 competent, all differing only by `algo.seed`. `_score` is still
+   `survive_rate × track_geo`, so three of the broken ones outrank the best
+   policy in the set. Detectable from ~5M of 20M steps, but a naive abort would
+   have killed the run that recovered to the second-best result. Nothing is
+   implemented; see `seed-sweep-and-personalities.md` for the taxonomy, the
+   reward mechanism behind it, and the options.
 3. **The front tire and the righting wings still have the compliance of a TPU
    roller — now fixable in one line.** `roller`, `front_tire` and `righting` were
    made separately addressable on 2026-09-09 (`sim.contact_parts`, via

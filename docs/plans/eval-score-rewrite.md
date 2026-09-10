@@ -411,6 +411,16 @@ artifact is a score that artifact should not carry.
 
 ## The turn personality — a behaviour the world-frame command CANNOT score
 
+> **Measured across 12 seeds, 2026-09-10** — see
+> `seed-sweep-and-personalities.md`. The axis is real and recurs: turn
+> resolution spans 22%–71% among competent policies. It also confirmed the
+> position below: **a turn-direction gate would be wrong, but a
+> STRAIGHT-line one is defensible** — a 0.3 floor on `speed_ratio_fwd` cuts the
+> five broken seeds with no false positives, in a gap ~0.6 wide. Though for
+> those runs it changes nothing about what gets exported: they never had a good
+> checkpoint to select. The mechanism that would help is an ABORT, not a score.
+
+
 Added 2026-09-09. Not a defect in `_score`'s weighting; a blind spot in the
 COMMAND, which no reweighting can fix.
 
