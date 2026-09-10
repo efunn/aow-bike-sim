@@ -1,0 +1,103 @@
+name: personality2
+type: rl
+kind: general
+policy_file: personality2.npz
+params_digest: e1c0d8822373309b
+plant_digest: e1ec36bfa670217e
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.0
+vel_window_s: 0.0
+obs_zero_lat: false
+obs_odometry: true
+odometry_encoder: counts
+obs_pitch: true
+obs_wings: false
+act_wings: false
+obs_swing: false
+act_swing: false
+wing_max_deg: 90.0
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- pitch
+- pitch_rate
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 18000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 4.453598003717474e-07
+  metrics:
+    survive_rate: 0.9
+    track: 0.535
+    track_geo: 0.51
+    vel_err: 0.371
+    head_err_deg: 38.0
+    n_eval: 20
+    drift_m: 0.651
+    drift_lon: -0.615
+    drift_lat: -0.211
+    drift_bearing_deg: -161.0
+    drift_max: 0.651
+    drift_sd: 0.181
+    steer_rest_deg: 19.0
+    speed_ratio_fwd: -0.105
+    speed_ratio_rev: 1.145
+    crab_ratio_left: 0.723
+    crab_ratio_right: 0.935
+    crab_head_err: 83.5
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.367
+    by_family:
+      hold:
+        n: 1
+        survive_rate: 1.0
+        head_err_tail: 26.8
+        vel_err_med: 0.221
+        drift_m: 0.651
+        drift_overshoot: 0.0
+      spin:
+        n: 2
+        survive_rate: 1.0
+        t_head_s: 1.07
+        t_head_n: 2
+        head_err_tail: 23.7
+        vel_err_med: 0.242
+      cruise:
+        n: 9
+        survive_rate: 1.0
+        t_head_s: 1.0
+        t_head_n: 6
+        head_err_tail: 10.3
+        vel_err_med: 0.732
+      crab:
+        n: 2
+        survive_rate: 0.5
+        head_err_tail: 48.2
+        vel_err_med: 0.388
+      turn_big:
+        n: 6
+        survive_rate: 0.833
+        t_head_s: 2.45
+        t_head_n: 6
+        head_err_tail: 82.8
+        vel_err_med: 0.225
+  exported_from: best_model.zip
