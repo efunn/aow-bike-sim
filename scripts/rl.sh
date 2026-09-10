@@ -333,24 +333,57 @@ cmd_seeds() {
   printf -v q_name '%q' "$name"
   for a in ${rest[@]+"${rest[@]}"}; do printf -v a '%q' "$a"; q_rest+=" $a"; done
 
-  local chain="for i in \$(seq $lo $hi); do
-      echo \"=== seed \$i of $lo..$hi : \$(date '+%F %T') ===\"
-      python -u -m aow_sim.train_${move}_rl --seed \"\$i\" \\
-        --run-dir $q_base/seed\$i --export-name ${q_name}\$i$q_rest || {
-          echo \"seed \$i FAILED -- continuing with the rest\" >&2; }
-    done
-    echo \"=== sweep done : \$(date '+%F %T') ===\""
+  # ONE LINE, no embedded newlines. `start` records the argv as the log's FIRST
+  # LINE and `cmd_eta` resolves --config and --timesteps by reading exactly that
+  # line. A multi-line chain puts them on line 2+, so eta silently falls back to
+  # config/rl_<move>.yaml and reports the percentage against the WRONG budget --
+  # which is the quiet failure cmd_eta's own comment documents (a 12M run shown
+  # as 6M, 2026-08-09). Observed again here before this was collapsed.
+  # TRAP + BACKGROUND-AND-WAIT, not a plain foreground call. Two reasons, and
+  # the second is a bug this cost:
+  #
+  #  1. bash DEFERS a trap while a FOREGROUND child runs, so a plain
+  #     `python ...` would swallow the signal until the seed finished -- up to
+  #     2.2 h late. `cmd & wait $!` lets the trap fire immediately.
+  #  2. Without the trap, killing the current python makes the LOOP ADVANCE and
+  #     spawn the next seed before bash itself is signalled -- orphaning it.
+  #     Observed on macOS, where `setsid` does not exist so `stop` falls back to
+  #     signal_tree (children first, then the parent) and loses that race. On
+  #     Linux setsid gives a real process group and the group kill is atomic, so
+  #     it would not have shown up on the training box at all.
+  #
+  # `exit 130` marks it cancelled rather than completed.
+  local chain="trap 'kill \"\$child\" 2>/dev/null; exit 130' TERM INT; for i in \$(seq $lo $hi); do echo \"=== seed \$i of $lo..$hi : \$(date '+%F %T') ===\"; python -u -m aow_sim.train_${move}_rl --seed \"\$i\" --run-dir $q_base/seed\$i --export-name ${q_name}\$i$q_rest & child=\$!; wait \"\$child\" || echo \"seed \$i FAILED or cancelled -- code \$?\" >&2; done; echo \"=== sweep done : \$(date '+%F %T') ===\""
 
+  # LOGNAME IS `train`, NOT `seeds`. Four places hardcode `train-latest.log` --
+  # cmd_eta, cmd_status's detail line, board_logdir and the `logs` subcommand --
+  # so any other name silently breaks all of them for a sweep. The supervisor's
+  # output goes to the same place a single run's would, and every subcommand
+  # keeps working unchanged.
+  #
+  # WHAT `eta` REPORTS FOR A SWEEP: the seed currently running, not the sweep.
+  # The chain restarts SB3 per seed, so `total_timesteps` resets each time and
+  # the percentage is the current seed's. Multiply by the seeds remaining, or
+  # read the total off the launch banner above.
   local log
-  RUN_TAG="$tag" log="$(RUN_TAG="$tag" start "$move" train "seeds" -- bash -c "$chain")"
+  log="$(RUN_TAG="$tag" start "$move" train "train" -- bash -c "$chain")"
 
   # ETA. 2500 steps/s is MEASURED, not assumed: derived from checkpoint mtimes
   # across general_rl_cmd_curriculum, _2 and _2b on the Threadripper (16C/32T),
   # which agree at 2514 / 2496 / 2518 steps/s -- 20M steps = 2.2 h per run. It
   # is a per-box constant; on a different machine read `./scripts/rl.sh eta`
   # once seed $lo is under way and rescale.
-  local steps eta_h
-  steps="$(awk '/^algo:/{a=1} a&&/^[ \t]+total_timesteps:/{print $2; exit}' "$cfg_file" 2>/dev/null)"
+  # An explicit --timesteps BEATS the config, exactly as cmd_eta resolves it.
+  # Reading only the config would print a budget the run is not using -- the
+  # same wrong-denominator failure, one line higher up.
+  local steps eta_h k
+  for ((k = 0; k < ${#argv[@]}; k++)); do
+    case "${argv[k]}" in
+      --timesteps)   steps="${argv[k+1]:-}" ;;
+      --timesteps=*) steps="${argv[k]#--timesteps=}" ;;
+    esac
+  done
+  [[ -n "${steps:-}" ]] || steps="$(awk '/^algo:/{a=1} a&&/^[ \t]+total_timesteps:/{print $2; exit}' "$cfg_file" 2>/dev/null)"
   if [[ -n "$steps" ]]; then
     eta_h="$(awk -v s="$steps" -v n="$n" 'BEGIN{printf "%.1f", s*n/2500/3600}')"
     echo "sweep        -> $n seeds, SERIAL, seed $lo..$hi"
@@ -365,6 +398,7 @@ cmd_seeds() {
   echo
   echo "board        -> $(board_url "${PORT:-$(port_for "$move")}")  (all seeds, one dashboard)"
   echo "watch        -> RUN_TAG=$tag ./scripts/rl.sh logs $move"
+  echo "progress     -> RUN_TAG=$tag ./scripts/rl.sh eta $move   (CURRENT seed, not the sweep)"
   echo "cancel ALL   -> RUN_TAG=$tag ./scripts/rl.sh stop $move"
   echo "compare      -> python analysis/per_command.py --metrics v_ach \\"
   echo "                  --policies ${name}${lo} ${name}$(( lo + 1 )) --tag seedsweep"
