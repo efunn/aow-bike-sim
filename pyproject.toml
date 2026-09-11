@@ -64,6 +64,14 @@ packages = ["src/aow_sim"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# TEST THE SOURCE NEXT TO THE TESTS, not whatever is installed. The editable
+# install points at whichever checkout ran `pip install -e .`, so inside a
+# `git worktree` -- which isolates FILES, not sys.path -- `import aow_sim`
+# loaded the MAIN tree and a worktree's own changes were invisible to its own
+# tests. That surfaced as two new tests failing against code that was never
+# loaded. `pythonpath` is resolved against rootdir, so each checkout now tests
+# itself, with no PYTHONPATH prefix to remember.
+pythonpath = ["src"]
 # --strict-markers turns a misspelt marker into an error. Without it
 # `pytest -m contct` selects nothing, says nothing, and exits 0 -- which is
 # indistinguishable from "that change affected no tests", the one answer a
