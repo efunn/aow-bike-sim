@@ -30,6 +30,10 @@ from .params import DEFAULT_PARAMS, _normalize, load_params  # noqa: F401
 
 
 FLOOR_CONTYPE, FLOOR_CONAFF = 1, 2
+_FLOOR_ALPHA = 1.0     # opaque. 0.75 was tried to see the dial through the
+                       #   floor; it also disables shadow receipt in MuJoCo,
+                       #   and the real fix was putting the dial, grid and pen
+                       #   ON the surface rather than seeing through it.
 FLOOR_GRID_M = 0.25   # default metres per checker square; override with
                       #   sim.floor_grid_m (record.py exposes --grid)
 DYN_CONTYPE, DYN_CONAFF = 2, 1
@@ -1022,8 +1026,14 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
         s.objname = "wing_right_joint"
 
 
+# `_smaller`, not the bare `swing_linkage.yaml`, because that is the design
+# the CAD path builds -- `cad_swing_linkage.CONFIG` -- and CAD is downstream of
+# the decision. The two disagreed: teleop and analysis/swing_linkage.py drove
+# one geometry while the part being made was another. Which config actually won
+# on 2026-09-02/03 is NOT recorded anywhere: the plan doc says that work lives
+# "only in docs/status.md", and status.md no longer carries it.
 SWING_LINKAGE_CFG = (Path(__file__).resolve().parents[2]
-                     / "config" / "swing_linkage.yaml")
+                     / "config" / "swing_linkage_smaller.yaml")
 
 
 def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
@@ -1218,7 +1228,22 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
     act.set_to_position(kp=w_ref["servo_kp"], kv=w_ref["servo_kv"])
     act.trntype = mujoco.mjtTrn.mjTRN_JOINT
     act.target = "swing_crank_joint"
-    act.forcerange = [-xc330["stall_torque"], xc330["stall_torque"]]
+    # THE CONFIG'S OWN TORQUE LIMIT, not the servo's stall torque. Every
+    # swing-linkage config carries the figure the mechanism was optimised
+    # around -- `limits.torque_nm` in the newer ones, `stroke.goal_current_nm`
+    # in the older -- and both were ignored, so the actuator got the full
+    # 0.8 Nm datasheet stall against a design sized for 0.55 (or 0.44). Through
+    # a four-bar whose transmission peaks near toggle, that surplus is enough
+    # to throw the bike off the ground on a step command.
+    #
+    # A Dynamixel's goal_current is exactly this: a cap on the torque the
+    # position loop may use, which makes the wing RISE rather than snap. Fall
+    # back to stall torque only when a config names no limit at all.
+    tau_cap = (cfg.get("limits") or {}).get("torque_nm")
+    if tau_cap is None:
+        tau_cap = (cfg.get("stroke") or {}).get("goal_current_nm")
+    tau_cap = float(tau_cap) if tau_cap else float(xc330["stall_torque"])
+    act.forcerange = [-tau_cap, tau_cap]
     trav = np.deg2rad(float(st["crank_travel_deg"]))
     # SIGNED range, unlike the mirrored linkage's one-way travel: -t deploys
     # one side and +t the other, and clamping it to [0, t] would silently make
@@ -1516,17 +1541,80 @@ def _add_world(spec: mujoco.MjSpec, p: dict) -> None:
     # 0 (i.e. uniform). A floor is not a shiny surface anyway.
     mat.specular = 0.0
     mat.shininess = 0.0
-    spec.worldbody.add_geom(
-        name="floor",
-        type=mujoco.mjtGeom.mjGEOM_PLANE,
-        material="floor_grid",
-        size=[sim["floor_size"], sim["floor_size"], 0.1],
-        contype=FLOOR_CONTYPE,
-        conaffinity=FLOOR_CONAFF,
-        condim=sim["condim"],
-        friction=_contact_friction(sim),
-        rgba=[0.85, 0.85, 0.85, 1],
-    )
+    # FLOOR TILT IS BAKED AT SPEC TIME, because it cannot be set later:
+    # mj_kinematics only walks bodies 1..nbody, so a world-body geom's
+    # `geom_quat` is read at compile and writing it (or `data.geom_xmat`) on a
+    # live model changes nothing at all -- silently, with the bike sliding
+    # exactly as it did on the level floor.
+    #
+    # Which is why SEVERAL floors are compiled rather than one being rotated.
+    # `sim.floor_tilt_steps` is a list of tilt angles in degrees; each becomes
+    # its own plane, and only the first is collidable and visible. What CAN be
+    # changed at runtime is `geom_contype`/`geom_conaffinity` (collision
+    # filtering reads them every step) and `geom_rgba` -- so teleop phases one
+    # floor in and the rest out without a rebuild. `run_drive.activate_floor`
+    # is the switch.
+    #
+    # Tilting the FLOOR rather than gravity is the version that keeps world Z
+    # vertical, which is what `extract_state`'s roll is measured against
+    # (balance.py:77) -- so the standing roll offset a real AHRS sees on a
+    # slope appears here too. Tilting gravity instead leaves world Z equal to
+    # the floor normal, the policy loses its gravity reference, and it coasts
+    # downhill uncorrected: measured 5-30x more drift than the truth.
+    #
+    # The cost: every height in this file is measured from a LEVEL floor and is
+    # wrong on a tilted one away from the origin, by tan(tilt) per metre. All
+    # the planes pass through the origin, so they coincide THERE and nowhere
+    # else -- which is why switching floors is paired with a respawn.
+    #
+    # Absent by default -> exactly one level floor, byte-identical to before.
+    # `floor_tilt_deg` is the single-floor spelling and stays supported: it is
+    # what analysis/pen_slope.py sets, and when this grew into a LIST for the
+    # teleop dial, dropping it would have left that script silently building
+    # LEVEL floors and drawing figures that looked fine and meant nothing.
+    steps = sim.get("floor_tilt_steps")
+    if not steps:
+        steps = [float(sim.get("floor_tilt_deg", 0.0) or 0.0)]
+    steps = list(steps)
+    bearing = float(sim.get("floor_tilt_bearing_deg", 0.0) or 0.0)
+    for idx, tilt in enumerate(steps):
+        tilt = float(tilt)
+        quat = [1.0, 0.0, 0.0, 0.0]
+        if abs(tilt) > 1e-12:
+            th, br = np.deg2rad(tilt), np.deg2rad(bearing)
+            axis = np.array([-np.sin(br), np.cos(br), 0.0])   # z x normal
+            quat = [np.cos(th / 2), *(np.sin(th / 2) * axis)]
+        live = idx == 0
+        spec.worldbody.add_geom(
+            # The first keeps the bare name `floor`: it is what every other
+            # module looks up (record.py's camera framing, the contact_parts
+            # priority split, analysis/floor_sweep.py), and those must not have
+            # to know how many floors exist.
+            name="floor" if live else f"floor_tilt{idx}",
+            type=mujoco.mjtGeom.mjGEOM_PLANE,
+            material="floor_grid",
+            quat=quat,
+            size=[sim["floor_size"], sim["floor_size"], 0.1],
+            # EVERY floor is compiled COLLIDABLE, even the ones that start
+            # inert. The compiler PRUNES a geom with contype=0 AND
+            # conaffinity=0 from the collision structures for good, so one
+            # compiled inert can never be switched on later -- it silently
+            # never generates a contact and the bike drops through it. They
+            # are compiled live and switched off below instead, which is
+            # reversible. Measured: compiled-inert plane -> ncon 0 forever;
+            # compiled-live then zeroed -> toggles both ways.
+            contype=FLOOR_CONTYPE,
+            conaffinity=FLOOR_CONAFF,
+            condim=sim["condim"],
+            friction=_contact_friction(sim),
+            # Translucent ONLY when several floors are compiled, i.e. the
+            # teleop dial: the command dial sits just above the surface and
+            # goes under it on a slope, and 75% lets it read through. A
+            # single-floor model -- every recording, every analysis figure --
+            # keeps a fully opaque floor, so none of those change.
+            rgba=[0.85, 0.85, 0.85,
+                  (_FLOOR_ALPHA if len(steps) > 1 else 1.0) if live else 0.0],
+        )
     # DIRECTIONAL, not positional. A point light at the origin lights the bike
     # only while it stays near the origin -- drive a few metres and it falls
     # off into flat grey, which shows up in any recording with real
@@ -1879,10 +1967,21 @@ def build_model(
     swing: bool = False, swing_cfg: str | Path | None = None,
     swing_linkage: bool = False, swing_linkage_cfg: str | Path | None = None,
 ) -> mujoco.MjModel:
-    return build_spec(params, variant, training_wheels, hockey, payload,
+    model = build_spec(params, variant, training_wheels, hockey, payload,
                       righting, wings, linkage, linkage_cfg,
                       flywheel, flywheel_cfg, swing, swing_cfg,
                       swing_linkage, swing_linkage_cfg).compile()
+    # Exactly one floor is solid and visible to start with. They are all
+    # COMPILED collidable (see the note at the floor block: compiling one
+    # inert prunes it permanently), so this is the reversible switch-off
+    # and `run_drive.activate_floor` can pick a different one at any time.
+    _floor_ids = [g for g in range(model.ngeom)
+                  if model.geom(g).name.startswith('floor_tilt')]
+    for g in _floor_ids:
+        model.geom_contype[g] = 0
+        model.geom_conaffinity[g] = 0
+        model.geom_rgba[g][3] = 0.0
+    return model
 
 
 def main() -> None:

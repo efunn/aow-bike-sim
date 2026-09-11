@@ -16,8 +16,11 @@
 > **Incomplete as a record.** The swing-linkage work of 2026-09-02/03 —
 > three-angle optimisation (22x faster), the constraint configs, the 65 mm
 > flat-deploy result, "vertical rest still does not pay", and the driveable
-> Onshape sketch feature — is currently written up only in `docs/status.md`.
-> Pulling it down into this file is outstanding.
+> Onshape sketch feature — was written up only in `docs/status.md`, and a later
+> rewrite of that file dropped it. **WHICH CONFIG WON is now recorded here**,
+> under "Which swing-linkage config won" — it was `_smaller`. The rest of that
+> work is still not pulled down, and `status.md` no longer has it either, so
+> anything not in this file is currently only in the git history.
 >
 > Tools: `analysis/wing_linkage.py`, `analysis/swing_linkage.py`,
 > `analysis/swing_demo.py`, `src/aow_sim/cad_swing_linkage.py`. Figures in
@@ -495,10 +498,41 @@ and got mis-reported as the linkage "forcing a taller roof". Fixing it shortened
 the wing 181 → 84.6 mm, dropped the fall-set requirement from 0.66 N·m to the
 0.38–0.50 window, and collapsed the two roof derivations into one rule.
 
+#### Which swing-linkage config won — 2026-09-02/03
+
+**`config/swing_linkage_smaller.yaml`.** `swing_linkage_smaller_v2.yaml` was
+tried as an even smaller envelope and did not buy enough to justify itself.
+`_smaller` is the one that was exported to CAD for construction, which is the
+strongest evidence available: CAD is downstream of the decision.
+
+This was the gap the banner at the top of this file flags — the 09-02/03 work
+was recorded "only in `docs/status.md`", and a later rewrite of that file
+dropped it, leaving fourteen `config/swing_linkage*.yaml` and nothing saying
+which one mattered. Written down here because this doc is the one that grows
+rather than being rewritten.
+
+Consequences now wired into the code:
+
+- `build_model.SWING_LINKAGE_CFG` points at `_smaller`, so teleop,
+  `analysis/swing_linkage.py` and `cad_swing_linkage` finally agree. They did
+  not: the CAD path built `_smaller` while the other two drove the bare
+  `swing_linkage.yaml`.
+- `run_drive --swing-linkage` takes an optional config path for the other
+  thirteen.
+
 #### Not decided
 
-The linkage is **not** a replacement for the geared pair. Both are built, both
-pass the fall set, and the choice is a real trade: gears have more torque margin
-and a simpler part count; the linkage has a self-locking deployed pose and needs
-no trajectory. Nothing downstream depends on the answer, so it can wait for the
-mechanical design.
+The linkage is **not** a replacement for the geared pair. **"Built" here means
+BUILT IN SIMULATION** — both are modelled and driveable (`--swing` and
+`--swing-linkage`), and both pass the fall set. **NEITHER HAS EVER BEEN
+PHYSICALLY CONSTRUCTED**, and there has never been a real geared pair; an
+earlier wording said only "both are built" and read as hardware.
+
+The choice is a real trade: gears have more torque margin and a simpler part
+count; the linkage has a self-locking deployed pose and needs no trajectory.
+Nothing downstream depends on the answer, so it can wait for the mechanical
+design.
+
+**Except that it no longer can, quite.** The linkage side HAS been taken to CAD
+for construction — see "Which swing-linkage config won" above — so the geared
+pair is the one with no physical path behind it.

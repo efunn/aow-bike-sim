@@ -322,7 +322,7 @@ def _phase_hud(frame, info):
     return frame
 
 
-def _trail(scn, pts, rgba=(*_TRAIL, 1.0)):
+def _trail(scn, pts, rgba=(*_TRAIL, 1.0), radius=0.012):
     """Breadcrumbs of where the chassis has actually been, in WORLD frame.
     The dial is drawn under the bike and travels with it, so it cannot show
     displacement; this can."""
@@ -331,8 +331,12 @@ def _trail(scn, pts, rgba=(*_TRAIL, 1.0)):
             return
         g = scn.geoms[scn.ngeom]
         mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_SPHERE,
-                            np.array([0.012, 0.012, 0.012]),
-                            np.array([q[0], q[1], 0.004]), np.eye(3).ravel(),
+                            np.array([radius, radius, radius]),
+                            # 3-D points ride a sloped floor; 2-D sit just
+                            # above a level one, which is every other caller.
+                            np.array([q[0], q[1],
+                                      q[2] if len(q) > 2 else 0.004]),
+                            np.eye(3).ravel(),
                             np.asarray(rgba, np.float32))
         scn.ngeom += 1
 

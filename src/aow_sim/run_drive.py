@@ -35,12 +35,14 @@ from __future__ import annotations
 
 import argparse
 import copy
+import time
 from pathlib import Path
 
 import mujoco
 import numpy as np
 
-from .build_model import build_model, load_params, tune_lighting
+from .build_model import (FLOOR_CONAFF, FLOOR_CONTYPE, _FLOOR_ALPHA,
+                          build_model, load_params, tune_lighting)
 from .wheel_overlay import (STRIPE_RADIUS_TELEOP, add_stripes,
                             stripe_frames)
 from .control import DriveController, run
@@ -347,7 +349,7 @@ def main() -> None:
     ap.add_argument("--hockey", action="store_true",
                     help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
     ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171"),
-                    nargs="?", const="tm151", default="none", metavar="LEVEL",
+                    nargs="?", const="tm151", default="tm151", metavar="LEVEL",
                     help="TM151 error model on the ATTITUDE the controller "
                          "reads -- roll, roll_rate, yaw_rate, i.e. the fast "
                          "loop. `typical` (the default when the flag is given "
@@ -389,7 +391,7 @@ def main() -> None:
                          "turns.")
     ap.add_argument("--odometry", nargs="?", const="front",
                     choices=("front", "blend", "lon_only", "lat_only"),
-                    default=None, metavar="MODE",
+                    default="front", metavar="MODE",
                     help="drive on the ONBOARD VELOCITY ESTIMATE instead of "
                          "MuJoCo truth: the controller sees what hw/odometry.py "
                          "reconstructs from the simulated encoders and AHRS, "
@@ -403,9 +405,27 @@ def main() -> None:
                          "`lat_only` is the reverse. The per-channel modes "
                          "isolate the blame -- headless, v_lon alone is nearly "
                          "free and v_lat alone falls every time")
-    ap.add_argument("--general", default=None, metavar="NAME",
-                    help="always-on policy to drive with (moves/NAME.{yaml,npz}); "
-                         "overrides control.general_move for this session")
+    # MUST BE REGISTERED AFTER `--odometry`, not before. Both actions share
+    # dest="odometry", and argparse seeds the namespace from the FIRST action
+    # it finds for a dest -- so with this one first its own default (None) won
+    # and omitting the flag gave None while passing `--odometry` gave "front".
+    # The two spellings silently meant different things.
+    ap.add_argument("--no-odometry", action="store_const", const=None,
+                    dest="odometry",
+                    help="drive on MuJoCo truth instead of the onboard "
+                         "estimate (--odometry is ON by default)")
+    ap.add_argument("--general", default="general_rl_cmd_curriculum2",
+                    metavar="NAME",
+                    help="always-on policy to drive with (moves/NAME.{yaml,npz}). "
+                         "Defaulted HERE rather than by moving "
+                         "`control.general_move`, because despite what the notes "
+                         "say `params_digest` hashes the WHOLE params dict, "
+                         "`control` included -- every call site passes the full "
+                         "dict -- so editing that pointer moves plant_digest and "
+                         "makes hw/state.py reject the deploy bundle and "
+                         "control/flick.py flag every trained move. Measured: "
+                         "e1c0d8822373309b -> 8218c1e882bd2743 for a one-word "
+                         "change. Pass a name to override.")
     ap.add_argument("--slowmo", type=float, default=1.0, metavar="X",
                     help="run teleop at 1/X speed (2 = half, 10 = a tenth). "
                          "- halves and = doubles it live (shifted _ and + too), "
@@ -430,10 +450,15 @@ def main() -> None:
                     help="the four-bar wing mechanism instead of the geared "
                          "pair (config/wing_linkage_locking.yaml); same 9/4 "
                          "keys, but the actuator drives the CRANK")
-    ap.add_argument("--swing-linkage", action="store_true",
-                    help="co-rotating FOUR-BAR wing pair "
-                         "(config/swing_linkage.yaml); the driveable form of "
-                         "analysis/swing_linkage.py. Same 3-position teleop.")
+    ap.add_argument("--swing-linkage", nargs="?", const=True, default=False,
+                    metavar="CONFIG",
+                    help="co-rotating FOUR-BAR wing pair; the driveable form "
+                         "of analysis/swing_linkage.py. Same 3-position "
+                         "teleop. Takes an OPTIONAL config path -- there are "
+                         "fourteen swing_linkage*.yaml and the bare flag uses "
+                         "build_model.SWING_LINKAGE_CFG "
+                         "(config/swing_linkage_smaller.yaml, what the CAD "
+                         "path builds).")
     ap.add_argument("--swing", action="store_true",
                     help="co-rotating wing pair (config/swing_wings.yaml): one "
                          "side down, other side tucked. 3 teleop positions.")
@@ -441,13 +466,32 @@ def main() -> None:
                     help="add the self-righting wing pair (teleop: 9 extends, "
                          "4 retracts). Nothing deploys on its own — the fallen "
                          "state is worth watching")
+    ap.add_argument("--slope-bearing", type=float, default=0.0,
+                    help="compass bearing the spare floors fall toward, in "
+                         "degrees from +X toward +Y. 0 (the default) puts "
+                         "downhill ACROSS the fixed camera, which is the only "
+                         "way a few degrees of tilt is visible at all -- "
+                         "falling away from the viewer reads as flat. 90 is "
+                         "downhill to the bike's left. The spawn dial picks "
+                         "the MAGNITUDE; direction comes from steering or "
+                         "from respawning on a different heading.")
     args = ap.parse_args()
     params = load_params(args.params)
+    # Compile the spare floors so the spawn dial has something to switch to.
+    # In-memory only -- `bike_params.yaml` is untouched, so neither digest
+    # moves. The extras are inert until `activate_floor` picks one, and the
+    # first floor is the same level plane every other entry point builds.
+    params = {**params, "sim": {**params["sim"],
+                                "floor_tilt_steps": FLOOR_TILT_STEPS,
+                                "floor_tilt_bearing_deg": args.slope_bearing}}
     model = build_model(params, variant="full", hockey=args.hockey,
                         righting=(args.wings or args.linkage or args.swing
                                   or args.swing_linkage),
                         wings=args.wings and not args.linkage,
-                        swing=args.swing, swing_linkage=args.swing_linkage,
+                        swing=args.swing, swing_linkage=bool(args.swing_linkage),
+                        swing_linkage_cfg=(args.swing_linkage
+                                           if isinstance(args.swing_linkage, str)
+                                           else None),
                         linkage=args.linkage,
                         linkage_cfg=args.linkage_config)
     # Same lighting the recorder applies, so a teleop session and a video of
@@ -573,6 +617,12 @@ _VEL_R = 0.20       # m, full-scale radius of the inner velocity gauge (= v_max)
                     #   along the commanded heading can never bury one in the
                     #   other — that is what made the orange arrow invisible.
 _DIAL_Z = 0.004     # m, just above the floor so the dial isn't z-fighting
+_RESPAWN_HOLD_S = 0.15  # s of wall clock to keep re-asserting a respawn,
+                        #   so the viewer's own async reset cannot win
+_SPAWN_Z = 0.13     # m. The spawn arrow marks the RESPAWN POINT rather than
+                    #   a patch of ground, and it does not follow the bike --
+                    #   so it is lifted clear instead of lying in the surface,
+                    #   where it competed with the dial and the checker.
 _CMD = (0.25, 1.0, 0.35, 1.0)      # green  — commanded
 _CMD_V = (1.0, 0.55, 0.1, 1.0)     # orange — commanded velocity
 _ACT = (0.2, 0.8, 1.0, 1.0)        # cyan   — actual heading
@@ -584,6 +634,214 @@ _TRAIL_FADE_S = 0.5                # s of older history fading to clear
 _GRID_PITCH = 0.5                  # m between floor grid lines
 _GRID_HALF = 3.0                   # m, grid extent either side of the bike
 _GRID_RGBA = (0.55, 0.55, 0.55, 0.28)
+_SLOPE = (0.85, 0.25, 0.85, 1.0)   # magenta — downhill, when the floor is tilted
+_SPAWN_RGBA = (0.15, 0.85, 0.45, 1.0)  # green — heading the respawn will use
+
+
+def _wrap(a):
+    """Angle into (-pi, pi]."""
+    return float(np.arctan2(np.sin(a), np.cos(a)))
+
+_SLOPE_G = 9.81
+
+# A SLOPING FLOOR IS TILTED GRAVITY, NOT A TILTED PLANE. For a plane the two
+# are exactly equivalent -- the bike cannot tell them apart, only the camera
+# can -- and gravity lives in mjModel.opt, which the running viewer re-reads
+# every step. So this can be changed mid-session with the bike still balancing,
+# where rotating the floor geom would need a rebuild AND would invalidate every
+# height in bike_params.yaml that is measured from a level floor
+# (`stand_clearance`, the wings' `clearance`, the righting reach numbers).
+#
+# Lives here rather than in the analysis script so the teleop feel and
+# analysis/pen_slope.py's numbers cannot drift apart.
+def tilt_gravity(model, along_deg: float, across_deg: float):
+    """Point gravity down a plane sloping `along` toward +X, `across` toward +Y.
+
+    +X is the bike's initial facing, so a positive `along` is DOWNHILL AHEAD
+    and a positive `across` is downhill to the bike's left. The magnitude is
+    held at exactly g -- a tilt redirects weight, it does not add any -- which
+    is why the z term is the residual rather than -g*cos of either angle.
+    """
+    sx = np.sin(np.deg2rad(along_deg))
+    sy = np.sin(np.deg2rad(across_deg))
+    sz = np.sqrt(max(0.0, 1.0 - sx * sx - sy * sy))
+    model.opt.gravity[:] = _SLOPE_G * np.array([sx, sy, -sz])
+    return model.opt.gravity.copy()
+
+
+def slope_components(tilt_deg: float, bearing_deg: float):
+    """(along, across) angles for a slope of `tilt_deg` running to `bearing_deg`.
+
+    Bearing is measured from +X toward +Y, so 0 is downhill straight ahead and
+    90 is downhill to the bike's left.
+
+    THE POINT IS THAT THE TOTAL TILT STAYS CONSTANT. Setting along and across
+    to the same angle does NOT give a 45-degree slope of that steepness -- it
+    gives one about sqrt(2) times steeper, because the two sines add in
+    quadrature. A compass rose built that way would put its diagonals on a
+    different hill from its edges and every diagonal-vs-edge comparison in it
+    would be wrong. Going through the sines keeps
+    arcsin(hypot(sx, sy)) == tilt_deg for every bearing.
+    """
+    s = np.sin(np.deg2rad(tilt_deg))
+    sx = s * np.cos(np.deg2rad(bearing_deg))
+    sy = s * np.sin(np.deg2rad(bearing_deg))
+    return float(np.degrees(np.arcsin(sx))), float(np.degrees(np.arcsin(sy)))
+
+
+def tilt_floor(model, tilt_deg: float, bearing_deg: float,
+               geom: str = "floor"):
+    """Rotate the FLOOR GEOM instead of gravity. Gravity is left nominal.
+
+    The honest version, and the expensive one. Tilting gravity gets the
+    mechanics exactly right but leaves world Z equal to the floor normal, so
+    `extract_state`'s roll (balance.py:77, arctan2 off the body quaternion
+    against world Z) is measured against the FLOOR -- while a real AHRS
+    measures against GRAVITY and would carry a standing offset of the slope
+    angle. Rotating the floor keeps world Z vertical, so that offset appears
+    the way it does on a real slope.
+
+    What it costs: every height in bike_params.yaml is measured from a LEVEL
+    floor, and they are all now wrong away from the origin. The plane still
+    passes through the origin, so a bike spawned there is fine and the error
+    grows with distance -- tan(tilt) per metre. Fine for a short rollout from
+    the origin, not a general-purpose slope.
+
+    Returns the plane normal, so a caller can put a trail bead on the surface.
+    """
+    d = np.array([np.cos(np.deg2rad(bearing_deg)),
+                  np.sin(np.deg2rad(bearing_deg))])
+    th = np.deg2rad(tilt_deg)
+    # Normal tilted TOWARD the downhill direction: check by substitution --
+    # z on the plane is -(n_x x + n_y y)/n_z, so this gives z = -tan(th)*s
+    # going a distance s along d, i.e. descending. The opposite sign climbs,
+    # which is the easy mistake and is silent.
+    n = np.array([np.sin(th) * d[0], np.sin(th) * d[1], np.cos(th)])
+    gid = model.geom(geom).id
+    if abs(th) < 1e-12:
+        model.geom_quat[gid] = [1.0, 0.0, 0.0, 0.0]
+    else:
+        axis = np.array([-d[1], d[0], 0.0])      # z x n, normalized
+        model.geom_quat[gid] = [np.cos(th / 2), *(np.sin(th / 2) * axis)]
+    return n
+
+
+def floor_height(n, xy):
+    """z of the tilted plane through the origin at world `xy`."""
+    xy = np.asarray(xy, float)
+    return -(n[0] * xy[..., 0] + n[1] * xy[..., 1]) / n[2]
+
+
+# (label, along_deg, across_deg). 0.57 deg is a 1% garage slab, 1.15 deg is 2%
+# -- DEGREES AND PERCENT DIFFER BY ~2x here, so both are spelled out. Cross
+# slopes come second because they are the ones that cost: a cross slope is a
+# standing roll disturbance, while a downhill one is almost entirely rejected.
+# YOU CANNOT OUT-GHOST THE VIEWER'S OWN KEYS. `key_callback` is typed
+# Callable[[int], None] -- it returns nothing, so there is no "I handled this"
+# signal and MuJoCo's built-in action fires as well as ours.
+#
+# WHICH IS WHY THE SLOPE IS NOT ON ITS OWN KEY. An earlier version put it on
+# the backtick; the comment fifteen lines into `on_key` already said the
+# viewer owns that one (bounding boxes), along with [ ] Esc Space Tab +/-
+# F1-F5 and every letter. Almost nothing is free, so the slope and the spawn
+# heading share ONE key and a modal layer, the way the policy menu already
+# does: ENTER opens the spawn dial and every key inside it is borrowed.
+_SPAWN_KEY = 257            # GLFW ENTER. policy_menu.KEY_ENTER is the same
+                            #   code, but only while that menu is open.
+
+# Floor tilts compiled into the model, in degrees. These are SEPARATE GEOMS
+# (build_model emits one plane per entry) because a tilt is baked at compile
+# and cannot be changed on a live model -- but `geom_contype`/`conaffinity`
+# and `geom_rgba` CAN, so switching which floor is solid and visible is free
+# and works mid-rollout, with the bike still balancing.
+#
+# 0.57 deg is a 1% garage slab and 1.15 deg is 2%; DEGREES AND PERCENT DIFFER
+# BY ~2x, so both are spelled. 5 and 10 are where this actually bites: at 2%
+# a trained policy rejects essentially all of it, at 10 deg a left turn falls
+# in five of eight downhill directions (analysis/pen_slope.py --rose).
+FLOOR_TILT_STEPS = [0.0, 2.0, 5.0, 10.0]
+
+
+def floor_geoms(model):
+    """Every compiled floor plane, in `FLOOR_TILT_STEPS` order."""
+    out = []
+    for i in range(model.ngeom):
+        n = model.geom(i).name
+        if n == "floor" or n.startswith("floor_tilt"):
+            out.append((0 if n == "floor" else int(n[len("floor_tilt"):]), i))
+    return [i for _, i in sorted(out)]
+
+
+def show_floor(model, idx: int):
+    """Make floor `idx` the visible one. Collision is NOT touched.
+
+    Split from `activate_floor` so the spawn dial can PREVIEW a slope while
+    the sim is paused: nothing is colliding at that moment, so swapping the
+    picture is free and instant, and the real floor only changes when the
+    respawn commits. The overlay reads the VISIBLE floor, so the downhill ray
+    and the reference grid follow the preview rather than the old surface.
+    """
+    ids = floor_geoms(model)
+    idx = int(np.clip(idx, 0, len(ids) - 1))
+    for k, gid in enumerate(ids):
+        model.geom_rgba[gid][3] = _FLOOR_ALPHA if k == idx else 0.0
+    return idx
+
+
+def visible_floor_index(model):
+    for k, gid in enumerate(floor_geoms(model)):
+        if model.geom_rgba[gid][3] > 0.0:
+            return k
+    return 0
+
+
+def collidable_floor_index(model):
+    for k, gid in enumerate(floor_geoms(model)):
+        if model.geom_contype[gid]:
+            return k
+    return 0
+
+
+def activate_floor(model, idx: int):
+    """Make floor `idx` the solid, visible one and the rest inert.
+
+    Collision filtering reads contype/conaffinity every step -- unlike
+    geom_quat, which is compile-time -- so this takes effect immediately.
+    Verified: toggling mid-rollout drops the bike through (z +0.051 -> -1.716).
+    """
+    ids = floor_geoms(model)
+    idx = int(np.clip(idx, 0, len(ids) - 1))
+    for k, gid in enumerate(ids):
+        live = k == idx
+        model.geom_contype[gid] = FLOOR_CONTYPE if live else 0
+        model.geom_conaffinity[gid] = FLOOR_CONAFF if live else 0
+    show_floor(model, idx)
+    return ids[idx]
+
+
+def floor_normal_of(model, idx: int):
+    """World normal of floor `idx`, straight from the model.
+
+    From `geom_quat` rather than `data.geom_xmat` because the caller needs it
+    around a `mj_resetData`, which leaves the world-body geom frames zeroed
+    until something repopulates them -- reading the data array there returns a
+    null normal and silently spawns the bike vertical.
+    """
+    gid = floor_geoms(model)[int(np.clip(idx, 0, len(floor_geoms(model)) - 1))]
+    R = np.zeros(9)
+    mujoco.mju_quat2Mat(R, model.geom_quat[gid])
+    return R.reshape(3, 3)[:, 2]
+
+
+def active_floor_normal(model, data):
+    """World normal of the floor currently being DRAWN.
+
+    Visible rather than solid on purpose: while the spawn dial previews a
+    slope the two differ, and an overlay that tracked the solid one would
+    draw its grid and downhill ray on a surface nobody can see.
+    """
+    gid = floor_geoms(model)[visible_floor_index(model)]
+    return np.array(data.geom_xmat[gid]).reshape(3, 3)[:, 2]
 # The `wheel` camera stands 0.45 m off a 0.05 m wheel, so the 0.5 m grid puts
 # at most one line in frame and reads as no reference at all. 25 mm is fine
 # enough that ground scrolling past is obvious at crawl speed -- which is the
@@ -632,7 +890,7 @@ def _draw_slowmo_badge(view, factor, shown) -> None:
 
 def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
              command=None, trail=None, grid=False, trail_level=None,
-             stripes=None, wheel_view=False):
+             stripes=None, wheel_view=False, spawn=None):
     """Ground dial under the bike showing the teleop command against reality.
 
     Headings live ON the rim as radial ticks; velocities are arrows from the
@@ -650,7 +908,27 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
     if reset:
         scn.ngeom = 0
     p = data.body("chassis").xpos
-    base = np.array([p[0], p[1], _DIAL_Z])
+    def floor_z(xy):
+        """Height of the live floor at world xy -- 0 when it is the level one.
+
+        The reference grid is drawn at a fixed z, which on a tilted floor
+        floats or buries itself: at 10 deg it is 0.18 m out per metre, so the
+        grid ends up in the air on the uphill side and under the surface on
+        the downhill one. Projecting it onto the plane is what makes a slope
+        READ as a slope in a plan view, where perspective gives almost nothing
+        and 2 deg of checker rotation is invisible.
+        """
+        n = active_floor_normal(model, data)
+        if abs(n[2]) < 1e-9 or float(np.linalg.norm(n[:2])) < 1e-9:
+            return 0.0
+        return -(n[0] * xy[0] + n[1] * xy[1]) / n[2]
+
+    # The dial RIDES the floor under the bike. Pinned at a fixed world z it
+    # stayed at the origin's height while the bike drove up or down a slope,
+    # so at 2 m out on 10 deg it floated a third of a metre clear of the
+    # ground it is supposed to be drawn on. Flat, not tilted -- it only needs
+    # to be at the right height to read as attached.
+    base = np.array([p[0], p[1], floor_z(p[:2]) + _DIAL_Z])
 
     def seg(a, b, kind, width, rgba):
         if scn.ngeom >= scn.maxgeom:
@@ -662,7 +940,15 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
         scn.ngeom += 1
 
     def at(heading, radius):
-        return base + radius * np.array([np.cos(heading), np.sin(heading), 0.0])
+        """A point on the dial, ON the floor surface.
+
+        Tracking only the bike's own floor height was not enough once the
+        floor became opaque: the dial is 0.30 m across, so at 10 deg its far
+        rim sits 53 mm out of plane and half the ring disappears into the
+        ground. Every rim point is put at its own floor height instead, which
+        lays the dial on the slope."""
+        xy = base[:2] + radius * np.array([np.cos(heading), np.sin(heading)])
+        return np.array([xy[0], xy[1], floor_z(xy) + _DIAL_Z])
 
     def ray(heading, length, width, rgba):
         seg(base, at(heading, length), mujoco.mjtGeom.mjGEOM_ARROW, width, rgba)
@@ -681,11 +967,13 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
         n = int(half / pitch)
         for i in range(-n, n + 1):
             u = i * pitch
-            seg(np.array([cx + u, cy - half, 0.001]),
-                np.array([cx + u, cy + half, 0.001]),
+            a = np.array([cx + u, cy - half]); b = np.array([cx + u, cy + half])
+            seg(np.array([*a, floor_z(a) + 0.001]),
+                np.array([*b, floor_z(b) + 0.001]),
                 mujoco.mjtGeom.mjGEOM_LINE, width, rgba)
-            seg(np.array([cx - half, cy + u, 0.001]),
-                np.array([cx + half, cy + u, 0.001]),
+            a = np.array([cx - half, cy + u]); b = np.array([cx + half, cy + u])
+            seg(np.array([*a, floor_z(a) + 0.001]),
+                np.array([*b, floor_z(b) + 0.001]),
                 mujoco.mjtGeom.mjGEOM_LINE, width, rgba)
 
     # The wheel view's stripes and fine grid are the SUBSTANCE of that view,
@@ -700,6 +988,34 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
         if grid:
             floor_grid(_WHEEL_GRID_PITCH, _WHEEL_GRID_HALF, _WHEEL_GRID_RGBA,
                        1.0, data.body("aow_hub").xpos)
+
+    # DOWNHILL, when the floor is tilted. Read straight off model.opt.gravity,
+    # so it needs no plumbing and can never disagree with the physics. Drawn
+    # ABOVE the `on[0]` gate -- unlike the command dial this is not a reference
+    # you might want out of the way, it is a MODE, and an operator who forgets
+    # the floor is tilted will read the resulting drift as the controller.
+    # One downhill ray. A rank of fall lines was tried here and read as
+    # visual noise; the slope is made legible instead by pointing it ACROSS
+    # the fixed camera (see --slope-bearing) and by the reference grid, which
+    # rides the tilted plane a few lines above.
+    n = active_floor_normal(model, data)
+    if float(np.linalg.norm(n[:2])) > 1e-9:
+        ray(float(np.arctan2(n[1], n[0])), _DIAL_R * 1.25, 0.006, _SLOPE)
+
+    # The spawn dial: where the bike will be facing after the next respawn.
+    # Drawn from the ORIGIN rather than under the bike, because that is where
+    # it will reappear -- and because every compiled floor passes through the
+    # origin and nowhere else, which is the whole reason a floor change is
+    # paired with a respawn.
+    if spawn is not None and spawn["open"]:
+        o = np.array([0.0, 0.0, _SPAWN_Z])
+        h = spawn["heading"]
+        # Fatter and higher than the other overlay rays. Seen through a
+        # translucent floor a thin line loses most of its contrast, and this
+        # one is the readout for a mode you are sitting in -- it has to be
+        # findable at a glance rather than merely present.
+        seg(o, o + _DIAL_R * 1.5 * np.array([np.cos(h), np.sin(h), 0.0]),
+            mujoco.mjtGeom.mjGEOM_ARROW, 0.022, _SPAWN_RGBA)
 
     if not on[0]:
         return
@@ -728,7 +1044,14 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
         # (and keep drawing) everything already drawn. That is what lets a
         # disconnected shape -- the crossbar and stem of a T -- be drawn
         # without retracing.
-        if solid > 0.0:
+        # ONLY WHEN THE CLOCK HAS MOVED. Paused, `data.time` is frozen, so
+        # every frame appended another point at the same time and the same
+        # place while the age-out below (`now - trail[0][0] > horizon`) could
+        # never fire -- the list grew without bound and the per-frame copy and
+        # stride over it got slower the longer the pause lasted. That is the
+        # lag that built up on ENTER -> ENTER and not on ENTER -> BACKSPACE,
+        # because the respawn path clears the trail on its way through.
+        if solid > 0.0 and (not trail or now > trail[-1][0]):
             trail.append((now, float(p[0]), float(p[1])))
         horizon = solid + _TRAIL_FADE_S
         if np.isfinite(solid) and solid > 0.0:
@@ -750,7 +1073,12 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
                 a = 1.0 if age <= solid else max(
                     0.0, (horizon - age) / _TRAIL_FADE_S)
             if a > 0.01:
-                seg(np.array([x0, y0, 0.002]), np.array([x1, y1, 0.002]),
+                # ON THE FLOOR, like the dial and the grid. At a fixed world
+                # z the pen dived under the surface downhill and floated
+                # above it uphill -- the drawn line stopped being where the
+                # bike had been, which is the one thing it is for.
+                seg(np.array([x0, y0, floor_z((x0, y0)) + 0.002]),
+                    np.array([x1, y1, floor_z((x1, y1)) + 0.002]),
                     mujoco.mjtGeom.mjGEOM_LINE, 5.0, (*_TRAIL, a))
 
     R = data.body("chassis").xmat.reshape(3, 3)
@@ -1325,6 +1653,17 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # inf = never expires. [ and ] step through it.
     trail_levels = [0.0, 2.0, 4.0, 10.0, float("inf")]
     trail_level = [1]          # index; default 2 s
+    # The spawn dial. ENTER opens it; inside, the arrows and 6/7/8 set the
+    # heading the bike will respawn facing, - and = pick the floor tilt, and
+    # BACKSPACE commits. Modal because almost no key is free (the viewer owns
+    # the letters, the brackets, the backtick, Esc, Space, Tab and F1-F5), and
+    # because picking a spawn is a different activity from driving -- the same
+    # argument the policy menu already makes for swallowing the keyboard.
+    spawn = {"open": False, "heading": 0.0, "floor": 0}
+    pending_respawn = [None]
+    last_floor = [0]           # so only a CHANGE of tilt prints
+    paused = [False]           # read live by teleop_loop; ENTER toggles it
+    spawn_clock = [time.perf_counter()]
     # free = the viewer's own mouse camera; follow = chase from behind;
     # overhead = plan view; wheel = broadside on the rear wheel, with roller
     # stripes and a 25 mm ground grid, for reading what the rear contact is
@@ -1348,6 +1687,10 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # live body pose changes per frame. Costs 64 scene geoms when drawn.
     stripe_geom = stripe_frames(model, params)
     ax_v, ax_psi, ax_lat = _Axis(), _Axis(), _Axis()
+    # The spawn dial gets its OWN axis so its heading ramps exactly like
+    # teleop's turn keys -- tap to nudge, hold to sweep -- without sharing
+    # hold state with the one that steers the bike.
+    ax_spawn = _Axis()
     keys = _KeyState()
     announced = [False]
     v_max = c.profile.v_max
@@ -1407,9 +1750,31 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "jadr": model.joint("swing_crank_joint" if linkage_form
                                     else "swing_right_joint").qposadr[0],
                 "stow": 0.0, "deploy": dep, "deploy_left": -dep,
-                # No slew limit: the joint carries DC-motor damping, so the
-                # position actuator already cannot drive it past no-load speed.
-                # Ramping on top of that would understate the strike.
+                # SLEW-LIMITED FOR THE FOUR-BAR, free for the geared pair.
+                # The old reasoning -- "the joint carries DC-motor damping, so
+                # the position actuator already cannot drive it past no-load
+                # speed, and ramping on top would understate the strike" --
+                # holds for the GEARED pair, where the wing angle is the servo
+                # angle over a fixed ratio. A four-bar has no fixed ratio: its
+                # transmission varies through the stroke and goes large near
+                # toggle, so a step command there is not a strike, it is a
+                # launch, and the bike leaves the ground.
+                #
+                # This is a TELEOP HANDLING LIMIT, not a modelled servo
+                # property: the servo block carries only `stall_torque`, with
+                # no no-load speed to derive a real figure from. Treat it the
+                # way `bike_params.yaml` treats a GUESS -- it wants replacing
+                # with the datasheet speed over the linkage's own transmission.
+                # The alternative fix is a current limit (shrink the
+                # actuator's forcerange), which is equally real and changes
+                # what the mechanism can HOLD as well as how fast it moves.
+                # No slew limit, for BOTH forms. A guessed ramp was tried here
+                # for the four-bar and is WITHDRAWN: the launch was the
+                # actuator running at the servo's full stall torque instead of
+                # the limit its own config specifies, which
+                # `_add_swing_linkage` now honours. Capping the torque is the
+                # real mechanism -- it is what a Dynamixel's goal_current does
+                # -- and unlike a ramp it also changes what the wing can HOLD.
                 "rate": float("inf"), "gear": ratio, "linkage": False,
                 "swing": True, "cmd": 0.0, "target": 0.0, "pos": 0,
                 "manual": False,
@@ -1811,15 +2176,172 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 v.cam.azimuth, v.cam.elevation, v.cam.distance = (
                     yaw, -89.0, 2.6)
 
+    def apply_pending_respawn(m, d):
+        """Put the bike on the chosen heading, if a respawn is armed.
+
+        Called from BOTH `step` and `draw_frame`. The viewer runs its own
+        reset on backspace from the UI thread, and the loop draws AFTER
+        stepping -- so a reset landing between our step and the sync got one
+        frame on screen at qpos0, in the air, before snapping to the chosen
+        pose. Re-asserting immediately before the draw removes that frame.
+        Idempotent by construction: it already re-applies across a short
+        window, so running it twice a frame costs nothing.
+        """
+        if pending_respawn[0] is not None:
+            # RE-ASSERTED FOR A BEAT, NOT SET ONCE. The viewer runs its own
+            # reset on backspace from the UI thread, asynchronously with this
+            # one -- so a single application lands before it about half the
+            # time and gets wiped, which is exactly the "sometimes the right
+            # heading, sometimes facing +X" coin flip. Holding the pose across
+            # a short wall-clock window means whichever order the two land in,
+            # ours is the one left standing. The bike is at rest anyway, so
+            # pinning it for ~0.15 s reads as a beat before it starts
+            # balancing rather than as a stall.
+            heading, floor_idx, until, announced = pending_respawn[0]
+            activate_floor(m, floor_idx)
+            mujoco.mj_resetData(m, d)
+            # Every compiled floor passes through the ORIGIN and nowhere else,
+            # so a respawn is the only place a floor change is safe: swap while
+            # the bike is metres out and the new surface is tan(tilt) per metre
+            # away from it, and the bike either drops or is launched.
+            # LEVEL TO THE GROUND, not to the world. Spawning upright in world
+            # puts the bike edge-on to a tilted floor -- the wheels are not
+            # flat on the surface and it starts by toppling into alignment.
+            # Sitting it perpendicular to the floor is how a bike parked on a
+            # slope actually stands, and it means the run starts from the pose
+            # the controller has to hold rather than from a jolt.
+            #
+            # Note this is NOT upright with respect to gravity: on a slope
+            # those are different by exactly the tilt angle, and that
+            # difference is the disturbance the policy has to reject.
+            q = np.array([np.cos(heading / 2), 0.0, 0.0, np.sin(heading / 2)])
+            n = floor_normal_of(m, floor_idx)
+            if float(np.linalg.norm(n[:2])) > 1e-9:
+                ang = float(np.arccos(float(np.clip(n[2], -1.0, 1.0))))
+                axis = np.array([-n[1], n[0], 0.0])
+                axis /= np.linalg.norm(axis)
+                q_tilt = np.array([np.cos(ang / 2), *(np.sin(ang / 2) * axis)])
+                out = np.zeros(4)
+                mujoco.mju_mulQuat(out, q_tilt, q)   # yaw first, then lie down
+                q = out
+                # Lift by the sagitta the tilt costs, so the wheels start on
+                # the surface rather than a millimetre inside it.
+                d.qpos[2] += float(d.qpos[2]) * (1.0 / max(np.cos(ang), 1e-6) - 1.0)
+            d.qpos[3:7] = q
+            mujoco.mj_forward(m, d)
+            zero_command(d)
+            ensure_mode(m, d)
+            if trail is not None:
+                trail.clear()
+            if time.perf_counter() >= until:
+                pending_respawn[0] = None
+            else:
+                pending_respawn[0] = (heading, floor_idx, until, True)
+            if not announced:
+                tilt = FLOOR_TILT_STEPS[min(floor_idx,
+                                            len(FLOOR_TILT_STEPS) - 1)]
+                print(f"respawned facing {np.degrees(heading):+.1f} deg on a "
+                      f"{tilt:.2f} deg floor")
+
     def step(m, d):
         apply_camera(d)
         ensure_mode(m, d)       # survive viewer resets before reading keys
+        apply_pending_respawn(m, d)
+        if spawn["open"]:
+            # Hold-to-sweep, the same two-path detection the driving keys use:
+            # real key state when the OS will give it, auto-repeat inference
+            # otherwise. Without this the dial only moves in discrete taps,
+            # which is not how the turn keys feel.
+            wall = time.perf_counter()
+            dt_wall = min(0.1, max(0.0, wall - spawn_clock[0]))
+            spawn_clock[0] = wall
+            if keys.available and keys.confirmed:
+                r = ax_spawn.physical_hold(keys.down("left"), keys.down("right"))
+            else:
+                r = ax_spawn.dir if ax_spawn.ramping(wall) else 0
+            if r:
+                # Integrated on WALL time too, and for a second reason: paused,
+                # `step` runs once per FRAME rather than once per physics step,
+                # so a per-timestep increment would sweep ~10x too slowly.
+                spawn["heading"] = _wrap(spawn["heading"]
+                                         + r * _TURN_RATE * dt_wall)
         while pending:
             k = pending.pop(0)
             if rec is not None:
                 _rec_key(rec, k, d.time,
                          _REC_KEY_LABELS.get(k, chr(k) if 32 <= k < 127 else f"key{k}"))
             general = c.mode == "general"
+            # -- the spawn dial owns the keyboard while it is open ----------
+            # Same argument as the policy menu below, and checked FIRST so a
+            # heading keystroke can never leak into the throttle.
+            if spawn["open"]:
+                if k == _SPAWN_KEY:                     # ENTER resumes
+                    spawn["open"] = False
+                    paused[0] = False
+                    # Re-sync the picture to the floor actually underfoot. A
+                    # preview left showing would mean driving on one surface
+                    # while looking at another, which is worse than no preview.
+                    spawn["floor"] = collidable_floor_index(m)
+                    show_floor(m, spawn["floor"])
+                    print("resumed (heading kept)")
+                elif k in (263, 262):                   # left / right
+                    dirn = 1 if k == 263 else -1
+                    # WALL CLOCK, not d.time: the dial pauses the physics, so
+                    # data.time is frozen and every press would look
+                    # simultaneous with the last -- read as auto-repeat, and
+                    # a single tap would sweep forever.
+                    if ax_spawn.press(time.perf_counter(), dirn):
+                        spawn["heading"] += dirn * _STEP_PSI
+                elif k in (ord("6"), ord("7"), ord("8")):
+                    spawn["heading"] += {ord("6"): np.pi / 2, ord("7"): -np.pi / 2,
+                                         ord("8"): np.pi}[k]
+                elif k == ord("5"):
+                    spawn["heading"] = 0.0
+                elif k in _KEYS_SLOWER + _KEYS_FASTER:  # - / = preview a tilt
+                    spawn["floor"] = show_floor(m, spawn["floor"]
+                                                + (-1 if k in _KEYS_SLOWER else 1))
+                elif k == 259:                          # BACKSPACE commits
+                    # Deferred to `step`: the viewer runs its OWN reset on
+                    # backspace and there is no way to tell whether that lands
+                    # before or after this callback. Applying the pose on the
+                    # next step is ordering-proof.
+                    # Respawn, but STAY open and paused: the point of the dial
+                    # is to look at the result and try another heading.
+                    pending_respawn[0] = (spawn["heading"], spawn["floor"],
+                                          time.perf_counter() + _RESPAWN_HOLD_S,
+                                          False)
+                spawn["heading"] = _wrap(spawn["heading"])
+                # DELIBERATELY SILENT per keystroke. Printing the dial state on
+                # every event buried the terminal, and holding a key to sweep
+                # the heading would make that a hundred lines a second. The
+                # green ray IS the readout; only a floor change gets a line,
+                # because the tilt is the one thing the ray cannot show.
+                if spawn["open"] and spawn["floor"] != last_floor[0]:
+                    last_floor[0] = spawn["floor"]
+                    print(f"  spawn floor: "
+                          f"{FLOOR_TILT_STEPS[min(spawn['floor'], len(FLOOR_TILT_STEPS) - 1)]:.2f}"
+                          f" deg tilt")
+                continue
+            if k == 259 and not menu["open"]:
+                # A BARE BACKSPACE RESPAWNS ON THE LAST CHOSEN HEADING. The
+                # viewer runs its own reset on this key and puts the bike back
+                # at qpos0 facing +X, which threw away a heading that had been
+                # picked on purpose -- so every reset now goes through the same
+                # deferred respawn the dial uses, with whatever `spawn` holds.
+                # `spawn["heading"]` is never cleared, so it is the last value
+                # set in the dial for the rest of the session.
+                pending_respawn[0] = (spawn["heading"],
+                                      collidable_floor_index(m),
+                                      time.perf_counter() + _RESPAWN_HOLD_S,
+                                      False)
+                continue
+            if k == _SPAWN_KEY and not menu["open"]:
+                spawn["open"] = True
+                paused[0] = True
+                spawn["floor"] = collidable_floor_index(m)
+                print("PAUSED - spawn dial: arrows / 6 7 8 heading, "
+                      "- = preview floor tilt, BACKSPACE respawn, ENTER resume")
+                continue
             # -- the policy menu owns the keyboard while it is open ---------
             # Deliberately swallowing everything, not just the keys it uses:
             # picking a controller and driving are different activities, and
@@ -2082,9 +2604,11 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         Order matters: _overlay resets scn.ngeom, so anything drawn before it
         is discarded. The menu needs the live camera, which only exists once
         the viewer has handed the handle over (on_start), hence the guard."""
+        apply_pending_respawn(m, d)
         _overlay(scn, m, d, c, overlay_on, v_max, trail=trail, grid=True,
                  trail_level=trail_levels[trail_level[0]],
-                 stripes=stripe_geom, wheel_view=cam_mode[0] == "wheel")
+                 stripes=stripe_geom, wheel_view=cam_mode[0] == "wheel",
+                 spawn=spawn)
         if menu["open"] and view[0] is not None:
             active = gen_name[0] if c.mode == "general" else policy_menu.ANALYTIC
             policy_menu.draw(scn, view[0].cam, menu["entries"],
@@ -2139,6 +2663,10 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "  ; / \' trail shorter/longer (pen-up 2s 4s 10s inf)   "
                 "\\ camera (free/follow/overhead/wheel)\n"
                 "- / = slow motion (halve / double, 1x-64x)\n"
+                "  ENTER spawn dial: arrows / 6 7 8 pick the heading, - = pick "
+                "the floor tilt\n"
+                "        (level/2/5/10 deg), BACKSPACE respawns there, ENTER "
+                "cancels\n"
                 "  " + policy_menu.label_help() + "\n"
                 "  analytic-only keys: 6/7 circle L/R   8/9 flick (trajopt "
                 "rev/fwd)   3 flick (RL)\n"
@@ -2149,6 +2677,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 draw=draw_frame,
                 show_ui=show_ui,
                 slowmo=slowmo,
+                paused=paused,
                 on_start=lambda v: view.__setitem__(0, v))
     # teleop_loop returns when the operator closes the viewer, so this is the
     # natural flush point. Ctrl-C bypasses it -- accepted, since a session
