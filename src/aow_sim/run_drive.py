@@ -617,8 +617,6 @@ _VEL_R = 0.20       # m, full-scale radius of the inner velocity gauge (= v_max)
                     #   along the commanded heading can never bury one in the
                     #   other — that is what made the orange arrow invisible.
 _DIAL_Z = 0.004     # m, just above the floor so the dial isn't z-fighting
-_RESPAWN_HOLD_S = 0.15  # s of wall clock to keep re-asserting a respawn,
-                        #   so the viewer's own async reset cannot win
 _SPAWN_Z = 0.13     # m. The spawn arrow marks the RESPAWN POINT rather than
                     #   a patch of ground, and it does not follow the bike --
                     #   so it is lifted clear instead of lying in the surface,
@@ -1659,6 +1657,39 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # the letters, the brackets, the backtick, Esc, Space, Tab and F1-F5), and
     # because picking a spawn is a different activity from driving -- the same
     # argument the policy menu already makes for swallowing the keyboard.
+    # The UNTOUCHED spawn pose, so the tilt lift below is always computed from
+    # the original height rather than compounding on itself.
+    qpos0_base = model.qpos0.copy()
+
+    def sync_spawn_qpos0(m, heading, floor_idx):
+        """Write the chosen spawn pose into `model.qpos0`.
+
+        STOP CORRECTING THE VIEWER'S RESET, CHANGE WHAT IT RESETS TO. Backspace
+        is MuJoCo's own key and `key_callback` returns None, so there is no way
+        to consume it -- the viewer resets to `qpos0` on its own thread and can
+        DRAW that frame before our physics thread has run at all. Every earlier
+        attempt here was a faster correction after the fact (a re-assert
+        window, a draw-time re-assert, applying in the same step, restoring
+        from the rewind detector) and each only narrowed the window.
+
+        `mj_resetData` copies `qpos0`, so putting the heading THERE means the
+        viewer's own reset produces the pose we want. There is nothing left to
+        race: the first frame after backspace is already correct.
+        """
+        m.qpos0[:7] = qpos0_base[:7]
+        q = np.array([np.cos(heading / 2), 0.0, 0.0, np.sin(heading / 2)])
+        n = floor_normal_of(m, floor_idx)
+        if float(np.linalg.norm(n[:2])) > 1e-9:
+            ang = float(np.arccos(float(np.clip(n[2], -1.0, 1.0))))
+            axis = np.array([-n[1], n[0], 0.0])
+            axis /= np.linalg.norm(axis)
+            q_tilt = np.array([np.cos(ang / 2), *(np.sin(ang / 2) * axis)])
+            out = np.zeros(4)
+            mujoco.mju_mulQuat(out, q_tilt, q)
+            q = out
+            m.qpos0[2] = float(qpos0_base[2]) / max(np.cos(ang), 1e-6)
+        m.qpos0[3:7] = q
+
     spawn = {"open": False, "heading": 0.0, "floor": 0}
     pending_respawn = [None]
     last_floor = [0]           # so only a CHANGE of tilt prints
@@ -1993,6 +2024,28 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         rewound = d.time < t_prev[0]
         t_prev[0] = float(d.time)
         if rewound:
+            # THE SPAWN POSE IS OPERATOR INTENT AND HAS TO SURVIVE THE REWIND,
+            # exactly like the command below. The viewer resets on backspace
+            # from its own thread, so an earlier version re-asserted the pose
+            # across a wall-clock window and the two writers visibly fought --
+            # the bike flickered between qpos0 and the chosen pose for the
+            # length of the window. This detector is the one the rest of this
+            # function already trusts on the threaded viewer, so use it: place
+            # the bike ONCE, at the moment the rewind is seen, BEFORE `c.reset`
+            # re-reads `_psi` -- otherwise the heading anchors on qpos0.
+            # OFF `spawn`, NOT off a latch set by the last respawn. The dial
+            # can be opened, a heading picked, and the dial closed WITHOUT ever
+            # respawning -- which is the reported repro -- and a latch armed
+            # only by `apply_pending_respawn` is still None at that point. The
+            # viewer then resets and draws the default pose before our next
+            # step runs, which is the glitch frame. `spawn["heading"]` is
+            # current from the moment it is chosen, so use it directly.
+            #
+            # With the heading at 0 this places the bike where the viewer's own
+            # reset already put it, so plain BACKSPACE is unchanged until the
+            # dial is actually used.
+            place_bike(m, d, spawn["heading"], collidable_floor_index(m))
+        if rewound:
             c.reset(m, d)           # re-read _psi from the REWOUND data
         if state["want_general"] and c.mode != "general":
             engage(d, quiet=True)
@@ -2176,6 +2229,44 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 v.cam.azimuth, v.cam.elevation, v.cam.distance = (
                     yaw, -89.0, 2.6)
 
+    def place_bike(m, d, heading, floor_idx):
+        """Put the chassis at the origin on `heading`, LEVEL TO THE GROUND.
+
+        Pose only -- no reset, no command handling -- so it can be called both
+        by the respawn and by `ensure_mode` when it catches the viewer's own
+        reset. Level to the ground is not upright with respect to gravity: on a
+        slope those differ by the tilt angle, and that difference is the
+        disturbance the policy has to reject.
+        """
+        q = np.array([np.cos(heading / 2), 0.0, 0.0, np.sin(heading / 2)])
+        n = floor_normal_of(m, floor_idx)
+        if float(np.linalg.norm(n[:2])) > 1e-9:
+            ang = float(np.arccos(float(np.clip(n[2], -1.0, 1.0))))
+            axis = np.array([-n[1], n[0], 0.0])
+            axis /= np.linalg.norm(axis)
+            q_tilt = np.array([np.cos(ang / 2), *(np.sin(ang / 2) * axis)])
+            out = np.zeros(4)
+            mujoco.mju_mulQuat(out, q_tilt, q)   # yaw first, then lie down
+            q = out
+            d.qpos[2] += float(d.qpos[2]) * (1.0 / max(np.cos(ang), 1e-6) - 1.0)
+        d.qpos[3:7] = q
+        # The wing latch is PYTHON state and survives mj_resetData: the reset
+        # stows the joint and zeros d.ctrl, but `wing["cmd"]`/`["target"]` are a
+        # dict in this closure and still hold wherever the operator left the
+        # wings, so without this the next step drives a DEPLOYED target against
+        # a STOWED joint. Same re-latch the 9/4 keys already use to avoid a
+        # snap (see `# no snap` there).
+        #
+        # HOUSEKEEPING, NOT A BUG FIX. Added while chasing a respawn glitch
+        # that turned out to be a one-step ordering problem elsewhere; no
+        # misbehaviour was ever attributed to this latch by measurement. It is
+        # kept because a stale target against a reset joint is wrong on its own
+        # terms, not because anything was observed.
+        if wing is not None:
+            wing["cmd"] = wing["target"] = float(d.qpos[wing["jadr"]])
+            wing["pos"] = 0
+        mujoco.mj_forward(m, d)
+
     def apply_pending_respawn(m, d):
         """Put the bike on the chosen heading, if a respawn is armed.
 
@@ -2188,60 +2279,19 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         window, so running it twice a frame costs nothing.
         """
         if pending_respawn[0] is not None:
-            # RE-ASSERTED FOR A BEAT, NOT SET ONCE. The viewer runs its own
-            # reset on backspace from the UI thread, asynchronously with this
-            # one -- so a single application lands before it about half the
-            # time and gets wiped, which is exactly the "sometimes the right
-            # heading, sometimes facing +X" coin flip. Holding the pose across
-            # a short wall-clock window means whichever order the two land in,
-            # ours is the one left standing. The bike is at rest anyway, so
-            # pinning it for ~0.15 s reads as a beat before it starts
-            # balancing rather than as a stall.
-            heading, floor_idx, until, announced = pending_respawn[0]
+            heading, floor_idx = pending_respawn[0]
+            pending_respawn[0] = None
             activate_floor(m, floor_idx)
+            sync_spawn_qpos0(m, heading, floor_idx)
             mujoco.mj_resetData(m, d)
-            # Every compiled floor passes through the ORIGIN and nowhere else,
-            # so a respawn is the only place a floor change is safe: swap while
-            # the bike is metres out and the new surface is tan(tilt) per metre
-            # away from it, and the bike either drops or is launched.
-            # LEVEL TO THE GROUND, not to the world. Spawning upright in world
-            # puts the bike edge-on to a tilted floor -- the wheels are not
-            # flat on the surface and it starts by toppling into alignment.
-            # Sitting it perpendicular to the floor is how a bike parked on a
-            # slope actually stands, and it means the run starts from the pose
-            # the controller has to hold rather than from a jolt.
-            #
-            # Note this is NOT upright with respect to gravity: on a slope
-            # those are different by exactly the tilt angle, and that
-            # difference is the disturbance the policy has to reject.
-            q = np.array([np.cos(heading / 2), 0.0, 0.0, np.sin(heading / 2)])
-            n = floor_normal_of(m, floor_idx)
-            if float(np.linalg.norm(n[:2])) > 1e-9:
-                ang = float(np.arccos(float(np.clip(n[2], -1.0, 1.0))))
-                axis = np.array([-n[1], n[0], 0.0])
-                axis /= np.linalg.norm(axis)
-                q_tilt = np.array([np.cos(ang / 2), *(np.sin(ang / 2) * axis)])
-                out = np.zeros(4)
-                mujoco.mju_mulQuat(out, q_tilt, q)   # yaw first, then lie down
-                q = out
-                # Lift by the sagitta the tilt costs, so the wheels start on
-                # the surface rather than a millimetre inside it.
-                d.qpos[2] += float(d.qpos[2]) * (1.0 / max(np.cos(ang), 1e-6) - 1.0)
-            d.qpos[3:7] = q
-            mujoco.mj_forward(m, d)
+            place_bike(m, d, heading, floor_idx)
             zero_command(d)
             ensure_mode(m, d)
             if trail is not None:
                 trail.clear()
-            if time.perf_counter() >= until:
-                pending_respawn[0] = None
-            else:
-                pending_respawn[0] = (heading, floor_idx, until, True)
-            if not announced:
-                tilt = FLOOR_TILT_STEPS[min(floor_idx,
-                                            len(FLOOR_TILT_STEPS) - 1)]
-                print(f"respawned facing {np.degrees(heading):+.1f} deg on a "
-                      f"{tilt:.2f} deg floor")
+            tilt = FLOOR_TILT_STEPS[min(floor_idx, len(FLOOR_TILT_STEPS) - 1)]
+            print(f"respawned facing {np.degrees(heading):+.1f} deg on a "
+                  f"{tilt:.2f} deg floor")
 
     def step(m, d):
         apply_camera(d)
@@ -2307,10 +2357,21 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                     # next step is ordering-proof.
                     # Respawn, but STAY open and paused: the point of the dial
                     # is to look at the result and try another heading.
-                    pending_respawn[0] = (spawn["heading"], spawn["floor"],
-                                          time.perf_counter() + _RESPAWN_HOLD_S,
-                                          False)
+                    # APPLIED RIGHT HERE, not left for the next step. Keys are
+                    # drained near the END of `step`, while
+                    # `apply_pending_respawn` runs at its TOP -- so arming it
+                    # only lands on the FOLLOWING step, with an `mj_step`
+                    # in between. Paused that is invisible (n=0, nothing
+                    # moves); unpaused it is one physics step of a balancing
+                    # bike running from the default pose before being snapped
+                    # back, which is the glitch. This closure is already
+                    # inside `step` with `m` and `d` in scope, so just do it.
+                    pending_respawn[0] = (spawn["heading"], spawn["floor"])
+                    apply_pending_respawn(m, d)
                 spawn["heading"] = _wrap(spawn["heading"])
+                # qpos0 tracks the dial LIVE, so a plain backspace taken after
+                # the dial closes already lands on the chosen heading.
+                sync_spawn_qpos0(m, spawn["heading"], collidable_floor_index(m))
                 # DELIBERATELY SILENT per keystroke. Printing the dial state on
                 # every event buried the terminal, and holding a key to sweep
                 # the heading would make that a hundred lines a second. The
@@ -2330,10 +2391,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 # deferred respawn the dial uses, with whatever `spawn` holds.
                 # `spawn["heading"]` is never cleared, so it is the last value
                 # set in the dial for the rest of the session.
-                pending_respawn[0] = (spawn["heading"],
-                                      collidable_floor_index(m),
-                                      time.perf_counter() + _RESPAWN_HOLD_S,
-                                      False)
+                pending_respawn[0] = (spawn["heading"], collidable_floor_index(m))
+                apply_pending_respawn(m, d)
                 continue
             if k == _SPAWN_KEY and not menu["open"]:
                 spawn["open"] = True
