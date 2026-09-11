@@ -106,9 +106,21 @@ def base_cfg():
     return {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
 
 
-def ahrs_cfg(cfg, tau, level="tm151"):
-    return {**cfg, "env": {**cfg["env"], "ahrs_level": level,
-                           "ahrs_tau_s": float(tau), "ahrs_channels": "both"}}
+def pin_ahrs(pol, tau, level="tm151"):
+    """Pin the swept tau ON THE POLICY, and return it.
+
+    This used to build a cfg overlay. It cannot: `policy_env_overrides` puts
+    the policy's OWN declaration on top of `cfg["env"]`, so once the move
+    yamls record `ahrs_tau_s` (2026-09-11) a cfg-level tau is overridden right
+    back and the sweep silently measures every policy at its training tau --
+    i.e. a flat row, which is the answer this script exists to test for.
+    Same argument as `policy_for` one function down: the axis being swept has
+    to be forced, or the comparison is not one.
+    """
+    pol.ahrs_level = level
+    pol.ahrs_tau_s = float(tau)
+    pol.ahrs_channels = "both"
+    return pol
 
 
 def policy_for(name, encoder):
@@ -196,8 +208,8 @@ def _one_cell(job):
     name, tau, encoder = job
     params = load_params()
     cfg = base_cfg()
-    pol = policy_for(name, encoder)
-    return ((name, tau), run_grid(pol, env_for(pol, params, ahrs_cfg(cfg, tau)),
+    pol = pin_ahrs(policy_for(name, encoder), tau)
+    return ((name, tau), run_grid(pol, env_for(pol, params, cfg),
                                   eval_cmds(cfg["env"]["v_max"])))
 
 

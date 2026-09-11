@@ -110,13 +110,18 @@ def main():
     print(f"{'':32}" + "".join(f"{'pitch':>9}{'roll':>6}{'fell':>4}"
                                for _ in args.fracs))
     for name, enc, ahrs in arms:
-        cfg = base if ahrs == "none" else {
-            **base, "env": {**base["env"], "ahrs_level": ahrs,
-                            "ahrs_tau_s": 0.19, "ahrs_channels": "both"}}
         pol = load_general(name)
         if enc:
             pol.odometry_encoder = enc
-        env = env_for(pol, params, cfg)
+        # Set on the POLICY, beside the encoder and for the same reason: a
+        # cfg-level AHRS is overridden back by any move that declares its own
+        # (see general_spec.policy_env_overrides). The arms table pairs each
+        # policy with the sensor mode its row is supposed to answer for, so
+        # the pairing has to be the thing that binds.
+        pol.ahrs_level = ahrs
+        pol.ahrs_tau_s = 0.19
+        pol.ahrs_channels = "both"
+        env = env_for(pol, params, base)
         cells = ""
         for f in args.fracs:
             p, r, when = probe(pol, env, -f * v_max, args.reverse_s, args.turn_s)

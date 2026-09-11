@@ -11,6 +11,9 @@ vel_window_s: 0.0
 obs_zero_lat: false
 obs_odometry: true
 odometry_encoder: counts
+ahrs_level: tm151
+ahrs_tau_s: 0.19
+ahrs_channels: both
 obs_pitch: false
 obs_wings: false
 act_wings: false

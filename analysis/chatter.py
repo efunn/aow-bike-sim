@@ -48,7 +48,11 @@ not, because a four-channel policy sums one more term.
 `--policies` takes any move names, so a fresh export can be put next to the
 standing set without editing rsa_policies.POLICIES. Each env is built by
 `policy_env_overrides`, so a policy trained on the ONBOARD ESTIMATE
-(`obs_odometry`) is evaluated on the estimate here too -- not on truth.
+(`obs_odometry`) is evaluated on the estimate here too -- not on truth. The
+same now holds for the ATTITUDE: a move that declares `ahrs_level` is run
+against that error model with no flag, which it was not before 2026-09-11.
+`--ahrs` still overrides, and overrides for every policy in the set, which is
+how a truth-trained policy is asked the deployment question.
 
 Read-only apart from stdout: loads moves/*.npz and writes nothing.
 """
@@ -166,14 +170,22 @@ def _one_policy(job):
     params = load_params()
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
-    if ahrs:
-        cfg = {**cfg, "env": {**cfg["env"], "ahrs_level": ahrs,
-                              "ahrs_tau_s": tau, "ahrs_channels": channels}}
     pol = load_general(name)
     if encoder:
         pol.odometry_encoder = encoder
     if force_odo:
         pol.obs_odometry = True
+    # ON THE POLICY, not on the cfg. `policy_env_overrides` overlays the
+    # policy's own declaration on top of `cfg["env"]`, so an AHRS-trained
+    # policy would override a cfg-level setting right back and `--ahrs` would
+    # be a silent no-op for exactly the policies it matters most for. Setting
+    # it here is the same route `--encoder` takes one line up. Leaving the
+    # flag off now means "whatever the move declares", which is what makes a
+    # bare `chatter.py` run an AHRS policy against its AHRS.
+    if ahrs:
+        pol.ahrs_level = ahrs
+        pol.ahrs_tau_s = tau
+        pol.ahrs_channels = channels
     return name, rollout_grid(pol, env_for(pol, params, cfg),
                               eval_cmds(cfg["env"]["v_max"]), params)
 
@@ -236,10 +248,9 @@ def main():
     params = load_params()
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
-    if args.ahrs:
-        cfg = {**cfg, "env": {**cfg["env"], "ahrs_level": args.ahrs,
-                              "ahrs_tau_s": args.ahrs_tau,
-                              "ahrs_channels": args.ahrs_channels}}
+    # No AHRS patch here: the parent only needs v_max off this cfg, and the
+    # sensor mode is applied per policy inside `_one_policy` -- see the note
+    # there for why it cannot live in the config.
     cmds = eval_cmds(cfg["env"]["v_max"])
 
     # One env PER POLICY: a velocity-windowed policy needs a wider observation

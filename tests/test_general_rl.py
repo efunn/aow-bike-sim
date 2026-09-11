@@ -859,6 +859,126 @@ def test_shipped_general_policy_matches_its_declared_width():
             f"moves/{name}: declared layout disagrees with its own flags")
 
 
+def test_policy_env_overrides_carries_the_ahrs():
+    """The AHRS is part of the env a policy must be rebuilt in, and nothing
+    about the OBSERVATION says so.
+
+    `ahrs_level` corrupts roll, roll_rate and yaw_rate IN PLACE -- entries 0,
+    1 and 2 -- so the width is identical with and without it and `obs_layout`,
+    the contract the rest of this file leans on, cannot see the difference.
+    That is the same hole `obs_zero_lat` and `obs_odometry` are carried for,
+    and it went unplugged for the AHRS until 2026-09-11: every analysis script
+    that built an env through `analysis/rsa_policies.env_for` without patching
+    its own config evaluated `general_rl_odo_ahrs` on MuJoCo attitude.
+
+    A policy that declares nothing must come back "none", or every export
+    predating the field would start being scored against an error model it
+    never trained on -- the mirror image of the bug, and just as wrong.
+    """
+    from aow_sim.control.general_spec import policy_env_overrides
+    from aow_sim.sim_ahrs import TAU_ORIENT_S
+
+    class P:
+        pass
+
+    bare = policy_env_overrides(P())
+    assert bare["ahrs_level"] == "none"
+    assert bare["ahrs_tau_s"] == TAU_ORIENT_S
+    assert bare["ahrs_channels"] == "both"
+
+    p = P()
+    p.ahrs_level, p.ahrs_tau_s, p.ahrs_channels = "tm151", 2.0, "orient"
+    over = policy_env_overrides(p)
+    assert over["ahrs_level"] == "tm151"
+    assert over["ahrs_tau_s"] == 2.0
+    assert over["ahrs_channels"] == "orient"
+
+
+def test_an_ahrs_move_declares_it_and_rebuilds_an_env_that_has_it():
+    """END TO END, on the files actually on disk: yaml -> load_move ->
+    policy_env_overrides -> GeneralEnv._ahrs.
+
+    The unit test above pins the overlay; this pins the thing that was
+    actually broken, which is that the yaml never carried the field at all.
+    `general_rl_odo_ahrs` is NAMED for the AHRS, trained with it, and was
+    being evaluated without it -- `env._ahrs` came back None and nothing
+    raised, because the observation was the right shape the whole time.
+
+    Asserted over EVERY move that declares a level rather than one exemplar:
+    the 21 backfilled here were recovered by matching each move's recorded env
+    fields against its training config, and a single-exemplar test would not
+    notice a future export dropping the field again.
+    """
+    pytest.importorskip("gymnasium")
+    from aow_sim.control.flick import MOVES_DIR, load_move
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    from aow_sim.control.general_spec import policy_env_overrides
+
+    import yaml
+    names = sorted(p.stem for p in MOVES_DIR.glob("*.yaml")
+                   if str(yaml.safe_load(p.read_text()).get("ahrs_level",
+                                                            "none")) != "none")
+    if not names:
+        pytest.skip("no AHRS-trained policy exported yet")
+
+    cfg = _load_rl_config()
+    # The base config names NO ahrs, which is the point: if the level only
+    # ever arrived from the cfg this test would pass on a policy that declares
+    # nothing, and prove nothing.
+    assert cfg["env"].get("ahrs_level", "none") == "none"
+
+    for name in names:
+        pol = load_move(name)
+        over = policy_env_overrides(pol)
+        assert over["ahrs_level"] != "none", f"moves/{name}: lost its level"
+
+    # Building one model is seconds; one exemplar is enough to pin the wiring
+    # since the loop above pins the declaration for all of them.
+    pol = load_move("general_rl_odo_ahrs")
+    env = GeneralEnv(rl_cfg={**cfg, "env": {**cfg["env"], "ball_prob": 0.0,
+                                            **policy_env_overrides(pol)}},
+                     seed=0)
+    assert env._ahrs is not None, "an AHRS policy rebuilt without its AHRS"
+    assert env._ahrs.level == "tm151"
+    # 2.0, not sim_ahrs.TAU_ORIENT_S: this policy pinned the old GUESS, and
+    # the export has to carry the number rather than inherit today's constant.
+    assert env._ahrs.tau_orient_s == 2.0
+
+
+def test_the_policys_ahrs_wins_over_the_config():
+    """PRECEDENCE, pinned because the wrong answer is silent both ways.
+
+    `policy_env_overrides` is applied as an overlay ON TOP OF `cfg["env"]`, so
+    a caller cannot select a sensor mode by patching the config -- an
+    AHRS-trained policy overrides it straight back. Six callers used to do
+    exactly that (chatter.py, per_command.py, ahrs_tau.py, eval_video.py,
+    reverse_flip.py and tests/test_sensor_modes.py); all of them now set the
+    field ON THE POLICY, which is the route `--encoder` has always taken.
+
+    If this ever inverts, `analysis/ahrs_tau.py` is the script that breaks
+    worst and least visibly: it sweeps tau, and a policy-loses rule would pin
+    every cell to the policy's training tau and print a flat table as a
+    finding.
+    """
+    from aow_sim.control.general_spec import policy_env_overrides
+
+    class P:
+        pass
+
+    p = P()
+    p.ahrs_level, p.ahrs_tau_s, p.ahrs_channels = "tm151", 0.19, "both"
+    env_cfg = {"ahrs_level": "tm171", "ahrs_tau_s": 5.0,
+               "ahrs_channels": "gyro"}
+    merged = {**env_cfg, **policy_env_overrides(p)}
+    assert merged["ahrs_level"] == "tm151"
+    assert merged["ahrs_tau_s"] == 0.19
+    assert merged["ahrs_channels"] == "both"
+
+    # ...and the way a caller forces a mode is to set it on the policy.
+    p.ahrs_level, p.ahrs_tau_s = "tm171", 5.0
+    assert {**env_cfg, **policy_env_overrides(p)}["ahrs_level"] == "tm171"
+
+
 def test_wing_channel_is_optional_and_appended():
     """ACT_DIM stays the SHARED move contract at 3; the wing channel is a
     general-policy-only fourth entry. scale_action's return arity follows its

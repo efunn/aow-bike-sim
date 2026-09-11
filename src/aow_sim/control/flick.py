@@ -294,6 +294,22 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         pol.obs_zero_lat = bool(d.get("obs_zero_lat", False))
         pol.obs_odometry = bool(d.get("obs_odometry", False))
         pol.odometry_encoder = str(d.get("odometry_encoder", "ideal"))
+        # The attitude error model this policy trained against. Same contract
+        # role as the two lines above and the same invisible failure: the AHRS
+        # corrupts roll/roll_rate/yaw_rate IN PLACE, so a policy evaluated
+        # without it gets the right-shaped observation off a cleaner sensor
+        # than it ever saw. Carried onto the policy (not left in the yaml)
+        # because `general_spec.policy_env_overrides` reads it off the loaded
+        # object, and because a caller forcing a sensor mode sets it HERE --
+        # see that function's precedence note.
+        #
+        # tau defaults to the module constant rather than to a literal so an
+        # AHRS move that predates the field still lands on the same number
+        # `general_env` would have used; "none" moves ignore it entirely.
+        from ..sim_ahrs import TAU_ORIENT_S
+        pol.ahrs_level = str(d.get("ahrs_level", "none"))
+        pol.ahrs_tau_s = float(d.get("ahrs_tau_s", TAU_ORIENT_S))
+        pol.ahrs_channels = str(d.get("ahrs_channels", "both"))
         pol.obs_pitch = bool(d.get("obs_pitch", False))
         # Wings: observed and/or driven. Both part of the obs/action contract,
         # and `wing_max_deg` is the cap replay must integrate against or the

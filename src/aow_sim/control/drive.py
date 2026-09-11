@@ -382,6 +382,21 @@ class DriveController(LQRBalance):
                   "onboard velocity ESTIMATE, and is being replayed on MuJoCo "
                   "truth.\n  Add --odometry to teleop to match training. On "
                   "hardware this is automatic.")
+        # THE SAME NOTE FOR THE ATTITUDE, which the move yaml has only carried
+        # since 2026-09-11 -- before that there was nothing here to test, and
+        # `general_rl_odo_ahrs` replayed on truth attitude in silence. The
+        # argument is identical to the one above and the case is worse: roll,
+        # roll_rate and yaw_rate are the FAST loop, and the error model
+        # corrupts them IN PLACE, so obs_layout sees nothing wrong here
+        # either.
+        if (str(getattr(self._gen, "ahrs_level", "none")) != "none"
+                and not self._ahrs_active):
+            print(f"NOTE: {getattr(self._gen, 'name', '?')} was trained "
+                  f"against a {getattr(self._gen, 'ahrs_level')} ATTITUDE "
+                  "error model, and is\n  being replayed on MuJoCo truth. Add "
+                  f"--ahrs {getattr(self._gen, 'ahrs_level')} "
+                  f"--ahrs-tau {float(getattr(self._gen, 'ahrs_tau_s', 0.19)):g}"
+                  " to match training.\n  On hardware this is automatic.")
         # THE INVERSE, and the one that actually bites in teleop. Turning the
         # sensors on while driving the CONFIG DEFAULT hands a truth-trained
         # policy a signal it has never seen. That is not a small degradation:

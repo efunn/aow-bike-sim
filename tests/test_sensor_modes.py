@@ -94,12 +94,19 @@ def _eval(name, params, *, ahrs="none", encoder=None, tau=2.0,
     # under `randomization:` are a TRAINING distribution. Leaving it on would
     # make every threshold here a distribution rather than a number.
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
-    if ahrs != "none":
-        cfg = {**cfg, "env": {**cfg["env"], "ahrs_level": ahrs,
-                              "ahrs_tau_s": tau}}
     pol = load_move(name)
     if encoder is not None:
         pol.odometry_encoder = encoder
+    # FORCED ON THE POLICY, unconditionally -- including "none", which is what
+    # makes `test_ideal_mode_is_the_ceiling` a truth run even though its
+    # policy is free to declare an AHRS later. A cfg-level setting would not
+    # bind: `policy_env_overrides` overlays the policy's own declaration on
+    # top of the config, so an AHRS-trained move overrides it back. That is
+    # the whole point of `test_policy_env_overrides_carries_the_ahrs` in
+    # test_general_rl.py.
+    pol.ahrs_level = ahrs
+    pol.ahrs_tau_s = tau
+    pol.ahrs_channels = "both"
     over = policy_env_overrides(pol)
     if force_odometry:
         over = {**over, "obs_odometry": True}

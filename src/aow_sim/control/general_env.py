@@ -208,7 +208,12 @@ class GeneralEnv(gym.Env):
         self._ahrs = None
         if env.get("ahrs_level", "none") != "none":
             from ..sim_ahrs import TAU_ORIENT_S, SimAhrs
-            self._ahrs = SimAhrs(self.model, params, level=env["ahrs_level"],
+            # `self.p`, NOT the `params` argument: it is None whenever the
+            # caller passed only an rl_cfg (every GeneralEnv in
+            # tests/test_general_rl.py does), and `self.p` is the resolved
+            # one. SimOdometry below took the same wrong name, which is why an
+            # odometry env could not be built that way at all.
+            self._ahrs = SimAhrs(self.model, self.p, level=env["ahrs_level"],
                                  tau_orient_s=float(env.get("ahrs_tau_s",
                                                             TAU_ORIENT_S)),
                                  channels=env.get("ahrs_channels", "both"))
@@ -230,7 +235,7 @@ class GeneralEnv(gym.Env):
         if self.obs_odometry:
             from ..sim_odometry import SimOdometry
             self._odo = SimOdometry(
-                self.model, params,
+                self.model, self.p,
                 mode=env.get("odometry_mode", "front"),
                 # "ideal" reads instantaneous joint velocity; "counts"
                 # quantises to 4096/rev and differences through RateFilter, as

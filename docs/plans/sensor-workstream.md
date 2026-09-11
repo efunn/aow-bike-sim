@@ -703,6 +703,13 @@ perturbs only its pitch pair, everything else at MuJoCo truth:
 | **blanked** | 31.4° | **86.4° FELL** | **85.4° FELL** | **84.3° FELL** | 0.816 / 0.95 |
 | **noisy (1.42°)** | 6.9° | 7.7° | 16.4° | 22.1° | 0.676 / 0.95 |
 
+**The `eval grid` column is optimistic, and the comparison is not.** Those
+three scores were taken before 2026-09-11, when `pitch_ablation.py` could not
+supply the AHRS at all (it has no flag, and `policy_env_overrides` did not
+carry the field) — so an AHRS-trained policy was scored on truth attitude.
+Every row shares that baseline, which is what the ablation needs; only the
+absolute level is flattering. Not re-run: the finding is the 84–86° column.
+
 **Blanking brings the backflip back** — same weights, same sensors, one
 channel zeroed, and the same 84–86° as the policies that never had pitch.
 The eval grid barely notices (0.866 → 0.816), which is the signature of a
@@ -881,6 +888,77 @@ grid. That is the honest limit of a 4-command guard, and it is what
 
 **Still deferred**, per the 08-27 decision: nothing here disturbs the bike or
 looks at the contact, so it inherits the eval grid's blind spots wholesale.
+
+#### The move yaml never recorded the AHRS, so most scripts evaluated without it (2026-09-11)
+
+**`policy_env_overrides` carried `obs_odometry` and `odometry_encoder` and not
+`ahrs_level`.** Its own docstring already named this failure mode — "an `odo`
+policy evaluated without it is handed MuJoCo truth instead of the onboard
+estimate, i.e. a cleaner signal than it ever trained on, and scores better than
+it deserves" — and the AHRS was the one sensor not on the list. The attitude
+error corrupts roll, roll_rate and yaw_rate IN PLACE, so the observation width
+never changes and nothing raises:
+
+    general_rl_cmd_curriculum2b      ahrs=None
+    general_rl_odo_ahrs              ahrs=None
+
+**How much it was worth**, 20-command grid, identical seeds, randomization off,
+encoder `counts`, only the error model differing:
+
+| policy | no AHRS | tm151 τ 0.19 | tm151 τ 2.0 |
+|---|---|---|---|
+| `general_rl_odo_ahrs` | 0.663 / 1.00 | 0.644 / 0.95 | 0.686 / 1.00 |
+| `general_rl_cmd_curriculum2b` | **0.675** / 0.95 | 0.595 / 0.90 | 0.530 / 0.90 |
+
+`odo_ahrs` barely cares — +0.019 against a ±0.02 seed-noise floor, and at its
+own training tau of 2.0 the no-AHRS run is WORSE. The curriculum arm is the
+casualty at +0.080 and +0.05 of survival, and it is the generation whose
+comparisons are live. **The policy named for the AHRS was the least
+contaminated one in the set**, which is why nobody caught this by reading a
+table.
+
+**Not every script was affected.** `chatter.py`, `per_command.py`,
+`ahrs_tau.py`, `eval_video.py` and `reverse_flip.py` all patched
+`cfg["env"]["ahrs_level"]` themselves off a `--ahrs` flag, and `per_command`
+defaults it to `tm151`. Affected were the ones with no flag at all:
+`floor_sweep.py`, `pen.py`, `liftoff.py`, `hold_spectrum.py`,
+`move_confusion.py`, `mass_envelope.py`, `kick_recovery.py`,
+`contact_surrogates.py`, `wheel_slowmo.py` and `pitch_ablation.py` — the last
+of which discusses the TM151 pitch error in its comments while running without
+one.
+
+**The fix, and the precedence rule it forced.** The exporter now writes
+`ahrs_level` / `ahrs_tau_s` / `ahrs_channels`; `load_move` carries them onto
+the policy; `policy_env_overrides` returns them. Because those overrides are
+overlaid ON TOP OF `cfg["env"]`, a cfg-level AHRS is now overridden back by any
+policy that declares one — so **a caller forcing a sensor mode sets it on the
+POLICY**, which is the route `--encoder` has always taken. All six cfg-patching
+call sites were converted. Getting this backwards would break `ahrs_tau.py`
+worst and least visibly: it sweeps tau, and a policy-wins-always rule applied
+to a cfg-level sweep pins every cell to the training tau and prints a flat
+table as a finding. `test_the_policys_ahrs_wins_over_the_config` pins it.
+
+**21 already-exported moves were backfilled** — the nine named `odo_ahrs` /
+`cmd_curriculum` arms and all twelve `personality` seeds. Each move was matched
+to its training config by fingerprinting the fourteen env fields the yaml
+already records (`v_max`, `v_lat_frac`, `vel_window_s`, `obs_*`, `act_*`,
+`odometry_encoder`, `action_space`, …); a mismatch was a hard error rather
+than a warning, since writing the wrong sensor model into the contract is the
+exact mistake being removed. `ahrs_tau_s` is written EXPLICITLY even where the
+config left it defaulted, so an export pins the number instead of inheriting
+whatever `sim_ahrs.TAU_ORIENT_S` is later — it has already moved once, 2.0 →
+0.19.
+
+**Two fixes fell out alongside.** `GeneralEnv` passed its raw `params`
+argument, not the resolved `self.p`, to both `SimAhrs` and `SimOdometry` — so
+an env built from an rl_cfg alone (as every test in `test_general_rl.py` builds
+one) crashed on that path. And teleop replay warned about an odometry-trained
+policy running on truth but had no equivalent AHRS warning; it does now, because
+until this change there was no field to test.
+
+**Still not covered**: `run_drive.py` teleop takes `--ahrs` explicitly and does
+not read the policy's declaration — it only warns. That is a separate
+construction path from `GeneralEnv` and was left alone.
 
 #### Live training run
 

@@ -237,7 +237,33 @@ def policy_env_overrides(pol) -> dict:
     it was trained never to see; an `odo` policy evaluated without it is handed
     MuJoCo truth instead of the onboard estimate, i.e. a cleaner signal than it
     ever trained on, and scores better than it deserves.
+
+    `ahrs_level`, `ahrs_tau_s` and `ahrs_channels` are here for exactly that
+    reason, and were MISSING until 2026-09-11 -- the failure this docstring
+    already described, on the sensor it did not list. The AHRS corrupts roll,
+    roll_rate and yaw_rate IN PLACE, so the width is untouched and the
+    observation is the right shape with the wrong signal. Every script that
+    built an env through `analysis/rsa_policies.env_for` and did not patch the
+    cfg itself therefore evaluated `general_rl_odo_ahrs` -- a policy NAMED for
+    the AHRS -- on MuJoCo attitude. Measured on the 20-command grid, the gain
+    from dropping the error model is +0.019 of score for `general_rl_odo_ahrs`
+    (inside the seed noise floor) and +0.080 for
+    `general_rl_cmd_curriculum2b` (four times it).
+
+    PRECEDENCE, because there is a real choice here and the wrong one is
+    silent. These overrides WIN over `cfg["env"]`, so a script cannot select a
+    sensor mode by patching the config -- an AHRS policy would simply override
+    it back. A caller that wants to force a mode sets the field ON THE POLICY,
+    which is how `--encoder` has always worked (`pol.odometry_encoder = ...` in
+    chatter.py, per_command.py and four others). Keeping one rule for both
+    sensors is the point: two rules is how this bug survived a docstring
+    written to prevent it.
     """
+    # Local import: general_spec is on the numpy-only replay path (see
+    # tests/test_hw_no_mujoco.py) and this is the one constant it needs from a
+    # simulation module. `general_env` defers the same import for the same
+    # reason.
+    from ..sim_ahrs import TAU_ORIENT_S
     return dict(policy_flags(pol),
                 act_wings=bool(getattr(pol, "act_wings", False)),
                 act_swing=bool(getattr(pol, "act_swing", False)),
@@ -245,6 +271,11 @@ def policy_env_overrides(pol) -> dict:
                 obs_zero_lat=bool(getattr(pol, "obs_zero_lat", False)),
                 obs_odometry=bool(getattr(pol, "obs_odometry", False)),
                 odometry_encoder=str(getattr(pol, "odometry_encoder", "ideal")),
+                # "none" default so every policy exported before the field
+                # existed rebuilds the env it was evaluated in, bit for bit.
+                ahrs_level=str(getattr(pol, "ahrs_level", "none")),
+                ahrs_tau_s=float(getattr(pol, "ahrs_tau_s", TAU_ORIENT_S)),
+                ahrs_channels=str(getattr(pol, "ahrs_channels", "both")),
                 wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)))
 
 

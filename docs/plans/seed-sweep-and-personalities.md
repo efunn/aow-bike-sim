@@ -12,7 +12,9 @@
 > **[speculative]** a hunch worth testing.
 
 Related: `eval-score-rewrite.md` (the score itself and the turn-personality
-axis), `general-rl-improvements.md` (prior RL findings), `docs/status.md`.
+axis), `general-rl-improvements.md` (prior RL findings), `docs/status.md`,
+`sensor-workstream.md` (the AHRS these twelve trained against — and §9 below,
+for why this document's numbers survived a 09-11 bug that hit others).
 
 ---
 
@@ -313,3 +315,73 @@ Reproduce anything here:
 
     python analysis/per_command.py --summary --policies personality0 ... personality11
     python analysis/per_command.py --metrics v_ach t_head_s --tag all12 --policies ...
+
+`per_command.py` defaults to `--encoder counts --ahrs tm151 --ahrs-tau 0.19`,
+so both commands run against the sensors. See §9 for why that is worth saying
+out loud, and for what `--ahrs none` does to the same table.
+
+## 9. These numbers were taken WITH the AHRS, and it matters (2026-09-11)
+
+**Checked, not assumed.** On 2026-09-11 `policy_env_overrides` was found not to
+carry `ahrs_level`, so every script that built an env through
+`rsa_policies.env_for` without patching its own config had been evaluating
+AHRS-trained policies on MuJoCo attitude — silently, because the error model
+corrupts roll, roll_rate and yaw_rate IN PLACE and the observation width never
+changes. `docs/plans/sensor-workstream.md` has the full account.
+
+**This document is not affected.** `per_command.py` has defaulted to
+`--ahrs tm151 --ahrs-tau 0.19` since before the sweep (verified at `f861bb8`,
+the commit that exported these twelve moves), and it wrote that into
+`cfg["env"]` where nothing overrode it. Every per_command-derived number above
+already had the TM151 in the loop. The twelve moves have since been backfilled
+with `ahrs_level: tm151`, `ahrs_tau_s: 0.19` from
+`rl_general_cmd_curriculum2.yaml`, so they now declare it themselves and a bare
+run of ANY analysis script gets it.
+
+**Re-run 2026-09-11, both sensor modes, same seeds, `--encoder counts`:**
+
+| seed | turns fwd | straight fwd | hold v | **falls, tm151** | falls, none |
+|---|---|---|---|---|---|
+| `personality0` | 3/9 | 2/2 | +0.02 | **2** | 1 |
+| `personality1` | 5/7 | 2/2 | +0.17 | **2** | 1 |
+| `personality2` | 0/7 | 0/1 | −0.14 | **5** | 2 |
+| `personality3` | 3/9 | 2/2 | −0.07 | **1** | 1 |
+| `personality4` | 0/9 | 0/2 | −0.15 | **0** | 0 |
+| `personality5` | 1/5 | 1/2 | −0.10 | **6** | 0 |
+| `personality6` | 4/7 | 2/2 | −0.04 | **4** | 1 |
+| `personality7` | 4/9 | 2/2 | −0.10 | **1** | 0 |
+| `personality8` | 4/8 | 2/2 | −0.09 | **1** | 0 |
+| `personality9` | 0/9 | 0/2 | −0.12 | **1** | 1 |
+| `personality10` | 0/8 | 0/2 | −0.09 | **1** | 0 |
+| `personality11` | 2/9 | 2/2 | −0.06 | **1** | 1 |
+
+(Columns are the tm151 run; the last column is the same table at `--ahrs none`.
+Ratio denominators shrink when a policy falls, because a fallen command is
+excluded from them — that is why `personality6` reads 4/7 with the AHRS and
+4/9 without, on the same four resolved turns.)
+
+**§2's taxonomy is unchanged in both modes** — competent {0, 1, 3, 6, 7, 8, 11},
+broken {2, 4, 9, 10}, partial {5}, 7/4/1 either way and identical to what the
+training metric picked out. **The backwards-driving failure is not a sensing
+artefact**, and neither is the turn-direction character: `turns fwd` moves on
+no seed except `personality5`, which is falling too often to read.
+
+**What the AHRS does separate is FALLS: 25 of 240 episodes against 8, a factor
+of 3.1.** And it is concentrated, not spread — `personality5` goes 0 → 6 and
+`personality6` 1 → 4, while `3`, `4`, `9` and `11` do not move at all. So the
+seeds differ in ROBUSTNESS far more than the truth-attitude table suggests, and
+a sweep scored without the sensors would report them as more alike than they
+are. `personality5` is the sharpest case: 2/2 on forward drive and zero falls on
+truth attitude, 1/2 and six falls with a TM151. Its §3 classification as
+*partial* survives; its apparent safety does not.
+
+**This does not re-rank §8.** `personality1` keeps the best fall count in the
+competent set (2, tied with `personality0`) alongside its forward drive, its
+5/7 turns and the only positive `hold v` in the set (+0.17 — it is the one
+policy that does not creep backwards while holding station). Nothing here
+changes the recommendation to leave `control.general_move` where it is.
+
+**Stale artefact**: `analysis/plots/per_command_v_ach_personalities_all12.png`
+predates the 09-11 fix in its fall hatching only — the `v_ach` bars it plots are
+the quantity §2 and §4 are built on and those are unchanged. Kept, not
+regenerated.

@@ -39,6 +39,7 @@ from .control.flick import MOVES_DIR, reserve_move_name
 from .control.general_env import GeneralEnv, _load_rl_config
 from .control.general_spec import ActionBounds, obs_layout
 from .control.policy import save_policy_npz
+from .sim_ahrs import TAU_ORIENT_S
 
 RUN_DIR = Path(__file__).resolve().parents[2] / "runs" / "general_rl"
 
@@ -885,6 +886,18 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # differenced, RateFilter -- the hardware path). Only meaningful
            # with obs_odometry. Like it, invisible to obs_layout.
            "odometry_encoder": str(cfg["env"].get("odometry_encoder", "ideal")),
+           # THE ATTITUDE ERROR MODEL, and the exact counterpart of the two
+           # fields above -- it corrupts roll, roll_rate and yaw_rate in
+           # place, so obs_layout cannot catch a mismatch and this is the only
+           # record. Unrecorded until 2026-09-11, which is how every analysis
+           # script that did not patch its own cfg evaluated an AHRS-trained
+           # policy on MuJoCo attitude. `ahrs_tau_s` is written EXPLICITLY
+           # even when the config left it defaulted, so the export pins the
+           # number rather than inheriting whatever `sim_ahrs.TAU_ORIENT_S`
+           # happens to be later -- it has already moved once, 2.0 -> 0.19.
+           "ahrs_level": str(cfg["env"].get("ahrs_level", "none")),
+           "ahrs_tau_s": float(cfg["env"].get("ahrs_tau_s", TAU_ORIENT_S)),
+           "ahrs_channels": str(cfg["env"].get("ahrs_channels", "both")),
            "obs_pitch": bool(cfg["env"].get("obs_pitch", False)),
            "obs_wings": bool(cfg["env"].get("obs_wings", False)),
            "act_wings": bool(cfg["env"].get("act_wings", False)),

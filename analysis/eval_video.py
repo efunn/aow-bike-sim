@@ -71,6 +71,14 @@ def _rollout(job):
     pol = load_general(name)
     if encoder:
         pol.odometry_encoder = encoder
+    # On the POLICY, not the cfg: `policy_env_overrides` overlays a policy's
+    # own AHRS declaration on top of `cfg["env"]`, so a cfg-level setting is
+    # overridden back by every AHRS-trained move. The clips have to be the
+    # same episodes per_command's bars describe, and per_command forces the
+    # mode the same way.
+    pol.ahrs_level = ahrs
+    pol.ahrs_tau_s = tau
+    pol.ahrs_channels = "both"
     env = env_for(pol, params, cfg)
     scale = np.asarray(pol.bounds.to_list(), float)[:pol.act_dim]
     n_act = env.action_space.shape[0]

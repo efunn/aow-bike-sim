@@ -250,8 +250,17 @@ def order_and_labels(cmds):
     return idx, labels, spans
 
 
-def _cfg_for(ahrs, tau):
+def _cfg_for(_ahrs=None, _tau=None):
     """The eval env's config: randomization off, no ball.
+
+    THE TWO ARGUMENTS DO NOTHING and are underscored to say so at the
+    signature. They used to write `ahrs_level` / `ahrs_tau_s` into the cfg;
+    since 2026-09-11 the move yamls declare their own and
+    `policy_env_overrides` overlays them ON TOP of whatever is here, so a
+    cfg-level AHRS is overridden back by every AHRS-trained policy. Kept in
+    the signature only because four call sites here and in `eval_video.py`
+    pass them positionally. THE SENSOR MODE IS SET ON THE POLICY -- see
+    `_one_policy`.
 
     NO BALL, matching `train_general_rl._eval_cfg`. `ball_prob` is contact
     -robustness DR for TRAINING and it was leaking into every read-only
@@ -265,9 +274,6 @@ def _cfg_for(ahrs, tau):
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     cfg = {**cfg, "env": {**cfg["env"], "ball_prob": 0.0}}
-    if ahrs != "none":
-        cfg = {**cfg, "env": {**cfg["env"], "ahrs_level": ahrs,
-                              "ahrs_tau_s": tau, "ahrs_channels": "both"}}
     return cfg
 
 
@@ -289,6 +295,15 @@ def _one_policy(job):
     pol = load_general(name)
     if encoder:
         pol.odometry_encoder = encoder
+    # UNCONDITIONAL, including `--ahrs none`. This table's whole value is that
+    # every row ran in the same sensor mode, so the flag has to bind on the
+    # truth-trained arms (giving them an AHRS they never saw -- the deployment
+    # question) AND on the AHRS-trained arms (pinning them to this tau rather
+    # than to whichever one their own config happened to name; `odo_ahrs`
+    # declares 2.0 and everything since declares 0.19).
+    pol.ahrs_level = ahrs
+    pol.ahrs_tau_s = tau
+    pol.ahrs_channels = "both"
     env = env_for(pol, params, cfg)
     scale = np.asarray(pol.bounds.to_list(), float)[:pol.act_dim]
     n_act = env.action_space.shape[0]
@@ -497,7 +512,11 @@ def main():
                          "leaves each on its own declaration, which is not "
                          "comparable across a set that mixes them")
     ap.add_argument("--ahrs", default="tm151",
-                    choices=("none", "tm151_static", "tm151", "tm171"))
+                    choices=("none", "tm151_static", "tm151", "tm171"),
+                    help="force every policy onto ONE attitude error model, "
+                         "for the same reason --encoder forces one encoder: a "
+                         "set that mixes them is not comparable. Binds even "
+                         "on policies that declare their own.")
     ap.add_argument("--ahrs-tau", type=float, default=0.19,
                     help="correlation time [s]; the measured value by default")
     ap.add_argument("--tag", default="",
