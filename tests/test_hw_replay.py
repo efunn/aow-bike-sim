@@ -202,3 +202,56 @@ def test_bundle_digest_rejects_stale_params():
     params["bike"]["chassis"]["mass"] *= 1.5     # a bike this bundle is not for
     with pytest.raises(ValueError, match="digest"):
         load_bundle(BUNDLE, params)
+
+
+@pytest.mark.deploy
+def test_params_digest_scope():
+    """`plant_digest` covers the MACHINE; `control` is design, not machine.
+
+    Regression test. The exclusion went missing once and the hash covered the
+    whole params dict, so editing `control.general_move` -- a pointer that
+    changes no physics -- moved the plant digest and marked every trained move
+    and the deploy bundle stale. Nothing caught it: the other two deploy tests
+    check that the MECHANISM rejects a stale digest, never its SCOPE.
+
+    The stamped exports are the evidence for which behaviour is correct, so
+    they are asserted against directly rather than a hex string being pasted
+    in here.
+    """
+    import copy
+    import yaml
+
+    from aow_sim.build_model import load_params
+    from aow_sim.params import design_digest, params_digest
+
+    p = load_params()
+    base = params_digest(p)
+
+    # a control-only edit must NOT move the plant digest ...
+    q = copy.deepcopy(p)
+    q["control"]["general_move"] = "some_other_policy"
+    assert params_digest(q) == base, (
+        "editing a policy pointer moved plant_digest: `control` is being "
+        "hashed again, and every trained move will read stale")
+
+    # ... but it is exactly what design_digest is for, when it hits a DESIGN
+    # field. `general_move` is not one of those, so neither digest moves.
+    r = copy.deepcopy(p)
+    r["control"]["rate_hz"] = float(p["control"]["rate_hz"]) + 1.0
+    assert design_digest(r) != design_digest(p), "rate_hz is a DESIGN_FIELD"
+    assert params_digest(r) == base, "a design field must not move the plant"
+
+    # a genuine plant change MUST move it
+    s = copy.deepcopy(p)
+    s["sim"]["timestep"] = float(p["sim"]["timestep"]) * 2.0
+    assert params_digest(s) != base, "a sim change must move plant_digest"
+
+    # and the trained exports agree with this scope
+    for name in ("general_rl_cmd_curriculum2", "general_rl_odo_ahrs"):
+        f = Path(__file__).resolve().parents[1] / "moves" / f"{name}.yaml"
+        if f.exists():
+            stamped = yaml.safe_load(f.read_text()).get("plant_digest")
+            assert stamped == base, (
+                f"{name} is stamped {stamped} but the current plant hashes "
+                f"{base} -- either the plant really moved, or the digest "
+                f"scope has drifted again")
