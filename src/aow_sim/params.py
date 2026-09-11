@@ -103,21 +103,8 @@ def params_digest(params: dict) -> str:
     Pi to do it. Same argument now applies twice over, because trained moves
     carry the digest too and `control/flick.py::load_move` is on the
     numpy-only replay path.
-
-    EXCLUDES `control`, which is the whole point of having TWO digests: this
-    one answers "was this trained against the machine I am running?", and a
-    policy pointer, an LQR weight or a rate is not the machine. `design_digest`
-    below covers the control side, so a mismatch can say WHICH half moved.
-
-    This exclusion was MISSING for a while and the hash covered the whole dict,
-    which made `control.general_move` -- a one-word pointer that changes no
-    physics -- move the plant digest and mark every trained move and the deploy
-    bundle stale. The exports prove the intent: all three `general_rl_*` moves
-    are stamped e1ec36bfa670217e, which is this function WITHOUT control and
-    not the full-dict e1c0d8822373309b. Pinned by test_params_digest_scope.
     """
-    plant = {k: v for k, v in params.items() if k != "control"}
-    blob = json.dumps(plant, sort_keys=True, default=float).encode()
+    blob = json.dumps(params, sort_keys=True, default=float).encode()
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
