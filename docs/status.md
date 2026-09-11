@@ -109,9 +109,9 @@ hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 
 ## Health
 
-**Test suite, measured 2026-09-09** with `pytest -n 10 --dist load`:
+**Test suite, measured 2026-09-11** with `pytest -n 10 --dist load`:
 
-    23 failed, 285 passed, 9 skipped, 38.7 s
+    23 failed, 288 passed, 9 skipped, 40.9 s
     red set unchanged (23 accepted failures) -- tests/expected_failures.txt
 
 Read the verdict line, not the FAILED count. The 23:
@@ -162,7 +162,9 @@ part. Landed as a **bit-exact no-op**, verified over a 3000-step driven rollout:
 the no-op *and* that an override bites, because a bug dropping `contact_parts`
 would otherwise pass as a perfect no-op.
 
-**Digests, both current 2026-09-09:**
+**Digests, re-verified 2026-09-11 — `deploy/bundle.npz` matches all three
+(`plant_digest`, `design_digest`, and the legacy whole-file
+`params_digest` aa232834f462a229):**
 
     plant_digest   e1ec36bfa670217e    was this trained against the machine I am running?
     design_digest  2db6c647ff3a2d59    were these gains designed against the weights I am running?
