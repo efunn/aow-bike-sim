@@ -312,7 +312,22 @@ control:
   #
   # It moves NEITHER digest (measured) and moves nothing in the test suite
   # (measured, 23/210 both ways).
-  general_move: general_rl_odo_ahrs   # which always-on policy teleop drives with, as
+  #
+  # 2026-09-14: REPOINTED to general_rl_cmd_curriculum2b, the command-family
+  # curriculum line. It was chosen on 2026-09-11 and never landed: the session
+  # making the edit stopped on a digest scare, and only teleop's `--general`
+  # default moved, to seed 0 (curriculum2) instead. Sensor-trained like
+  # odo_ahrs (odometry counts + TM151 at tau 0.19), plus obs_pitch.
+  # docs/plans/seed-sweep-and-personalities.md: personality1, bit-identical to
+  # it, is the best of 12 seeds on every behaviour axis -- drives forward and
+  # reverse, finishes every heading command, holds station -- while `_score`
+  # ranks it 8th, because the score cannot see direction.
+  #
+  # Moves NEITHER digest that anything checks, measured: plant_digest stays
+  # e1ec36bfa670217e, design_digest 2db6c647ff3a2d59. Only the legacy
+  # whole-file params_digest moves (e1c0d88 -> 76e36770), and deploy/bundle.npz
+  # is judged on the two above -- hw.state.load_bundle accepts it unchanged.
+  general_move: general_rl_cmd_curriculum2b   # which always-on policy teleop drives with, as
                         #   moves/<name>.{yaml,npz}. Point it at a second
                         #   export (e.g. general_rl_prev) to A/B two trained
                         #   policies without renaming files; `run_drive
