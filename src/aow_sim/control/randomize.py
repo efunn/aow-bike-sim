@@ -62,6 +62,10 @@ class DomainRandomizer:
         self._forcerange0 = model.actuator_forcerange.copy()
         self._ctrlrange0 = model.actuator_ctrlrange.copy()
         self._solref0 = model.geom_solref.copy()
+        # The supply draw, kept so a per-step actuator outside the model arrays
+        # -- the detailed drivetrain's servo loop -- can follow the same
+        # battery. 1.0 whenever actuator_frac draws nothing.
+        self.supply_scale = 1.0
 
     def reset_nominal(self) -> None:
         """Restore the unperturbed model (also the `enabled: false` path)."""
@@ -70,6 +74,7 @@ class DomainRandomizer:
         self.model.actuator_forcerange[:] = self._forcerange0
         self.model.actuator_ctrlrange[:] = self._ctrlrange0
         self.model.geom_solref[:] = self._solref0
+        self.supply_scale = 1.0
 
     def apply(self, rng) -> None:
         """Draw one perturbed model. Call once per episode, before reset."""
@@ -86,6 +91,7 @@ class DomainRandomizer:
         af = float(r.get("actuator_frac", 0.0))
         if af > 0.0:
             v = 1 + rng.uniform(-af, af)      # one draw = one supply voltage
+            self.supply_scale = float(v)
             self.model.actuator_forcerange[:] = self._forcerange0 * v
             self.model.actuator_ctrlrange[:] = self._ctrlrange0 * v
         # Contact stiffness and restitution. Also absent from older configs ->

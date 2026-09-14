@@ -32,6 +32,7 @@ import mujoco
 import numpy as np
 from gymnasium import spaces
 
+from .. import drivetrain_model
 from ..build_model import build_model, load_params, reset_actuator_state
 from .balance import extract_state, mix
 from .drive import DriveController
@@ -105,6 +106,10 @@ class GeneralEnv(gym.Env):
         self.p = params or load_params()
         self.cfg = rl_cfg or _load_rl_config()
         env = self.cfg["env"]
+        # The detailed drivetrain, when the config (or a policy's own export,
+        # through policy_env_overrides) asks for it. Params that already carry
+        # one win -- see drivetrain_model.from_env_config.
+        self.p = drivetrain_model.from_env_config(self.p, env)
         self.hockey = bool(env.get("ball_prob", 0.0) > 0.0)
         # Wings are GATED. Building them is not a small addition: it pulls in
         # the righting shell, adds ~143 g to a ~1016 g bike, raises the CoM
@@ -127,11 +132,18 @@ class GeneralEnv(gym.Env):
         self.model = build_model(self.p, variant="full", hockey=self.hockey,
                                  righting=self.wings or self.swing,
                                  wings=self.wings, swing=self.swing)
+        # The opt-in detailed drivetrain (drivetrain_model.py), present only
+        # when the params carry the overlay. None otherwise, and every line
+        # below that reads it is then a no-op -- the default env is unchanged.
+        self._drive = drivetrain_model.DrivetrainSim.attach(self.model, self.p)
         self._eq = settle_upright(self.model).qpos.copy()
         self.data = mujoco.MjData(self.model)
         # Crawl-balance fallback gain from the ball-free model, as ball_env.
+        # Designed on the IDEAL drivetrain: the detailed one replaces the
+        # native drive actuation with a Python loop that linearize cannot see.
+        _ideal = drivetrain_model.base_params(self.p)
         self._K0 = DriveController(
-            self.p, build_model(self.p, variant="full"))._K0
+            _ideal, build_model(_ideal, variant="full"))._K0
 
         self.full = env["action_space"] == "full"
         self.bounds = ActionBounds(**env["action_bounds"])
@@ -806,6 +818,24 @@ class GeneralEnv(gym.Env):
             self._v_cmd_w = np.array([c * v[0] - s * v[1],
                                       s * v[0] + c * v[1]])
             self._next_resample = 10 ** 9      # hold for the whole episode
+        if self._drive is not None:
+            # LAST, after every other draw, so the detent phase takes the one
+            # extra number off the stream and nothing drawn above moves.
+            self._drive.reset(self.data, rng)
+            # Drive randomisation, BOTH OFF unless asked for, so a run can
+            # add the drivetrain without adding variables. Absent keys draw
+            # nothing, leaving the stream alone.
+            #   drive_supply_randomize    the servo follows actuator_frac's
+            #                             battery draw (steer always does)
+            #   drive_friction_side_frac  each side's Coulomb friction x
+            #                             U(1-f, 1+f), independently
+            r = self.rand
+            on = bool(r["enabled"])
+            self._drive.set_supply(self._rand.supply_scale if on and bool(
+                r.get("drive_supply_randomize", False)) else 1.0)
+            side = float(r.get("drive_friction_side_frac", 0.0)) if on else 0.0
+            self._drive.set_friction_scale(
+                1.0 + rng.uniform(-side, side, 2) if side > 0.0 else (1.0, 1.0))
         obs, *_ = self._obs()
         return obs, {}
 
@@ -847,6 +877,8 @@ class GeneralEnv(gym.Env):
                 self._np_random.uniform(-1, 1) * self.rand["disturb_force_N"])
 
         for _k in range(self.substeps):
+            if self._drive is not None:
+                self._drive.pre_step(self.data)
             mujoco.mj_step(self.model, self.data)
             # TICK THE ESTIMATOR INSIDE THE SUBSTEP LOOP, not after it. It runs
             # at its own rate (100 Hz, the Pi's) while the policy is queried at

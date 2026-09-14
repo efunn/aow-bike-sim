@@ -1,0 +1,131 @@
+# The DETAILED DRIVETRAIN, as an opt-in overlay on bike_params.yaml.
+#
+# NOT READ BY DEFAULT. Nothing in the repo loads this unless asked to:
+#     python -m aow_sim.run_drive --teleop --drivetrain
+#     python analysis/drivetrain_eval.py
+# so every existing plant, digest, policy and test is untouched. When it is
+# loaded it lands in the params dict as `drivetrain_model`, which moves
+# plant_digest -- correctly, because it IS a different plant, and teleop's
+# digest check will say so about every policy trained without it.
+#
+# It lives here rather than in bike_params.yaml because adopting it for
+# TRAINING is a params edit with its own checklist (CLAUDE.md), and the first
+# question -- can the existing policies drive it at all -- should not have to
+# pay that cost. See docs/plans/drivetrain-model.md for the reasoning, the
+# fits, and what is still open.
+#
+# Every `measured` number is a fit to the Station A captures under
+# traces/drivetrain/ (rear assembly, hand held, wheel in the air, 2026-09-13)
+# and re-derives with:
+#     python analysis/drivetrain_fit.py
+# Three components, separately switchable, because they are separate
+# questions with separate evidence:
+#
+#   servo        the XC430 firmware velocity loop and the motor behind it,
+#                replacing actuators.drive_kv / drive_ki
+#   detent       the differential's tooth-pass resistance, every 7.5 deg of
+#                ring-vs-hub
+#   roller_slop  per-roller free play between the roller and the drive
+
+# Physics steps per firmware update (sim knob). The velocity loop runs once
+# every N steps and holds its torque between; the frictions still run every
+# step. 1 = every 0.4 ms step.
+update_every: 1
+
+servo:
+  enabled: true
+  # FIRMWARE TABLE VALUES, i.e. what is written to the servo. Factory default.
+  # The open decision in drivetrain-measurements.yaml (P 100/200/400, I 1920
+  # or 3840) is a change HERE and nowhere else: the two scales below map any
+  # table value onto the loop, which is the point of fitting them per unit.
+  velocity_p_gain: 100        # Velocity P Gain(78)
+  velocity_i_gain: 1920       # Velocity I Gain(76)
+  #
+  #   duty = Kp * (v_ref - LPF(w_meas)) + Ki * (integral(v_ref) - theta_meas)
+  #   torque_servo = stall_torque * (clip(duty, +-1) - w / no_load_speed)
+  #
+  # Kp: 3.5-4.5e-4 per P unit across P 100/200/400 on the reversal and chirp
+  # captures (the ones that load the P term). ROBOTIS's own conversion,
+  # KVP/128 per 0.229 rpm per 885 PWM counts, is 3.68e-4.
+  kp_per_unit: {value: 4.0e-4, source: measured}    # duty per rad/s, per P unit
+  # Ki: 1.3-1.5e-3 per I unit on the steps (R^2 0.998), matching the hand-push
+  # hold spring of 0.047 duty per servo degree (2.69 duty/rad at I 1920).
+  # Twice ROBOTIS's conversion at a 1 kHz loop, so a 2 kHz loop is the likely
+  # reading -- inferred, not verified.
+  ki_per_unit: {value: 1.45e-3, source: measured}   # duty per rad, per I unit
+  # Frame computing a command -> the servo's velocity reference moving.
+  command_delay_s: {value: 0.004, source: measured}      # latency.velocity_trajectory_delay_ms
+  # EFFECTIVE, not a register: the lag inside the loop (encoder differencing
+  # plus filtering) that puts the ~20 Hz peak at P 400 and none at P 200. Fit
+  # by closed-loop replay of the chirps; see the plan doc for what it misses.
+  measurement_delay_s: {value: 0.004, source: measured}
+  velocity_filter_s: {value: 0.012, source: measured}
+  # Velocity Limit(44) = 460 x 0.229 rpm, read off both servos.
+  velocity_limit_rad_s: {value: 11.03, source: datasheet}
+  # AT THE SERVO SHAFT. Rotor + gearbox + belt, loaded: 2.3-2.8e-3 from the
+  # PWM coast, 1.8-2.3e-3 from the P 400 chirps. The bare-shaft PWM tau_m of
+  # 14 ms implies 2.0e-3, so the drivetrain adds little. Becomes
+  # input_armature / belt_ratio^2.
+  rotor_inertia: {value: 2.2e-3, source: measured}
+  # Per servo, at the servo shaft, and the SAME in common and diff mode
+  # (0.10-0.14 duty common, 0.10-0.13 diff, from the coast) -- so it sits at
+  # the input shafts, not in the hub or the rollers. Servo B's side is ~25 %
+  # stiffer in every capture; one value here, the asymmetry is outstanding.
+  # ~60x the hub_joint_frictionloss GUESS. Applied per input shaft as a
+  # STICKING friction (a stiff spring to an anchor that slides past the
+  # limit), not as a joint frictionloss: MuJoCo's soft friction constraint
+  # creeps on these joints and gives no static floor, and without one the
+  # detent below never stalls a 1 % creep at all.
+  coulomb_friction: {value: 0.15, source: measured}   # N.m
+  # Sim knobs for that stick, at the input shaft: N.m/rad and N.m.s/rad.
+  # 250 holds to ~2e-4 rad and keeps omega*dt ~0.4 on the rotor inertia.
+  friction_stick_stiffness: 250.0
+  friction_stick_damping: 0.2
+
+detent:
+  enabled: true
+  # A friction BUMP on ring-vs-hub, once per tooth. Friction and not a
+  # conservative hill, because at the 1 % creep the extra push sits at the same
+  # phase whichever way the drive is pushed: 0.09-0.12 duty above its floor in
+  # the direction-split fold (drivetrain_fit.py detent). At 3 % the fold shows
+  # little of either (a ~0.02 duty ripple). A quasi-static torque ramp would
+  # settle the shape.
+  period_deg: {value: 7.5, source: tooth-count}   # ring-vs-hub, input shaft
+  width_deg: {value: 2.5, source: measured}       # raised cosine, full width
+  # Peak extra friction on ring_spin, N.m. ~0.09 duty per servo above the
+  # ~0.12 baseline at the wall (breakaway 0.19-0.24 duty); x stall torque /
+  # belt, x2 for the two servos a diff move pushes with.
+  friction: {value: 0.096, source: measured}
+  # Phase is drawn per episode where there is an rng (training, the eval
+  # env), else this. Nothing has measured where the wall sits.
+  phase_deg: 0.0
+  # Elasto-plastic stick, sim knobs: the spring to the sticking point on
+  # ring-vs-hub [N.m/rad], and its damping [N.m.s/rad]. 1000 holds a stuck
+  # detent to ~1e-4 rad and sits at omega*dt ~0.4 on the input shafts; much
+  # stiffer and the explicit step goes unstable.
+  stick_stiffness: 1000.0
+  stick_damping: 1.0
+
+roller_slop:
+  enabled: true
+  # Per roller, roller-angle units, about k_roller * ring angle. The rigid
+  # equality coupling is replaced by a tendon with a weak centring spring and
+  # hard limits at the ends of the play.
+  half_play_deg: {value: 7.8, source: measured}      # 15.6 deg p-p by hand
+  # "A roller often springs back to the middle of its play -- not every time"
+  # (roller_slop.hand_release). Nothing measures the size. At 1e-3 the spring
+  # is 1.4e-4 N.m at the wall, against ~0.05 N.m of ground torque on a loaded
+  # roller: a dead zone under load, a centring spring in the air.
+  centring_stiffness: {value: 1.0e-3, source: GUESS}  # N.m/rad
+  # CRITICAL against the roller's own spin inertia (2.31e-7 kg m2 in the
+  # compiled model, plus the joint's 1e-6 damping): 2 sqrt(k J) = 3.0e-5.
+  # By hand 2026-09-14, a flicked roller of any size, or one held at the end of
+  # its play and let go, returns to centre with no visible overshoot
+  # (roller_slop.hand_flick). At the old 2e-6 the sim rang for ~200 ms.
+  # tests/test_drivetrain_model.py pins the ratio, so a roller mass change
+  # that detunes it goes red.
+  damping: {value: 2.9e-5, source: GUESS}             # N.m.s/rad
+  # How hard the ends of the play are. 0.001 holds the play to within ~1.5
+  # deg under a 20 rad/s dithered diff; MuJoCo's default 0.02 let rollers
+  # overshoot by 50 deg. Must stay >= 2 x sim.timestep.
+  wall_timeconst_s: 0.001

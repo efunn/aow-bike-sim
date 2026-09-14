@@ -24,7 +24,7 @@ import mujoco
 import numpy as np
 import yaml
 
-from . import geometry
+from . import drivetrain_model, geometry
 # Re-exported: params loading is MuJoCo-free so the Pi can use it (params.py).
 from .params import DEFAULT_PARAMS, _normalize, load_params  # noqa: F401
 
@@ -1688,6 +1688,7 @@ def build_spec(
             rgba=[0.5, 0.55, 0.6, 1],
         )
         _add_aow(spec, stand, p)
+        drivetrain_model.edit_spec(spec, p)
         return spec
     if variant != "full":
         raise ValueError(f"unknown variant {variant!r}; expected 'full' or 'testbed'")
@@ -1887,6 +1888,10 @@ def build_spec(
                              "not an addition -- pick one mechanism")
         _add_swing_wings(spec, chassis, p,
                          yaml.safe_load(Path(swing_cfg or SWING_CFG).read_text()))
+    # LAST, after every mechanism: the opt-in detailed drivetrain appends its
+    # two torque actuators, and nothing may land after them or a saved
+    # policy's action indices would shift. A no-op without the overlay.
+    drivetrain_model.edit_spec(spec, p)
 
     return spec
 

@@ -294,6 +294,8 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         pol.obs_zero_lat = bool(d.get("obs_zero_lat", False))
         pol.obs_odometry = bool(d.get("obs_odometry", False))
         pol.odometry_encoder = str(d.get("odometry_encoder", "ideal"))
+        # The resolved drivetrain overlay it trained on; None = ideal drives.
+        pol.drivetrain_model = d.get("drivetrain_model")
         # The attitude error model this policy trained against. Same contract
         # role as the two lines above and the same invisible failure: the AHRS
         # corrupts roll/roll_rate/yaw_rate IN PLACE, so a policy evaluated

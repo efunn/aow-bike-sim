@@ -898,6 +898,11 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            "ahrs_level": str(cfg["env"].get("ahrs_level", "none")),
            "ahrs_tau_s": float(cfg["env"].get("ahrs_tau_s", TAU_ORIENT_S)),
            "ahrs_channels": str(cfg["env"].get("ahrs_channels", "both")),
+           # THE DRIVETRAIN, resolved: the whole overlay dict, or null for the
+           # ideal drives. The dict rather than a path, so the policy replays
+           # on the plant it trained on after config/drivetrain_model.yaml has
+           # moved on. Invisible to obs_layout, like the sensors above.
+           "drivetrain_model": params.get("drivetrain_model"),
            "obs_pitch": bool(cfg["env"].get("obs_pitch", False)),
            "obs_wings": bool(cfg["env"].get("obs_wings", False)),
            "act_wings": bool(cfg["env"].get("act_wings", False)),
@@ -1061,6 +1066,12 @@ def main():
 
     params = load_params()
     cfg = _load_rl_config(args.config)
+    # The opt-in detailed drivetrain (env.drivetrain_model). Resolved HERE, not
+    # only inside each env, so plant_digest and the move yaml record the plant
+    # the policy actually trained on.
+    from .drivetrain_model import describe, from_env_config
+    params = from_env_config(params, cfg["env"])
+    print(f"plant: {describe(params)}")
     a = cfg["algo"]
     if args.seed is not None:
         # Rebound before either consumer reads it: `_make_vecenv` below and

@@ -131,5 +131,6 @@ markers = [
     "deploy: pins deploy/bundle.npz against the params digest. This is step 1 of the bike_params checklist in CLAUDE.md.",
     "boundary: the onboard import boundary -- the Pi installs no mujoco, scipy or torch. Run after touching imports under hw/.",
     "pure: builds no model and returns in well under a second. The inner loop while editing control logic.",
+    "drivetrain: the opt-in detailed drivetrain overlay -- config/drivetrain_model.yaml and src/aow_sim/drivetrain_model.py (XC430 firmware loop, differential detent, roller slop). Run after touching either, or the drive actuator / roller coupling blocks of build_model.",
     "hardware: NEEDS SERVOS ON A BUS. Skipped automatically unless AOW_DXL_PORT names a real port, so a plain `pytest` on a laptop with nothing plugged in still means what it says. Everything else in the suite -- including every register map and indirect-layout test -- runs with no hardware at all. Run with: AOW_DXL_PORT=/dev/cu.usbserial-XXXX pytest -m hardware",
 ]

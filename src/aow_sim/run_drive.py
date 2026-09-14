@@ -420,6 +420,25 @@ def main() -> None:
                          "bike_params.yaml, the same pointer record.py and "
                          "hw/run_bike.py read. Repointing that moves neither "
                          "plant_digest nor design_digest.")
+    ap.add_argument("--drivetrain", nargs="?", const=True, default=None,
+                    metavar="PATH",
+                    help="drive the DETAILED drivetrain: the XC430 firmware "
+                         "loop fitted to the bench captures, the differential's "
+                         "7.5 deg detent, and per-roller slop "
+                         "(config/drivetrain_model.yaml, or PATH). Opt-in; "
+                         "every policy so far trained on the ideal drives, and "
+                         "the digest check will say so. The analytic LQR is "
+                         "still DESIGNED on the ideal plant and flown on this "
+                         "one. See docs/plans/drivetrain-model.md")
+    ap.add_argument("--drivetrain-without", nargs="+", default=(),
+                    choices=("servo", "detent", "roller_slop"), metavar="PART",
+                    help="switch parts of --drivetrain off: servo, detent, "
+                         "roller_slop -- to feel which one a policy minds")
+    ap.add_argument("--servo-gains", default=None, metavar="P:I",
+                    help="firmware Velocity P:I gains in TABLE units under "
+                         "--drivetrain (default: the overlay's, factory "
+                         "100:1920). The open firmware-gain decision, "
+                         "flyable: e.g. 400:3840")
     ap.add_argument("--slowmo", type=float, default=1.0, metavar="X",
                     help="run teleop at 1/X speed (2 = half, 10 = a tenth). "
                          "- halves and = doubles it live (shifted _ and + too), "
@@ -478,16 +497,39 @@ def main() -> None:
     params = {**params, "sim": {**params["sim"],
                                 "floor_tilt_steps": FLOOR_TILT_STEPS,
                                 "floor_tilt_bearing_deg": args.slope_bearing}}
-    model = build_model(params, variant="full", hockey=args.hockey,
-                        righting=(args.wings or args.linkage or args.swing
-                                  or args.swing_linkage),
-                        wings=args.wings and not args.linkage,
-                        swing=args.swing, swing_linkage=bool(args.swing_linkage),
-                        swing_linkage_cfg=(args.swing_linkage
-                                           if isinstance(args.swing_linkage, str)
-                                           else None),
-                        linkage=args.linkage,
-                        linkage_cfg=args.linkage_config)
+    if args.drivetrain or args.drivetrain_without or args.servo_gains:
+        from . import drivetrain_model
+        if not args.teleop:
+            raise SystemExit("--drivetrain is teleop-only: the scripted "
+                             "scenarios and --view run the analytic controller "
+                             "without the per-step drivetrain hook")
+        gains = (tuple(int(x) for x in args.servo_gains.split(":"))
+                 if args.servo_gains else None)
+        params = drivetrain_model.with_drivetrain(
+            params, None if args.drivetrain in (None, True) else args.drivetrain,
+            without=args.drivetrain_without, gains=gains)
+    build_kw = dict(variant="full", hockey=args.hockey,
+                    righting=(args.wings or args.linkage or args.swing
+                              or args.swing_linkage),
+                    wings=args.wings and not args.linkage,
+                    swing=args.swing, swing_linkage=bool(args.swing_linkage),
+                    swing_linkage_cfg=(args.swing_linkage
+                                       if isinstance(args.swing_linkage, str)
+                                       else None),
+                    linkage=args.linkage,
+                    linkage_cfg=args.linkage_config)
+    model = build_model(params, **build_kw)
+    design = None
+    if "drivetrain_model" in params:
+        # The analytic LQR identifies the plant by driving the native drive
+        # actuators, which the detailed drivetrain turns into command holders.
+        # So design on the ideal plant -- same mechanisms, same floors -- and
+        # fly those gains on the detailed one, which is the hardware situation
+        # anyway.
+        from .control.linearize import design_all
+        from .drivetrain_model import base_params
+        design = design_all(base_params(params),
+                            build_model(base_params(params), **build_kw))
     # Same lighting the recorder applies, so a teleop session and a video of
     # the same thing do not look like two different simulators.
     tune_lighting(model)
@@ -501,7 +543,7 @@ def main() -> None:
                 record=args.record,
                 slowmo_x=args.slowmo, odometry=args.odometry,
                 odometry_encoder=args.odometry_encoder, ahrs=args.ahrs,
-                ahrs_tau=args.ahrs_tau)
+                ahrs_tau=args.ahrs_tau, design=design)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1555,7 +1597,7 @@ def _rec_write(rec, path, params, gen_name, mode):
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
             show_ui=False, wings=False, linkage=False, swing=False, record=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
-            ahrs="none", ahrs_tau=None):
+            ahrs="none", ahrs_tau=None, design=None):
     from .interactive import teleop_loop
 
     from . import policy_menu
@@ -1614,10 +1656,16 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
 
     menu = {"open": False, "cursor": 0, "entries": []}
     data = _fresh(model, eq_qpos)
-    c = DriveController(params, model)
+    c = DriveController(params, model, design=design)
     c.reset(model, data)
+    from .drivetrain_model import DrivetrainSim, describe
+    drive_sim = DrivetrainSim.attach(model, params)
+    if "drivetrain_model" in params:
+        print(f"DETAILED DRIVETRAIN: {describe(params)}.\n  Every policy so far "
+              "trained on the ideal drives; expect the digest warning below.")
     c._odometry_active = odo is not None
     c._ahrs_active = ahrs_model is not None
+    c._drivetrain_active = "drivetrain_model" in params
     pending = []
     # `v` is the operator's speed INTENT and `psi` the absolute commanded
     # heading; the controller (or policy) still rate-limits how it gets there.
@@ -2731,7 +2779,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 show_ui=show_ui,
                 slowmo=slowmo,
                 paused=paused,
-                on_start=lambda v: view.__setitem__(0, v))
+                on_start=lambda v: view.__setitem__(0, v),
+                pre_step=None if drive_sim is None else drive_sim.pre_step)
     # teleop_loop returns when the operator closes the viewer, so this is the
     # natural flush point. Ctrl-C bypasses it -- accepted, since a session
     # abandoned that way is usually one you did not want kept.

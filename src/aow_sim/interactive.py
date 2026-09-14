@@ -39,7 +39,7 @@ def steps_per_frame(timestep: float, slowmo: float = 1.0, fps: float = 60.0) -> 
 
 def teleop_loop(model, data, step, on_key, intro: str, module: str,
                 draw=None, show_ui: bool = False, on_start=None,
-                slowmo=None, paused=None) -> None:
+                slowmo=None, paused=None, pre_step=None) -> None:
     """Run `step(model, data)` every physics step inside a real-time-paced
     passive viewer with `on_key(keycode)` handling. If `draw` is given, it is
     called as `draw(viewer.user_scn, model, data)` each rendered frame to add
@@ -57,6 +57,10 @@ def teleop_loop(model, data, step, on_key, intro: str, module: str,
     redrawing. That is what lets a modal overlay be adjusted against a frozen
     bike. Anything `step` does off `data.time` stalls while paused, so a
     caller that needs a clock there must use a wall one.
+
+    `pre_step(data)`, if given, runs immediately before every `mj_step` and
+    never while paused -- the hook the detailed drivetrain needs
+    (drivetrain_model.DrivetrainSim), which integrates per physics step.
 
     `show_ui` restores the viewer's two side panels. They are off by default:
     teleop is driven from the keyboard, the panels eat a third of the window,
@@ -92,6 +96,8 @@ def teleop_loop(model, data, step, on_key, intro: str, module: str,
             else:
                 for _ in range(n):
                     step(model, data)
+                    if pre_step is not None:
+                        pre_step(data)
                     mujoco.mj_step(model, data)
             if draw is not None:
                 draw(v.user_scn, model, data)

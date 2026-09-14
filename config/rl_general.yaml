@@ -110,3 +110,12 @@ randomization:           # as rl_flick/rl_pivot
   # dampratio_range: [0.3, 0.8]   # absolute draw, not a fraction of nominal
   disturb_force_N: 2.0
   disturb_prob: 0.01
+  # DETAILED DRIVETRAIN (docs/plans/drivetrain-model.md). Selected under env:
+  #   drivetrain_model: true            # or a path; absent = ideal drives
+  #   drivetrain_without: [roller_slop] # optional
+  #   servo_gains: [100, 1920]          # optional, firmware table units
+  # and randomised here, both OFF unless set:
+  #   drive_supply_randomize: false     # true: the drive servo follows
+  #                                     #   actuator_frac's battery draw
+  #   drive_friction_side_frac: 0.0     # each side's Coulomb friction
+  #                                     #   x U(1-f, 1+f), independently

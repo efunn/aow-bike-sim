@@ -415,6 +415,11 @@ class DriveController(LQRBalance):
                   "MISMATCH,\n  not a verdict on the policy. Drive an "
                   "estimate-trained one instead:\n"
                   "    --general general_rl_odo")
+        if (getattr(self._gen, "drivetrain_model", None) is not None
+                and not bool(getattr(self, "_drivetrain_active", False))):
+            print(f"NOTE: {getattr(self._gen, 'name', '?')} was trained on the "
+                  "DETAILED drivetrain and is being flown on the ideal one.\n"
+                  "  Add --drivetrain to teleop to match training.")
         self._gen_obs_pitch = bool(getattr(self._gen, "obs_pitch", False))
         self._gen_obs_wings = bool(getattr(self._gen, "obs_wings", False))
         self._gen_act_wings = bool(getattr(self._gen, "act_wings", False))
