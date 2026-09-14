@@ -426,9 +426,10 @@ cmd_seeds() {
 #
 #   RUN_TAG=<queue> ./scripts/rl.sh logs|eta|stop general
 #
-# `eta` reads the FIRST job's --config off the launch line, so it reports the
-# current job correctly only while every config in the queue has the same
-# total_timesteps. Keep them equal, or read the per-job banner in the log.
+# `eta` takes the CURRENT job's config from the last "=== job" banner in the
+# log and reports that job, not the queue. A --timesteps given as an extra
+# trainer arg on a queue line is still read off the launch line, where the
+# greedy match takes the last one -- keep per-line --timesteps equal.
 cmd_queue() {
   local move=$1 file=${2:-}
   [[ -n "$file" && -f "$file" ]] || die "usage: $0 queue <move> <queuefile>"
@@ -568,6 +569,16 @@ cmd_eta() {
   # line was recorded.
   hdr="$(head -1 "$log")"
   cfg="$(sed -n 's/.*--config[= ][= ]*\([^ ]*\).*/\1/p' <<< "$hdr")"
+  # A `queue` launch line carries EVERY job's --config, and the greedy match
+  # above takes the LAST one. The supervisor prints a banner per job --
+  # "=== job N of M: NAME (CONFIG, seed S) : date ===" -- so the current job's
+  # config is the one in the last banner.
+  local qcfg
+  qcfg="$(sed -n 's/^=== job [0-9][0-9]* of [0-9][0-9]*: [^ ]* (\(.*\), seed [0-9][0-9]*) : .*/\1/p' "$log" | tail -1)"
+  if [[ -n "$qcfg" ]]; then
+    cfg="$qcfg"
+    echo "job          $(grep '^=== job ' "$log" | tail -1 | sed 's/^=== \(job [0-9]* of [0-9]*: [^ ]*\).*/\1/')"
+  fi
   [[ -n "$cfg" && "$cfg" != /* ]] && cfg="$REPO/$cfg"
   [[ -n "$cfg" && -f "$cfg" ]] || cfg="$REPO/config/rl_$move.yaml"
   echo "config       ${cfg#$REPO/}"
