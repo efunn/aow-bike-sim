@@ -6,6 +6,7 @@
 #   ./scripts/rl.sh up general              # board + training, then disconnect
 #   ./scripts/rl.sh seeds general 4         # seeds 0-3, serial, one board
 #   ./scripts/rl.sh seeds general 2-11      # seeds 2..11 (skip ones already run)
+#   ./scripts/rl.sh queue general <file>    # (config, seed, name) jobs, serial
 #   ./scripts/rl.sh board general           # dashboard only (outlives training)
 #   ./scripts/rl.sh train general --resume  # extra args go straight to the trainer
 #   ./scripts/rl.sh status                  # what is up, and on which port
@@ -404,6 +405,80 @@ cmd_seeds() {
   echo "                  --policies ${name}${lo} ${name}$(( lo + 1 )) --tag seedsweep"
 }
 
+# Run a QUEUE of (config, seed, export name) jobs ONE AFTER ANOTHER, under one
+# board. `seeds` sweeps ONE config; an A/B across configs wants them
+# INTERLEAVED -- A0 B0 A1 B1 -- so a queue cancelled or cut short still leaves
+# matched pairs rather than three of A and none of B. Serial for every reason
+# `seeds` gives above.
+#
+# The file, one job per line, `#` comments and blank lines ignored:
+#
+#   # config                                seed  export-name                   [trainer args]
+#   config/rl_general_drivetrain_p100.yaml  0     general_rl_drivetrain_p100_0
+#
+# READ ONCE, AT LAUNCH. Every line is checked (config exists, integer seed, no
+# moves/<name>.yaml already) before anything starts, and the jobs are baked
+# into the supervisor -- editing the file mid-queue changes nothing.
+#
+# <queue> is the file's basename. Each job writes runs/<queue>/<export-name>,
+# the board serves runs/<queue>/ (every job on one dashboard), and the
+# bookkeeping tag is <queue> too:
+#
+#   RUN_TAG=<queue> ./scripts/rl.sh logs|eta|stop general
+#
+# `eta` reads the FIRST job's --config off the launch line, so it reports the
+# current job correctly only while every config in the queue has the same
+# total_timesteps. Keep them equal, or read the per-job banner in the log.
+cmd_queue() {
+  local move=$1 file=${2:-}
+  [[ -n "$file" && -f "$file" ]] || die "usage: $0 queue <move> <queuefile>"
+  local tag base; tag="$(basename "${file%.*}")"; base="runs/$tag"
+  local total; total="$(grep -cvE '^[[:space:]]*(#|$)' "$file" || true)"
+  local chain="trap 'kill \"\$child\" 2>/dev/null; exit 130' TERM INT;"
+  local n=0 lineno=0 cfg seed name rest first_cfg="" q_cfg q_name q_base q_extra a
+  local -a extra
+  printf -v q_base '%q' "$base"
+  while read -r cfg seed name rest || [[ -n "${cfg:-}" ]]; do
+    lineno=$((lineno + 1))
+    [[ -z "${cfg:-}" || "$cfg" == \#* ]] && continue
+    [[ -f "$cfg" ]] || die "$file:$lineno: no config '$cfg'"
+    [[ "${seed:-}" =~ ^[0-9]+$ ]] || die "$file:$lineno: seed must be an integer, got '${seed:-}'"
+    [[ -n "${name:-}" ]] || die "$file:$lineno: missing export name"
+    [[ ! -e "moves/$name.yaml" ]] || die "$file:$lineno: moves/$name.yaml already exists -- pick a new export name"
+    first_cfg="${first_cfg:-$cfg}"
+    n=$((n + 1))
+    printf -v q_cfg '%q' "$cfg"; printf -v q_name '%q' "$name"
+    q_extra=""
+    read -r -a extra <<< "${rest:-}"
+    for a in ${extra[@]+"${extra[@]}"}; do printf -v a '%q' "$a"; q_extra+=" $a"; done
+    # ONE LINE, as in `seeds`: start records the argv on the log's first line
+    # and cmd_eta reads --config and --timesteps from exactly that line.
+    chain+=" echo \"=== job $n of $total: $name ($cfg, seed $seed) : \$(date '+%F %T') ===\"; python -u -m aow_sim.train_${move}_rl --config $q_cfg --seed $seed --run-dir $q_base/$q_name --export-name $q_name$q_extra & child=\$!; wait \"\$child\" || echo \"job $name FAILED or cancelled -- code \$?\" >&2;"
+  done < "$file"
+  (( n > 0 )) || die "$file: no jobs"
+  chain+=" echo \"=== queue done : \$(date '+%F %T') ===\""
+
+  activate_env
+  LOGDIR="$base" cmd_board "$move"
+  echo
+  local log steps
+  log="$(RUN_TAG="$tag" start "$move" train "train" -- bash -c "$chain")"
+  steps="$(awk '/^algo:/{a=1} a&&/^[ \t]+total_timesteps:/{print $2; exit}' "$first_cfg" 2>/dev/null)"
+  echo "queue        -> $n jobs from $file, SERIAL, in file order"
+  if [[ -n "$steps" ]]; then
+    echo "                ~$(awk -v s="$steps" -v n="$n" 'BEGIN{printf "%.1f", s*n/2500/3600}') h if every job runs $steps steps at 2500 steps/s"
+    echo "                (the ideal-plant rate; the detailed drivetrain costs ~8 %)"
+  fi
+  echo "                each: $base/<export-name>"
+  echo "                pid $(RUN_TAG="$tag" pid_of "$move" train)  (one supervisor for the queue)"
+  echo "                log: $log"
+  echo
+  echo "board        -> $(board_url "${PORT:-$(port_for "$move")}")  (every job, one dashboard)"
+  echo "watch        -> RUN_TAG=$tag ./scripts/rl.sh logs $move"
+  echo "progress     -> RUN_TAG=$tag ./scripts/rl.sh eta $move   (CURRENT job, not the queue)"
+  echo "cancel ALL   -> RUN_TAG=$tag ./scripts/rl.sh stop $move"
+}
+
 cmd_up() {
   local move=$1; shift
   # Resolve the board's logdir from the argv we are ABOUT TO LAUNCH, not from
@@ -628,6 +703,7 @@ SUB="${1:-}"; shift || true
 case "$SUB" in
   up)         check_move "${1:-}"; cmd_up "$@" ;;
   seeds)      check_move "${1:-}"; cmd_seeds "$@" ;;
+  queue)      check_move "${1:-}"; cmd_queue "$@" ;;
   train)      check_move "${1:-}"; cmd_train "$@" ;;
   board)      check_move "${1:-}"; cmd_board "$1" ;;
   stop)       check_move "${1:-}"; stop "$1" train ;;

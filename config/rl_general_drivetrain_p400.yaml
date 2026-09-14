@@ -1,0 +1,190 @@
+# THE DETAILED DRIVETRAIN, FIRMWARE P 400 -- one arm of a two-arm comparison,
+# P 100 against P 400, three seeds each. rl_general_drivetrain_p100.yaml is the other arm and differs
+# from this file in `servo_gains` and nothing else.
+#
+# WHY. On the detailed drivetrain (config/drivetrain_model.yaml -- the XC430
+# firmware loop fitted to the bench, the differential's detent, roller slop)
+# the current line survives factory P 100 and collapses at P 400, the gain the
+# bench liked best (docs/plans/drivetrain-model.md). general_rl_cmd_curriculum2b,
+# eval grid at --encoder counts --ahrs tm151 --ahrs-tau 0.19, score / survival:
+#
+#   ideal drivetrain          0.595 / 0.90
+#   full, P 100 / I 1920      0.638 / 0.95
+#   full, P 400 / I 1920      0.177 / 0.50
+#
+# That says nothing about a policy TRAINED at P 400. On the bench P 400 cuts
+# the time stuck at the detents (49 % -> 23 % at I 1920), triples tracking at
+# 3-10 Hz and stops 3x faster -- and rings near 20 Hz, in the band these
+# policies dither the diff channel. The firmware gain and the policy are one
+# decision, and this pair is the experiment that makes it.
+#
+# ONE VARIABLE AT A TIME. Against rl_general_cmd_curriculum2.yaml, the base --
+# the config the 12-seed sweep ran; curriculum2b is its seed 1:
+#   env.drivetrain_model: true         the detailed drivetrain, every part on
+#   env.servo_gains: [400, 1920]         the arm
+#   randomization.actuator_frac: 0.0   was 0.15 -- the battery is FIXED for this
+#                                      comparison, steer servo included
+#   drive_supply_randomize / drive_friction_side_frac written out as off
+# `algo.seed` is set per job by the queue. I is 1920 in BOTH arms, so P is the
+# only firmware difference; I 3840 cut the stalls further on the bench and
+# rang harder, and is a later question.
+#
+# Everything else is curriculum2: the command-family curriculum with hold_max,
+# no lateral command, obs_pitch, odometry + TM151 at tau 0.19, 20M steps,
+# 32 x 512. The detent phase is drawn per episode by the env.
+#
+# WHAT TO LOOK FOR, once all six are back:
+#
+#   python analysis/drivetrain_eval.py --variants full full_p400 --by-family \
+#       --policies general_rl_drivetrain_p100_0 ... general_rl_drivetrain_p400_2
+#
+#   * the seed spread inside an arm BEFORE any difference between arms. On the
+#     ideal plant 5 of this config's 12 seeds came back broken or partial --
+#     told forward, driving backward (docs/plans/seed-sweep-and-personalities.md)
+#     -- so expect one of three per arm, and read speed_ratio_fwd first.
+#   * each arm on ITS OWN gains (p100 on `full`, p400 on `full_p400`): does
+#     P 400 train to anything at all, and does it beat P 100?
+#   * each arm on the OTHER gain: how gain-specific is a trained policy?
+#   * the pen (analysis/pen_slope.py --drivetrain --servo-gains ...).
+#
+# The moves yaml records the resolved drivetrain, so every analysis script
+# rebuilds this plant from the policy itself. Teleop needs --drivetrain, and
+# `--servo-gains 400:1920` for this arm.
+#
+# LAUNCH -- queued with the other arm, interleaved p100_0, p400_0, p100_1, ...
+# (on the remote box, after committing and pushing):
+#
+#   ./scripts/rl.sh sync
+#   ./scripts/rl.sh queue general config/queue_drivetrain_gains.txt
+#
+# --- inherited from rl_general_cmd_curriculum2.yaml, unchanged below ---
+
+algo:
+  algorithm: PPO
+  total_timesteps: 20000000   # a general controller is a bigger task than a
+                              #   single move; expect to need the full budget
+  n_envs: 32    # was 8
+  learning_rate: 3.0e-4
+  n_steps: 512 # was 2048  -> 32 x 512 = 16384, unchanged
+  batch_size: 1024
+  n_epochs: 10
+  # gamma at 50 Hz: 1/(1-g) = 100 steps = 2.0 s of lookahead, which matches
+  # the timescale of a heading change. THE MOVES' 0.99 AT 200 Hz IS ONLY
+  # 0.5 s — far too myopic here; they get away with it because their reward
+  # is a dense per-step yaw-progress term rather than setpoint tracking.
+  # If control_rate_hz is raised back to 200, gamma must go to ~0.998.
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005        # ball_rl's lesson: 0.0 collapsed exploration
+  net_arch: [128, 128]
+  seed: 0
+  eval_every: 1000000     # BestByScore cadence [timesteps]
+
+env:
+  action_space: full
+  # 50 Hz, not the moves' 200 Hz: standard for locomotion RL, and it makes a
+  # 2.5 s maneuver 125 steps instead of 500 — far better credit assignment.
+  # Replay is ZOH at this rate, so the controller holds each action 4 physics
+  # ticks longer than a move does.
+  # The one change from rl_general_smooth_diff.yaml.
+  obs_odometry: true
+  odometry_mode: front   # what the Pi runs today; `blend` is the experiment
+  # The two changes from rl_general_odo.yaml.
+  odometry_encoder: counts   # 4096 counts/rev, differenced, 25 ms RateFilter
+  ahrs_level: tm151          # the part we own, at its DYNAMIC accuracy
+  # THE ARM. See the header.
+  drivetrain_model: true     # config/drivetrain_model.yaml, every part on
+  servo_gains: [400, 1920]    # firmware Velocity P, I in table units
+  ahrs_tau_s: 0.19           # PINNED at the MEASURED value (see the header).
+  obs_pitch: true            # in the state; no w_pitch penalty this run.
+  control_rate_hz: 50
+  max_episode_s: 15.0    # long: the policy must hold a command, not finish one
+  v_max: 1.2             # matches control.drive.v_max in bike_params.yaml
+  v_lat_frac: 0.0        # DROPPED -- see the header. Crab stays in the eval.
+  p_v_zero: 0.2          # unread under cmd_families; the families own the mix
+  resample_s: [2.0, 6.0] # >= one discount horizon (2.0 s at gamma .99, 50 Hz)
+
+  # The command mix, explicit. Weights are shares of whatever `hold` leaves,
+  # each ramped in linearly over its own [onset, full] window; before any has
+  # opened, hold takes everything. Resulting mix, measured:
+  #
+  #     d      hold  in-place  straight  moving turn     mean|v|  mean|step|
+  #   0.00     40.0%      0.0%     60.0%         0.0%    0.22 m/s        --
+  #   0.20     25.4%     15.1%     59.5%         0.0%    0.33 m/s    30 deg
+  #   0.50     13.9%     23.0%     35.2%        27.9%    0.51 m/s    64 deg
+  #   1.00     10.0%     20.2%     30.1%        39.7%    0.81 m/s   120 deg
+  #
+  # against the eval grid's 6 / 31 / 19 / 44. Close, and deliberately not
+  # equal: the grid is a DISCRIMINATOR chosen to separate policies, not a
+  # model of what an operator does.
+  cmd_families:
+    hold_min: 0.10       # floor, reached as d -> 1
+    hold_max: 0.40       # SHARE AT d=0. Arm 1 used 1.0 -- see the header.
+    hold_decay: 3.0      # p_hold = min + (max-min)*(1-d)^decay
+    # full <= onset means "open at full weight from step 0": there must be a
+    # forward/reverse command in the mix before the gate can be cleared.
+    straight:      {onset: 0.00, full: 0.00, weight: 1.5}
+    turn_in_place: {onset: 0.05, full: 0.45, weight: 1.0}
+    moving_turn:   {onset: 0.20, full: 0.70, weight: 2.0}
+  cmd_v_lo: 0.1          # [m/s] floor on a non-zero speed command
+  cmd_step_lo_deg: 10.0  # floor on a non-zero heading step
+  cmd_v_exponent: 1.0    # density ~ |x|^k on [lo, hi]; 1.0 = linear
+  cmd_step_exponent: 1.0
+  ball_prob: 0.25        # fraction of episodes with a ball parked nearby --
+                         #   contact robustness only, NO ball reward. Set to
+                         #   0.0 to train on the ball-free model.
+  ball_place_radius: 0.5 # ball dropped within this radius of the start pose
+  action_bounds:
+    steer_rate_max: 8.0
+    hub_max: 1.4         # v_max 1.2 + margin (moves cap at 0.6-0.72 because
+                         #   they are standstill maneuvers)
+    diff_max: 40.0
+
+curriculum:              # the repo's first; a single scalar scaling the
+  enabled: true          #   command sampling ranges in _sample_command
+  start: 0.0             # 0, not 0.15: difficulty 0 is now a PURE HOLD stage
+                         #   rather than a slow-and-gentle one
+  step: 0.02             # advance per episode that clears advance_score
+  advance_score: 0.6     # mean of (vel + heading) tracking rewards, in [0,1]
+
+reward:
+  # Bounded-POSITIVE tracking + alive bonus. Over a 15 s episode a
+  # penalty-only reward (the moves' form) makes falling early strictly
+  # rational; this removes that incentive.
+  w_vel: 1.5             # x exp(-|v_cmd - v|^2 / sigma_v^2)
+  w_head: 1.0            # x exp(-(psi_err/sigma_psi)^2)
+  w_alive: 0.5
+  sigma_v: 0.35          # [m/s] tracking tolerance scale
+  sigma_psi_deg: 25.0    # heading tolerance scale
+  w_upright: 0.5
+  w_effort: 0.001
+  # [steer_rate, hub, diff]. One number here would price all three alike
+  # (the historical form); the list is what lets `diff` be asked a separate
+  # question -- see the header. All three equal == the scalar form exactly.
+  w_smooth: [0.05, 0.05, 0.25]
+  penalty_fall: 50.0
+  fall_roll_deg: 60
+
+randomization:           # as rl_flick/rl_pivot
+  enabled: true
+  init_roll_deg: 2.0
+  init_yaw_deg: 5.0
+  init_pos_m: 0.02
+  init_vel: 0.05
+  mass_frac: 0.15        # was 0.1. The as-built payload mass (battery + Pi +
+                         #   U2D2 + buck, ~190 g of a 1.02 kg bike) is a GUESS
+                         #   until the thing is weighed, and it is a bigger
+                         #   share of the total than anything else unmeasured.
+  friction_frac: 0.2
+  # Supply voltage. The model's servo numbers are the 12 V datasheet column,
+  # but a 3S pack spans 12.6 V (full) to 9.9 V (cutoff) -> ~0.83-1.05x nominal
+  # strength. 0.15 covers that window with margin. Scales ctrlrange AND
+  # forcerange from a single draw (speed and torque both go with voltage) --
+  # see control/randomize.py. Untethered transfer depends on this.
+  actuator_frac: 0.0     # FIXED for this comparison (was 0.15). One
+                         #   fewer variable; see the header.
+  drive_supply_randomize: false   # the drive servo stays at 12 V
+  drive_friction_side_frac: 0.0   # both sides at the overlay's friction
+  disturb_force_N: 2.0
+  disturb_prob: 0.01

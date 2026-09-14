@@ -1,0 +1,16 @@
+# P 100 against P 400 on the detailed drivetrain, three seeds each, INTERLEAVED
+# so a queue cancelled part-way still leaves matched pairs. One job per line,
+# run in file order by:
+#
+#   ./scripts/rl.sh queue general config/queue_drivetrain_gains.txt
+#
+# Runs land in runs/queue_drivetrain_gains/<export-name>. Why these arms:
+# the header of config/rl_general_drivetrain_p100.yaml.
+#
+# config                                  seed  export-name
+config/rl_general_drivetrain_p100.yaml    0     general_rl_drivetrain_p100_0
+config/rl_general_drivetrain_p400.yaml    0     general_rl_drivetrain_p400_0
+config/rl_general_drivetrain_p100.yaml    1     general_rl_drivetrain_p100_1
+config/rl_general_drivetrain_p400.yaml    1     general_rl_drivetrain_p400_1
+config/rl_general_drivetrain_p100.yaml    2     general_rl_drivetrain_p100_2
+config/rl_general_drivetrain_p400.yaml    2     general_rl_drivetrain_p400_2
