@@ -64,6 +64,7 @@ square (`sim.floor_grid_m`) and is the scale bar.
     python analysis/pen_slope.py
     python analysis/pen_slope.py --slopes 0 0.57 1.15 2.0 --commands hold
     python analysis/pen_slope.py --across --tag cross    # tilt sideways instead
+    python analysis/pen_slope.py --drivetrain --tag drivetrain_p100   # detailed drive
 
 Writes analysis/plots/pen_slope_<policy>[_<tag>].png and prints the table.
 Read-only: loads moves/*.npz and config, overrides gravity and floor extent IN
@@ -81,6 +82,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from aow_sim import drivetrain_model as dm
 from aow_sim.build_model import load_params, tune_lighting
 from aow_sim.control.balance import extract_state
 from aow_sim.control.general_env import _load_rl_config
@@ -410,9 +412,25 @@ def main():
     ap.add_argument("--tag", default="",
                     help="suffix for the PNG, so variants never overwrite each "
                          "other at a tracked name")
+    ap.add_argument("--drivetrain", nargs="?", const=True, default=None,
+                    metavar="PATH",
+                    help="the opt-in detailed drivetrain "
+                         "(config/drivetrain_model.yaml, or PATH); same flags "
+                         "as run_drive. Pass --tag with it")
+    ap.add_argument("--drivetrain-without", nargs="+", default=(),
+                    choices=dm.PARTS, metavar="PART")
+    ap.add_argument("--servo-gains", default=None, metavar="P:I",
+                    help="firmware Velocity P:I in table units under "
+                         "--drivetrain (default the overlay's 100:1920)")
     args = ap.parse_args()
 
     params = load_params()
+    if args.drivetrain or args.drivetrain_without or args.servo_gains:
+        gains = (tuple(int(x) for x in args.servo_gains.split(":"))
+                 if args.servo_gains else None)
+        params = dm.with_drivetrain(
+            params, None if args.drivetrain in (None, True) else args.drivetrain,
+            without=args.drivetrain_without, gains=gains)
     # In-memory only. A bigger plane keeps a runaway on a drawn floor instead of
     # off the edge into grey; the checker is texuniform so squares stay 0.25 m
     # whatever this is, and the scale reading is unaffected.
@@ -454,7 +472,8 @@ def main():
 
     base = {c: np.array([r[0][-1] - r[0][0] for r in runs[(c, 0.0)]])
             for c in args.commands} if 0.0 in args.slopes else {}
-    print(f"\n{args.policy}   {'across' if args.across else 'along'}-slope, "
+    print(f"\n{args.policy}   {dm.describe(params)}   "
+          f"{'across' if args.across else 'along'}-slope, "
           f"{'GRAVITY tilted' if args.tilt_gravity else 'floor tilted'}, "
           f"{args.seconds:.0f} s, {len(seeds)} seed(s)")
     if not base:
@@ -547,7 +566,7 @@ def main():
     axis_short = "cross-slope" if args.across else "along-slope"
     how = "GRAVITY tilted" if args.tilt_gravity else "floor tilted"
     fig.suptitle(f"Pen on a sloping floor, {axis_short} ({how}) "
-                 f"\u2014 {args.policy}", fontsize=13)
+                 f"\u2014 {args.policy}, {dm.describe(params)}", fontsize=13)
     where = ("+Y, the bike's left, UP in these panels" if args.across
              else "+X, straight ahead, RIGHT in these panels")
     caption = (
