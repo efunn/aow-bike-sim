@@ -603,15 +603,20 @@ def test_general_move_replays():
     including at a policy that did not exist.
     """
     from aow_sim.build_model import load_params
-    from aow_sim.control.flick import MOVES_DIR
-    from aow_sim.control.policy import load_policy_npz
+    from aow_sim.control.flick import MOVES_DIR, load_move
+    from aow_sim.control.general_spec import obs_layout_for
     name = load_params()["control"].get("general_move", "general_rl")
     if not (MOVES_DIR / f"{name}.npz").exists():
         pytest.skip(f"control.general_move names {name}, which is not exported")
-    pol = load_policy_npz(MOVES_DIR / f"{name}.npz")
-    if pol.obs_dim != OBS_DIM:
+    # load_move, not load_policy_npz: the yaml carries the optional-block
+    # flags, and the width is judged against the policy's own layout. The
+    # 15-wide OBS_DIM skipped every pitch- or window-observing policy.
+    pol = load_move(name)
+    if pol.obs_dim != len(obs_layout_for(pol)):
         pytest.skip(f"moves/{name} predates the current obs spec — retrain")
-    act = pol.action(_obs())
+    obs = np.zeros(pol.obs_dim)
+    obs[:OBS_DIM] = _obs()                 # optional blocks left at zero
+    act = pol.action(obs)
     assert len(act) == 3 and np.all(np.isfinite(act))
 
 

@@ -333,12 +333,16 @@ def _needs_general():
     """
     from aow_sim.build_model import load_params
     from aow_sim.control.flick import MOVES_DIR, load_move
-    from aow_sim.control.general_spec import OBS_DIM
+    from aow_sim.control.general_spec import obs_layout_for
     name = load_params()["control"].get("general_move", "general_rl")
     if not (MOVES_DIR / f"{name}.yaml").exists():
         pytest.skip(f"control.general_move names {name}, which is not exported "
                     "— run `python -m aow_sim.train_general_rl` first")
-    if load_move(name).obs_dim != OBS_DIM:
+    # Against the policy's OWN declared layout, not the 15-wide base: a
+    # pitch- or window-observing policy is current, and comparing against
+    # OBS_DIM skipped every one of them as "stale".
+    pol = load_move(name)
+    if pol.obs_dim != len(obs_layout_for(pol)):
         pytest.skip(f"moves/{name} predates the current obs spec — retrain")
 
 

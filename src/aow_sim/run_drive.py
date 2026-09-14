@@ -414,18 +414,12 @@ def main() -> None:
                     dest="odometry",
                     help="drive on MuJoCo truth instead of the onboard "
                          "estimate (--odometry is ON by default)")
-    ap.add_argument("--general", default="general_rl_cmd_curriculum2",
-                    metavar="NAME",
-                    help="always-on policy to drive with (moves/NAME.{yaml,npz}). "
-                         "Defaulted HERE rather than by moving "
-                         "`control.general_move`, because despite what the notes "
-                         "say `params_digest` hashes the WHOLE params dict, "
-                         "`control` included -- every call site passes the full "
-                         "dict -- so editing that pointer moves plant_digest and "
-                         "makes hw/state.py reject the deploy bundle and "
-                         "control/flick.py flag every trained move. Measured: "
-                         "e1c0d8822373309b -> 8218c1e882bd2743 for a one-word "
-                         "change. Pass a name to override.")
+    ap.add_argument("--general", default=None, metavar="NAME",
+                    help="always-on policy to drive with (moves/NAME.{yaml,npz}) "
+                         "for this session. Default: `control.general_move` in "
+                         "bike_params.yaml, the same pointer record.py and "
+                         "hw/run_bike.py read. Repointing that moves neither "
+                         "plant_digest nor design_digest.")
     ap.add_argument("--slowmo", type=float, default=1.0, metavar="X",
                     help="run teleop at 1/X speed (2 = half, 10 = a tenth). "
                          "- halves and = doubles it live (shifted _ and + too), "
