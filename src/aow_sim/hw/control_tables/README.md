@@ -82,6 +82,29 @@ version of `r5_control_mode_comparison` in `docs/measurements/servo-measurements
 Note also that `apply_map` drops torque, and anything that drops torque is a
 good place for a gain to be quietly restored, so read back after that too.
 
+## Goal writes are discarded while torque is off
+
+Measured 2026-09-13 on both XC430-W150s (ids 101/102), velocity mode, torque
+off. Each register written DIRECTLY -- which returns a status packet -- then
+read back and restored:
+
+| register | wrote | status | read back |
+|---|---|---|---|
+| Goal Velocity (104) | 100 | rc=0 err=0 | **0** |
+| Goal Position (116) | 1234 | rc=0 err=0 | **unchanged** (1902 and 1307) |
+| Goal PWM (100) | 50 | rc=0 err=0 | 50 |
+| Profile Velocity (112) | 7 | rc=0 err=0 | 7 |
+| LED (65) | 1 | rc=0 err=0 | 1 |
+
+**Acknowledged, not applied, and no error anywhere.** Found when a torque-off
+bench test SyncWrote a random Goal Velocity every frame and read it back: on
+schedule, 1602 frames, every read-back 0. ROBOTIS's page does not say so.
+
+So reading a goal back proves a write landed only while torque is ON; a
+torque-off check has to write a register that holds (`drivetrain_bench.py idle
+--write` uses Profile Velocity). Not yet checked on the XC330, nor in position
+mode, where Goal Position is the register that matters.
+
 ## What is NOT in these files
 
 Upstream's `[unit info]` covers velocity and current only. Everything else the
