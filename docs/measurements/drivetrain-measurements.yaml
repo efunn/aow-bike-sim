@@ -368,6 +368,21 @@ roller_slop:
     So the gears floating apart axially is not it; if the mesh opens under
     load, it is compliance in the teeth and shafts, with friction against the
     rings varying as the pinions turn.
+  loaded_hand_check: >
+    2026-09-14, by hand, rollers down on a table: with almost no weight on the
+    assembly it rolls side to side through the play with very little effort;
+    pressed down as hard as was comfortable, the play is the SAME size and
+    still takes very little effort. Backdriving from the ground past a detent
+    wall was very hard: one detent tick after a couple of minutes at about
+    the most downward force comfortable. Reading: the play is a GAP whose size
+    does not depend on load, not compliance (compliance would travel further
+    under more force), with hard walls at its ends as seen from the roller.
+  hand_flick: >
+    2026-09-14, by hand, wheel in the air: a roller flicked by any amount, or
+    held at one end of its play and let go, returns to the centre without
+    visible overshoot. Close to critically damped; a centring spring strong
+    enough to beat the roller's friction (compare hand_release, "not every
+    time", 2026-09-13). By eye, not filmed.
 
 k_roller:
   capture: 260913-123607_belt     # diff, exactly 1 servo rev at 3 %
@@ -449,7 +464,7 @@ bus_watchdog:
 
 outstanding:
   - "choose the firmware Velocity P AND I gains (chirp_vs_gain, pi_grid_creep). P 400 / I 3840 cuts detent stalls most and rings most, so it is a trade, not a free win. Then fit drive_kv, drive_ki and input_armature against the choice"
-  - lever-arm known-torque test, to turn duty into N.m (protocol s3)
+  - "torque scale, duty -> N.m: D5 below (a known added inertia) gives it with the wheel in the air, no lever arm. Present Load cannot -- it is computed from PWM and speed (present_load_xc430)"
   - quasi-static diff torque ramp (PWM mode, up and down), for the detent's true torque-angle curve and hysteresis
   - the 9 V load test above
   - "B's side takes more force than A's in every test that separates them: reversal tracking, the common-creep twist, and B always breaking free second (pi_grid_creep). Check B's belt tension and bearing against A's"
