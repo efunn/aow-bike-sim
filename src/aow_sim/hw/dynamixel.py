@@ -137,6 +137,41 @@ MODE_EXTENDED_POSITION = 4
 MODE_CURRENT_POSITION = 5     # current-based position, the self-righting mode
 MODE_PWM = 16
 
+# Registers that decide what a capture MEANS but do not change frame to frame.
+# `DynamixelBus.snapshot` reads whichever of these a model has, so a bench
+# capture can carry the configuration it was taken under -- the lesson of
+# `control_tables/README.md`, where a mode write silently reset the gains and
+# the comparison measured the gains instead of the modes.
+CONFIG_REGISTERS = (
+    "Model Number", "Firmware Version", "ID", "Baud Rate", "Return Delay Time",
+    "Drive Mode", "Operating Mode", "Homing Offset", "Moving Threshold",
+    "Temperature Limit", "Max Voltage Limit", "Min Voltage Limit", "PWM Limit",
+    "Current Limit", "Velocity Limit", "Max Position Limit",
+    "Min Position Limit", "Shutdown", "Torque Enable", "Status Return Level",
+    "Hardware Error Status", "Velocity I Gain", "Velocity P Gain",
+    "Position D Gain", "Position I Gain", "Position P Gain",
+    "Feedforward 2nd Gain", "Feedforward 1st Gain", "Bus Watchdog",
+    "Profile Acceleration", "Profile Velocity", "Present Input Voltage",
+    "Present Temperature")
+
+# Hardware Error Status(70) bits. Any of them latches, drops torque (for the
+# bits enabled in Shutdown(63)), and survives until a REBOOT -- clearing it is
+# not a register write.
+HARDWARE_ERROR_BITS = {0: "input voltage", 2: "overheating", 3: "motor encoder",
+                       4: "electrical shock", 5: "overload"}
+
+BUS_WATCHDOG_LSB_MS = 20      # Bus Watchdog(98) unit
+BUS_WATCHDOG_TRIPPED = 255    # reads as -1 in its 1-byte field once tripped
+
+
+def describe_hardware_error(raw: int) -> str:
+    """Hardware Error Status -> ``"overload, overheating"`` (``"none"`` for 0)."""
+    names = [n for b, n in HARDWARE_ERROR_BITS.items() if raw & (1 << b)]
+    unknown = raw & ~sum(1 << b for b in HARDWARE_ERROR_BITS)
+    if unknown:
+        names.append(f"unknown bits 0x{unknown:02x}")
+    return ", ".join(names) or "none"
+
 VEL_LSB_RAD_S = 0.229 * 2 * np.pi / 60.0
 VOLT_LSB = 0.1
 TICK_WRAP = 32768             # Realtime Tick is 0..32767 ms
@@ -479,6 +514,10 @@ class IndirectMap:
     def read_labels(self) -> tuple:
         return tuple(lbl for lbl, _ in self._reads)
 
+    @property
+    def write_labels(self) -> tuple:
+        return tuple(lbl for lbl, _ in self._writes)
+
     def address_bytes(self, dxl_id: int) -> list:
         """The full indirect-ADDRESS payload for one servo, little-endian.
 
@@ -727,6 +766,70 @@ class DynamixelBus:
                 self.write_raw(i, "Profile Acceleration", 0)
                 self.write_raw(i, "Profile Velocity", 0)
 
+    # -- configuration and health -------------------------------------------
+
+    def snapshot(self, names=CONFIG_REGISTERS, ids=None) -> dict:
+        """``{id: {name: raw}}`` for every named register the model has.
+
+        Raw, not decoded: this is a record, and the raw value is what the
+        control table documents. One round trip per register, so a bring-up
+        call, never a per-frame one.
+        """
+        ids = tuple(ids) if ids is not None else self.ids
+        return {i: {n: self.read_raw(i, n) for n in names if n in self.tables[i]}
+                for i in ids}
+
+    def hardware_errors(self, ids=None) -> dict:
+        """``{id: raw}`` for each servo with a non-zero Hardware Error Status.
+
+        Worth checking before every torque-on: a latched error (an overload
+        from the last hand-held test, say) silently refuses torque, and every
+        frame after that reads a motionless shaft as if it were a result.
+        """
+        ids = tuple(ids) if ids is not None else self.ids
+        return {i: e for i in ids
+                if (e := self.read_raw(i, "Hardware Error Status"))}
+
+    def reboot(self, ids=None, settle_s: float = 1.0) -> None:
+        """Reboot servos -- the only way to clear a latched hardware error.
+
+        EVERYTHING IN RAM IS LOST: torque, gains, and the indirect ADDRESS
+        block (168 is past the EEPROM area). So reboot before `prepare` and
+        `apply_map`, never between `apply_map` and a capture.
+        """
+        import time
+
+        ids = tuple(ids) if ids is not None else self.ids
+        for i in ids:
+            rc, err = self._packet.reboot(self._port, i)
+            if rc != 0:
+                raise RuntimeError(f"reboot id={i}: rc={rc} err={err}")
+        time.sleep(settle_s)
+
+    def bus_watchdog(self, ms: float, ids=None) -> None:
+        """Arm Bus Watchdog(98) at ``ms`` (20 ms steps), or disarm with 0.
+
+        What it is for: with torque on in velocity or PWM mode, a script that
+        hangs or dies leaves the shaft running at its last goal. Armed, the
+        servo stops by itself once no instruction packet has arrived for
+        ``ms``. On the drivetrain rig it has only ever tripped in a pause of
+        the caller's own making -- converting a long capture after its last
+        frame -- which is why `bench_log.record` takes a ``finish`` hook.
+
+        Once TRIPPED the register reads -1 and GOAL WRITES ARE IGNORED until
+        it is written back to 0 -- with no error, since SyncWrite returns no
+        status. So disarm before any pause in traffic that is not meant to stop
+        the servo, and check `watchdog_tripped` after a capture.
+        """
+        units = 0 if ms <= 0 else max(1, min(127, int(round(ms / BUS_WATCHDOG_LSB_MS))))
+        self.write_all("Bus Watchdog", units, ids)
+
+    def watchdog_tripped(self, ids=None) -> dict:
+        """``{id: bool}``: has Bus Watchdog fired since it was armed?"""
+        ids = tuple(ids) if ids is not None else self.ids
+        return {i: self.read_raw(i, "Bus Watchdog") == BUS_WATCHDOG_TRIPPED
+                for i in ids}
+
     # -- per-frame I/O -----------------------------------------------------
 
     def apply_map(self, imap: IndirectMap, verify: bool = False) -> IndirectMap:
@@ -777,6 +880,14 @@ class DynamixelBus:
             # fastSyncRead leaves the group buffer in the other layout and the
             # next plain read raises IndexError from `getData`. Build a new bus.
             self._fast = hasattr(self._reader, "fastSyncRead")
+            # The decode plan, resolved ONCE: `read_offsets` and `register`
+            # are recomputed / linearly searched on every call, which is
+            # host time out of every frame's budget at 500 Hz for no reason.
+            offs = imap.read_offsets
+            self._read_plan = {
+                i: tuple((lbl, imap.read_addr + offs[lbl], imap.register(i, lbl))
+                         for lbl in imap.read_labels)
+                for i in imap.ids}
         if imap.write_len:
             self._writer = GroupSyncWrite(self._port, self._packet,
                                           imap.write_addr, imap.write_len)
@@ -794,16 +905,13 @@ class DynamixelBus:
               else self._reader.txRxPacket())
         if rc != 0:
             raise RuntimeError(f"SyncRead failed: rc={rc}")
-        imap, out = self._map, {}
-        offs = imap.read_offsets
-        for i in imap.ids:
-            if not self._reader.isAvailable(i, imap.read_addr, imap.read_len):
+        imap, reader, out = self._map, self._reader, {}
+        for i, plan in self._read_plan.items():
+            if not reader.isAvailable(i, imap.read_addr, imap.read_len):
                 raise RuntimeError(f"no data for id {i}")
             row = {}
-            for label in imap.read_labels:
-                reg = imap.register(i, label)
-                raw = self._reader.getData(i, imap.read_addr + offs[label],
-                                           reg.size)
+            for label, addr, reg in plan:
+                raw = reader.getData(i, addr, reg.size)
                 row[label] = reg.decode(raw) if decode else raw
             out[i] = row
         return out
@@ -820,8 +928,9 @@ class DynamixelBus:
         for i, v in values.items():
             reg = imap.register(i, imap._writes[0][0])
             raw = reg.encode(v) if encode else int(v) & 0xFFFFFFFF
-            self._writer.addParam(i, [(raw >> (8 * k)) & 0xFF
-                                      for k in range(width)])
+            if not self._writer.addParam(i, [(raw >> (8 * k)) & 0xFF
+                                             for k in range(width)]):
+                raise RuntimeError(f"SyncWrite refused id {i} (listed twice?)")
         rc = self._writer.txPacket()
         if rc != 0:
             raise RuntimeError(f"SyncWrite failed: rc={rc}")
