@@ -38,7 +38,7 @@ Ranked by what unblocks the most, not by interest.
 |---|---|---|---|
 | 1 | **Weigh the electronics stack and pack** | Two `GUESS`es die in ten minutes; the parts are on the bench today | `first-physical-test.md` §0a |
 | 2 | **Contact calibration — P0, P0b, P1, once per floor** | Needs no printing: a weight, a caliper, slow-mo, a tilting board. The contact is the least-measured thing in the sim and the one no policy has been randomised over — and the SPREAD across surfaces is what sets the randomization range | `floors-and-the-contact-model.md` |
-| 3 | **Finish the drivetrain station** | Built and characterised 2026-09-12/13: belt ratio 3.0 confirmed, a 7.5° detent in the differential, and a velocity-loop resonance at ~22 Hz at firmware P 400 that P 200 does not have. Roller slop measured by hand 2026-09-13: ±1.5 mm at the roller's 22 mm diameter, 15.6° p-p, from the same gear chain as the detent (20 detents per roller turn). `k_roller` 2.4 confirmed by counting roller turns. Open: choose the firmware Velocity P **and I** gains — a P/I grid cut time stuck at the diff detents from 49 % (factory) to 12 % at P 400 / I 3840, but P 400 rings near 22 Hz and I 3840 rings harder (peak 1.09–1.20), and the sim must model whichever ships — then the lever-arm torque calibration and fitting the five drivetrain `GUESS`es from the captures | `drivetrain-measurements.yaml` |
+| 3 | **Finish the drivetrain station** | Built and characterised 2026-09-12/13: belt ratio 3.0 confirmed, a 7.5° detent in the differential, and a velocity-loop resonance at ~22 Hz at firmware P 400 that P 200 does not have. Roller slop measured by hand 2026-09-13: ±1.5 mm at the roller's 22 mm diameter, 15.6° p-p, from the same gear chain as the detent (20 detents per roller turn). `k_roller` 2.4 confirmed by counting roller turns. Open: choose the firmware Velocity P **and I** gains — a P/I grid cut time stuck at the diff detents from 49 % (factory) to 12 % at P 400 / I 3840, but P 400 rings near 22 Hz and I 3840 rings harder (peak 1.09–1.20), and the sim must model whichever ships — then a torque-scale check (D5, a known added inertia -- no lever arm needed) and fitting the five drivetrain `GUESS`es from the captures. **The sim now answers half of the gain question (2026-09-14):** a drive model fitted to these captures is built, opt-in, and the existing policies survive it at factory P 100 (0.636 / 0.95) and collapse at P 200+ (P 400: ≤ 0.08 / 0.30) — so the gains cannot be chosen apart from a policy trained at them | `drivetrain-measurements.yaml`, `drivetrain-model.md` |
 | 4 | **Umbilical bring-up on the laptop** | Verification steps 1–2 need no pack at all | `untethered-setup.md` §"Bench power" |
 
 All four are bench work. **The sim-side item is being taken now:**
@@ -66,7 +66,7 @@ odometry rewrite (flown around, seven accepted red tests).
 
 | workstream | state | blocker | owner doc |
 |---|---|---|---|
-| **Simulation & model** | Working. 17 parameters still `GUESS` | Physical parts to measure | `mujoco-modeling-decisions.md` |
+| **Simulation & model** | Working. 17 parameters still `GUESS`. A detailed drivetrain (fitted XC430 loop, diff detent, roller slop) exists as an opt-in overlay, in the eval env, teleop and training (per config). P 100 vs P 400 x 3 seeds is queued: `config/queue_drivetrain_gains.txt` | Physical parts to measure; the queued runs | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
 | **Control — RL** | Working, and primary. Trains against the onboard sensors | Crab still one-sided; `turn_asym` stuck ~0.2 | `general-rl-improvements.md` |
 | **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy needs a moving bike | `sensor-workstream.md` |
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
@@ -94,6 +94,7 @@ parked or reference — read that before the body.
 | `odometry-rewrite.md` | the estimator itself, and why rewriting it was skipped |
 | `floors-and-the-contact-model.md` | **the multi-floor plan** — solref/solimp history, why the parameters read backwards, the per-geom blocker, and how the spread across surfaces becomes a randomization range |
 | `aow-contact-approximations.md` | the contact surrogate survey, the timestep/mesh result, and the two blocked drive-plant fixes |
+| `drivetrain-model.md` | **the detailed drivetrain**: servo, detent and slop fitted to the Station A captures, the replay check against them, what the existing policies do on it, and why firmware gains and policy are one decision |
 | `cad-onshape-workflow.md` | the Onshape round trip and its API quota, plus everything drawn so far |
 | `wing-linkage-design-and-optimization.md` | the righting mechanism as it now stands |
 | `self-righting.md` | where recovery stops being possible; the fall cases. Reference |
@@ -113,10 +114,12 @@ hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 
 ## Health
 
-**Test suite, measured 2026-09-13** with `pytest -n 10 --dist load`:
+**Test suite, measured 2026-09-14** with `pytest -n 6 --dist load`:
 
-    23 failed, 302 passed, 9 skipped, 39.6 s
+    23 failed, 317 passed, 9 skipped, 50.1 s
     red set unchanged (23 accepted failures) -- tests/expected_failures.txt
+
++15 passing against 09-13: `tests/test_drivetrain_model.py`, marker `drivetrain`.
 
 Read the verdict line, not the FAILED count. The 23:
 
@@ -181,21 +184,31 @@ check. See `params-digest-split.md`.
 
 ## What drives the bike
 
-`control.general_move` names **`general_rl_odo_ahrs`**.
+`control.general_move` names **`general_rl_cmd_curriculum2b`** (repointed
+2026-09-14). That is the command-family curriculum line: sensor-trained like
+`odo_ahrs`, plus pitch, and the config the 12-seed sweep ran.
+`seed-sweep-and-personalities.md` §8 has `personality1`, bit-identical to it,
+as the best of the twelve on behaviour, while `_score` ranks it 8th. Teleop's
+`--general` now defaults to the pointer instead of a hardcoded
+`general_rl_cmd_curriculum2`. The pointer was chosen on 09-11 and never landed:
+the digest worry that stopped it was about the legacy whole-file digest, and a
+pointer edit moves neither `plant_digest` nor `design_digest`.
 
-The split that matters is not one good policy against the rest — it is
+The table below predates the curriculum line and is kept for the sensor
+argument it makes. The split that matters is not one good policy against the rest — it is
 **trained-against-the-sensors against not**. On the eval grid at
 `--encoder counts --ahrs tm151`, score / survival:
 
 | policy | trained against | tau 2.0 | tau 0.19 (measured) |
 |---|---|---|---|
 | `smooth_diff_pi` | MuJoCo truth | 0.110 / **0.20** | — |
-| `odo_ahrs` ← **current default** | estimate + attitude, tau 2.0 | **0.672** / 1.00 | 0.570 / 0.95 |
+| `odo_ahrs` (default until 09-14) | estimate + attitude, tau 2.0 | **0.672** / 1.00 | 0.570 / 0.95 |
 | `odo_ahrs_rand2` | + attitude randomised, narrow | 0.654 / 1.00 | **0.663** / **1.00** |
 
 Every truth-trained policy falls in four episodes out of five.
 
-**Two open pointer questions, and they are different questions:**
+**Two pointer questions from before the curriculum line** (superseded as
+pointer candidates by it, kept as findings):
 
 1. **`rand2` vs `odo_ahrs`.** `rand2` is better at the tau the bike actually has
    and is nearly tau-invariant (spread 0.009 against 0.102). `odo_ahrs` keeps a
@@ -227,7 +240,7 @@ to identify it. Never quietly promote one. The load-bearing ones:
 | `chassis.mass` | 0.45 kg — **44% of the bike** | stage 2, the frame |
 | `contact_solimp` | MuJoCo stock | contact calibration (`dmin` confounds both bench tests) |
 | `friction_sliding` | 0.9 | the incline slide, P0b — cheapest test in the project |
-| `input_armature`, hub/roller damping + frictionloss | 5 of them | the drivetrain station, spin-downs |
+| `input_armature`, hub/roller damping + frictionloss | 5 of them | the drivetrain station, spin-downs. Fitted 2026-09-14 into the OPT-IN overlay only (armature 2.44e-4 at the input shaft; Coulomb 0.05 N.m there, ~60x the hub guess) — not promoted in `bike_params.yaml` |
 | `payload.pack.mass` / `electronics.mass` | 0.115 / 0.076 kg | **a scale, today** |
 | `min_pinion_radius` | 0.006 m | print a test pinion |
 
@@ -350,7 +363,12 @@ every field in `contact-measurements.yaml` is still 0.0.
    now a one-line, deliberate edit that moves `plant_digest`, rather than a
    refactor. See `floors-and-the-contact-model.md` §4.
 4. **Authority derating.** Real servos will not deliver modelled torque at
-   modelled bandwidth. Not yet quantified.
+   modelled bandwidth. **Partly quantified 2026-09-14** on the fitted servo
+   model (`drivetrain-model.md`): the two AHRS-trained policies hold at factory
+   gains and lose most of the grid at P 200–400, the gains the bench liked.
+   The torque SCALE is still the datasheet 1.6 N.m. The bench replay cannot
+   see it (fitted inertia and friction scale with it); the bike can. D5 or
+   servo-strength randomisation covers it.
 5. **Left/right asymmetry, and crab.** `turn_asym` has never gone below ~0.2 at
    any run length; crab is one-sided in every champion. The plant is
    mirror-symmetric and the handedness *flips sign between policies* —
