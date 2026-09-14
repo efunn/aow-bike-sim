@@ -79,6 +79,14 @@ _COMMON = {
     # tests/test_hw_dynamixel.py rather than trusted here.
     # source: datasheet
     "Velocity Limit":        (0.0239691227, "rad/s", False),
+    # The firmware's own copy of the goal after the profile generator -- with
+    # profiles at 0, the goal as it LANDED, which is what dates a command in
+    # the servo's clock. Upstream gives no unit, so it decoded as raw counts and
+    # the first drivetrain analysis compared counts against rad/s. Captures
+    # taken before this line carry `unit: null` in their meta.json.
+    # source: datasheet (same LSB as Goal Velocity / Goal Position)
+    "Velocity Trajectory":   (0.0239691227, "rad/s", True),
+    "Position Trajectory":   (2 * 3.141592653589793 / 4096, "rad", True),
     # source: datasheet
     "Present Input Voltage": (0.1, "V", False),
     "Present Temperature":   (1.0, "degC", False),

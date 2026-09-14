@@ -435,3 +435,16 @@ def test_velocity_limit_shares_the_velocity_lsb():
         ct = table_by_name(stem)
         assert ct["Velocity Limit"].unit == ct["Present Velocity"].unit
         assert ct["Velocity Limit"].unit_name == "rad/s"
+
+
+def test_trajectory_registers_share_the_goal_lsb():
+    """Same gap, second time: Velocity Trajectory decoded as raw counts, and the
+    first drivetrain step analysis found no command arrival on any non-zero
+    step because it compared counts with rad/s. Signed, like the goals."""
+    for stem in ("xc430_w150", "xc330_t181", "xl330_m288"):
+        ct = table_by_name(stem)
+        for traj, goal in (("Velocity Trajectory", "Goal Velocity"),
+                           ("Position Trajectory", "Goal Position")):
+            assert ct[traj].unit == pytest.approx(ct[goal].unit), (stem, traj)
+            assert ct[traj].signed, (stem, traj)
+        assert ct.decode("Velocity Trajectory", (-100) & 0xFFFFFFFF) < 0
