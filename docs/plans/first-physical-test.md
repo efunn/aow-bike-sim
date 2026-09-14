@@ -127,7 +127,7 @@ Unlocks, via `omni-wheel-protocol.md` §7:
 | roller flick spin-down | `roller_joint_damping`, `roller_joint_frictionloss` |
 | driven-wheel spin-down | `hub_joint_damping`, `hub_joint_frictionloss`, `input_armature` |
 | servo step/ramp through the belt | validates `drive_kv`, `drive_tau` |
-| — | verifies `belt_ratio 3.0`, currently `source: design` |
+| — | verifies `belt_ratio 3.0` — **done 2026-09-12**: 2.00 servo revs gave 6 tyre turns, pulleys 45T/15T. `bike_params.yaml` still says `source: design` |
 
 It is also the LOAD FIXTURE that servo-protocol §3 (torque-speed envelope) and
 §4 (droop) need and §2 deliberately does without. So stage 0b and stage 1
@@ -269,6 +269,15 @@ from the BAM review.
 
 Build the mount to take both a plain disc and the wheel — that is a fixture
 decision to make before cutting metal, not after.
+
+**Run 2026-09-12/13 on the rear assembly, hand-held, wheel in the air**, with
+`analysis/drivetrain_bench.py`; numbers in
+`docs/measurements/drivetrain-measurements.yaml`. D1, D2 and D4 done. D3 done
+by hand, so the hold stiffness is in duty units, not N·m. D5 and D6 not run.
+Beyond the table: the belt ratio (counted), a Velocity P gain sweep with a
+chirp at each gain, and a 7.5° detent in the differential found by the
+`creep` test. What to record from the servos while doing any of it:
+`docs/measurements/servo-logging.md`.
 
 **BAM does not cover this station.** Its actuator classes implement a position
 control law only; there is no velocity-mode `compute_control`, and its

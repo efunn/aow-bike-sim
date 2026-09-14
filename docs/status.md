@@ -21,8 +21,10 @@ workstreams; that material moved into the plan docs listed below, verbatim.
    (velocity, heading) command. The analytic LQR is a reference baseline only.
 3. **The onboard software path is built and proven in sim** — hardware shim,
    deploy bundle, odometry, AHRS protocol — with no assembled bike to run it on.
-4. **Hardware has started.** Four servos on a bench, 2026-09-01. The Digi-Key
-   order landed 2026-09-08: Pi 3, cables, electronics. No pack, no charger.
+4. **Hardware has started.** Four servos on a bench, 2026-09-01; the rear
+   drivetrain assembly built and characterised by hand 2026-09-12/13. The
+   Digi-Key order landed 2026-09-08: Pi 3, cables, electronics. No pack, no
+   charger.
 5. **The goal is a functioning bike with sample videos, in weeks.** Everything
    below is ranked against that.
 
@@ -36,7 +38,7 @@ Ranked by what unblocks the most, not by interest.
 |---|---|---|---|
 | 1 | **Weigh the electronics stack and pack** | Two `GUESS`es die in ten minutes; the parts are on the bench today | `first-physical-test.md` §0a |
 | 2 | **Contact calibration — P0, P0b, P1, once per floor** | Needs no printing: a weight, a caliper, slow-mo, a tilting board. The contact is the least-measured thing in the sim and the one no policy has been randomised over — and the SPREAD across surfaces is what sets the randomization range | `floors-and-the-contact-model.md` |
-| 3 | **Build the drivetrain station** | Five `GUESS`es die, and it is the load fixture the servo torque/droop tests need. The next thing that unblocks anything on the build track | `first-physical-test.md` §1 |
+| 3 | **Finish the drivetrain station** | Built and characterised 2026-09-12/13: belt ratio 3.0 confirmed, a 7.5° detent in the differential, and a velocity-loop resonance at ~22 Hz at firmware P 400 that P 200 does not have. Roller slop measured by hand 2026-09-13: ±1.5 mm at the roller's 22 mm diameter, 15.6° p-p, from the same gear chain as the detent (20 detents per roller turn). `k_roller` 2.4 confirmed by counting roller turns. Open: choose the firmware Velocity P **and I** gains — a P/I grid cut time stuck at the diff detents from 49 % (factory) to 12 % at P 400 / I 3840, but P 400 rings near 22 Hz and I 3840 rings harder (peak 1.09–1.20), and the sim must model whichever ships — then the lever-arm torque calibration and fitting the five drivetrain `GUESS`es from the captures | `drivetrain-measurements.yaml` |
 | 4 | **Umbilical bring-up on the laptop** | Verification steps 1–2 need no pack at all | `untethered-setup.md` §"Bench power" |
 
 All four are bench work. **The sim-side item is being taken now:**
@@ -68,7 +70,7 @@ odometry rewrite (flown around, seven accepted red tests).
 | **Control — RL** | Working, and primary. Trains against the onboard sensors | Crab still one-sided; `turn_asym` stuck ~0.2 | `general-rl-improvements.md` |
 | **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy needs a moving bike | `sensor-workstream.md` |
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
-| **Hardware / untethered** | First measurements 2026-09-01. Bus layer validated at 500 Hz on 4 servos. Nothing assembled | Chassis, and the drivetrain station | `first-physical-test.md`, `untethered-setup.md` |
+| **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency` | Firmware P-gain choice, torque calibration, then the chassis | `first-physical-test.md`, `drivetrain-measurements.yaml`, `servo-logging.md` |
 | **CAD** | Layout, drivetrain, steering and righting stations pinned. Electronics packing deferred on purpose | Nothing — it is being worked on | `cad-onshape-workflow.md` |
 | **Self-righting mechanism** | Side project. Moved to asymmetric output / symmetric layout; torque analysis not trusted | Will be resolved by building, not by analysis | `wing-linkage-design-and-optimization.md` |
 
@@ -100,7 +102,9 @@ parked or reference — read that before the body.
 | `ball-shot-move.md` | the ball shot. Works, parked |
 | `plans/old/` | six retired docs — built, superseded, or never started |
 
-`docs/measurements/` holds hand-entered protocol/data pairs.
+`docs/measurements/` holds hand-entered protocol/data pairs, plus
+`servo-logging.md`: which registers to record off a Dynamixel, per frame and
+per session, bench versus onboard, and why each earns its bytes.
 `docs/cad/` holds generated CAD output (`.fs`, `.png`, the layout YAML) — never
 hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 `cad_swing_linkage`.
@@ -109,9 +113,9 @@ hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 
 ## Health
 
-**Test suite, measured 2026-09-11** with `pytest -n 10 --dist load`:
+**Test suite, measured 2026-09-13** with `pytest -n 10 --dist load`:
 
-    23 failed, 288 passed, 9 skipped, 40.9 s
+    23 failed, 302 passed, 9 skipped, 39.6 s
     red set unchanged (23 accepted failures) -- tests/expected_failures.txt
 
 Read the verdict line, not the FAILED count. The 23:

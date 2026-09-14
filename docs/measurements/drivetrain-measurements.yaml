@@ -1,0 +1,456 @@
+# Drivetrain station measurements -- the rear assembly, Station A of
+# docs/plans/first-physical-test.md. Hand-entered, 2026-09-13.
+#
+# Every number names the capture it came from. Captures live under
+# traces/drivetrain/ (gitignored, Dropbox-synced) and re-print their own quick
+# look with:
+#     python analysis/drivetrain_bench.py summary traces/drivetrain/<capture>
+# The deeper tables (detent shape, chirp gain/phase, load model) were computed
+# in-session from those captures, not by the script; the method is stated per
+# section so they can be re-derived.
+#
+# BARE-SHAFT results (no belt, no wheel, 2026-09-01) are in
+# servo-measurements.yaml. Do not mix the two; the rig is a field, not a comment.
+# Which registers to record, and why: servo-logging.md.
+# Nothing here is read by code yet.
+
+meta:
+  rig: rear_assembly_hand_held   # 2x XC430-W150 -> 45T/15T belts -> differential -> omni wheel, wheel in the air
+  servo_ids: [101, 102]          # A, B
+  firmware: 50                   # XC430 numbering, the latest build; unrelated to the XC330's 50
+  factory_gains: {velocity_p: 100, velocity_i: 1920}
+  profile_velocity: 0
+  profile_acceleration: 0
+  return_delay_time: 0
+  supply_V: 11.9                 # 12 V brick at the servo terminals; sags to 11.4 V under load
+  temperature_C: [27, 43]        # Present Temperature range over the session
+  bus: "U2D2, 3 Mbps, FastSyncRead at 500 Hz (tick dt 2.0 ms), macOS after adjust-ftdi-latency"
+  dates: [2026-09-12, 2026-09-13]
+  tool: analysis/drivetrain_bench.py
+  caveats:
+    - hand held, so every result includes whatever the holding hand absorbed
+    - wheel in the air, no ground contact load
+    - only the two servo shafts are encoded; hub and roller angles are inferred through belt_ratio
+
+signs:
+  capture: 260913-000411_jog
+  servo_sign_turning_hub_forward: [1, -1]   # both horns face outboard; confirmed by eye
+  common_jog: {hub_input_rev: 1.035, diff_input_rev: -0.005}
+  diff_jog: {hub_input_rev: 0.016, diff_input_rev: 1.006}
+
+belt_ratio:
+  captures: [260912-235920_belt, 260913-000118_belt, 260913-000158_belt, 260913-000320_belt]
+  pulleys: "45T at the servo, 15T at the input shaft (as designed)"
+  servo_revs_encoder_A: [2.004, 2.005, 2.008, 2.006]   # B mirrors each within 0.003
+  tyre_turns_counted: 6
+  value: 3.0
+  # config/bike_params.yaml still carries `source: design`; `tooth-count` now
+  # applies. Deliberately not edited alongside these docs -- a params edit has
+  # its own checklist in CLAUDE.md.
+
+d1_step_response:
+  capture: 260913-000853_step      # KVP 100, common and diff, both signs, 1 s hold / 1 s return
+  method: >
+    Differenced position over +-2 frames. Times measured from the command's
+    arrival, which is the first frame Velocity Trajectory changes. Medians over
+    both servos and both signs.
+  # "arrival" below = the first frame Velocity Trajectory has moved half the
+  # step, timed from the frame that computed and wrote the command. That is the
+  # servo's REFERENCE moving, ~2 frames after the goal register itself landed
+  # (see `latency`) -- not the write's transport time.
+  command_arrival_ms: [3.5, 5.0]
+  # stick = arrival to 10 %; t63 from arrival; overshoot of the up-step
+  common_up:   # frac: [stick_ms, t63_ms, overshoot_pct]
+    0.02: [129, 129, 85]
+    0.05: [60, 139, 38]
+    0.10: [24, 89, 30]
+    0.20: [21, 54, 20]
+    0.50: [10, 41, 9]
+    1.00: [8, 35, 1]               # PWM saturated (p95 1.00)
+  diff_up:
+    0.02: [90, 90, 505]
+    0.05: [76, 155, 159]
+    0.10: [24, 169, 38]
+    0.20: [27, 89, 21]
+    0.50: [12, 45, 9]
+    1.00: [8, 33, 2]
+  return_to_zero_t63_ms: {common: [21, 30], diff: [12, 26]}
+  bare_shaft_t63_ms_at_kvp100: [26, 30]   # servo-measurements.yaml, for comparison
+  reading: >
+    Stepping DOWN is unaffected by the load. Small steps UP stick until the
+    velocity integrator builds enough torque to break friction, then jump and
+    overshoot -- worse through the rollers (diff) than the hub (common).
+
+d2_reversal:
+  capture: 260913-001336_reversal  # KVP 100, 8 cycles per condition
+  method: "(p97 - p3) of differenced velocity after the first quarter period, over commanded 2A; mean of the two servos"
+  freqs_hz: [5, 10, 15, 25]
+  bare_shaft_any_amplitude: [0.99, 0.82, 0.64, 0.37]
+  common: {0.10: [0.42, 0.30, 0.22, 0.09], 0.25: [0.88, 0.38, 0.31, 0.18], 0.50: [0.96, 0.53, 0.35, 0.24]}
+  diff:   {0.10: [0.31, 0.17, 0.09, 0.09], 0.25: [0.73, 0.33, 0.31, 0.21], 0.50: [0.88, 0.52, 0.41, 0.23]}
+  reading: >
+    The bare shaft was amplitude-invariant (a first-order lag). Loaded, small
+    amplitudes track far worse: friction, not a lag. The 10 % row is the regime
+    a balancing policy works in.
+  common_mode_leakage_during_diff:  # hub fundamental / diff fundamental, from the two encoders
+    amp_0.25: {leak_pct: [15, 23], amplitude_A_over_B: [1.36, 1.53]}
+    amp_0.50: {leak_pct: [1, 9], amplitude_A_over_B: [1.01, 1.19]}
+    net_hub_drift_deg: 2.4       # at most, per segment: it oscillates, it does not creep away
+
+reversal_vs_gain:
+  capture: 260913-011952_reversal  # 25 % amplitude; diff, and each servo alone with the other holding zero
+  method: "fundamental of velocity over fundamental of command, per servo"
+  # [|g_A|, |g_B|] and phase lag in degrees
+  kvp100: {diff_10hz: [0.36, 0.30], diff_15hz: [0.28, 0.23], alone_10hz: [0.35, 0.26], alone_15hz: [0.26, 0.21], phase_deg: [-74, -91]}
+  kvp400: {diff_10hz: [0.69, 0.65], diff_15hz: [0.93, 0.89], alone_10hz: [0.71, 0.65], alone_15hz: [0.92, 0.85], phase_deg: [-19, -43]}
+  hub_leak_pct_in_diff: {kvp100: [10, 11], kvp400: [2, 3]}
+  held_servo_coupling_max: 0.04
+  pwm_p95: {kvp100: [0.20, 0.27], kvp400: [0.54, 0.72]}
+  reading: >
+    B's side is weaker ON ITS OWN, not through the differential. On steps and
+    in the hold test A and B are equal, so it is dynamic, not static friction.
+    Raising P brings both towards the command and closes most of the gap
+    (alone at 10 Hz, A/B 1.35 -> 1.09).
+
+chirp_vs_gain:
+  captures: {kvp100: 260913-001455_chirp, kvp400: 260913-013646_chirp, kvp200: 260913-014930_chirp}
+  figure: analysis/plots/drivetrain_chirp_gain.png   # python analysis/drivetrain_chirp_plot.py
+  amplitude: 0.15                  # of no-load speed, 1.67 rad/s at the servo
+  method: >
+    Log sweep. Sine fit in windows of 3 periods, velocity from a +-1 frame
+    difference corrected for its sinc attenuation. plateau = mean tracking
+    3-10 Hz. [A, B].
+  kvp100: {common_plateau: [0.17, 0.10], diff_plateau: [0.22, 0.05], common_1_2_3hz_A: [0.86, 0.61, 0.33]}
+  kvp200: {common_plateau: [0.40, 0.33], diff_plateau: [0.36, 0.28], peak: none, phase_minus90_hz: [19, 23]}
+  kvp400: {common_plateau: [0.56, 0.47], diff_plateau: [0.49, 0.40], common_peak: [0.99, 0.83], diff_peak: [1.21, 1.07], peak_hz: [19, 23], phase_minus90_hz: [21, 24]}
+  kvp400_i3840:
+    capture: 260913-134255_chirp
+    # MODE coordinates (hub, ring-vs-hub), the figure's method, which reads a
+    # little lower in diff than the per-servo numbers above. [I 3840, I 1920] at P 400.
+    common: {plateau: [0.61, 0.51], peak: [1.09, 0.88], peak_hz: [19.4, 19.4], phase_minus90_hz: [20.7, 22.0]}
+    diff: {plateau: [0.50, 0.43], peak: [1.20, 1.14], peak_hz: [20.7, 22.0], phase_minus90_hz: [22.0, 23.4]}
+    reading: >
+      Doubling I at P 400 raises tracking below 10 Hz by ~0.1 in both modes, and
+      the ~20 Hz peak grows with it: common now overshoots (1.09), diff goes
+      1.14 to 1.20, and the resonance moves ~1 Hz lower. More ringing, not a new
+      instability. The gains that cut detent stalls most (pi_grid_creep) ring most.
+  dwell_20hz:
+    capture: 260913-135723_chirp   # diff, P 400 / I 3840, chirp narrowed to 20-21 Hz for 5 s
+    question: "does the ~20 Hz resonance reach the rollers, or stay in the belts and backlash?"
+    ring_vs_hub_amplitude_deg: {commanded: 2.22, measured: 2.93}   # sine fit to the encoder angle at the chirp's phase
+    servo_amplitude_deg: {A: 1.16, B: 0.82}
+    roller_surface_if_rigid_mm: 1.35     # x k_roller 2.4 x 11 mm
+    roller_surface_seen_mm: 1.2          # by eye, a marked point blurring side to side; not filmed
+    hub_leakage_at_tyre_mm: 0.61         # +-0.68 deg of hub, from A moving more than B
+    servo_mismatch: {amplitude_A_over_B: 1.41, phase_apart_deg: 162}   # a perfect diff pair is 1.00 and 180
+    mark_path: >
+      Seen by eye as moving both side to side and forward-back. From the
+      encoders: roller spin +-1.35 mm sideways, hub rocking +-0.61 mm fore-aft,
+      the hub 41 deg behind the roller drive -- a narrow tilted ellipse,
+      1.43 x 0.37 mm semi-axes. Both A's larger swing and the 18 deg phase
+      error put hub motion into what should be pure diff.
+    reading: >
+      It reaches the rollers, at roughly 90 % of what a rigid drivetrain would
+      give -- within what an eyeball can tell. The oscillation (+-2.9 deg
+      ring-vs-hub) is inside the hand-measured free play (+-3.25 deg), so that
+      play does not act as a gap under a fast oscillation: see roller_slop. The
+      policies' 15-32 diff sign flips per second sit in the band P 400 amplifies.
+  phase_includes: >
+    ~4 ms from computing a command to the servo's velocity reference moving
+    (`latency`), about 34 deg at 22 Hz. The -90 deg crossings are that plus the
+    servo, not the servo alone. The P 400 peak is unaffected: it depends on the
+    gain, and the delay does not.
+  reading: >
+    A resonance near 20-23 Hz at KVP 400 -- tracking 1.8-2.7x the plateau and
+    above 1.0 in diff -- that is ABSENT at KVP 200. Gain-dependent, so it is the
+    velocity loop (phase margin), not a mechanical mode. The policies' diff
+    channel flips sign 15-32 times a second, i.e. right on it.
+  decision_open: >
+    Firmware Velocity P gain: 100 is friction-bound to ~2 Hz at this amplitude;
+    200 roughly doubles the plateau with no peak; 400 is best below 15 Hz and
+    rings at 22 Hz. The sim must model whichever ships, so choose before
+    fitting the actuator model.
+
+d4_coast:
+  capture: 260913-001639_coast     # PWM mode, spin at duty 0.4, then torque OFF vs Goal PWM 0
+  method: "differenced position +-2 frames; linear vs exponential fit over 90 % -> 10 %"
+  r2_linear: [0.89, 0.997]
+  r2_exponential: [0.68, 0.97]
+  decel_rad_s2_servo_shaft: {common: [71, 154], diff: [126, 214]}
+  t90_to_10_ms_from_2p7_rad_s: {common: [16, 26], diff: [10, 18]}
+  pwm0_vs_torque_off: "PWM 0 decelerates 15-40 % faster: some braking, friction dominates"
+  steady_at_duty_0p4: {common_rad_s: 3.0, diff_rad_s: [2.4, 2.8]}   # bare no-load at that duty would be ~4.4
+  reading: "Friction-dominated (Coulomb, linear decay), and it stops in tens of ms. Faster through the rollers."
+
+d3_hold:
+  capture: 260913-003138_hold      # common, goal 0, pushed and twisted by hand; no known torque
+  spring_duty_per_servo_deg: -0.047   # both servos, every push; range of the ratio -0.040 to -0.056
+  standing_offsets_wheel_deg: [-9.4, 5.6]   # parked after release, servos still pushing (0.18/0.12, 0.07/0.12)
+  reading: >
+    The velocity integrator is a torsion spring (goal 0 integrates to position
+    error), and friction parks the wheel inside a band where the spring cannot
+    break it free. Integral action: yes. Exact return: no.
+  torque_estimate: >
+    ~0.075 N.m per servo degree (4.3 N.m/rad at the servo, 0.48 at the input
+    shaft), from duty x 1.6 N.m datasheet stall torque. Uncalibrated.
+
+velocity_p_sweep_steps:
+  capture: 260913-003338_step      # common, KVP 100/200/400, 5/10/20 %
+  # [stick_ms, t63_ms, overshoot_pct], medians of 4
+  kvp100: {up_0.05: [20, 86, 52], up_0.10: [28, 113, 38], up_0.20: [35, 86, 21], return_t63_ms: [22, 26]}
+  kvp200: {up_0.05: [51, 131, 38], up_0.10: [16, 110, 30], up_0.20: [23, 82, 21], return_t63_ms: [16, 21]}
+  kvp400: {up_0.05: [11, 154, 38], up_0.10: [4, 95, 30], up_0.20: [8, 78, 21], return_t63_ms: [7, 10]}
+  rest_velocity_std_rad_s: {kvp100: 0.00, kvp200: [0.013, 0.031], kvp400: [0.016, 0.020]}
+  reading: "P speeds stopping 2.5-3x; it barely helps small steps get moving. Repeats vary +-50 % between captures."
+
+diff_detent:
+  captures: [260913-012157_creep, 260913-013834_creep]   # 1 % and 3 % speed, 10 s each way, diff then common
+  prediction_deg: 7.5              # every mesh repeats per 7.5 deg ring-vs-hub: 48 ring teeth; 12->20 at k_roller 2.4
+  # ring-vs-hub input-shaft degrees. [run1, run2]
+  stop_spacing_deg: {plus_1pct: [7.32, 7.25], minus_1pct: [7.19, 7.38], plus_3pct: [7.88, 7.65], minus_3pct: [7.78, 7.78]}
+  grid_concentration_R: {plus_1pct: [0.76, 0.79], minus_1pct: [0.75, 0.76], plus_3pct: [0.86, 0.84], minus_3pct: [0.86, 0.82]}
+  angle_spectrum_peak_deg: [7.39, 7.53]
+  stop_phase_in_cycle_deg: {plus_1pct: [5.21, 5.55], minus_1pct: [7.31, 6.81], plus_3pct: [6.63, 6.90], minus_3pct: [6.63, 6.43]}
+  pooled_run1: {stops: 187, best_period_deg: 7.52, R: 0.77, chance: 0.07}
+  breakaway_duty_per_servo: [0.19, 0.24]
+  figure: analysis/plots/drivetrain_creep_stickiness.png   # python analysis/drivetrain_creep_plot.py
+  through_speed: >
+    Folded onto the 7.5 deg cycle as average speed THROUGH each part of the
+    tooth (travel per pass / time spent there), both runs pooled: slow over
+    ~5.5-7.5 deg in BOTH push directions, i.e. the same physical place; fast
+    over ~1-4.5 deg, peaking at ~7x the command at 1 % and ~3x at 3 %. Band
+    under half the command: see the figure's per-panel label. Common mode
+    folded the same way stays at 1.0 everywhere.
+  shape: >
+    Not a sine. Motion stalls in a band 1.3-2 deg wide depending on how the
+    band is measured: frames pile up over phase 5.6-7.4 of 7.5 (40-60 % of the
+    time at 3 %), and the average speed through the tooth is under half the
+    command over 1.3-1.5 deg (the figure). Meanwhile the push builds to ~0.21 duty per
+    servo; then it releases and crosses the other ~5 deg at 2-8x the commanded
+    speed on ~0.13. Folded effort curve: k=1 harmonic 0.04-0.06 duty, p-p
+    0.08-0.10 at 3 %. Measured through a velocity loop, so the effort includes
+    integrator wind-up; a quasi-static torque ramp would give the true
+    torque-angle curve and split the conservative part from friction.
+  direction_offset_deg: {at_1pct: [1.3, 2.1], at_3pct: [0.0, 0.5]}   # candidate backlash, ring-vs-hub; x2.4 at the roller
+  common_mode_control: >
+    No detent: grid R 0.06-0.33, few stops, no consistent spectral line at
+    7.5. During common creep the ring-vs-hub angle moves only 1.8-4.4 deg in
+    10 s (under one notch) and does not jump at hub stops, so the detent is not
+    clicking. The servos push unequally (duty 0.12 vs 0.20 at +1 %), so the
+    diff axis sits loaded against a notch wall -- consistent with the hand-feel
+    that common stickiness comes from the diff, not proven by it.
+  common_ripple:
+    best_fold_deg: 8.44        # 8.438 pooled at 1 %, identical in both runs (0.002 deg scan); 3 % prefers 8.31-8.44, weaker
+    per_segment_best_deg: [8.44, 8.70]   # 7 of 8 segments; the eighth prefers 6.46
+    speed_independent: true    # same period at 1 % and 3 %, so tied to hub angle, not to time
+    phase_consistent: false    # only three of the eight segments agree on where in the cycle it sits
+    second_line_deg: [6.46, 6.59]   # near one motor revolution, 6.77 deg of hub angle (159.59:1 x belt 3), but 3-5 % off
+    not_the_belt: "one belt tooth is 24 deg of hub angle (15T input pulley)"
+    figure_row: "bottom row of the creep figure, folded on 8.44 deg"
+    reading: >
+      A real but soft ripple in common mode, unplaced. Unlike the diff detent it
+      does not hold its phase, so it is not a hard notch; it matches the
+      hand-feel of common stickiness at random-seeming points.
+    not_the_diff_walls: >
+      In all eight common creep segments (both runs) the ring-vs-hub angle
+      stayed inside one detent's free zone, under 0.5 % of frames in the diff's
+      stall band (5.5-7.5 of the 7.5 deg cycle), and all 39 hub stops happened
+      with it at 0.6-3.2 deg. So common stalls are not the diff reaching a wall.
+      With the wheel in the air nothing in the diff moves relative to anything
+      else in common mode; what does is the belts, the servo gearboxes and the
+      hub bearing (tightening the rear axle raised friction, 2026-09-13).
+    twist_duty_mean: [-0.044, -0.002]   # (sa*effort_A - sb*effort_B)/2 per segment; negative in every one: B pushes harder
+    expected_common_play_at_wheel: >
+      Only the 12T/48T share of the roller slop shows in common mode: at most
+      15.6 / 2.4 = 6.5 deg of wheel (+-2.9 mm at the 51.2 mm tyre) if all of it
+      is there, zero if all of it is in the 20T/12T mesh, plus belt and servo
+      gearbox backlash x3 at the hub. Little is felt by hand, so most of the
+      roller slop is probably in the 20T/12T mesh.
+    common_play_eyeballed: >
+      Under ~2 mm at the tyre if any, by eye, 2026-09-13. Deliberately not
+      measured further: a rim measurement lumps servo gearbox and belt backlash
+      in with the diff, and would not change anything downstream. Treat it as
+      an upper guess, not a result.
+
+pi_grid_creep:
+  capture: 260913-133208_creep     # diff, 1 %, 6 s each way, 9 Velocity P:I pairs; factory 100:1920 restored after
+  question: "can firmware PI gains smooth the stick-slip through the diff detents?"
+  # both directions averaged. stopped = time under 25 % of command; burst = p99 speed over command
+  stopped_pct: {P100: {I960: 59, I1920: 49, I3840: 34}, P200: {I960: 53, I1920: 35, I3840: 23}, P400: {I960: 43, I1920: 23, I3840: 12}}
+  burst_x_cmd: {P100: {I960: 8.3, I1920: 8.6, I3840: 7.9}, P200: {I960: 7.3, I1920: 7.4, I3840: 6.9}, P400: {I960: 5.6, I1920: 5.9, I3840: 5.5}}
+  travel_x_cmd: {I960: [0.52, 0.56], I1920: [0.78, 0.85], I3840: [0.92, 0.93]}
+  breakaway_duty: [0.196, 0.241]   # every pair alike: the wall belongs to the mesh, not the loop
+  start_transient:                 # medians over P and direction
+    first_servo_moves_ms: {I960: 1288, I1920: 660, I3840: 354}
+    second_servo_lag_ms: {I960: 552, I1920: 171, I3840: 182}
+    first_to_move: "A, in all 18 segments"
+    hub_motion_during_lag_deg: {I960: 0.66, I1920: 0.53, I3840: 0.40}
+    hub_drift_after_both_move_deg: {I960: 7.98, I1920: 3.89, I3840: 2.50}   # roughly as 1/I; A out-travels B
+  reading: >
+    Gains DO smooth it, in the direction the spring picture predicts -- the
+    opposite of "higher P, lower I". Raising I cuts the time stuck at every P;
+    raising P cuts it further and shrinks the burst after each wall (~8.5x to
+    ~5.5x the command). The force to cross a wall does not change (~0.2 duty),
+    which is why the pairs felt alike by hand. Low I also produces the
+    start-of-run common-mode motion seen by eye: the servos start late, A always
+    breaks free first, and A then out-travels B for the rest of the run, by an
+    amount that grows roughly as 1/I -- consistent with each servo lagging its
+    command by its own friction over the I spring, with B's side the stiffer.
+  costs_unmeasured: >
+    P 400 rings near 22 Hz, and at I 3840 the peak is taller (common 0.88 to
+    1.09, diff 1.14 to 1.20) and ~1 Hz lower (chirp_vs_gain.kvp400_i3840).
+    Only diff at 1 % was tested. The 6 s segments are too short for the
+    angle-spectrum column.
+
+roller_slop:
+  method: >
+    By hand, 2026-09-13. Slop: one roller rocked against its stops with the
+    rest of the drivetrain still. Detents: the drive turned by hand and let
+    settle in the middle of each detent, spacing read on the roller surface.
+    Both read at the roller's largest diameter.
+  roller_diameter_mm: 22       # largest; the roller is barrel-shaped
+  slop_mm_pp: 3.0              # +-1.5 mm
+  slop_deg_pp: {roller: 15.6, ring_vs_hub: 6.5, servo_shaft: 2.2}   # /11 mm radius; /k_roller 2.4; /belt 3
+  contact_patch_free_play_mm: 1.5   # either way, lateral
+  detent_spacing_mm: 3.5         # re-measured, centring within each detent; the first reading, 2.5 mm, was taken through the slop
+  detents_per_roller_rev: 20     # 20 detent jumps by hand move a mark exactly one turn
+  detent_spacing_deg: {roller: 18.0, ring_vs_hub: 7.5}   # one tooth of the 20T roller gear
+  vs_encoder_detent: >
+    Agrees with the creep test: 7.19-7.88 deg ring-vs-hub x k_roller 2.4 is ~18
+    deg of roller, 3.46 mm at 22 mm. The first hand reading (2.5 mm) was hard to
+    take through the slop, is superseded, and had briefly cast doubt on k_roller.
+  gear_chain: >
+    Backdriving one roller: 20T roller gear -> 12T bevel on the planet shaft ->
+    12T pinion on the same shaft -> 48T ring gear, which does not move. Roller
+    free play = backlash of the 20T/12T mesh + backlash of the 12T/48T mesh
+    x 12/20 (0.6), at the roller.
+  reading: >
+    ONE mechanism, three numbers. Every 18 deg of roller (one tooth) there is a
+    WALL. Inside a detent the roller moves freely over ~15.6 deg (the slop,
+    +-7.8 about the detent centre); reaching the next detent means forcing
+    across the remaining ~2.4 deg, i.e. 18 - 15.6, or 2 x (9 - 7.8). The
+    steep resistance sits in that narrow wall; inside the detent there is only a weak centring spring and friction (hand_release). The creep
+    data agree in kind: the drive runs fast through most of each cycle and is
+    held over 1.3-1.5 deg of ring-vs-hub angle (3.1-3.6 deg of roller) -- wider
+    than 2.4 because it includes the servo winding up against the wall, and all
+    eight rollers at once. Breakaway ~0.19-0.24 duty per servo (diff_detent).
+    Model at the roller joint: period 18 deg, a soft centring spring plus friction over ~15.6 deg, a wall of
+    ~2.4-3.6 deg with a breakaway torque, phase randomised per episode.
+  why_sharp: >
+    48 ring teeth over 8 planets is 6 teeth apart, a whole number, so all eight
+    pinion meshes reach their walls together (if the planets are evenly
+    spaced). That is why the combined detent is as sharp as a single mesh's.
+  source_hypothesis: >
+    Each 12T pinion sits between the two side (ring) gears. Bevel teeth under
+    load push the gears apart axially as well as round, so if the side gears
+    can float, loading them opens the mesh: backlash grows, and past the wall a
+    tooth rides over the tip instead of rolling through. The force to cross a
+    detent would then be the force to spread the side gears. Not measured.
+    Hand checks: feel for axial play in the side gears, or squeeze the wheel's
+    two sides together while turning in diff and see whether the jumps change.
+  dynamic_check: >
+    A 20 Hz diff oscillation of +-2.9 deg ring-vs-hub -- smaller than the
+    +-3.25 deg hand-measured play -- still moved a roller +-1.2 mm by eye, about
+    90 % of the rigid value (chirp_vs_gain.dwell_20hz). So much of the 3 mm
+    measured by hand is probably compliance (teeth and shafts deflecting under a
+    hand push), not a gap the teeth rattle across. For the model that argues for
+    a stiff spring at the roller joint more than a dead zone. One eyeballed
+    observation; a filmed or encoded roller would settle it.
+  hand_release: >
+    2026-09-13, by hand: pushed against one end of a detent and let go, a roller
+    often springs back to the middle of its play -- not every time. A centring
+    spring with friction on top: it returns until the spring force falls below
+    friction, so it can stop short. Together with dynamic_check, the "slop" is
+    a shallow spring-loaded valley per tooth, not a flat dead zone.
+  axial_load_test: >
+    2026-09-13, by hand: tightening the rear axle (an axial load on the side
+    gears) raised friction everywhere and did not noticeably change the slop.
+    So the gears floating apart axially is not it; if the mesh opens under
+    load, it is compliance in the teeth and shafts, with friction against the
+    rings varying as the pinions turn.
+
+k_roller:
+  capture: 260913-123607_belt     # diff, exactly 1 servo rev at 3 %
+  ring_vs_hub_deg: 1082.6         # from the encoders
+  roller_turns_counted: 7.17      # 7 full turns + 12 mm at the 22 mm diameter
+  implied: 2.39                   # 7.17 x 360 / 1082.6
+  expected_turns_at_2p4: 7.22
+  reading: >
+    0.05 turn (~3.4 mm at 22 mm) short of 2.4 -- about the roller's own 3 mm of
+    free play, since the mark sits somewhere in its slop at the start and at the
+    end. 2.4 stands; bike_params.yaml keeps `source: tooth-count`, now also
+    checked by count.
+  detents_in_encoder_data: >
+    Angle-spectrum period 7.51 deg over 1081 deg of travel: 144 detents, as
+    expected. Only 75 stopped completely at 3 %; the rest were driven through.
+    The spectrum counts the detents; stops only bound them from below.
+
+present_load_xc430:
+  robotis: "an inferred value based on the internal output value; not a measured value using torque sensor"
+  model: "Present Load = LPF_50ms(duty - omega/11 rad/s), delayed a further 12 ms"
+  fit_r2: {id101: 0.984, id102: 0.988}
+  slope: [0.988, 0.996]
+  omega0_rad_s: 11                 # the datasheet no-load speed at 12 V
+  worse_models_r2: {duty_only: [0.58, 0.62], bus_current: [0.05, 0.07], bus_magnitude_with_torque_sign: [0.85, 0.88]}
+  reconstruction_lead_ms: 48       # duty - w/11 from the same frame leads Present Load; corr 0.964 / 0.974
+  sensed_or_computed:
+    temperature: "slope 0.99-1.01 across 33-40 C on quasi-static captures; a sensed winding current would fall ~2.5 %"
+    voltage: "inconclusive: the supply moved only +-0.06 V"
+    verdict: "leans computed, not proven"
+    decisive_test: "repeat any capture at ~9 V; a computed Load still crosses zero at 11 rad/s, a sensed one near 8.3"
+  earlier_error: >
+    An unfiltered fit put the zero crossing at 13-14 rad/s and was reported as
+    evidence against a sensor. It was an artefact of fitting a 50 ms filtered
+    signal without the filter. Retracted 2026-09-13.
+
+latency:
+  source: 260913-000853_step
+  present_pwm_frames_after_arrival: {p50: 0, histogram_0_1: [65, 14], of: 90}   # i.e. PWM moves with the reference
+  present_velocity_frames_to_react: {p10: 6, p50: 11}   # the firmware filter, ~22 ms
+  # From the frame that computes and writes a command:
+  goal_register_reads_back: {frames: 1, share: 1.00, lost: 0}   # paced and unpaced; see bus_timing
+  velocity_trajectory_delay_ms: [4.1, 4.5]   # chirp, goal vs Velocity Trajectory cross-correlation; residual 4-7 % of the signal
+  velocity_trajectory_step_lands_frames: {3: [401, 400], 2: [7, 8], of: 408}   # reversal switches, id 101 / 102
+  velocity_trajectory_ramps: true   # intermediate values before landing on every switch, with Profile Acceleration 0
+  corrected: >
+    An earlier version of this file said Velocity Trajectory reaches the target
+    0-1 frames after the write. That figure measured something else. Velocity
+    Trajectory follows the goal register by a further ~2-3 ms.
+
+bus_timing:
+  captures: {read_only: 260913-111419_idle, with_syncwrite: 260913-111445_idle}   # both unpaced (--rate 0), torque off
+  latency_timer_ms: 2          # adjust-ftdi-latency; the macOS minimum
+  rate_hz: {read_only: 500, with_syncwrite: 500}
+  read_call_ms_p50: {read_only: 1.99, with_syncwrite: 1.97}
+  write_call_ms_p50: 0.02
+  servo_tick_2ms_share: [0.987, 0.999]
+  write_landing:                # idle --write: random Profile Velocity every frame, read back, torque off
+    unpaced: {capture: 260913-112342_idle, reads_back_next_frame: 1.00, lost: "0 of 1497, both servos"}
+    paced_500hz: {reads_back_next_frame: 1.00, lost: "0 of 1490, both servos", note: "verification run, not kept under traces/"}
+  paced_500hz_read_ms_p50: [1.3, 1.6]   # paced captures sit at a fixed point in the latency cycle
+  reading: >
+    The 2 ms latency timer is the ceiling. Unpaced, each read waits out the
+    whole cycle; a SyncWrite in every frame costs nothing measurable here.
+  torque_off_writes: >
+    The write capture's read-back was 0 on every frame: with torque off the
+    servo acknowledges and discards Goal Velocity writes, and Goal Position
+    writes too (hw/control_tables/README.md). The write TIMING above stands.
+    Whether writes land needs a register that holds, so `idle --write` now
+    writes Profile Velocity.
+
+bus_watchdog:
+  finding: >
+    Both 89 s creep captures read TRIPPED at shutdown. The second read the
+    register every frame: armed and clear on all 44478. It fired in the pause
+    after the last frame, while record() converted the frames, which grows with
+    capture length; no capture of 49 s or less tripped. Harmless (goal already
+    zero). Fixed by a finish hook that stops traffic first.
+  after_fix: "260913-123607_belt, 28 s with torque on, read not tripped at shutdown. The 89 s case that tripped has not been re-run."
+
+outstanding:
+  - "choose the firmware Velocity P AND I gains (chirp_vs_gain, pi_grid_creep). P 400 / I 3840 cuts detent stalls most and rings most, so it is a trade, not a free win. Then fit drive_kv, drive_ki and input_armature against the choice"
+  - lever-arm known-torque test, to turn duty into N.m (protocol s3)
+  - quasi-static diff torque ramp (PWM mode, up and down), for the detent's true torque-angle curve and hysteresis
+  - the 9 V load test above
+  - "B's side takes more force than A's in every test that separates them: reversal tracking, the common-creep twist, and B always breaking free second (pi_grid_creep). Check B's belt tension and bearing against A's"
+  - D5 (added inertia) and D6 (bare disc vs wheel) from the Station A table
