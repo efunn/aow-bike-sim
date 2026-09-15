@@ -425,20 +425,24 @@ def main() -> None:
                     help="drive the DETAILED drivetrain: the XC430 firmware "
                          "loop fitted to the bench captures, the differential's "
                          "7.5 deg detent, and per-roller slop "
-                         "(config/drivetrain_model.yaml, or PATH). Opt-in; "
-                         "every policy so far trained on the ideal drives, and "
-                         "the digest check will say so. The analytic LQR is "
-                         "still DESIGNED on the ideal plant and flown on this "
-                         "one. See docs/plans/drivetrain-model.md")
+                         "(config/drivetrain_model.yaml, or PATH). Without it, "
+                         "teleop compiles the startup policy's own training "
+                         "plant, if it has one. Either way the structure is "
+                         "fixed for the session and only the firmware gains "
+                         "follow a policy picked from the menu. The analytic "
+                         "LQR is still DESIGNED on the ideal plant and flown "
+                         "on this one. See docs/plans/drivetrain-model.md")
     ap.add_argument("--drivetrain-without", nargs="+", default=(),
                     choices=("servo", "detent", "roller_slop"), metavar="PART",
                     help="switch parts of --drivetrain off: servo, detent, "
                          "roller_slop -- to feel which one a policy minds")
     ap.add_argument("--servo-gains", default=None, metavar="P:I",
                     help="firmware Velocity P:I gains in TABLE units under "
-                         "--drivetrain (default: the overlay's, factory "
-                         "100:1920). The open firmware-gain decision, "
-                         "flyable: e.g. 400:3840")
+                         "the detailed drivetrain, PINNED for the session so "
+                         "every policy picked from the menu flies on them "
+                         "(default: each policy's training gains, else the "
+                         "overlay's factory 100:1920). Implies the drivetrain "
+                         "if nothing else asks for it. e.g. 400:3840")
     ap.add_argument("--slowmo", type=float, default=1.0, metavar="X",
                     help="run teleop at 1/X speed (2 = half, 10 = a tenth). "
                          "- halves and = doubles it live (shifted _ and + too), "
@@ -497,17 +501,32 @@ def main() -> None:
     params = {**params, "sim": {**params["sim"],
                                 "floor_tilt_steps": FLOOR_TILT_STEPS,
                                 "floor_tilt_bearing_deg": args.slope_bearing}}
-    if args.drivetrain or args.drivetrain_without or args.servo_gains:
+    if (args.drivetrain or args.drivetrain_without or args.servo_gains) \
+            and not args.teleop:
+        raise SystemExit("--drivetrain is teleop-only: the scripted "
+                         "scenarios and --view run the analytic controller "
+                         "without the per-step drivetrain hook")
+    drivetrain_base = servo_gains = None
+    drivetrain_source = ""
+    if args.teleop:
+        # The plant is COMPILED here, once; see drivetrain_model.teleop_base.
+        # Only the firmware gains can follow a policy picked later from the menu.
         from . import drivetrain_model
-        if not args.teleop:
-            raise SystemExit("--drivetrain is teleop-only: the scripted "
-                             "scenarios and --view run the analytic controller "
-                             "without the per-step drivetrain hook")
-        gains = (tuple(int(x) for x in args.servo_gains.split(":"))
-                 if args.servo_gains else None)
-        params = drivetrain_model.with_drivetrain(
-            params, None if args.drivetrain in (None, True) else args.drivetrain,
-            without=args.drivetrain_without, gains=gains)
+        servo_gains = (tuple(int(x) for x in args.servo_gains.split(":"))
+                       if args.servo_gains else None)
+        startup = args.general or params["control"].get("general_move",
+                                                        "general_rl")
+        record = drivetrain_model.policy_record(startup)
+        drivetrain_base = drivetrain_model.teleop_base(
+            record, args.drivetrain, args.drivetrain_without, servo_gains)
+        if drivetrain_base is not None:
+            overlay, _notes = drivetrain_model.teleop_overlay(
+                drivetrain_base, record, servo_gains)
+            params = {**params, drivetrain_model.KEY: overlay}
+            drivetrain_source = (
+                "from --drivetrain" if args.drivetrain or args.drivetrain_without
+                else f"from {startup}'s training record" if record
+                else "from config/drivetrain_model.yaml (--servo-gains)")
     build_kw = dict(variant="full", hockey=args.hockey,
                     righting=(args.wings or args.linkage or args.swing
                               or args.swing_linkage),
@@ -543,7 +562,9 @@ def main() -> None:
                 record=args.record,
                 slowmo_x=args.slowmo, odometry=args.odometry,
                 odometry_encoder=args.odometry_encoder, ahrs=args.ahrs,
-                ahrs_tau=args.ahrs_tau, design=design)
+                ahrs_tau=args.ahrs_tau, design=design,
+                drivetrain_base=drivetrain_base, servo_gains=servo_gains,
+                drivetrain_source=drivetrain_source)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1597,7 +1618,8 @@ def _rec_write(rec, path, params, gen_name, mode):
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
             show_ui=False, wings=False, linkage=False, swing=False, record=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
-            ahrs="none", ahrs_tau=None, design=None):
+            ahrs="none", ahrs_tau=None, design=None, drivetrain_base=None,
+            servo_gains=None, drivetrain_source=""):
     from .interactive import teleop_loop
 
     from . import policy_menu
@@ -1658,11 +1680,20 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     data = _fresh(model, eq_qpos)
     c = DriveController(params, model, design=design)
     c.reset(model, data)
-    from .drivetrain_model import DrivetrainSim, describe
-    drive_sim = DrivetrainSim.attach(model, params)
-    if "drivetrain_model" in params:
-        print(f"DETAILED DRIVETRAIN: {describe(params)}.\n  Every policy so far "
-              "trained on the ideal drives; expect the digest warning below.")
+    from .drivetrain_model import (KEY, DrivetrainSim, base_params, describe,
+                                   teleop_overlay)
+    # Lists because a menu swap REPLACES them: the model stays, the firmware
+    # numbers follow the policy (drivetrain_model.teleop_overlay). `plant` is
+    # what the digest check judges a policy against.
+    drive_sim = [DrivetrainSim.attach(model, params)]
+    plant = [params]
+    drivetrain_said = [None]
+    if KEY in params:
+        gains_rule = ("PINNED by --servo-gains" if servo_gains else
+                      "follow the policy picked from the menu")
+        print(f"DETAILED DRIVETRAIN {drivetrain_source}: {describe(params)}.\n"
+              f"  Structure is compiled for the session; firmware gains "
+              f"{gains_rule}.")
     c._odometry_active = odo is not None
     c._ahrs_active = ahrs_model is not None
     c._drivetrain_active = "drivetrain_model" in params
@@ -1972,6 +2003,28 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         else:
             c.set_speed(0.0)
 
+    def retarget_drivetrain() -> None:
+        """Fly the engaged policy on its own firmware gains, unless pinned.
+
+        Runs on EVERY engage, including the quiet one after a viewer reset, so
+        it rebuilds and prints only when something changed. A fresh
+        DrivetrainSim resets itself on its first pre_step, at the current state.
+        An ideal session has nothing to retarget; drive.py's NOTE covers a
+        detailed-trained policy flown there.
+        """
+        if drivetrain_base is None:
+            return
+        overlay, notes = teleop_overlay(
+            drivetrain_base, getattr(c._gen, "drivetrain_model", None),
+            servo_gains)
+        if overlay != plant[0].get(KEY):
+            plant[0] = {**base_params(params), KEY: overlay}
+            drive_sim[0] = DrivetrainSim.attach(model, plant[0])
+        if drivetrain_said[0] != (gen_name[0], describe(plant[0])):
+            drivetrain_said[0] = (gen_name[0], describe(plant[0]))
+            print(f"drivetrain: {describe(plant[0])}"
+                  + "".join(f"\n  NOTE: {gen_name[0]} {n}" for n in notes))
+
     def engage(d, quiet=False) -> bool:
         """Hand control to the general policy. Returns False (and clears the
         intent) if there is no usable policy, so the caller falls back to the
@@ -2001,8 +2054,9 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         # currently in bike_params.yaml — nothing else reports this, and a
         # policy silently belonging to an older plant is the failure mode
         # that put a stale export in control.general_move for three days.
+        retarget_drivetrain()
         from .control.flick import check_move_digest
-        check_move_digest(c._gen, params)
+        check_move_digest(c._gen, plant[0])
         zero_command(d)                  # never inherit a stale setpoint
         # Re-engaging hands the wings back to the policy, so the manual
         # override is a temporary grab (right the bike by hand, then re-engage)
@@ -2780,7 +2834,10 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 slowmo=slowmo,
                 paused=paused,
                 on_start=lambda v: view.__setitem__(0, v),
-                pre_step=None if drive_sim is None else drive_sim.pre_step)
+                # Through the list, not a bound method: a menu swap replaces
+                # the DrivetrainSim and the loop has to step the new one.
+                pre_step=(None if drive_sim[0] is None
+                          else lambda d: drive_sim[0].pre_step(d)))
     # teleop_loop returns when the operator closes the viewer, so this is the
     # natural flush point. Ctrl-C bypasses it -- accepted, since a session
     # abandoned that way is usually one you did not want kept.

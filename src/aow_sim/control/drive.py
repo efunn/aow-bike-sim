@@ -419,7 +419,9 @@ class DriveController(LQRBalance):
                 and not bool(getattr(self, "_drivetrain_active", False))):
             print(f"NOTE: {getattr(self._gen, 'name', '?')} was trained on the "
                   "DETAILED drivetrain and is being flown on the ideal one.\n"
-                  "  Add --drivetrain to teleop to match training.")
+                  "  The drivetrain is compiled at launch: relaunch teleop with "
+                  f"--general {getattr(self._gen, 'name', 'NAME')} to match "
+                  "training.")
         self._gen_obs_pitch = bool(getattr(self._gen, "obs_pitch", False))
         self._gen_obs_wings = bool(getattr(self._gen, "obs_wings", False))
         self._gen_act_wings = bool(getattr(self._gen, "act_wings", False))

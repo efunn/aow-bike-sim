@@ -152,6 +152,91 @@ def describe(params: dict) -> str:
     return ", ".join(bits) if bits else "overlay loaded, every part off"
 
 
+# -- teleop: which plant a policy flies on -------------------------------------
+#
+# The model is compiled ONCE per teleop session, but policies swap live from
+# the `,` menu. Servo and slop are model structure; the firmware gains are
+# DrivetrainSim numbers. So the gains can follow whichever policy is driving,
+# and nothing else can without a relaunch. A flag pins what it names for the
+# whole session: --drivetrain the overlay, --servo-gains the gains.
+
+GAIN_KEYS = ("velocity_p_gain", "velocity_i_gain")
+
+
+def policy_record(name: str, moves_dir=None):
+    """The overlay `moves/NAME.yaml` was trained on, or None (ideal, or no
+    such move -- the engage path reports that one)."""
+    from .control.flick import MOVES_DIR
+    try:
+        with open(Path(moves_dir or MOVES_DIR) / f"{name}.yaml") as f:
+            return (yaml.safe_load(f) or {}).get(KEY) or None
+    except FileNotFoundError:
+        return None
+
+
+def teleop_base(record, drivetrain=None, without=(), gains=None):
+    """The overlay teleop COMPILES, before any gains follow a policy.
+
+    `--drivetrain [PATH]` or `--drivetrain-without` pin the file; else the
+    startup policy's own `record`; else `--servo-gains` alone asks for the
+    default file; else None, the ideal plant.
+    """
+    if drivetrain or without:
+        path = None if drivetrain in (None, True) else drivetrain
+        return with_drivetrain({}, path, without=tuple(without))[KEY]
+    if record:
+        return copy.deepcopy(record)
+    if gains is not None:
+        return load()
+    return None
+
+
+def _flat(d, pre=""):
+    for k, v in d.items():
+        if isinstance(v, dict):
+            yield from _flat(v, f"{pre}{k}.")
+        else:
+            yield f"{pre}{k}", v
+
+
+def teleop_overlay(base, record, gains=None):
+    """(overlay, notes): the plant to fly a policy trained on `record` on,
+    in a session that compiled `base`.
+
+    Gains: `gains` (--servo-gains) if pinned, else the record's, else `base`'s.
+    Everything else stays as launched; a difference from the record is
+    reported in `notes`, not applied -- slop and rotor inertia are compiled,
+    and the rest is what --drivetrain pinned.
+    """
+    if base is None:
+        notes = (["trained on the DETAILED drivetrain, but this session compiled "
+                  "the ideal one"] if record else [])
+        return None, notes
+    out = copy.deepcopy(base)
+    src = gains
+    if src is None and record and "servo" in record:
+        src = tuple(record["servo"][k] for k in GAIN_KEYS)
+    if src is not None and "servo" in out:
+        for k, v in zip(GAIN_KEYS, src):
+            out["servo"][k] = int(v)
+    if record is None:
+        return out, ["trained on the IDEAL drivetrain"]
+    notes = []
+    if gains is not None and "servo" in record:
+        trained = tuple(int(record["servo"][k]) for k in GAIN_KEYS)
+        if trained != tuple(int(g) for g in gains):
+            notes.append(f"trained at P{trained[0]}/I{trained[1]}, flying at "
+                         f"the pinned --servo-gains P{gains[0]}/I{gains[1]}")
+    a, b = dict(_flat(record)), dict(_flat(out))
+    skip = {f"servo.{k}" for k in GAIN_KEYS}
+    diffs = sorted(k for k in a.keys() | b.keys()
+                   if k not in skip and a.get(k) != b.get(k))
+    if diffs:
+        notes.append("differs from its training plant in " + ", ".join(diffs)
+                     + " (fixed at launch, not applied)")
+    return out, notes
+
+
 # -- model structure ---------------------------------------------------------
 
 def edit_spec(spec: mujoco.MjSpec, p: dict) -> None:

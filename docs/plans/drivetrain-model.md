@@ -223,9 +223,26 @@ each plant, plus a sim-only roller push and flick.
 
 Teleop:
 
+    mjpython -m aow_sim.run_drive --teleop --general general_rl_drivetrain_p400_2
     mjpython -m aow_sim.run_drive --teleop --drivetrain
-    mjpython -m aow_sim.run_drive --teleop --drivetrain --servo-gains 400:3840
+    mjpython -m aow_sim.run_drive --teleop --drivetrain --servo-gains 200:1920
     mjpython -m aow_sim.run_drive --teleop --drivetrain --drivetrain-without roller_slop
+
+The model is compiled once per session and policies swap live from the `,`
+menu, so only the firmware gains (DrivetrainSim numbers) can follow a policy.
+A flag pins what it names for the session:
+
+| launch | compiled plant | gains after a menu swap |
+|---|---|---|
+| no flags | the startup policy's recorded drivetrain, else ideal | the picked policy's |
+| `--drivetrain [PATH]` / `--drivetrain-without` | the file | the picked policy's, else the file's |
+| `--servo-gains P:I` | as above; the file if nothing else asks | pinned |
+
+An ideal-plant session cannot gain a drivetrain from a menu swap; it prints a
+NOTE instead. Other differences from a policy's record are reported, not
+applied (`drivetrain_model.teleop_overlay`). Checked 2026-09-14 by driving the
+real teleop closures headlessly through a `p100_1` -> `p400_2` swap in all
+three launches.
 
 Training, per config (`config/rl_general.yaml` documents the keys):
 
@@ -241,8 +258,8 @@ Training, per config (`config/rl_general.yaml` documents the keys):
 writes the RESOLVED overlay dict into the move yaml as `drivetrain_model`.
 `policy_env_overrides` carries it, so every env built from the policy —
 per_command, chatter, floor_sweep — rebuilds the plant it trained on, even after
-this yaml moves on. Teleop says so when such a policy is flown without
-`--drivetrain`. Both randomisation knobs are off by default on purpose: the
+this yaml moves on. Teleop compiles it too when such a policy is the startup
+one, and says so when one is flown on an ideal session. Both randomisation knobs are off by default on purpose: the
 first runs should add the drivetrain and nothing else. `actuator_frac` still
 randomises the STEER servo; set it to 0 as well for a fully fixed battery.
 Checked 2026-09-14 by a 2000-step smoke run through export.

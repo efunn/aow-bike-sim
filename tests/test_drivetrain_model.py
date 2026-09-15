@@ -196,6 +196,43 @@ def test_policy_carries_its_drivetrain():
     assert got["drivetrain_model"] is overlay
 
 
+def test_teleop_gains_follow_the_policy_unless_pinned(params):
+    import copy
+    file_cfg = dm.load()
+    p400 = dm.with_drivetrain({}, gains=(400, 1920))[dm.KEY]
+    # What launch compiles: a drivetrain flag pins the file, else the startup
+    # policy's record, else --servo-gains alone means the file, else ideal.
+    assert dm.teleop_base(p400, drivetrain=True) == file_cfg
+    assert dm.teleop_base(p400) == p400
+    assert dm.teleop_base(None, gains=(200, 1920)) == file_cfg
+    assert dm.teleop_base(None) is None
+
+    base = dm.teleop_base(None, drivetrain=True)
+    got, notes = dm.teleop_overlay(base, p400)
+    assert got["servo"]["velocity_p_gain"] == 400 and not notes
+    got, notes = dm.teleop_overlay(base, None)
+    assert got["servo"]["velocity_p_gain"] == file_cfg["servo"]["velocity_p_gain"]
+    assert any("IDEAL" in n for n in notes)
+    got, notes = dm.teleop_overlay(base, p400, gains=(200, 1920))
+    assert got["servo"]["velocity_p_gain"] == 200
+    assert any("P400" in n for n in notes)
+    got, notes = dm.teleop_overlay(None, p400)
+    assert got is None and notes, "an ideal session cannot grow a drivetrain"
+
+    soft = copy.deepcopy(p400)
+    soft["detent"]["friction"] = 0.05
+    got, notes = dm.teleop_overlay(base, soft)
+    assert got["detent"]["friction"] == file_cfg["detent"]["friction"]
+    assert any("detent.friction" in n for n in notes), "reported, not applied"
+
+    # The swap needs no rebuild: the same compiled model takes either gain.
+    m = build_model(dm.with_drivetrain(params), variant="testbed")
+    for p_gain in (100, 400):
+        g, _ = dm.teleop_overlay(base, dm.with_drivetrain({}, gains=(p_gain, 1920))[dm.KEY])
+        sim = dm.DrivetrainSim.attach(m, {**params, dm.KEY: g})
+        assert sim.kp == pytest.approx(g["servo"]["kp_per_unit"] * p_gain)
+
+
 def _randomized_env(params, **rand):
     from aow_sim.control.general_env import GeneralEnv, _load_rl_config
     cfg = _load_rl_config()

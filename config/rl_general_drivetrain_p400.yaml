@@ -48,8 +48,8 @@
 #   * the pen (analysis/pen_slope.py --drivetrain --servo-gains ...).
 #
 # The moves yaml records the resolved drivetrain, so every analysis script
-# rebuilds this plant from the policy itself. Teleop needs --drivetrain, and
-# `--servo-gains 400:1920` for this arm.
+# rebuilds this plant from the policy itself, and so does teleop
+# (`--general <export>`; the gains also follow it from the `,` menu).
 #
 # LAUNCH -- queued with the other arm, interleaved p100_0, p400_0, p100_1, ...
 # (on the remote box, after committing and pushing):
