@@ -73,6 +73,7 @@ from aow_sim.sim_ahrs import TAU_ORIENT_S
 from aow_sim.sim_odometry import ENCODERS
 from aow_sim.train_general_rl import _eval_episodes, _score, eval_cmds
 from rsa_policies import POLICIES, REPO, env_for, load_general
+from drivetrain_eval import VARIANTS, params_for
 
 # The three channels every general policy has, plus the optional fourth. A
 # policy's own width decides how many of these it fills -- see `act_scale`.
@@ -112,6 +113,76 @@ def act_scale(pol) -> np.ndarray:
     return scale
 
 
+# THE REAR WHEEL, AT PHYSICS RATE. Every table above is the ACTION, sampled at
+# the 50 Hz control rate, and says nothing about whether the wheel follows it:
+# the ideal drive and a P 100 servo smooth a dithering command, a stiffer loop
+# may pass it through or ring on its own. The control-rate Nyquist is 25 Hz,
+# and the bench put the XC430's resonance near 20 Hz, so the wheel is sampled
+# on EVERY mj_step instead, through a stand-in for the `mujoco` module that
+# general_env steps with.
+WHEEL_SIGNALS = ("tread", "roller", "servo_a", "servo_b")
+_SMOOTH_S = 0.1          # jitter: speed minus its centred 100 ms sliding-window mean
+_REV_HYST = 0.002        # tread direction reversals counted past +-2 mm/s
+
+
+class _StepTap:
+    """`mujoco` as general_env sees it, with mj_step also sampling the wheel."""
+
+    def __init__(self, module, sample):
+        self._module, self._sample = module, sample
+
+    def __getattr__(self, name):
+        return getattr(self._module, name)
+
+    def mj_step(self, model, data, *a):
+        self._module.mj_step(model, data, *a)
+        self._sample(data)
+
+
+# Tread speed RMS per frequency band [Hz]. From the RAW speed's spectrum, not
+# the jitter residual's: subtracting a 100 ms sliding-window mean leaves a
+# residual whose gain peaks near 14 Hz whatever the input, so a residual
+# spectrum puts its peak there for every policy.
+WHEEL_BANDS = ((2, 8), (8, 16), (16, 32), (32, 64), (64, 1250))
+
+
+def wheel_jitter(W, T, h):
+    """Jitter per WHEEL_SIGNALS column, tread reversals per second, and the
+    tread speed's RMS per WHEEL_BANDS band. Split into episodes where
+    `data.time` rewinds, so nothing is smoothed or counted across a reset."""
+    k = max(1, int(round(_SMOOTH_S / h)))
+    win = np.ones(k) / k
+    n_fft = 2 ** int(np.floor(np.log2(1.0 / h)))          # ~1 s segments
+    taper = np.hanning(n_fft)
+    t = np.arange(n_fft)
+    sq, n, rev, dur = np.zeros(W.shape[1]), 0, 0, 0.0
+    band_ms, n_win = np.zeros(len(WHEEL_BANDS)), 0
+    f = np.fft.rfftfreq(n_fft, h)
+    for seg in np.split(W, np.flatnonzero(np.diff(T) < 0) + 1):
+        for i in range(0, len(seg) - n_fft + 1, n_fft):
+            x = seg[i:i + n_fft, 0]
+            x = x - np.polyval(np.polyfit(t, x, 1), t)     # linear detrend
+            p = np.abs(np.fft.rfft(x * taper)) ** 2
+            # One-sided Parseval, window-corrected: mean square in a band.
+            band_ms += [2 * p[(f >= lo) & (f < hi)].sum() / (n_fft * (taper ** 2).sum())
+                        for lo, hi in WHEEL_BANDS]
+            n_win += 1
+        if len(seg) <= 2 * k:
+            continue
+        smooth = np.stack([np.convolve(seg[:, j], win, mode="same")
+                           for j in range(seg.shape[1])], 1)
+        res = (seg - smooth)[k:-k]        # the edges the window cannot fill
+        sq += (res ** 2).sum(0)
+        n += len(res)
+        s = np.sign(seg[:, 0]) * (np.abs(seg[:, 0]) > _REV_HYST)
+        s = s[s != 0]
+        rev += int(np.count_nonzero(np.diff(s)))
+        dur += len(seg) * h
+    return {"rms": np.sqrt(sq / max(n, 1)),
+            "rev_per_s": rev / max(dur, 1e-9),
+            "band_rms": np.sqrt(band_ms / max(n_win, 1))}
+
+
 def rollout_grid(pol, env, cmds, params):
     """Run the eval grid, keeping every normalized action alongside the
     per-command metrics. Actions are recorded as a fraction of their bound,
@@ -138,7 +209,30 @@ def rollout_grid(pol, env, cmds, params):
         rates.append(float(env.data.qvel[env._sd]))
         return a[:env.action_space.shape[0]]
 
-    m, rows = _eval_episodes(env, act, cmds)
+    # Surface speeds, so the columns share a unit: tread = hub x outer radius;
+    # roller = k_roller x ring_spin (geared RELATIVE to the hub) x mean roller
+    # radius; servo = input shaft / belt ratio, at the XC430's output.
+    from aow_sim.control import general_env as ge
+    ow, dt = params["omni_wheel"], params["drivetrain"]
+    dofs = [int(env.model.joint(j).dofadr[0])
+            for j in ("hub_spin", "ring_spin", "input_a_spin", "input_b_spin")]
+    r_roller = (float(ow["roller"]["big_diameter"])
+                + float(ow["roller"]["small_diameter"])) / 4
+    gain = np.array([float(ow["outer_radius"]), float(dt["k_roller"]) * r_roller,
+                     1 / float(dt["belt_ratio"]), 1 / float(dt["belt_ratio"])])
+    wheel, wheel_t = [], []
+
+    def sample(data):
+        wheel_t.append(float(data.time))
+        wheel.append(data.qvel[dofs] * gain)
+
+    ge.mujoco = _StepTap(ge.mujoco, sample)
+    try:
+        m, rows = _eval_episodes(env, act, cmds)
+    finally:
+        ge.mujoco = ge.mujoco._module
+    m["wheel"] = wheel_jitter(np.array(wheel), np.array(wheel_t),
+                              float(env.model.opt.timestep))
     A = np.array(acts)
     # Steer joint rate against the XC330's own no-load speed. gear_ratio is
     # servo rotation per steer rotation, so the servo turns that much faster.
@@ -166,11 +260,15 @@ def _one_policy(job):
     commands across workers would silently re-seed every episode and produce
     numbers matching no other table in the project.
     """
-    name, encoder, force_odo, ahrs, tau, channels = job
-    params = load_params()
+    name, encoder, force_odo, ahrs, tau, channels, plant = job
+    # "own" is each policy's recorded drivetrain (policy_env_overrides);
+    # anything else forces one drivetrain_eval variant on every policy.
+    params = load_params() if plant == "own" else params_for(plant)
     cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     pol = load_general(name)
+    if plant != "own":
+        pol.drivetrain_model = None
     if encoder:
         pol.odometry_encoder = encoder
     if force_odo:
@@ -242,6 +340,11 @@ def main():
                          "deployment question -- what the Pi will hand them -- "
                          "and it is not what a truth-trained policy's own row "
                          "above measures.")
+    ap.add_argument("--plant", default="own", choices=["own", *VARIANTS],
+                    help="drivetrain every policy runs on: 'own' is each "
+                         "policy's recorded one (ideal for most), else an "
+                         "analysis/drivetrain_eval.py variant forced on all, "
+                         "e.g. full (P 100) or full_p400")
     args = ap.parse_args()
     names = args.policies or list(POLICIES)
 
@@ -261,7 +364,7 @@ def main():
     # DISTRIBUTION under it, so those rows answer "does it survive
     # deployment", not "how good is it".
     jobs = [(k, args.encoder, args.force_odometry, args.ahrs, args.ahrs_tau,
-             args.ahrs_channels) for k in names]
+             args.ahrs_channels, args.plant) for k in names]
     done = {}
     with ProcessPoolExecutor(max_workers=min(len(jobs),
                                              os.cpu_count() or 1)) as ex:
@@ -272,7 +375,7 @@ def main():
     w = f"{max(len(k) for k in out) + 2}"
 
     print(f"eval grid: {len(cmds)} commands, identical seeds, "
-          f"randomization off\n")
+          f"randomization off, plant: {args.plant}\n")
     print(f"{'policy':{w}}{'score':>8}{'surv':>7}{'track_geo':>11}"
           f"{'vel_err':>9}{'head_deg':>10}{'drift_m':>9}{'steer_rest':>11}")
     for k, (m, *_) in out.items():
@@ -379,6 +482,32 @@ def main():
                  for c, seg in per.items() if pred(c) and len(seg) > 1]
             line += f"{np.mean(v):>9.3f}" if v else f"{'-':>9}"
         print(f"{k:{w}}{line}")
+
+    print(f"\nREAR WHEEL JITTER, at physics rate: RMS of speed minus its "
+          f"centred {_SMOOTH_S * 1e3:.0f} ms sliding-window mean")
+    print(f"{'policy':{w}}{'tread':>9}{'roller':>9}{'servo_a':>9}{'servo_b':>9}"
+          f"{'rev/s':>8}")
+    for k, (m, *_) in out.items():
+        wj = m["wheel"]
+        rms = wj["rms"]
+        print(f"{k:{w}}{rms[0] * 1e3:>9.1f}{rms[1] * 1e3:>9.1f}"
+              f"{np.degrees(rms[2]):>9.1f}{np.degrees(rms[3]):>9.1f}"
+              f"{wj['rev_per_s']:>8.2f}")
+    print(f"  tread and roller in mm/s at the surface, servo in deg/s at the "
+          f"XC430 output.\n  rev/s: tread direction reversals past "
+          f"+-{_REV_HYST * 1e3:.0f} mm/s. The 100 ms residual weights "
+          f"frequencies unevenly\n  (x0.36 at 5 Hz, x1.22 at 14 Hz): read the "
+          f"band table below for WHERE the energy is.")
+    print("\ntread speed RMS by frequency band [mm/s], raw speed, linear "
+          "detrend per ~0.8 s window")
+    print(f"{'policy':{w}}" + "".join(f"{f'{lo}-{hi}Hz':>10}"
+                                      for lo, hi in WHEEL_BANDS))
+    for k, (m, *_) in out.items():
+        print(f"{k:{w}}" + "".join(f"{v * 1e3:>10.1f}"
+                                   for v in m["wheel"]["band_rms"]))
+    print("  The action is held for 20 ms, so dither every step or every "
+          "other step lands at\n  25-50 Hz; the bench put the XC430 loop's "
+          "resonance near 20 Hz.")
 
     print("\ncross-axis leakage in BEHAVIOUR [m/s]: motion on the axis that "
           "was not commanded")
