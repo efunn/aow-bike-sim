@@ -38,7 +38,7 @@ Ranked by what unblocks the most, not by interest.
 |---|---|---|---|
 | 1 | **Weigh the electronics stack and pack** | Two `GUESS`es die in ten minutes; the parts are on the bench today | `first-physical-test.md` §0a |
 | 2 | **Contact calibration — P0, P0b, P1, once per floor** | Needs no printing: a weight, a caliper, slow-mo, a tilting board. The contact is the least-measured thing in the sim and the one no policy has been randomised over — and the SPREAD across surfaces is what sets the randomization range | `floors-and-the-contact-model.md` |
-| 3 | **Finish the drivetrain station** | Built and characterised 2026-09-12/13: belt ratio 3.0 confirmed, a 7.5° detent in the differential, and a velocity-loop resonance at ~22 Hz at firmware P 400 that P 200 does not have. Roller slop measured by hand 2026-09-13: ±1.5 mm at the roller's 22 mm diameter, 15.6° p-p, from the same gear chain as the detent (20 detents per roller turn). `k_roller` 2.4 confirmed by counting roller turns. Open: choose the firmware Velocity P **and I** gains — a P/I grid cut time stuck at the diff detents from 49 % (factory) to 12 % at P 400 / I 3840, but P 400 rings near 22 Hz and I 3840 rings harder (peak 1.09–1.20), and the sim must model whichever ships — then a torque-scale check (D5, a known added inertia -- no lever arm needed) and fitting the five drivetrain `GUESS`es from the captures. **The sim now answers half of the gain question (2026-09-14):** a drive model fitted to these captures is built, opt-in, and the existing policies survive it at factory P 100 (0.636 / 0.95) and collapse at P 200+ (P 400: ≤ 0.08 / 0.30) — so the gains cannot be chosen apart from a policy trained at them | `drivetrain-measurements.yaml`, `drivetrain-model.md` |
+| 3 | **Finish the drivetrain station** | Built and characterised 2026-09-12/13: belt ratio 3.0 confirmed, a 7.5° detent in the differential, and a velocity-loop resonance at ~22 Hz at firmware P 400 that P 200 does not have. Roller slop measured by hand 2026-09-13: ±1.5 mm at the roller's 22 mm diameter, 15.6° p-p, from the same gear chain as the detent (20 detents per roller turn). `k_roller` 2.4 confirmed by counting roller turns. Open: choose the firmware Velocity P **and I** gains — a P/I grid cut time stuck at the diff detents from 49 % (factory) to 12 % at P 400 / I 3840, but P 400 rings near 22 Hz and I 3840 rings harder (peak 1.09–1.20), and the sim must model whichever ships — then a torque-scale check (D5, a known added inertia -- no lever arm needed) and fitting the five drivetrain `GUESS`es from the captures. **The sim cannot pick the gain (2026-09-14):** on the drive model fitted to these captures, policies trained at each gain tie — 3 seeds each, median 0.749 at P 100 against 0.750 at P 400, each on its own plant — but P 400 buzzes the rear wheel ~3× harder at 8–32 Hz. Decide on the physical bike, with a policy trained at the gain that ships | `drivetrain-measurements.yaml`, `drivetrain-model.md` |
 | 4 | **Umbilical bring-up on the laptop** | Verification steps 1–2 need no pack at all | `untethered-setup.md` §"Bench power" |
 
 All four are bench work. **The sim-side item is being taken now:**
@@ -66,7 +66,7 @@ odometry rewrite (flown around, seven accepted red tests).
 
 | workstream | state | blocker | owner doc |
 |---|---|---|---|
-| **Simulation & model** | Working. 17 parameters still `GUESS`. A detailed drivetrain (fitted XC430 loop, diff detent, roller slop) exists as an opt-in overlay, in the eval env, teleop and training (per config). P 100 vs P 400 x 3 seeds is queued: `config/queue_drivetrain_gains.txt` | Physical parts to measure; the queued runs | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
+| **Simulation & model** | Working. 17 parameters still `GUESS`. A detailed drivetrain (fitted XC430 loop, diff detent, roller slop) exists as an opt-in overlay, in the eval env, teleop and training (per config). Trained at P 100 and P 400, 3 seeds each (2026-09-14): a tie on score. Teleop builds a policy's own drivetrain from its record | Physical parts to measure; the built bike, to confirm the drivetrain model | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
 | **Control — RL** | Working, and primary. Trains against the onboard sensors | Crab still one-sided; `turn_asym` stuck ~0.2 | `general-rl-improvements.md` |
 | **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy needs a moving bike | `sensor-workstream.md` |
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
@@ -114,12 +114,13 @@ hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 
 ## Health
 
-**Test suite, measured 2026-09-14** with `pytest -n 6 --dist load`:
+**Test suite, measured 2026-09-14** with `pytest -n 10 --dist load`:
 
-    23 failed, 317 passed, 9 skipped, 50.1 s
+    23 failed, 318 passed, 9 skipped, 40.5 s
     red set unchanged (23 accepted failures) -- tests/expected_failures.txt
 
-+15 passing against 09-13: `tests/test_drivetrain_model.py`, marker `drivetrain`.
++16 passing against 09-13: `tests/test_drivetrain_model.py`, marker
+`drivetrain`. The 16th pins how teleop picks a policy's drivetrain.
 
 Read the verdict line, not the FAILED count. The 23:
 
@@ -193,6 +194,24 @@ as the best of the twelve on behaviour, while `_score` ranks it 8th. Teleop's
 `general_rl_cmd_curriculum2`. The pointer was chosen on 09-11 and never landed:
 the digest worry that stopped it was about the legacy whole-file digest, and a
 pointer edit moves neither `plant_digest` nor `design_digest`.
+
+**Six policies trained ON the detailed drivetrain (2026-09-14), not pointed
+at.** `general_rl_drivetrain_p{100,400}_{0,1,2}` are curriculum2's config at
+firmware Velocity P 100 or P 400. Score on the eval grid:
+
+| policy | ideal | drivetrain P 100 | drivetrain P 400 |
+|---|---|---|---|
+| `curriculum2b` (the pointer) | 0.595 | 0.638 | 0.177 |
+| P 100 seeds | 0.36–0.48 | **0.741–0.751** | 0.180–0.503 |
+| P 400 seeds | 0.05–0.14 | 0.42–0.54 | **0.625–0.803** |
+
+Each arm beats the pointer on its own gain, and every policy is specific to the
+plant it trained on, the pointer included. **The pointer stays because the
+drivetrain model is not yet confirmed against the built bike**, not because
+these lose. P 400 buzzes the rear wheel ~3× harder at 8–32 Hz (`chatter.py
+--plant`). Teleop builds a policy's own drivetrain from its record
+(`--general general_rl_drivetrain_p100_1`). Reproduce the table with
+`analysis/drivetrain_eval.py --variants ideal full full_p400`.
 
 The table below predates the curriculum line and is kept for the sensor
 argument it makes. The split that matters is not one good policy against the rest — it is
@@ -364,8 +383,10 @@ every field in `contact-measurements.yaml` is still 0.0.
    refactor. See `floors-and-the-contact-model.md` §4.
 4. **Authority derating.** Real servos will not deliver modelled torque at
    modelled bandwidth. **Partly quantified 2026-09-14** on the fitted servo
-   model (`drivetrain-model.md`): the two AHRS-trained policies hold at factory
-   gains and lose most of the grid at P 200–400, the gains the bench liked.
+   model (`drivetrain-model.md`): the ideal-drive policies measured hold at
+   factory gains and lose most of the grid at P 400 (≤ 0.18), the gain the bench
+   liked. That loss was the policy/plant mismatch: policies trained AT P 400 get
+   it back (0.63–0.80), at the cost of a rear wheel that buzzes ~3× harder.
    The torque SCALE is still the datasheet 1.6 N.m. The bench replay cannot
    see it (fitted inertia and friction scale with it); the bike can. D5 or
    servo-strength randomisation covers it.
