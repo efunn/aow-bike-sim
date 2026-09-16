@@ -37,13 +37,12 @@ from .balance import quat_to_mat
 from .drive import DriveController
 from .linearize import settle_upright
 
-# Hand-back target. Inside the general policy's COLD recoverable set on both
-# sides at standstill (analysis/no_return.py: 16.3 deg right, 11.8 deg left)
-# with margin — and note it is the weaker (left) side that sets it, which is
-# why the policy's left/right asymmetry matters to the mechanism.
-RECOVER_DEG = 12.0
-HANDOFF_RATE = 3.0      # rad/s; a roll inside the window but still moving fast
-                        #   is not a hand-off, it is a bike on its way past
+# Hand-back target, and the rate gate that goes with it. Re-exported from
+# `recovery.py` rather than defined here: the onboard fall guard ends its cut
+# on the SAME event (hw/run_bike.py), cannot import this module (mujoco), and
+# two copies of a measured constant is how they drift. See there for the
+# derivation and for why raising either is a question rather than a fix.
+from .recovery import HANDOFF_RATE, RECOVER_DEG, ready_for_policy  # noqa: F401
 
 # Where the FOUR-BAR's servo torque peaks, in bike roll. Measured from
 # analysis/wing_linkage.py --torque: 0.54 N.m at roll 53-57 deg, with the
@@ -308,7 +307,12 @@ class RightingSequencer:
             # it just means nothing has to be re-engaged at hand-off.
             if self.keep_policy and self.ctrl is not None:
                 self.ctrl.step(model, data)
-            if abs(roll) < self.recover_deg and abs(data.qvel[3]) < HANDOFF_RATE:
+            # `roll_pitch` returns DEGREES; the predicate takes radians,
+            # because that is what every other state signal in this repo
+            # and on the bike is in. Converting at the one call site is
+            # better than a predicate that has to guess.
+            if ready_for_policy(np.deg2rad(roll), data.qvel[3],
+                                self.recover_deg):
                 self.phase, self.t_hand = "balance", self._t
                 if self.ctrl is None:
                     # Built one from scratch, so it has no command yet: park it.
