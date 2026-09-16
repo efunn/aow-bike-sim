@@ -15,10 +15,13 @@ from aow_sim.control.steer import XC330_COUNTS_PER_RAD
 from aow_sim.hw.control_table import (MODEL_NUMBERS, table_by_name,
                                       table_for)
 from aow_sim.hw.dynamixel import (CT, INDIRECT_ADDRESS_1, INDIRECT_DATA_1,
-                                  N_INDIRECT, POS_WRAP, READ_BLOCK,
-                                  TICK_WRAP, VEL_LSB_RAD_S, IndirectMap,
+                                  MODE_CURRENT_POSITION, MODE_EXTENDED_POSITION,
+                                  MODE_VELOCITY, N_INDIRECT, POS_WRAP,
+                                  READ_BLOCK, TICK_WRAP, VEL_LSB_RAD_S,
+                                  VELOCITY_GAIN_REGISTERS, IndirectMap,
                                   RateFilter, ServoBus, assert_alias_margin,
-                                  _pos_delta, _signed, _tick_delta_ms)
+                                  resolve_gains, _pos_delta, _signed,
+                                  _tick_delta_ms)
 
 # Register maps, unit conversions and tick math; no bike model.
 # See `pytest --markers` for what each one means.
@@ -448,3 +451,99 @@ def test_trajectory_registers_share_the_goal_lsb():
             assert ct[traj].unit == pytest.approx(ct[goal].unit), (stem, traj)
             assert ct[traj].signed, (stem, traj)
         assert ct.decode("Velocity Trajectory", (-100) & 0xFFFFFFFF) < 0
+
+
+# --- the fourth servo, and the gains ------------------------------------
+# Added 2026-09-15 with the Pi bench bring-up. The righting servo shares the
+# daisy chain and the per-tick transfers; the gains are written at startup
+# because they are RAM registers that do not survive a power cycle.
+
+def test_the_righting_servo_joins_the_same_write_slot():
+    """Current-based position mode takes its goal in Goal Position(116), the
+    same register the steer uses — which is the whole reason a fourth servo is
+    free: it maps to the SAME indirect write address and needs no BulkWrite."""
+    b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4)
+    b._build_map()
+    assert b.ids == (1, 2, 3, 4)
+    assert b.goal_item[4] == "Goal Position"
+    assert b.write_addr == ServoBus(load_params(), ids=(1, 2, 3))._build_map().write_addr
+    assert b.write_len == 4, "one 4-byte goal per servo, whatever the goal means"
+
+
+def test_the_righting_servo_is_not_unwrapped():
+    """It runs current-based position, where the winding is meaningful — the
+    same argument as the steer, and the opposite of the two hubs."""
+    b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4)
+    assert b._wraps == {b.id_a, b.id_b}
+
+
+def test_the_righting_servo_gets_current_based_position_mode():
+    b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4)
+    assert b.modes() == {1: MODE_VELOCITY, 2: MODE_VELOCITY,
+                         3: MODE_EXTENDED_POSITION, 4: MODE_CURRENT_POSITION}
+    assert 4 not in ServoBus(load_params(), ids=(1, 2, 3)).modes()
+
+
+def test_goal_current_cannot_be_in_the_shared_block():
+    """The reason `set_righting_current` is a separate write and not another
+    indirect entry: the XC430 does not have the register at all. 102 is Goal
+    Current on the XC330 and does not exist on the XC430, which has Goal
+    PWM(100) and Present Load(126) where the XC330 has current."""
+    assert "Goal Current" in table_by_name("xc330_t181")
+    assert "Goal Current" not in table_by_name("xc430_w150")
+
+
+def test_gain_roles_expand_to_ids():
+    b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4,
+                 gains={"drive": {"Velocity P Gain": 400},
+                        "steer": {"Position P Gain": 800}})
+    assert b.gains == {1: {"Velocity P Gain": 400}, 2: {"Velocity P Gain": 400},
+                       3: {"Position P Gain": 800}}
+
+
+def test_a_righting_gain_is_dropped_on_a_three_servo_bench():
+    """One config has to serve both benches, so a role with no servo behind it
+    is not an error."""
+    b = ServoBus(load_params(), ids=(1, 2, 3),
+                 gains={"righting": {"Position P Gain": 700}})
+    assert b.gains == {}
+    with pytest.raises(ValueError, match="unknown gain role"):
+        ServoBus(load_params(), ids=(1, 2, 3), gains={"wheels": {}})
+
+
+def test_the_gain_keys_agree_with_the_drivetrain_overlay():
+    """`hw/` cannot import drivetrain_model (it imports mujoco at module
+    scope), so the key names are duplicated. Duplicated AND CHECKED — the same
+    device `CT` uses for the shared register subset."""
+    from aow_sim.drivetrain_model import GAIN_KEYS
+    assert tuple(VELOCITY_GAIN_REGISTERS) == GAIN_KEYS
+
+
+def test_the_policys_own_training_gain_is_what_gets_written():
+    """A policy is specific to the firmware gain it trained at — the P 100
+    seeds score 0.741–0.751 on their own gain and 0.180–0.503 on P 400 — so
+    the record's gain beats any configured default."""
+    gains, note = resolve_gains(load_params(), "general_rl_drivetrain_p400_1")
+    assert gains["drive"] == {"Velocity P Gain": 400, "Velocity I Gain": 1920}
+    assert "general_rl_drivetrain_p400_1" in note
+
+
+def test_a_pinned_gain_beats_the_policys_own():
+    gains, note = resolve_gains(load_params(), "general_rl_drivetrain_p400_1",
+                                override=(100, 1920))
+    assert gains["drive"]["Velocity P Gain"] == 100
+    assert "pinned" in note
+
+
+def test_an_ideal_plant_policy_has_no_opinion_and_says_so():
+    """`general_rl_cmd_curriculum2b` trained without the drivetrain overlay, so
+    there is no firmware loop in its plant and no gain to inherit. The startup
+    must say that rather than inventing one."""
+    gains, note = resolve_gains(load_params(), "general_rl_cmd_curriculum2b")
+    assert "drive" not in gains
+    assert "NOTHING" in note
+
+
+def test_a_missing_move_file_is_not_a_crash():
+    gains, note = resolve_gains(load_params(), "no_such_policy_at_all")
+    assert "drive" not in gains and "NOTHING" in note

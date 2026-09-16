@@ -994,8 +994,85 @@ class DynamixelBus:
         return rows
 
 
+# The drivetrain overlay's firmware-gain keys, and the registers they are.
+# Kept here rather than imported because `drivetrain_model.py` imports mujoco
+# at module scope and nothing under `hw/` may. `tests/test_hw_dynamixel.py`
+# asserts this agrees with `drivetrain_model.GAIN_KEYS` -- the same trick `CT`
+# uses above, so the duplication is checked rather than trusted.
+DRIVETRAIN_KEY = "drivetrain_model"
+VELOCITY_GAIN_REGISTERS = {"velocity_p_gain": "Velocity P Gain",
+                           "velocity_i_gain": "Velocity I Gain"}
+
+
+def policy_servo_gains(name: str, moves_dir="moves") -> dict | None:
+    """The firmware velocity gains `moves/NAME.yaml` was TRAINED at, or None.
+
+    None means the policy trained on the ideal drive plant, which has no
+    firmware loop in it and therefore no opinion about the gain -- not that the
+    gain does not matter. `resolve_gains` falls back to the config in that case
+    and says so.
+
+    Deliberately reads the yaml directly instead of `load_move`: this runs
+    before the bus is configured, it needs no weights, and `drivetrain_model`
+    (which owns these keys) cannot be imported here at all.
+    """
+    import yaml
+    try:
+        with open(Path(moves_dir) / f"{name}.yaml") as f:
+            rec = (yaml.safe_load(f) or {}).get(DRIVETRAIN_KEY) or {}
+    except FileNotFoundError:
+        return None
+    servo = rec.get("servo") or {}
+    if not servo.get("enabled", False):
+        return None
+    got = {reg: servo[key] for key, reg in VELOCITY_GAIN_REGISTERS.items()
+           if key in servo}
+    return got or None
+
+
+def resolve_gains(params: dict, policy: str | None = None,
+                  override=None, moves_dir="moves") -> tuple:
+    """-> ({role: {register: value}}, note) -- what to write, and from where.
+
+    Precedence follows the one teleop already uses for the same decision
+    (`drivetrain_model.teleop_overlay`): an explicit pin beats the policy's own
+    training gain, which beats the configured default. Keeping the two in the
+    same order matters because a policy is specific to the gain it trained at,
+    and the bike and the simulator disagreeing about which gain is flying is
+    exactly the failure this whole path exists to prevent.
+
+    `note` is meant to be printed. A startup that silently picks one of three
+    sources is how the old `engage_general` bug happened.
+    """
+    cfg = ((params.get("control") or {}).get("onboard") or {})
+    gains = {role: dict(regs) for role, regs in (cfg.get("gains") or {}).items()}
+
+    if override is not None:
+        p_gain, i_gain = override
+        src = f"pinned P{int(p_gain)}/I{int(i_gain)}"
+        drive = {"Velocity P Gain": int(p_gain), "Velocity I Gain": int(i_gain)}
+    else:
+        drive = policy_servo_gains(policy, moves_dir) if policy else None
+        if drive:
+            src = (f"{policy}'s own training gain "
+                   f"P{drive['Velocity P Gain']}/I{drive['Velocity I Gain']}")
+        elif gains.get("drive"):
+            d = gains["drive"]
+            src = (f"config control.onboard.gains.drive "
+                   f"P{d.get('Velocity P Gain')}/I{d.get('Velocity I Gain')}")
+            drive = None                     # already in `gains`
+        else:
+            src = ("NOTHING -- the policy trained on the ideal drive plant and "
+                   "no default is configured, so the servos keep their "
+                   "power-on values (factory P100/I1920)")
+            drive = None
+    if drive:
+        gains.setdefault("drive", {}).update(drive)
+    return gains, f"firmware velocity gains from {src}"
+
+
 class ServoBus:
-    """The three servos as one device.
+    """The three servos as one device, plus an optional fourth.
 
     Owns every unit conversion between the controller's physical units and
     register counts, including the belt and steering gear ratios — so nothing
@@ -1005,12 +1082,37 @@ class ServoBus:
 
     def __init__(self, params: dict, port: str = "/dev/ttyUSB0",
                  baud: int = 3_000_000, ids=(1, 2, 3),
+                 righting_id: int | None = None,
                  velocity_source: str = "differenced",
                  window_ms: float = 25.0, taper: float = 0.5,
                  control_hz: float = CONTROL_HZ_DEFAULT,
+                 gains: dict | None = None,
                  models: dict | None = None):
+        self.params = params
+        # Servo-shaft angle that the controller calls zero. None = capture it
+        # at open(); a number pins it (e.g. a homing routine's result).
+        self.steer_zero = None
         self.id_a, self.id_b, self.id_steer = ids
-        self.ids = tuple(ids)
+        # The self-righting servo is a FOURTH servo on the same daisy chain,
+        # and it rides in the same FastSyncRead / SyncWrite as the other three.
+        # It is optional because the bike balances without it and the bench
+        # often has only three servos on the bus.
+        #
+        # It is free to carry because current-based position mode (5) takes its
+        # goal in Goal Position(116) -- the same register the steer uses -- so
+        # it maps to the SAME indirect write slot and costs one more 4-byte
+        # SyncWrite param and one more status packet in the read.
+        #
+        # Goal Current(102) is deliberately NOT in that block. The XC430-W150
+        # does not have the register at all (checked: the vendored table has
+        # Goal PWM(100) and Present Load(126) where the XC330 has Goal
+        # Current(102) and Present Current(126)), so there is no shared write
+        # layout that includes it. Dynamic current is a separate write --
+        # `set_righting_current` -- which is what it should be anyway: it is an
+        # operator-scale change, not a per-tick one.
+        self.id_right = int(righting_id) if righting_id is not None else None
+        self.ids = tuple(ids) + ((self.id_right,) if self.id_right else ())
+        self.control_hz = float(control_hz)
         self.belt_ratio = float(params["drivetrain"]["belt_ratio"])
         self.steer_ratio = float(params["bike"]["steering"]["gear_ratio"])
         self.port_name, self.baud = port, baud
@@ -1018,11 +1120,22 @@ class ServoBus:
             raise ValueError("velocity_source must be 'differenced' or 'reported'")
         self.velocity_source = velocity_source
         self._filters = {i: RateFilter(window_ms, taper, 1000.0 / control_hz)
-                         for i in ids}
+                         for i in self.ids}
         # Per-servo goal register: this is what makes one SyncWrite enough.
         self.goal_item = {self.id_a: "Goal Velocity",
                           self.id_b: "Goal Velocity",
                           self.id_steer: "Goal Position"}
+        if self.id_right:
+            self.goal_item[self.id_right] = "Goal Position"
+        # Firmware gains, ROLE-keyed on the way in ("drive" covers both hubs)
+        # and id-keyed once here. See `resolve_gains` for where they come from
+        # and `_configure_servos` for why they are written EVERY startup.
+        self.gains = self._expand_gains(gains)
+        self.gains_applied: dict = {}
+        # Latest righting goal [rad at the servo shaft]. Held rather than
+        # commanded per tick by the controller, because the righting servo is
+        # operated by hand and not by the policy -- see run_bike.
+        self._righting_goal = None
         self._port = self._packet = None
         self._prev = {}          # id -> (tick, counts)
         # Which servos report a SINGLE-TURN position and therefore wrap. The
@@ -1039,19 +1152,36 @@ class ServoBus:
         self.models = dict(models) if models else {
             self.id_a: "xc430_w150", self.id_b: "xc430_w150",
             self.id_steer: "xc330_t181"}
+        if self.id_right and self.id_right not in self.models:
+            self.models[self.id_right] = "xc330_t181"
         self.tables = {i: table_by_name(m) for i, m in self.models.items()}
 
     # -- lifecycle ---------------------------------------------------------
 
     def open(self) -> None:
+        """Port, indirect map, modes and gains. Leaves torque OFF.
+
+        TORQUE IS NOT ENABLED HERE. It used to be, which made `run_bike`'s
+        "before any torque, the bike is stationary here and never again"
+        comment false at the line it was written on: the AHRS preflight, whose
+        whole job is to run before anything can move, ran with the servos
+        already energised. `arm()` is the explicit step, after preflight.
+        """
         from dynamixel_sdk import GroupSyncRead, GroupSyncWrite, PacketHandler, PortHandler
         assert_low_latency(self.port_name)
+        # Cheap, and it runs where the numbers are known -- which is what its
+        # docstring always claimed and no caller actually did. It matters most
+        # here because `control_hz` is a bring-up knob: the 40x margin at
+        # 100 Hz is bought by the rate, and a rate sweep is exactly when it
+        # stops being true.
+        assert_alias_margin(self.params, self.control_hz)
         self._port = PortHandler(self.port_name)
         if not self._port.openPort():
             raise RuntimeError(f"cannot open {self.port_name}")
         if not self._port.setBaudRate(self.baud):
             raise RuntimeError(f"cannot set {self.baud} baud on {self.port_name}")
         self._packet = PacketHandler(PROTOCOL)
+        self._check_models()
 
         self.torque(False)                 # indirect setup wants torque off
         self._setup_indirect()
@@ -1064,8 +1194,52 @@ class ServoBus:
         self._writer = GroupSyncWrite(self._port, self._packet,
                                       self.write_addr, self.write_len)
         self._fast = hasattr(self._reader, "fastSyncRead")
-        self._configure_modes()
-        self.torque(True)
+        self.gains_applied = self._configure_servos()
+        self._capture_steer_zero()
+
+    def _capture_steer_zero(self) -> None:
+        """Call wherever the steer is NOW zero. Removes the power-on jump.
+
+        The steer is commanded as an ABSOLUTE multi-turn angle, and an XC330 in
+        extended position mode loses its multi-turn count across a power cycle
+        -- so without this the first command sends it from wherever the shaft
+        happens to sit to wherever the policy asks, at whatever
+        `Profile Velocity` allows, which is 0 (unlimited) by default. On a bare
+        shaft that is a bang; with a fork on it, it is a mechanism.
+
+        The offset is applied in BOTH directions -- subtracted from what the
+        controller reads and added back to what it commands -- because applying
+        it to one side only would leave the loop reading one frame and
+        commanding another.
+
+        WHAT THIS DOES NOT DO is tell you where "straight ahead" is. It defines
+        the current pose as zero, which is correct only if the wheel really is
+        centred at power-on. Making that true is the mechanical question this
+        repo has open (hard stop, or a magnet/hall index) -- see
+        `untethered-setup.md`, Open items. This removes the jump; it does not
+        home the bike.
+        """
+        if self.steer_zero is not None:            # pinned by the caller
+            return
+        raw = _signed(self.read_raw(self.id_steer, "Present Position"), 4)
+        self.steer_zero = raw / XC330_COUNTS_PER_RAD
+        print(f"steer zero captured at {np.degrees(self.steer_zero):+.1f} deg "
+              f"(servo shaft); commands are relative to it")
+
+    def arm(self, ids=None) -> None:
+        """Enable torque, then re-verify the gains.
+
+        The read-back is not paranoia: `control_tables/README.md` records that
+        anything which drops torque is a good place for a gain to be quietly
+        restored, so the value that matters is the one present when the servo
+        is actually driving.
+        """
+        self.torque(True, ids)
+        bad = self._verify_gains()
+        if bad:
+            self.torque(False, ids)
+            raise RuntimeError("gains changed across torque enable: "
+                               + "; ".join(bad))
 
     def _build_map(self) -> IndirectMap:
         """The bike's indirect layout, as an :class:`IndirectMap`. No I/O.
@@ -1091,8 +1265,58 @@ class ServoBus:
         """Build the map and install it in ONE SyncWrite. Torque must be off."""
         self._build_map().apply(self._port, self._packet)
 
-    def _configure_modes(self) -> None:
-        """Modes live in EEPROM and need torque off, which open() guarantees.
+    def _check_models(self) -> None:
+        """Every id answers, and answers as the model it was declared to be.
+
+        The declared `models` decide which control table is used to build the
+        indirect map, so a bench with two ids swapped would address the right
+        registers on the wrong servo and report plausible numbers. This is
+        where the comment in __init__ -- "open() replaces these with what the
+        hardware actually reports and raises if the two disagree" -- becomes
+        true; it was aspirational before.
+
+        Four reads, once, at startup.
+        """
+        wrong = []
+        for i in self.ids:
+            got = table_for(self.read_raw(i, "Model Number"))
+            want = self.tables[i]
+            if got.name != want.name:
+                wrong.append(f"id {i}: declared {want.name}, answers {got.name}")
+        if wrong:
+            raise RuntimeError("servo model mismatch (ids swapped, or the "
+                               "wrong bus): " + "; ".join(wrong))
+
+    def _expand_gains(self, gains) -> dict:
+        """{role: {register: value}} -> {id: {register: value}}.
+
+        Roles are `drive` (both hubs), `drive_a`, `drive_b`, `steer`,
+        `righting`. A role with no servo behind it -- `righting` on a
+        three-servo bench -- is dropped rather than raising, so one config
+        serves both benches.
+        """
+        by_role = {"drive": (self.id_a, self.id_b), "drive_a": (self.id_a,),
+                   "drive_b": (self.id_b,), "steer": (self.id_steer,),
+                   "righting": (self.id_right,) if self.id_right else ()}
+        out: dict = {}
+        for role, regs in (gains or {}).items():
+            if role not in by_role:
+                raise ValueError(f"unknown gain role {role!r}; "
+                                 f"expected one of {sorted(by_role)}")
+            for i in by_role[role]:
+                out.setdefault(i, {}).update({k: int(v) for k, v in regs.items()})
+        return out
+
+    def modes(self) -> dict:
+        """{id: Operating Mode} the bike wants. Pure; no I/O."""
+        want = {self.id_a: MODE_VELOCITY, self.id_b: MODE_VELOCITY,
+                self.id_steer: MODE_EXTENDED_POSITION}
+        if self.id_right:
+            want[self.id_right] = MODE_CURRENT_POSITION
+        return want
+
+    def _configure_servos(self) -> dict:
+        """EEPROM config, then RAM gains. Torque must be off; open() ensures it.
 
         Return Delay Time is set to 0 here and it matters more than it looks:
         the factory default is 250, in units of 2 us, so every servo waits
@@ -1100,13 +1324,72 @@ class ServoBus:
         ~330 us of wire time, so the default delay is LONGER THAN THE DATA
         TRANSFER. Zeroing it roughly halves the bus time per tick and is what
         makes headroom above ~100 Hz possible at all.
+
+        READ FIRST, WRITE ONLY ON A DIFFERENCE. Both registers live in EEPROM
+        (the X-series EEPROM area is addresses 0-63), and the reason to avoid a
+        blind write is not wear -- a handful of writes per startup is nowhere
+        near any endurance figure -- it is that WRITING Operating Mode(11)
+        SILENTLY RESETS Position P and D to that mode's defaults, measured
+        2026-09-01 and tabulated in `control_tables/README.md`. A startup that
+        rewrites the mode unconditionally therefore destroys the position gains
+        unconditionally, and then has to put them back. Making the write
+        conditional makes the startup idempotent: run it twice and the second
+        run changes nothing.
+
+        THE GAINS ARE WRITTEN EVERY STARTUP REGARDLESS, and that is not
+        redundant with setting them in DYNAMIXEL Wizard. Velocity I(76),
+        Velocity P(78) and the position gains are all above address 63, i.e.
+        RAM, so they return to their power-on defaults on every power cycle.
+        There is no way to persist them and no way to check them except to read
+        them back -- which this does, and raises on a mismatch, because the
+        policy is gain-specific: on the fitted drivetrain the P 100 seeds score
+        0.741-0.751 on their own gain and 0.180-0.503 on the other one.
         """
+        report: dict = {}
         for i in self.ids:
-            self._write(i, CT["Return Delay Time"][0], 1, 0)
-        for i, mode in ((self.id_a, MODE_VELOCITY),
-                        (self.id_b, MODE_VELOCITY),
-                        (self.id_steer, MODE_EXTENDED_POSITION)):
-            self._write(i, CT["Operating Mode"][0], 1, mode)
+            if self.read_raw(i, "Return Delay Time") != 0:
+                self.write_raw(i, "Return Delay Time", 0)
+        for i, mode in self.modes().items():
+            if self.read_raw(i, "Operating Mode") != mode:
+                self.write_raw(i, "Operating Mode", mode)
+                if self.read_raw(i, "Operating Mode") != mode:
+                    raise RuntimeError(f"id {i} refused Operating Mode {mode}")
+                report.setdefault(i, {})["mode_written"] = mode
+        # AFTER the mode, never before: see above.
+        for i, regs in self.gains.items():
+            for name, value in regs.items():
+                self.write_raw(i, name, int(value))
+            report.setdefault(i, {}).update(
+                {name: self.read_raw(i, name) for name in regs})
+        bad = self._verify_gains()
+        if bad:
+            raise RuntimeError("gains did not stick: " + "; ".join(bad))
+        return report
+
+    def _verify_gains(self) -> list:
+        """-> ["id 1 Velocity P Gain: wanted 400, read 100", ...]; [] if clean."""
+        bad = []
+        for i, regs in self.gains.items():
+            for name, value in regs.items():
+                got = self.read_raw(i, name)
+                if got != int(value):
+                    bad.append(f"id {i} {name}: wanted {int(value)}, read {got}")
+        return bad
+
+    def read_raw(self, dxl_id: int, name: str) -> int:
+        """One register, raw counts. Startup only -- not on the tick path."""
+        addr, size = self.tables[dxl_id][name].address, self.tables[dxl_id][name].size
+        fn = {1: self._packet.read1ByteTxRx, 2: self._packet.read2ByteTxRx,
+              4: self._packet.read4ByteTxRx}[size]
+        raw, rc, err = fn(self._port, dxl_id, addr)
+        if rc != 0 or err != 0:
+            raise RuntimeError(f"read id={dxl_id} {name}: rc={rc} err={err}")
+        return int(raw)
+
+    def write_raw(self, dxl_id: int, name: str, raw: int) -> None:
+        """One register, raw counts. Startup only -- not on the tick path."""
+        reg = self.tables[dxl_id][name]
+        self._write(dxl_id, reg.address, reg.size, int(raw))
 
     def close(self) -> None:
         if self._port is not None:
@@ -1130,8 +1413,15 @@ class ServoBus:
         if rc != 0 or err != 0:
             raise RuntimeError(f"write id={dxl_id} addr={address}: rc={rc} err={err}")
 
-    def torque(self, on: bool) -> None:
-        for i in self.ids:
+    @property
+    def policy_ids(self) -> tuple:
+        """The servos the balance policy drives. NOT the righting servo --
+        it is operated by hand and must stay live while the bike is down,
+        which is the one moment the other three are deliberately dead."""
+        return (self.id_a, self.id_b, self.id_steer)
+
+    def torque(self, on: bool, ids=None) -> None:
+        for i in (self.ids if ids is None else tuple(ids)):
             self._write(i, CT["Torque Enable"][0], 1, int(on))
 
     def pack_voltage(self) -> float:
@@ -1228,7 +1518,8 @@ class ServoBus:
             "dt": state["dt"],
             "w_servo_a": sv[self.id_a]["vel"],
             "w_servo_b": sv[self.id_b]["vel"],
-            "steer_pos": sv[self.id_steer]["pos"] / self.steer_ratio,
+            "steer_pos": ((sv[self.id_steer]["pos"] - (self.steer_zero or 0.0))
+                          / self.steer_ratio),
             "steer_vel": sv[self.id_steer]["vel"] / self.steer_ratio,
             # The servos' own smoothed estimates, carried alongside so a
             # hardware bring-up can compare them against the differenced
@@ -1236,16 +1527,62 @@ class ServoBus:
             "w_servo_a_reported": sv[self.id_a]["vel_reported"],
             "w_servo_b_reported": sv[self.id_b]["vel_reported"],
             "steer_vel_reported": sv[self.id_steer]["vel_reported"] / self.steer_ratio,
+            # Feedback only -- no controller reads it. It is here so the
+            # operator driving the mechanism by hand can see where it is.
+            "righting_pos": (sv[self.id_right]["pos"] if self.id_right else None),
         }
+
+    def set_righting(self, goal_rad: float | None) -> None:
+        """Hold a goal for the self-righting servo [rad at its own shaft].
+
+        Set by the operator, not by the policy, and held between commands --
+        so it costs nothing per tick and goes out in the SyncWrite that is
+        happening anyway. `None` (the startup state) means "do not command it
+        at all": its param is simply left out of the write, which leaves the
+        servo holding whatever it already had.
+        """
+        self._righting_goal = None if goal_rad is None else float(goal_rad)
+
+    def set_righting_current(self, counts: int) -> int:
+        """Goal Current(102) on the righting servo -- its torque cap. RAW.
+
+        A SEPARATE write, not part of the per-tick block, for two reasons. The
+        XC430-W150 has no Goal Current register at all, so there is no shared
+        indirect layout that could carry it; and this is an operator-scale
+        knob, changed when the mechanism's job changes, not every 10 ms. It is
+        write-only on the wire in the sense that matters -- it does not sit in
+        the loop -- so its cost is one extra transaction when the operator
+        moves it, not per tick.
+
+        RAW COUNTS, deliberately, because the two sources disagree about what
+        the register means: ROBOTIS's e-manual gives ~1 mA/LSB for the XC330,
+        while the vendored model file declares a unit of 6.709e-4 with
+        unit_name "N/m" (a torque). Rather than pick one and bake a wrong
+        conversion into the bike, this takes the register's own counts and
+        leaves the interpretation to whoever measured it. Station C (R6, the
+        bus-current calibration in `first-physical-test.md`) is the test that
+        settles it.
+
+        Clamped to Current Limit(38), which is what the servo would do anyway
+        -- done here so the clamped value is visible to the caller.
+        """
+        if not self.id_right:
+            raise RuntimeError("no righting servo configured")
+        limit = self.read_raw(self.id_right, "Current Limit")
+        value = int(max(-limit, min(limit, int(counts))))
+        self.write_raw(self.id_right, "Goal Current", value)
+        return value
 
     def write_commands(self, ctrl, aid: dict) -> None:
         """One SyncWrite from the controller's `ctrl` vector.
 
         Every servo receives 4 bytes at the same indirect address; indirection
         routes them to Goal Velocity on the drives and Goal Position on the
-        steer. `ctrl` is exactly what DriveController wrote: drive entries are
-        INPUT-SHAFT rad/s (divide by belt_ratio for the servo), the steer entry
-        is an absolute multi-turn steer-joint angle in radians.
+        steer AND on the righting servo. `ctrl` is exactly what DriveController
+        wrote: drive entries are INPUT-SHAFT rad/s (divide by belt_ratio for
+        the servo), the steer entry is an absolute multi-turn steer-joint angle
+        in radians. The righting goal is not in `ctrl` -- nothing in the
+        controller knows about that servo -- and comes from `set_righting`.
         """
         from dynamixel_sdk import DXL_HIBYTE, DXL_HIWORD, DXL_LOBYTE, DXL_LOWORD
 
@@ -1259,9 +1596,16 @@ class ServoBus:
             w_servo = float(ctrl[aid[key]]) / self.belt_ratio
             self._writer.addParam(dxl_id, le4(int(round(w_servo / VEL_LSB_RAD_S))))
 
-        steer_rad = clamp_extended(float(ctrl[aid["steer"]]) * self.steer_ratio)
+        steer_rad = clamp_extended(float(ctrl[aid["steer"]]) * self.steer_ratio
+                                   + (self.steer_zero or 0.0))
         self._writer.addParam(self.id_steer,
                               le4(int(round(steer_rad * XC330_COUNTS_PER_RAD))))
+
+        if self.id_right and self._righting_goal is not None:
+            self._writer.addParam(
+                self.id_right,
+                le4(int(round(clamp_extended(self._righting_goal)
+                              * XC330_COUNTS_PER_RAD))))
 
         rc = self._writer.txPacket()
         if rc != 0:
