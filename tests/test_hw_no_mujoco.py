@@ -34,6 +34,7 @@ ONBOARD_MODULES = [
     "aow_sim.control.lqr_design",
     "aow_sim.control.flick_spec",
     "aow_sim.control.general_spec",
+    "aow_sim.control.recovery",
     "aow_sim.control.balance",
     "aow_sim.control.pivot",
     "aow_sim.control.flick",
@@ -44,6 +45,10 @@ ONBOARD_MODULES = [
     "aow_sim.hw.odometry",
     "aow_sim.hw.state",
     "aow_sim.hw.run_bike",
+    # Runs on the LAPTOP, not the bike -- but it is the other half of the
+    # onboard UDP protocol, and on the bench it runs ON the Pi against
+    # 127.0.0.1, which is the whole point of it being a terminal program.
+    "aow_sim.hw.ground",
 ]
 
 
