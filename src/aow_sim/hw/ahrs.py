@@ -236,18 +236,83 @@ def parse_frame(buf: bytes):
             i = j + 2                             # bad CRC: resync past it
 
 
+EP_CMD_REQUEST = 12          # Ep_Request: "send me message <cmd>"
+EP_ID_HOST = 2               # from_id the vendor's own tools use
+
+
+def build_request(cmd: int = EP_CMD_COMBO, to_id: int = 0) -> bytes:
+    """A frame asking the sensor to send one message of type `cmd`.
+
+    The only frame this module ever TRANSMITS, and it exists for `poll=True`
+    below. Ep_Request's payload is the 4-byte header bitfield, the requested
+    command, and three pad bytes. Same construction as
+    `analysis/tm151_serial.request`, re-implemented here because `analysis/`
+    is not installed on the bike.
+    """
+    payload = struct.pack("<IB3x",
+                          (EP_CMD_REQUEST & 0x7F) | ((EP_ID_HOST & 0x7FF) << 10)
+                          | ((to_id & 0x7FF) << 21),
+                          cmd & 0x7F)
+    body = bytes([len(payload)]) + payload
+    return SYNC + body + struct.pack("<H", crc16_modbus(body))
+
+
 class AhrsReader:
-    """Background UART reader publishing the latest sample."""
+    """Background UART reader publishing the latest sample.
+
+    TWO WAYS TO GET FRAMES, and the default is the designed one:
+
+      * `poll=False` (default) -- the sensor free-runs and pushes Ep_Combo; the
+        reader only ever reads. This is what `untethered-setup.md` specifies
+        and it is the right mode when the sensor's output profile has Combo
+        enabled.
+      * `poll=True` -- the reader asks for each Combo with an Ep_Request. Use
+        it when the unit is NOT configured to stream Combo, which is a
+        configuration held in the sensor's flash and changeable only from the
+        vendor's Windows GUI: the public C library, and the one its own
+        "Generate Code" exports, both stop at Init/TX_Request/RX and have no
+        setters at all (checked 2026-09-16).
+
+    POLLING IS NOT A DOWNGRADE HERE, measured on a real TM151 at 200 Hz ODR:
+
+        polled Ep_Combo, while rpy/status/raw also streamed:
+            204 Hz,  latency mean 4.91 ms, p50 4.99, p99 7.61, max 9.11
+
+    At a 200 Hz sample period that is at most one sample of age -- comparable
+    to the push path. The objection in `untethered-setup.md` ("a control loop
+    must never block on a sensor") does not apply, because the request/reply
+    happens on THIS thread and the control thread still only reads the
+    latest-value slot. What polling does cost: an 8-byte write per sample, and
+    a dependence on our own timing rather than the sensor's.
+
+    At 50 Hz ODR the same measurement was 50 Hz and 20 ms, i.e. useless for the
+    loop -- so poll mode is only viable because the ODR is 200. Check
+    `rate_hz` in a Combo frame before trusting it on a different unit.
+    """
 
     def __init__(self, port: str = "/dev/serial0", baud: int = 460800,
-                 calibration: MountCalibration | None = None):
+                 calibration: MountCalibration | None = None,
+                 poll: bool = False, poll_timeout: float = 0.015):
         self.port, self.baud = port, baud
         self.cal = calibration or MountCalibration()
+        self.poll = bool(poll)
+        self.poll_timeout = float(poll_timeout)
+        self._request = build_request()
+        self.requests = 0
         self._latest: AhrsSample | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
-        self.frames = 0
+        self.frames = 0          # Ep_Combo frames decoded
         self.errors = 0
+        # Bytes off the wire, whatever they turned out to be. Counted because
+        # `frames == 0` on its own cannot tell "nothing is plugged in" from
+        # "the sensor is streaming a message we do not decode", and those have
+        # completely different fixes. Measured 2026-09-16 on the bench: a
+        # factory-configured TM151 streams rpy(35) + raw_gyro_acc_mag(41) +
+        # status(22) at 50 Hz and NO Ep_Combo, which `parse_frame` skips
+        # silently -- good CRC, wrong command -- so the reader sat at
+        # frames=0, errors=0 and looked exactly like an unplugged sensor.
+        self.bytes_in = 0
 
     def start(self) -> None:
         import serial
@@ -266,10 +331,39 @@ class AhrsReader:
 
     def _run(self) -> None:
         buf = bytearray()
+        # Self-pacing: ask, and ask again the moment an answer lands. On
+        # silence, re-ask after `poll_timeout` rather than waiting forever --
+        # a dropped request must not stall the loop, and a duplicate request
+        # costs 13 bytes. Inert when `poll` is False.
+        #
+        # `poll_timeout` MUST BE WELL UNDER `latest()`'s max_age. It was
+        # 0.05 == the 50 ms staleness limit, which made a single unanswered
+        # request certain to trip it: measured on a Pi 3B+, the age climbed in
+        # 10 ms steps (one per control tick) from 34 to 54 ms and the loop died,
+        # a few times per 25 s, while the control thread itself was never more
+        # than 0.1 ms late. 15 ms is 3x the measured 4.97 ms round trip and 3x
+        # under the limit.
+        deadline = 0.0
         while not self._stop.is_set():
-            chunk = self._serial.read(256)
+            if self.poll and time.monotonic() >= deadline:
+                try:
+                    self._serial.write(self._request)
+                    self.requests += 1
+                except Exception:
+                    self.errors += 1
+                deadline = time.monotonic() + self.poll_timeout
+            # TAKE WHAT IS THERE, do not wait for a fixed block. `read(256)`
+            # blocks until 256 bytes have accumulated, which at the sensor's
+            # ~19.5 kB/s is ~13 ms -- so the reader could never publish faster
+            # than ~75 Hz however fast the sensor sent, and in poll mode the
+            # reply sat in the buffer while we waited for the junk behind it.
+            # Measured on a Pi 3B+: this capped AhrsReader at ~100 Hz while the
+            # request/reply round trip itself was 4.97 ms.
+            n = self._serial.in_waiting
+            chunk = self._serial.read(n if n else 1)
             if not chunk:
                 continue
+            self.bytes_in += len(chunk)
             buf.extend(chunk)
             # Bound the buffer: if sync is never found (wrong baud, wrong
             # wiring) this must not grow without limit.
@@ -294,6 +388,34 @@ class AhrsReader:
                 t=time.monotonic(),
             )
             self.frames += 1
+            deadline = 0.0          # answered -- ask for the next one now
+
+    def wait_ready(self, timeout: float = 2.0) -> float:
+        """Block until the first sample lands. -> seconds waited.
+
+        THE STARTUP RACE THIS EXISTS FOR: `start()` only spawns the thread, so
+        for the first few milliseconds there is no sample and `latest()`
+        raises. `run_bike` used to call `preflight_ahrs` immediately after
+        `start()`, and preflight returns on its FIRST failure -- so it reported
+        a dead AHRS microseconds after opening a port that was working
+        perfectly. In poll mode it can never win that race, because the first
+        sample costs a request round trip.
+
+        Raises with the byte counters in the message, which is what separates
+        "not plugged in" from "streaming the wrong message".
+        """
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            if self._latest is not None:
+                return time.monotonic() - t0
+            time.sleep(0.005)
+        raise RuntimeError(
+            f"no AHRS sample in {timeout:.1f} s on {self.port}: "
+            f"{self.bytes_in} bytes read, {self.frames} Ep_Combo frames, "
+            f"{self.errors} errors, {self.requests} requests sent"
+            + ("" if self.poll else
+               " -- push mode; if bytes are arriving but no frames decode, the "
+               "sensor is not configured to stream Ep_Combo (try ahrs_poll)"))
 
     def latest(self, max_age: float = 0.05) -> AhrsSample:
         """Most recent sample, or raise if it is stale.
