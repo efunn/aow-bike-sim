@@ -70,7 +70,7 @@ odometry rewrite (flown around, seven accepted red tests).
 | **Control — RL** | Working, and primary. Trains against the onboard sensors | Crab still one-sided; `turn_asym` stuck ~0.2 | `general-rl-improvements.md` |
 | **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy needs a moving bike | `sensor-workstream.md` |
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
-| **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency` | Firmware P-gain choice, torque calibration, then the chassis | `first-physical-test.md`, `drivetrain-measurements.yaml`, `servo-logging.md` |
+| **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency`. **Onboard software readied for a Pi bench session 2026-09-15** — ground station, firmware-gain writes, fourth servo, fall cut/re-arm; none of it has touched hardware | Firmware P-gain choice, torque calibration, then the chassis | `pi-bench-bringup.md`, `first-physical-test.md`, `drivetrain-measurements.yaml` |
 | **CAD** | Layout, drivetrain, steering and righting stations pinned. Electronics packing deferred on purpose | Nothing — it is being worked on | `cad-onshape-workflow.md` |
 | **Self-righting mechanism** | Side project. Moved to asymmetric output / symmetric layout; torque analysis not trusted | Will be resolved by building, not by analysis | `wing-linkage-design-and-optimization.md` |
 
@@ -86,6 +86,7 @@ parked or reference — read that before the body.
 |---|---|
 | `first-physical-test.md` | **the build order.** Which parts unlock which unknowns, in what sequence. Plus the three servo bench stations and the 09-01 bench results |
 | `untethered-setup.md` | the physical bike: power, wiring, onboard software, Pi setup, verification. The umbilical path is §"Bench power" |
+| `pi-bench-bringup.md` | **the Pi bench session**: what the four servos + TM151 + Pi 3B+ can prove without a chassis, the seven code gaps that block it, and what to measure |
 | `sensor-workstream.md` | the odometry/AHRS arc and the full policy standings — why sensor-trained policies win 1.00 to 0.20 |
 | `eval-score-rewrite.md` | how policies are SCORED, why the early numbers hid a failure, and the command-distribution audit |
 | `seed-sweep-and-personalities.md` | **the 12-seed sweep**: determinism, the failure taxonomy, why reverse is easier, early abort detection, and the options not taken |
@@ -114,13 +115,52 @@ hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 
 ## Health
 
-**Test suite, measured 2026-09-14** with `pytest -n 10 --dist load`:
+**Test suite, measured 2026-09-15** with `pytest -n 10 --dist load`:
 
-    23 failed, 318 passed, 9 skipped, 40.5 s
+    23 failed, 354 passed, 9 skipped, 42.0 s
     red set unchanged (23 accepted failures) -- tests/expected_failures.txt
 
-+16 passing against 09-13: `tests/test_drivetrain_model.py`, marker
-`drivetrain`. The 16th pins how teleop picks a policy's drivetrain.
++36 passing against 09-14, all from the onboard bring-up work: 18 in the new
+`tests/test_hw_runbike.py` (the fall guard and the UDP command struct, both
+`pure`), 11 added to `test_hw_dynamixel.py` (the fourth servo, gain
+resolution), 2 in `test_hw_ahrs.py` (a non-Combo frame is skipped silently,
+which is what made a healthy TM151 read as a dead one), and 2 to the `boundary`
+list (`hw/ground.py`, `control/recovery.py`).
+
+**THE CONTROL LOOP RUNS ON THE PI (2026-09-16).** 60 s, four servos and the
+TM151 both live, policy stepping, nothing energised: **tick jitter mean 0.17 ms,
+p99 0.93, max 2.91** at 100 Hz, against a p99 < 1 ms gate. Per-phase the servo
+read is 2.08 ms, the SyncWrite 0.58, and `DriveController.step` **0.03 ms** —
+the same as on an M4 Mac, so SBC compute was never a risk and the bus is the
+budget. Getting there fixed three bugs of mine (a preflight that raced its own
+reader, a fixed-block serial read capping the AHRS at 100 Hz, and a telemetry
+percentile costing up to 49.5 ms per tick) and one design trap (`poll_timeout`
+defaulting to the same 50 ms as the staleness limit). `SCHED_FIFO` made it
+worse and is off, and the `gc.disable()` that fixed the jitter once was REMOVED
+once the telemetry fix made it unnecessary (re-measured: indistinguishable).
+**With four servos ENERGISED and the AHRS live, 30 s: 0.24 / 0.79 / 1.56 ms**,
+no tick over 10 ms. The 40-60 ms outlier that only appeared under torque was
+`np.percentile`'s first call, not electrics -- warmed before the loop. A steer
+zero is now captured at startup: the bare XC330 came up 1.4 turns wound, so the
+first absolute command would have slammed it. Detail: `pi-bench-bringup.md`.
+
+**The AHRS path is proven on hardware (2026-09-16).** `hw/ahrs.py::parse_frame`
+decodes real TM151 Ep_Combo frames — quaternion, gyro 0.2 deg/s at rest,
+`|accel|` 9.772 against g 9.807. The unit does NOT stream Combo (that profile
+bit is RAM-only and dies at power-up; the 200 Hz ODR is in flash and survives),
+so `AhrsReader` gained an opt-in `poll=True` that requests each frame: **230 Hz,
+age-at-tick 4.7 ms mean / 10.4 ms max, zero stale raises in 300 ticks**, against
+0 frames and 300/300 stale on push. `control.onboard.ahrs_poll` is true until
+the profile is written to flash from the vendor's Windows GUI. Detail and the
+three ways the "no configuration API" claim was checked: `pi-bench-bringup.md`.
+
+**`pytest -m hardware` passed 7/7 on 2026-09-15** — four servos on the Mac,
+ids 101-104 at 3 Mbps. It failed 1/7 first (63 frames/s at a requested 200 Hz);
+`adjust-ftdi-latency` fixed it, and a direct measurement then gave a 4-servo
+FastSyncRead at **2.000 ms mean / 2.034 p99**, i.e. a 500 Hz read-only ceiling
+and a tick that is entirely the FTDI latency timer. A SyncWrite is 25 µs and a
+SECOND one is free: read + one write and read + two writes are both 2.000 ms.
+See `pi-bench-bringup.md` §2.3.
 
 Read the verdict line, not the FAILED count. The 23:
 
