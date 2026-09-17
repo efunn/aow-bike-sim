@@ -1047,6 +1047,166 @@ SWING_LINKAGE_CFG = (Path(__file__).resolve().parents[2]
                      / "config" / "swing_linkage_smaller.yaml")
 
 
+class SwingLinkageSolver:
+    """Where every link of the co-rotating four-bar sits, at any crank angle.
+
+    CLOSED FORM -- two circle-circle intersections per side, no solver and no
+    iteration. Exists because there are two callers that must not disagree:
+
+      * `_add_swing_linkage`, which needs the REST pose to lay the bodies out;
+      * `hw/telemetry.apply_pose`, which needs EVERY pose, because the mirror
+        renders the bike without stepping it.
+
+    The second is the one that forced this out of a nested function. A closed
+    kinematic loop in MuJoCo is held by `mjEQ_CONNECT`, and an equality is only
+    satisfied by the constraint solver during a dynamics step -- `mj_forward`
+    computes constraint forces, not constraint-satisfying positions. So the
+    mirror, which deliberately never steps, cannot be handed a crank angle and
+    left to work the rest out: writing the crank alone and calling `mj_forward`
+    leaves the couplers and wings wherever they were and the mechanism visibly
+    comes apart. Every joint in the loop has to be written, and this is what
+    knows where they go.
+
+    Verified against the model it builds: writing `pose(t)` into `qpos` and
+    calling `mj_forward` leaves both `mjEQ_CONNECT` site pairs coincident to
+    better than 1e-9 m at 21 travels across the full +-136.6 deg stroke. That
+    is the check that matters -- the arithmetic here agreeing with itself
+    proves nothing, agreeing with the constraint the compiler emitted does.
+
+    ANGLES ARE FRAME-FREE. The config is millimetres from the floor and the
+    centreline; the model is metres from the rear axle. That conversion is a
+    translation, and a translation does not move an angle, so this works in the
+    config's own units for positions and returns joint angles that are correct
+    in the model without any conversion at all.
+
+    Sibling of `analysis/swing_linkage.py`'s `SwingLinkage`, which answers
+    design questions (reach, transmission, clearance) about the same geometry
+    and is deliberately not imported: `analysis/` is not on the path, and a
+    study that changes when someone asks it a new question is the wrong
+    dependency for a model builder. The arithmetic that overlaps is the
+    circle-circle solve and the branch invariant, which is a dozen lines.
+    """
+
+    def __init__(self, cfg: dict, r_rear: float = 0.0):
+        b, m_ = cfg["bike"], cfg["mechanism"]
+
+        def to_bike(y_mm, z_mm):
+            return np.array([y_mm / 1000.0, z_mm / 1000.0 - r_rear])
+
+        self.servo = to_bike(0.0, b["wheel_radius"] + m_["servo_offset"])
+        self.pivot_y = m_["wing_pivot_x"] / 1000.0
+        self.pivot_z = to_bike(0.0, b["wheel_radius"] + m_["wing_pivot_z"])[1]
+        self.crank = m_["crank_length"] / 1000.0
+        self.coupler = m_["coupler_length"] / 1000.0
+        self.rocker = m_["rocker_length"] / 1000.0
+        self.between = m_["angle_between_cranks"]
+        self.travel_max = np.deg2rad(float(
+            (cfg.get("stroke") or {}).get("crank_travel_deg", 0.0)))
+        # The assembly branch, taken once at rest. A four-bar cannot change
+        # which way its coupler-rocker elbow bends without coming apart, so
+        # this is what picks the reachable root out of the circle-circle pair
+        # at every other travel -- and unlike "nearest to the last answer" it
+        # makes `pose` a function of the angle alone, so it can be called in
+        # any order from any frame.
+        self._rest = {}
+        for side in (-1, 1):
+            j0 = self._joint_raw(side, 0.0, want=None)
+            if j0 is None:
+                # A loop that will not close AT REST is a broken config, not a
+                # stroke that ran out -- say so here rather than letting a None
+                # fall through into the arithmetic below, where it surfaces as
+                # a TypeError with the link lengths nowhere in sight.
+                raise ValueError(
+                    f"swing linkage does not close at rest on side {side}: "
+                    f"crank {self.crank*1e3:.1f} coupler {self.coupler*1e3:.1f} "
+                    f"rocker {self.rocker*1e3:.1f} mm cannot reach the pivot")
+            self._rest[side] = (j0, _elbow_sign(j0, self.crank_tip(side, 0.0),
+                                                self.pivot(side)))
+
+    def pivot(self, side: int) -> np.ndarray:
+        return np.array([side * self.pivot_y, self.pivot_z])
+
+    def arm_dir(self, side: int, travel: float = 0.0) -> np.ndarray:
+        """Unit vector along one crank arm. Both arms are on ONE body
+        `angle_between_cranks` apart, so a single `travel` moves both."""
+        a = np.deg2rad(90.0 - side * self.between / 2.0) + travel
+        return np.array([np.cos(a), np.sin(a)])
+
+    def crank_tip(self, side: int, travel: float = 0.0) -> np.ndarray:
+        return self.servo + self.crank * self.arm_dir(side, travel)
+
+    def rest_joint(self, side: int) -> np.ndarray:
+        """The rocker joint at rest -- where the coupler meets the wing."""
+        return self._rest[side][0]
+
+    def _joint_raw(self, side: int, travel: float, want):
+        p, c = self.pivot(side), self.crank_tip(side, travel)
+        d = c - p
+        L = float(np.linalg.norm(d))
+        if L == 0 or L > self.rocker + self.coupler \
+                or L < abs(self.rocker - self.coupler):
+            return None                      # the loop cannot close: assembly limit
+        a_ = (self.rocker ** 2 - self.coupler ** 2 + L ** 2) / (2 * L)
+        h2 = self.rocker ** 2 - a_ ** 2
+        if h2 < 0.0:
+            return None
+        h_ = np.sqrt(h2)
+        base = p + a_ * d / L
+        perp = np.array([-d[1], d[0]]) / L
+        cands = [base + h_ * perp, base - h_ * perp]
+        if want is None:
+            # Seeding at rest: the OUTBOARD branch. The inboard one folds the
+            # rocker through the chassis, and a four-bar assembled on the wrong
+            # branch cannot be driven onto the right one -- it is a different
+            # machine, not a different pose.
+            return max(cands, key=lambda q: abs(q[0]))
+        ok = [q for q in cands if _elbow_sign(q, c, p) == want]
+        return ok[0] if len(ok) == 1 else None
+
+    def joint(self, side: int, travel: float):
+        return self._joint_raw(side, travel, self._rest[side][1])
+
+    def pose(self, travel: float) -> dict | None:
+        """Joint name -> angle [rad] for the whole mechanism. None past the
+        assembly limit, which is an answer rather than an error.
+
+        Every angle is RELATIVE TO REST, because that is how the bodies were
+        laid out: the builder draws each link in its rest direction, so a joint
+        at zero is the rest pose by construction.
+        """
+        out = {"swing_crank_joint": float(travel)}
+        for side, tag in ((-1, "right"), (1, "left")):
+            j = self.joint(side, travel)
+            if j is None:
+                return None
+            j0, p = self.rest_joint(side), self.pivot(side)
+            out[f"swing_wing_{tag}_joint"] = _wrap_pi(
+                _bearing(j - p) - _bearing(j0 - p))
+            # The coupler hangs off the CRANK body, so its own joint carries
+            # only what the crank has not already turned -- subtracting the
+            # travel is not a correction, it is the frame it is measured in.
+            out[f"swing_coupler_{tag}_joint"] = _wrap_pi(
+                _bearing(j - self.crank_tip(side, travel))
+                - _bearing(j0 - self.crank_tip(side, 0.0)) - travel)
+        return out
+
+
+def _elbow_sign(j, c, p) -> float:
+    """Which way the coupler-rocker elbow bends, as +-1. THE assembly
+    invariant: it still separates the two roots at a toggle, where the
+    crank-coupler elbow has gone straight and cannot decide anything."""
+    v, w = j - p, c - j
+    return float(np.sign(v[0] * w[1] - v[1] * w[0]))
+
+
+def _bearing(v) -> float:
+    return float(np.arctan2(v[1], v[0]))
+
+
+def _wrap_pi(a: float) -> float:
+    return float((a + np.pi) % (2 * np.pi) - np.pi)
+
+
 def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
     """Co-rotating FOUR-BAR wing pair (build_model(..., swing_linkage=True)).
 
@@ -1090,13 +1250,12 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
     def to_bike(y_mm, z_mm):
         return np.array([y_mm / 1000.0, z_mm / 1000.0 - r_rear])
 
-    servo = to_bike(0.0, b["wheel_radius"] + m_["servo_offset"])
-    pivot_y = m_["wing_pivot_x"] / 1000.0
-    pivot_z = to_bike(0.0, b["wheel_radius"] + m_["wing_pivot_z"])[1]
-    crank_len = m_["crank_length"] / 1000.0
-    coupler_len = m_["coupler_length"] / 1000.0
-    rocker_len = m_["rocker_length"] / 1000.0
-    between = m_["angle_between_cranks"]
+    # ONE description of this geometry, shared with the station -- see
+    # SwingLinkageSolver, which the mirror also drives to render the mechanism
+    # at angles this builder never sees.
+    sl = SwingLinkageSolver(cfg, r_rear)
+    servo, crank_len = sl.servo, sl.crank
+    pivot_z = sl.pivot_z
     rest = np.deg2rad(m_["wing_angle_from_rocker"])
     norm_off = m_["wing_norm_offset"] / 1000.0
     z_max = m_["wing_z_max"] / 1000.0
@@ -1106,27 +1265,8 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
     # where the panel starts.
     ground_clear = to_bike(0.0, b["ground_clearance"])[1]
 
-    def arm_dir(side, travel_deg):
-        base = 90.0 - side * between / 2.0
-        a = np.deg2rad(base + travel_deg)
-        return np.array([np.cos(a), np.sin(a)])
-
     def rest_joint(side):
-        """Rocker joint at rest: the circle-circle intersection FURTHER from
-        the centreline. The inboard branch folds the rocker through the
-        chassis, and a four-bar that starts on the wrong branch cannot be
-        driven onto the right one -- it is assembled differently, not merely
-        posed differently."""
-        pivot = np.array([side * pivot_y, pivot_z])
-        c = servo + crank_len * arm_dir(side, 0.0)
-        d = c - pivot
-        L = float(np.linalg.norm(d))
-        a_ = (rocker_len ** 2 - coupler_len ** 2 + L ** 2) / (2 * L)
-        h_ = np.sqrt(max(rocker_len ** 2 - a_ ** 2, 0.0))
-        base_pt = pivot + a_ * d / L
-        perp = np.array([-d[1], d[0]]) / L
-        return pivot, max([base_pt + h_ * perp, base_pt - h_ * perp],
-                          key=lambda q: abs(q[0]))
+        return sl.pivot(side), sl.rest_joint(side)
 
     # `wing_angle_mode: vertical_rest` DERIVES the panel bearing so the panels
     # stand vertical at rest, exactly as `wing_z_min` below is derived so the
@@ -1157,7 +1297,7 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
                     axis=[1, 0, 0])
     tips = {}
     for side, tag in ((-1, "right"), (1, "left")):
-        tip = crank_len * arm_dir(side, 0.0)
+        tip = crank_len * sl.arm_dir(side, 0.0)
         tips[tag] = tip
         crank.add_geom(
             name=f"swing_crank_{tag}",
@@ -1193,7 +1333,7 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
                       pos=[0.0, vec[0], vec[1]], size=[0.003, 0, 0])
 
         wing = chassis.add_body(name=f"swing_wing_{tag}",
-                                pos=[px, side * pivot_y, pivot_z])
+                                pos=[px, side * sl.pivot_y, pivot_z])
         wing.add_joint(name=f"swing_wing_{tag}_joint",
                        type=mujoco.mjtJoint.mjJNT_HINGE, axis=[1, 0, 0],
                        damping=[0.002, 0, 0])
