@@ -30,7 +30,8 @@ def sample(**over):
               steer=-0.21, w_shaft=[24.0, -16.0], shaft=[0.0, 0.0], psi=0.3,
               cmd_v_world=[0.7, 0.0], cmd_psi=0.35, roll=0.174, roll_rate=0.1,
               volts=11.9, vlat_conf=0.87, qos=5, jitter_ms=0.14, dt_ms=10.0,
-              cuts=0, righting=None, righting_current=300)
+              cuts=0, righting=None, righting_pos=None,
+              righting_current=300)
     kw.update(over)
     return T.build(**kw)
 
@@ -254,3 +255,320 @@ def test_integration_survives_only_for_a_bike_that_cannot_send_it(built):
     del tel["shaft"]
     got = T.apply_pose(m, d, tel, adr, p, shaft_angle=(0.0, 0.0), dt=0.5)
     assert got[0] == pytest.approx(5.0)
+
+
+# --- the righting mechanism ---------------------------------------------------
+
+@pytest.fixture(scope="module")
+def swung():
+    """A bike WITH the co-rotating four-bar. Separate from `built` because
+    nearly every other test here wants the plain model, and the mechanism adds
+    six joints that shift nothing else only because `PoseAdr` works by name."""
+    import yaml
+
+    from aow_sim.build_model import SWING_LINKAGE_CFG, SwingLinkageSolver
+    p = load_params()
+    m = build_model(p, variant="full", righting=True, swing_linkage=True)
+    onb = p["control"]["onboard"]
+    stow = np.deg2rad(float(onb["righting_stow_deg"]))
+    sign = float(onb["righting_sign"])
+    with open(SWING_LINKAGE_CFG) as fh:
+        solver = SwingLinkageSolver(yaml.safe_load(fh),
+                                    p["omni_wheel"]["outer_radius"])
+    return p, m, solver, (lambda rad: solver.pose((float(rad) - stow) * sign)), stow
+
+
+def _eq_gaps(m, d):
+    """Distance between each `mjEQ_CONNECT` site pair [m]. Zero means the
+    four-bar is assembled; anything else means it is drawn coming apart."""
+    return [float(np.linalg.norm(d.site(f"swing_coupler_{t}_end").xpos
+                                 - d.site(f"swing_wing_{t}_attach").xpos))
+            for t in ("right", "left")]
+
+
+def test_the_rendered_four_bar_stays_assembled_without_a_physics_step(swung):
+    """THE REASON `SwingLinkageSolver` EXISTS. The loop is closed by an
+    equality constraint, and an equality is only satisfied by the solver during
+    a dynamics step -- `mj_forward` computes constraint forces, not positions.
+    The mirror never steps, so if `apply_pose` wrote only the crank the
+    mechanism would visibly tear apart.
+
+    Checked against MuJoCo's own constraint rather than against the arithmetic
+    in the module, for the same reason the gearbox test is."""
+    p, m, solver, pose, stow = swung
+    adr, d = T.PoseAdr(m), mujoco.MjData(m)
+    trav = solver.travel_max
+    assert trav > 0, "the config must declare stroke.crank_travel_deg"
+    for t in np.linspace(-trav, trav, 21):
+        mujoco.mj_resetData(m, d)
+        T.apply_pose(m, d, sample(righting_pos=float(stow + t)), adr, p,
+                     rest_z=0.05, dt=1 / 60, swing_pose=pose)
+        mujoco.mj_forward(m, d)
+        assert max(_eq_gaps(m, d)) < 1e-9, f"comes apart at {np.rad2deg(t):.1f} deg"
+
+
+def test_the_solvers_rest_pose_is_the_pose_the_builder_laid_out(swung):
+    """The contract between the solver's two callers. `_add_swing_linkage`
+    draws every link in its rest direction, so a joint at zero IS the rest
+    pose -- and the solver must agree, or the mechanism would jump the moment
+    the first packet arrived and then be wrong by that offset forever.
+
+    Both halves are checked: the solver says all-zero at zero travel, and the
+    model as compiled (nothing written into it at all) already satisfies its
+    own equality constraints."""
+    p, m, solver, pose, _stow = swung
+    at_rest = solver.pose(0.0)
+    assert set(at_rest) == {"swing_crank_joint",
+                            "swing_coupler_left_joint", "swing_wing_left_joint",
+                            "swing_coupler_right_joint", "swing_wing_right_joint"}
+    assert all(v == pytest.approx(0.0, abs=1e-12) for v in at_rest.values()), \
+        at_rest
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    assert max(_eq_gaps(m, d)) < 1e-9, "the compiled model is not at rest"
+
+
+def test_the_wings_co_rotate_rather_than_mirror(swung):
+    """The whole point of this mechanism over the geared pair: one wing swings
+    down and out while the other comes up and in. A mirrored pair would give
+    the two wings equal and OPPOSITE angles; this one drives them the same way,
+    which is what lets it present one face on one side."""
+    p, m, solver, pose, stow = swung
+    adr, d = T.PoseAdr(m), mujoco.MjData(m)
+    q = adr.q
+    got = {}
+    for tag, t in (("plus", 0.6 * solver.travel_max),
+                   ("minus", -0.6 * solver.travel_max)):
+        mujoco.mj_resetData(m, d)
+        T.apply_pose(m, d, sample(righting_pos=float(stow + t)), adr, p,
+                     rest_z=0.05, dt=1 / 60, swing_pose=pose)
+        got[tag] = (float(d.qpos[q["swing_wing_right_joint"]]),
+                    float(d.qpos[q["swing_wing_left_joint"]]))
+    for r, l in got.values():
+        assert np.sign(r) == np.sign(l), (r, l)      # same way: co-rotating
+        assert abs(r) > 2 * abs(l) or abs(l) > 2 * abs(r), (
+            "one side should swing far while the other barely moves")
+    # And the two crank directions are each other's mirror image, which is what
+    # makes the rest pose symmetric by construction rather than by tuning.
+    assert got["plus"][0] == pytest.approx(-got["minus"][1], abs=1e-4)
+
+
+def test_the_measured_angle_beats_the_commanded_one(swung):
+    """A wing held back by its Goal Current must be DRAWN held back. Rendering
+    the goal would give a mechanism that always arrives, which is exactly the
+    thing the operator is watching for while tuning `righting_current`."""
+    p, m, solver, pose, stow = swung
+    adr, d = T.PoseAdr(m), mujoco.MjData(m)
+    half = 0.5 * solver.travel_max
+    T.apply_pose(m, d, sample(righting=float(stow + solver.travel_max),
+                              righting_pos=float(stow + half)),
+                 adr, p, rest_z=0.05, dt=1 / 60, swing_pose=pose)
+    assert d.qpos[adr.q["swing_crank_joint"]] == pytest.approx(half, abs=1e-4)
+
+
+def test_a_bike_that_sends_no_reading_falls_back_to_the_goal(swung):
+    """An older bike, or one whose righting servo is absent from the chain."""
+    p, m, solver, pose, stow = swung
+    adr, d = T.PoseAdr(m), mujoco.MjData(m)
+    half = 0.5 * solver.travel_max
+    T.apply_pose(m, d, sample(righting=float(stow + half)), adr, p,
+                 rest_z=0.05, dt=1 / 60, swing_pose=pose)
+    # abs=1e-4 because `build` ROUNDS the angle to four decimals on the way
+    # out. That is the wire's resolution -- 6e-5 rad, or 0.003 deg at the
+    # servo -- not slop in the solve.
+    assert d.qpos[adr.q["swing_crank_joint"]] == pytest.approx(half, abs=1e-4)
+    mujoco.mj_resetData(m, d)
+    T.apply_pose(m, d, sample(), adr, p, rest_z=0.05, dt=1 / 60, swing_pose=pose)
+    assert d.qpos[adr.q["swing_crank_joint"]] == 0.0, "no command, no movement"
+
+
+def test_a_model_without_the_mechanism_ignores_the_solver(built):
+    """The station builds the solver from a config; the model may not have the
+    mechanism at all. That combination must render a plain bike, not raise."""
+    p, m = built
+    adr, d = T.PoseAdr(m), mujoco.MjData(m)
+    T.apply_pose(m, d, sample(righting_pos=3.4), adr, p, rest_z=0.05,
+                 dt=1 / 60, swing_pose=lambda _: {"swing_crank_joint": 1.0})
+    assert "swing_crank_joint" not in adr.q
+
+
+def test_this_geometry_turns_all_the_way_round(swung):
+    """MEASURED, and not what the config's name suggests. `crank_travel_deg`
+    136.6 is the DESIGN stroke -- what reach and clearance ask for -- not a
+    kinematic limit: this crank closes the loop at every angle in 360 deg.
+
+    Worth pinning because the guard below looks like dead code otherwise, and
+    because "the mechanism stopped at the end of its travel" would be the wrong
+    explanation for a station that froze at 136 deg."""
+    _, _, solver, pose, stow = swung
+    assert solver.travel_max == pytest.approx(np.deg2rad(136.6), abs=1e-3)
+    assert all(pose(stow + np.deg2rad(d)) is not None
+               for d in range(-180, 181)), "expected a full-rotation crank"
+
+
+def test_past_the_assembly_limit_the_mechanism_holds_rather_than_jumps(swung):
+    """`pose` returns None where the loop cannot close. That is an answer, not
+    an error -- and the station must leave the last good pose on screen rather
+    than snapping every joint to zero.
+
+    Driven with a LENGTHENED coupler, which sounds like the wrong direction
+    and is not. A circle-circle solve fails two ways, and this one fails on the
+    INNER bound: the loop needs |rocker - coupler| <= L <= rocker + coupler,
+    and stretching the coupler from 59.6 to 77.5 mm lifts that lower bound from
+    11.6 to 29.5 mm while the crank tip still swings to within 27.8 mm of the
+    wing pivot. Nothing is out of REACH -- 52 of 361 whole degrees are out of
+    FOLD, because the two links would have to overlap to close that tightly.
+
+    Chosen over a shortened one because x0.7 fails in the constructor instead
+    (it cannot close at rest either), which tests a different thing. Not
+    hypothetical: `crank_length` and `coupler_length` are free variables of the
+    optimiser in analysis/swing_linkage.py, and `assembly_limit` exists there
+    to find exactly this."""
+    import copy
+
+    import yaml
+
+    from aow_sim.build_model import SWING_LINKAGE_CFG, SwingLinkageSolver
+    p, m, solver, pose, stow = swung
+    adr, d = T.PoseAdr(m), mujoco.MjData(m)
+    with open(SWING_LINKAGE_CFG) as fh:
+        cfg = copy.deepcopy(yaml.safe_load(fh))
+    cfg["mechanism"]["coupler_length"] *= 1.3
+    short = SwingLinkageSolver(cfg, p["omni_wheel"]["outer_radius"])
+    blocked = [dg for dg in range(-180, 181)
+               if short.pose(np.deg2rad(dg)) is None]
+    assert blocked, "a longer coupler should put some angles out of reach"
+
+    half = 0.5 * solver.travel_max
+    T.apply_pose(m, d, sample(righting_pos=float(stow + half)), adr, p,
+                 rest_z=0.05, dt=1 / 60, swing_pose=pose)
+    was = float(d.qpos[adr.q["swing_crank_joint"]])
+    T.apply_pose(m, d, sample(righting_pos=999.0), adr, p, rest_z=0.05,
+                 dt=1 / 60,
+                 swing_pose=lambda rad: short.pose(np.deg2rad(blocked[0])))
+    assert d.qpos[adr.q["swing_crank_joint"]] == pytest.approx(was), (
+        "an unreachable angle must leave the last good pose alone")
+
+
+# --- the seam ----------------------------------------------------------------
+
+# Every field, split by what it is FOR. A field that describes the bike's
+# shape must move `data`; a field that is a number on the status line must not
+# be expected to. The split is written out rather than inferred so that adding
+# a field forces a decision about which it is -- which is the whole mechanism
+# below.
+POSE_FIELDS = {"quat", "gyro", "v_world", "pos", "steer", "w_shaft", "shaft",
+               "righting", "righting_pos"}
+DISPLAY_FIELDS = {"v", "t", "state", "cmd_v_world", "cmd_psi", "psi", "roll",
+                  "roll_rate", "volts", "vlat_conf", "qos", "jitter_ms",
+                  "dt_ms", "cuts", "righting_current"}
+
+# A perturbation per pose field, big enough to be unmistakable.
+_NUDGE = {"quat": [0.966, 0.259, 0.0, 0.0], "gyro": [1.0, -2.0, 3.0],
+          "v_world": [-1.1, 0.7], "pos": [9.0, -4.0], "steer": 0.4,
+          "w_shaft": [-30.0, 44.0], "shaft": [7.0, -5.0],
+          "righting_pos": 3.6, "righting": 3.6}
+
+
+def test_every_telemetry_field_is_read_by_the_mirror(swung):
+    """THE SEAM TEST, and the one this module's docstring has always claimed
+    existed. `build` runs on the Pi and `apply_pose` on the laptop; the failure
+    they are both exposed to is a field that one side writes and the other
+    never reads, which does not raise and does not look wrong.
+
+    `test_build_emits_exactly_the_declared_fields` pins the SENDING half.
+    This is the receiving half: every pose field, perturbed on its own, must
+    move `qpos` or `qvel`. A field added with no reader lands in neither set
+    and fails on the partition below before it gets here.
+    """
+    p, m, _solver, pose, _stow = swung
+    assert POSE_FIELDS | DISPLAY_FIELDS == set(T.FIELDS), (
+        "a new field must be classified as pose or display -- "
+        f"unclassified: {set(T.FIELDS) - POSE_FIELDS - DISPLAY_FIELDS}")
+    assert not POSE_FIELDS & DISPLAY_FIELDS
+
+    def rendered(tel):
+        d = mujoco.MjData(m)
+        T.apply_pose(m, d, tel, T.PoseAdr(m), p, rest_z=0.05, dt=1 / 60,
+                     swing_pose=pose)
+        return np.concatenate([d.qpos.copy(), d.qvel.copy()])
+
+    for name in sorted(POSE_FIELDS):
+        base = sample(righting_pos=2.9)
+        # `righting` is the FALLBACK for a bike that sends no reading, so it
+        # can only be shown to be read when there is no reading to beat it.
+        if name == "righting":
+            base = sample()
+        moved = rendered({**base, name: _NUDGE[name]})
+        assert not np.allclose(rendered(base), moved), (
+            f"{name!r} is sent and nothing renders it -- a wire nobody "
+            "connected")
+
+
+def test_a_deployed_wing_never_sinks_through_the_floor(swung):
+    """The panels are BOXES, so their lowest point is a corner and which
+    corner it is changes with roll -- the reason the wheels' `centre - radius`
+    shortcut cannot cover them.
+
+    Upright this changes nothing (a fully deployed wing still clears the wheel
+    contact by 5.7 mm); rolled it is the whole point, because the wing reaches
+    78 mm below the wheels at 61 deg and was being drawn sunk through the
+    ground."""
+    p, m, solver, pose, stow = swung
+    adr, d = T.PoseAdr(m), mujoco.MjData(m)
+    assert adr.panels, "the mechanism's panels must be found by name"
+
+    def lowest(roll_deg, servo_deg):
+        a = np.deg2rad(roll_deg) / 2
+        tel = sample(quat=[float(np.cos(a)), float(np.sin(a)), 0.0, 0.0],
+                     righting_pos=float(stow + np.deg2rad(servo_deg)))
+        mujoco.mj_resetData(m, d)
+        T.apply_pose(m, d, tel, adr, p, rest_z=0.05, dt=1 / 60, swing_pose=pose)
+        mujoco.mj_forward(m, d)
+        floors = [float(d.body("aow_hub").xpos[2])
+                  - float(p["omni_wheel"]["outer_radius"]),
+                  float(d.body("front_wheel").xpos[2])
+                  - float(p["bike"]["front_wheel"]["radius"])]
+        for gid, size in adr.panels:
+            rot = d.geom_xmat[gid].reshape(3, 3)
+            floors.append(float(d.geom_xpos[gid][2])
+                          - float(np.abs(rot[2]) @ size))
+        return min(floors)
+
+    for roll in (0, 30, 61, 90):
+        for servo in (0, 68, 136):
+            assert lowest(roll, servo) > -1e-9, (
+                f"something is through the floor at roll {roll}, "
+                f"servo {servo}")
+
+
+def test_grounding_on_a_wing_lifts_the_wheels_rather_than_the_other_way(swung):
+    """A rolled bike with a wing out rests ON THE WING -- which is what the
+    mechanism is for, and is the observable difference from grounding on the
+    wheels alone."""
+    p, m, solver, pose, stow = swung
+    adr, d = T.PoseAdr(m), mujoco.MjData(m)
+    a = np.deg2rad(61.0) / 2
+    tel = sample(quat=[float(np.cos(a)), float(np.sin(a)), 0.0, 0.0],
+                 righting_pos=float(stow + np.deg2rad(136.0)))
+    T.apply_pose(m, d, tel, adr, p, rest_z=0.05, dt=1 / 60, swing_pose=pose)
+    mujoco.mj_forward(m, d)
+    rear = (float(d.body("aow_hub").xpos[2])
+            - float(p["omni_wheel"]["outer_radius"]))
+    assert rear > 0.05, (
+        f"the rear wheel should be lifted clear, is {rear*1e3:.1f} mm")
+
+
+def test_a_bike_with_no_mechanism_grounds_on_its_wheels_exactly_as_before(built):
+    """The generalisation must not move the plain bike. `panels` is empty
+    there, so the wheel arithmetic is reached unchanged."""
+    p, m = built
+    adr, d = T.PoseAdr(m), mujoco.MjData(m)
+    assert adr.panels == []
+    T.apply_pose(m, d, sample(), adr, p, rest_z=0.05, dt=1 / 60)
+    mujoco.mj_forward(m, d)          # apply_pose leaves this to its caller
+    rear = (float(d.body("aow_hub").xpos[2])
+            - float(p["omni_wheel"]["outer_radius"]))
+    front = (float(d.body("front_wheel").xpos[2])
+             - float(p["bike"]["front_wheel"]["radius"]))
+    assert min(rear, front) == pytest.approx(0.0, abs=1e-12)

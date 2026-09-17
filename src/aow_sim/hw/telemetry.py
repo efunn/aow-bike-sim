@@ -28,6 +28,8 @@ pose, and the packet says so rather than presenting a plausible number:
                 truth. NOTHING may treat it as position.
     z, wheels,  NOT KNOWN AT ALL. The bike has no ride-height sensor and no
     rollers     encoder on the front wheel or the omni internals.
+    righting_   MEASURED, the righting servo's encoder. The LINKAGE it drives
+    pos         is drawn from the config -- see the swing note below.
 
 `apply_pose` fills the last group so the picture is not broken, and every one
 of those is a DRAWING, not a reading:
@@ -49,7 +51,14 @@ of those is a DRAWING, not a reading:
     -- is lossy three ways: `vel` is filtered so it lags, telemetry does not
     carry every tick, and a dropped packet is a permanently lost increment.
     Integration survives only as the fallback for a bike too old to send it;
-  * the front wheel is rolled from forward speed and its own radius.
+  * the front wheel is rolled from forward speed and its own radius;
+  * the co-rotating four-bar is solved in closed form from the righting
+    servo's measured angle (`build_model.SwingLinkageSolver`). A MIXED case,
+    and the mix is the point: the angle is a real encoder reading and every
+    link hanging off it is geometry. The loop is closed by `mjEQ_CONNECT`,
+    which only the constraint solver satisfies and only during a dynamics
+    step -- so a mirror that never steps has to write every joint itself or
+    watch the mechanism come apart on screen.
 """
 
 from __future__ import annotations
@@ -68,13 +77,15 @@ FIELDS = (
     "quat", "gyro", "v_world", "pos", "steer", "w_shaft", "shaft",
     "cmd_v_world", "cmd_psi", "psi",
     "roll", "roll_rate", "volts", "vlat_conf", "qos",
-    "jitter_ms", "dt_ms", "cuts", "righting", "righting_current",
+    "jitter_ms", "dt_ms", "cuts", "righting", "righting_pos",
+    "righting_current",
 )
 
 
 def build(*, t, state, quat, gyro, v_world, pos, steer, w_shaft, shaft, psi,
           cmd_v_world, cmd_psi, roll, roll_rate, volts, vlat_conf, qos,
-          jitter_ms, dt_ms, cuts, righting, righting_current) -> dict:
+          jitter_ms, dt_ms, cuts, righting, righting_pos,
+          righting_current) -> dict:
     """The packet. Pure, keyword-only, and rounded HERE rather than at the
     call site so the wire format is one decision in one place.
 
@@ -121,7 +132,16 @@ def build(*, t, state, quat, gyro, v_world, pos, steer, w_shaft, shaft, psi,
         "jitter_ms": jitter_ms,
         "dt_ms": round(float(dt_ms), 2),
         "cuts": int(cuts),
+        # TWO NUMBERS, AND THE DIFFERENCE IS THE POINT. `righting` is the goal
+        # the operator last asked for; `righting_pos` is where the servo
+        # actually is. They separate exactly when the mechanism is loaded past
+        # what Goal Current allows -- which is the whole reason that servo runs
+        # in current-based position mode, and the thing a station tuning
+        # `righting_current` needs to see. Rendering the goal would draw a wing
+        # that always arrives.
         "righting": None if righting is None else round(float(righting), 4),
+        "righting_pos": (None if righting_pos is None
+                         else round(float(righting_pos), 4)),
         "righting_current": righting_current,
     }
 
@@ -166,6 +186,17 @@ class PoseAdr:
                 self.q[name] = int(model.jnt_qposadr[j])
                 self.d[name] = int(model.jnt_dofadr[j])
         self.rollers = sorted(n for n in self.q if n.startswith("roller_spin_"))
+        # RIGHTING PANELS, for grounding. Box geoms, so unlike the wheels their
+        # lowest point is a CORNER and depends on attitude -- see
+        # `ground_the_bike`. Collected by name because every righting mechanism
+        # names its panels the same way (`wing_left`, `swing_wing_right`), and
+        # an empty tuple is the normal case: a bike with no mechanism built.
+        self.panels = []
+        for g in range(model.ngeom):
+            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g)
+            if (name and ("wing" in name)
+                    and model.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX):
+                self.panels.append((g, model.geom_size[g].copy()))
 
 
 def gearbox_mix(params: dict) -> dict:
@@ -187,35 +218,60 @@ def gearbox_mix(params: dict) -> dict:
             ("mix_hub_a", "mix_hub_b", "mix_ring_a", "mix_ring_b", "k_roller")}
 
 
-def ground_the_wheels(model, data, params: dict) -> float:
-    """Raise/lower the chassis so the LOWER wheel touches z = 0. -> the shift.
+def ground_the_bike(model, data, params: dict, adr=None) -> float:
+    """Raise/lower the chassis so its LOWEST point touches z = 0. -> the shift.
 
     Call after the attitude is set and `mj_kinematics` has run; the caller must
     run kinematics again afterwards, which `apply_pose` does.
 
     A DRAWING, not a contact solve. It exists because the bike sends no ride
     height, so the mirror has to choose one -- and a constant is wrong as soon
-    as the bike pitches, which it does on every wheelie. Using each wheel's own
-    centre and radius is exact for a surface of revolution and needs no
-    geometry query: the rear omni wheel and the front tyre are both round about
-    their axles, whatever the attitude.
+    as the bike pitches, which it does on every wheelie.
 
-    Consequence worth knowing: the rendered bike can never sink into the floor
-    and never floats, so it CANNOT show a real wheel lifting off. A wheelie
-    reads as a pitch about the rear contact, which is what it is.
+    THE WHEELS are exact and need no geometry query: the rear omni wheel and
+    the front tyre are both surfaces of revolution about their own axles, so
+    the lowest point is `centre_z - radius` whatever the attitude.
+
+    THE RIGHTING PANELS are not. They are boxes, so the lowest point is a
+    CORNER, and which corner it is changes with roll -- which is the whole
+    reason they need including. Measured on the co-rotating four-bar: upright,
+    a fully deployed wing still clears the wheel contact by 5.7 mm and changes
+    nothing here; rolled 61 deg it reaches 78 mm BELOW it, which is what was
+    being drawn as a wing sunk through the floor. Transforming eight corners
+    per panel is a few microseconds and happens once a frame.
+
+    So a rolled bike with a wing out now rests ON THE WING, which is what the
+    mechanism is for. `adr` is optional only so a caller that has not built a
+    `PoseAdr` still gets the wheels; pass it to include the panels.
+
+    Consequence worth knowing, and unchanged: the rendered bike can never sink
+    into the floor and never floats, so it CANNOT show a wheel lifting off. A
+    wheelie reads as a pitch about the rear contact, which is what it is.
     """
     import numpy as np
     r_rear = float(params["omni_wheel"]["outer_radius"])
     r_front = float(params["bike"]["front_wheel"]["radius"])
     low = min(float(data.body("aow_hub").xpos[2]) - r_rear,
               float(data.body("front_wheel").xpos[2]) - r_front)
+    for gid, size in (getattr(adr, "panels", None) or ()):
+        pos = data.geom_xpos[gid]
+        rot = data.geom_xmat[gid].reshape(3, 3)
+        # Only the z row of the rotation matters, so the lowest corner is the
+        # centre minus the sum of |projection| of each half-extent onto z --
+        # no need to enumerate the eight of them.
+        low = min(low, float(pos[2]) - float(np.abs(rot[2]) @ size))
     data.qpos[2] -= low
     return -low
 
 
+# The name this had while it only knew about wheels. Kept because it is the
+# kind of helper a bench script imports.
+ground_the_wheels = ground_the_bike
+
+
 def apply_pose(model, data, tel: dict, adr: PoseAdr, params: dict,
                shaft_angle=(0.0, 0.0), rest_z: float | None = None,
-               dt: float = 0.0) -> tuple:
+               dt: float = 0.0, swing_pose=None) -> tuple:
     """Write one telemetry packet into `data` for RENDERING. -> new shaft angle.
 
     NOT a state estimator and not a physics step: it sets `qpos`/`qvel` and
@@ -288,8 +344,33 @@ def apply_pose(model, data, tel: dict, adr: PoseAdr, params: dict,
         data.qvel[d["front_spin"]] = speed / r if r else 0.0
         data.qpos[q["front_spin"]] += (speed / r if r else 0.0) * dt_s
 
+    # -- the righting mechanism ---------------------------------------------
+    #
+    # `swing_pose` maps a CRANK TRAVEL to every joint in the four-bar. It has
+    # to write all of them: the loop is closed by `mjEQ_CONNECT`, and an
+    # equality is only satisfied by the constraint solver during a dynamics
+    # step. The mirror never steps, so writing the crank alone and calling
+    # `mj_forward` would leave the couplers and wings where they were and the
+    # mechanism would visibly come apart. See build_model.SwingLinkageSolver.
+    #
+    # MEASURED where the servo is, DRAWN where the wings are: the angle is a
+    # real encoder reading, and the linkage hanging off it is geometry from the
+    # config. On a bike whose wings are not built yet, that is a picture of
+    # what this servo angle WOULD do.
+    if swing_pose is not None and "swing_crank_joint" in q:
+        got = tel.get("righting_pos")
+        if got is None:
+            got = tel.get("righting")         # the goal, if there is no reading
+        if got is not None:
+            angles = swing_pose(float(got))
+            if angles is not None:            # None = past the assembly limit
+                for name, val in angles.items():
+                    if name in q:
+                        data.qpos[q[name]] = val
+                        data.qvel[d[name]] = 0.0
+
     if rest_z is not None:
         import mujoco
-        mujoco.mj_kinematics(model, data)     # place the wheels, then settle
-        ground_the_wheels(model, data, params)
+        mujoco.mj_kinematics(model, data)     # place the parts, then settle
+        ground_the_bike(model, data, params, adr)
     return a, b

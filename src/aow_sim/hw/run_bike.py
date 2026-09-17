@@ -400,6 +400,7 @@ class BikeRunner:
         self._w_shaft = (0.0, 0.0)
         self._shaft = (0.0, 0.0)
         self._qos = None
+        self._righting_pos = None
 
     # -- one tick ----------------------------------------------------------
 
@@ -440,6 +441,10 @@ class BikeRunner:
         self._w_shaft = (s["w_servo_a"] * self.bus.belt_ratio,
                          s["w_servo_b"] * self.bus.belt_ratio)
         self._shaft = (s["turned_a"], s["turned_b"])
+        # WHERE THE RIGHTING SERVO ACTUALLY IS, alongside the goal. Read every
+        # tick because it is already in the sync-read window -- the righting
+        # servo is the fourth id on the same chain -- so this costs no bus time.
+        self._righting_pos = s["righting_pos"]
         self._qos = a.qos
 
     def _apply_command(self) -> None:
@@ -808,6 +813,10 @@ class BikeRunner:
                     dt_ms=self._dt_meas * 1e3,
                     cuts=self.guard.cuts,
                     righting=self.bus._righting_goal,
+                    # The GOAL above, the READING here. The station renders the
+                    # reading, so a wing held back by its current limit is
+                    # drawn held back instead of drawn as commanded.
+                    righting_pos=self._righting_pos,
                     # So `[` and `]` step from the value that is ON the servo
                     # (control.onboard.righting_current at startup) rather than
                     # from zero. The station cannot know it otherwise.

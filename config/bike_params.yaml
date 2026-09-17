@@ -427,6 +427,38 @@ control:
     # until then the register's own number is the honest thing to write down.
     # The operator moves it live with [ and ] -- see hw/ground.py.
     righting_current: 300
+    # WHERE THE CRANK'S REST POSE SITS ON THE SERVO, and which way it runs.
+    # Read only by the station, to turn a servo angle into a drawn mechanism:
+    # crank_travel = (righting_pos - righting_stow_deg) * righting_sign.
+    #
+    # 180 for the same reason steer_zero_deg is: it puts the servo in the
+    # middle of its single-turn range with room to swing +-136.6 deg either
+    # way, which is what makes the full co-rotating stroke reachable without
+    # winding into extended position. hw/ground.py's STOW_RAD carries the same
+    # number as its own default; the terminal station takes --stow-deg and
+    # does not read this file.
+    #
+    # `righting_stow_deg` IS FORCED, not chosen, which is why it is `design`
+    # and not a guess: the stroke is +-136.6 deg and the servo has one
+    # 0-360 range to do it in, so the rest pose has to sit near the middle.
+    # 180 +- 136.6 spans 43.4 .. 316.6 and fits; anything more than ~43 deg
+    # off centre runs an end of the stroke off the range and into extended
+    # position, where a power cycle loses the turn count. Same argument as
+    # steer_zero_deg, and the same number by coincidence rather than by
+    # sharing anything.
+    righting_stow_deg: 180.0   # source: design -- the only value the range allows
+    # WHICH WAY THE CRANK GOES for a positive servo angle. TBD ON PURPOSE, and
+    # NOT the same kind of unknown as the rest of this file: the motor can be
+    # installed facing either way, the packing solution for the bike is not
+    # settled, and it may yet get flipped. So there is nothing to measure yet
+    # -- there is a decision to make, and this follows it.
+    #
+    # Consequence of getting it wrong is small and entirely visual: the render
+    # deploys the wings to the wrong side. Nothing flies on it (the station
+    # reads it, the bike does not) and neither digest sees it. When the motor
+    # is finally mounted, drive it positive, watch which wing drops, and set
+    # this to match -- one observation, one character.
+    righting_sign: 1           # source: GUESS -- TBD, a build decision not yet made
     # The safety cut. NOT a recoverability boundary -- there is no such angle;
     # see FallGuard and analysis/no_return.py. 60 deg is rl_general.yaml's
     # `fall_roll_deg`, i.e. the angle past which the policy never trained.
