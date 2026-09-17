@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import select
 import socket
 import threading
 import time
@@ -52,7 +53,9 @@ from collections import deque
 from ..params import load_params
 from ..control.drive import DriveController
 from ..control.recovery import HANDOFF_RATE, RECOVER_DEG, ready_for_policy
-from .ahrs import AhrsReader, MountCalibration
+from . import telemetry
+from .ahrs import (QOS_MIN_SERVICE, QOS_NAMES, QOS_UNKNOWN,
+                   AhrsReader, MountCalibration)
 from .dynamixel import CONTROL_HZ_DEFAULT, ServoBus, resolve_gains
 from .odometry import VelocityEstimator, body_to_world
 from .state import HardwareData, load_ahrs_mount, load_bundle
@@ -225,7 +228,7 @@ class CommandLink:
     bytes, and it keeps the ground station trivial to write and extend.
     """
 
-    def __init__(self, listen=("0.0.0.0", 9910), telemetry_hz=50.0):
+    def __init__(self, listen=("0.0.0.0", 9910), telemetry_hz=CONTROL_HZ):
         self.addr = listen
         self.telemetry_hz = telemetry_hz
         self.cmd = {"v_cmd_world": [0.0, 0.0], "psi_cmd": 0.0}
@@ -238,7 +241,9 @@ class CommandLink:
     def start(self):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.bind(self.addr)
-        self._sock.settimeout(0.1)
+        # select() owns the waiting; keep a short timeout only so a
+        # spurious readable never parks the thread.
+        self._sock.settimeout(0.01)
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True, name="link")
         self._thread.start()
@@ -249,8 +254,25 @@ class CommandLink:
             self._thread.join(timeout=1.0)
 
     def _run(self):
-        last_tx = 0.0
+        # ACCUMULATED DEADLINE, not "long enough since the last send". This
+        # loop only wakes when a datagram arrives or the socket times out, so
+        # its clock is the OPERATOR's send rate -- and `now - last_tx > period`
+        # against that clock aliases: with commands at 50 Hz and the period at
+        # 50 Hz, jitter makes roughly every other wake fail the comparison.
+        # Measured 2026-09-16 against a station sending at 50 Hz: 27.8 Hz of
+        # telemetry, which a mirrored viewer would render as judder and which
+        # reads as "the radio is struggling" rather than as an arithmetic bug.
+        # AND WAIT ON THE DEADLINE, not only on the socket. `recvfrom` with a
+        # 0.1 s timeout wakes on a datagram or after 100 ms, so telemetry could
+        # never go out faster than commands came in: at a 50 Hz station the
+        # accumulated deadline still only got 34.7 Hz out, because it can only
+        # fire on a wake. `select` with the time-to-deadline as its timeout
+        # wakes for BOTH reasons, which is the same shape hw/ground.py's loop
+        # already has on the other end of the wire.
+        next_tx = 0.0
         while not self._stop.is_set():
+            timeout = min(0.1, max(0.0, next_tx - time.monotonic()))
+            select.select([self._sock], [], [], timeout)
             try:
                 data, peer = self._sock.recvfrom(4096)
                 self.cmd = json.loads(data.decode())
@@ -261,12 +283,19 @@ class CommandLink:
             except Exception:
                 pass          # a malformed datagram must never stop the link
             now = time.monotonic()
-            if self.peer and now - last_tx > 1.0 / self.telemetry_hz:
+            # `and self.telemetry`: the control loop fills this dict, and the
+            # link thread starts first. Sending the empty one is not harmless
+            # -- the station version-checks the first packet it sees, and an
+            # empty dict reads as "schema vNone", i.e. a stale deploy. Silence
+            # until there is something to say.
+            if self.peer and self.telemetry and now >= next_tx:
                 try:
                     self._sock.sendto(json.dumps(self.telemetry).encode(), self.peer)
                 except OSError:
                     pass
-                last_tx = now
+                # Advance by whole periods, and never bank credit for a gap we
+                # slept through -- otherwise a reconnect fires a burst.
+                next_tx = max(now, next_tx + 1.0 / self.telemetry_hz)
 
     def age(self) -> float:
         return time.monotonic() - self.cmd_t if self.cmd_t else float("inf")
@@ -276,7 +305,8 @@ class BikeRunner:
     def __init__(self, bundle_path: str, port: str, ahrs_port: str,
                  control_hz: float = CONTROL_HZ, servo_gains=None,
                  require_link: bool = True, auto_rearm: bool = False,
-                 ids=None, torque: bool = True, seconds: float = 0.0):
+                 ids=None, torque: bool = True, seconds: float = 0.0,
+                 steer_zero=None, allow_guess_mount: bool = False):
         self.params = load_params()
         self.design, self.model = load_bundle(bundle_path, self.params)
         self.dt = 1.0 / control_hz
@@ -305,7 +335,9 @@ class BikeRunner:
         # servo at all, which is the common bench case.
         righting = ids[3] if len(ids) > 3 else cfg.get("righting_id")
         self.bus = ServoBus(self.params, port=port, control_hz=control_hz,
-                            ids=ids[:3], righting_id=righting, gains=gains)
+                            ids=ids[:3], righting_id=righting, gains=gains,
+                            righting_current=cfg.get("righting_current"),
+                            servo_sign=cfg.get("servo_sign", (1.0, 1.0)))
         # A PERSISTED CONSTANT BEATS A CAPTURE, and this is the bike's default.
         # The policy observes the steer as sin/cos(2*delta) -- pi-periodic,
         # because the wheel is front-back symmetric -- the servo's encoder is
@@ -317,8 +349,19 @@ class BikeRunner:
         # Left unset, ServoBus captures the current pose as zero instead, which
         # is right for a bare bench shaft and WRONG on a chassis -- it would
         # define whatever angle the wheel happened to be at as straight ahead.
-        if cfg.get("steer_zero_deg") is not None:
-            self.bus.steer_zero = np.deg2rad(float(cfg["steer_zero_deg"]))
+        # `steer_zero` overrides the config for one session: a number pins it,
+        # the string "capture" forces the startup capture. THE BENCH NEEDS THE
+        # SECOND ONE. The config now pins 180 deg, which is where the servo
+        # will be clamped on the assembled bike -- so until that assembly
+        # happens, a bare shaft sitting at some other angle would be told it is
+        # 107 deg off straight and every bench number would inherit the offset.
+        zero = cfg.get("steer_zero_deg") if steer_zero is None else steer_zero
+        if isinstance(zero, str):
+            if zero != "capture":
+                raise ValueError("--steer-zero takes a number or 'capture'")
+            zero = None
+        if zero is not None:
+            self.bus.steer_zero = np.deg2rad(float(zero))
         self.torque = bool(torque)
         # A BENCH RUN MUST END ITSELF. `timeout` sends SIGTERM, which kills the
         # process without running `finally: shutdown()` -- so the servos stay
@@ -350,6 +393,13 @@ class BikeRunner:
         self._roll = self._roll_rate = 0.0
         self._dt_meas = self.dt
         self._righting_current = None
+        # Preflight findings whose KIND may be accepted without disarming the
+        # rest of preflight. See _report_preflight.
+        self._preflight_allow = ((MOUNT_UNCALIBRATED,) if allow_guess_mount
+                                 else ())
+        self._w_shaft = (0.0, 0.0)
+        self._shaft = (0.0, 0.0)
+        self._qos = None
 
     # -- one tick ----------------------------------------------------------
 
@@ -382,6 +432,15 @@ class BikeRunner:
         self.data.integrate_position(dt)
         self._roll = roll
         self._roll_rate = float(a.gyro[0])
+        # For telemetry only -- no controller reads either. The shaft speeds
+        # are what the mirror integrates into a wheel angle (the drive servos
+        # run in velocity mode and their single-turn position wraps, so there
+        # is no absolute angle to send); the QoS is the AHRS grading itself,
+        # already decoded out of the frame this tick used.
+        self._w_shaft = (s["w_servo_a"] * self.bus.belt_ratio,
+                         s["w_servo_b"] * self.bus.belt_ratio)
+        self._shaft = (s["turned_a"], s["turned_b"])
+        self._qos = a.qos
 
     def _apply_command(self) -> None:
         age = self.link.age()
@@ -425,22 +484,27 @@ class BikeRunner:
           * |accel| == g, which catches a dead, mis-scaled or mis-parsed
             accelerometer regardless of which way is down;
           * |gyro| ~ 0, which catches a runaway bias — the failure that would
-            otherwise show up as the bike calmly driving itself over.
+            otherwise show up as the bike calmly driving itself over;
+          * the sensor's OWN QoS grade, which is the only one of the four that
+            catches a unit whose numbers are all plausible and all wrong.
+            Ep_Combo carries it, so it costs nothing to read. The WORST grade
+            seen in the window is the one judged, not the mean: a sensor that
+            dips into fault for 50 ms has faulted.
 
         What it CANNOT check is the mounting calibration, because that needs a
         known reference pose. See docs/plans/untethered-setup.md for the
         wings-down self-check that would close that gap once the wing geometry
         is built and its expected attitude is known.
         """
-        problems: list[str] = []
+        problems: list = []
         if self.mount_source != "measured":
-            problems.append(
+            problems.append((MOUNT_UNCALIBRATED,
                 f"AHRS mount calibration is '{self.mount_source}', not 'measured' — "
                 "assuming the sensor is perfectly aligned with the chassis. "
-                "Any mounting tilt is a permanent roll bias.")
+                "Any mounting tilt is a permanent roll bias."))
 
         t_end = time.monotonic() + seconds
-        accels, gyros, last_err = [], [], None
+        accels, gyros, qoses, last_err = [], [], [], None
         while time.monotonic() < t_end:
             try:
                 s = self.ahrs.latest()
@@ -454,27 +518,41 @@ class BikeRunner:
                 continue
             accels.append(np.linalg.norm(s.accel))
             gyros.append(np.linalg.norm(s.gyro))
+            qoses.append(s.qos)
             time.sleep(0.01)
 
         if not accels:
-            problems.append(f"AHRS produced no samples in {seconds:.1f} s"
-                            + (f": {last_err}" if last_err else ""))
-            problems.append(self._ahrs_diagnosis())
-            return _report_preflight(problems, strict)
+            problems.append((None, f"AHRS produced no samples in {seconds:.1f} s"
+                             + (f": {last_err}" if last_err else "")))
+            problems.append((None, self._ahrs_diagnosis()))
+            return _report_preflight(problems, strict, self._preflight_allow)
 
         a, g = float(np.mean(accels)), float(np.max(gyros))
+        qos = min(qoses)
+        if qos == QOS_UNKNOWN:
+            problems.append((None,
+                "AHRS frames carry no QoS — the sample came from a path that "
+                "does not decode Ep_Combo's sysState. Check the parser, not "
+                "the sensor."))
+        elif qos < QOS_MIN_SERVICE:
+            problems.append((None,
+                f"AHRS reports QoS {qos} ({QOS_NAMES.get(qos, '?')}); the bike "
+                f"needs at least {QOS_MIN_SERVICE} "
+                f"({QOS_NAMES[QOS_MIN_SERVICE]}). Low grades right after "
+                "power-on usually clear on their own — wait ~30 s for the "
+                "gyro calibration and preflight again."))
         if abs(a - GRAVITY) > PREFLIGHT_ACCEL_TOL * GRAVITY:
-            problems.append(
+            problems.append((None,
                 f"|accel| is {a:.2f} m/s^2, expected ~{GRAVITY:.2f} "
-                f"(+-{PREFLIGHT_ACCEL_TOL:.0%}) — check units, parsing, or the sensor")
+                f"(+-{PREFLIGHT_ACCEL_TOL:.0%}) — check units, parsing, or the sensor"))
         if g > PREFLIGHT_GYRO_MAX:
-            problems.append(
+            problems.append((None,
                 f"|gyro| peaks at {np.degrees(g):.1f} deg/s while supposedly at rest "
                 f"(limit {np.degrees(PREFLIGHT_GYRO_MAX):.1f}) — bias, vibration, "
-                "or the bike is moving")
+                "or the bike is moving"))
         print(f"preflight: |accel| {a:.2f} m/s^2, |gyro| max {np.degrees(g):.2f} deg/s, "
-              f"mount '{self.mount_source}'")
-        return _report_preflight(problems, strict)
+              f"qos {qos} ({QOS_NAMES.get(qos, '?')}), mount '{self.mount_source}'")
+        return _report_preflight(problems, strict, self._preflight_allow)
 
     def _ahrs_diagnosis(self) -> str:
         """Why is there no attitude? The three cases have different fixes.
@@ -566,6 +644,9 @@ class BikeRunner:
 
     def run(self, preflight: bool = True) -> None:
         self.bus.open()                      # torque still OFF; see ServoBus.open
+        # What open() just wrote, so the operator's first [ or ] is a CHANGE
+        # rather than a redundant write of the value already on the servo.
+        self._righting_current = self.bus.righting_current_applied
         self.ahrs.start()
         self.link.start()
         _try_realtime()
@@ -678,11 +759,19 @@ class BikeRunner:
                     self.ctl.step(self.model, self.data)
                     self.bus.write_commands(self.data.ctrl, self.aid)
 
-                # HALF THE RATE OF THE LOOP, because CommandLink transmits at
-                # 50 Hz and every dict built in between was allocated and
-                # discarded unread. Cheap either way once the cyclic collector
-                # is off, but free is cheaper, and the control tick is the one
-                # place in this program where that is worth saying.
+                # EVERY TICK since 2026-09-16, was every other one. The old
+                # comment here said building a dict the link would not send was
+                # waste, which was true while `CommandLink` transmitted at
+                # 50 Hz -- but that halving is also 0-20 ms of extra staleness
+                # on top of the transmit period, and the mirror shows it as
+                # lag. Both now run at the control rate.
+                #
+                # THE COST IS MEASURED, not assumed: `telemetry.build` is
+                # 48.8 us on a Pi 3B+ (155 us with a full pose and four servos
+                # of registers, which is Phase 2's packet), so every tick is
+                # ~0.5% of a 10 ms budget. The packet is 438 B, so 100 Hz is
+                # 43.8 kB/s against a link measured to carry 1.5 MB/s with
+                # zero loss. Neither end of that is close.
                 if k % 100 == 0 and self.link.peer is None:
                     # No ground station to send telemetry to, so say it here.
                     print(f"  t {self.data.time:5.1f}  roll {np.degrees(self._roll):+6.1f} "
@@ -691,23 +780,39 @@ class BikeRunner:
                           f"steer {np.degrees(self.data.ctrl[self.aid['steer']]):+6.1f} deg  "
                           f"v {self.data.qvel[0]:+.2f},{self.data.qvel[1]:+.2f}  "
                           f"{self._jitter_ms:.2f} ms")
-                if k % 2:
-                    continue
-                self.link.telemetry = {
-                    "t": round(self.data.time, 3),
-                    "state": self.guard.state,
-                    "roll": round(float(self._roll), 4),
-                    "roll_rate": round(float(self._roll_rate), 3),
-                    "v": [round(float(v), 3) for v in self.data.qvel[:2]],
-                    "steer": round(float(self.data.qpos[self.ctl._sj]), 4),
-                    "volts": round(voltage, 1),
+                self.link.telemetry = telemetry.build(
+                    t=self.data.time,
+                    state=self.guard.state,
+                    quat=self.data.qpos[3:7],
+                    gyro=self.data.qvel[3:6],
+                    v_world=self.data.qvel[:2],
+                    pos=self.data.qpos[:2],
+                    steer=self.data.qpos[self.ctl._sj],
+                    w_shaft=self._w_shaft,
+                    shaft=self._shaft,
+                    # The bike's OWN heading, so the station's `/` can re-aim
+                    # the command at where the bike actually points -- which is
+                    # what teleop's `/` does, and what "stop" means once the
+                    # commanded heading has drifted from the real one.
+                    psi=self.ctl._psi,
+                    cmd_v_world=self.ctl._gen_v_cmd,
+                    cmd_psi=self.ctl._gen_psi_cmd,
+                    roll=self._roll,
+                    roll_rate=self._roll_rate,
+                    volts=voltage,
                     # <1 means the front wheel is near perpendicular and v_lat
                     # is coasting on the accelerometer -- worth seeing live.
-                    "vlat_conf": round(float(self.est.confidence), 2),
-                    "jitter_ms": self._jitter_ms,
-                    "dt_ms": round(self._dt_meas * 1e3, 2),
-                    "cuts": self.guard.cuts,
-                }
+                    vlat_conf=self.est.confidence,
+                    qos=self._qos,
+                    jitter_ms=self._jitter_ms,
+                    dt_ms=self._dt_meas * 1e3,
+                    cuts=self.guard.cuts,
+                    righting=self.bus._righting_goal,
+                    # So `[` and `]` step from the value that is ON the servo
+                    # (control.onboard.righting_current at startup) rather than
+                    # from zero. The station cannot know it otherwise.
+                    righting_current=self._righting_current,
+                )
         finally:
             self.shutdown()
 
@@ -734,19 +839,45 @@ def _rpy(quat) -> tuple[float, float, float]:
             float(np.arctan2(R[1, 0], R[0, 0])))
 
 
-def _report_preflight(problems: list[str], strict: bool) -> list[str]:
+# A finding that is a STANDING CONDITION, not a fault: known, accepted, and
+# true on every run until a separate piece of work clears it. Tagged rather
+# than worded specially, so an escape hatch can be aimed at exactly this one.
+MOUNT_UNCALIBRATED = "ahrs-mount-uncalibrated"
+
+
+def _report_preflight(problems, strict: bool, allow=()) -> list[str]:
     """Print preflight findings; raise on them only when strict.
 
-    `strict` defaults on because the whole point of the check is to stop before
-    engaging, but `--no-preflight` exists for bench work where the bike is
-    deliberately being moved or a sensor is deliberately absent.
+    `problems` is a list of `(kind, text)` -- `kind` is None for an ordinary
+    fault, or a tag like MOUNT_UNCALIBRATED for a standing condition. Anything
+    whose kind is in `allow` prints as an accepted warning and does not block.
+
+    WHY THE DISTINCTION EXISTS. The AHRS mount calibration is `GUESS` and stays
+    `GUESS` until the bike can be jigged level on a level floor -- so it fired
+    on EVERY run, and the only way past it was `--no-preflight`, which also
+    disarms the |accel|, |gyro| and QoS checks. A gate that fires every single
+    time is not a gate: it trains the operator to reach for the flag that turns
+    off the gates which do catch things. Giving the standing condition its own
+    narrow escape keeps the real ones armed.
+
+    `strict` still defaults on, and `--no-preflight` remains for bench work
+    where the bike is deliberately being moved or a sensor deliberately absent.
     """
-    for p in problems:
-        print(f"PREFLIGHT: {p}")
-    if problems and strict:
+    blocking = []
+    for kind, text in problems:
+        if kind is not None and kind in allow:
+            print(f"PREFLIGHT WARNING (accepted): {text}")
+        else:
+            print(f"PREFLIGHT: {text}")
+            blocking.append(text)
+    if blocking and strict:
+        only_mount = all(k == MOUNT_UNCALIBRATED for k, _ in problems)
         raise RuntimeError(
-            f"{len(problems)} preflight problem(s); fix them or pass --no-preflight")
-    return problems
+            f"{len(blocking)} preflight problem(s); "
+            + ("pass --allow-guess-mount to accept it and keep the other "
+               "checks armed" if only_mount else
+               "fix them, or --no-preflight to disarm preflight entirely"))
+    return [t for _, t in problems]
 
 
 # NO gc.disable() HERE, and that is a measured decision rather than an
@@ -788,8 +919,13 @@ def _gains(text: str) -> tuple:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--bundle", default="deploy/bundle.npz")
-    ap.add_argument("--port", default="/dev/ttyUSB0", help="U2D2 serial port")
-    ap.add_argument("--ahrs-port", default="/dev/serial0", help="TM151 UART")
+    # Defaults come from control.onboard.{dxl_port,ahrs_port} when they are
+    # set; the literals below are the generic fallbacks for a machine whose
+    # config does not name them.
+    ap.add_argument("--port", default=None,
+                    help="U2D2 serial port (default: control.onboard.dxl_port)")
+    ap.add_argument("--ahrs-port", default=None,
+                    help="TM151 port (default: control.onboard.ahrs_port)")
     ap.add_argument("--rate", type=float, default=CONTROL_HZ)
     ap.add_argument("--no-preflight", action="store_true",
                     help="report AHRS preflight problems but engage anyway")
@@ -809,6 +945,20 @@ def main() -> None:
                     help="stop cleanly after N seconds of loop time, torque "
                          "off on the way out. Use this rather than `timeout`, "
                          "whose SIGTERM skips the shutdown handler")
+    ap.add_argument("--allow-guess-mount", action="store_true",
+                    help="accept an uncalibrated AHRS mount and KEEP the rest "
+                         "of preflight armed. This is the flag a bench session "
+                         "wants: the mount stays 'GUESS' until the bike can be "
+                         "jigged level, so without it preflight blocks every "
+                         "run and the habit becomes --no-preflight, which also "
+                         "disarms the |accel|, |gyro| and QoS checks")
+    ap.add_argument("--steer-zero", metavar="DEG|capture",
+                    type=lambda t: t if t == "capture" else float(t),
+                    help="servo-shaft angle that is STRAIGHT AHEAD, for one "
+                         "session. `capture` calls the current pose zero, "
+                         "which is what a bare bench shaft wants and what the "
+                         "assembled bike must never do. Default: "
+                         "control.onboard.steer_zero_deg")
     ap.add_argument("--no-torque", action="store_true",
                     help="run the whole loop but never enable torque. The "
                          "timing is real; nothing can move")
@@ -817,12 +967,24 @@ def main() -> None:
                          "operator asking. OFF by default -- a bike that "
                          "re-engages in your hands is worse than one that waits")
     args = ap.parse_args()
-    BikeRunner(args.bundle, args.port, args.ahrs_port, args.rate,
+    dxl_port, ahrs_port = _resolve_ports(args, load_params())
+    print(f"bus  {dxl_port}\nahrs {ahrs_port}")
+    BikeRunner(args.bundle, dxl_port, ahrs_port, args.rate,
                servo_gains=args.servo_gains,
                require_link=not args.no_link,
                auto_rearm=args.auto_rearm,
-               ids=args.ids, torque=not args.no_torque, seconds=args.seconds
-               ).run(preflight=not args.no_preflight)
+               ids=args.ids, torque=not args.no_torque, seconds=args.seconds,
+               steer_zero=args.steer_zero,
+               allow_guess_mount=args.allow_guess_mount,
+    ).run(preflight=not args.no_preflight)
+
+
+def _resolve_ports(args, params) -> tuple:
+    """(dxl, ahrs), from --port/--ahrs-port, else the config, else the generic
+    device names. Separate and pure so a test can walk the precedence."""
+    cfg = ((params.get("control") or {}).get("onboard") or {})
+    return (args.port or cfg.get("dxl_port") or "/dev/ttyUSB0",
+            args.ahrs_port or cfg.get("ahrs_port") or "/dev/serial0")
 
 
 if __name__ == "__main__":

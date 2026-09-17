@@ -26,10 +26,16 @@ or not anything moved, because the datagram IS the heartbeat: silence for
 only speaks when the operator does would look identical to a station that has
 crashed.
 
-Keys:
-    w / s     forward / reverse, one step of 0.1 m/s
-    a / d     heading left / right, 10 deg
-    space     stop -- zero velocity, hold heading
+Keys. THE ARROWS AND `/` ARE THE PRIMARY BINDING, matching run_drive's teleop
+so one pair of hands works both; the letters are aliases for a terminal that
+eats escape sequences (ssh through something odd, tmux misconfigured).
+
+    up / down     forward / reverse, one step of 0.1 m/s      (also w / s)
+    left / right  heading left / right, 10 deg                (also a / d)
+    /             stop -- zero velocity AND re-aim the heading command at
+                  where the bike actually points, which is what teleop's `/`
+                  does. Needs telemetry; without it, it zeroes velocity and
+                  holds the commanded heading                 (also space)
     9 / 4     self-righting servo: STEP the target one notch, 9 one way and 4
               the other, through three positions (one side / centre / the
               other). Latched, as teleop does it — no auto-deploy and no auto
@@ -49,10 +55,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import socket
 import sys
 import time
 from pathlib import Path
+
+from .telemetry import check_version
 
 V_STEP = 0.1                  # m/s per keypress
 PSI_STEP = math.radians(10.0)
@@ -106,18 +115,52 @@ class OperatorState:
         self.pos = 0                      # -1 / 0 / +1, as teleop's wing["pos"]
         self.rearm = False
         self.quit = False
+        # The bike's own heading, from telemetry. None until the first packet.
+        # `/` needs it to do what teleop's `/` does; without it that key
+        # degrades to "zero the velocity" rather than lying about the heading.
+        self.psi_actual = None
+
+    def sync(self, telemetry: dict) -> None:
+        """Adopt what only the BIKE knows. Pure -- takes the decoded dict.
+
+        Two things the station cannot work out for itself:
+
+          * the bike's heading, so `/` can re-aim rather than guess;
+          * the Goal Current already on the righting servo, written at startup
+            from `control.onboard.righting_current`. Without this the first
+            `[` or `]` steps from zero, so the operator's first nudge is a
+            300-count drop they did not ask for.
+
+        `righting_current` is adopted ONCE, and only while the operator has not
+        touched it -- after that the station's value is the intent and the
+        telemetry is an echo of it arriving a tick late.
+        """
+        if not telemetry:
+            return
+        psi = telemetry.get("psi")
+        if psi is not None:
+            self.psi_actual = float(psi)
+        if self.righting_current is None:
+            got = telemetry.get("righting_current")
+            if got is not None:
+                self.righting_current = int(got)
 
     def key(self, ch: str) -> None:
-        if ch == "w":
+        if ch in ("w", "UP"):
             self.v = min(self.v_max, self.v + V_STEP)
-        elif ch == "s":
+        elif ch in ("s", "DOWN"):
             self.v = max(-self.v_max, self.v - V_STEP)
-        elif ch == "a":
+        elif ch in ("a", "LEFT"):
             self.psi = _wrap(self.psi + PSI_STEP)
-        elif ch == "d":
+        elif ch in ("d", "RIGHT"):
             self.psi = _wrap(self.psi - PSI_STEP)
-        elif ch == " ":
+        elif ch in (" ", "/"):
             self.v = 0.0
+            # teleop's zero_command re-anchors the heading ON THE BIKE so a
+            # policy never inherits a stale setpoint. Same here, when telemetry
+            # has told us where the bike points.
+            if self.psi_actual is not None:
+                self.psi = _wrap(self.psi_actual)
         elif ch in "94" and self.travel is not None:
             self.pos = max(-1, min(1, self.pos + (1 if ch == "9" else -1)))
             self.righting = self.stow + self.pos * self.travel
@@ -153,6 +196,47 @@ class OperatorState:
         return out
 
 
+# xterm arrow keys, as they arrive in cbreak mode. Three bytes, and the third
+# is the only one that differs. `\x1bO` is the "application cursor" variant
+# some terminals send instead -- both are decoded, because which one you get
+# depends on the terminal's mode rather than on the keyboard.
+_ARROWS = {"A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT"}
+
+
+def decode_keys(buf: str):
+    """-> (keys, leftover). Splits a raw read into key names.
+
+    Returns the tail unconsumed when an escape sequence is still arriving, so
+    a three-byte arrow split across two reads is not seen as ESC + garbage.
+    That split is rare locally and common over ssh, which is exactly where the
+    station runs.
+
+    A bare ESC (no bracket behind it) is DROPPED rather than passed through.
+    It is what a terminal sends for a key this station has no use for, and
+    letting it fall into `key()` would make a stray function key look like a
+    command.
+    """
+    keys, i = [], 0
+    while i < len(buf):
+        ch = buf[i]
+        if ch != "\x1b":
+            keys.append(ch)
+            i += 1
+            continue
+        if i + 1 >= len(buf):
+            return keys, buf[i:]              # ESC alone: might be a prefix
+        if buf[i + 1] not in "[O":
+            i += 2                            # ESC + something else: drop both
+            continue
+        if i + 2 >= len(buf):
+            return keys, buf[i:]              # still arriving
+        name = _ARROWS.get(buf[i + 2])
+        if name:
+            keys.append(name)
+        i += 3
+    return keys, ""
+
+
 def _wrap(a: float) -> float:
     return (a + math.pi) % (2 * math.pi) - math.pi
 
@@ -177,11 +261,14 @@ def _status(op: OperatorState, telemetry: dict, age: float) -> str:
     if not t:
         return f"v {op.v:+.2f}  psi {math.degrees(op.psi):+6.1f}   no telemetry yet"
     stale = "  STALE" if age > 0.5 else ""
+    # `v_world`, not `v`: since schema v2 the key `v` is the SCHEMA VERSION.
+    # This line read `t.get("v", [0, 0])` and would have printed the integer 2
+    # as the velocity vector -- a rename that a .get() default swallows.
     return (f"v {op.v:+.2f} psi {math.degrees(op.psi):+6.1f} | "
             f"{t.get('state', '?'):7s} roll {math.degrees(t.get('roll', 0)):+6.1f} "
-            f"vel {t.get('v', [0, 0])} steer {t.get('steer', 0):+.3f} "
-            f"{t.get('volts', 0):.1f}V jit {t.get('jitter_ms', 0):.2f}ms "
-            f"cuts {t.get('cuts', 0)}{stale}")
+            f"vel {t.get('v_world', [0, 0])} steer {t.get('steer', 0):+.3f} "
+            f"{t.get('volts', 0):.1f}V qos {t.get('qos', '?')} "
+            f"jit {t.get('jitter_ms', 0):.2f}ms cuts {t.get('cuts', 0)}{stale}")
 
 
 def run(host: str, port: int = 9910, v_max: float = 1.2,
@@ -198,6 +285,8 @@ def run(host: str, port: int = 9910, v_max: float = 1.2,
     sock.setblocking(False)
     dest = (host, port)
     telemetry, t_tel = {}, 0.0
+    pending = ""
+    checked = False
 
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
@@ -209,11 +298,22 @@ def run(host: str, port: int = 9910, v_max: float = 1.2,
             timeout = max(0.0, next_tx - time.monotonic())
             ready, _, _ = select.select([fd, sock], [], [], timeout)
             if fd in ready:
-                op.key(sys.stdin.read(1))
+                # Read what is THERE, not one byte: an arrow key is three
+                # bytes and reading them one select() at a time would work
+                # only by luck. `pending` carries a sequence split across
+                # reads -- see decode_keys.
+                pending += os.read(fd, 64).decode("utf-8", "replace")
+                keys, pending = decode_keys(pending)
+                for k in keys:
+                    op.key(k)
             if sock in ready:
                 try:
                     telemetry = json.loads(sock.recv(4096).decode())
+                    if telemetry and not checked:
+                        check_version(telemetry)      # raises on a stale deploy
+                        checked = True
                     t_tel = time.monotonic()
+                    op.sync(telemetry)
                 except (OSError, ValueError):
                     pass
             now = time.monotonic()

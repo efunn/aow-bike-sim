@@ -73,7 +73,26 @@ def without_laptop_packages():
         yield
     finally:
         sys.meta_path.remove(blocker)
-        sys.modules.clear()
+        # DO NOT `sys.modules.clear()` HERE. `saved` is a snapshot from setup,
+        # so anything imported for the first time DURING the test -- numpy,
+        # reached through aow_sim.control.policy -- is absent from it, and
+        # clear+update evicts it permanently. The next test then re-imports
+        # numpy from scratch and its C extension refuses:
+        #
+        #   ImportError: cannot load module more than once per process
+        #
+        # Invisible on a laptop, where some earlier test file has always
+        # imported numpy before this fixture first runs, so numpy IS in
+        # `saved`. Measured 2026-09-16 on the Pi: `pytest tests/` gives 3
+        # failures, `pytest tests/test_hw_no_mujoco.py` alone gives 18 -- and
+        # running this file alone is exactly what you do to check the import
+        # boundary on the bike.
+        #
+        # So evict only the namespaces this fixture tore down, and leave every
+        # other module exactly as the test left it.
+        for name in list(sys.modules):
+            if name.split(".")[0] in LAPTOP_ONLY or name.startswith("aow_sim"):
+                del sys.modules[name]
         sys.modules.update(saved)
 
 

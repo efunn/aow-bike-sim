@@ -239,3 +239,234 @@ def test_every_field_the_station_sends_is_read_by_the_bike():
            + inspect.getsource(run_bike.BikeRunner._apply_operator))
     for field in op.packet():
         assert f'"{field}"' in src, f"the bike never reads {field!r}"
+
+
+# --- key parity with teleop, and the escape sequences that carry it ----------
+
+def test_arrows_and_slash_do_what_the_letters_do():
+    """The station and run_drive's viewer must not need different hands.
+
+    run_drive binds GLFW 265/264/263/262 (up/down/left/right) to throttle,
+    brake-reverse, turn left, turn right, and `/` to zero_command. The letters
+    stay as aliases for a terminal that swallows escape sequences.
+    """
+    from aow_sim.hw.ground import OperatorState
+    for arrow, letter in (("UP", "w"), ("DOWN", "s"),
+                          ("LEFT", "a"), ("RIGHT", "d")):
+        a, b = OperatorState(), OperatorState()
+        for _ in range(3):
+            a.key(arrow)
+            b.key(letter)
+        assert (a.v, a.psi) == (b.v, b.psi), f"{arrow} != {letter}"
+
+
+def test_slash_re_aims_the_heading_at_the_bike_like_teleop_does():
+    """run_drive's `/` is zero_command, which sets psi to the bike's ACTUAL
+    heading so a policy never inherits a stale setpoint. Space historically
+    only zeroed velocity here; both keys now do the teleop thing."""
+    from aow_sim.hw.ground import OperatorState
+    op = OperatorState()
+    op.key("a"), op.key("a"), op.key("w")     # heading away, some speed
+    assert op.v > 0 and op.psi != 0.0
+    op.sync({"psi": 1.25})
+    op.key("/")
+    assert op.v == 0.0
+    assert op.psi == pytest.approx(1.25)
+
+
+def test_slash_without_telemetry_holds_the_commanded_heading():
+    """No packet yet means the station does not KNOW where the bike points,
+    and inventing a heading is worse than keeping the operator's."""
+    from aow_sim.hw.ground import OperatorState
+    op = OperatorState()
+    op.key("a")
+    psi = op.psi
+    op.key("/")
+    assert op.v == 0.0 and op.psi == psi
+
+
+def test_the_righting_current_is_adopted_from_the_bike_once():
+    """`[`/`]` must step from what is ON the servo. The station cannot know
+    the startup value any other way, and stepping from zero would make the
+    operator's first nudge a 300-count drop."""
+    from aow_sim.hw.ground import OperatorState
+    op = OperatorState()
+    assert op.righting_current is None
+    op.sync({"righting_current": 300})
+    assert op.righting_current == 300
+    op.key("]")
+    assert op.righting_current == 320
+    op.sync({"righting_current": 300})        # a stale echo must not undo it
+    assert op.righting_current == 320
+
+
+def test_decode_keys_handles_split_and_bare_escapes():
+    """An arrow is three bytes and ssh splits reads wherever it likes."""
+    from aow_sim.hw.ground import decode_keys
+    assert decode_keys("\x1b[Aw\x1b[D/") == (["UP", "w", "LEFT", "/"], "")
+    assert decode_keys("\x1bOC") == (["RIGHT"], "")        # application cursor
+    # split across two reads: nothing is emitted until the sequence completes
+    keys, tail = decode_keys("ab\x1b[")
+    assert keys == ["a", "b"] and tail == "\x1b["
+    assert decode_keys(tail + "B") == (["DOWN"], "")
+    # a bare ESC is dropped, not passed through as a command
+    assert decode_keys("\x1b") == ([], "\x1b")
+    assert decode_keys("\x1bZ") == ([], "")
+
+
+def test_every_field_the_bike_sends_back_is_named_in_the_stations_sync():
+    """The mirror of test_every_field_the_station_sends_is_read_by_the_bike:
+    telemetry the station silently ignores is a control nobody has."""
+    from aow_sim.hw.ground import OperatorState
+    op = OperatorState()
+    op.sync({"psi": 0.4, "righting_current": 300})
+    assert op.psi_actual == pytest.approx(0.4)
+    assert op.righting_current == 300
+
+
+def test_the_steer_zero_is_pinned_and_is_not_on_the_wrap():
+    """180, not 0 or 360: straight ahead sits mid-range rather than on the
+    boundary of the servo's single-turn count."""
+    from aow_sim.params import load_params
+    cfg = load_params()["control"]["onboard"]
+    assert cfg["steer_zero_deg"] == 180.0
+    assert cfg["steer_zero_deg"] % 360 != 0
+
+
+# --- the mirror station drives the same command model ------------------------
+
+def test_the_viewer_and_the_terminal_share_one_command_model():
+    """`--mirror` claims the two stations are the same UI. That is only true
+    if every GLFW code it binds lands on an action `OperatorState` implements
+    -- a code mapping to a name nothing handles is a key that silently does
+    nothing, which is the worst kind of control."""
+    from aow_sim.run_drive import MIRROR_KEYS
+    from aow_sim.hw.ground import OperatorState
+    handled = {"UP", "DOWN", "LEFT", "RIGHT", "/", " ", "9", "4", "[", "]",
+               "r", "q"}
+    assert set(MIRROR_KEYS.values()) <= handled, (
+        f"unhandled: {set(MIRROR_KEYS.values()) - handled}")
+    # and every one of them actually moves the state
+    for name in set(MIRROR_KEYS.values()):
+        op = OperatorState(travel_rad=1.0)
+        before = (op.v, op.psi, op.pos, op.righting_current, op.rearm, op.quit)
+        op.key(name)
+        after = (op.v, op.psi, op.pos, op.righting_current, op.rearm, op.quit)
+        if name not in (" ", "/"):        # stop from a standstill is a no-op
+            assert before != after, f"{name!r} changed nothing"
+
+
+def test_the_arrows_are_bound_to_teleops_own_glfw_codes():
+    """265/264/263/262 are what run_drive's teleop binds. If these drift, the
+    two UIs stop being one UI and the whole reason for --mirror goes away."""
+    from aow_sim.run_drive import MIRROR_KEYS
+    assert MIRROR_KEYS[265] == "UP" and MIRROR_KEYS[264] == "DOWN"
+    assert MIRROR_KEYS[263] == "LEFT" and MIRROR_KEYS[262] == "RIGHT"
+
+
+def test_glfw_reports_letters_uppercase():
+    """A binding on ord("w") would never fire: GLFW key codes are the
+    UNSHIFTED physical key, which for letters is the uppercase code point.
+    Pinned because it is invisible until someone presses the key."""
+    from aow_sim.run_drive import MIRROR_KEYS
+    for ch in "WASDRQ":
+        assert ord(ch) in MIRROR_KEYS
+        assert ord(ch.lower()) not in MIRROR_KEYS
+
+
+# --- preflight: a standing condition is not a fault --------------------------
+
+def test_an_accepted_mount_does_not_disarm_the_other_checks():
+    """The bug this prevents: the AHRS mount is `GUESS` until the bike can be
+    jigged level, so preflight blocked EVERY run and the only way past was
+    `--no-preflight` -- which also turns off the |accel|, |gyro| and QoS
+    checks. A gate that fires every time trains you to disable the gates that
+    catch things."""
+    from aow_sim.hw.run_bike import MOUNT_UNCALIBRATED, _report_preflight
+    allow = (MOUNT_UNCALIBRATED,)
+    # the standing condition alone: accepted, no raise
+    _report_preflight([(MOUNT_UNCALIBRATED, "mount is GUESS")], True, allow)
+    # a real fault alongside it: still raises, and the mount is not counted
+    with pytest.raises(RuntimeError) as e:
+        _report_preflight([(MOUNT_UNCALIBRATED, "mount is GUESS"),
+                           (None, "gyro running away")], True, allow)
+    assert "1 preflight problem" in str(e.value)
+
+
+def test_the_mount_blocks_when_it_is_not_accepted():
+    """It still blocks by default -- an uncalibrated mount on the assembled
+    bike is a permanent roll bias, and that is worth stopping for."""
+    from aow_sim.hw.run_bike import MOUNT_UNCALIBRATED, _report_preflight
+    with pytest.raises(RuntimeError, match="--allow-guess-mount"):
+        _report_preflight([(MOUNT_UNCALIBRATED, "mount is GUESS")], True)
+
+
+def test_the_error_names_the_narrow_flag_only_when_it_would_work():
+    """Suggesting --allow-guess-mount when a gyro fault is also present would
+    send the operator to a flag that does not clear the block."""
+    from aow_sim.hw.run_bike import MOUNT_UNCALIBRATED, _report_preflight
+    with pytest.raises(RuntimeError, match="no-preflight"):
+        _report_preflight([(MOUNT_UNCALIBRATED, "m"), (None, "gyro")], True)
+
+
+def test_non_strict_preflight_reports_without_raising():
+    from aow_sim.hw.run_bike import _report_preflight
+    got = _report_preflight([(None, "gyro running away")], False)
+    assert got == ["gyro running away"]
+
+
+# --- the ports live in config, not in muscle memory --------------------------
+
+def test_port_precedence_is_flag_then_config_then_generic():
+    """Typing two by-id paths on every run is how `--no-preflight` got into
+    the habit as well. The flag still wins for a swapped cable."""
+    import argparse
+
+    from aow_sim.hw.run_bike import _resolve_ports
+    from aow_sim.params import load_params
+    cfg = load_params()
+    none = argparse.Namespace(port=None, ahrs_port=None)
+    dxl, ahrs = _resolve_ports(none, cfg)
+    assert dxl == cfg["control"]["onboard"]["dxl_port"]
+    assert ahrs == cfg["control"]["onboard"]["ahrs_port"]
+    over = argparse.Namespace(port="/dev/ttyUSB9", ahrs_port=None)
+    assert _resolve_ports(over, cfg)[0] == "/dev/ttyUSB9"
+    assert _resolve_ports(none, {}) == ("/dev/ttyUSB0", "/dev/serial0")
+
+
+def test_the_configured_ports_are_by_id_not_enumeration_order():
+    """`ttyUSB0`/`ttyACM0` are assigned in enumeration order and would swap the
+    moment a second FTDI device appeared -- which on this bike means the AHRS
+    reader opening the servo bus."""
+    from aow_sim.params import load_params
+    cfg = load_params()["control"]["onboard"]
+    for key in ("dxl_port", "ahrs_port"):
+        assert cfg[key].startswith("/dev/serial/by-id/"), key
+
+
+# --- the heading lead clamp --------------------------------------------------
+
+def test_the_lead_clamp_only_blocks_the_direction_that_grows_the_lead():
+    """The mirror's first version blocked BOTH directions once the command
+    left the +-35 deg band, so the heading froze with no way back. Worse, the
+    band can be left with no key pressed at all -- the BIKE moves -- so it
+    presented as "the heading command does nothing" with nothing on screen
+    pointing at the clamp."""
+    from aow_sim.run_drive import _LEAD_MAX, lead_blocks
+    over = _LEAD_MAX + 0.2
+    assert lead_blocks(+0.01, over, True), "growing the lead must be blocked"
+    assert not lead_blocks(-0.01, over, True), "REDUCING it must be allowed"
+    assert lead_blocks(-0.01, -over, True)
+    assert not lead_blocks(+0.01, -over, True)
+    # inside the band both directions are free
+    assert not lead_blocks(+0.01, 0.0, True)
+    assert not lead_blocks(-0.01, 0.0, True)
+
+
+def test_a_snap_disarms_the_clamp():
+    """6/7/8 command 90/-90/180, which IS a lead by construction. With the
+    clamp armed the gate would kill continuous turning one way while allowing
+    the other, which reads as "steering broke after a snap"."""
+    from aow_sim.run_drive import _LEAD_MAX, lead_blocks
+    assert not lead_blocks(+0.01, _LEAD_MAX + 1.0, False)
+    assert not lead_blocks(-0.01, -_LEAD_MAX - 1.0, False)
