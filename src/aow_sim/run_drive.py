@@ -339,6 +339,12 @@ def main() -> None:
     ap.add_argument("--params", default=None)
     ap.add_argument("--view", action="store_true")
     ap.add_argument("--teleop", action="store_true")
+    ap.add_argument("--mirror", metavar="HOST", default=None,
+                    help="drive the REAL bike at HOST and mirror it in the "
+                         "viewer: same keys as --teleop, same UDP protocol as "
+                         "hw/ground.py, no physics. Nothing is simulated -- "
+                         "every pose comes from telemetry. Needs mjpython.")
+    ap.add_argument("--mirror-port", type=int, default=9910)
     ap.add_argument("--record", nargs="?", const="auto", default=None,
                     metavar="PATH",
                     help="log the teleop session to traces/teleop/<stamp>.npz "
@@ -554,6 +560,13 @@ def main() -> None:
     tune_lighting(model)
     eq = settle_upright(model)
 
+    if args.mirror:
+        # `v_max` is assigned further down for the scripted scenarios; read it
+        # here rather than moving that line, which several of them anchor on.
+        _mirror(model, params, eq.qpos, args.mirror, port=args.mirror_port,
+                v_max=params["control"]["drive"]["v_max"], show_ui=args.ui,
+                travel_deg=getattr(args, "travel_deg", None))
+        return
     if args.teleop:
         _teleop(model, params, eq.qpos, hockey=args.hockey,
                 general=args.general, show_ui=args.ui,
@@ -1240,6 +1253,47 @@ _TURN_RATE = 1.2               # rad/s continuous slew while held
 # it keeps spinning long after you let go. Snaps deliberately bypass it.
 _LEAD_MAX = np.deg2rad(35.0)
 
+# GLFW keycode -> the key name `hw.ground.OperatorState` understands. Module
+# level so a test can walk it: the claim being made is that the viewer and the
+# terminal station drive ONE command model, and that is only true if every code
+# here lands on an action `OperatorState.key` implements.
+#
+# The arrows and `/` are the primary binding, matching teleop. The letters are
+# the terminal's fallback (an escape sequence has more ways to go missing over
+# ssh than a letter does) and are accepted here too, so muscle memory carries
+# in both directions. GLFW reports LETTERS UPPERCASE regardless of shift.
+#
+# DIGITS 0-5 ARE NOT FREE. MuJoCo's viewer binds them to geom-group
+# visibility, and group 0 holds almost every geom -- pressing `0` blanks the
+# window. The binding table quoted above does not list them because it is the
+# SIMULATION table, and those bindings are inert under launch_passive since
+# our loop owns the stepping; a group toggle is view state and stays live.
+# Measured on the real viewer: letters work, `0` hides everything.
+def lead_blocks(delta: float, lead: float, armed: bool,
+                limit: float = _LEAD_MAX) -> bool:
+    """Should the lead clamp refuse this heading nudge?
+
+    ONLY THE DIRECTION THAT GROWS THE LEAD. Module level and pure because the
+    mirror's first version got this wrong in a way that is invisible reading
+    it: it blocked BOTH directions once outside the band, so the heading
+    command froze with no way back -- and the band can be left with no key
+    pressed at all, because the BIKE moves. The symptom was "the heading
+    command does nothing", a long way from the line responsible.
+
+    `armed` is False after a snap, which is meant to lead until the bike
+    catches up.
+    """
+    if not armed:
+        return False
+    return (delta > 0 and lead >= limit) or (delta < 0 and lead <= -limit)
+
+
+MIRROR_KEYS = {265: "UP", 264: "DOWN", 263: "LEFT", 262: "RIGHT",
+               ord("W"): "UP", ord("S"): "DOWN", ord("A"): "LEFT",
+               ord("D"): "RIGHT", ord("/"): "/", ord(" "): " ",
+               ord("9"): "9", ord("4"): "4", ord("["): "[", ord("]"): "]",
+               ord("R"): "r", ord("Q"): "q"}
+
 
 # macOS virtual keycodes for the arrows (Carbon kVK_* constants).
 # macOS virtual keycodes for the keys hold-detection tracks. These are
@@ -1613,6 +1667,371 @@ def _rec_write(rec, path, params, gen_name, mode):
           f"{dur:.1f} s)")
     print(f"  review it:  python analysis/teleop_review.py {path}")
     return path
+
+
+def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
+            v_max: float = 1.2, show_ui: bool = False, travel_deg=None) -> None:
+    """Drive the REAL bike, and watch a MuJoCo bike mirror it.
+
+    Not a simulation. Nothing is stepped: each frame writes the latest
+    telemetry into `data`, calls `mj_forward` for kinematics, and renders. The
+    command goes out over the same UDP protocol `hw/ground.py` speaks, so the
+    bike cannot tell the two stations apart -- which is the point of
+    `OperatorState` living in `hw/ground.py` and being imported here rather
+    than reimplemented.
+
+    WHAT THIS BUYS OVER THE TERMINAL STATION, in order of how much it matters:
+
+      1. `_overlay`'s ground dial -- commanded heading against actual, and
+         commanded velocity against actual, which is the question a terminal
+         line of numbers cannot answer at a glance.
+      2. HOLD-TO-DRIVE, with the same `_KeyState`/`_Axis` machinery and the
+         same ramp constants teleop uses. A terminal physically cannot know a
+         key is held; it only ever sees auto-repeat events, so the station
+         steps 0.1 m/s per repeat and reaches v_max in under half a second.
+      3. One key map for both. The arrows and `/` are teleop's, and this is
+         literally teleop's handler.
+
+    WHAT IT IS NOT: a shadow controller. There is no local policy running
+    alongside the bike's, so nothing here predicts or second-guesses what the
+    bike does -- the dial shows the command the BIKE says it received, not the
+    one this process last sent, and those differ exactly when a packet was
+    dropped.
+
+    See `hw/telemetry.py` for which parts of the rendered pose are measured and
+    which are drawn. The short version: attitude, steer and wheel spin are
+    real; ride height, the front wheel and world position are not.
+    """
+    import json
+    import socket
+
+    from .hw import telemetry as T
+    from .hw.ground import STOW_RAD, OperatorState, linkage_travel_deg
+    from .interactive import mirror_loop
+
+    data = mujoco.MjData(model)
+    data.qpos[:] = eq_qpos                  # a settled pose to start from
+    mujoco.mj_forward(model, data)
+    adr = T.PoseAdr(model)
+    rest_z = float(eq_qpos[2])              # NOT sent by the bike; see telemetry
+
+    travel = None if travel_deg is None else np.deg2rad(float(travel_deg))
+    if travel is None:
+        got = linkage_travel_deg()
+        travel = None if got is None else np.deg2rad(got)
+    op = OperatorState(v_max=v_max, stow_rad=STOW_RAD, travel_rad=travel)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setblocking(False)
+    dest = (host, port)
+
+    tel: dict = {}
+    box = {"t_tel": 0.0, "shaft": (0.0, 0.0), "t_tx": 0.0, "t_frame": 0.0,
+           "checked": False, "seen": 0, "said": False}
+    # WHERE THE RENDER CALLS (0, 0). `pos` in the packet is the bike's own
+    # dead-reckoned position and drifts without bound, which is worth WATCHING
+    # -- the drift IS the odometry error, made visible -- right up until the
+    # bike has wandered out of frame. `0` re-centres once; `p` pins it there
+    # every frame.
+    origin = [0.0, 0.0]
+    pinned = [False]
+    m_ref = [model]
+
+    floor_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
+    floor_was = (int(model.geom_matid[floor_id]),
+                 model.geom_rgba[floor_id].copy()) if floor_id >= 0 else None
+
+    def set_floor_plain(m, plain: bool) -> None:
+        """Drop the floor's CHECKERBOARD in pinned mode, not just the overlay
+        grid.
+
+        Two different grids sit on that floor and only one of them was being
+        hidden: `_overlay`'s faint drawn grid, and the plane's own checker
+        TEXTURE, which comes from its material. Hiding the fainter one and
+        leaving the loud one made `p` look like it barely did anything.
+
+        The texture is the whole point in free mode -- it is what makes the
+        drift legible as motion. Pinned, it is a moving reference under a
+        bike that cannot move, which is actively misleading, so the floor goes
+        flat rather than invisible: a bike over nothing reads as floating.
+        """
+        if floor_was is None:
+            return
+        m.geom_matid[floor_id] = -1 if plain else floor_was[0]
+        m.geom_rgba[floor_id] = ([0.32, 0.34, 0.36, 1.0] if plain
+                                 else floor_was[1])
+    keys = _KeyState()
+    ax_v, ax_psi, ax_lat = _Axis(), _Axis(), _Axis()
+    v_lat = [0.0]
+    announced = [False]
+    lead_armed = [True]
+
+    def lead_now():
+        """Signed lead of the commanded heading over the BIKE's, +-180.
+
+        The mirror can compute this for real, which the terminal station never
+        could: `psi` is measured on the bike and arrives in every packet.
+        Falls back to zero lead before the first packet, which leaves the clamp
+        inert rather than blocking a command against a heading we do not know.
+        """
+        actual = tel.get("psi")
+        if actual is None:
+            return 0.0
+        d = op.psi - float(actual)
+        return float(np.arctan2(np.sin(d), np.cos(d)))
+
+    def turn(delta, clamp=True):
+        """Teleop's `turn`, verbatim in behaviour -- see its docstring there.
+
+        THE PART THAT WAS WRONG HERE FIRST TIME: the clamp must only block the
+        direction that GROWS the lead. Blocking both freezes the heading
+        command as soon as it leaves the band, with no way back, which is
+        exactly the "heading command does nothing" symptom -- and it can leave
+        the band without any key being pressed at all, because the BIKE moves.
+        A snap disarms the clamp until the bike catches up, since a commanded
+        90/180 is meant to lead.
+        """
+        if clamp and lead_blocks(delta, lead_now(), lead_armed[0]):
+            return
+        if not clamp:
+            lead_armed[0] = False
+        op.psi = _wrap(op.psi + delta)
+
+    def on_key(k):
+        now = time.perf_counter()
+        if k in (265, 264):
+            ax_v.press(now, 1 if k == 265 else -1)
+        elif k in (263, 262):
+            ax_psi.press(now, 1 if k == 263 else -1)
+        elif k in (ord("1"), ord("3")):
+            ax_lat.press(now, 1 if k == ord("1") else -1)
+        elif k == ord("O"):
+            # `o` for origin, NOT `0`. THE DIGITS ARE NOT FREE: MuJoCo's viewer
+            # binds 0-5 to geom-group visibility, and group 0 is where almost
+            # every geom lives -- so `0` blanked the window. The binding table
+            # quoted further up does not list them, which is why this looked
+            # safe; it lists the SIMULATION bindings, and a group toggle is
+            # view state, so it stays live under launch_passive. Letters do
+            # work (verified on the real viewer), digits 0-5 do not.
+            got = tel.get("pos")
+            if got:
+                origin[0], origin[1] = float(got[0]), float(got[1])
+            return
+        elif k == ord("P"):
+            pinned[0] = not pinned[0]
+            set_floor_plain(m_ref[0], pinned[0])
+            print("position: " + ("PINNED at the origin — the odometry drift "
+                                  "is no longer visible"
+                                  if pinned[0] else
+                                  "free — the bike walks by its own odometry, "
+                                  "drift included"))
+            return
+        elif k in _KEYS_SLOWER or k in _KEYS_FASTER:
+            # Reuse teleop's zoom keys rather than inventing a pair: `-`/`_`
+            # out, `=`/`+` in. The viewer owns the scroll wheel and [ ] cycle
+            # its cameras, so these are what is left.
+            cam_dist[0] = float(np.clip(
+                cam_dist[0] * (1.25 if k in _KEYS_SLOWER else 0.8), 0.25, 6.0))
+            return
+        elif k in (ord("6"), ord("7"), ord("8")):
+            # Heading snaps, teleop's own bindings: +90 / -90 / 180. They pass
+            # clamp=False because a snap is MEANT to lead -- that is the whole
+            # gesture -- and `turn` disarms the lead clamp until the bike has
+            # caught up.
+            turn({ord("6"): np.pi / 2, ord("7"): -np.pi / 2,
+                  ord("8"): np.pi}[k], clamp=False)
+            return
+        name = MIRROR_KEYS.get(k)
+        if name in ("UP", "DOWN", "LEFT", "RIGHT"):
+            return          # the ramps own these; a discrete step is applied below
+        if name is not None:
+            op.key(name)
+            if name in (" ", "/"):
+                v_lat[0] = 0.0
+                ax_v.clear()
+                ax_lat.clear()
+
+    def drain():
+        """Take the NEWEST telemetry waiting and throw the rest away.
+
+        A mirror that worked through a backlog would render the past. Same
+        argument as `ahrs.parse_frame` returning the newest frame in the
+        buffer rather than the oldest.
+        """
+        nonlocal tel
+        got = None
+        while True:
+            try:
+                got = sock.recv(65535)
+            except BlockingIOError:
+                break
+            except OSError:
+                break
+        if got is None:
+            return
+        try:
+            new = json.loads(got.decode())
+        except ValueError:
+            return
+        if not new:
+            return                          # the bike is up, the loop is not
+        if not box["checked"]:
+            T.check_version(new)            # raises on a stale deploy
+            box["checked"] = True
+        tel = new
+        op.sync(tel)
+        box["t_tel"] = time.perf_counter()
+        box["seen"] += 1
+        if not box["said"]:
+            box["said"] = True
+            print(f"telemetry up: schema v{tel.get('v')}, "
+                  f"state {tel.get('state')}, qos {tel.get('qos')}")
+
+    def ramps(dt):
+        """teleop's `apply`, on a WALL clock and without a local controller.
+
+        The constants are teleop's own -- imported by being in this module --
+        so "the same as the simulator" is true by construction rather than by
+        two lists agreeing.
+        """
+        now = time.perf_counter()
+        keys.poll(now)
+        if keys.confirmed and not announced[0]:
+            announced[0] = True
+            print(f"hold-to-drive active (via {keys.source})")
+        if keys.available and keys.confirmed:
+            ramp_v = ax_v.physical_hold(keys.down("up"), keys.down("down"))
+            ramp_psi = ax_psi.physical_hold(keys.down("left"), keys.down("right"))
+            ramp_lat = ax_lat.physical_hold(keys.down("crab_left"),
+                                            keys.down("crab_right"))
+            coasting, coasting_lat = ramp_v == 0, ramp_lat == 0
+        else:
+            ramp_v = ax_v.dir if ax_v.ramping(now) else 0
+            ramp_psi = ax_psi.dir if ax_psi.ramping(now) else 0
+            ramp_lat = ax_lat.dir if ax_lat.ramping(now) else 0
+            coasting = ramp_v == 0 and ax_v.released(now)
+            coasting_lat = ramp_lat == 0 and ax_lat.released(now)
+
+        if ramp_v:
+            v = op.v
+            v += (ramp_v * (_BRAKE if v * ramp_v < -1e-9
+                            else (_ACCEL if ramp_v > 0 else _ACCEL_REV))) * dt
+            op.v = float(np.clip(v, -v_max, v_max))
+        elif coasting:
+            op.v = float(op.v - np.sign(op.v) * min(abs(op.v), _DECAY * dt))
+
+        lat_max = 0.4 * v_max
+        if ramp_lat:
+            rate = _BRAKE if v_lat[0] * ramp_lat < -1e-9 else _ACCEL
+            v_lat[0] = float(np.clip(v_lat[0] + ramp_lat * rate * dt,
+                                     -lat_max, lat_max))
+        elif coasting_lat:
+            v_lat[0] = float(v_lat[0] - np.sign(v_lat[0])
+                             * min(abs(v_lat[0]), _DECAY * dt))
+
+        # Re-arm the clamp once the bike has caught up, exactly as teleop's
+        # `apply` does -- so a snap's deliberate lead stops being special the
+        # moment it is no longer a lead.
+        if not lead_armed[0] and abs(lead_now()) <= _LEAD_MAX:
+            lead_armed[0] = True
+        if ramp_psi:
+            turn(ramp_psi * _TURN_RATE * dt)
+
+    def frame(m, d):
+        wall = time.perf_counter()
+        dt = min(0.1, wall - box["t_frame"]) if box["t_frame"] else 1 / 60.0
+        box["t_frame"] = wall
+        drain()
+        if tel:
+            box["shaft"] = T.apply_pose(m, d, tel, adr, params,
+                                        shaft_angle=box["shaft"], rest_z=rest_z,
+                                        dt=dt)
+            # AFTER apply_pose and before mj_forward. Only x/y move, so the
+            # wheel grounding it just did is untouched.
+            got = tel.get("pos")
+            if got:
+                if pinned[0]:
+                    origin[0], origin[1] = float(got[0]), float(got[1])
+                d.qpos[0] = float(got[0]) - origin[0]
+                d.qpos[1] = float(got[1]) - origin[1]
+        mujoco.mj_forward(m, d)
+        apply_camera()
+        ramps(dt)
+        if wall - box["t_tx"] >= 1.0 / 50.0:
+            box["t_tx"] = wall
+            pkt = op.packet()
+            # The velocity command is a world-frame VECTOR, so a crab is just a
+            # course off the commanded heading -- the same resolution
+            # `set_command_polar` does in the simulator.
+            speed, course = float(np.hypot(op.v, v_lat[0])), float(
+                np.arctan2(v_lat[0], op.v))
+            th = op.psi + course
+            pkt["v_cmd_world"] = [speed * np.cos(th), speed * np.sin(th)]
+            try:
+                sock.sendto(json.dumps(pkt).encode(), dest)
+            except OSError:
+                pass
+        if op.quit:
+            raise SystemExit("q — station stopped; the bike torques off in ~1 s")
+
+    def draw(scn, m, d):
+        cmd = (float(tel.get("cmd_psi", 0.0)),
+               np.asarray(tel.get("cmd_v_world", (0.0, 0.0)), float))
+        # `on` is a one-element list in teleop so a key can toggle it; the
+        # mirror has no reason to hide the dial, which is the whole point.
+        # The floor grid is a WORLD reference, and in pinned mode there is no
+        # world motion left for it to reference -- it would sit still under a
+        # bike that is also sitting still and read as though nothing worked.
+        _overlay(scn, m, d, None, [True], v_max, grid=not pinned[0], command=cmd)
+
+    intro = (f"\n  MIRRORING {host}:{port} — this is the real bike, not a "
+             "simulation. Nothing here\n  is stepped: every pose comes off "
+             "the wire, and what the bike does not\n  know (ride height, the "
+             "front wheel, world position) is DRAWN.\n"
+             "  arrows drive (hold to ramp) · 1/3 crab · / stop and re-aim\n"
+             "  6/7/8 snap heading +90/-90/180 · -/= zoom out/in\n"
+             "  o re-centre · p pin at centre (and flatten the floor)\n"
+             "  9/4 righting servo · [ ] its current · r re-arm · q quit\n"
+             "  green tick = commanded heading · cyan = actual")
+    started = [False]
+    view = [None]
+    chassis_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "chassis")
+    cam_dist = [0.9]
+
+    def on_start(v):
+        started[0] = True
+        view[0] = v
+        # TRACKING, and closer than teleop's 1.6. The mirror's bike barely
+        # travels -- and what travel it has is `pos`, dead-reckoned from
+        # odometry, which drifts -- so a world-fixed camera would either be
+        # zoomed out to nothing or lose the bike entirely. Tracking makes the
+        # tight framing safe either way, and 0.9 m fills the window with the
+        # thing being watched. `-` / `=` zoom, since the mouse wheel belongs to
+        # the viewer.
+        with v.lock():
+            v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+            v.cam.trackbodyid = chassis_id
+            v.cam.azimuth, v.cam.elevation = 135.0, -20.0
+            v.cam.distance = cam_dist[0]
+
+    def apply_camera():
+        v = view[0]
+        if v is None:
+            return
+        with v.lock():
+            if abs(v.cam.distance - cam_dist[0]) > 1e-6:
+                v.cam.distance = cam_dist[0]
+
+    try:
+        mirror_loop(model, data, frame, on_key, intro, "aow_sim.run_drive",
+                    draw=draw, show_ui=show_ui, on_start=on_start)
+    finally:
+        sock.close()
+        # Only when the viewer actually came up. Printing "mirror stopped" after
+        # launch_passive refused (the mjpython hint) reads as though it ran and
+        # buries the one line that says what to do.
+        if started[0]:
+            print(f"\nmirror stopped after {box['seen']} telemetry packets")
 
 
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
@@ -2167,11 +2586,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         clamp re-arms in `apply` the moment the lead falls back inside the
         band, so its anti-windup job resumes as soon as it can be done
         without fighting a deliberate command."""
-        if clamp and lead_armed[0]:
-            lead = lead_now()
-            if (delta > 0 and lead >= _LEAD_MAX) or \
-               (delta < 0 and lead <= -_LEAD_MAX):
-                return
+        if clamp and lead_blocks(delta, lead_now(), lead_armed[0]):
+            return
         if not clamp:
             lead_armed[0] = False        # a snap is meant to lead; let it
         state["psi"] += delta

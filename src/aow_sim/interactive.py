@@ -108,3 +108,56 @@ def teleop_loop(model, data, step, on_key, intro: str, module: str,
                 time.sleep(lag)
             else:
                 t_wall = time.perf_counter()
+
+
+def mirror_loop(model, data, frame, on_key, intro: str, module: str,
+                draw=None, show_ui: bool = False, on_start=None,
+                fps: float = 60.0) -> None:
+    """Like `teleop_loop`, but the STATE COMES FROM OUTSIDE and there is no
+    physics. `frame(model, data)` is called once per rendered frame and is
+    expected to write `qpos`/`qvel` and call `mj_forward` itself.
+
+    A separate function rather than a flag on `teleop_loop`, deliberately. The
+    two differ in the one line that matters -- `mj_step` -- and everything
+    around it (slow motion, pause, `pre_step`, steps-per-frame) is meaningless
+    when the trajectory is somebody else's. Threading a `mirror=True` through
+    would put four dead branches inside the loop that drives the simulator,
+    which is the loop least worth making conditional.
+
+    PACED ON THE WALL CLOCK, not on `data.time`: the bike's clock is the bike's
+    and arrives in the packets. Frames are rendered at `fps` whatever the
+    telemetry rate, so a dropped packet redraws the last pose rather than
+    freezing the window, and a link running faster than the display simply
+    loses intermediate frames -- which for a mirror is correct. `frame` should
+    therefore be cheap and non-blocking; if it waits on a socket, the viewer
+    stops.
+    """
+    print(intro)
+    print("  F5 fullscreen"
+          + ("" if show_ui else " · --ui brings the side panels back"))
+    try:
+        viewer = mujoco.viewer.launch_passive(model, data, key_callback=on_key,
+                                              show_left_ui=show_ui,
+                                              show_right_ui=show_ui)
+    except RuntimeError as e:
+        raise SystemExit(
+            f"could not start the interactive viewer ({e}).\n"
+            "On macOS the passive viewer must run under mjpython:\n"
+            f"    mjpython -m {module} --mirror <host>"
+        ) from e
+    with viewer as v:
+        if on_start is not None:
+            on_start(v)
+        period = 1.0 / max(1.0, fps)
+        t_wall = time.perf_counter()
+        while v.is_running():
+            frame(model, data)
+            if draw is not None:
+                draw(v.user_scn, model, data)
+            v.sync()
+            t_wall += period
+            lag = t_wall - time.perf_counter()
+            if lag > 0:
+                time.sleep(lag)
+            else:
+                t_wall = time.perf_counter()
