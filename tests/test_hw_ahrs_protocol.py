@@ -22,7 +22,7 @@ pytestmark = pytest.mark.pure
 
 def make_combo_payload(quat=(1.0, 0.0, 0.0, 0.0), gyro=(0.0, 0.0, 0.0),
                        accel=(0.0, 0.0, 1.0), cmd=EP_CMD_COMBO,
-                       timestamp=123456, break_checksum=False):
+                       timestamp=123456, break_checksum=False, qos=4):
     """Build an Ep_Combo payload field-by-field, per EasyObjectDictionary.h.
 
     quat is (w,x,y,z) unit, gyro rad/s, accel in g.
@@ -32,7 +32,7 @@ def make_combo_payload(quat=(1.0, 0.0, 0.0, 0.0), gyro=(0.0, 0.0, 0.0),
     header = (cmd & 0x7F) | (0 << 7) | (3 << 10) | (2 << 21)
     struct.pack_into("<I", b, 0, header)
     struct.pack_into("<I", b, 4, timestamp)
-    struct.pack_into("<H", b, 8, 4)                      # sysState: QoS 4
+    struct.pack_into("<H", b, 8, qos)                    # sysState: QoS in bits 0-2
     struct.pack_into("<hhH", b, 10, 0, 0, 0)             # roll, pitch, yaw
     for k, q in enumerate(quat):                         # q1..q4 @ 16, 1e-7
         struct.pack_into("<i", b, 16 + 4 * k, int(round(q / 1e-7)))
@@ -80,7 +80,7 @@ def test_decodes_values_with_correct_scaling():
     accel_g = (0.0, 0.0, 1.0)
     got = parse_combo(make_combo_payload(quat=q, gyro=gyro, accel=accel_g))
     assert got is not None
-    quat, w, a = got
+    quat, w, a, qos = got
     assert np.allclose(quat, q, atol=1e-6)
     assert np.allclose(w, gyro, atol=1e-5), "gyro is 1e-5 rad/s per LSB"
     # accel arrives in g and must leave in m/s^2
@@ -92,10 +92,22 @@ def test_negative_values_survive_signedness():
     q = np.array([0.5, -0.5, 0.5, -0.5])
     got = parse_combo(make_combo_payload(quat=q, gyro=(-1.5, -0.001, 2.0),
                                          accel=(-1.0, 0.5, -0.25)))
-    quat, w, a = got
+    quat, w, a, _qos = got
     assert np.allclose(quat, q, atol=1e-6)
     assert np.allclose(w, (-1.5, -0.001, 2.0), atol=1e-5)
     assert np.allclose(a, np.array((-1.0, 0.5, -0.25)) * G_TO_MS2, atol=1e-4)
+
+
+def test_qos_is_the_low_three_bits_of_sysstate():
+    """The sensor's own service grade, and the reason nothing has to subscribe
+    to Ep_Status(22) to get it."""
+    for qos in range(8):
+        got = parse_combo(make_combo_payload(qos=qos))
+        assert got is not None
+        assert got[3] == qos
+    # Only the low three bits are QoS; the other thirteen are "unused" and
+    # must not leak into the grade if a future firmware starts setting them.
+    assert parse_combo(make_combo_payload(qos=(0xFFF8 | 4)))[3] == 4
 
 
 def test_payload_checksum_is_enforced():

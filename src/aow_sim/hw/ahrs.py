@@ -119,14 +119,42 @@ class MountCalibration:
         return quat_to_mat(quat_conj(self.q_mount)) @ np.asarray(v_sensor, dtype=float)
 
 
-class AhrsSample:
-    __slots__ = ("quat", "gyro", "accel", "t")
+# Ep_Status_SysState.qos -- the sensor grading its own fusion, from
+# EasyObjectDictionary.h. Rising is better, and the two useful facts are that
+# 0 and 1 mean it is NOT MEASURING, and that 4 is what a healthy unit settles
+# at about 30 s after boot once DynamicGyroCalib has run.
+QOS_BOOTING_OR_ASLEEP = 0
+QOS_SYSTEM_FAULT = 1
+QOS_LIMITED = 2           # "some functions unavailable / very limited accuracy"
+QOS_BASIC = 3             # all functions, basic performance (after static boot)
+QOS_FINE = 4              # all functions, fine performance (gyro calib landed)
+QOS_VERY_GOOD = 5
+QOS_EXTENDED = 7          # "use extended QoS definition" -- not decoded here
+QOS_UNKNOWN = -1          # no frame yet, or a path that does not carry it
 
-    def __init__(self, quat, gyro, accel, t):
+# What preflight insists on. 3 rather than 4: BASIC is the grade a unit holds
+# in the first ~30 seconds after power-on, which is exactly when the bike is
+# being armed, and refusing it would make the startup a coin flip against a
+# calibration timer. 2 is excluded because the vendor's own words for it are
+# "very limited measurement accuracy", which is not a thing to balance on.
+QOS_MIN_SERVICE = QOS_BASIC
+
+QOS_NAMES = {QOS_BOOTING_OR_ASLEEP: "booting or asleep", QOS_SYSTEM_FAULT: "system fault",
+             QOS_LIMITED: "limited service", QOS_BASIC: "basic service",
+             QOS_FINE: "fine service", QOS_VERY_GOOD: "very good service",
+             6: "reserved", QOS_EXTENDED: "extended-QoS encoding",
+             QOS_UNKNOWN: "unknown"}
+
+
+class AhrsSample:
+    __slots__ = ("quat", "gyro", "accel", "t", "qos")
+
+    def __init__(self, quat, gyro, accel, t, qos=QOS_UNKNOWN):
         self.quat = quat      # (w,x,y,z), chassis frame
         self.gyro = gyro      # [wx,wy,wz] rad/s, chassis frame
         self.accel = accel    # [ax,ay,az] m/s^2, chassis frame, gravity included
         self.t = t            # time.monotonic() at parse
+        self.qos = qos        # the sensor's OWN verdict on itself; see QOS_*
 
 
 SYNC = b"\xaa\x55"
@@ -170,10 +198,14 @@ def crc16_modbus(data: bytes) -> int:
 
 
 def parse_combo(payload: bytes):
-    """Ep_Combo payload -> (quat_wxyz, gyro_xyz, accel_xyz) in SI, sensor frame.
+    """Ep_Combo payload -> (quat_wxyz, gyro_xyz, accel_xyz, qos), sensor frame.
 
     Returns None if the payload's own `simpleChecksum` does not match, which
     catches the sensor emitting a torn struct independently of link integrity.
+
+    `qos` rides along because it is FREE HERE and unobtainable elsewhere: it is
+    a field of the frame the loop already decodes, so reading it costs one mask
+    and removes any reason to also subscribe to Ep_Status(22).
     """
     if len(payload) != COMBO_SIZE:
         return None
@@ -181,9 +213,15 @@ def parse_combo(payload: bytes):
     if int.from_bytes(payload[-2:], "little") != sum(payload[:-2]) & 0xFFFF:
         return None
 
+    # `_sys` is Ep_Status_SysState: qos in the low 3 bits (0 booting/asleep,
+    # 1 fault, 2 limited, 3 basic, 4 fine, 5 very good). `_rate10` is the
+    # FUSION's internal sampling rate in units of TEN Hz -- it reads 40 on this
+    # unit, meaning 400 Hz, and it is NOT the output rate, which does not
+    # appear in the frame at all. Ep_Status(22) carries the same number as a
+    # plain uint16 Hz and agrees: 401.
     (_hdr, _ts, _sys, _roll, _pitch, _yaw, q1, q2, q3, q4,
      wx, wy, wz, ax, ay, az, _mx, _my, _mz,
-     _temp, _rate, _res, _sum) = _COMBO.unpack(payload)
+     _temp, _rate10, _res, _sum) = _COMBO.unpack(payload)
 
     quat = np.array([q1, q2, q3, q4], dtype=float) * 1e-7     # (w,x,y,z)
     n = np.linalg.norm(quat)
@@ -191,7 +229,7 @@ def parse_combo(payload: bytes):
         return None
     gyro = np.array([wx, wy, wz], dtype=float) * 1e-5          # rad/s
     accel = np.array([ax, ay, az], dtype=float) * 1e-5 * G_TO_MS2
-    return quat / n, gyro, accel
+    return quat / n, gyro, accel, _sys & 0x7
 
 
 def parse_frame(buf: bytes):
@@ -286,8 +324,17 @@ class AhrsReader:
     a dependence on our own timing rather than the sensor's.
 
     At 50 Hz ODR the same measurement was 50 Hz and 20 ms, i.e. useless for the
-    loop -- so poll mode is only viable because the ODR is 200. Check
-    `rate_hz` in a Combo frame before trusting it on a different unit.
+    loop -- so poll mode is only viable because the ODR is 200. MEASURE the
+    output rate rather than reading it out of a frame: the Combo field that
+    looks like one (`updateRate`) is the FUSION's internal rate in tens of Hz,
+    400 on this unit against a 200 Hz output, so it answers a different
+    question and reads 2x high if mistaken for the answer to this one.
+
+    PUSH IS THE DEFAULT AGAIN since 2026-09-16, the output profile having been
+    written to flash from a Windows machine and survived a power cycle.
+    Measured through this class on the Mac, poll=False, 100 Hz reader ticks:
+    201.4 Hz, requests 0, age-at-tick mean 2.32 ms / p50 2.42 / p99 4.87 /
+    max 4.93, zero stale raises in 367 ticks.
     """
 
     def __init__(self, port: str = "/dev/serial0", baud: int = 460800,
@@ -380,12 +427,13 @@ class AhrsReader:
                 del buf[:consumed]
             if decoded is None:
                 continue
-            q_s, g_s, a_s = decoded
+            q_s, g_s, a_s, qos = decoded
             self._latest = AhrsSample(
                 quat=self.cal.to_chassis_quat(q_s),
                 gyro=self.cal.to_chassis_vec(g_s),
                 accel=self.cal.to_chassis_vec(a_s),
                 t=time.monotonic(),
+                qos=qos,
             )
             self.frames += 1
             deadline = 0.0          # answered -- ask for the next one now
