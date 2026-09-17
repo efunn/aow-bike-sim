@@ -942,6 +942,119 @@ hiccup take seconds, not milliseconds — long enough for `CMD_DEAD_S` to fire a
 drop torque. That is the correct behaviour, but it means a flaky ground-station
 AP shows up as unexplained torque-offs rather than as sluggish steering.
 
+### Changing the bike's network without a monitor or the SD card
+
+Measured 2026-09-17, and the reason this section exists: on house wifi at
+**-74 dBm** the telemetry link delivers 99.8 packets/s on average and still
+**stalls 100-150 ms six times in eight seconds**, with the Pi otherwise IDLE
+(load 0.10, `run_bike` not running). At 60 fps that is 6-9 held frames, which
+is what the mirror's chugging is. The average hides it entirely -- see
+`docs/status.md` for the full table.
+
+**NOTHING HERE NEEDS THE SD CARD OR A MONITOR.** It is all ssh. What it does
+need is the right file:
+
+  * the Pi on the bike runs **Debian 13 + NetworkManager, configured by
+    NETPLAN**. The live NM profile is named `netplan-wlan0-<SSID>`, which is
+    the tell: it is GENERATED. `nmcli con add/modify` appears to work and is
+    reverted the next time anything runs `netplan apply`.
+  * so the file to edit is `/etc/netplan/*.yaml`, under `wifis: wlan0:
+    access-points:`.
+
+**ADD A SECOND ACCESS POINT; NEVER REPLACE THE FIRST.** That is the whole
+anti-lockout property -- `access-points:` is a map and NetworkManager will
+associate with whichever is in range, so a new network that does not work
+leaves the old one still joinable and ssh still available. Replacing the entry
+is the one way to end up needing the monitor this section promises to avoid.
+
+```yaml
+      access-points:
+        "ATA-5G":                 # keep this. it is the way back in.
+          auth:
+            key-management: "psk"
+            password: "<unchanged>"
+        "<new SSID>":             # the 2.4 GHz band, or the laptop's AP
+          auth:
+            key-management: "psk"
+            password: "<the new passphrase>"
+```
+
+Then `sudo netplan apply`, and `iw dev wlan0 link` to see which one it took.
+`netplan try` self-reverts after 120 s but prompts on the console, which is
+the wrong shape for ssh; the second-access-point rule is the better safety
+net.
+
+**SCAN WITH `iw`, NOT WITH `nmcli`.** Recorded because it cost a wrong
+conclusion on 2026-09-17: `nmcli dev wifi list` returned only the associated
+BSS, and three `nmcli dev wifi rescan` calls did not change that, because
+NetworkManager RATE-LIMITS rescan requests and coalesced them. The report
+"there is no 2.4 GHz network" was therefore a reading of NM's cache, not of
+the air, and it was wrong -- the operator could see the network from a laptop
+standing next to the bike. `sudo iw dev wlan0 scan` is the measurement:
+
+```sh
+sudo iw dev wlan0 scan | grep -E "^BSS|freq:|SSID:|signal:" | paste - - - -
+```
+
+**WHAT IS ACTUALLY ON AIR AT THE BENCH** (2026-09-17, from the bike):
+
+| SSID | freq | signal |
+|---|---|---|
+| `ATA-5G` *(what the bike is on)* | 5745 MHz | **-70 dBm** |
+| **`ATA`** | **2417 MHz** | **-57 dBm** |
+| `ATA_EXT` | 2417 MHz | -63 dBm |
+| `ATA-5G_EXT` | 5745 MHz | -69 dBm |
+| `CONNEX-e04f4305d38c` | 2417 MHz | -58 dBm |
+
+`ATA` is the same router's 2.4 GHz band with the same credentials, and it is
+**13 dB stronger** than the band the bike is using -- about 20x the received
+power. Since what was measured is rate adaptation (130 -> 65 Mbit/s) and tx
+failures, both symptoms of a marginal link, that margin is the single most
+likely fix and the cheapest to try.
+
+The honest caveat: 2417 MHz is channel 2 and `CONNEX` sits on it at -58 dBm,
+so 2.4 GHz here has CO-CHANNEL NEIGHBOURS where 5 GHz has none. Contention
+adds latency; a 13 dB margin removes retries. The payload is ~22 kB/s, which
+is nothing on either band, so signal should win -- but it is a prediction, and
+the gap-tail measurement above is how to check it.
+
+**THE OPTIONS, AND WHAT EACH COSTS**
+
+| option | cost | buys |
+|---|---|---|
+| **`ATA` (2.4 GHz, same router)** | one netplan edit | +13 dB. Still house networking, still shares a channel with `CONNEX` |
+| `ATA_EXT` (2.4 GHz extender) | same edit | +7 dB, and only worth it if the extender is physically nearer the bench than the router |
+| **laptop-hosted AP** | Internet Sharing from a WIRED uplink; laptop is offline while hosting if it has none | a link that does not depend on house networking at all -- the plan of record |
+| dedicated travel router | a purchase, and a thing to power at the bench | isolated network, configured once on both ends, laptop keeps its own wifi |
+| stay on `ATA-5G` | nothing | the measured 100-150 ms stalls |
+| ethernet | a cable | ruled out by the operator |
+
+None of these are exclusive: the anti-lockout rule means the bike can carry
+`ATA`, `ATA-5G` and the laptop AP all at once and pick by priority.
+
+**WHICH BOARD SHIPS IS OPEN, so do not design around one radio.** This plan
+was written around a Zero 2 W (CYW43438, 2.4 GHz only). That board is
+effectively unobtainable and is **probably not happening** -- the likely end
+state is a custom or different SBC, whose radio is therefore unknown. The Pi
+3B+ on the bike now is dual-band and a stand-in. Consequences: 2.4 GHz is the
+right BENCH choice on signal alone rather than because the final chip forces
+it, and any link number measured today is provisional against a radio nobody
+has chosen yet.
+
+**ONE RADIO EACH -- NEITHER END CAN BE ON TWO NETWORKS AT ONCE.**
+
+  * *The laptop.* macOS Internet Sharing over Wi-Fi turns the single Wi-Fi
+    radio into the AP, so it cannot also be a CLIENT of the house network.
+    Sharing therefore has to come FROM a wired uplink (Ethernet adapter,
+    Thunderbolt bridge, USB tether) TO Wi-Fi. With no wired uplink the laptop
+    simply has no internet while it hosts -- fine for a bench session, and
+    worth knowing before wondering why the browser stopped.
+  * *The bike.* One association at a time as well. It cannot sit on the laptop
+    AP and house wifi together -- but BOTH can be configured, and
+    NetworkManager picks by `autoconnect-priority`, so it joins the laptop AP
+    when that is up and falls back to the house network otherwise. That is the
+    same mechanism as the anti-lockout rule above, used deliberately.
+
 ### The radio, and what actually goes wrong with it
 
 The Zero 2 W's wireless is a Cypress/Broadcom **CYW43438** on SDIO, driven by
