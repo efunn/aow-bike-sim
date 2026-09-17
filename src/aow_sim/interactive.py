@@ -37,9 +37,64 @@ def steps_per_frame(timestep: float, slowmo: float = 1.0, fps: float = 60.0) -> 
     return max(1, int(round(1 / fps / timestep / max(1e-3, slowmo))))
 
 
+class FrameStats:
+    """Where a rendered frame's wall time actually goes. -> a line every `every`.
+
+    EXISTS BECAUSE THE EXPENSIVE PART IS THE ONE A HEADLESS PROFILE CANNOT
+    SEE. Reported chugging in the viewer was chased by measuring everything
+    this process controls -- physics, the overlay, the policy, the four-bar
+    solver -- over 3000 frames, and the whole frame came to 2.9 ms mean and
+    3.2 ms p99 against a 16.7 ms budget, with exactly one frame over and that
+    one the warm-up. The model is light to draw too: 2 meshes, 708 vertices,
+    39 geoms.
+
+    What is left is `viewer.sync()` and the OS compositor, and neither can be
+    measured from a machine that is not the one with the window on it. So
+    rather than guess again, this reports the split live -- `sync` is the
+    column the headless profile could never produce.
+
+    `sleep` is the loop deliberately idling to hold the frame rate. A healthy
+    loop has a LARGE sleep; a loop that is chugging has none, and then the
+    other three columns say which one ate it.
+
+    EACH LINE COVERS ONLY THE FRAMES SINCE THE LAST ONE -- a rolling window,
+    not a running total (`rows` is cleared every time). That is what makes an
+    intermittent spike findable: averaged over a whole session it would be
+    invisible, and here it lands in the one line it happened in, where `max`
+    and the over-budget count both move.
+    """
+
+    def __init__(self, every: float = 5.0):
+        self.every = float(every)
+        self.rows: list[tuple] = []
+        self.t0 = time.perf_counter()
+        self.said = False
+
+    def add(self, step_s, draw_s, sync_s, sleep_s) -> None:
+        self.rows.append((step_s, draw_s, sync_s, sleep_s))
+        now = time.perf_counter()
+        if now - self.t0 < self.every:
+            return
+        import numpy as np
+        a = np.array(self.rows) * 1e3
+        total = a[:, :3].sum(axis=1)
+        if not self.said:
+            self.said = True
+            print("  frame stats [ms]: work = step+draw+sync; sleep is "
+                  "headroom. n is frames in the window.")
+        print(f"  n {len(a):4d} | step {a[:,0].mean():6.2f} | "
+              f"draw {a[:,1].mean():5.2f} | sync {a[:,2].mean():5.2f} | "
+              f"sleep {a[:,3].mean():6.2f} || work p50 "
+              f"{np.percentile(total,50):5.2f} p99 {np.percentile(total,99):6.2f} "
+              f"max {total.max():7.2f} | over 16.7: "
+              f"{int((total > 16.7).sum())}/{len(a)}")
+        self.rows.clear()
+        self.t0 = now
+
+
 def teleop_loop(model, data, step, on_key, intro: str, module: str,
                 draw=None, show_ui: bool = False, on_start=None,
-                slowmo=None, paused=None, pre_step=None) -> None:
+                slowmo=None, paused=None, pre_step=None, stats=None) -> None:
     """Run `step(model, data)` every physics step inside a real-time-paced
     passive viewer with `on_key(keycode)` handling. If `draw` is given, it is
     called as `draw(viewer.user_scn, model, data)` each rendered frame to add
@@ -87,6 +142,7 @@ def teleop_loop(model, data, step, on_key, intro: str, module: str,
             on_start(v)
         t_wall = time.perf_counter()
         while v.is_running():
+            t_frame0 = time.perf_counter()
             # Recomputed per frame, because `slowmo` is live.
             f = max(1e-3, float(slowmo[0])) if slowmo else 1.0
             n = steps_per_frame(model.opt.timestep, f)
@@ -99,20 +155,25 @@ def teleop_loop(model, data, step, on_key, intro: str, module: str,
                     if pre_step is not None:
                         pre_step(data)
                     mujoco.mj_step(model, data)
+            t_a = time.perf_counter()
             if draw is not None:
                 draw(v.user_scn, model, data)
+            t_b = time.perf_counter()
             v.sync()
+            t_c = time.perf_counter()
             t_wall += n * model.opt.timestep * f
             lag = t_wall - time.perf_counter()
             if lag > 0:
                 time.sleep(lag)
             else:
                 t_wall = time.perf_counter()
+            if stats is not None:
+                stats.add(t_a - t_frame0, t_b - t_a, t_c - t_b, max(0.0, lag))
 
 
 def mirror_loop(model, data, frame, on_key, intro: str, module: str,
                 draw=None, show_ui: bool = False, on_start=None,
-                fps: float = 60.0) -> None:
+                fps: float = 60.0, stats=None) -> None:
     """Like `teleop_loop`, but the STATE COMES FROM OUTSIDE and there is no
     physics. `frame(model, data)` is called once per rendered frame and is
     expected to write `qpos`/`qvel` and call `mj_forward` itself.
@@ -151,13 +212,19 @@ def mirror_loop(model, data, frame, on_key, intro: str, module: str,
         period = 1.0 / max(1.0, fps)
         t_wall = time.perf_counter()
         while v.is_running():
+            t_frame0 = time.perf_counter()
             frame(model, data)
+            t_a = time.perf_counter()
             if draw is not None:
                 draw(v.user_scn, model, data)
+            t_b = time.perf_counter()
             v.sync()
+            t_c = time.perf_counter()
             t_wall += period
             lag = t_wall - time.perf_counter()
             if lag > 0:
                 time.sleep(lag)
             else:
                 t_wall = time.perf_counter()
+            if stats is not None:
+                stats.add(t_a - t_frame0, t_b - t_a, t_c - t_b, max(0.0, lag))

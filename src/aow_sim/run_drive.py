@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import copy
 import time
+import weakref
 from pathlib import Path
 
 import mujoco
@@ -458,6 +459,18 @@ def main() -> None:
                          "step, not resolution; sim.timestep is untouched. "
                          "Pairs with the \\ wheel camera for watching the "
                          "rear contact.")
+    ap.add_argument("--frame-stats", nargs="?", type=float, const=5.0,
+                    default=None, metavar="SECONDS",
+                    help="print where each rendered frame's wall time goes -- "
+                         "step, draw, viewer sync, and the sleep that holds "
+                         "the frame rate. One line every SECONDS (default 5), "
+                         "covering ONLY the frames since the previous line -- "
+                         "a rolling window, not a running total, so a spike "
+                         "shows up in the line it happened in and `n` is how "
+                         "many frames that line saw (~300 at 60 fps over 5 s). "
+                         "SYNC is the column a headless profile cannot "
+                         "produce, and a healthy loop shows a large sleep. "
+                         "Works in --teleop and --mirror")
     ap.add_argument("--ui", action="store_true",
                     help="restore the viewer's side panels (off by default: "
                          "teleop is keyboard-driven and Reset is Backspace)")
@@ -565,10 +578,14 @@ def main() -> None:
         # here rather than moving that line, which several of them anchor on.
         _mirror(model, params, eq.qpos, args.mirror, port=args.mirror_port,
                 v_max=params["control"]["drive"]["v_max"], show_ui=args.ui,
-                travel_deg=getattr(args, "travel_deg", None))
+                travel_deg=getattr(args, "travel_deg", None),
+                swing_cfg=(args.swing_linkage
+                           if isinstance(args.swing_linkage, str) else None),
+                frame_stats=args.frame_stats)
         return
     if args.teleop:
-        _teleop(model, params, eq.qpos, hockey=args.hockey,
+        _teleop(model, params, eq.qpos, frame_stats=args.frame_stats,
+                hockey=args.hockey,
                 general=args.general, show_ui=args.ui,
                 wings=args.wings, linkage=args.linkage,
                 swing=args.swing or args.swing_linkage,
@@ -830,14 +847,34 @@ _SPAWN_KEY = 257            # GLFW ENTER. policy_menu.KEY_ENTER is the same
 FLOOR_TILT_STEPS = [0.0, 2.0, 5.0, 10.0]
 
 
+# MEMOISED, and it matters more than it looks. `floor_geoms` walks every geom
+# building a named accessor per geom, and `_overlay`'s reference grid used to
+# reach it TWICE PER GRID POINT -- once through `active_floor_normal` and once
+# through `visible_floor_index`. Measured at 208 calls and 8132 `str.startswith`
+# per rendered frame, which was the single largest cost in the overlay.
+#
+# Sound because the set is fixed at compile time: geoms cannot be added to a
+# compiled model, `show_floor` only touches `geom_rgba` and `activate_floor`
+# only `geom_contype`. Neither changes which geoms are named `floor*`, which is
+# the only thing cached here -- the ACTIVE floor is still looked up live.
+#
+# Weak keys so a model built and dropped by a test does not pin its arrays.
+_FLOOR_IDS: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
 def floor_geoms(model):
     """Every compiled floor plane, in `FLOOR_TILT_STEPS` order."""
+    hit = _FLOOR_IDS.get(model)
+    if hit is not None:
+        return hit
     out = []
     for i in range(model.ngeom):
         n = model.geom(i).name
         if n == "floor" or n.startswith("floor_tilt"):
             out.append((0 if n == "floor" else int(n[len("floor_tilt"):]), i))
-    return [i for _, i in sorted(out)]
+    ids = [i for _, i in sorted(out)]
+    _FLOOR_IDS[model] = ids
+    return ids
 
 
 def show_floor(model, idx: int):
@@ -976,6 +1013,14 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
     if reset:
         scn.ngeom = 0
     p = data.body("chassis").xpos
+    # HOISTED OUT OF `floor_z`. The normal is one plane's orientation and does
+    # not vary over the grid, but it was being recomputed at every grid point
+    # -- and each call walks the geom list. One lookup per overlay instead of
+    # one per point took the overlay from 4.0 ms a frame to well under one,
+    # which at 60 fps is a quarter of the frame budget handed back.
+    _n = active_floor_normal(model, data)
+    _tilted = not (abs(_n[2]) < 1e-9 or float(np.linalg.norm(_n[:2])) < 1e-9)
+
     def floor_z(xy):
         """Height of the live floor at world xy -- 0 when it is the level one.
 
@@ -986,10 +1031,9 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
         READ as a slope in a plan view, where perspective gives almost nothing
         and 2 deg of checker rotation is invisible.
         """
-        n = active_floor_normal(model, data)
-        if abs(n[2]) < 1e-9 or float(np.linalg.norm(n[:2])) < 1e-9:
+        if not _tilted:
             return 0.0
-        return -(n[0] * xy[0] + n[1] * xy[1]) / n[2]
+        return -(_n[0] * xy[0] + _n[1] * xy[1]) / _n[2]
 
     # The dial RIDES the floor under the bike. Pinned at a fixed world z it
     # stayed at the origin's height while the bike drove up or down a slope,
@@ -1269,6 +1313,72 @@ _LEAD_MAX = np.deg2rad(35.0)
 # SIMULATION table, and those bindings are inert under launch_passive since
 # our loop owns the stepping; a group toggle is view state and stays live.
 # Measured on the real viewer: letters work, `0` hides everything.
+class _LinkStats:
+    """What the WIRE is doing, on the same cadence as the frame stats.
+
+    A MIRROR CAN CHUG WITH A PERFECTLY HEALTHY LOOP, and that is the case
+    `FrameStats` structurally cannot see. If telemetry stalls for 150 ms the
+    viewer redraws the SAME pose at a flawless 60 fps -- every frame inside
+    budget, sync free, headroom untouched -- while the bike on screen freezes
+    and then jumps. The stutter is in the DATA, not the drawing, so timing the
+    drawing reports that everything is fine.
+
+    So this measures arrival instead:
+
+      rx      packets actually received per second. The bike sends at the
+              control rate (100 Hz); well under that is loss, not jitter.
+      gap     wall time between consecutive packets. `max` is the freeze the
+              eye actually sees -- at 60 fps anything past ~33 ms is a visibly
+              held frame.
+      stale   fraction of rendered frames that got NO new packet and therefore
+              redrew the previous pose. A few percent is normal when the link
+              runs near the frame rate; a large number IS the chugging.
+      age     how old the newest packet was when the frame was drawn.
+    """
+
+    def __init__(self, every: float = 5.0):
+        self.every = float(every)
+        self.t0 = time.perf_counter()
+        self.t_last = None
+        self.gaps: list = []
+        self.ages: list = []
+        self.frames = 0
+        self.repeats = 0
+        self.said = False
+
+    def packet(self, now: float) -> None:
+        if self.t_last is not None:
+            self.gaps.append(now - self.t_last)
+        self.t_last = now
+
+    def frame(self, now: float, fresh: bool, t_tel: float) -> None:
+        self.frames += 1
+        if not fresh:
+            self.repeats += 1
+        if t_tel:
+            self.ages.append(now - t_tel)
+        if now - self.t0 < self.every:
+            return
+        g = np.array(self.gaps) * 1e3 if self.gaps else np.zeros(1)
+        a = np.array(self.ages) * 1e3 if self.ages else np.zeros(1)
+        if not self.said:
+            self.said = True
+            print("  link stats: rx = packets/s off the wire; gap = time "
+                  "between them; stale = frames\n  that redrew the previous "
+                  "pose. A big gap or a high stale IS the chugging.")
+        window = now - self.t0
+        print(f"  rx {len(self.gaps) / max(window, 1e-9):5.1f}/s | gap p50 "
+              f"{np.percentile(g, 50):5.1f} p99 {np.percentile(g, 99):6.1f} "
+              f"MAX {g.max():7.1f} ms | stale "
+              f"{100.0 * self.repeats / max(self.frames, 1):4.1f}% "
+              f"({self.repeats}/{self.frames}) | age p50 "
+              f"{np.percentile(a, 50):5.1f} max {a.max():6.1f} ms")
+        self.gaps.clear()
+        self.ages.clear()
+        self.frames = self.repeats = 0
+        self.t0 = now
+
+
 def lead_blocks(delta: float, lead: float, armed: bool,
                 limit: float = _LEAD_MAX) -> bool:
     """Should the lead clamp refuse this heading nudge?
@@ -1670,7 +1780,8 @@ def _rec_write(rec, path, params, gen_name, mode):
 
 
 def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
-            v_max: float = 1.2, show_ui: bool = False, travel_deg=None) -> None:
+            v_max: float = 1.2, show_ui: bool = False, travel_deg=None,
+            swing_cfg=None, frame_stats=None) -> None:
     """Drive the REAL bike, and watch a MuJoCo bike mirror it.
 
     Not a simulation. Nothing is stepped: each frame writes the latest
@@ -1701,13 +1812,24 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
     See `hw/telemetry.py` for which parts of the rendered pose are measured and
     which are drawn. The short version: attitude, steer and wheel spin are
     real; ride height, the front wheel and world position are not.
+
+    THE RIGHTING MECHANISM, under `--swing-linkage`, is a fourth case and its
+    own kind: the ANGLE is measured (the righting servo's encoder, in every
+    packet) and the LINKAGE hanging off it is drawn from the config. The
+    mechanism is built, so this is a real thing being watched -- but the render
+    is only as good as `righting_stow_deg` and `righting_sign`, which are still
+    GUESSes and can be wrong by a rotation and a mirror. Confirm them against
+    the bike before reading anything into which wing is down.
     """
     import json
     import socket
 
+    import yaml
+
+    from .build_model import SWING_LINKAGE_CFG, SwingLinkageSolver
     from .hw import telemetry as T
-    from .hw.ground import STOW_RAD, OperatorState, linkage_travel_deg
-    from .interactive import mirror_loop
+    from .hw.ground import OperatorState, linkage_travel_deg
+    from .interactive import FrameStats, mirror_loop
 
     data = mujoco.MjData(model)
     data.qpos[:] = eq_qpos                  # a settled pose to start from
@@ -1715,19 +1837,67 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
     adr = T.PoseAdr(model)
     rest_z = float(eq_qpos[2])              # NOT sent by the bike; see telemetry
 
+    # THE STROKE COMES FROM THE CONFIG THE MODEL WAS BUILT WITH, not from
+    # ground.py's fixed default. There are fourteen swing_linkage*.yaml and
+    # their travels differ (136.6 vs 132.1 deg between the two `_smaller`
+    # ones), so a station reading a different file than the builder did would
+    # command a stroke the rendered mechanism cannot reach -- and `pose` would
+    # return None at the ends, which reads as the wings freezing.
+    cfg_path = swing_cfg or SWING_LINKAGE_CFG
     travel = None if travel_deg is None else np.deg2rad(float(travel_deg))
     if travel is None:
-        got = linkage_travel_deg()
+        got = linkage_travel_deg(cfg_path)
         travel = None if got is None else np.deg2rad(got)
-    op = OperatorState(v_max=v_max, stow_rad=STOW_RAD, travel_rad=travel)
+    onb = params["control"].get("onboard", {})
+    stow = np.deg2rad(float(onb.get("righting_stow_deg", 180.0)))
+    r_sign = float(onb.get("righting_sign", 1))
+    op = OperatorState(v_max=v_max, stow_rad=stow, travel_rad=travel)
+
+    # The four-bar solver, only when the model actually has the mechanism.
+    # `apply_pose` is handed a callable rather than a config path so that
+    # `hw/telemetry.py` stays free of geometry -- it knows how to write joints,
+    # not where the links are.
+    swing_pose = None
+    if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT,
+                         "swing_crank_joint") >= 0:
+        with open(cfg_path) as fh:
+            solver = SwingLinkageSolver(yaml.safe_load(fh),
+                                        params["omni_wheel"]["outer_radius"])
+
+        def swing_pose(servo_rad, _s=solver, _z=stow, _g=r_sign):
+            """Servo angle -> every joint in the loop.
+
+            SAYS SO WHEN THE SERVO IS OUTSIDE THE DESIGN STROKE, because this
+            crank turns all the way round: a servo sitting at 0 instead of the
+            180 stow is -180 deg of travel, the loop still closes there, and
+            what gets drawn is a real pose of a mechanism that can never be
+            COMMANDED to it. It reads as a different machine -- which is
+            exactly how it was first reported. Warned once per excursion
+            rather than per frame, and still drawn, because hiding it would
+            replace a confusing picture with a frozen one.
+            """
+            t = (float(servo_rad) - _z) * _g
+            over = abs(t) > _s.travel_max > 0
+            if over != box["off_stroke"]:
+                box["off_stroke"] = over
+                if over:
+                    print(f"  servo {np.rad2deg(float(servo_rad)):.1f}° is "
+                          f"{np.rad2deg(abs(t)):.1f}° from stow, past the "
+                          f"±{np.rad2deg(_s.travel_max):.1f}° stroke — the "
+                          "linkage is drawn in a pose it cannot be driven to")
+                else:
+                    print("  servo back inside the stroke")
+            return _s.pose(t)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setblocking(False)
     dest = (host, port)
+    link = None if frame_stats is None else _LinkStats(frame_stats)
 
     tel: dict = {}
     box = {"t_tel": 0.0, "shaft": (0.0, 0.0), "t_tx": 0.0, "t_frame": 0.0,
-           "checked": False, "seen": 0, "said": False}
+           "checked": False, "seen": 0, "said": False, "state": None,
+           "off_stroke": False, "fresh": False}
     # WHERE THE RENDER CALLS (0, 0). `pos` in the packet is the bike's own
     # dead-reckoned position and drifts without bound, which is worth WATCHING
     # -- the drift IS the odometry error, made visible -- right up until the
@@ -1761,6 +1931,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         m.geom_rgba[floor_id] = ([0.32, 0.34, 0.36, 1.0] if plain
                                  else floor_was[1])
     keys = _KeyState()
+    cam_dirty = [False]          # set by the zoom keys; see apply_camera
     ax_v, ax_psi, ax_lat = _Axis(), _Axis(), _Axis()
     v_lat = [0.0]
     announced = [False]
@@ -1832,6 +2003,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             # its cameras, so these are what is left.
             cam_dist[0] = float(np.clip(
                 cam_dist[0] * (1.25 if k in _KEYS_SLOWER else 0.8), 0.25, 6.0))
+            cam_dirty[0] = True
             return
         elif k in (ord("6"), ord("7"), ord("8")):
             # Heading snaps, teleop's own bindings: +90 / -90 / 180. They pass
@@ -1846,6 +2018,15 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             return          # the ramps own these; a discrete step is applied below
         if name is not None:
             op.key(name)
+            if name == "r":
+                # CONSENT IS STICKY, and that is the part worth saying out
+                # loud: `FallGuard` stores it and spends it the moment the
+                # bike is back inside the window, so pressing r while it is
+                # still on its side is not wasted -- it just does not look
+                # like it did anything. The bike must be under REARM_ROLL_DEG
+                # (12) and settled for the dwell before the policy comes back.
+                print("re-arm requested — the bike takes it when it is back "
+                      "under 12° and still for 0.2 s")
             if name in (" ", "/"):
                 v_lat[0] = 0.0
                 ax_v.clear()
@@ -1879,6 +2060,20 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             T.check_version(new)            # raises on a stale deploy
             box["checked"] = True
         tel = new
+        box["fresh"] = True
+        if link is not None:
+            link.packet(time.perf_counter())
+        # SAY WHEN THE BIKE'S STATE CHANGES. Without this a cut is a word that
+        # scrolls past in the bike's own console -- which the operator is not
+        # looking at, because they are looking at the viewer -- and `r` is a
+        # key that appears to do nothing for as long as the bike is still down.
+        st = tel.get("state")
+        if st != box["state"]:
+            if box["state"] is not None:
+                print(f"bike: {box['state']} -> {st}"
+                      + ("   — press r once it is upright and still"
+                         if st == "cut" else ""))
+            box["state"] = st
         op.sync(tel)
         box["t_tel"] = time.perf_counter()
         box["seen"] += 1
@@ -1941,11 +2136,14 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         wall = time.perf_counter()
         dt = min(0.1, wall - box["t_frame"]) if box["t_frame"] else 1 / 60.0
         box["t_frame"] = wall
+        box["fresh"] = False
         drain()
+        if link is not None:
+            link.frame(time.perf_counter(), box["fresh"], box["t_tel"])
         if tel:
             box["shaft"] = T.apply_pose(m, d, tel, adr, params,
                                         shaft_angle=box["shaft"], rest_z=rest_z,
-                                        dt=dt)
+                                        dt=dt, swing_pose=swing_pose)
             # AFTER apply_pose and before mj_forward. Only x/y move, so the
             # wheel grounding it just did is untouched.
             got = tel.get("pos")
@@ -1992,6 +2190,9 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
              "  6/7/8 snap heading +90/-90/180 · -/= zoom out/in\n"
              "  o re-centre · p pin at centre (and flatten the floor)\n"
              "  9/4 righting servo · [ ] its current · r re-arm · q quit\n"
+             + ("  wings DRAWN from the servo's measured angle — check "
+                "against the real\n  mechanism: righting_stow_deg and "
+                "righting_sign are still GUESSes\n" if swing_pose else "") +
              "  green tick = commanded heading · cyan = actual")
     started = [False]
     view = [None]
@@ -2015,16 +2216,34 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             v.cam.distance = cam_dist[0]
 
     def apply_camera():
+        """Push a ZOOM CHANGE to the camera. Nothing to do on a normal frame.
+
+        THE FLAG IS THE WHOLE POINT, and it is not a micro-optimisation.
+        `v.lock()` is the viewer's own mutex, held by the render thread while
+        it renders; taking it costs a wait, not a few instructions. This used
+        to be unconditional, so every mirror frame took that mutex TWICE --
+        here and inside `viewer.sync()` -- merely to compare one float that
+        changes only when someone presses `-` or `=`.
+
+        Teleop does not do this: its camera defaults to `free`, whose
+        `apply_camera` returns before any lock, which is why chugging was
+        reported in the mirror and not in teleop. (Teleop's follow/overhead
+        modes DO lock every frame, and have to -- they recompute azimuth from
+        the bike's yaw. This camera is fixed-azimuth tracking, set once in
+        `on_start`, so there is genuinely nothing to push.)
+        """
         v = view[0]
-        if v is None:
+        if v is None or not cam_dirty[0]:
             return
+        cam_dirty[0] = False
         with v.lock():
-            if abs(v.cam.distance - cam_dist[0]) > 1e-6:
-                v.cam.distance = cam_dist[0]
+            v.cam.distance = cam_dist[0]
 
     try:
         mirror_loop(model, data, frame, on_key, intro, "aow_sim.run_drive",
-                    draw=draw, show_ui=show_ui, on_start=on_start)
+                    draw=draw, show_ui=show_ui, on_start=on_start,
+                    stats=None if frame_stats is None
+                    else FrameStats(frame_stats))
     finally:
         sock.close()
         # Only when the viewer actually came up. Printing "mirror stopped" after
@@ -2038,8 +2257,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             show_ui=False, wings=False, linkage=False, swing=False, record=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
             ahrs="none", ahrs_tau=None, design=None, drivetrain_base=None,
-            servo_gains=None, drivetrain_source=""):
-    from .interactive import teleop_loop
+            servo_gains=None, drivetrain_source="", frame_stats=None):
+    from .interactive import FrameStats, teleop_loop
 
     from . import policy_menu
 
@@ -3253,7 +3472,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 # Through the list, not a bound method: a menu swap replaces
                 # the DrivetrainSim and the loop has to step the new one.
                 pre_step=(None if drive_sim[0] is None
-                          else lambda d: drive_sim[0].pre_step(d)))
+                          else lambda d: drive_sim[0].pre_step(d)),
+                stats=None if frame_stats is None else FrameStats(frame_stats))
     # teleop_loop returns when the operator closes the viewer, so this is the
     # natural flush point. Ctrl-C bypasses it -- accepted, since a session
     # abandoned that way is usually one you did not want kept.

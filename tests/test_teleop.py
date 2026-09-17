@@ -860,3 +860,140 @@ def test_viewer_reset_re_reads_the_heading_from_the_rewound_data(
     assert lead < np.deg2rad(2.0), (
         f"heading command is {np.degrees(lead):.1f} deg off the bike's actual "
         f"heading after the reset")
+
+
+def test_the_overlay_does_not_rescan_the_geoms_per_grid_point():
+    """`floor_geoms` walks every geom building a named accessor each time, and
+    `_overlay`'s reference grid used to reach it TWICE PER GRID POINT -- once
+    through `active_floor_normal` inside `floor_z`, once through
+    `visible_floor_index`. Measured at 208 calls and 8132 `str.startswith` per
+    rendered frame, which made the overlay 4.0 ms: a quarter of a 60 fps frame
+    budget, spent on a plane's orientation that cannot vary across the grid.
+
+    A COUNT and not a stopwatch, deliberately -- the count is deterministic and
+    a timing threshold on a shared machine is not. The cache makes repeat calls
+    free; hoisting the normal out of `floor_z` is what stops them happening.
+    """
+    import aow_sim.run_drive as RD
+
+    p = load_params()
+    m = build_model(p)
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    scn = mujoco.MjvScene(m, maxgeom=20000)
+
+    calls = []
+    real = RD.floor_geoms
+    RD.floor_geoms = lambda model: (calls.append(1), real(model))[1]
+    try:
+        RD._overlay(scn, m, d, None, [True], 1.2, grid=True,
+                    command=(0.3, np.array([0.5, 0.1])))
+    finally:
+        RD.floor_geoms = real
+    assert len(calls) <= 4, (
+        f"{len(calls)} floor_geoms calls in one overlay -- it is being asked "
+        "per grid point again")
+
+
+def test_floor_geoms_is_cached_per_model_and_not_across_models():
+    """The cache is keyed on the model, because two models in one process
+    (teleop builds a second one to design gains on) have different geom
+    layouts and an index from one is meaningless in the other."""
+    import aow_sim.run_drive as RD
+
+    p = load_params()
+    plain = build_model(p)
+    winged = build_model(p, variant="full", righting=True, swing_linkage=True)
+    a, b = RD.floor_geoms(plain), RD.floor_geoms(winged)
+    assert RD.floor_geoms(plain) is a, "same model should hit the cache"
+    assert a is not b, "different models must not share an entry"
+    for gid in a:
+        assert mujoco.mj_id2name(
+            plain, mujoco.mjtObj.mjOBJ_GEOM, gid).startswith("floor")
+    for gid in b:
+        assert mujoco.mj_id2name(
+            winged, mujoco.mjtObj.mjOBJ_GEOM, gid).startswith("floor")
+
+
+def test_the_mirror_does_not_take_the_viewer_lock_on_an_idle_frame():
+    """`viewer.lock()` is the mutex the RENDER THREAD holds while rendering, so
+    taking it costs a wait rather than a few instructions.
+
+    The mirror's `apply_camera` used to take it unconditionally, every frame,
+    to compare one float that only changes when `-` or `=` is pressed -- so
+    every mirror frame took the viewer mutex twice, here and inside
+    `viewer.sync()`. Teleop's default `free` camera returns before any lock,
+    which is exactly why chugging was reported in the mirror and not in
+    teleop.
+
+    Drives the real `_mirror` with a stub loop and counts acquisitions: zero
+    on idle frames, one after a zoom key, and back to zero after that.
+    """
+    import contextlib
+    import socket
+
+    import aow_sim.interactive as I
+    import aow_sim.run_drive as RD
+
+    locks = [0]
+
+    class FakeCam:
+        type = 0
+        trackbodyid = 0
+        azimuth = elevation = 0.0
+        distance = 1.0
+        lookat = np.zeros(3)
+
+    class FakeViewer:
+        def __init__(self):
+            self.cam = FakeCam()
+            self.user_scn = None
+
+        @contextlib.contextmanager
+        def lock(self):
+            locks[0] += 1
+            yield
+
+    seen = {}
+
+    def stub_loop(model, data, frame, on_key, intro, module, draw=None,
+                  show_ui=False, on_start=None, fps=60.0, stats=None):
+        v = FakeViewer()
+        v.user_scn = mujoco.MjvScene(model, maxgeom=20000)
+        on_start(v)                      # the one legitimate lock
+        locks[0] = 0
+        for _ in range(30):
+            frame(model, data)
+        seen["idle"] = locks[0]
+        on_key(ord("-"))                 # zoom out
+        for _ in range(30):
+            frame(model, data)
+        seen["after_zoom"] = locks[0]
+        for _ in range(30):
+            frame(model, data)
+        seen["settled"] = locks[0]
+
+    p = load_params()
+    m = build_model(p)
+    eq = settle_upright(m)
+    # An ephemeral port nobody is listening on: `frame` sends into the void,
+    # which is what a mirror does before the bike answers.
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    # `_mirror` imports `mirror_loop` from `interactive` INSIDE the function,
+    # so the module it resolves against is the one to patch.
+    real = I.mirror_loop
+    I.mirror_loop = stub_loop
+    try:
+        RD._mirror(m, p, eq.qpos, "127.0.0.1", port=port)
+    finally:
+        I.mirror_loop = real
+
+    assert seen["idle"] == 0, (
+        f"{seen['idle']} viewer locks in 30 idle frames -- apply_camera is "
+        "taking the render mutex again")
+    assert seen["after_zoom"] == 1, seen
+    assert seen["settled"] == 1, "the flag should clear after one push"

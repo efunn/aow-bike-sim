@@ -56,9 +56,14 @@ All four are bench work. **The sim-side item is being taken now:**
 > itself (stronger, but re-bases every score in `docs/` and every
 > `moves/*.yaml`). See `eval-score-rewrite.md`.
 
-Not next, and deliberately: the self-righting wings (design done, build last),
-the ball shot (works, off the path), the privileged critic (speculative), the
-odometry rewrite (flown around, seven accepted red tests).
+Not next, and deliberately: the ball shot (works, off the path), the
+privileged critic (speculative), the odometry rewrite (flown around, seven
+accepted red tests).
+
+**The self-righting wings came off that list on 2026-09-17: the co-rotating
+four-bar is BUILT and operating** -- this file had carried "design done, build
+last" for eight days. Open on it: read `righting_stow_deg` and `righting_sign`
+off the bike (below), and Station C / R6 for `righting_current` in counts.
 
 ---
 
@@ -369,6 +374,221 @@ sent angle outright and keeps integration only as the fallback for a bike too
 old to send one. NOT yet confirmed against a hand-turned wheel on the bench --
 the plumbing and the arithmetic are tested, the physical check is outstanding.
 
+**THE RIGHTING MECHANISM IS IN THE MIRROR (2026-09-17).** `run_drive --mirror
+HOST --swing-linkage` now draws the co-rotating four-bar from the righting
+servo's measured angle. The servo sends `righting_pos` (a new telemetry field;
+no version bump, adding one never needed it), and `build_model.
+SwingLinkageSolver` turns that into all five joint angles in closed form.
+
+WHY A SOLVER AND NOT JUST THE CRANK. The loop is closed by `mjEQ_CONNECT`, and
+an equality is only satisfied by the constraint solver during a dynamics step
+-- `mj_forward` computes constraint FORCES, not constraint-satisfying
+positions. The mirror deliberately never steps, so writing the crank alone and
+calling `mj_forward` leaves the couplers and wings where they were and the
+mechanism visibly comes apart. Every joint has to be written.
+
+Verified against MuJoCo's own constraint rather than against the arithmetic:
+both `mjEQ_CONNECT` site pairs stay coincident to **< 1e-9 m at 21 travels
+across the full +-136.6 deg stroke**, and end to end over a real socket a servo
+at 280 deg renders crank +100, wings R +62.1 / L +11.7, gap 0.000 um.
+
+The measured angle beats the commanded one on purpose: a wing held back by its
+Goal Current is DRAWN held back, which is the thing an operator tuning
+`righting_current` is watching for. Both are sent; `righting` is the fallback
+for a bike that reports no reading.
+
+**THE MECHANISM IS BUILT AND SWEEPS ITS MOTIONS (2026-09-17)**, which this
+document said was "design done, build last" for eight days. It was constructed
+separately; the testbed XC330s are bare, so it can be driven without risk.
+
+`righting_stow_deg: 180` is `source: design` and **forced rather than chosen**:
+the stroke is +-136.6 deg in one 0-360 servo range, so 180 +- 136.6 spans
+43.4 .. 316.6 and fits, and more than ~43 deg off centre runs an end of the
+stroke into extended position where a power cycle loses the turn count.
+
+`righting_sign: 1` is **TBD on purpose and is not a measurement waiting to
+happen** -- the motor can be installed either way and the bike's packing
+solution is unsettled, so it may still be flipped. Consequence of it being
+wrong is entirely visual: the render deploys to the wrong side. Nothing flies
+on it and neither digest sees it. One observation when the motor is mounted.
+
+MEASURED IN PASSING, and not what the config's name suggests: this crank
+**turns all the way round**. `stroke.crank_travel_deg: 136.6` is the DESIGN
+stroke -- what reach and clearance ask for -- not a kinematic limit; the loop
+closes at every angle in 360 deg. Pinned by a test, because "it stopped at the
+end of its travel" would be the wrong explanation for a station that froze.
+
+Also fixed: the mirror read `stroke.crank_travel_deg` from `hw/ground.py`'s
+fixed default rather than from the config the MODEL was built with. The two
+`_smaller` configs differ (136.6 vs 132.1 deg), so `--swing-linkage <other>`
+would have commanded a stroke the rendered mechanism could not reach.
+
+`test_every_telemetry_field_is_read_by_the_mirror` **now exists.** The
+`hw/telemetry.py` docstring has named it since the module was written and no
+such test was ever added; the coverage was hand-written assertions that a new
+field slips straight past. It partitions FIELDS into pose and display, and
+perturbs every pose field on its own to prove `qpos`/`qvel` moves. Confirmed to
+bite by breaking the reader and watching it fail.
+
+**THE VIEWER'S LAG WAS THE OVERLAY, NOT THE SOLVER.** Reported as heavy lag
+while rolling the bike and backdriving the servos, and the four-bar was the
+obvious suspect. Measured instead:
+
+| per rendered frame | before | after |
+|---|---|---|
+| `SwingLinkageSolver.pose` | 23.7 us | 23.7 us |
+| `apply_pose` (whole pose pipeline) | 0.033 ms | 0.033 ms |
+| `mj_forward`, worst case (rolled 90, 8 contacts) | 0.098 ms | 0.098 ms |
+| **`_overlay`** | **4.004 ms** | **0.256 ms** |
+
+`floor_geoms` walks every geom building a named accessor each time, and the
+reference grid reached it TWICE PER GRID POINT -- 208 calls and 8132
+`str.startswith` per frame -- to recompute one plane's orientation that cannot
+vary across the grid. Hoisted out of `floor_z`, and `floor_geoms` memoised on
+the model (weak keys; the set is fixed at compile time). **15.6x, and it is
+TELEOP'S BUG TOO** -- same overlay, same path, and it has been there far longer
+than the mirror. Pinned by a call COUNT rather than a stopwatch.
+
+**WINGS NO LONGER SINK THROUGH THE FLOOR.** `ground_the_wheels` is now
+`ground_the_bike` and includes the righting panels. They are boxes, so the
+lowest point is a corner that moves with roll -- upright a fully deployed wing
+still clears the wheel contact by 5.7 mm and nothing changes, but at 61 deg it
+reaches **78 mm below** it. A rolled bike with a wing out now rests ON THE
+WING and the wheels lift clear, which is what the mechanism is for.
+
+Re-arm now says so. `r` was a key that appeared to do nothing: `FallGuard`
+stores consent and spends it only once the bike is back under **12 deg** and
+settled for **0.2 s**, and nothing in the viewer said either thing. The mirror
+now prints state transitions and acknowledges the keypress.
+
+**"THE LINKAGE REGRESSED TO A DIFFERENT MECHANISM" WAS THE SERVO AT ~0 deg.**
+Reported as `--swing-linkage` showing an older or wrong geometry; the config
+was right (`_smaller`) and the compiled model is byte-identical to HEAD across
+all seven build combinations. The servo was sitting near 0 instead of the 180
+stow, i.e. -180 deg of crank travel -- OUTSIDE the +-136.6 deg stroke, but this
+crank turns all the way round, so the loop closes there and what got drawn was
+a real pose the mechanism can never be COMMANDED to. It reads as a different
+machine because kinematically it is one. Driving the servo back to 180 fixed
+it. The mirror now warns once per excursion, and still draws it: hiding it
+would swap a confusing picture for a frozen one.
+
+**THE MIRROR'S CHUGGING IS THE WIFI LINK. MEASURED 2026-09-17.** Not the
+renderer, not the loop, not the four-bar. `--frame-stats` on the real mirror
+reported the loop HEALTHY while the operator was watching it chug -- 60 fps
+(n~300 per 5 s window), sync 0.10-0.17 ms, 10.7 ms of sleep headroom, and 0 of
+300 frames over budget in the very window the stutter was seen. That is the
+signature of a mirror redrawing the SAME pose: the loop cannot be at fault
+because the loop is idle.
+
+So the arrival pattern was measured instead -- 800 UDP packets at 100 Hz from
+the Pi, telemetry-sized, **with the Pi otherwise IDLE (load 0.10, `run_bike`
+not running)**:
+
+| | |
+|---|---|
+| received | 793 of 800, 99.8/s -- looks fine on the average |
+| gap p50 / p90 / p99 | 9.95 / 10.44 / 11.81 ms -- smooth most of the time |
+| **gaps > 33 ms** | **6 in 8 s: five of 100-150 ms, one of 552 ms** |
+| link | **-74 dBm**, rate adapted 130 -> 65 Mbit/s, 36 tx failures |
+
+A 100-150 ms gap is 6-9 HELD FRAMES at 60 fps, several times a second-ish.
+The average hides it completely, which is why "95.5 Hz telemetry, zero loss"
+from the earlier bench session was true and useless for this question: it
+measured throughput, and the thing the eye sees is the tail.
+
+**THIS PROMOTES THE ACCESS POINT FROM PLAN-OF-RECORD TO THE FIX FOR A
+MEASURED FAULT.** Ethernet is ruled out by choice. Of what is left:
+
+  * **`ATA` (2.4 GHz) is there and is 13 dB better.** From the bike:
+    `ATA-5G` -70 dBm against **`ATA` -57 dBm** on 2417 MHz, same router, same
+    credentials -- about 20x the received power. What was measured is rate
+    adaptation and tx failures, i.e. a marginal link, so that margin is the
+    likeliest fix and the cheapest to try. Caveat: `CONNEX` shares 2417 at
+    -58 dBm, so 2.4 GHz here has co-channel neighbours where 5 GHz has none.
+  * **A METHOD ERROR WORTH NOT REPEATING.** This was first reported as "no
+    2.4 GHz network exists", from `nmcli dev wifi list` plus three
+    `nmcli dev wifi rescan` calls. NetworkManager RATE-LIMITS rescans and
+    coalesced all three, so what came back was its CACHE -- the associated BSS
+    and nothing else. The operator could see `ATA` from a laptop beside the
+    bike. `sudo iw dev wlan0 scan` is the measurement; `nmcli` is a cache with
+    a plausible face.
+  * **WHICH BOARD SHIPS IS OPEN.** The Zero 2 W this plan is written around is
+    effectively unobtainable and is probably NOT happening; the end state is a
+    custom or different SBC with an unknown radio. So 2.4 GHz is the right
+    bench choice on SIGNAL, not because the final chip forces it, and every
+    link number is provisional against a radio nobody has chosen -- including
+    the 95.5 Hz one.
+  * **The laptop AP, with one radio per end.** macOS Internet Sharing over
+    Wi-Fi turns the laptop's single radio into the AP, so it cannot also be a
+    client of the house network: sharing has to come from a WIRED uplink, and
+    without one the laptop is simply offline while hosting. The bike likewise
+    holds one association at a time -- but both networks can be CONFIGURED,
+    and NetworkManager picks by `autoconnect-priority`.
+
+The Pi is Debian 13 + NetworkManager **configured by NETPLAN** (the live
+profile is named `netplan-wlan0-ATA-5G`, which is the tell). `nmcli` edits
+survive until the next `netplan apply` and then vanish. No SD card or monitor
+is needed to change any of this; the recipe, and the add-a-second-AP rule that
+makes it lockout-proof, are in `untethered-setup.md`.
+
+`--frame-stats` now also prints LINK stats in `--mirror`: rx/s, inter-arrival
+gap p50/p99/max, the fraction of frames that redrew a stale pose, and packet
+age at draw time. Frame timing structurally cannot see this failure, which is
+the lesson -- the instrument measured the loop, and the fault was in the data.
+
+**AND THE VIEWER LOCK, FIXED ALONG THE WAY.**
+Reported as chugging in `--mirror` but not in teleop, which pointed at the one
+thing the two loops differ in that touches the render thread. It was a real
+waste and not the reported fault -- sync now measures 0.10-0.17 ms, but it was
+never the cause. The mirror's `apply_camera` took `viewer.lock()`
+UNCONDITIONALLY every frame to compare one float, so every mirror frame took
+the render mutex TWICE (there and inside `viewer.sync()`) where teleop takes
+it once. Teleop's camera defaults to `free`, whose `apply_camera` returns
+before any lock -- hence the asymmetry.
+
+That mutex is held by the render thread WHILE IT RENDERS, so taking it is a
+wait, not a few instructions. The mirror's camera is fixed-azimuth tracking
+set once in `on_start` and only zoom ever changes it, so the lock bought
+nothing. Now behind a dirty flag set by `-`/`=`. Pinned by a test that counts
+acquisitions: **30 in 30 idle frames before, 0 after**, verified to fail when
+the guard is removed.
+
+Teleop's follow/overhead/wheel cameras DO lock every frame and have to -- they
+recompute azimuth from the bike's yaw. So the prediction is that teleop in
+follow mode chugs the same way; untested.
+
+**AND THE COMPUTE WAS NEVER THE PROBLEM.** Measured the real teleop
+closure -- policy, odometry, AHRS model, physics, overlay, four-bar -- over
+3000 frames at 42 physics steps each:
+
+| | ms |
+|---|---|
+| step (42x, policy included) | 2.02 mean, 2.37 p99 |
+| draw | 0.83 mean, 0.96 p99 |
+| whole frame | 2.85 mean, **3.22 p99**, budget 16.67 |
+| frames over budget | **1 of 3000, and it is frame 0** |
+
+The model is light to render too: 2 meshes, 708 vertices, 39 geoms. Scene
+geoms cap at 201. What is left is `viewer.sync()` and the OS compositor, which
+cannot be measured from a machine without the window on it -- so rather than
+guess a third time, `--frame-stats [SECONDS]` now reports step / draw / SYNC /
+sleep live in both loops. Sync is the column a headless profile cannot
+produce; a healthy loop shows a large sleep. Each line covers only the frames
+since the last, so an intermittent spike lands in the line it happened in
+rather than being averaged away.
+
+**A FALSE ALARM WORTH KILLING, NOT YET FIXED.** Every teleop run prints
+"this policy is an artifact of a DIFFERENT machine". It is wrong: teleop
+injects `floor_tilt_steps` into `params["sim"]` for the spawn dial, which
+moves the IN-MEMORY plant digest eda849e7afaaca0f -> 044e2677741b0b33. The
+comment there says "so neither digest moves", meaning the file. The policy
+check hashes the mutated copy. Left alone deliberately -- digest behaviour is
+not something to change in passing -- but it is training the reader to ignore
+the one warning that would matter.
+
+Suite **20 failed, 414 passed, 9 skipped -- red set unchanged**, 14 new tests.
+Neither digest moves on disk (the new keys are under `control`).
+
 **THE DRIVE SERVOS ARE MIRRORED AND THE FLIGHT CODE DID NOT KNOW (2026-09-16).**
 `servo_sign_turning_hub_forward: [1, -1]` was measured on 2026-09-13 -- both
 horns face outboard -- and written into
@@ -561,7 +781,7 @@ encoder scores older policies on a different bike, not a better result.
 
 ## The parameters that are still guesses
 
-17 marked `source: GUESS` in `config/bike_params.yaml`, each with a note on how
+18 marked `source: GUESS` in `config/bike_params.yaml`, each with a note on how
 to identify it. Never quietly promote one. The load-bearing ones:
 
 | parameter | value | dies at |
@@ -572,6 +792,7 @@ to identify it. Never quietly promote one. The load-bearing ones:
 | `input_armature`, hub/roller damping + frictionloss | 5 of them | the drivetrain station, spin-downs. Fitted 2026-09-14 into the OPT-IN overlay only (armature 2.44e-4 at the input shaft; Coulomb 0.05 N.m there, ~60x the hub guess) — not promoted in `bike_params.yaml` |
 | `payload.pack.mass` / `electronics.mass` | 0.115 / 0.076 kg | **a scale, today** |
 | `min_pinion_radius` | 0.006 m | print a test pinion |
+| `righting_sign` | +1 | mounting the motor -- a build DECISION, not a measurement. Station-only (the render); nothing flies on it |
 
 **The contact model as it currently ships**, since it comes up often:
 
