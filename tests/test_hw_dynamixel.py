@@ -493,6 +493,40 @@ def test_goal_current_cannot_be_in_the_shared_block():
     assert "Goal Current" not in table_by_name("xc430_w150")
 
 
+def test_the_righting_current_is_carried_but_not_written_without_a_servo():
+    """The startup torque cap. Pure -- no bus, so this pins the PLUMBING:
+    that the value survives construction and that a three-servo bench carries
+    it harmlessly rather than raising."""
+    b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4,
+                 righting_current=300)
+    assert b.righting_current == 300
+    assert b.righting_current_applied is None      # nothing written until open()
+    three = ServoBus(load_params(), ids=(1, 2, 3), righting_current=300)
+    assert three.id_right is None
+    assert three.righting_current == 300           # carried, never applied
+
+
+def test_no_righting_current_means_no_cap_is_written():
+    """None must not become 0. A Goal Current of 0 is a servo that produces no
+    torque at all, which would look exactly like a dead righting mechanism."""
+    b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4)
+    assert b.righting_current is None
+
+
+def test_the_configured_ids_match_the_configured_righting_servo():
+    """101-103 plus 104, not 1-3 plus 4. A Dynamixel ships as ID 1, so ID 1 on
+    a bus means an unconfigured servo; and `righting_id` sat at 4 against a
+    bench numbered 101-104 until 2026-09-16, which no test would have caught
+    because nothing read the two together."""
+    cfg = load_params()["control"]["onboard"]
+    ids = tuple(cfg["servo_ids"])
+    assert len(ids) == 3 and 1 not in ids
+    assert cfg["righting_id"] not in ids
+    assert cfg["righting_id"] == max(ids) + 1, (
+        "the righting servo is the fourth on the same chain; if it is not "
+        "adjacent to the other three, say why here")
+
+
 def test_gain_roles_expand_to_ids():
     b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4,
                  gains={"drive": {"Velocity P Gain": 400},
@@ -547,3 +581,87 @@ def test_an_ideal_plant_policy_has_no_opinion_and_says_so():
 def test_a_missing_move_file_is_not_a_crash():
     gains, note = resolve_gains(load_params(), "no_such_policy_at_all")
     assert "drive" not in gains and "NOTHING" in note
+
+
+def test_turned_is_surfaced_at_the_input_shaft_not_the_servo():
+    """The accumulated angle has to arrive in the frame the MODEL's joints are
+    in. `w_servo_*` deliberately stay in servo units because VelocityEstimator
+    applies the belt ratio itself; `turned_*` do not have that excuse -- no
+    controller reads them, so they are converted here or nowhere."""
+    b = ServoBus(load_params(), ids=(1, 2, 3))
+    state = {"dt": 0.01, "servos": {
+        1: {"pos": 0.0, "vel": 1.0, "vel_reported": 1.0, "turned": 2.0},
+        2: {"pos": 0.0, "vel": -1.0, "vel_reported": -1.0, "turned": -3.0},
+        3: {"pos": 0.0, "vel": 0.0, "vel_reported": 0.0, "turned": 0.0}}}
+    got = b.to_controller_units(state)
+    assert got["turned_a"] == pytest.approx(2.0 * b.belt_ratio)
+    assert got["turned_b"] == pytest.approx(-3.0 * b.belt_ratio)
+    # and the rates are NOT converted, which is the asymmetry worth pinning
+    assert got["w_servo_a"] == pytest.approx(1.0)
+
+
+def test_the_accumulator_starts_empty_and_is_per_servo():
+    b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4)
+    assert b._turned == {}
+
+
+# --- the servo sign: the one boundary between servo and input-shaft frames ---
+
+def test_the_servo_sign_is_applied_on_read_and_on_write():
+    """MEASURED [1, -1] (docs/measurements/drivetrain-measurements.yaml,
+    `signs.servo_sign_turning_hub_forward`): both horns face outboard, so B is
+    mirrored. It has to land on BOTH paths or the two disagree -- and it must
+    land in exactly one place per path, because everything upstream (the
+    estimator's hub mix, the ctrl vector, the model's joints) is written in
+    the input-shaft frame and must not know servos exist.
+    """
+    b = ServoBus(load_params(), ids=(1, 2, 3), servo_sign=(1, -1))
+    state = {"dt": 0.01, "servos": {
+        1: {"pos": 0.0, "vel": 2.0, "vel_reported": 2.0, "turned": 1.0},
+        2: {"pos": 0.0, "vel": -2.0, "vel_reported": -2.0, "turned": -1.0},
+        3: {"pos": 0.0, "vel": 0.0, "vel_reported": 0.0, "turned": 0.0}}}
+    got = b.to_controller_units(state)
+    # a real forward roll: servos equal and OPPOSITE, input shafts TOGETHER
+    assert got["w_servo_a"] == pytest.approx(2.0)
+    assert got["w_servo_b"] == pytest.approx(2.0)
+    assert got["turned_a"] == pytest.approx(1.0 * b.belt_ratio)
+    assert got["turned_b"] == pytest.approx(1.0 * b.belt_ratio)
+
+
+def test_the_default_sign_is_inert():
+    """A three-servo bench with no config keeps the old behaviour rather than
+    silently adopting this bike's mirroring."""
+    b = ServoBus(load_params(), ids=(1, 2, 3))
+    assert b.servo_sign == (1.0, 1.0)
+
+
+def test_the_configured_sign_is_the_measured_one():
+    cfg = load_params()["control"]["onboard"]
+    assert list(cfg["servo_sign"]) == [1, -1], (
+        "if the build changes, re-measure with `analysis/drivetrain_bench.py "
+        "jog` and update BOTH this and drivetrain-measurements.yaml")
+
+
+def test_a_commanded_common_mode_reaches_the_servos_as_opposite_goals():
+    """The failure the sign prevents, stated as behaviour: commanding both
+    input shafts forward must turn the two MIRRORED servos opposite ways. With
+    the sign missing the bike crabs when told to drive."""
+    b = ServoBus(load_params(), ids=(1, 2, 3), servo_sign=(1, -1))
+    sent = {}
+
+    class FakeWriter:
+        def clearParam(self): sent.clear()
+        def addParam(self, i, data):
+            sent[i] = int.from_bytes(bytes(data), "little", signed=False)
+        def txPacket(self): return 0
+
+    b._writer = FakeWriter()
+    b.steer_zero = 0.0
+    aid = {"drive_a": 0, "drive_b": 1, "steer": 2}
+    b.write_commands([6.0, 6.0, 0.0], aid)          # both input shafts forward
+
+    def as_signed(v):
+        return v - (1 << 32) if v >= (1 << 31) else v
+    a, bb = as_signed(sent[1]), as_signed(sent[2])
+    assert a > 0 and bb < 0, f"servo goals {a}, {bb} -- must be opposite"
+    assert a == pytest.approx(-bb, rel=1e-9)

@@ -82,6 +82,59 @@ version of `r5_control_mode_comparison` in `docs/measurements/servo-measurements
 Note also that `apply_map` drops torque, and anything that drops torque is a
 good place for a gain to be quietly restored, so read back after that too.
 
+## A REBOOT is a RAM reset, and it takes the torque cap with it
+
+Measured 2026-09-16 on the bench (ids 103/104, torque OFF, Protocol 2.0
+instruction `0x08`). A reboot is the cheap stand-in for a power cycle — no
+12 V switching, and the same RAM.
+
+| register | addr | before | after reboot | |
+|---|---|---|---|---|
+| Operating Mode | 11 | 4 / 5 | 4 / 5 | EEPROM, survives |
+| Position P Gain | 84 | **813** | **900** | RAM, lost |
+| Goal Current | 102 | **300** | **910** | RAM, lost — back to `Current Limit` |
+| Present Position | 132 | 1271 | 1271 | within one turn; see below |
+
+**The P gain was probed with 813 on purpose.** The first attempt wrote the
+FACTORY defaults (900 on the steer, 700/1400 on the righting servo) and read
+them back unchanged, which proves nothing at all: "RAM kept it" and "RAM reset
+it to the default I happened to write" are the same two numbers. A value that
+is not a default for any mode separates them, and it came back 900. So the
+gains ARE volatile and `_configure_servos` rewriting them at every startup is
+load-bearing, not belt-and-braces.
+
+**`Goal Current` coming back at `Current Limit` is the one with teeth.** 910 on
+an XC330-T181 is no cap at all, so a righting servo that skipped its startup
+write is in current-based position mode with the current limit wide open —
+3.2 N·m at the arm through 4:1, against a stroke that needs 0.18–0.21 A. That
+is why `control.onboard.righting_current` exists and why it is written next to
+the gains rather than left to the operator's first keypress.
+
+**The multi-turn winding is RAM too, MEASURED.** The first pass could not tell:
+both servos read inside one turn before and after simply because nothing had
+wound them past 4096 counts. Re-run with the steer driven one slow revolution
+first (torque on id 103 only, `Profile Velocity` 30):
+
+    start                    634 counts   +0.155 turns
+    commanded               4930 counts   +1.204 turns -- one revolution
+    arrived                 4931 counts   past 4095, so the counter IS
+                                          multi-turn while powered
+    after reboot             835 counts   +0.204 turns
+    lost                    4096 counts   EXACTLY one turn
+
+So extended position accumulates turns while powered and comes back from the
+absolute encoder's within-one-turn reading after a reset.
+
+**WHY THIS MATTERS, and the answer is not "it does not".** An earlier note here
+said nothing downstream depends on it, because `_capture_steer_zero` anchors to
+the power-up reading and `DriveController.engage_general` re-adopts
+`data.qpos[steer]` on every arm. Both true, and both about the COMMAND. What
+they miss is the servo's own absolute count: `clamp_extended` allows +-256
+turns, so if the winding persisted across power cycles a few turns of drift per
+session would march toward that ceiling with nothing to stop it and no symptom
+until the steer silently stopped tracking. It does not persist, so the failure
+is unreachable — but that is a measurement, not a consequence of the anchoring.
+
 ## Goal writes are discarded while torque is off
 
 Measured 2026-09-13 on both XC430-W150s (ids 101/102), velocity mode, torque

@@ -357,11 +357,76 @@ control:
   # NEITHER digest: `plant_digest` excludes the whole `control` block and
   # `design_digest` hashes only DESIGN_FIELDS (rate_hz, lqr, drive.speed_grid).
   onboard:
+    # WHERE THE TWO USB DEVICES ARE. `/dev/serial/by-id/` paths, not
+    # `ttyUSB0`/`ttyACM0`: those are enumeration-order and would swap the
+    # moment a second FTDI device appeared on the bus, which on this bike
+    # means the AHRS reader opening the servo bus. The by-id name carries the
+    # FTDI serial (FTB8HNE3) and the STM32's, so it is wrong loudly rather
+    # than quietly.
+    #
+    # Here rather than only on the command line because they never change and
+    # typing them every run is how `--no-preflight` ends up in the muscle
+    # memory too. `--port` and `--ahrs-port` still override for one session,
+    # which is what a swapped cable or a second U2D2 wants.
+    dxl_port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTB8HNE3-if00-port0
+    ahrs_port: /dev/serial/by-id/usb-STMicroelectronics_STM32_Virtual_ComPort_338139793235-if00
+    # WHICH WAY EACH DRIVE SERVO TURNS for a positive input-shaft rotation.
+    # MEASURED 2026-09-13 on the assembled rear drivetrain and recorded as
+    # `signs.servo_sign_turning_hub_forward` in
+    # docs/measurements/drivetrain-measurements.yaml: both horns face outboard,
+    # so servo B is mirrored.
+    #
+    # THE MEASUREMENT EXISTED FOR FOUR DAYS AND NOTHING READ IT.
+    # `analysis/drivetrain_bench.py` defaults to `--signs 1 -1` and has always
+    # been right; `hw/dynamixel.py` and `hw/odometry.py` assumed [1, 1], which
+    # swaps the two modes outright -- a commanded common mode reaches the
+    # hardware as a differential, and a real forward roll reads as pure roller
+    # motion with v_lon near zero. Caught on the bench by rolling the wheel
+    # forward by hand and watching the two servos report equal and OPPOSITE:
+    # turned_a +13.962, turned_b -13.958, hub 0.002 rad. Signed, the same
+    # numbers give hub 13.96 rad (2.22 turns) and ring 0.002.
+    #
+    # In `control.onboard` rather than `drivetrain:` on purpose. It is a fact
+    # about the servo frame, and the simulator has no servos -- its drive
+    # actuators act on the input shafts directly -- so no trained policy can
+    # see it and it moves NEITHER digest. `ServoBus` is the only consumer,
+    # because it is the only boundary between the two frames.
+    servo_sign: [1, -1]
+    # The three servos the policy drives: drive_a, drive_b, steer. `--ids`
+    # overrides for one session.
+    #
+    # 101-103, NOT 1-3. A Dynamixel ships as ID 1, so ID 1 on a bus means "a
+    # servo nobody has configured" and is exactly the thing a bring-up should
+    # refuse to talk to rather than assume. Numbering from 101 makes an
+    # unconfigured unit inert instead of ambiguous. This block had no
+    # `servo_ids` entry at all until 2026-09-16, so `run_bike` fell through to
+    # its (1, 2, 3) default and every bench run died on
+    # `read id=1 Model Number: rc=-3001`.
+    servo_ids: [101, 102, 103]
     # Dynamixel id of the self-righting servo, or omit it for a three-servo
     # bench. It rides in the same SyncRead/SyncWrite as the other three but is
     # driven BY HAND, not by the policy -- four training runs established the
     # general policy should not drive the wings (docs/plans/self-righting.md).
-    righting_id: 4
+    righting_id: 104        # was 4, which matched no servo on this bus
+    # Goal Current(102) on the righting servo, in RAW REGISTER COUNTS, written
+    # at every startup for the same reason the gains are: it is RAM, and it
+    # comes up at Current Limit(38) -- 910 on this XC330-T181, i.e. no cap.
+    # Uncapped current-based position mode is position mode with extra steps,
+    # and the whole reason the righting servo runs in mode 5 is that it can be
+    # driven into the floor and stall instead of levering the bike off it.
+    #
+    # 300 is a STARTING POINT, not a measurement. `self_righting.py lift
+    # --sweep` prices the stroke at 0.65-0.75 N.m AT THE ARM, which through the
+    # 4:1 reduction and kt = stall_torque/stall_current = 0.909 N.m/A is
+    # 179-206 mA; 300 leaves margin for friction and a sagging pack while
+    # staying a third of stall. At 910 the arm would see 3.2 N.m.
+    #
+    # COUNTS, not mA, because the two sources disagree: ROBOTIS's e-manual
+    # gives ~1 mA/LSB while the vendored model file declares 6.709e-4 with
+    # unit_name "N/m". Station C (R6) in first-physical-test.md settles it;
+    # until then the register's own number is the honest thing to write down.
+    # The operator moves it live with [ and ] -- see hw/ground.py.
+    righting_current: 300
     # The safety cut. NOT a recoverability boundary -- there is no such angle;
     # see FallGuard and analysis/no_return.py. 60 deg is rl_general.yaml's
     # `fall_roll_deg`, i.e. the angle past which the policy never trained.
@@ -377,19 +442,27 @@ control:
     # 4.91 ms mean latency, so it costs the loop nothing if it is ever needed.
     # At 50 Hz ODR it was 50 Hz / 20 ms and would NOT have been usable.
     #
-    # TRUE, and the reason is worth keeping: the unit on the bench IS streaming
-    # Combo right now (status + combo + raw_gyro_acc_mag at ~220 Hz, qos 5),
-    # but that was applied LIVE and never written to flash -- the profile
-    # checkbox reads back unticked when the GUI reloads. So push works today
-    # and stops working at the next power cycle, silently, with the symptom
-    # being an AHRS that produces no frames.
+    # FALSE since 2026-09-16: the Combo checkbox was ticked from a WINDOWS
+    # machine and this time it stuck. The proof is a power cycle, not a
+    # checkbox -- the unit was unplugged from that machine and plugged into
+    # the Mac, which cuts its only source of power, and it came up streaming
+    # Combo unprompted. Measured on that first plug-in, nothing transmitted to
+    # it: cmd 43 at 198.3 Hz, gap mean 5.04 ms / p50 4.98 / p99 5.65 / max
+    # 10.05, |accel| 9.872. The earlier attempt from the QEMU/Linux GUI
+    # applied live and was gone at the next power cycle.
     #
-    # Poll is insensitive to that: 199 Hz measured with the device streaming
-    # nothing, 204 Hz alongside other messages. Push measures slightly better
-    # (age-at-tick 4.3 ms mean / 9.7 ms max, against 3.3 / 9.4 polled -- both
-    # with zero stale raises over 300 ticks), so FLIP THIS TO false once the
-    # output profile has actually been saved to the sensor's flash.
-    ahrs_poll: true
+    # It still streams status(22), rpy(35) and raw_gyro_acc_mag(41) at 200 Hz
+    # each alongside it -- 33.7 kB/s total, of which Combo is 8.7. Harmless on
+    # USB CDC, and `parse_frame` drops the other three on the command check.
+    # It would NOT fit a 460800 UART (336 kbps of 460.8, no flow control), so
+    # untie those three before moving the sensor to the Pi's GPIO UART.
+    #
+    # Poll mode still works and is the fallback if a unit turns up unconfigured:
+    # 199 Hz with the device streaming nothing, 204 Hz alongside other
+    # messages. Push measures slightly better (age-at-tick 4.3 ms mean /
+    # 9.7 ms max, against 3.3 / 9.4 polled -- both with zero stale raises over
+    # 300 ticks).
+    ahrs_poll: false
     # Servo-shaft angle, in degrees, at which the front wheel points STRAIGHT
     # AHEAD. Measure once at assembly and write it here; it is a property of
     # how the servo is clamped to the fork and changes only when that does.
@@ -400,9 +473,22 @@ control:
     # The multi-turn count that extended position mode loses at power-up is
     # exactly the part nothing depends on.
     #
-    # Commented out = capture the pose at startup and call it zero, which suits
-    # a bare bench shaft and is wrong on a bike.
-    # steer_zero_deg: 0.0
+    # 180, NOT 0 OR 360. The servo is oriented at assembly so that straight
+    # ahead lands mid-range rather than on the wrap, which keeps a small
+    # steer either side of centre from crossing 0/4095 in the raw count.
+    # Extended position mode makes that mostly academic -- it counts turns
+    # rather than wrapping, and the policy only needs the angle mod pi -- but
+    # a zero that sits at the boundary is the kind of thing that is free to
+    # avoid now and expensive to discover later.
+    #
+    # NOT YET TRUE OF THE HARDWARE. It is the orientation the fork clamp will
+    # be built to; the bench shaft is bare and sits wherever it was left. Until
+    # the servo is actually clamped, a bench session wants
+    # `--steer-zero capture`, which calls the current pose zero -- otherwise
+    # every steer number inherits the gap between 180 and wherever the shaft
+    # happens to be. Delete this paragraph once the clamp exists and the angle
+    # has been measured rather than chosen.
+    steer_zero_deg: 180.0
     cut_roll_deg: 60.0
     # The re-arm pair is control/righting.py's hand-off criterion -- RECOVER_DEG
     # and HANDOFF_RATE -- for the same event, and both come from what
@@ -419,7 +505,44 @@ control:
     # moves/<name>.yaml carries the gain it trained at and that wins. This is
     # the fallback for a policy trained on the ideal drive plant, which has no
     # firmware loop in it and therefore no opinion.
-    gains: {}
+    #
+    # THE POSITION ENTRIES ARE THE FACTORY DEFAULTS, written down on purpose.
+    # They are not a tuning choice -- they are an ASSERTION. `_configure_servos`
+    # only rewrites Operating Mode when it differs, and the position gains only
+    # reset when the mode is written, so a servo somebody poked in Wizard comes
+    # up with whatever is in it and nothing notices. Listing them makes startup
+    # read them back and raise (`_verify_gains`).
+    #
+    # Roles: drive (both hubs), drive_a, drive_b, steer, righting. A role with
+    # no servo behind it is dropped, so this one block serves the three-servo
+    # bench too.
+    gains:
+      # Extended position mode (4). Factory P900/I0/D0, and D 0 is right here:
+      # the PID output is PWM duty, so the motor's back-EMF droop is still in
+      # the loop and damps it for free. See actuators.steer_kv, which IS that
+      # droop.
+      steer:
+        Position P Gain: 900
+        Position I Gain: 0
+        Position D Gain: 0
+      # Current-based position mode (5). Factory P700/I0/D1400. D IS LOAD
+      # BEARING here and is not a default worth drifting off: commanding
+      # current regulates the back-EMF droop away, so the plant has no damping
+      # of its own and the firmware's D term is all of it.
+      #
+      # I stays 0 on both. The steer has no standing load to integrate against,
+      # and on the righting servo an integrator winds up against the FLOOR at
+      # the end of the stroke -- stored energy in the one place it is least
+      # wanted.
+      #
+      # These map onto the simulator as righting.arm.servo_kp/kv (1.62 /
+      # 0.0519 at the servo shaft); the derivation is written out there, and
+      # the two must move together or the bike and the simulator are running
+      # different servos.
+      righting:
+        Position P Gain: 700
+        Position I Gain: 0
+        Position D Gain: 1400
   pd:                   # PD cascade (rear crawl only, steer held straight)
     roll_kp: 6.0        # lateral contact velocity [m/s] per rad of roll
     roll_kd: 1.2        # ... per rad/s of roll rate

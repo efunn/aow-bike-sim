@@ -614,6 +614,14 @@ class DynamixelBus:
         self._port = self._packet = None
         self._map = self._reader = self._writer = None
         self._fast = True
+        # ACCUMULATED shaft angle [rad at the servo] for the wrapping hubs.
+        # `read_state` already computes the unwrapped per-tick delta in order
+        # to difference a velocity, so summing it is free -- and it is the only
+        # honest absolute angle available, because Velocity Control Mode
+        # reports position over a single turn and the winding is not kept.
+        # Zero at open(); it is a relative angle whose origin is the start of
+        # the session, which is all a rendered wheel needs.
+        self._turned = {}
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -1087,6 +1095,8 @@ class ServoBus:
                  window_ms: float = 25.0, taper: float = 0.5,
                  control_hz: float = CONTROL_HZ_DEFAULT,
                  gains: dict | None = None,
+                 righting_current: int | None = None,
+                 servo_sign=(1.0, 1.0),
                  models: dict | None = None):
         self.params = params
         # Servo-shaft angle that the controller calls zero. None = capture it
@@ -1114,6 +1124,19 @@ class ServoBus:
         self.ids = tuple(ids) + ((self.id_right,) if self.id_right else ())
         self.control_hz = float(control_hz)
         self.belt_ratio = float(params["drivetrain"]["belt_ratio"])
+        # WHICH WAY EACH DRIVE SERVO TURNS when the input shaft it drives turns
+        # POSITIVE. The two horns face outboard, so one servo is mirrored and
+        # the pair reads [1, -1]; measured 2026-09-13 and recorded as
+        # `signs.servo_sign_turning_hub_forward` in
+        # docs/measurements/drivetrain-measurements.yaml.
+        #
+        # THIS IS THE ONLY PLACE IT BELONGS. Servo frame on one side,
+        # input-shaft frame on the other, and everything upstream -- the
+        # estimator's `mix_hub_a * wa + mix_hub_b * wb`, the controller's ctrl
+        # vector, the model's joints -- is written in the input-shaft frame and
+        # must not know servos exist. Applying it in two places would be worse
+        # than applying it in none.
+        self.servo_sign = (float(servo_sign[0]), float(servo_sign[1]))
         self.steer_ratio = float(params["bike"]["steering"]["gear_ratio"])
         self.port_name, self.baud = port, baud
         if velocity_source not in ("differenced", "reported"):
@@ -1132,6 +1155,13 @@ class ServoBus:
         # and `_configure_servos` for why they are written EVERY startup.
         self.gains = self._expand_gains(gains)
         self.gains_applied: dict = {}
+        # Goal Current(102) on the righting servo, written once at startup and
+        # then owned by the operator. RAW COUNTS -- see set_righting_current
+        # for why this is not milliamps. None leaves whatever the servo came up
+        # with, which is Current Limit, i.e. no cap at all.
+        self.righting_current = (None if righting_current is None
+                                 else int(righting_current))
+        self.righting_current_applied: int | None = None
         # Latest righting goal [rad at the servo shaft]. Held rather than
         # commanded per tick by the controller, because the righting servo is
         # operated by hand and not by the policy -- see run_bike.
@@ -1145,6 +1175,14 @@ class ServoBus:
         # apart without this line moving too.
         self._wraps = {self.id_a, self.id_b}
         self._fast = True
+        # ACCUMULATED shaft angle [rad at the servo] for the wrapping hubs.
+        # `read_state` already computes the unwrapped per-tick delta in order
+        # to difference a velocity, so summing it is free -- and it is the only
+        # honest absolute angle available, because Velocity Control Mode
+        # reports position over a single turn and the winding is not kept.
+        # Zero at open(); it is a relative angle whose origin is the start of
+        # the session, which is all a rendered wheel needs.
+        self._turned = {}
         # The bike's servos, declared so the indirect map can be built (and
         # unit-tested) without a bus present. `open()` replaces these with what
         # the hardware actually reports and raises if the two disagree, which
@@ -1364,6 +1402,17 @@ class ServoBus:
         bad = self._verify_gains()
         if bad:
             raise RuntimeError("gains did not stick: " + "; ".join(bad))
+        # THE TORQUE CAP, and it belongs here for the same reason the gains do:
+        # Goal Current(102) is RAM and comes up at Current Limit(38), which on
+        # an XC330-T181 is 910 -- no cap at all. Current-based position mode
+        # without a meaningful cap is position mode with extra steps, and the
+        # whole point of running the righting servo in mode 5 is that it can be
+        # driven into the floor and stall gracefully.
+        if self.id_right and self.righting_current is not None:
+            self.righting_current_applied = self.set_righting_current(
+                self.righting_current)
+            report.setdefault(self.id_right, {})["righting_current"] = \
+                self.righting_current_applied
         return report
 
     def _verify_gains(self) -> list:
@@ -1493,6 +1542,13 @@ class ServoBus:
                          else counts - prev[1])
                     raw = (d / XC330_COUNTS_PER_RAD) / (dms * 1e-3)
                     vel_diff = filt.update(raw)
+                    # Sum the SAME delta the velocity is differenced from.
+                    # Not equivalent to integrating `vel`: that is filtered
+                    # (`filt.update`), so it carries the filter's lag, and
+                    # anything that integrates it downstream loses whatever
+                    # happened between the samples it saw.
+                    self._turned[i] = self._turned.get(i, 0.0) + \
+                        d / XC330_COUNTS_PER_RAD
                     if i == self.id_a:
                         dt_s = dms * 1e-3
                 else:                        # wrap glitch or stall: hold, do
@@ -1503,6 +1559,7 @@ class ServoBus:
                 "pos": counts / XC330_COUNTS_PER_RAD,
                 "vel": vel_diff if self.velocity_source == "differenced" else vel_rep,
                 "vel_reported": vel_rep,
+                "turned": self._turned.get(i, 0.0),
             }
         return {"dt": dt_s, "servos": out}
 
@@ -1516,8 +1573,15 @@ class ServoBus:
         sv = state["servos"]
         return {
             "dt": state["dt"],
-            "w_servo_a": sv[self.id_a]["vel"],
-            "w_servo_b": sv[self.id_b]["vel"],
+            # SIGNED into the input-shaft frame; see `servo_sign`.
+            "w_servo_a": sv[self.id_a]["vel"] * self.servo_sign[0],
+            "w_servo_b": sv[self.id_b]["vel"] * self.servo_sign[1],
+            # Absolute-since-open shaft angles, at the INPUT SHAFTS (i.e. past
+            # the belt), which is the frame the model's joints are in. No
+            # controller reads these; they exist so a display does not have to
+            # integrate a filtered rate to find out where a wheel is.
+            "turned_a": sv[self.id_a]["turned"] * self.belt_ratio * self.servo_sign[0],
+            "turned_b": sv[self.id_b]["turned"] * self.belt_ratio * self.servo_sign[1],
             "steer_pos": ((sv[self.id_steer]["pos"] - (self.steer_zero or 0.0))
                           / self.steer_ratio),
             "steer_vel": sv[self.id_steer]["vel"] / self.steer_ratio,
@@ -1592,8 +1656,14 @@ class ServoBus:
                     DXL_LOBYTE(DXL_HIWORD(v)), DXL_HIBYTE(DXL_HIWORD(v))]
 
         self._writer.clearParam()
-        for dxl_id, key in ((self.id_a, "drive_a"), (self.id_b, "drive_b")):
-            w_servo = float(ctrl[aid[key]]) / self.belt_ratio
+        for (dxl_id, key), sign in zip(((self.id_a, "drive_a"),
+                                        (self.id_b, "drive_b")),
+                                       self.servo_sign):
+            # `ctrl` is in the INPUT-SHAFT frame, so the sign lands here too --
+            # the same one `to_controller_units` undoes on the way in. Without
+            # it a commanded common mode arrives at the hardware as a
+            # differential: the bike crabs when told to drive.
+            w_servo = float(ctrl[aid[key]]) / self.belt_ratio * sign
             self._writer.addParam(dxl_id, le4(int(round(w_servo / VEL_LSB_RAD_S))))
 
         steer_rad = clamp_extended(float(ctrl[aid["steer"]]) * self.steer_ratio
