@@ -1264,7 +1264,7 @@ no display and the desktop only costs RAM. Before writing, open the gear /
 image, so first boot comes up on the network with SSH already listening:
 
 ```sh
-ssh pi@aowbike.local
+ssh efun@aowbike.local
 ```
 
 64-bit matters: `dynamixel-sdk` and numpy both ship aarch64 wheels, so nothing
@@ -1354,7 +1354,7 @@ power is capped, which reads as unexplained short range.
 `rsync`, not `git` — during bring-up you want the working tree, not commits:
 
 ```sh
-rsync -av --delete --exclude .git --exclude runs --exclude traces --exclude '__pycache__' ./ pi@aowbike.local:~/aow-bike-sim/
+rsync -av --delete --exclude .git --exclude runs --exclude traces --exclude '__pycache__' ./ efun@aowbike.local:~/aow-bike-sim/
 ```
 
 ### 5. Install — `--no-deps` is load-bearing
@@ -1380,7 +1380,7 @@ python3 -c "import aow_sim.hw.run_bike; import sys; assert 'mujoco' not in sys.m
 
 ```sh
 python -m aow_sim.export_deploy          # -> deploy/bundle.npz
-rsync -av deploy/ moves/ pi@aowbike.local:~/aow-bike-sim/
+rsync -av deploy/ moves/ efun@aowbike.local:~/aow-bike-sim/
 ```
 
 Re-run this whenever gains, `bike_params.yaml`, or a policy changes — the

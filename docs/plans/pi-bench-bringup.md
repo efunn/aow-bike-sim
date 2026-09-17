@@ -68,6 +68,21 @@ rather than starting deaf (`wait_for_link`), because the watchdog should mean
 "the operator went away", which is only meaningful once they have been there.
 `--no-link` turns the link failsafes off for a bench run with no operator.
 
+**It binds the SAME KEYS as the viewer (2026-09-16).** The first version used
+`w`/`s`/`a`/`d` and space, which nothing else in the repo uses: teleop is
+arrows for throttle/brake and turn, and `/` for zero-command. Two UIs for one
+bike, each with its own muscle memory, is a mistake that only shows up under
+pressure. The arrows and `/` are now the primary binding and the letters are
+aliases, kept because an escape sequence has more ways to go missing over ssh
+than a letter does. `/` also does what teleop's `/` does in full — zero the
+velocity AND re-aim the heading command at where the bike actually points —
+which needed the bike to start reporting its own `psi` in telemetry. Same
+packet now carries `righting_current`, so `[` and `]` step from the value that
+is on the servo instead of from zero.
+
+**There is still NO GRAPHICAL station.** The terminal one is what exists; the
+gap is recorded in `untethered-setup.md`.
+
 The struct lost a field on the way: it carried `"mode"` and the bike never read
 it. `general_rl` is the only deployable controller, so a mode key was a control
 the operator would believe they had.
@@ -651,7 +666,7 @@ so the timer does not invalidate it), bus 11.9-12.0 V, torque off:
 | 101, 102 | XC430-W150 (1070) | 50 | the latest XC430 build; its numbering is unrelated to the XC330's |
 | 103, 104 | XC330-T181 (1210) | **53** | both clear `MIN_FIRMWARE` — neither is the silent-indirect unit | Then just power the Pi over micro-USB — Imager bakes the wifi credentials and
 the ssh key into the image, so first boot joins the network with sshd already
-listening and `ssh pi@aowbike.local` works with nothing else attached. **The
+listening and `ssh efun@aowbike.local` works with nothing else attached. **The
 USB-A Ethernet adapter is a recovery path, not a step**: it is what you reach
 for if the Pi never appears, which in practice means a typo'd passphrase, an
 unset country code, or a 5 GHz-only SSID. Without it, that failure costs a
@@ -878,8 +893,8 @@ Only the **first** setup touches the OS. After that nothing is reflashed:
 
 | changed | ship | cost |
 |---|---|---|
-| control code | `rsync -av --delete --exclude .git --exclude runs --exclude traces --exclude __pycache__ ./ pi@aowbike.local:~/aow-bike-sim/` | seconds, over wifi or Ethernet |
-| a policy | `rsync -av moves/ pi@aowbike.local:~/aow-bike-sim/moves/` | seconds |
+| control code | `rsync -av --delete --exclude .git --exclude runs --exclude traces --exclude __pycache__ ./ efun@aowbike.local:~/aow-bike-sim/` | seconds, over wifi or Ethernet |
+| a policy | `rsync -av moves/ efun@aowbike.local:~/aow-bike-sim/moves/` | seconds |
 | `bike_params.yaml`, gains | `python -m aow_sim.export_deploy` then rsync `deploy/` | seconds, and the digest check catches it if you forget |
 | the OS itself | reflash | never, after Phase 1 |
 

@@ -115,10 +115,19 @@ hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 
 ## Health
 
-**Test suite, measured 2026-09-15** with `pytest -n 10 --dist load`:
+**Test suite, measured 2026-09-16** with `pytest -n 10 --dist load`:
 
-    23 failed, 354 passed, 9 skipped, 42.0 s
-    red set unchanged (23 accepted failures) -- tests/expected_failures.txt
+    20 failed, 358 passed, 9 skipped, 45.3 s
+    red set unchanged (20 accepted failures) -- tests/expected_failures.txt
+
+**Three came OFF the red list**, and by a route nobody was looking down:
+`actuators.steer_kv` 0.05 -> 0.0676 cleared
+`test_front_constraint_beats_roller_kinematics` and both
+`test_fused_estimator_end_to_end[standstill*]`. Confirmed causal by swapping
+that one value and re-running -- 3 passed at 0.0676, 3 failed at 0.05. The
+estimator was never what failed in those three; it was being judged against a
+plant whose steering was under-damped. The other four odometry entries are
+unmoved, so `odometry-rewrite.md` still has a job.
 
 +36 passing against 09-14, all from the onboard bring-up work: 18 in the new
 `tests/test_hw_runbike.py` (the fall guard and the UDP command struct, both
@@ -146,13 +155,252 @@ first absolute command would have slammed it. Detail: `pi-bench-bringup.md`.
 
 **The AHRS path is proven on hardware (2026-09-16).** `hw/ahrs.py::parse_frame`
 decodes real TM151 Ep_Combo frames — quaternion, gyro 0.2 deg/s at rest,
-`|accel|` 9.772 against g 9.807. The unit does NOT stream Combo (that profile
-bit is RAM-only and dies at power-up; the 200 Hz ODR is in flash and survives),
-so `AhrsReader` gained an opt-in `poll=True` that requests each frame: **230 Hz,
-age-at-tick 4.7 ms mean / 10.4 ms max, zero stale raises in 300 ticks**, against
-0 frames and 300/300 stale on push. `control.onboard.ahrs_poll` is true until
-the profile is written to flash from the vendor's Windows GUI. Detail and the
-three ways the "no configuration API" claim was checked: `pi-bench-bringup.md`.
+`|accel|` 9.772 against g 9.807. `AhrsReader` also gained an opt-in
+`poll=True` that requests each frame, for a unit whose output profile has Combo
+switched off: **230 Hz, age-at-tick 4.7 ms mean / 10.4 ms max, zero stale
+raises in 300 ticks**. Detail and the three ways the "no configuration API"
+claim was checked: `pi-bench-bringup.md`.
+
+**PUSH IS BACK, and this time it is in flash (2026-09-16).** The Combo output
+profile was ticked from a Windows machine; the earlier attempt through the
+QEMU/Linux GUI applied live and was gone at the next power cycle. The proof is
+a power cycle, not a checkbox — the unit was unplugged from that machine and
+plugged into the Mac, cutting its only power, and came up streaming Combo
+unprompted at **198.3 Hz** with nothing transmitted to it. Through `AhrsReader`
+at 100 Hz ticks: **201.4 Hz, requests 0, age-at-tick 2.32 ms mean / 4.87 p99 /
+4.93 max, zero stale raises in 367 ticks** — better than the polled path on
+every number. `control.onboard.ahrs_poll` is now **false**.
+
+It still streams `Status`(22), `RPY`(35) and `Raw_GyroAccMag`(41) at 200 Hz
+alongside Combo: 33.7 kB/s total, of which Combo is 8.7. Free on USB CDC, and
+`parse_frame` drops the other three on the command check — but it would NOT fit
+a 460800 UART (336 kbps of 460.8, no flow control), which is the wiring
+`untethered-setup.md` specifies for the Zero 2 W. Untick them before that move.
+
+**Preflight now checks the sensor's own QoS.** `Ep_Combo` carries
+`Ep_Status_SysState`, so the grade costs one mask and no extra subscription.
+The bar is 3 (`basic service`) rather than 4, because 3 is what a healthy unit
+holds in the first ~30 s after power-on — exactly when the bike is being armed —
+and 2 is excluded on the vendor's own words for it, "very limited measurement
+accuracy". The bench unit reads 5 (`very good service`). This is the only one
+of preflight's four checks that can catch a sensor whose numbers are all
+plausible and all wrong.
+
+**The whole loop ran on the Pi against the new config (2026-09-16), torque
+off.** Tick jitter **mean 0.15 ms, p99 0.91, max 1.50** on a 10 ms budget; pack
+11.9 V. The AHRS ran pushed — `requests 0`, 200.6 Hz, 73.0 B/frame,
+age-at-tick **mean 2.09 / p99 4.32 / max 5.18 ms**, zero ticks over 10 ms and
+zero stale raises in 984 — which is BETTER than the Mac (2.41 mean) and half
+the old four-stream push figure (4.3 / 9.7). The position gains were read back
+off the bus rather than trusted: id 103 mode 4 P900/I0/D0, id 104 mode 5
+P700/I0/D1400.
+
+Three config gaps the run found, all fixed: `control.onboard.servo_ids` was
+READ by `run_bike` and never defined, so it fell through to `(1, 2, 3)` and
+every bench run died on `read id=1 Model Number: rc=-3001`; `righting_id` was
+4 against a bench numbered 101-104; and `Goal Current` on the righting servo
+came up at `Current Limit` (910), i.e. no torque cap, with nothing setting it.
+`righting_current: 300` is now written next to the gains at every startup. See
+`hw/control_tables/README.md` for the reboot measurement that says why it has
+to be every startup.
+
+**Torque on, 2026-09-16, operator holding the rear assembly.** The steer does
+NOT drift: it settled at -57 deg within a second and stayed there (-58.2 to
+-56.1 over 10 s), because with the wheels turning the odometry moves and the
+policy's observation stops being constant. The unbounded -229.2 deg/s march
+seen with `--no-torque` is an open-loop artifact, not a property of the
+controller. Tick jitter mean 0.14 / p99 0.76 / max 0.84 ms, the best yet, and
+torque dropped cleanly on all four servos at `--seconds`.
+
+**Extended position's turn counter is RAM (measured).** Driving the steer one
+revolution put `Present Position` at 4931 counts; a reboot brought it back to
+835, losing exactly 4096. So steer winding cannot accumulate across power
+cycles toward `clamp_extended`'s +-256 turn ceiling. `control_tables/README.md`
+carries the table and why the first version of this test proved nothing.
+
+**The ground station binds the viewer's keys (2026-09-16).** Arrows and `/`
+are primary, `w`/`s`/`a`/`d`/space are aliases, and `/` re-aims the heading at
+the bike the way `run_drive`'s `zero_command` does — which needed `psi` and
+`righting_current` added to the telemetry, since the station cannot know
+either. Still a TERMINAL station: there is no graphical one, and reusing the
+MuJoCo viewer as a live mirror is the obvious candidate rather than a second
+UI. **`steer_zero_deg` is pinned at 180** — the orientation the fork clamp will
+be built to, chosen so straight-ahead sits mid-range rather than on the
+single-turn wrap. It is NOT yet true of the hardware, so bench sessions want
+`--steer-zero capture`; without it the bare shaft (73.4 deg) is told it is
+106.6 deg off straight, which is visible in the telemetry as a completely
+different drive split.
+
+**Telemetry schema v2, and the mirror's half of it (2026-09-16).**
+`hw/telemetry.py` holds `build` (Pi, mujoco-free) and `apply_pose` (laptop)
+fifty lines apart on purpose: the failure they are both exposed to is drifting
+apart, and a renamed field is read as a `.get()` default rather than raising.
+438 B/packet, 21.4 kB/s at 50 Hz, versioned so a stale deploy fails at connect.
+
+The rear wheel renders from TWO NUMBERS. `_aow_assembly`'s gearbox is a pair of
+linear tendon equalities, so hub, ring and all eight rollers are a closed form
+of the input-shaft angles -- no solver needed in a render. Checked against
+MuJoCo's own constraint solve after 1500 driven steps, agreeing to <2e-3 rad.
+What the bike genuinely does not know (ride height, front-wheel angle, the omni
+internals' absolute phase) is DRAWN and the module says so per field.
+
+**Two link bugs found by measuring the packet rate rather than trusting it.**
+A station sending at 50 Hz got **27.8 Hz** of telemetry back. `CommandLink._run`
+compared `now - last_tx > period` against a clock driven by datagram ARRIVALS,
+which aliases; fixing it to an accumulated deadline gave 34.7 Hz, still short,
+because the loop could only transmit on a wake and `recvfrom` only wakes on a
+command or a 100 ms timeout. Waiting on `select` with the time-to-deadline as
+its timeout gives **50.0 Hz, gap mean 20.02 ms / p99 29.6 / max 40.7**, and the
+control loop is untouched (tick jitter mean 0.15 / max 1.30 ms). Both bugs read
+as "the radio is struggling" and neither was.
+
+**The radio is not the constraint, measured.** Pi to Mac, zero loss at every
+size tried: 218 B, 1.1 kB, 3.9 kB, 11.9 kB and 31.9 kB per packet at 50 Hz
+(the last is **1.56 MB/s**), and 1.1 kB / 7.9 kB at 200 Hz. Encoding is the
+budget that binds, and barely: a full pose plus four servos x six registers is
+855 B and **154.8 us on the Pi, 1.55% of a 10 ms tick**. Caveat: house wifi,
+stationary bike, one client -- and `untethered-setup.md` specifies a
+LAPTOP-HOSTED AP for the real link, which is one hop rather than two. Re-measure
+before trusting it with the bike moving.
+
+**A latent test bug, not mine, found on the Pi.** `pytest tests/` gave 3
+failures in `test_hw_no_mujoco.py` and `pytest tests/test_hw_no_mujoco.py`
+alone gave 18 -- and running that file alone is exactly how you check the
+import boundary on the bike. The fixture's teardown did `sys.modules.clear()`
+then restored a snapshot taken at SETUP, so numpy (first imported during the
+test, via `control.policy`) was evicted permanently and the next re-import hit
+`cannot load module more than once per process`. Invisible on a laptop, where
+an earlier test file has always imported numpy first. Now 1 failure alone, and
+that one legitimately needs mujoco.
+
+**The mirror is up (2026-09-16).** `mjpython -m aow_sim.run_drive --mirror
+aowbike.local` drives the real bike and renders it in the MuJoCo viewer with no
+physics at all: `interactive.mirror_loop` calls `frame(model, data)` per
+rendered frame, `telemetry.apply_pose` writes the pose, `mj_forward` does the
+kinematics. Teleop's own `_KeyState`/`_Axis` and ramp constants drive it, so
+hold-to-accelerate and the 35 deg lead clamp behave exactly as in the
+simulator, and `MIRROR_KEYS` is module-level so a test can prove both stations
+land on the same `OperatorState`.
+
+Checked headless against the live bike over 12 s: **rendered roll tracks
+telemetry roll to 0.003 deg**, chassis sits at the settled rest height, steer
+matches, 401 packets, zero empties. `_overlay`'s dial needed no change -- green
+tick commanded heading, cyan actual -- and it is fed `cmd_psi`/`cmd_v_world`
+from the packet, i.e. the command THE BIKE SAYS IT RECEIVED, which differs from
+what the station last sent exactly when one was dropped.
+
+Two bugs the live run found. The bike transmitted its telemetry dict before the
+control loop had filled it, so the first packets on the wire were `{}` and the
+station's version check reported "schema vNone -- re-sync the Pi" against a Pi
+that was fine; the bike now stays silent until it has something to say, and
+`check_version` tolerates an empty packet, both. And `--mirror` under plain
+`python` printed "mirror stopped after 0 telemetry packets" underneath the
+mjpython hint, which reads as though it ran.
+
+**Preflight's standing condition got its own escape hatch (2026-09-16).**
+The AHRS mount is `GUESS` and stays that way until the bike can be jigged level
+on a level floor -- so preflight blocked EVERY run, and the only way past was
+`--no-preflight`, which also disarms the |accel|, |gyro| and QoS checks. A gate
+that fires every single time is not a gate: it trains the operator to reach for
+the flag that turns off the gates which do catch things. Findings now carry a
+kind, `--allow-guess-mount` accepts exactly that one, and the error only
+suggests it when it would actually clear the block. The mount still blocks by
+default -- on the assembled bike an uncalibrated mount is a permanent roll bias
+and is worth stopping for.
+
+**Five things the first mirror session found (2026-09-16), all from looking
+at it rather than from a test:**
+
+  * **The lead clamp blocked BOTH directions** once the command left the
+    +-35 deg band, so the heading command froze with no way back -- and the
+    band can be left with no key pressed at all, because the bike moves.
+    Presented as "the heading command does nothing". Teleop's own `turn`
+    blocks only the direction that GROWS the lead; the predicate is now
+    `run_drive.lead_blocks`, module level and tested.
+  * **6/7/8 were unbound.** They are teleop's heading snaps (+90/-90/180) and
+    pass `clamp=False`, because a snap is meant to lead until the bike catches
+    up.
+  * **A fixed ride height put the front wheel underground** on a nose-down
+    pitch, and floated the rear on a wheelie -- the attitude rotates the body
+    about its origin. `telemetry.ground_the_wheels` now puts whichever wheel is
+    lower on the floor, exact for a surface of revolution (`centre_z - radius`,
+    no bounding-box estimate). Consequence: the mirror can never show a wheel
+    genuinely lifting off, because one is always pinned.
+  * **The camera was framed for a bike that travels.** It now TRACKS the
+    chassis at 0.9 m with `-`/`=` to zoom, which is safe whether or not the
+    dead-reckoned position wanders.
+  * **`--port`/`--ahrs-port` are in `control.onboard` now** as
+    `dxl_port`/`ahrs_port`, by-id rather than `ttyUSB0`. Typing two 70-character
+    paths on every run is how `--no-preflight` got into the habit too. Flags
+    still override.
+
+**Telemetry runs at the CONTROL rate now, not half of it.** The dict was built
+every other tick to match a 50 Hz link; that halving is also 0-20 ms of extra
+staleness on top of the transmit period, and the mirror shows it as lag. Both
+are at 100 Hz: measured **95.5 Hz, 40.0 kB/s, gap mean 10.47 / p99 20.03 ms**,
+and the control loop is unmoved with a station attached (tick jitter mean 0.16
+/ p99 0.94 / max 1.50 ms). What remains is irreducible without more work:
+AHRS age ~2 ms, one control tick <=10, one transmit period <=10, the radio, and
+one render frame <=17 -- so ~25-45 ms typical against teleop's zero, because
+teleop's state is local. The mirror is a picture of somewhere else.
+
+**A measurement artifact that bit twice.** Both attempts to measure the
+telemetry rate from a loop that drains to the NEWEST packet once per frame
+read back the loop's own frame rate (27.8 Hz, then 49.4) rather than the
+link's. Counting every packet gives 95.5. Drain-to-newest is right for a
+mirror and wrong for a rate measurement, and the two look identical in the
+output.
+
+**The mirror's odometry drift is now watchable on purpose.** `pos` is
+dead-reckoned and drifts, and that drift IS the odometry error made visible --
+so the bike walks around the floor by default, `0` re-centres it, and `p` pins
+it at the origin and hides the floor grid (a world reference with no world
+motion left to reference reads as though nothing is working).
+
+**The rear wheel's angle is MEASURED now, not integrated.** It was summed on
+the station from `w_shaft` x display-dt, which was wrong twice: the dt came
+from the packet (the bike's 10 ms tick) while the call happens once per
+rendered frame, so the wheels turned at 60% of reality; and `vel` is FILTERED,
+so even a correct integral would lag and would lose whatever happened between
+the packets that arrived. `read_state` already computes an unwrapped per-tick
+position delta in order to difference the velocity, so the bus now sums that
+same delta into `turned` and the packet carries it. The station prefers the
+sent angle outright and keeps integration only as the fallback for a bike too
+old to send one. NOT yet confirmed against a hand-turned wheel on the bench --
+the plumbing and the arithmetic are tested, the physical check is outstanding.
+
+**THE DRIVE SERVOS ARE MIRRORED AND THE FLIGHT CODE DID NOT KNOW (2026-09-16).**
+`servo_sign_turning_hub_forward: [1, -1]` was measured on 2026-09-13 -- both
+horns face outboard -- and written into
+`docs/measurements/drivetrain-measurements.yaml`. Nothing under `src/` ever
+read it. `analysis/drivetrain_bench.py` defaults to `--signs 1 -1` and has
+always been right; `hw/dynamixel.py` and `hw/odometry.py` assumed [1, 1].
+
+That swaps the two modes outright. A commanded common mode reaches the
+hardware as a differential -- the bike crabs when told to drive -- and a real
+forward roll reads as pure roller motion with `v_lon` near zero.
+
+Caught on the bench by rolling the rear wheel forward by hand and reading the
+two servos: **+3048 and -3048 counts**, `turned_a +13.962` against
+`turned_b -13.958`, giving hub 0.002 rad. Signed, the same numbers give **hub
+13.96 rad = 2.22 turns** and ring 0.002 -- a forward roll with the rollers
+still, which is what the hand did.
+
+`control.onboard.servo_sign` now carries it and `ServoBus` is the only
+consumer, applied once on read and once on write. It is the boundary between
+the servo frame and the input-shaft frame, and everything upstream -- the
+estimator's hub mix, the ctrl vector, the model's joints -- is written in the
+input-shaft frame and must not know servos exist. Moves NEITHER digest: the
+simulator has no servos, so no trained policy can see it.
+
+**EVERY TORQUE-ON RUN BEFORE THIS IS SUSPECT**, including 2026-09-16's. The
+commanded `+32.6 / -7.4 rad/s` reached the hardware with B inverted, so what
+the bike physically did is not what the telemetry said. Nothing was damaged --
+the bike was held -- but do not read those numbers as a controller result.
+
+A measurement that exists, is correct, is written down, and has no consumer is
+the failure mode this repo keeps finding. Worth a grep before trusting that a
+recorded fact is in force.
 
 **`pytest -m hardware` passed 7/7 on 2026-09-15** — four servos on the Mac,
 ids 101-104 at 3 Mbps. It failed 1/7 first (63 frames/s at a requested 200 Hz);
@@ -183,12 +431,17 @@ pinned at its clamp 86% of the time, which read as oscillation and was really a
 saturated actuator). Those two are the knobs to reach for when contact moves.
 
 **`MIN_FIT_R2` is 0.93, and the bar was the thing that was wrong.** Nothing has
-ever cleared 0.98 — not the current plant (0.9412), not the servo without its
-integral term (0.9757). The fit gets *worse* as the contact gets more realistic:
+ever cleared 0.98 — not the current plant (**0.9489** since the 09-16 steer
+damping change, 0.9412 before it), not the servo without its integral term
+(0.9757). The fit gets *worse* as the contact gets more realistic:
 
 | `contact_solref` dampratio | 0.3 | 0.5 | **1.0 (ships)** | 2.0 |
 |---|---|---|---|---|
 | worst R² | 0.8148 | 0.9297 | **0.9412** | 0.9602 |
+
+(That row is at `steer_kv` 0.05 and has NOT been re-swept at 0.0676; the
+shipping column alone is now 0.9489. The monotonic trend is the load-bearing
+part and a damping change to a different joint has no reason to reverse it.)
 
 The drop test implies ~0.30 — the worst-fitting value. There is no setting that
 is both faithful and well-fitting. **Re-derive the bar from the measurement
@@ -214,8 +467,25 @@ would otherwise pass as a perfect no-op.
 (`plant_digest`, `design_digest`, and the legacy whole-file
 `params_digest` aa232834f462a229):**
 
-    plant_digest   e1ec36bfa670217e    was this trained against the machine I am running?
+    plant_digest   eda849e7afaaca0f    was this trained against the machine I am running?
     design_digest  2db6c647ff3a2d59    were these gains designed against the weights I am running?
+
+**`plant_digest` MOVED on 2026-09-16** (was `e1ec36bfa670217e`), and everything
+in `moves/` is now an artifact of a different machine — `load_move` says so on
+load. What moved it: `actuators.steer_kv` 0.05 -> 0.0676, the XC330's own
+back-EMF droop `stall_torque/no_load_speed`, replacing a number that was a
+GUESS in spirit; and `righting.{arm,wings}.servo_kp/kv` from tuning knobs
+(30.0 / 1.0) to the servo's firmware gains referred to its shaft (1.62 /
+0.0519). The bundle was re-exported and the LQR redesigned: worst fit 0.9412 ->
+0.9489, gains moved 21% of scale on the drive input and 27% on the steer input
+at the worst speed (v = -0.50).
+
+**ACCEPTED, not outstanding, for the policies.** They were all trained at the
+old value and are provisional in the digest's sense, but the change makes the
+simulator MORE like the bike, not less — so retraining is the fix and reverting
+is not. `general_rl_cmd_curriculum2b` has not been re-evaluated on the new
+plant; do that with `analysis/per_command.py` before reading anything into a
+hardware run.
 
 `deploy/bundle.npz` matches both. A failing digest check is the mechanism
 working — fix it with `python -m aow_sim.export_deploy`, never by loosening the
