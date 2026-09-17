@@ -170,10 +170,19 @@ tests/test_teleop.py::test_hold_ramps_to_full_speed_with_auto_repeat  # 2026-08-
 # `general_rl_smooth_diff_pi`'s 0.15 while running on this same estimator. So
 # a policy can now be flown on the estimator as it stands. Do not clear these
 # by tuning for RMS: that is the metric that would have shipped a regression.
+# CLEARED 2026-09-16 by actuators.steer_kv 0.05 -> 0.0676 -- the XC330's own
+# back-EMF droop (stall_torque/no_load_speed), replacing a number that was a
+# GUESS in spirit. Three entries left this list:
+#     test_front_constraint_beats_roller_kinematics
+#     test_fused_estimator_end_to_end[standstill]
+#     test_fused_estimator_end_to_end[standstill_shoved]
+# CONFIRMED CAUSAL, not coincidence: swapping only that one value and re-running
+# gives 3 passed at 0.0676 and 3 failed at 0.05. The estimator was never the
+# problem in those three -- it was being judged against a plant whose steering
+# was under-damped. The four still listed below are unmoved by it, so the
+# estimator work in docs/plans/odometry-rewrite.md still has a job to do.
+#
 tests/test_hw_odometry.py::test_constraint_coefficients_are_the_geometry            # 2026-08-25 estimator: tan coeff 0.652 vs ~1
-tests/test_hw_odometry.py::test_front_constraint_beats_roller_kinematics            # 2026-08-25 estimator: 31.7 vs 53.8 mm/s
 tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[standstill]         # 2026-08-25 estimator: 42.2 mm/s RMS
 tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[standstill_shoved]  # 2026-08-25 estimator: 44.9 mm/s RMS
 tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[straight_0.6]       # 2026-08-25 estimator: correlation 0.137
-tests/test_hw_odometry.py::test_fused_estimator_end_to_end[standstill]              # 2026-08-25 estimator: fused 42.8 mm/s RMS
-tests/test_hw_odometry.py::test_fused_estimator_end_to_end[standstill_shoved]       # 2026-08-25 estimator: fused 46.0 mm/s RMS

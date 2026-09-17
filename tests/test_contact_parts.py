@@ -66,8 +66,21 @@ def test_shipped_config_is_a_bit_exact_no_op():
 
 
 def test_the_split_did_not_move_the_plant_digest():
-    """The whole reason the overrides are absent from the YAML."""
-    assert plant_digest(load_params()) == "e1ec36bfa670217e"
+    """The whole reason the overrides are absent from the YAML.
+
+    RE-BASELINED, not loosened. This pins a literal, so it goes red whenever
+    the plant moves for ANY reason -- which is the point: it is the tripwire
+    that asks "did you mean to move the plant?". Every re-baseline belongs in
+    the log below with what moved it, so the history reads as a list of
+    deliberate plant changes rather than as a number somebody kept bumping.
+
+        e1ec36bfa670217e  the contact-parts split (the claim this test makes)
+        eda849e7afaaca0f  2026-09-16  actuators.steer_kv 0.05 -> 0.0676 (the
+                          XC330's back-EMF droop, derived, replacing a guess)
+                          and righting.{arm,wings}.servo_kp/kv from tuning
+                          knobs to the servo's own firmware gains
+    """
+    assert plant_digest(load_params()) == "eda849e7afaaca0f"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

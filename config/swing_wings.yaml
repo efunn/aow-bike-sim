@@ -116,8 +116,13 @@ mass: 0.020            # [kg] per wing, same as the geared pair's
 gear_ratio: 2.0
 
 servo: xc330_t181      # key into bike_params.yaml `servos`
-servo_kp: 30.0         # at the wing; scaled by gear_ratio like `arm`/`wings`
-servo_kv: 1.0
+# AT THE SERVO SHAFT, and the builder squares gear_ratio -- the old comment
+# here said "at the wing" while the code then scaled it AGAIN, which is the
+# same ambiguity bike_params' `righting` block carried. Derived from the
+# XC330-T181's factory current-based-position gains (700/1400); the full
+# derivation is on `righting.arm.servo_kp` in bike_params.yaml.
+servo_kp: 1.62         # was 30.0
+servo_kv: 0.0519       # was 1.0
 
 # HOW TO DRIVE IT TO RIGHT THE BIKE. Not obvious, and getting it wrong reads as
 # "this mechanism cannot right", which is what a first pass here concluded.

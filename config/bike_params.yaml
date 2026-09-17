@@ -274,8 +274,28 @@ actuators:
   # Both are `GUESS` in spirit; replace them with §4, do not refine by feel.
   drive_kv: 0.016016   # was 0.5 (placeholder). = stall_torque/no_load/belt^2
   drive_ki: 0.6        # was 0.0 (P-only). Ti = kv/ki = 26.7 ms
-  steer_kp: 2.0        # position-servo gains at the steer joint
-  steer_kv: 0.05
+  # Steering position servo, at the steer joint (steering.gear_ratio is 1.0,
+  # so the joint IS the servo shaft). The XC330 runs here in EXTENDED POSITION
+  # mode (4), whose PID output is PWM duty -- which makes the whole actuator an
+  # exact affine map onto MuJoCo's position actuator:
+  #
+  #   tau = duty*tau_stall - (tau_stall/w_noload)*w
+  #       = [Kp * k3 * tau_stall] * err  -  [tau_stall/w_noload] * w
+  #
+  # so kp is a firmware gain and kv is the motor's own back-EMF droop. Unlike
+  # the righting servo's kv, NOTHING here is inferred.
+  #
+  # kv 0.0676, was 0.05 (2026-09-16). 0.05 was a GUESS in spirit and the
+  # derived value is stall_torque/no_load_speed = 0.80/11.833. This is the
+  # same droop line drive_kv carries for the XC430s, and for the same reason.
+  #
+  # kp LEFT AT 2.0. The derived value at the factory Position P Gain of 900 is
+  # 900 * 2.877e-3 * 0.80 = 2.07, which is 3.6% away -- inside the uncertainty
+  # of kt and of the measured-vs-documented P divisor, and not worth moving a
+  # digest for on its own. Move it when the servo is characterised on the
+  # bench, not before.
+  steer_kp: 2.0
+  steer_kv: 0.0676
 
 control:
   # Balance controller settings (tuning knobs, not measurements).
@@ -656,12 +676,38 @@ righting:
     # is the same ratio the drive belts already use. Set to 1.0 to price
     # direct drive.
     gear_ratio: {value: 4.0, source: design}
-    # Position-servo gains for the arm (tuning knobs, not measurements). Much
-    # stiffer than the steer actuator's 2.0 on purpose: the whole point of the
-    # torque study is to see the actuator hit its 0.80 N.m forcerange, and a
-    # soft gain would report "not enough gain" as "not enough torque".
-    servo_kp: 30.0
-    servo_kv: 1.0
+    # Position-servo gains AT THE SERVO SHAFT. Each builder applies its own
+    # reduction as N^2 (see build_model), so ONE number serves the geared arm,
+    # the geared wing pair and the direct-drive cranks alike -- which it did
+    # not before 2026-09-16, when this was a tuning knob read as "at the servo"
+    # by two builders and "at the mechanism" by three.
+    #
+    # DERIVED from the XC330-T181's own firmware gains in CURRENT-BASED
+    # POSITION MODE (5), which is the mode the righting servo runs in:
+    #
+    #   kp = Position P Gain * k5 * kt = 700 * 2.546e-3 A/(Kp.rad) * 0.909 N.m/A
+    #   kv = (Position D Gain / 16) * (256 * k5) * dt_loop * kt
+    #      = (1400/16) * 0.6519 * 1e-3 * 0.909
+    #
+    # k5 = (4096/2pi) / (256 * 1000) is the position PID's output read as
+    # milliamps, measured at 2.525e-3 on an X330 and derived at 2.546e-3; the
+    # 256 divisor is measured, against a manual that says 128. kt is
+    # stall_torque/stall_current. 700/1400 are the factory defaults for mode 5,
+    # pinned in control.onboard.gains so the bike asserts them at startup.
+    #
+    # WHY MODE 5 HAS A D GAIN AT ALL and mode 3/4 ship with zero: commanding
+    # current regulates the motor's back-EMF droop away, so the plant has no
+    # damping of its own left and the firmware has to supply it.
+    #
+    # THE kv IS THE SOFT NUMBER. It assumes the firmware's D term is
+    # Kd*(delta error) per tick at a 1 kHz loop rather than Kd*d(error)/dt --
+    # those differ by 1000x, and 32 ms of derivative time is the reading that
+    # is not absurd. It also carries the measured 256 into a path where only
+    # the manual's /16 is known. To settle it: step the goal in mode 5, log
+    # Present Position and Present Current at ~500 Hz, and fit
+    # I = a*e + b*edot; `a` should come back at 2.525e-3 as a check on the fit.
+    servo_kp: 1.62      # was 30.0 -- a tuning knob, and 18.5x the real servo
+    servo_kv: 0.0519    # was 1.0
   wings:
     # The ALTERNATIVE to `arm`: a mirrored pair of wings, one per side, driven
     # by ONE servo through a gear train (meshed gears at the two pivots with a
@@ -784,10 +830,10 @@ righting:
                                                       #   side -> print a test
     gear_width: {value: 0.006, source: design}        # face width; visual only
     mirror: {value: -1.0, source: design}          # theta_left = mirror * theta_right
-    # Position-servo gains, same reasoning as the arm's: stiff on purpose, so
-    # the torque study reads a forcerange limit and not a gain limit.
-    servo_kp: 30.0
-    servo_kv: 1.0
+    # Same servo, same mode, same derivation as the arm's -- see the long note
+    # there. At the servo shaft; the builder squares gear_ratio.
+    servo_kp: 1.62      # was 30.0
+    servo_kv: 0.0519    # was 1.0
 
 hockey:
   # Ball-shot move extras (build_model(..., hockey=True)); see

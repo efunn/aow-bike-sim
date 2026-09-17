@@ -481,8 +481,14 @@ def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True) -> No
     # servo's datasheet number whatever the gearing.
     tau = p["servos"]["xc330_t181"]["stall_torque"] * a["gear_ratio"]
     act = spec.add_actuator(name="righting")
-    act.set_to_position(kp=a["servo_kp"] * a["gear_ratio"],
-                        kv=a["servo_kv"] * a["gear_ratio"])
+    # GEAR_RATIO SQUARED, not linear. `servo_kp`/`servo_kv` are defined AT THE
+    # SERVO SHAFT; a reduction of N multiplies TORQUE by N (which is what
+    # `tau` above does) and referred STIFFNESS by N^2, because the shaft turns
+    # N times per arm turn AND each newton-metre is worth N. The drive
+    # actuator has always said so ("divide a servo-output measurement by
+    # belt_ratio^2"); these three mechanisms applied N once until 2026-09-16.
+    act.set_to_position(kp=a["servo_kp"] * a["gear_ratio"] ** 2,
+                        kv=a["servo_kv"] * a["gear_ratio"] ** 2)
     act.trntype = mujoco.mjtTrn.mjTRN_JOINT
     act.target = "righting_joint"
     act.forcerange = [-tau, tau]
@@ -786,6 +792,10 @@ def _add_wing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
     # One actuator, on the shared crank shaft.
     xc330 = p["servos"]["xc330_t181"]
     act = spec.add_actuator(name="wings")
+    # NO ratio term, and that is not an oversight: the actuator IS the crank,
+    # so N = 1 and N^2 = 1. `servo_kp` is at the servo shaft and the crank is
+    # the servo shaft. The geared `arm`/`wings` builders square their N; this
+    # one has none to square.
     act.set_to_position(kp=w_ref["servo_kp"], kv=w_ref["servo_kv"])
     act.trntype = mujoco.mjtTrn.mjTRN_JOINT
     act.target = "wing_crank_joint"
@@ -1007,8 +1017,9 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
     # ratio so a swept number reads against the XC330 datasheet directly.
     tau = p["servos"]["xc330_t181"]["stall_torque"] * w["gear_ratio"]
     act = spec.add_actuator(name="wings")
-    act.set_to_position(kp=w["servo_kp"] * w["gear_ratio"],
-                        kv=w["servo_kv"] * w["gear_ratio"])
+    # Squared: see the note on the arm's actuator.
+    act.set_to_position(kp=w["servo_kp"] * w["gear_ratio"] ** 2,
+                        kv=w["servo_kv"] * w["gear_ratio"] ** 2)
     act.trntype = mujoco.mjtTrn.mjTRN_JOINT
     act.target = "wing_right_joint"
     act.forcerange = [-tau, tau]
@@ -1225,6 +1236,7 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
     xc330 = p["servos"][cfg.get("servo", "xc330_t181")] if isinstance(
         cfg.get("servo", "xc330_t181"), str) else p["servos"]["xc330_t181"]
     act = spec.add_actuator(name="swing")
+    # N = 1: the actuator IS the crank. Same as the mirrored linkage above.
     act.set_to_position(kp=w_ref["servo_kp"], kv=w_ref["servo_kv"])
     act.trntype = mujoco.mjtTrn.mjTRN_JOINT
     act.target = "swing_crank_joint"
@@ -1352,7 +1364,9 @@ def _add_swing_wings(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
             pair.condim = sim["condim"]
 
     act = spec.add_actuator(name="swing")
-    act.set_to_position(kp=cfg["servo_kp"] * ratio, kv=cfg["servo_kv"] * ratio)
+    # Squared: see the note on the arm's actuator in `righting_fit`.
+    act.set_to_position(kp=cfg["servo_kp"] * ratio ** 2,
+                        kv=cfg["servo_kv"] * ratio ** 2)
     act.trntype = mujoco.mjtTrn.mjTRN_JOINT
     act.target = "swing_right_joint"
     act.forcerange = [-tau, tau]
