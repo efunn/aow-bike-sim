@@ -349,7 +349,7 @@ numbers are known, which is what its docstring always claimed.
 | AHRS on the GPIO UART | **AHRS over USB.** The datasheet (V1.1.6 §Communication Interface) gives USB 2.0 full-speed **Virtual COM Port**, i.e. CDC — `/dev/ttyACM0` on the Pi, `cu.usbmodem…` on the Mac — so there is **no FTDI latency timer to fix on that port**. `AhrsReader` needs nothing but `--ahrs-port`. The datasheet also says both interfaces can be used **simultaneously**, so ImuAssistant can stay on USB while the Pi reads the UART, once there is a UART |
 | §2a: `enable_uart`, `dtoverlay=disable-bt`, kill the serial console | **Skip all of it** while the AHRS is on USB. It comes back if the Zero 2 W does |
 | laptop hosts the AP | **no radio at all for the first session** — run the ground station on the Pi over ssh to 127.0.0.1. Wifi and AP directionality are a separate test with its own gate (§5) |
-| 3S pack, LVC at 10.2 V | 12 V brick. The LVC can never fire; `VOLTAGE_MIN` is untestable here |
+| 3S pack, LVC at 10.2 V | 12 V brick. The LVC can never fire at its real threshold. *(2026-09-18: now `PackMonitor`, 10.5 warn / 9.9 cut on the filtered max servo reading. `--pack-warn 12.5 --pack-cut 12.2` makes it fire on the brick)* |
 | Ethernet does not exist | **it does on a 3B+.** A cable to the router makes first boot and every reflash independent of wifi. Use it |
 
 **Power is the one place the 3B+ is worse than the design target.** Its

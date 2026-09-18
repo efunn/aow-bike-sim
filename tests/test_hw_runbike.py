@@ -176,8 +176,12 @@ def _bike_hearing(peer="A", lost=False):
     from types import SimpleNamespace
     g = FallGuard()
     g.state = "cut"
-    return SimpleNamespace(guard=g, link=SimpleNamespace(peer=peer),
-                           _link_lost=lost, _rearm_seen=None)
+    r = SimpleNamespace(guard=g, link=SimpleNamespace(peer=peer),
+                        _link_lost=lost, _rearm_seen=None, _pack_low=False,
+                        _servo_fault=False, _errs={}, said=[])
+    r._hold_reason = lambda: RB.BikeRunner._hold_reason(r)
+    r._event = lambda kind, text: r.said.append((kind, text))
+    return r
 
 
 def test_the_bike_acts_on_a_change_in_the_count_and_only_then():
@@ -547,11 +551,15 @@ def _runner(torque=True, age=0.0):
     link = SimpleNamespace(age=lambda: age, peer=("192.168.0.114", 5000),
                            addr=("0.0.0.0", 9910))
     said = []
-    return SimpleNamespace(bus=_Bus(), guard=FallGuard(), torque=torque,
-                           require_link=True, link=link, _link_lost=False,
-                           _roll=0.0, _engage=lambda: None, said=said,
-                           _servo_fault=False, _errs={},
-                           _event=lambda kind, text: said.append((kind, text)))
+    r = SimpleNamespace(bus=_Bus(), guard=FallGuard(), torque=torque,
+                        require_link=True, link=link, _link_lost=False,
+                        _roll=0.0, _engage=lambda: None, said=said,
+                        _servo_fault=False, _errs={},
+                        _pack_low=False, pack=RB.PackMonitor(),
+                        _health={}, _dt_meas=0.01,
+                        _event=lambda kind, text: said.append((kind, text)))
+    r._hold_reason = lambda: RB.BikeRunner._hold_reason(r)
+    return r
 
 
 def test_a_rearm_never_energises_a_no_torque_session():
@@ -854,3 +862,111 @@ def test_while_the_bike_is_not_engaged_the_command_follows_it():
     assert op.psi == pytest.approx(1.2) and op.v == 0.0
     op.sync({"state": "cut", "psi": -0.4})          # the bike is carried round
     assert op.psi == pytest.approx(-0.4)
+
+
+def _pack(monitor, volts_by_servo, seconds, dt=0.01):
+    events = []
+    for _ in range(round(seconds / dt)):
+        e = monitor.update(dt, volts_by_servo)
+        if e:
+            events.append(e)
+    return events
+
+
+def test_the_pack_reads_the_least_loaded_servo():
+    """Measured 2026-09-18 on the brick: the loaded drive read 0.7 V under
+    the others. Drive A alone at 9.5 V with the rest near 11 is ITS wiring,
+    not a flat pack."""
+    m = RB.PackMonitor()
+    m.v = 11.1
+    assert _pack(m, [9.5, 10.9, 11.0, 11.1], 30.0) == []
+    assert abs(m.v - 11.1) < 1e-6
+
+
+def test_a_brief_sag_does_not_trip_and_a_sustained_one_does():
+    m = RB.PackMonitor()
+    m.v = 11.1
+    assert _pack(m, [9.0] * 4, 0.3) == []          # a hard move, 300 ms
+    assert m.v > m.warn_v
+    assert _pack(m, [11.1] * 4, 5.0) == []
+    # a pack actually at 9.8 V: warned first, then cut, ~5 s in, and once
+    assert _pack(m, [9.8] * 4, 4.0) == ["warn"]
+    assert _pack(m, [9.8] * 4, 2.0) == ["cut"]
+    # the rebound when the load stops does not undo either
+    assert _pack(m, [10.8] * 4, 30.0) == [] and m.low and m.warned
+
+
+def test_the_pack_monitor_ignores_missing_readings_and_needs_hysteresis():
+    m = RB.PackMonitor()
+    assert m.update(0.01, [None, 0]) == "" and m.v is None
+    assert m.update(0.01, [None, 9.0]) == "cut"    # first reading seeds
+    with pytest.raises(ValueError):
+        RB.PackMonitor(warn_v=9.9, cut_v=10.0)
+
+
+def test_a_flat_pack_cuts_and_holds_and_a_returning_link_does_not_release():
+    """It used to end the process on a raw 1 Hz drive-A sample. Now it is a
+    cut, like a faulted servo: the loop and telemetry go on, so the station
+    sees why."""
+    r = _runner()
+    r.guard.auto = True
+    r.pack.v = 9.0
+    r._health = {"drive_a": {"Present Input Voltage": 9.0},
+                 "righting": {"Present Input Voltage": 9.1}}
+    RB.BikeRunner._watch_pack(r)
+    assert r.guard.state == "cut" and r.guard.hold
+    assert r.bus.calls == [("torque", False, (1, 2, 3))]
+    assert [k for k, _ in r.said] == ["cut"] and "9.0 V" in r.said[0][1]   # filtered
+    RB.BikeRunner._watch_pack(r)
+    assert len(r.said) == 1                          # said once
+    r._link_lost = True
+    RB.BikeRunner._watch_link(r)
+    assert r.guard.hold
+    assert r.guard.update(10.0, 0.0, 0.0) == "" == r.guard.update(20.0, 0.0, 0.0)
+    # AND IT SAYS SO, to a station that was not there for the cut: the
+    # reason is a level in telemetry, the reconnect names it instead of
+    # inviting `r`, and a press is answered rather than swallowed.
+    assert "pack at 9.0 V" in r._hold_reason()
+    assert "still HELD" in r.said[-1][1] and "pack" in r.said[-1][1]
+    r._rearm_seen = (r.link.peer, 0)
+    RB.BikeRunner._rearm_from(r, 1)
+    assert r.said[-1][0] == "hold" and "r ignored" in r.said[-1][1]
+
+    r = _runner(torque=False)
+    r.pack.v = 9.0
+    r._health = {"steer": {"Present Input Voltage": 9.0}}
+    RB.BikeRunner._watch_pack(r)
+    assert r.guard.state == "cut" and r.bus.calls == []   # nothing to turn off
+
+
+def test_a_held_bike_names_its_reason_and_a_free_one_does_not():
+    r = _runner()
+    assert r._hold_reason() is None
+    r._errs = {"drive_a": 32}
+    r._servo_fault = True
+    assert r._hold_reason().startswith("drive_a faulted")
+    r._pack_low, r.pack.v = True, 9.7
+    assert r._hold_reason().startswith("pack at 9.7 V")     # worst first
+    # a press while ENGAGED is not answered -- there is nothing to refuse
+    r._pack_low = r._servo_fault = False
+    r._link_lost = False
+    r._rearm_seen = (r.link.peer, 0)
+    RB.BikeRunner._rearm_from(r, 1)
+    assert r.said == []
+
+
+def test_a_pack_warning_stands_until_it_becomes_a_hold():
+    """Operator, 2026-09-18: PACK LOW flashed on the mirror for 5 s and was
+    gone. The warning is a level now, like the hold that supersedes it."""
+    r = _runner()
+    assert RB.BikeRunner._warning(r) is None
+    r.pack.v, r._health = 10.3, {"drive_a": {"Present Input Voltage": 10.3}}
+    RB.BikeRunner._watch_pack(r)
+    assert r.said[-1][0] == "pack"
+    assert "pack low: 10.3 V" in RB.BikeRunner._warning(r)
+    r._health = {"drive_a": {"Present Input Voltage": 11.0}}   # load off
+    RB.BikeRunner._watch_pack(r)
+    assert RB.BikeRunner._warning(r) is not None               # still stands
+    r.pack.v, r._health = 9.5, {"drive_a": {"Present Input Voltage": 9.5}}
+    RB.BikeRunner._watch_pack(r)
+    assert RB.BikeRunner._warning(r) is None and r._hold_reason()

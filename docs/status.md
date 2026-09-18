@@ -658,6 +658,29 @@ the dated note in `pi-bench-bringup.md`. One run each, so indicative:
 | before, two 20 s runs | 0.09 ms | 0.86-0.90 ms | 1.6-3.6 ms |
 | after, 142 s, mirror connected | 0.03 ms | 0.76 ms | 1.12 ms |
 
+**THE LOW-VOLTAGE CUTOFF IS REBUILT** (2026-09-18; each threshold seen to fire on the brick).
+It read drive A alone as a raw 1 Hz sample and ENDED the process at 10.2 V.
+But each servo reads the rail at its own connector: on the brick all four agree
+to 0.1 V at rest, and with the drives loaded the spread is 0.2-0.3 V typical
+and 0.7 V worst, drive A lowest. On a pack, that would have tripped a
+mid-move sag. Now (`PackMonitor`): the HIGHEST servo reading, low-passed every
+tick (tau 2 s). It warns below 10.5 V and CUTS AND HOLDS below 9.9 V, like a
+servo fault, so the station is told why. Both latch; a flat pack means a
+full power cycle, and the HELD row says POWER OFF AND SWAP BATTERY. It won't arm a pack already below the cut. The servos' own voltage
+limit is no backstop as set: Min Voltage Limit 6.0 V on all four, and Shutdown
+(52 = overheat, shock, overload) does not include a voltage error. Replayed over the three torque-on
+records, the filtered value bottoms at 11.68 V against drive A's raw 11.0.
+On the brick (~12.0 V), `--pack-warn 12.5` shows the warning and adding
+`--pack-cut 12.2` shows the cut. Both fired on the first tick after contact.
+**A HOLD WAS SILENT to a station that arrived later.** The message rides
+EventLog's 5 s, so a reconnect showed only "cut", was told "r once upright",
+and `r` did nothing. Now `hold` is a telemetry LEVEL: a HELD row in the
+mirror and on the terminal status line. The reconnect names the reason, and
+a refused `r` is answered. This covers pack, servo fault and link holds. The
+pack WARNING had the same flaw (gone after 5 s) and is a `warn` level, a
+WARN row, until the cut replaces it with HELD.
+**Outstanding:** a pack has never been on the bike.
+
 **THE BENCH WINDING IS THE ATTITUDE, as the operator suspected.** Replaying
 the torque-off bench record: with the recorded +3.4 deg roll the policy asks
 for its full -458 deg/s steer rate on 100% of queries; the same record with

@@ -24,8 +24,9 @@ FAILSAFES, and the one that is not a failsafe
                    Armed only once the ground station has been heard from --
                    see `wait_for_link` -- and switched off entirely by
                    --no-link for a bench session with no operator.
-  2. pack voltage <10.2 V (3.4 V/cell) -> torque off. Read from the servos'
-                   own Present Input Voltage register; no extra hardware.
+  2. pack voltage: warn below 10.5 V, CUT AND HOLD below 9.9 V (3.5 / 3.3
+                   V/cell), on the highest servo's Present Input Voltage
+                   low-passed over 2 s -- `PackMonitor`. No extra hardware.
   3. AHRS stale   -> torque off (raised by AhrsReader.latest).
   *. |roll| past the cut angle is NOT in that list any more. It is the one
      condition that is expected, survivable and self-clearing, so it is a
@@ -68,7 +69,9 @@ from .state import HardwareData, load_ahrs_mount, load_bundle
 CONTROL_HZ = CONTROL_HZ_DEFAULT   # see hw/dynamixel.py
 CMD_STALE_S = 0.15        # -> zero the command. PROVISIONAL, see note below
 CMD_DEAD_S = 1.0          # -> torque off
-VOLTAGE_MIN = 10.2        # 3.4 V/cell on 3S. Pack total, not per-cell — see note
+PACK_WARN_V = 10.5        # 3.5 V/cell on 3S -> say so, once
+PACK_CUT_V = 9.9          # 3.3 V/cell -> cut and hold. Pack total — see note
+PACK_TAU_S = 2.0          # low-pass on the per-tick max servo reading
 LINK_WAIT_S = 30.0        # how long to wait for the ground station before giving up
 # Where the onboard record goes: traces/ is gitignored and Dropbox-synced on
 # the laptop, and the drivetrain bench captures already live beside it.
@@ -129,7 +132,7 @@ PREFLIGHT_GYRO_MAX = np.deg2rad(2.0)     # at rest
 # docs/plans/untethered-setup.md, "The radio, and what actually goes wrong with
 # it" and Verification step 2b.
 #
-# VOLTAGE_MIN reads the pack total via the servos' address 144, which cannot see
+# The pack limits read the pack total via the servos' address 144, which cannot see
 # individual cells. A pack with one weak cell can sit at 3.6/3.6/3.0 V and still
 # report 10.2 V, so the weak cell is over-discharged with nothing onboard to
 # notice. That is an accepted limitation — the free voltage read is still the
@@ -259,6 +262,56 @@ class FallGuard:
         return "rearm"
 
 
+class PackMonitor:
+    """Low-voltage cutoff on the servos' own Present Input Voltage.
+
+    THE HIGHEST READING, NOT ANY ONE SERVO. Every servo measures the rail at
+    its own connector, so a loaded servo reads its own wiring drop on top of
+    the pack's sag. Measured on the 12 V brick, 2026-09-18 (torque1 runs):
+    all four agree to 0.1 V at rest; with the drives pinned the spread was
+    0.2-0.3 V typical and 0.7 V worst, drive A lowest (11.0 V against the
+    righting servo's 11.5-12.0). The least-loaded servo is the one closest to
+    the pack. The old LVC read drive A alone, as a raw 1 Hz sample -- the
+    worst choice on both counts.
+
+    LOW-PASSED, tau 2 s, updated every tick. A TX burst or a hard balancing
+    move sags the rail for tens of ms; a flat pack stays low. The filter is
+    the whole debounce -- there is no separate dwell.
+
+    BOTH EVENTS LATCH for the session. A pack under load recovers a few
+    tenths when the load stops, so an unlatched cut would re-arm on the
+    rebound and cut again; the fix for a flat pack is a new pack, which means
+    a restart anyway. Pure -- no clock, no I/O.
+    """
+
+    def __init__(self, warn_v: float = PACK_WARN_V, cut_v: float = PACK_CUT_V,
+                 tau_s: float = PACK_TAU_S):
+        if cut_v >= warn_v:
+            raise ValueError(f"cut {cut_v} V must be below warn {warn_v} V")
+        self.warn_v, self.cut_v, self.tau_s = float(warn_v), float(cut_v), float(tau_s)
+        self.v: float | None = None       # filtered pack voltage [V]
+        self.warned = False
+        self.low = False
+
+    def update(self, dt: float, readings) -> str:
+        """One tick. -> "warn", "cut" or "" (the EVENT, as FallGuard does)."""
+        vals = [float(r) for r in readings if r is not None and r > 0]
+        if not vals:
+            return ""
+        top = max(vals)
+        if self.v is None:
+            self.v = top
+        else:
+            self.v += min(dt / self.tau_s, 1.0) * (top - self.v)
+        if not self.low and self.v < self.cut_v:
+            self.low = self.warned = True
+            return "cut"
+        if not self.warned and self.v < self.warn_v:
+            self.warned = True
+            return "warn"
+        return ""
+
+
 class CommandLink:
     """UDP command receive + telemetry transmit.
 
@@ -356,8 +409,10 @@ class BikeRunner:
                  ids=None, torque: bool = True, seconds: float = 0.0,
                  steer_zero=None, allow_guess_mount: bool = False,
                  record: bool = True, tag: str | None = None,
-                 link_wait: float = 0.0):
+                 link_wait: float = 0.0, pack_warn_v: float = PACK_WARN_V,
+                 pack_cut_v: float = PACK_CUT_V):
         self.params = load_params()
+        self.pack = PackMonitor(pack_warn_v, pack_cut_v)
         self.bundle_path = bundle_path
         self.record, self.tag = bool(record), tag
         self.link_wait = float(link_wait)
@@ -466,6 +521,7 @@ class BikeRunner:
         self.events = telemetry.EventLog()
         self._errs: dict = {}             # role -> Hardware Error Status seen
         self._servo_fault = False         # a policy servo has a latched error
+        self._pack_low = False            # PackMonitor cut; latched
 
     # -- one tick ----------------------------------------------------------
 
@@ -558,8 +614,39 @@ class BikeRunner:
         seen = self._rearm_seen
         if seen is not None and seen[0] == peer and n != seen[1] \
                 and not self._link_lost:
+            reason = self._hold_reason()
+            if reason is not None and self.guard.state != "engaged":
+                # SAID, not swallowed: a press the bike will not act on
+                # used to vanish without a word.
+                self._event("hold", f"r ignored -- held: {reason}")
             self.guard.request_rearm()
         self._rearm_seen = (peer, n)
+
+    def _warning(self) -> str | None:
+        """A standing warning, or None: the pack below warn but not yet cut
+        (once cut, `hold` says it). The level behind the one-off PACK LOW
+        message, which the station shows for 5 s and then drops."""
+        if self.pack.warned and not self._pack_low:
+            return (f"pack low: {self.pack.v:.1f} V < {self.pack.warn_v:.1f} V"
+                    f" ({self.pack.cut_v:.1f} V min)")
+        return None
+
+    def _hold_reason(self) -> str | None:
+        """Why nothing will re-arm, in words, or None. The level behind
+        `guard.hold`, sent every tick as telemetry `hold`. Worst first."""
+        if self._pack_low:
+            # A full power cycle, not just run_bike: a swap takes the Pi down
+            # with the pack.
+            return (f"pack at {self.pack.v:.1f} V ({self.pack.cut_v:.1f} V "
+                    "min) POWER OFF AND SWAP BATTERY")
+        if self._servo_fault:
+            bad = [r for r in ("drive_a", "drive_b", "steer")
+                   if self._errs.get(r)]
+            return (f"{', '.join(bad) or 'a policy servo'} faulted -- restart "
+                    "run_bike to reboot it")
+        if self._link_lost:
+            return "link lost"
+        return None
 
     def preflight_ahrs(self, seconds: float = 0.5, strict: bool = True) -> list[str]:
         """Sanity-check the AHRS before engaging. Bike must be STATIONARY.
@@ -668,24 +755,32 @@ class BikeRunner:
         return (f"{r.frames} Ep_Combo frames decoded but the latest is stale -- "
                 f"the reader is falling behind, not the sensor")
 
-    def _check_failsafes(self, voltage: float) -> str | None:
-        """The LATCHING failsafes -- the ones there is no coming back from.
+    def _watch_pack(self) -> None:
+        """Low pack -> warn once; flat pack -> cut and hold, like a faulted
+        servo. See `PackMonitor` for why the max and why filtered.
 
-        The fall is deliberately NOT here any more. It is the one condition
-        that is expected, survivable and self-clearing, so it is a state
-        transition (`FallGuard`) rather than a reason to stop the process; a
-        bike that has to be power-cycled after every tip-over cannot be tested.
-        A flat pack stays fatal because it does not clear itself.
-
-        THE LINK MOVED OUT OF HERE on 2026-09-18 (`_watch_link`). A dead link
-        used to end the process, so every closed mirror window meant an ssh
-        round trip to restart the bike. It is now a CUT that waits: torque off,
-        the loop and the record carry on, and a returning station re-arms with
-        `r` exactly as after a fall.
+        IT USED TO END THE PROCESS (`_check_failsafes`, until 2026-09-18),
+        on a raw 1 Hz sample of drive A alone. Now the loop, the telemetry and
+        the record carry on, so the station SEES why the bike stopped and the
+        record keeps the discharge curve. Nothing re-arms: the fix is a new
+        pack and a restart. The righting servo keeps its last goal, as on
+        every other cut.
         """
-        if voltage < VOLTAGE_MIN:
-            return f"pack at {voltage:.1f} V (min {VOLTAGE_MIN})"
-        return None
+        readings = [h.get("Present Input Voltage")
+                    for h in self._health.values()]
+        event = self.pack.update(self._dt_meas, readings)
+        if event == "warn":
+            self._event("pack", f"PACK LOW: {self.pack.v:.1f} V < "
+                                f"{self.pack.warn_v:.1f} V "
+                                f"({self.pack.cut_v:.1f} V min)")
+        elif event == "cut":
+            self._pack_low = True
+            if self.guard.cut_now() and self.torque:
+                self.bus.torque(False, self.bus.policy_ids)
+            self._event("cut", f"CUT: pack at {self.pack.v:.1f} V "
+                               f"({self.pack.cut_v:.1f} V min) POWER OFF AND "
+                               "SWAP BATTERY")
+        self.guard.hold = self._link_lost or self._servo_fault or self._pack_low
 
     def _event(self, kind: str, text: str) -> None:
         """Say it here AND to the station. The one place a message is made."""
@@ -721,7 +816,7 @@ class BikeRunner:
                                "run_bike to reboot it (a latched error "
                                "survives until then)")
         self._servo_fault = fault
-        self.guard.hold = self._link_lost or self._servo_fault
+        self.guard.hold = self._link_lost or self._servo_fault or self._pack_low
 
     def _on_guard_event(self, event: str) -> None:
         if event == "cut":
@@ -762,9 +857,11 @@ class BikeRunner:
                                 "out, torque off -- waiting for a station")
         elif not dead and self._link_lost:
             self._link_lost = False
-            self.guard.hold = self._servo_fault
-            self._event("link", f"LINK BACK from {self.link.peer[0]}: r once "
-                                "the bike is upright and still")
+            self.guard.hold = self._servo_fault or self._pack_low
+            reason = self._hold_reason()
+            self._event("link", f"LINK BACK from {self.link.peer[0]}: " + (
+                f"still HELD -- {reason}" if reason
+                else "r once the bike is upright and still"))
 
     def wait_for_link(self, timeout: float = LINK_WAIT_S) -> None:
         """Block until the ground station says hello. Before any torque.
@@ -906,6 +1003,9 @@ class BikeRunner:
             self.wait_for_link(self.link_wait)
 
         voltage = self.bus.pack_voltage()
+        # Seed the filter; the first tick decides. Set, not `update`d, so a
+        # pack that is already flat still produces its "cut" event there.
+        self.pack.v = voltage
         # WHICH policy: `self.gen_name`, resolved in __init__ because the
         # firmware gains follow it and are written before torque. It used to be
         # engage_general with no name at all, which silently took the hardcoded
@@ -915,13 +1015,18 @@ class BikeRunner:
         print(f"pack {voltage:.1f} V — engaging general policy {self.gen_name} "
               f"at {1/self.dt:.0f} Hz")
         print(f"  {self.gain_note}")
+        print(f"  pack: warn below {self.pack.warn_v:.1f} V, cut below "
+              f"{self.pack.cut_v:.1f} V (max servo reading, "
+              f"{self.pack.tau_s:g} s low-pass)")
         print(f"  cut at {np.degrees(self.guard.cut):.0f} deg, re-arm below "
               f"{np.degrees(self.guard.rearm):.0f} deg"
               + ("" if self.guard.auto else " on request"))
 
         self.data.time = 0.0
         self._engage()
-        if self.torque:
+        if self.torque and voltage < self.pack.cut_v:
+            print(f"pack {voltage:.1f} V is below the cut -- NOT arming")
+        elif self.torque:
             self.bus.arm()                   # <- the first torque of the run
         else:
             # EVERY OTHER PART OF THE TICK STILL RUNS. Goal writes are simply
@@ -961,15 +1066,11 @@ class BikeRunner:
             self._apply_command()
 
             k += 1
-            if k % 100 == 0:            # 1 Hz, as it always was
-                # From this tick's read block now -- the same register,
-                # without the extra round trip `pack_voltage` costs. Kept
-                # at 1 Hz rather than per tick on purpose: the LVC trips
-                # on a SAMPLE, and a per-tick sample would see every TX
-                # sag the 1 Hz one was never exposed to.
-                voltage = (self.bus.last_voltage
-                           if self.bus.last_voltage is not None
-                           else self.bus.pack_voltage())
+            # EVERY TICK, filtered (PackMonitor). It was a raw 1 Hz sample
+            # precisely because a raw per-tick one would trip on every sag;
+            # the low-pass is what makes per-tick safe.
+            self._watch_pack()
+            voltage = self.pack.v
             if k % 50 == 0 and self.jitter:   # 2 Hz; a percentile is not free
                 self._jitter_ms = round(
                     float(np.percentile(np.fromiter(self.jitter, float), 99))
@@ -979,16 +1080,6 @@ class BikeRunner:
                 break
             self._watch_link()
             self._watch_errors()
-            reason = self._check_failsafes(voltage)
-            if reason is not None:
-                self._event("failsafe", f"FAILSAFE: {reason} -- stopping")
-                self._stopped_by = f"failsafe: {reason}"
-                # One more packet, so the station hears WHY before the bike
-                # goes quiet. 30 ms on a latching stop; torque goes off next.
-                self.link.telemetry = {**self.link.telemetry,
-                                       "log": self.events.recent()}
-                time.sleep(0.03)
-                break
 
             # The fall guard runs on the SENSED state and before the
             # controller, so a tick that starts on the bike's side never
@@ -1070,6 +1161,8 @@ class BikeRunner:
                                               self._effort_unit),
                 run=self.run_id,
                 log=self.events.recent(),
+                hold=self._hold_reason(),
+                warn=self._warning(),
             )
             if self.rec is not None:
                 self._record_tick(next_tick + slip - t0, slip, write_s,
@@ -1361,6 +1454,12 @@ def main() -> None:
                          "tick goes to traces/bike/<stamp>_run[_tag]/ on the "
                          "Pi -- a bench_log capture, see RunRecorder")
     ap.add_argument("--tag", help="suffix for the record's directory name")
+    ap.add_argument("--pack-warn", type=float, default=PACK_WARN_V,
+                    metavar="V", help=f"warn below V (default {PACK_WARN_V})")
+    ap.add_argument("--pack-cut", type=float, default=PACK_CUT_V, metavar="V",
+                    help=f"cut and hold below V (default {PACK_CUT_V}). The 12 V "
+                         "brick rests at ~12.0 V, so --pack-warn 12.5 "
+                         "--pack-cut 12.2 cuts on the first tick")
     ap.add_argument("--auto-rearm", action="store_true",
                     help="let the policy re-engage after a fall without the "
                          "operator asking. OFF by default -- a bike that "
@@ -1381,6 +1480,7 @@ def main() -> None:
                allow_guess_mount=args.allow_guess_mount or args.bench,
                record=not args.no_record, tag=args.tag,
                link_wait=args.link_wait,
+               pack_warn_v=args.pack_warn, pack_cut_v=args.pack_cut,
     ).run(preflight=not args.no_preflight)
 
 

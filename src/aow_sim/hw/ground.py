@@ -309,7 +309,9 @@ def _status(op: OperatorState, telemetry: dict, age: float) -> str:
             f"{t.get('state', '?'):7s} roll {math.degrees(t.get('roll', 0)):+6.1f} "
             f"vel {t.get('v_world', [0, 0])} steer {t.get('steer', 0):+.3f} "
             f"{t.get('volts', 0):.1f}V qos {t.get('qos', '?')} "
-            f"jit {t.get('jitter_ms', 0):.2f}ms cuts {t.get('cuts', 0)}{stale}")
+            f"jit {t.get('jitter_ms', 0):.2f}ms cuts {t.get('cuts', 0)}{stale}"
+            + (f"  HELD: {t['hold']}" if t.get("hold") else "")
+            + (f"  WARN: {t['warn']}" if t.get("warn") else ""))
 
 
 def run(host: str, port: int = 9910, v_max: float = 1.2,

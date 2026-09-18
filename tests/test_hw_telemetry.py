@@ -507,7 +507,8 @@ POSE_FIELDS = {"quat", "gyro", "v_world", "pos", "steer", "w_shaft", "shaft",
                "righting", "righting_pos"}
 DISPLAY_FIELDS = {"v", "t", "state", "cmd_v_world", "cmd_psi", "psi", "roll",
                   "roll_rate", "volts", "vlat_conf", "qos", "jitter_ms",
-                  "dt_ms", "cuts", "righting_current", "servos", "run", "log"}
+                  "dt_ms", "cuts", "righting_current", "servos", "run", "log",
+                  "hold", "warn"}
 
 # A perturbation per pose field, big enough to be unmistakable.
 _NUDGE = {"quat": [0.966, 0.259, 0.0, 0.0], "gyro": [1.0, -2.0, 3.0],
@@ -656,3 +657,14 @@ def test_the_readout_shows_the_bikes_latest_message():
     left, right = T.status_text(tel)
     assert dict(zip(left.split("\n"), right.split("\n")))["bike"] == \
         "LINK BACK from 192.168.0.114"
+
+
+def test_a_hold_is_a_row_on_the_readout_while_it_lasts():
+    """The level, not the message: a station that connects after the cut
+    still sees why `r` does nothing."""
+    left, right = T.status_text(sample(state="cut", hold="pack at 9.8 V"))
+    assert "HELD" in left.split("\n") and "pack at 9.8 V" in right
+    left, _ = T.status_text(sample())
+    assert "HELD" not in left and "WARN" not in left
+    left, right = T.status_text(sample(warn="pack low: 10.4 V"))
+    assert "WARN" in left.split("\n") and "10.4 V" in right

@@ -81,7 +81,7 @@ FIELDS = (
     "cmd_v_world", "cmd_psi", "psi",
     "roll", "roll_rate", "volts", "vlat_conf", "qos",
     "jitter_ms", "dt_ms", "cuts", "righting", "righting_pos",
-    "righting_current", "servos", "run", "log",
+    "righting_current", "servos", "run", "log", "hold", "warn",
 )
 
 # The effort slot's key names ITS UNIT, because address 126 means different
@@ -116,7 +116,8 @@ def servo_health(health: dict, effort_unit: dict) -> dict:
 def build(*, t, state, quat, gyro, v_world, pos, steer, w_shaft, shaft, psi,
           cmd_v_world, cmd_psi, roll, roll_rate, volts, vlat_conf, qos,
           jitter_ms, dt_ms, cuts, righting, righting_pos,
-          righting_current, servos=None, run=None, log=None) -> dict:
+          righting_current, servos=None, run=None, log=None,
+          hold=None, warn=None) -> dict:
     """The packet. Pure, keyword-only, and rounded HERE rather than at the
     call site so the wire format is one decision in one place.
 
@@ -182,6 +183,15 @@ def build(*, t, state, quat, gyro, v_world, pos, steer, w_shaft, shaft, psi,
         "run": run,
         # The bike's own messages, see `EventLog`. Written ONLY on the bike.
         "log": log or [],
+        # WHY NOTHING WILL RE-ARM, as a LEVEL, or None. The `log` message
+        # saying so rides for EventLog's 5 s and is gone -- so a station that
+        # connects later saw only "cut", and `r` did nothing, silently
+        # (operator, 2026-09-18, on the pack cutoff's first run).
+        "hold": hold,
+        # A STANDING WARNING that is not (yet) a hold, or None -- the pack
+        # below its warn threshold. A level for the same reason as `hold`:
+        # the `log` message said it for 5 s and the mirror then forgot.
+        "warn": warn,
     }
 
 
@@ -265,6 +275,10 @@ def status_text(tel: dict) -> tuple[str, str]:
         right.append(v)
 
     row("state", f"{tel.get('state', '?')}   cuts {tel.get('cuts', 0)}")
+    if tel.get("hold"):
+        row("HELD", str(tel["hold"]))
+    if tel.get("warn"):
+        row("WARN", str(tel["warn"]))
     q = tel.get("qos")
     row("pack", f"{tel.get('volts', float('nan')):.1f} V   jitter "
                 f"{tel.get('jitter_ms') or 0:.2f} ms   qos {'-' if q is None else q}")
