@@ -159,13 +159,51 @@ def test_space_stops_without_losing_the_heading():
     assert op.v == 0.0 and op.psi == psi
 
 
-def test_rearm_is_edge_triggered():
-    """One keypress must ask once. A sticky flag re-arms the bike every 20 ms
-    for as long as the station is running, which defeats the consent rule."""
+def test_rearm_is_a_count_that_survives_lost_packets():
+    """One keypress must ask once -- and must not be lost with one datagram,
+    which the old edge-triggered `rearm: true` was. Every packet carries the
+    count; the bike acts on a CHANGE."""
     op = OperatorState()
+    assert op.packet()["rearm_n"] == 0
     op.key("r")
-    assert op.packet().get("rearm") is True
-    assert "rearm" not in op.packet()
+    assert op.packet()["rearm_n"] == 1
+    assert op.packet()["rearm_n"] == 1          # repeated, not consumed
+    op.key("r")
+    assert op.packet()["rearm_n"] == 2
+
+
+def _bike_hearing(peer="A", lost=False):
+    from types import SimpleNamespace
+    g = FallGuard()
+    g.state = "cut"
+    return SimpleNamespace(guard=g, link=SimpleNamespace(peer=peer),
+                           _link_lost=lost, _rearm_seen=None)
+
+
+def test_the_bike_acts_on_a_change_in_the_count_and_only_then():
+    from aow_sim.hw.run_bike import BikeRunner as B
+    r = _bike_hearing()
+    B._rearm_from(r, 0)
+    assert not r.guard.consent                  # first packet: recorded only
+    B._rearm_from(r, 0)
+    assert not r.guard.consent                  # repeats are not presses
+    B._rearm_from(r, 1)
+    assert r.guard.consent                      # a press, however many lost
+
+
+def test_a_new_station_or_a_press_made_blind_is_not_consent():
+    from aow_sim.hw.run_bike import BikeRunner as B
+    r = _bike_hearing(peer="A")
+    B._rearm_from(r, 5)
+    r.link.peer = "B"                           # a different station, at 0
+    B._rearm_from(r, 0)
+    assert not r.guard.consent
+    r._link_lost = True                         # pressed during a dropout
+    B._rearm_from(r, 1)
+    assert not r.guard.consent
+    r._link_lost = False                        # the NEXT press counts
+    B._rearm_from(r, 2)
+    assert r.guard.consent
 
 
 def test_righting_is_absent_until_commanded():
@@ -349,9 +387,10 @@ def test_the_viewer_and_the_terminal_share_one_command_model():
     # and every one of them actually moves the state
     for name in set(MIRROR_KEYS.values()):
         op = OperatorState(travel_rad=1.0)
-        before = (op.v, op.psi, op.pos, op.righting_current, op.rearm, op.quit)
+        op.sync({"state": "engaged", "psi": 0.3})   # the bike has said where
+        before = (op.v, op.psi, op.pos, op.righting_current, op.rearms, op.quit)
         op.key(name)
-        after = (op.v, op.psi, op.pos, op.righting_current, op.rearm, op.quit)
+        after = (op.v, op.psi, op.pos, op.righting_current, op.rearms, op.quit)
         if name not in (" ", "/"):        # stop from a standstill is a no-op
             assert before != after, f"{name!r} changed nothing"
 
@@ -470,3 +509,348 @@ def test_a_snap_disarms_the_clamp():
     from aow_sim.run_drive import _LEAD_MAX, lead_blocks
     assert not lead_blocks(+0.01, _LEAD_MAX + 1.0, False)
     assert not lead_blocks(-0.01, -_LEAD_MAX - 1.0, False)
+
+
+# --- the session lifecycle: signals, the single-instance port, a lost link --
+#
+# Driven through BikeRunner's own methods on a stand-in `self`, because the
+# real __init__ wants a bundle, a bus and an AHRS. What is under test is the
+# decision each method makes, which needs none of those.
+
+import errno
+import os
+import signal
+from types import SimpleNamespace
+
+import pytest
+
+from aow_sim.hw import run_bike as RB
+
+
+class _Bus:
+    policy_ids = (1, 2, 3)
+
+    def __init__(self):
+        self.calls = []
+
+    def torque(self, on, ids=None):
+        self.calls.append(("torque", on, ids))
+
+    def arm(self, ids=None):
+        self.calls.append(("arm", ids))
+
+    def open(self):
+        self.calls.append(("open",))
+
+
+def _runner(torque=True, age=0.0):
+    link = SimpleNamespace(age=lambda: age, peer=("192.168.0.114", 5000),
+                           addr=("0.0.0.0", 9910))
+    said = []
+    return SimpleNamespace(bus=_Bus(), guard=FallGuard(), torque=torque,
+                           require_link=True, link=link, _link_lost=False,
+                           _roll=0.0, _engage=lambda: None, said=said,
+                           _servo_fault=False, _errs={},
+                           _event=lambda kind, text: said.append((kind, text)))
+
+
+def test_a_rearm_never_energises_a_no_torque_session():
+    """It did, until 2026-09-18: `r` after a cut called `bus.arm`
+    unconditionally, so the mode promising nothing can move could be made to
+    move by the operator's re-arm key."""
+    r = _runner(torque=False)
+    RB.BikeRunner._on_guard_event(r, "rearm")
+    assert not [c for c in r.bus.calls if c[0] == "arm"]
+    r = _runner(torque=True)
+    RB.BikeRunner._on_guard_event(r, "rearm")
+    assert ("arm", (1, 2, 3)) in r.bus.calls
+
+
+def test_a_dead_link_cuts_and_holds_instead_of_ending_the_run():
+    """The process used to exit here, so every closed mirror window meant
+    restarting the bike over ssh. Now: cut, torque off the policy servos
+    only, and nothing re-arms while nobody is there -- not even
+    --auto-rearm, which with no operator would drive a bike nobody can stop."""
+    r = _runner(age=5.0)
+    r.guard.auto = True
+    RB.BikeRunner._watch_link(r)
+    assert r.guard.state == "cut" and r.guard.hold
+    assert r.bus.calls == [("torque", False, (1, 2, 3))]
+    assert r.guard.cuts == 0                     # a lost link is not a fall
+    assert r.guard.update(10.0, 0.0, 0.0) == ""  # settled, auto, still held
+    assert r.guard.update(11.0, 0.0, 0.0) == ""
+
+    r.link.age = lambda: 0.01                    # a station comes back
+    RB.BikeRunner._watch_link(r)
+    assert not r.guard.hold and r.guard.state == "cut"
+    # ...and the bike SAID both, as `link` events the station will print
+    assert [k for k, _ in r.said] == ["link", "link"]
+    assert "LOST" in r.said[0][1] and "BACK" in r.said[1][1]
+    assert r.guard.update(12.0, 0.0, 0.0) == ""  # the dwell starts over
+    assert r.guard.update(12.3, 0.0, 0.0) == "rearm"
+
+
+def test_consent_given_before_the_link_died_does_not_survive_it():
+    r = _runner(age=5.0)
+    r.guard.request_rearm()
+    RB.BikeRunner._watch_link(r)
+    r.link.age = lambda: 0.01
+    RB.BikeRunner._watch_link(r)
+    r.guard.update(0.0, 0.0, 0.0)
+    assert r.guard.update(1.0, 0.0, 0.0) == ""   # needs a fresh `r`
+    r.guard.request_rearm()
+    assert r.guard.update(1.1, 0.0, 0.0) == "rearm"
+
+
+def test_a_lost_link_on_a_no_torque_run_writes_no_torque_at_all():
+    r = _runner(torque=False, age=5.0)
+    RB.BikeRunner._watch_link(r)
+    assert r.bus.calls == [] and r.guard.state == "cut"
+
+
+def test_a_second_instance_leaves_the_bus_alone():
+    """The port is the lock. Opening the bus turns torque OFF on every servo,
+    so a second run_bike that got that far before finding 9910 taken would
+    drop the first one's bike mid-session."""
+    def taken():
+        raise OSError(errno.EADDRINUSE, "Address already in use")
+    r = _runner()
+    r.link.start = taken
+    with pytest.raises(SystemExit, match="already running"):
+        RB.BikeRunner._run(r, True)
+    assert r.bus.calls == []
+
+
+@pytest.fixture
+def _restore_signals():
+    saved = {s: signal.getsignal(s)
+             for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
+    yield
+    for s, h in saved.items():
+        signal.signal(s, h)
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGHUP])
+def test_a_kill_signal_unwinds_through_shutdown(sig, _restore_signals):
+    """SIGTERM and SIGHUP used to kill the process on the spot, skipping the
+    `finally` that takes torque off -- so `kill`, `timeout` or a dropped
+    `ssh -t` left the servos holding their last goal. A real signal, sent to
+    this process from inside the run."""
+    seen = []
+
+    def body(_preflight):
+        os.kill(os.getpid(), sig)
+        seen.append("not interrupted")          # never reached
+
+    r = SimpleNamespace(_run=body, _stopped_by=None,
+                        shutdown=lambda: seen.append("shutdown"))
+    RB.BikeRunner.run(r)
+    assert seen == ["shutdown"]
+    assert signal.Signals(sig).name in r._stopped_by
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_inside_the_loop_a_signal_waits_for_the_tick_boundary(sig,
+                                                              _restore_signals):
+    """Raising wherever the main thread happens to be lands inside a bus
+    transaction most of the time, and leaves the SDK port marked busy -- the
+    shutdown's torque-off then returned COMM_PORT_BUSY on the Pi. In the loop
+    the handler only records; the work in progress FINISHES."""
+    seen = []
+
+    def body(_preflight):
+        RB._STOP["defer"] = True             # what _run does at the loop
+        os.kill(os.getpid(), sig)
+        seen.append("transaction finished")  # reached: nothing was raised
+        if RB._STOP["sig"] is not None:      # the loop's own check
+            raise RB._stopped(RB._STOP["sig"])
+
+    r = SimpleNamespace(_run=body, _stopped_by="unset",
+                        shutdown=lambda: seen.append("shutdown"))
+    RB.BikeRunner.run(r)
+    assert seen == ["transaction finished", "shutdown"]
+    assert r._stopped_by is None if sig == signal.SIGINT else "SIGTERM" in r._stopped_by
+
+
+def test_the_shutdown_torque_off_survives_an_abandoned_transaction():
+    """`is_using` left set by an interrupted packet made every later write
+    COMM_PORT_BUSY; and torque() stopped at the first failure, leaving the
+    rest energised. close() clears the flag and tries every servo."""
+    from aow_sim.hw.dynamixel import ServoBus
+    from aow_sim.params import load_params
+
+    b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4)
+    tries = []
+
+    class Port:
+        is_using = True                      # an abandoned transaction
+
+        def clearPort(self):
+            pass
+
+        def closePort(self):
+            tries.append("closed")
+
+    def torque(on, ids=None):
+        (i,) = ids
+        assert not b._port.is_using, "busy flag not cleared first"
+        tries.append(i)
+        if i == 2 and tries.count(2) == 1:
+            raise RuntimeError("one bad reply")
+
+    b._port, b.torque = Port(), torque
+    b.close()
+    assert tries == [1, 2, 3, 4, 2, "closed"]   # all tried, the failure retried
+
+
+def test_a_hardware_error_is_announced_by_the_bike_once_and_when_it_clears():
+    """Righting servo: announced, never a cut -- it is not the policy's."""
+    r = _runner()
+    for err in (0, 0, 36, 36, 0):
+        r._health = {"righting": {"Hardware Error Status": err}}
+        RB.BikeRunner._watch_errors(r)
+    assert [k for k, _ in r.said] == ["error", "error"]
+    assert "overheating" in r.said[0][1] and "cleared" in r.said[1][1]
+    assert r.guard.state == "engaged"
+
+
+def test_a_faulted_policy_servo_cuts_and_holds_until_it_clears():
+    """2026-09-18: drive A tripped overload at 88.6 s and the policy drove it,
+    dead, for 5 s. A latched error means that servo has ALREADY dropped its
+    own torque; the bike cannot balance on it, so the rest go limp too and
+    nothing re-arms -- not even --auto-rearm -- until it clears."""
+    r = _runner()
+    r.guard.auto = True
+    r._health = {"drive_a": {"Hardware Error Status": 32}}   # overload
+    RB.BikeRunner._watch_errors(r)
+    assert r.guard.state == "cut" and r.guard.hold
+    assert ("torque", False, (1, 2, 3)) in r.bus.calls
+    assert [k for k, _ in r.said] == ["error", "cut"]
+    assert r.guard.update(1.0, 0.0, 0.0) == "" == r.guard.update(2.0, 0.0, 0.0)
+    RB.BikeRunner._watch_errors(r)                           # still latched
+    assert [k for k, _ in r.said] == ["error", "cut"]        # said once
+    r._health = {"drive_a": {"Hardware Error Status": 0}}
+    RB.BikeRunner._watch_errors(r)
+    assert not r.guard.hold
+    # and a link that comes back does not release a servo that is still bad
+    r._health = {"steer": {"Hardware Error Status": 4}}
+    RB.BikeRunner._watch_errors(r)
+    r._link_lost = True
+    r.link.age = lambda: 0.01
+    RB.BikeRunner._watch_link(r)
+    assert r.guard.hold
+
+
+def test_the_alert_bit_is_not_a_failed_instruction():
+    """err=128 is 'this servo has a latched hardware error', on every reply
+    it sends, and the instruction WAS carried out. Treating it as failure
+    ended the 2026-09-18 bench run on a torque-off that had worked."""
+    from aow_sim.hw.dynamixel import _failed
+    assert not _failed(0, 0x80)          # alert only: done
+    assert _failed(0, 0x80 | 0x04)       # alert AND a real error
+    assert _failed(0, 0x07)              # access error, no alert
+    assert _failed(-1000, 0)             # port busy
+    assert not _failed(0, 0)
+
+
+def test_a_latched_error_is_rebooted_away_at_startup():
+    from aow_sim.hw.dynamixel import ServoBus
+    from aow_sim.params import load_params
+    b = ServoBus(load_params(), ids=(1, 2, 3))
+    latched = {1: 32}
+    rebooted = []
+
+    class Packet:
+        def reboot(self, port, i):
+            rebooted.append(i)
+            latched.pop(i, None)
+            return 0, 0
+
+    b._packet = Packet()
+    b.read_raw = lambda i, name: latched.get(i, 0)
+    import aow_sim.hw.dynamixel as D
+    real_sleep = D.time.sleep
+    D.time.sleep = lambda s: None
+    try:
+        got = b._clear_latched_errors()
+    finally:
+        D.time.sleep = real_sleep
+    assert got == {1: 32} and rebooted == [1]
+
+
+
+# --- the packed command (hw/telemetry.encode_command) ----------------------
+
+def test_the_command_is_twelve_bytes_and_round_trips():
+    from aow_sim.hw import telemetry as T
+    op = OperatorState(travel_rad=2.4)
+    op.v, op.psi = 0.37, 1.234
+    op.key("9"), op.key("]"), op.key("r")
+    pkt = op.packet()
+    wire = T.encode_command(pkt)
+    assert len(wire) == T.COMMAND_BYTES == 12
+    got = T.decode_command(wire)
+    assert set(got) == set(pkt)               # same fields, same names
+    assert got["v_cmd_world"] == pytest.approx(pkt["v_cmd_world"], abs=1e-3)
+    assert got["psi_cmd"] == pytest.approx(pkt["psi_cmd"], abs=1e-4)
+    assert got["righting_rad"] == pytest.approx(pkt["righting_rad"], abs=1e-3)
+    assert got["righting_current"] == pkt["righting_current"]
+    assert got["rearm_n"] == pkt["rearm_n"] == 1
+
+
+def test_an_absent_righting_goal_stays_absent_not_zero():
+    """Absent means 'write no goal'; zero would drive the wing to 0 rad."""
+    from aow_sim.hw import telemetry as T
+    got = T.decode_command(T.encode_command(OperatorState().packet()))
+    assert "righting_rad" not in got and "righting_current" not in got
+
+
+def test_the_heading_goes_wrapped_and_means_the_same():
+    """The bike uses the heading only as wrap_pi(psi_cmd - psi), so a
+    command three turns round is the same command."""
+    import math
+    from aow_sim.hw import telemetry as T
+    pkt = {"v_cmd_world": [0.0, 0.0], "psi_cmd": 6 * math.pi + 0.5}
+    got = T.decode_command(T.encode_command(pkt))["psi_cmd"]
+    assert got == pytest.approx(0.5, abs=1e-4)
+
+
+def test_a_json_station_is_refused_by_name():
+    import json
+    from aow_sim.hw import telemetry as T
+    with pytest.raises(T.CommandFormatError, match="JSON"):
+        T.decode_command(json.dumps({"psi_cmd": 0.0}).encode())
+    with pytest.raises(T.CommandFormatError, match="v9"):
+        T.decode_command(bytes([9]) + bytes(11))
+
+
+
+# --- the heading command starts from the BIKE, not from the AHRS's zero ----
+
+def test_a_new_station_sends_no_heading_until_the_bike_says_where_it_points():
+    """It sent 0.0 -- the AHRS's arbitrary yaw zero -- so every connect
+    commanded a 45-66 deg turn (four sessions, 2026-09-18)."""
+    from aow_sim.hw import telemetry as T
+    op = OperatorState()
+    op.key("LEFT")                                  # nothing to turn from
+    assert op.psi is None and "psi_cmd" not in op.packet()
+    assert "psi_cmd" not in T.decode_command(T.encode_command(op.packet()))
+    op.sync({"state": "engaged", "psi": -1.0})
+    assert op.psi == pytest.approx(-1.0)
+    assert T.decode_command(T.encode_command(op.packet()))["psi_cmd"] == \
+        pytest.approx(-1.0, abs=1e-4)
+
+
+def test_while_the_bike_is_not_engaged_the_command_follows_it():
+    """So a re-arm starts from where the bike points NOW. Engaged, the
+    operator's heading is theirs and telemetry does not move it."""
+    op = OperatorState()
+    op.sync({"state": "engaged", "psi": 0.0})
+    op.key("UP"), op.key("LEFT")
+    aimed = op.psi
+    op.sync({"state": "engaged", "psi": 0.5})
+    assert op.psi == aimed and op.v > 0             # engaged: untouched
+    op.sync({"state": "cut", "psi": 1.2})
+    assert op.psi == pytest.approx(1.2) and op.v == 0.0
+    op.sync({"state": "cut", "psi": -0.4})          # the bike is carried round
+    assert op.psi == pytest.approx(-0.4)

@@ -41,10 +41,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import errno
 import select
+import signal
 import socket
+import sys
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -54,6 +58,7 @@ from ..params import load_params
 from ..control.drive import DriveController
 from ..control.recovery import HANDOFF_RATE, RECOVER_DEG, ready_for_policy
 from . import telemetry
+from .bench_log import RunRecorder, new_capture_dir
 from .ahrs import (QOS_MIN_SERVICE, QOS_NAMES, QOS_UNKNOWN,
                    AhrsReader, MountCalibration)
 from .dynamixel import CONTROL_HZ_DEFAULT, ServoBus, resolve_gains
@@ -65,6 +70,23 @@ CMD_STALE_S = 0.15        # -> zero the command. PROVISIONAL, see note below
 CMD_DEAD_S = 1.0          # -> torque off
 VOLTAGE_MIN = 10.2        # 3.4 V/cell on 3S. Pack total, not per-cell — see note
 LINK_WAIT_S = 30.0        # how long to wait for the ground station before giving up
+# Where the onboard record goes: traces/ is gitignored and Dropbox-synced on
+# the laptop, and the drivetrain bench captures already live beside it.
+RECORD_ROOT = Path(__file__).resolve().parents[3] / "traces" / "bike"
+
+# What the record keeps per tick besides the raw registers: name -> width.
+# Everything the controller had, so a post-hoc question about a run is a load
+# rather than a re-run. `state` is an index into FallGuard's state names,
+# stored in meta as `states`.
+BIKE_COLS = {
+    "t": 1, "state": 1, "slip_ms": 1, "dt_ms": 1,
+    "quat": 4, "gyro": 3, "accel": 3, "qos": 1, "roll": 1, "roll_rate": 1,
+    "v_world": 2, "pos": 2, "psi": 1, "vlat_conf": 1, "steer": 1,
+    "ctrl": 3,                      # drive_a, drive_b [input-shaft rad/s], steer [rad]
+    "cmd_v_world": 2, "cmd_psi": 1, "link_age": 1,
+    "righting_goal": 1, "righting_current": 1, "volts": 1,
+}
+STATES = ("engaged", "cut")   # FallGuard.state
 
 # Defaults for the fall guard, overridable from control.onboard in
 # bike_params.yaml and from the command line.
@@ -186,6 +208,21 @@ class FallGuard:
         self.consent = False
         self._settled_since = None
         self.cuts = 0
+        # While True, nothing re-arms -- not consent, not --auto-rearm. Set by
+        # the runner while the link is down: there is nobody to consent, and
+        # an auto re-arm with no operator would drive a bike nobody can stop.
+        self.hold = False
+
+    def cut_now(self) -> bool:
+        """Cut for a reason that is not a fall (a lost link). Clears consent
+        -- a go-ahead given before the link died is not one for after it --
+        and does NOT count toward `cuts`, which counts falls. -> whether it
+        was engaged, i.e. whether there was torque to take off."""
+        was = self.state == "engaged"
+        self.state = "cut"
+        self.consent = False
+        self._settled_since = None
+        return was
 
     def request_rearm(self) -> None:
         """The operator's go-ahead. Ignored while engaged; consumed on rearm."""
@@ -205,7 +242,9 @@ class FallGuard:
         # the consent, the cut itself -- is the onboard wrapper around it.
         settled = ready_for_policy(roll, roll_rate, self.rearm_deg,
                                    self.rearm_rate)
-        if not settled:
+        # Held: the dwell does not accrue either. Stillness nobody was there
+        # to see is not a reason to re-arm the instant someone arrives.
+        if not settled or self.hold:
             self._settled_since = None
             return ""
         if self._settled_since is None:
@@ -223,9 +262,11 @@ class FallGuard:
 class CommandLink:
     """UDP command receive + telemetry transmit.
 
-    The command is a JSON object rather than a packed struct: it is 50 Hz of
-    tiny datagrams on a private link, the readability is worth more than the
-    bytes, and it keeps the ground station trivial to write and extend.
+    The command arrives as 12 packed bytes (`telemetry.decode_command`) and is
+    decoded straight back into the dict this class always held, so nothing
+    downstream of the socket knows the wire format changed. A datagram that
+    will not decode -- an old station still sending JSON -- is said ONCE and
+    otherwise ignored: an unreadable command is not a heartbeat.
     """
 
     def __init__(self, listen=("0.0.0.0", 9910), telemetry_hz=CONTROL_HZ):
@@ -237,6 +278,7 @@ class CommandLink:
         self._stop = threading.Event()
         self._thread = None
         self.telemetry = {}
+        self._said: set = set()
 
     def start(self):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -275,7 +317,13 @@ class CommandLink:
             select.select([self._sock], [], [], timeout)
             try:
                 data, peer = self._sock.recvfrom(4096)
-                self.cmd = json.loads(data.decode())
+                try:
+                    self.cmd = telemetry.decode_command(data)
+                except telemetry.CommandFormatError as e:
+                    if str(e) not in self._said:
+                        self._said.add(str(e))
+                        _say(f"ignoring a command from {peer[0]}: {e}")
+                    continue
                 self.cmd_t = time.monotonic()
                 self.peer = peer
             except socket.timeout:
@@ -306,11 +354,20 @@ class BikeRunner:
                  control_hz: float = CONTROL_HZ, servo_gains=None,
                  require_link: bool = True, auto_rearm: bool = False,
                  ids=None, torque: bool = True, seconds: float = 0.0,
-                 steer_zero=None, allow_guess_mount: bool = False):
+                 steer_zero=None, allow_guess_mount: bool = False,
+                 record: bool = True, tag: str | None = None,
+                 link_wait: float = 0.0):
         self.params = load_params()
+        self.bundle_path = bundle_path
+        self.record, self.tag = bool(record), tag
+        self.link_wait = float(link_wait)
+        self.rec: RunRecorder | None = None
+        self.run_id: str | None = None
+        self._stopped_by: str | None = None
         self.design, self.model = load_bundle(bundle_path, self.params)
         self.dt = 1.0 / control_hz
-        self.ctl = DriveController(self.params, self.model, self.design)
+        self.ctl = DriveController(controller_params(self.params, control_hz),
+                                   self.model, self.design)
         self.aid = self.ctl.aid
         self.data = HardwareData(self.model.nq, self.model.nv, self.model.nu)
         cfg = ((self.params.get("control") or {}).get("onboard") or {})
@@ -390,7 +447,7 @@ class BikeRunner:
         # problem; this tells you WHERE, which is what separates "the bus
         # stalled" from "something on the control thread blocked".
         self._late: list = []
-        self._roll = self._roll_rate = 0.0
+        self._roll = self._roll_rate = self._yaw = 0.0
         self._dt_meas = self.dt
         self._righting_current = None
         # Preflight findings whose KIND may be accepted without disarming the
@@ -401,6 +458,14 @@ class BikeRunner:
         self._shaft = (0.0, 0.0)
         self._qos = None
         self._righting_pos = None
+        self._accel = (0.0, 0.0, 0.0)
+        self._health: dict = {}
+        self._link_lost = False
+        self._rearm_seen = None           # (peer, rearm_n) last heard
+        # What the bike tells the station, in words (telemetry.EventLog).
+        self.events = telemetry.EventLog()
+        self._errs: dict = {}             # role -> Hardware Error Status seen
+        self._servo_fault = False         # a policy servo has a latched error
 
     # -- one tick ----------------------------------------------------------
 
@@ -432,6 +497,7 @@ class BikeRunner:
         self.data.set_velocity(body_to_world(v_lon, v_lat, yaw))
         self.data.integrate_position(dt)
         self._roll = roll
+        self._yaw = yaw
         self._roll_rate = float(a.gyro[0])
         # For telemetry only -- no controller reads either. The shaft speeds
         # are what the mirror integrates into a wheel angle (the drive servos
@@ -446,6 +512,8 @@ class BikeRunner:
         # servo is the fourth id on the same chain -- so this costs no bus time.
         self._righting_pos = s["righting_pos"]
         self._qos = a.qos
+        self._accel = a.accel
+        self._health = s["health"]
 
     def _apply_command(self) -> None:
         age = self.link.age()
@@ -468,6 +536,7 @@ class BikeRunner:
         -- it is a separate bus transaction, so sending it every tick would put
         an operator-scale knob on the control path.
         """
+        self._rearm_from(c.get("rearm_n"))
         if not self.bus.id_right:
             return
         if "righting_rad" in c:
@@ -475,8 +544,22 @@ class BikeRunner:
         want = c.get("righting_current")
         if want is not None and want != self._righting_current:
             self._righting_current = self.bus.set_righting_current(int(want))
-        if c.get("rearm"):
+
+    def _rearm_from(self, n) -> None:
+        """Consent arrives as a COUNT of presses (`OperatorState.rearms`); a
+        change is a press. Not acted on -- only recorded -- when the count
+        comes from a station this bike has not heard before (a fresh station
+        starts at 0, a restarted one too, and neither is a press), or while
+        the link is down: a press the operator made during a dropout was made
+        blind, and must not turn into consent the moment packets resume."""
+        if n is None:
+            return
+        peer = self.link.peer
+        seen = self._rearm_seen
+        if seen is not None and seen[0] == peer and n != seen[1] \
+                and not self._link_lost:
             self.guard.request_rearm()
+        self._rearm_seen = (peer, n)
 
     def preflight_ahrs(self, seconds: float = 0.5, strict: bool = True) -> list[str]:
         """Sanity-check the AHRS before engaging. Bike must be STATIONARY.
@@ -592,14 +675,96 @@ class BikeRunner:
         that is expected, survivable and self-clearing, so it is a state
         transition (`FallGuard`) rather than a reason to stop the process; a
         bike that has to be power-cycled after every tip-over cannot be tested.
-        The other three stay fatal because none of them clears itself: a dead
-        link, a flat pack and a silent AHRS are all still true one second later.
+        A flat pack stays fatal because it does not clear itself.
+
+        THE LINK MOVED OUT OF HERE on 2026-09-18 (`_watch_link`). A dead link
+        used to end the process, so every closed mirror window meant an ssh
+        round trip to restart the bike. It is now a CUT that waits: torque off,
+        the loop and the record carry on, and a returning station re-arms with
+        `r` exactly as after a fall.
         """
-        if self.require_link and self.link.age() > CMD_DEAD_S:
-            return f"command link dead ({self.link.age():.1f} s)"
         if voltage < VOLTAGE_MIN:
             return f"pack at {voltage:.1f} V (min {VOLTAGE_MIN})"
         return None
+
+    def _event(self, kind: str, text: str) -> None:
+        """Say it here AND to the station. The one place a message is made."""
+        _say(text)
+        self.events.add(kind, text)
+
+    def _watch_errors(self) -> None:
+        """A servo's Hardware Error Status CHANGING is an event the bike
+        announces; the level itself is in `servos` for display. Decided here
+        so the station does not keep its own copy of the rule.
+
+        A LATCHED ERROR ON A POLICY SERVO IS A CUT, and holds. The servo has
+        already turned its own torque off -- the bike cannot balance on a dead
+        drive or a limp steer -- and until 2026-09-18 the policy stayed
+        engaged and kept commanding it: drive A tripped overload at 88.6 s of
+        a bench run and was driven, dead, for 5 s. The latch only clears on a
+        reboot, which restarting run_bike now does (`ServoBus.open`). The
+        righting servo is exempt: its fault is announced, not a cut.
+        """
+        from .dynamixel import describe_hardware_error
+        for role, h in self._health.items():
+            err = int(h.get("Hardware Error Status", 0) or 0)
+            if err != self._errs.get(role, 0):
+                self._event("error", f"{role} HARDWARE ERROR: "
+                                     f"{describe_hardware_error(err)}"
+                            if err else f"{role} hardware error cleared")
+            self._errs[role] = err
+        fault = any(self._errs.get(r) for r in ("drive_a", "drive_b", "steer"))
+        if fault and not self._servo_fault:
+            if self.guard.cut_now() and self.torque:
+                self.bus.torque(False, self.bus.policy_ids)
+            self._event("cut", "CUT: a policy servo faulted -- restart "
+                               "run_bike to reboot it (a latched error "
+                               "survives until then)")
+        self._servo_fault = fault
+        self.guard.hold = self._link_lost or self._servo_fault
+
+    def _on_guard_event(self, event: str) -> None:
+        if event == "cut":
+            # Torque off the three the policy drives, and ONLY those: the
+            # righting servo has to stay alive here, since lying down is the
+            # one moment it has a job.
+            self.bus.torque(False, self.bus.policy_ids)
+            self._event("cut", f"CUT: roll {np.degrees(self._roll):.0f} deg -- "
+                               "policy out, righting servo live. r once "
+                               "upright and still")
+        elif event == "rearm":
+            self._engage()
+            # ONLY WITH --torque. This armed unconditionally until 2026-09-18,
+            # so `r` after a cut ENERGISED a --no-torque session -- the one
+            # mode whose whole promise is that nothing can move.
+            if self.torque:
+                self.bus.arm(self.bus.policy_ids)
+            self._event("rearm", "RE-ARMED: policy engaged, command zeroed"
+                        + ("" if self.torque else " (--no-torque: still limp)"))
+
+    def _watch_link(self) -> None:
+        """Dead link -> cut and hold; link back -> say so and wait for `r`.
+
+        Only the three policy servos lose torque, as in a fall. The righting
+        servo keeps holding its last goal: it is current-limited, it is what
+        it does on every normal tick, and dropping it would let a deployed
+        wing fall under load with nobody there to see why.
+        """
+        if not self.require_link:
+            return
+        dead = self.link.age() > CMD_DEAD_S
+        if dead and not self._link_lost:
+            self._link_lost = True
+            self.guard.hold = True
+            if self.guard.cut_now() and self.torque:
+                self.bus.torque(False, self.bus.policy_ids)
+            self._event("link", f"LINK LOST ({self.link.age():.1f} s): policy "
+                                "out, torque off -- waiting for a station")
+        elif not dead and self._link_lost:
+            self._link_lost = False
+            self.guard.hold = self._servo_fault
+            self._event("link", f"LINK BACK from {self.link.peer[0]}: r once "
+                                "the bike is upright and still")
 
     def wait_for_link(self, timeout: float = LINK_WAIT_S) -> None:
         """Block until the ground station says hello. Before any torque.
@@ -615,9 +780,10 @@ class BikeRunner:
         operator has been there. `--no-link` is the bench escape, and it turns
         the link failsafes off rather than pretending a command arrived.
         """
-        print(f"waiting up to {timeout:.0f} s for a command on "
-              f"{self.link.addr[0]}:{self.link.addr[1]} ...")
-        t_end = time.monotonic() + timeout
+        print(("waiting for a command" if not timeout else
+               f"waiting up to {timeout:.0f} s for a command")
+              + f" on {self.link.addr[0]}:{self.link.addr[1]} ...", flush=True)
+        t_end = time.monotonic() + timeout if timeout else float("inf")
         while time.monotonic() < t_end:
             if self.link.age() < CMD_DEAD_S:
                 print(f"ground station at {self.link.peer[0]}")
@@ -642,18 +808,82 @@ class BikeRunner:
         self.est = VelocityEstimator(self.params)
         self._sense()
         self.ctl.reset(self.model, self.data)
-        self.ctl.engage_general(self.data, name=self.gen_name)
+        self.ctl.engage_general(self.data, name=self.gen_name, reuse=True)
         # The operator's last command predates the fall. Re-anchor to standing
         # still and let them ask again.
         self.ctl.set_command(v_cmd_world=[0.0, 0.0])
 
     def run(self, preflight: bool = True) -> None:
+        """The session, with ONE try around all of it, so every way out --
+        ctrl-C, SIGTERM, SIGHUP, a failsafe, an exception in preflight --
+        runs `shutdown()`, which is what takes torque off.
+
+        SIGTERM AND SIGHUP USED TO SKIP IT. Python's default for both is to
+        die on the spot, so `kill`, `timeout`, or a dropped `ssh -t` session
+        left the servos energised holding their last goal -- a drive in
+        velocity mode keeps spinning -- because the servos' own Bus Watchdog
+        is not armed by this runner.
+
+        AND NOT MID-TRANSACTION. Raising from the handler wherever the main
+        thread happens to be lands, most of the time, inside a bus read or
+        write -- which leaves the SDK's port marked busy, so the torque-off in
+        `shutdown` was refused (measured: rc -1000 on a SIGTERM'd run). So
+        inside the control loop a signal only REQUESTS the stop, and the loop
+        honours it at the top of the next tick, between transactions -- at
+        most 10 ms later. Outside the loop (preflight, waiting for a station)
+        there is no transaction to interrupt and it raises at once. ctrl-C is
+        routed the same way, since it had the same flaw.
+        """
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal.signal(sig, _on_stop_signal)
+        _STOP.update(sig=None, defer=False)
+        try:
+            self._run(preflight)
+        except KeyboardInterrupt:
+            self._stopped_by = None          # ctrl-C is the normal way out
+            _say("\nctrl-C")
+        except Stopped as e:
+            self._stopped_by = str(e)
+            _say(f"\n{e}")
+        except BaseException as e:
+            self._stopped_by = f"{type(e).__name__}: {e}"
+            raise
+        finally:
+            for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+                signal.signal(sig, signal.SIG_IGN)   # one shutdown, not two
+            self.shutdown()
+
+    def _run(self, preflight: bool) -> None:  # noqa: C901 -- the session
+        # THE PORT FIRST: it is the single-instance lock. A second run_bike
+        # used to open the bus before discovering 9910 was taken -- and
+        # opening the bus turns torque OFF and rewrites the indirect map on
+        # every servo, i.e. dropped the running instance's bike mid-session,
+        # then crashed. Binding first means the second one touches nothing.
+        try:
+            self.link.start()
+        except OSError as e:
+            if e.errno == errno.EADDRINUSE:
+                raise SystemExit(
+                    f"port {self.link.addr[1]} is taken -- another run_bike is "
+                    "already running (pgrep -af run_bike). Not touching the "
+                    "bus.") from None
+            raise
         self.bus.open()                      # torque still OFF; see ServoBus.open
+        from .dynamixel import describe_hardware_error
+        for i, bits in (self.bus.rebooted or {}).items():
+            self._event("error", f"id {i} had a latched hardware error "
+                                 f"({describe_hardware_error(bits)}) -- "
+                                 "rebooted, clear now")
+        # Per role, the unit the effort slot decodes in -- A or fraction of
+        # max torque, by model (hw/dynamixel.HEALTH_BLOCK).
+        self._effort_unit = {role: self.bus._map.register(i, "effort").unit_name
+                             for i, role in self.bus.roles.items()}
+        if self.record:
+            self._start_record()
         # What open() just wrote, so the operator's first [ or ] is a CHANGE
         # rather than a redundant write of the value already on the servo.
         self._righting_current = self.bus.righting_current_applied
         self.ahrs.start()
-        self.link.start()
         _try_realtime()
 
         # Before any torque: the bike is stationary here and never again.
@@ -673,7 +903,7 @@ class BikeRunner:
                 raise
         self.preflight_ahrs(strict=preflight)
         if self.require_link:
-            self.wait_for_link()
+            self.wait_for_link(self.link_wait)
 
         voltage = self.bus.pack_voltage()
         # WHICH policy: `self.gen_name`, resolved in __init__ because the
@@ -711,132 +941,274 @@ class BikeRunner:
         # measurement, twice now (see the telemetry note above).
         np.percentile(np.zeros(8), 99)
 
+        _STOP["defer"] = True                # from here, stop between ticks
         t0 = time.monotonic()
         next_tick = t0
         k = 0
-        try:
-            while True:
-                next_tick += self.dt
-                now = time.monotonic()
-                if now < next_tick:
-                    time.sleep(next_tick - now)
-                slip = time.monotonic() - next_tick
-                self.jitter.append(slip)
-                if slip > 0.01 and len(self._late) < 40:
-                    self._late.append((k, round(slip * 1e3, 1)))
+        while True:
+            if _STOP["sig"] is not None:
+                raise _stopped(_STOP["sig"])
+            next_tick += self.dt
+            now = time.monotonic()
+            if now < next_tick:
+                time.sleep(next_tick - now)
+            slip = time.monotonic() - next_tick
+            self.jitter.append(slip)
+            if slip > 0.01 and len(self._late) < 40:
+                self._late.append((k, round(slip * 1e3, 1)))
 
-                self._sense()
-                self._apply_command()
+            self._sense()
+            self._apply_command()
 
-                k += 1
-                if k % 100 == 0:            # 1 Hz; a bus read is not free
-                    voltage = self.bus.pack_voltage()
-                if k % 50 == 0 and self.jitter:   # 2 Hz; a percentile is not free
-                    self._jitter_ms = round(
-                        float(np.percentile(np.fromiter(self.jitter, float), 99))
-                        * 1e3, 2)
-                if self.seconds and self.data.time >= self.seconds:
-                    print(f"reached --seconds {self.seconds:g}")
-                    break
-                reason = self._check_failsafes(voltage)
-                if reason is not None:
-                    print(f"FAILSAFE: {reason}")
-                    break
+            k += 1
+            if k % 100 == 0:            # 1 Hz, as it always was
+                # From this tick's read block now -- the same register,
+                # without the extra round trip `pack_voltage` costs. Kept
+                # at 1 Hz rather than per tick on purpose: the LVC trips
+                # on a SAMPLE, and a per-tick sample would see every TX
+                # sag the 1 Hz one was never exposed to.
+                voltage = (self.bus.last_voltage
+                           if self.bus.last_voltage is not None
+                           else self.bus.pack_voltage())
+            if k % 50 == 0 and self.jitter:   # 2 Hz; a percentile is not free
+                self._jitter_ms = round(
+                    float(np.percentile(np.fromiter(self.jitter, float), 99))
+                    * 1e3, 2)
+            if self.seconds and self.data.time >= self.seconds:
+                print(f"reached --seconds {self.seconds:g}")
+                break
+            self._watch_link()
+            self._watch_errors()
+            reason = self._check_failsafes(voltage)
+            if reason is not None:
+                self._event("failsafe", f"FAILSAFE: {reason} -- stopping")
+                self._stopped_by = f"failsafe: {reason}"
+                # One more packet, so the station hears WHY before the bike
+                # goes quiet. 30 ms on a latching stop; torque goes off next.
+                self.link.telemetry = {**self.link.telemetry,
+                                       "log": self.events.recent()}
+                time.sleep(0.03)
+                break
 
-                # The fall guard runs on the SENSED state and before the
-                # controller, so a tick that starts on the bike's side never
-                # reaches the policy at all.
-                event = self.guard.update(self.data.time, self._roll,
-                                          self._roll_rate)
-                if event == "cut":
-                    # Torque off the three the policy drives, and ONLY those:
-                    # the righting servo has to stay alive here, since lying
-                    # down is the one moment it has a job.
-                    self.bus.torque(False, self.bus.policy_ids)
-                    print(f"CUT: roll {np.degrees(self._roll):.0f} deg — policy "
-                          f"out, righting servo still live")
-                elif event == "rearm":
-                    self._engage()
-                    self.bus.arm(self.bus.policy_ids)
-                    print("RE-ARMED: policy engaged, command zeroed")
+            # The fall guard runs on the SENSED state and before the
+            # controller, so a tick that starts on the bike's side never
+            # reaches the policy at all.
+            event = self.guard.update(self.data.time, self._roll,
+                                      self._roll_rate)
+            self._on_guard_event(event)
 
-                if self.guard.state == "engaged":
-                    self.ctl.step(self.model, self.data)
-                    self.bus.write_commands(self.data.ctrl, self.aid)
+            write_s = float("nan")
+            self.bus.last_goal = {}
+            if self.guard.state == "engaged":
+                self.ctl.tick(self.model, self.data)
+                t_w = time.perf_counter()
+                self.bus.write_commands(self.data.ctrl, self.aid)
+                write_s = time.perf_counter() - t_w
 
-                # EVERY TICK since 2026-09-16, was every other one. The old
-                # comment here said building a dict the link would not send was
-                # waste, which was true while `CommandLink` transmitted at
-                # 50 Hz -- but that halving is also 0-20 ms of extra staleness
-                # on top of the transmit period, and the mirror shows it as
-                # lag. Both now run at the control rate.
-                #
-                # THE COST IS MEASURED, not assumed: `telemetry.build` is
-                # 48.8 us on a Pi 3B+ (155 us with a full pose and four servos
-                # of registers, which is Phase 2's packet), so every tick is
-                # ~0.5% of a 10 ms budget. The packet is 438 B, so 100 Hz is
-                # 43.8 kB/s against a link measured to carry 1.5 MB/s with
-                # zero loss. Neither end of that is close.
-                if k % 100 == 0 and self.link.peer is None:
-                    # No ground station to send telemetry to, so say it here.
-                    print(f"  t {self.data.time:5.1f}  roll {np.degrees(self._roll):+6.1f} "
-                          f"deg  drive {self.data.ctrl[self.aid['drive_a']]:+6.2f}"
-                          f"/{self.data.ctrl[self.aid['drive_b']]:+6.2f} rad/s  "
-                          f"steer {np.degrees(self.data.ctrl[self.aid['steer']]):+6.1f} deg  "
-                          f"v {self.data.qvel[0]:+.2f},{self.data.qvel[1]:+.2f}  "
-                          f"{self._jitter_ms:.2f} ms")
-                self.link.telemetry = telemetry.build(
-                    t=self.data.time,
-                    state=self.guard.state,
-                    quat=self.data.qpos[3:7],
-                    gyro=self.data.qvel[3:6],
-                    v_world=self.data.qvel[:2],
-                    pos=self.data.qpos[:2],
-                    steer=self.data.qpos[self.ctl._sj],
-                    w_shaft=self._w_shaft,
-                    shaft=self._shaft,
-                    # The bike's OWN heading, so the station's `/` can re-aim
-                    # the command at where the bike actually points -- which is
-                    # what teleop's `/` does, and what "stop" means once the
-                    # commanded heading has drifted from the real one.
-                    psi=self.ctl._psi,
-                    cmd_v_world=self.ctl._gen_v_cmd,
-                    cmd_psi=self.ctl._gen_psi_cmd,
-                    roll=self._roll,
-                    roll_rate=self._roll_rate,
-                    volts=voltage,
-                    # <1 means the front wheel is near perpendicular and v_lat
-                    # is coasting on the accelerometer -- worth seeing live.
-                    vlat_conf=self.est.confidence,
-                    qos=self._qos,
-                    jitter_ms=self._jitter_ms,
-                    dt_ms=self._dt_meas * 1e3,
-                    cuts=self.guard.cuts,
-                    righting=self.bus._righting_goal,
-                    # The GOAL above, the READING here. The station renders the
-                    # reading, so a wing held back by its current limit is
-                    # drawn held back instead of drawn as commanded.
-                    righting_pos=self._righting_pos,
-                    # So `[` and `]` step from the value that is ON the servo
-                    # (control.onboard.righting_current at startup) rather than
-                    # from zero. The station cannot know it otherwise.
-                    righting_current=self._righting_current,
-                )
-        finally:
-            self.shutdown()
+            # EVERY TICK since 2026-09-16, was every other one. The old
+            # comment here said building a dict the link would not send was
+            # waste, which was true while `CommandLink` transmitted at
+            # 50 Hz -- but that halving is also 0-20 ms of extra staleness
+            # on top of the transmit period, and the mirror shows it as
+            # lag. Both now run at the control rate.
+            #
+            # THE COST IS MEASURED, not assumed: `telemetry.build` is
+            # 48.8 us on a Pi 3B+ (155 us with a full pose and four servos
+            # of registers, which is Phase 2's packet), so every tick is
+            # ~0.5% of a 10 ms budget. The packet is 438 B, so 100 Hz is
+            # 43.8 kB/s against a link measured to carry 1.5 MB/s with
+            # zero loss. Neither end of that is close.
+            if k % 100 == 0 and self.link.peer is None:
+                # No ground station to send telemetry to, so say it here.
+                print(f"  t {self.data.time:5.1f}  roll {np.degrees(self._roll):+6.1f} "
+                      f"deg  drive {self.data.ctrl[self.aid['drive_a']]:+6.2f}"
+                      f"/{self.data.ctrl[self.aid['drive_b']]:+6.2f} rad/s  "
+                      f"steer {np.degrees(self.data.ctrl[self.aid['steer']]):+6.1f} deg  "
+                      f"v {self.data.qvel[0]:+.2f},{self.data.qvel[1]:+.2f}  "
+                      f"{self._jitter_ms:.2f} ms")
+            self.link.telemetry = telemetry.build(
+                t=self.data.time,
+                state=self.guard.state,
+                quat=self.data.qpos[3:7],
+                gyro=self.data.qvel[3:6],
+                v_world=self.data.qvel[:2],
+                pos=self.data.qpos[:2],
+                steer=self.data.qpos[self.ctl._sj],
+                w_shaft=self._w_shaft,
+                shaft=self._shaft,
+                # The bike's OWN heading, so the station's `/` can re-aim
+                # the command at where the bike actually points -- which is
+                # what teleop's `/` does, and what "stop" means once the
+                # commanded heading has drifted from the real one.
+                # THE MEASURED YAW, NOT THE CONTROLLER'S. `ctl._psi` is only
+                # updated while the policy runs, so it FROZE through every cut
+                # -- 101 deg stale in one bench session -- and the station
+                # re-aims and clamps against this number.
+                psi=self._yaw,
+                cmd_v_world=self.ctl._gen_v_cmd,
+                cmd_psi=self.ctl._gen_psi_cmd,
+                roll=self._roll,
+                roll_rate=self._roll_rate,
+                volts=voltage,
+                # <1 means the front wheel is near perpendicular and v_lat
+                # is coasting on the accelerometer -- worth seeing live.
+                vlat_conf=self.est.confidence,
+                qos=self._qos,
+                jitter_ms=self._jitter_ms,
+                dt_ms=self._dt_meas * 1e3,
+                cuts=self.guard.cuts,
+                righting=self.bus._righting_goal,
+                # The GOAL above, the READING here. The station renders the
+                # reading, so a wing held back by its current limit is
+                # drawn held back instead of drawn as commanded.
+                righting_pos=self._righting_pos,
+                # So `[` and `]` step from the value that is ON the servo
+                # (control.onboard.righting_current at startup) rather than
+                # from zero. The station cannot know it otherwise.
+                righting_current=self._righting_current,
+                servos=telemetry.servo_health(self._health,
+                                              self._effort_unit),
+                run=self.run_id,
+                log=self.events.recent(),
+            )
+            if self.rec is not None:
+                self._record_tick(next_tick + slip - t0, slip, write_s,
+                                  voltage)
+
+    # -- the onboard record ------------------------------------------------
+
+    def _start_record(self) -> None:
+        from ..params import design_digest, plant_digest
+        d = new_capture_dir(RECORD_ROOT, "run", self.tag)
+        self.run_id = d.name
+        self.rec = RunRecorder(d, self.bus._map, BIKE_COLS, rate_hz=1 / self.dt,
+                               meta={
+            "argv": sys.argv,
+            "bundle": str(self.bundle_path),
+            "policy": self.gen_name,
+            "plant_digest": plant_digest(self.params),
+            "design_digest": design_digest(self.params),
+            "roles": {str(i): r for i, r in self.bus.roles.items()},
+            "models": {str(i): m for i, m in self.bus.models.items()},
+            "gains_applied": self.bus.gains_applied,
+            "steer_zero_rad": self.bus.steer_zero,
+            "torque": self.torque,
+            "states": list(STATES),
+            # The whole config the run was taken under, so a param that moved
+            # afterwards cannot quietly reinterpret it.
+            "params": self.params,
+        })
+        print(f"recording to {d}")
+
+    def _record_tick(self, t_host: float, slip: float, write_s: float,
+                     voltage: float) -> None:
+        c, a = self.data.ctrl, self.aid
+        st = self.guard.state
+        self.rec.add(t_host, dict(self.bus.last_raw), cmd=self.bus.last_goal,
+                     read_s=self.bus.last_read_s, write_s=write_s, bike={
+            "t": self.data.time,
+            "state": STATES.index(st) if st in STATES else -1,
+            "slip_ms": slip * 1e3, "dt_ms": self._dt_meas * 1e3,
+            "quat": self.data.qpos[3:7], "gyro": self.data.qvel[3:6],
+            "accel": self._accel,
+            "qos": np.nan if self._qos is None else self._qos,
+            "roll": self._roll, "roll_rate": self._roll_rate,
+            "v_world": self.data.qvel[:2], "pos": self.data.qpos[:2],
+            "psi": self.ctl._psi, "vlat_conf": self.est.confidence,
+            "steer": self.data.qpos[self.ctl._sj],
+            "ctrl": (c[a["drive_a"]], c[a["drive_b"]], c[a["steer"]]),
+            "cmd_v_world": self.ctl._gen_v_cmd, "cmd_psi": self.ctl._gen_psi_cmd,
+            "link_age": min(self.link.age(), 1e6),
+            "righting_goal": (np.nan if self.bus._righting_goal is None
+                              else self.bus._righting_goal),
+            "righting_current": (np.nan if self._righting_current is None
+                                 else self._righting_current),
+            "volts": voltage,
+        })
 
     def shutdown(self) -> None:
+        """Torque off FIRST, then everything else. Every print goes through
+        `_say`, because after a SIGHUP the terminal is gone and a plain print
+        raises -- which inside a `finally` would skip the steps after it."""
         try:
             self.bus.close()
         finally:
+            if self.rec is not None:
+                try:
+                    d = self.rec.close(stopped_by=self._stopped_by)
+                    _say(f"record: {self.rec.n} ticks -> {d}")
+                except Exception as e:       # noqa: BLE001 -- never mask the stop
+                    _say(f"record: close failed ({e}); rows.bin left in "
+                         f"{self.rec.dir}, Capture.load reads it")
             self.ahrs.stop()
             self.link.stop()
             if self.jitter:
                 j = np.fromiter(self.jitter, float) * 1e3
-                print(f"tick jitter: mean {j.mean():.2f} ms  "
-                      f"p99 {np.percentile(j, 99):.2f} ms  max {j.max():.2f} ms")
+                _say(f"tick jitter: mean {j.mean():.2f} ms  "
+                     f"p99 {np.percentile(j, 99):.2f} ms  max {j.max():.2f} ms")
                 if self._late:
-                    print(f"  ticks over 10 ms late: {self._late}")
+                    _say(f"  ticks over 10 ms late: {self._late}")
+
+
+def controller_params(params: dict, loop_hz: float) -> dict:
+    """`params` with `control.rate_hz` set to the rate this loop ACTUALLY
+    ticks the controller at.
+
+    THE CONTROLLER WAS RUNNING AT HALF SPEED ON THE BIKE until 2026-09-18.
+    `control.rate_hz` is 200 -- the simulator's controller rate, and what the
+    LQR schedule was designed at -- and DriveController took its `dt` from
+    it. The bike ticks at 100 Hz. Every integrator and hold count inside the
+    controller runs on `dt`, so on hardware:
+
+        the policy was queried every 4 ticks = 25 Hz, trained at 50
+        the steer target integrated at HALF the commanded rate
+        the velocity low-pass had twice its time constant
+
+    Found by replaying a bench record: the policy asked for -458 deg/s and
+    the target moved at -229. Nothing had balanced on hardware yet, so no
+    result is affected. Only the controller's copy changes: load_bundle still
+    checks the digests against the real params, and the general policy does
+    not use the 200 Hz LQR gains.
+    """
+    import copy
+    out = copy.deepcopy(params)
+    out["control"]["rate_hz"] = float(loop_hz)
+    return out
+
+
+class Stopped(BaseException):
+    """A stop signal, raised in the main thread so the run unwinds through
+    `finally`. BaseException, like KeyboardInterrupt, so no `except
+    Exception` on the way can swallow it."""
+
+
+# The signal handler's mailbox. `defer` is True while the control loop runs:
+# the handler then only records the signal, and the loop acts on it between
+# ticks (see BikeRunner.run for why).
+_STOP = {"sig": None, "defer": False}
+
+
+def _stopped(signum) -> BaseException:
+    if signum == signal.SIGINT:
+        return KeyboardInterrupt()
+    return Stopped(f"stopped by {signal.Signals(signum).name}"
+                   + (" (the ssh session closed)" if signum == signal.SIGHUP
+                      else ""))
+
+
+def _on_stop_signal(signum, _frame) -> None:
+    if _STOP["defer"]:
+        _STOP["sig"] = signum
+        return
+    raise _stopped(signum)
+
+
+def _say(msg: str) -> None:
+    """print, but a vanished terminal is not an error."""
+    try:
+        print(msg, flush=True)
+    except OSError:
+        pass
 
 
 def _rpy(quat) -> tuple[float, float, float]:
@@ -971,20 +1343,44 @@ def main() -> None:
     ap.add_argument("--no-torque", action="store_true",
                     help="run the whole loop but never enable torque. The "
                          "timing is real; nothing can move")
+    ap.add_argument("--bench", action="store_true",
+                    help="bench preset: --no-torque --allow-guess-mount. Add "
+                         "--torque to energise anyway. The steer zero stays "
+                         "the config's (operator's call, 2026-09-18: a bench "
+                         "offset is visible in the mirror and harmless); pass "
+                         "--steer-zero capture to call the current pose "
+                         "straight")
+    ap.add_argument("--torque", action="store_true",
+                    help="with --bench: enable torque after all")
+    ap.add_argument("--link-wait", type=float, default=0.0, metavar="S",
+                    help="give up if no ground station within S seconds. "
+                         "0 (default) waits forever -- start the bike, then "
+                         "the mirror, whenever")
+    ap.add_argument("--no-record", action="store_true",
+                    help="do not write the onboard record. By default every "
+                         "tick goes to traces/bike/<stamp>_run[_tag]/ on the "
+                         "Pi -- a bench_log capture, see RunRecorder")
+    ap.add_argument("--tag", help="suffix for the record's directory name")
     ap.add_argument("--auto-rearm", action="store_true",
                     help="let the policy re-engage after a fall without the "
                          "operator asking. OFF by default -- a bike that "
                          "re-engages in your hands is worse than one that waits")
     args = ap.parse_args()
+    if args.torque and not args.bench:
+        ap.error("--torque only means something with --bench")
+    torque = args.torque if args.bench else not args.no_torque
+    steer_zero = args.steer_zero
     dxl_port, ahrs_port = _resolve_ports(args, load_params())
     print(f"bus  {dxl_port}\nahrs {ahrs_port}")
     BikeRunner(args.bundle, dxl_port, ahrs_port, args.rate,
                servo_gains=args.servo_gains,
                require_link=not args.no_link,
                auto_rearm=args.auto_rearm,
-               ids=args.ids, torque=not args.no_torque, seconds=args.seconds,
-               steer_zero=args.steer_zero,
-               allow_guess_mount=args.allow_guess_mount,
+               ids=args.ids, torque=torque, seconds=args.seconds,
+               steer_zero=steer_zero,
+               allow_guess_mount=args.allow_guess_mount or args.bench,
+               record=not args.no_record, tag=args.tag,
+               link_wait=args.link_wait,
     ).run(preflight=not args.no_preflight)
 
 

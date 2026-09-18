@@ -202,3 +202,38 @@ def test_bundle_digest_rejects_stale_params():
     params["bike"]["chassis"]["mass"] *= 1.5     # a bike this bundle is not for
     with pytest.raises(ValueError, match="digest"):
         load_bundle(BUNDLE, params)
+
+
+def test_the_bike_runs_the_policy_at_its_trained_rate_and_integrates_in_full():
+    """THE CONTROLLER RAN AT HALF SPEED ON THE BIKE until 2026-09-18.
+    `control.rate_hz` is the simulator's 200; the bike ticks at 100. With
+    dt taken from the config, the policy was queried at 25 Hz (trained at 50)
+    and the steer target integrated half the commanded rate -- a bench record
+    showed -458 deg/s asked for and -229 delivered.
+
+    Ticked the way run_bike ticks it: `tick()`, 100 Hz, with the 9/10/11 ms
+    jitter the servo clock actually measures."""
+    from aow_sim.hw.run_bike import controller_params
+
+    params = load_params()
+    name = params["control"].get("general_move", "general_rl")
+    if not (Path(__file__).resolve().parents[1] / "moves" / f"{name}.npz").exists():
+        pytest.skip(f"control.general_move names {name}, which is not exported")
+    model = build_model(params)
+    data = mujoco.MjData(model)
+    sj = model.joint("steer_joint").qposadr[0]
+    c = DriveController(controller_params(params, 100.0), model)
+    c.reset(model, data)
+    c.engage_general(data, name=name)
+    rate_hz = float(getattr(c._gen, "control_rate_hz", 50.0))
+    calls = []
+    c._gen.action = lambda obs: calls.append(1) or (0.5, 0.0, 0.0)  # 0.5 rad/s
+    start = c._gen_steer
+    rng = np.random.default_rng(0)
+    for _ in range(100):                          # ~1 s at 100 Hz
+        data.time += rng.choice([0.009, 0.010, 0.011], p=[0.1, 0.8, 0.1])
+        c.tick(model, data)
+    assert len(calls) == pytest.approx(rate_hz, abs=1)   # 50, not 25
+    # 100 ticks x 10 ms x 0.5 rad/s: under the 45 deg lead bound, so the whole
+    # commanded rate must arrive -- 0.5 rad, not the 0.25 the bug delivered
+    assert c._gen_steer - start == pytest.approx(0.5, abs=0.02)

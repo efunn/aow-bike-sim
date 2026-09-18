@@ -1,4 +1,7 @@
-"""The bike -> ground-station packet: one schema, both directions, no mujoco.
+"""The bike <-> ground-station packets: one schema, both directions, no mujoco.
+
+Bike -> station is JSON (`build`, below). Station -> bike is 12 packed bytes
+(`encode_command` / `decode_command`).
 
 WHY THIS IS ITS OWN MODULE. The encoder runs on the Pi inside the control
 thread and must not import mujoco (`tests/test_hw_no_mujoco.py` pins that); the
@@ -78,14 +81,42 @@ FIELDS = (
     "cmd_v_world", "cmd_psi", "psi",
     "roll", "roll_rate", "volts", "vlat_conf", "qos",
     "jitter_ms", "dt_ms", "cuts", "righting", "righting_pos",
-    "righting_current",
+    "righting_current", "servos", "run", "log",
 )
+
+# The effort slot's key names ITS UNIT, because address 126 means different
+# things by model (hw/dynamixel.HEALTH_BLOCK): a drive's 0.3 is 30 % of max
+# torque and the steer's 0.3 is 300 mA. A single "effort" key would put both
+# in one column and invite comparing them.
+EFFORT_KEY = {"A": "A", "frac_max_torque": "load"}
+
+
+def servo_health(health: dict, effort_unit: dict) -> dict:
+    """{role: {HEALTH_BLOCK label: value}} -> the packet's `servos` field.
+
+    Short keys, since this is five numbers times four servos every tick:
+    `pwm` duty [-1, 1], `A` or `load` (see EFFORT_KEY), `V`, `C` [degC], and
+    `err` -- the raw Hardware Error Status bits, 0 when healthy, decoded by
+    `hw.dynamixel.describe_hardware_error` where someone reads it.
+    """
+    out = {}
+    for role, h in health.items():
+        if not h:
+            continue
+        row = {"pwm": round(float(h["Present PWM"]), 3)}
+        row[EFFORT_KEY.get(effort_unit.get(role), "effort")] = round(
+            float(h["effort"]), 3)
+        row["V"] = round(float(h["Present Input Voltage"]), 1)
+        row["C"] = int(h["Present Temperature"])
+        row["err"] = int(h["Hardware Error Status"])
+        out[role] = row
+    return out
 
 
 def build(*, t, state, quat, gyro, v_world, pos, steer, w_shaft, shaft, psi,
           cmd_v_world, cmd_psi, roll, roll_rate, volts, vlat_conf, qos,
           jitter_ms, dt_ms, cuts, righting, righting_pos,
-          righting_current) -> dict:
+          righting_current, servos=None, run=None, log=None) -> dict:
     """The packet. Pure, keyword-only, and rounded HERE rather than at the
     call site so the wire format is one decision in one place.
 
@@ -143,7 +174,197 @@ def build(*, t, state, quat, gyro, v_world, pos, steer, w_shaft, shaft, psi,
         "righting_pos": (None if righting_pos is None
                          else round(float(righting_pos), 4)),
         "righting_current": righting_current,
+        # -- per servo, every tick (see `servo_health`). Already rounded.
+        "servos": servos or {},
+        # The onboard record this tick is being written into -- the name of
+        # its directory under traces/bike/ on the Pi, or None when the bike
+        # is not recording. What the operator writes down to find it later.
+        "run": run,
+        # The bike's own messages, see `EventLog`. Written ONLY on the bike.
+        "log": log or [],
     }
+
+
+class EventLog:
+    """The bike's messages to the station: `[[seq, kind, text], ...]`.
+
+    WHY. What happens to the bike -- a cut, a lost link, a hardware error, a
+    failsafe -- is decided ON THE BIKE, and used to be printed only to the
+    bike's own console, which the operator is not looking at. The station
+    re-derived some of it by watching `state` change, which is a second copy
+    of the decision in the place that is not the authority. Now the bike says
+    it once, in words, and the station prints what it is told.
+
+    LOSS-PROOF WITHOUT ACKS. Each message rides in EVERY packet for `hold_s`
+    (~500 packets at 100 Hz), and the station prints each `seq` once. 5 s
+    rather than 2 because the message that matters most after a dropout is
+    "LINK LOST", and at 2 s it only just survived a 3 s outage (measured on
+    the Pi): it is made 1 s into the silence and has to outlast the rest. After
+    `hold_s` a message drops out, so a quiet bike sends `"log": []` -- the
+    steady-state cost is ~11 bytes, and a burst is bounded by `keep`.
+
+    `kind` is a short tag a station can act on (colour, sound) without
+    parsing the text: cut, rearm, link, error, failsafe. Plain text rather
+    than codes because codes need the same table on both ends, which is the
+    two-copies problem this exists to remove. Shorten later if bytes matter.
+    """
+
+    def __init__(self, hold_s: float = 5.0, keep: int = 4, clock=None):
+        import time as _time
+        from collections import deque
+        self.hold_s, self.clock = float(hold_s), clock or _time.monotonic
+        self.seq = 0
+        self._q = deque(maxlen=int(keep))
+
+    def add(self, kind: str, text: str) -> None:
+        self.seq += 1
+        self._q.append((self.clock(), [self.seq, kind, text]))
+
+    def recent(self) -> list:
+        now = self.clock()
+        return [m for t, m in self._q if now - t <= self.hold_s]
+
+
+def new_messages(tel: dict, last_seq: int) -> tuple[list, int]:
+    """-> (messages with seq > last_seq, the new last_seq). The station's
+    half of `EventLog`: each message printed once, however many packets
+    carried it. A bike that RESTARTED counts from 1 again, so a seq far
+    below the last one seen resets the count rather than going silent."""
+    got = [m for m in (tel.get("log") or []) if isinstance(m, list) and len(m) == 3]
+    if got and max(m[0] for m in got) < last_seq:
+        last_seq = 0                         # the bike restarted
+    fresh = [m for m in got if m[0] > last_seq]
+    return fresh, max([last_seq] + [m[0] for m in fresh])
+
+
+SERVO_ORDER = ("drive_a", "drive_b", "steer", "righting")
+
+
+def servo_errors(tel: dict) -> dict:
+    """{role: "overload, ..."} for every servo reporting a hardware error.
+    Empty when all is well -- the common case, and the one to keep quiet."""
+    from .dynamixel import describe_hardware_error
+    return {role: describe_hardware_error(int(row.get("err", 0)))
+            for role, row in (tel.get("servos") or {}).items()
+            if row.get("err")}
+
+
+def status_text(tel: dict) -> tuple[str, str]:
+    """The station's readout: (labels, values), one line each, for the
+    viewer's two-column text overlay. Pure, so it is tested without a window.
+
+    What is here is what the operator cannot see by looking at the bike: the
+    pack, the loop's health, which record this is going into, and per servo
+    temperature, effort and duty. A hardware error REPLACES that servo's line,
+    because a latched error is the one thing on this list that means stop.
+    """
+    left, right = [], []
+
+    def row(k, v):
+        left.append(k)
+        right.append(v)
+
+    row("state", f"{tel.get('state', '?')}   cuts {tel.get('cuts', 0)}")
+    q = tel.get("qos")
+    row("pack", f"{tel.get('volts', float('nan')):.1f} V   jitter "
+                f"{tel.get('jitter_ms') or 0:.2f} ms   qos {'-' if q is None else q}")
+    row("record", tel.get("run") or "off")
+    log = tel.get("log") or []
+    if log:
+        row("bike", str(log[-1][2]))
+    errs = servo_errors(tel)
+    servos = tel.get("servos") or {}
+    for role in [r for r in SERVO_ORDER if r in servos] + \
+            sorted(set(servos) - set(SERVO_ORDER)):
+        r = servos[role]
+        if role in errs:
+            row(role, f"HARDWARE ERROR: {errs[role]}")
+            continue
+        eff = (f"{r['A']:+.2f} A" if "A" in r
+               else f"load {100 * r['load']:+4.0f}%" if "load" in r else "")
+        row(role, f"{r.get('C', 0):3d} C   {eff}   pwm {100 * r.get('pwm', 0):+4.0f}%")
+    return "\n".join(left), "\n".join(right)
+
+
+# ---------------------------------------------------------------------------
+# The OTHER direction: station -> bike, as 12 packed bytes.
+#
+#   byte  0      version (COMMAND_VERSION)
+#   byte  1      rearm_n, uint8 -- a press COUNT, wraps at 256; the bike acts
+#                on a change, so the wrap is harmless
+#   bytes 2-5    v_cmd_world x, y     int16  [mm/s]    +-32.7 m/s
+#   bytes 6-7    psi_cmd, WRAPPED     int16  [1e-4 rad]  +-pi fits in +-31416;
+#                ABSENT = the station does not know the bike's heading yet
+#   bytes 8-9    righting_rad         int16  [1e-3 rad]  +-32.7 rad, ~5 turns
+#   bytes 10-11  righting_current     int16  [raw counts]
+#
+# ABSENT (-32768) in a righting slot means "not commanded": the bike then
+# writes no goal at all, which is different from a goal of zero.
+#
+# WHY PACKED, when this was JSON on purpose: the operator's call (2026-09-18),
+# while the protocol is being reworked anyway. JSON was 76-150 B. On wifi the
+# saving is small -- 28 B of IP/UDP header and ~30 B of 802.11 framing ride
+# every packet whatever the payload -- but the format now has a fixed layout
+# and a version byte, which a JSON dict never had.
+#
+# The heading goes WRAPPED because the bike only ever uses it as
+# wrap_pi(psi_cmd - psi) (general_spec.build_obs), so a wrapped command is
+# the same command. Resolution: 1 mm/s, 0.006 deg, 0.057 deg for the wing
+# (the servo resolves 0.088).
+# ---------------------------------------------------------------------------
+
+COMMAND_VERSION = 1
+_CMD = __import__("struct").Struct("<BBhhhhh")
+COMMAND_BYTES = _CMD.size          # 12
+ABSENT = -32768
+
+
+class CommandFormatError(ValueError):
+    """A datagram that is not this command format -- most likely a station
+    from before the packed format, still sending JSON."""
+
+
+def _i16(x: float) -> int:
+    return int(max(-32767, min(32767, round(x))))
+
+
+def encode_command(pkt: dict) -> bytes:
+    """`OperatorState.packet()` (a dict) -> the 12-byte datagram."""
+    import math
+    vx, vy = pkt.get("v_cmd_world", (0.0, 0.0))
+    psi = pkt.get("psi_cmd")
+    if psi is not None:
+        psi = math.atan2(math.sin(float(psi)), math.cos(float(psi)))
+    r = pkt.get("righting_rad")
+    cur = pkt.get("righting_current")
+    return _CMD.pack(COMMAND_VERSION, int(pkt.get("rearm_n", 0)) & 0xFF,
+                     _i16(vx * 1e3), _i16(vy * 1e3),
+                     ABSENT if psi is None else _i16(psi * 1e4),
+                     ABSENT if r is None else _i16(r * 1e3),
+                     ABSENT if cur is None else _i16(cur))
+
+
+def decode_command(data: bytes) -> dict:
+    """The 12-byte datagram -> the same dict shape the bike always read, so
+    nothing downstream of the socket changed. Raises CommandFormatError."""
+    if data[:1] == b"{":
+        raise CommandFormatError(
+            "the station is sending JSON -- it predates the packed command "
+            "format. Update the station (this repo, same commit as the bike).")
+    if len(data) != COMMAND_BYTES:
+        raise CommandFormatError(f"{len(data)} B, expected {COMMAND_BYTES}")
+    ver, n, vx, vy, psi, r, cur = _CMD.unpack(data)
+    if ver != COMMAND_VERSION:
+        raise CommandFormatError(
+            f"command format v{ver}, this bike reads v{COMMAND_VERSION}")
+    out = {"v_cmd_world": [vx * 1e-3, vy * 1e-3], "rearm_n": n}
+    if psi != ABSENT:
+        out["psi_cmd"] = psi * 1e-4
+    if r != ABSENT:
+        out["righting_rad"] = r * 1e-3
+    if cur != ABSENT:
+        out["righting_current"] = cur
+    return out
 
 
 class SchemaMismatch(RuntimeError):

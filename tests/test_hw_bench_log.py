@@ -190,3 +190,69 @@ def test_finish_runs_on_interrupt_and_a_failing_finish_costs_nothing():
     assert calls == [1]
     assert cap.meta["stopped_by"] == "KeyboardInterrupt"
     assert "port gone" in cap.meta["finish_error"]
+
+
+# --- RunRecorder: the onboard record, fed one tick at a time ---------------
+
+from aow_sim.hw.bench_log import RunRecorder   # noqa: E402
+
+BIKE = {"roll": 1, "quat": 4}
+
+
+def _run(tmp_path, n, close=True, buffer_bytes=1 << 16, **kw):
+    bus = FakeBus()
+    imap = _imap(bus)
+    rec = RunRecorder(tmp_path / "run", imap, BIKE, rate_hz=100.0,
+                      buffer_bytes=buffer_bytes, meta={"policy": "p"})
+    rows = []
+    for k in range(n):
+        raw = None if k == 2 else {i: (k, 4000 + k, (-k) & 0xFFFF, 120) for i in IDS}
+        rec.add(k * 0.01, raw, cmd={101: 0.5 * k}, read_s=1e-3,
+                bike={"roll": 0.1 * k, "quat": (1, 0, 0, k), "typo": 9})
+        rows.append(raw)
+    return (rec.close(**kw) if close else rec.dir), rows
+
+
+def test_a_run_record_loads_as_a_capture_and_decodes_like_one(tmp_path):
+    """Same format as `record`, so every bench analysis reads a run as-is:
+    raw registers round-trip exactly and decode from the record's own meta."""
+    d, rows = _run(tmp_path, 25)
+    cap = Capture.load(d)
+    assert len(cap) == 25 and cap.meta["complete"] and cap.meta["kind"] == "run"
+    assert cap.meta["policy"] == "p"
+    assert list(cap.ok) == [k != 2 for k in range(25)]
+    np.testing.assert_array_equal(cap.raw("Present Position", 101)[:2], [4000, 4001])
+    assert cap.value("Present Load", 102)[5] == pytest.approx(-5 * 0.001)
+    assert np.isnan(cap.value("Present Load", 102)[2])     # the failed read
+    np.testing.assert_allclose(cap.command(101), 0.5 * np.arange(25))
+    assert np.isnan(cap.command(102)).all()                # never commanded
+    np.testing.assert_allclose(cap.bike("roll"), 0.1 * np.arange(25))
+    assert cap.bike("quat").shape == (25, 4) and cap.bike("quat")[7, 3] == 7
+    assert "bike_typo" not in cap.arrays        # ignored, not raised
+    assert not (d / "rows.bin").exists()        # its own scratch is gone
+
+
+def test_a_run_that_never_closes_still_loads_what_reached_disk(tmp_path):
+    """THE RUN THAT MATTERS MOST ENDS BADLY. A kill or a brownout never
+    reaches close(); what the buffer already flushed is on disk -- including
+    a torn final row, which is dropped rather than misread -- and meta.json,
+    written at the start, says the record is incomplete."""
+    rec_dir, _ = _run(tmp_path, 25, close=False, buffer_bytes=0)  # unbuffered
+    f = rec_dir / "rows.bin"
+    f.write_bytes(f.read_bytes()[:-7])         # a power cut mid-row
+    cap = Capture.load(rec_dir)
+    assert len(cap) == 24
+    assert cap.meta["complete"] is False
+    np.testing.assert_allclose(cap.bike("roll"), 0.1 * np.arange(24))
+
+
+def test_an_empty_run_still_closes_into_a_loadable_record(tmp_path):
+    d, _ = _run(tmp_path, 0)
+    assert len(Capture.load(d)) == 0
+
+
+def test_a_stopped_run_says_why(tmp_path):
+    d, _ = _run(tmp_path, 3, stopped_by="failsafe: pack at 9.9 V")
+    cap = Capture.load(d)
+    assert cap.meta["complete"] is False
+    assert cap.meta["stopped_by"] == "failsafe: pack at 9.9 V"

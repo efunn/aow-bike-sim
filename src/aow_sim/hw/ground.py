@@ -10,11 +10,29 @@ Teleop is not a substitute: `run_drive.py`'s key handling lives inside MuJoCo's
 viewer callback and needs a rendering host and a compiled model, neither of
 which exists on a Pi or on a bench.
 
-IT IS A TERMINAL PROGRAM, on purpose. Raw-mode stdin over ssh works from
-anywhere, including from the bike itself, which is what lets the first bench
-session happen with no radio in the loop at all -- run the station on the Pi
-against 127.0.0.1, prove the control loop, and make WiFi a separate experiment
-with its own failure modes. It is deliberately NOT a port of teleop's
+IT IS A TERMINAL PROGRAM, on purpose, and since the MuJoCo mirror
+(`run_drive --mirror`) it is the FALLBACK station, not the main one. Nothing
+on the bike imports it; the mirror imports `OperatorState` from here, which is
+the one reason the file must stay. What it is still for:
+
+  * a station on any machine with Python -- no MuJoCo, no mjpython, no
+    display: `--host aowbike.local`;
+  * a keyboard plugged into the Pi itself, or a console with no wifi at all;
+  * torque-off or on-a-stand checks run on the Pi over `ssh -t`, against
+    127.0.0.1.
+
+NO KEYBOARD IS NEEDED ON THE PI for that last one: `ssh -t` carries the
+laptop's keys into this terminal. A gamepad is not read at all.
+
+THE LOCAL MODE DEFEATS THE DEAD-MAN, which is why it is bench-only. The
+command is re-sent at 50 Hz whether or not a key arrived, so run on the Pi
+the heartbeat is generated ON THE BIKE. If wifi stalls without ssh actually
+dropping, the operator's keys stop arriving and the bike keeps receiving
+"carry on at the last speed" from localhost -- `run_bike`'s 1 s link watchdog
+never trips. (An earlier version of this note sold local mode as "no radio in
+the loop"; the keys still come over the radio, the safety net is what goes.)
+Run from the laptop instead, the radio carries the heartbeat and a stalled
+link stops the bike, which is the property that matters once it can move. It is deliberately NOT a port of teleop's
 hold-to-accelerate model: a terminal gets key repeats, not key-down/key-up, so
 the honest thing is a step per keypress rather than a simulated hold. Teleop's
 `_KeyState` exists precisely because that distinction is hard, and guessing at
@@ -46,8 +64,9 @@ eats escape sequences (ssh through something odd, tmux misconfigured).
               ServoBus.set_righting_current for why it is not milliamps
     r         request re-arm after a fall cut (the bike will not come back on
               its own unless it was started with --auto-rearm)
-    q         quit -- and quitting stops the heartbeat, which torques the bike
-              off a second later. That is the intended way to stop it
+    q         quit -- and quitting stops the heartbeat: a second later the
+              bike cuts (policy servos limp) and WAITS for a station. It no
+              longer exits; restart a station and press r to re-arm
 """
 
 from __future__ import annotations
@@ -61,7 +80,7 @@ import sys
 import time
 from pathlib import Path
 
-from .telemetry import check_version
+from .telemetry import check_version, encode_command, new_messages
 
 V_STEP = 0.1                  # m/s per keypress
 PSI_STEP = math.radians(10.0)
@@ -93,7 +112,12 @@ class OperatorState:
                  travel_rad=None):
         self.v_max = float(v_max)
         self.v = 0.0                      # signed speed along the heading
-        self.psi = 0.0
+        # None UNTIL THE BIKE HAS SAID WHERE IT POINTS. It was 0.0, which is
+        # the AHRS's own yaw zero -- an arbitrary direction -- so every station
+        # connected commanding a turn of 45-66 deg (measured, four sessions
+        # 2026-09-18). Absent, the packet carries no heading and the bike keeps
+        # its own. See `sync`.
+        self.psi = None
         self.righting = None              # None = never commanded; see set_righting
         self.righting_current = None
         # THREE POSITIONS ON TWO KEYS, and the stow is mid-scale not zero.
@@ -113,7 +137,12 @@ class OperatorState:
         self.stow = float(stow_rad)
         self.travel = None if travel_rad is None else float(travel_rad)
         self.pos = 0                      # -1 / 0 / +1, as teleop's wing["pos"]
-        self.rearm = False
+        # A COUNT, not a flag: one per press of `r`, sent in EVERY packet.
+        # The bike acts when it changes. It used to be `rearm: true` in the
+        # one packet after the press, so a single dropped datagram silently
+        # ate the operator's re-arm; a count survives any number of losses
+        # (the next packet carries it) and duplicates are harmless.
+        self.rearms = 0
         self.quit = False
         # The bike's own heading, from telemetry. None until the first packet.
         # `/` needs it to do what teleop's `/` does; without it that key
@@ -140,6 +169,17 @@ class OperatorState:
         psi = telemetry.get("psi")
         if psi is not None:
             self.psi_actual = float(psi)
+            # THE COMMAND FOLLOWS THE BIKE WHENEVER THE POLICY IS NOT DRIVING,
+            # and on the first packet. So a re-arm -- after a fall, a lost
+            # link, a faulted servo -- starts from where the bike points now,
+            # not from a heading set before it went down; and a fresh station
+            # adopts the bike's heading instead of commanding the AHRS's zero.
+            # Reads the bike's `state`, a level it owns: not a second copy of
+            # any rule about when it cuts.
+            if self.psi is None or telemetry.get("state") != "engaged":
+                self.psi = _wrap(self.psi_actual)
+                if telemetry.get("state") != "engaged":
+                    self.v = 0.0
         if self.righting_current is None:
             got = telemetry.get("righting_current")
             if got is not None:
@@ -150,9 +190,9 @@ class OperatorState:
             self.v = min(self.v_max, self.v + V_STEP)
         elif ch in ("s", "DOWN"):
             self.v = max(-self.v_max, self.v - V_STEP)
-        elif ch in ("a", "LEFT"):
+        elif ch in ("a", "LEFT") and self.psi is not None:
             self.psi = _wrap(self.psi + PSI_STEP)
-        elif ch in ("d", "RIGHT"):
+        elif ch in ("d", "RIGHT") and self.psi is not None:
             self.psi = _wrap(self.psi - PSI_STEP)
         elif ch in (" ", "/"):
             self.v = 0.0
@@ -169,13 +209,15 @@ class OperatorState:
             self.righting_current = base + (CURRENT_STEP if ch == "]"
                                             else -CURRENT_STEP)
         elif ch == "r":
-            self.rearm = True
+            self.rearms += 1
         elif ch in ("q", "\x03"):          # q or ctrl-C
             self.quit = True
 
     def packet(self) -> dict:
-        """The datagram. `rearm` is edge-triggered and consumed here, so one
-        keypress asks once rather than re-arming forever."""
+        """The datagram. Every field is a LEVEL -- the current state of the
+        operator's inputs -- re-sent whole every packet, so a lost one costs
+        nothing. `rearm_n` is how the one event (a press of `r`) becomes a
+        level: see `self.rearms`."""
         # NO `mode` FIELD. The struct used to carry one and the bike never
         # read it: `general_rl` is the only deployable controller (the LQR
         # needs a world anchor it cannot have onboard -- see
@@ -183,16 +225,15 @@ class OperatorState:
         # mode key would be a control the operator believes they have. When a
         # second onboard controller exists it goes into both halves at once,
         # which is what test_every_field_the_station_sends_is_read pins.
-        out = {"v_cmd_world": [self.v * math.cos(self.psi),
-                               self.v * math.sin(self.psi)],
-               "psi_cmd": self.psi}
+        th = 0.0 if self.psi is None else self.psi
+        out = {"v_cmd_world": [self.v * math.cos(th), self.v * math.sin(th)]}
+        if self.psi is not None:          # absent: the bike keeps its own
+            out["psi_cmd"] = self.psi
         if self.righting is not None:
             out["righting_rad"] = self.righting
         if self.righting_current is not None:
             out["righting_current"] = self.righting_current
-        if self.rearm:
-            out["rearm"] = True
-            self.rearm = False
+        out["rearm_n"] = self.rearms
         return out
 
 
@@ -259,12 +300,12 @@ def linkage_travel_deg(path=LINKAGE_CONFIG):
 def _status(op: OperatorState, telemetry: dict, age: float) -> str:
     t = telemetry
     if not t:
-        return f"v {op.v:+.2f}  psi {math.degrees(op.psi):+6.1f}   no telemetry yet"
+        return f"v {op.v:+.2f}  psi   --     no telemetry yet"
     stale = "  STALE" if age > 0.5 else ""
     # `v_world`, not `v`: since schema v2 the key `v` is the SCHEMA VERSION.
     # This line read `t.get("v", [0, 0])` and would have printed the integer 2
     # as the velocity vector -- a rename that a .get() default swallows.
-    return (f"v {op.v:+.2f} psi {math.degrees(op.psi):+6.1f} | "
+    return (f"v {op.v:+.2f} psi {math.degrees(op.psi or 0.0):+6.1f} | "
             f"{t.get('state', '?'):7s} roll {math.degrees(t.get('roll', 0)):+6.1f} "
             f"vel {t.get('v_world', [0, 0])} steer {t.get('steer', 0):+.3f} "
             f"{t.get('volts', 0):.1f}V qos {t.get('qos', '?')} "
@@ -287,6 +328,7 @@ def run(host: str, port: int = 9910, v_max: float = 1.2,
     telemetry, t_tel = {}, 0.0
     pending = ""
     checked = False
+    log_seq = 0
 
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
@@ -314,13 +356,16 @@ def run(host: str, port: int = 9910, v_max: float = 1.2,
                         checked = True
                     t_tel = time.monotonic()
                     op.sync(telemetry)
+                    msgs, log_seq = new_messages(telemetry, log_seq)
+                    for _seq, kind, text in msgs:
+                        print(f"\nbike [{kind}]: {text}")
                 except (OSError, ValueError):
                     pass
             now = time.monotonic()
             if now >= next_tx:
                 next_tx = now + 1.0 / SEND_HZ
                 try:
-                    sock.sendto(json.dumps(op.packet()).encode(), dest)
+                    sock.sendto(encode_command(op.packet()), dest)
                 except OSError as e:
                     print(f"\nsend failed: {e}")
                     break

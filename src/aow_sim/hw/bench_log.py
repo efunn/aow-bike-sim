@@ -232,6 +232,154 @@ def record(bus, imap, segments, rate_hz: float, log=print,
     return Capture(arrays, meta)
 
 
+class RunRecorder:
+    """The ONBOARD record: every `run_bike` tick, written as it goes, loadable
+    as a :class:`Capture`.
+
+    `record` above owns its loop; `run_bike` owns its own, so this is the same
+    format fed one row at a time. Same raw register columns, same meta, so
+    `Capture.value()` and every analysis written against bench captures reads
+    a run unchanged. Additions a bench capture has no use for sit alongside:
+
+        bike_<name>  (N,) or (N, k) float  what the controller had that tick
+                     -- attitude, estimate, command, the policy's ctrl -- as
+                     declared by the caller in `bike_cols`
+
+    ONE ROW, ONE APPEND, ON THE CALLER'S THREAD. Each tick is packed into a
+    fixed-layout structured row and appended to `rows.bin` through a 64 kB
+    buffer -- a small memcpy per tick and a page-cache write about once a
+    second. There is deliberately NO writer thread. The first version had
+    one, handing 1000-row chunks to `np.savez` in the background, and on a
+    Pi 3B+ that background save stole the GIL from the control loop for
+    ~0.4 s at every hand-off: 31 consecutive ticks late, the worst by 24 ms,
+    beginning at exactly tick 1000 (measured 2026-09-17; the save alone is
+    12 ms). A thread does not isolate anything here -- it contends.
+
+    WRITTEN AS IT GOES, because the run that matters most is the one that ends
+    badly. A kill or brownout loses at most the unflushed buffer (~1 s), and
+    `Capture.load` reads a `rows.bin` with no `capture.npz` beside it; meta,
+    written at START with `complete: false`, says the record is partial.
+
+    `close()` converts `rows.bin` to the usual `capture.npz` and removes it --
+    the one is this recorder's scratch, the other is the artifact.
+    """
+
+    def __init__(self, directory, imap, bike_cols: dict, meta: dict | None = None,
+                 rate_hz: float = 0.0, buffer_bytes: int = 1 << 16):
+        self.dir = Path(directory)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.ids = tuple(imap.ids)
+        self.labels = tuple(imap.read_labels)
+        self.bike_cols = {k: int(w) for k, w in bike_cols.items()}
+        self.n = 0
+        self.dtype = _row_dtype(self.labels, len(self.ids), self.bike_cols)
+        # A blank row (nan floats, zero ints), copied over the working row
+        # each tick in one assignment rather than field by field.
+        self._blank = np.zeros((), self.dtype)
+        for name in self.dtype.names:
+            if self.dtype[name].base.kind == "f":
+                self._blank[name] = np.nan
+        self._row = self._blank.copy()
+        regs = {(i, lbl): imap.register(i, lbl) for i in self.ids
+                for lbl in self.labels}
+
+        def reg_meta(per_label):
+            return {str(i): dataclasses.asdict(per_label(i)) for i in self.ids}
+
+        self.meta = {
+            "format": FORMAT, "version": FORMAT_VERSION,
+            "kind": "run",
+            "created": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "rate_hz": rate_hz, "ids": list(self.ids),
+            "read": [{"label": lbl, "key": raw_key(lbl),
+                      "registers": reg_meta(lambda i, lbl=lbl: regs[i, lbl])}
+                     for lbl in self.labels],
+            "write": [{"label": lbl,
+                       "registers": reg_meta(lambda i, lbl=lbl: imap.register(i, lbl))}
+                      for lbl in imap.write_labels],
+            "bike_cols": self.bike_cols,
+            "segments": [{"label": "run", "seconds": None, "info": {},
+                          "start": 0, "stop": 0, "t_host": 0.0}],
+            "complete": False,
+            "stopped_by": "not closed -- crash, kill or power loss; rows.bin only",
+            **(meta or {}),
+        }
+        self._write_meta()
+        self._f = open(self.dir / "rows.bin", "wb", buffering=int(buffer_bytes))
+
+    def add(self, t_host: float, raw: dict | None, cmd: dict | None = None,
+            bike: dict | None = None, read_s: float = np.nan,
+            write_s: float = np.nan) -> None:
+        """One tick. `raw` is {id: tuple in read_labels order} (None = the
+        read failed), `cmd` {id: value in the write register's units}, `bike`
+        {name: scalar or sequence} for the declared columns. Unknown `bike`
+        keys are ignored rather than raised: this runs inside the control
+        loop, and a typo must not be what stops the bike."""
+        r = self._row
+        r[()] = self._blank
+        r["t_host"], r["read_s"], r["write_s"] = t_host, read_s, write_s
+        if raw is not None:
+            r["ok"] = True
+            r["raw"] = np.array([raw[i] for i in self.ids], np.int64).T
+        if cmd:
+            r["cmd"] = [np.nan if cmd.get(i) is None else cmd[i]
+                        for i in self.ids]
+        if bike:
+            for name, v in bike.items():
+                if name in self.bike_cols and v is not None:
+                    r["bike_" + name] = v
+        self._f.write(r.tobytes())
+        self.n += 1
+
+    def _write_meta(self) -> None:
+        (self.dir / "meta.json").write_text(
+            json.dumps(self.meta, indent=1, default=_jsonable) + "\n")
+
+    def close(self, stopped_by: str | None = None, **meta) -> Path:
+        """Flush, convert rows.bin to capture.npz, finalise meta.json."""
+        self._f.close()
+        arrays = _read_rows(self.dir, self.meta)
+        self.meta.update(meta)
+        n = len(arrays["t_host"])
+        self.meta["segments"][0].update(stop=n, seconds=(
+            float(arrays["t_host"][-1] - arrays["t_host"][0]) if n else 0.0))
+        self.meta["complete"] = stopped_by is None
+        self.meta["stopped_by"] = stopped_by
+        self.meta["stats"] = {"frames": n, "dropped": int(n - arrays["ok"].sum())}
+        np.savez_compressed(self.dir / "capture.npz", **arrays)
+        self._write_meta()
+        (self.dir / "rows.bin").unlink()
+        return self.dir
+
+
+def _row_dtype(labels, n_servo: int, bike_cols: dict) -> np.dtype:
+    """The on-disk row. Rebuilt from meta at load, so it must depend on
+    nothing but what meta records."""
+    return np.dtype(
+        [("t_host", "<f8"), ("read_s", "<f8"), ("write_s", "<f8"), ("ok", "?"),
+         ("cmd", "<f8", (n_servo,)), ("raw", "<i8", (len(labels), n_servo))]
+        + [("bike_" + k, "<f8", (w,) if w > 1 else ()) for k, w in bike_cols.items()])
+
+
+def _read_rows(d: Path, meta: dict) -> dict:
+    """rows.bin -> the arrays a Capture holds. Tolerates a torn final row,
+    which is what a power cut mid-write leaves."""
+    labels = [e["label"] for e in meta["read"]]
+    dt = _row_dtype(labels, len(meta["ids"]), meta.get("bike_cols") or {})
+    buf = (Path(d) / "rows.bin").read_bytes()
+    rows = np.frombuffer(buf[:len(buf) - len(buf) % dt.itemsize], dt)
+    out = {"t_host": rows["t_host"].copy(), "read_s": rows["read_s"].copy(),
+           "write_s": rows["write_s"].copy(), "ok": rows["ok"].copy(),
+           "segment": np.zeros(len(rows), np.int32),
+           "ids": np.asarray(meta["ids"], np.int64), "cmd": rows["cmd"].copy()}
+    for j, lbl in enumerate(labels):
+        out[raw_key(lbl)] = rows["raw"][:, j, :].copy()
+    for name in dt.names:
+        if name.startswith("bike_"):
+            out[name] = rows[name].copy()
+    return out
+
+
 def _decode(reg: Register, raw: np.ndarray) -> np.ndarray:
     v = raw.astype(np.int64)
     if reg.signed:
@@ -269,6 +417,12 @@ class Capture:
         meta = json.loads((d / "meta.json").read_text())
         if meta.get("format") != FORMAT:
             raise ValueError(f"{d} is not a {FORMAT} (format={meta.get('format')!r})")
+        if not (d / "capture.npz").exists() and (d / "rows.bin").exists():
+            # A RunRecorder that never reached close(). meta says
+            # `complete: false`, which is the truth.
+            arrays = _read_rows(d, meta)
+            meta["segments"][0]["stop"] = len(arrays["t_host"])
+            return cls(arrays, meta)
         with np.load(d / "capture.npz", allow_pickle=False) as z:
             arrays = {k: z[k] for k in z.files}
         return cls(arrays, meta)
@@ -311,6 +465,10 @@ class Capture:
 
     def command(self, dxl_id: int) -> np.ndarray:
         return self.arrays["cmd"][:, self._col[dxl_id]]
+
+    def bike(self, name: str) -> np.ndarray:
+        """A `RunRecorder` column -- what the controller had that tick."""
+        return self.arrays["bike_" + name]
 
     # -- derived -----------------------------------------------------------
 

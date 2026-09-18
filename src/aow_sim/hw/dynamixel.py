@@ -85,6 +85,7 @@ Units, all converted here so nothing downstream does arithmetic:
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from pathlib import Path
 
@@ -164,6 +165,26 @@ BUS_WATCHDOG_LSB_MS = 20      # Bus Watchdog(98) unit
 BUS_WATCHDOG_TRIPPED = 255    # reads as -1 in its 1-byte field once tripped
 
 
+# Protocol 2.0 status packet, Error byte: bit 7 is ALERT -- "this servo has a
+# latched hardware error" -- and bits 0-6 are the result of THIS instruction.
+ALERT_BIT = 0x80
+
+
+def _failed(rc: int, err: int) -> bool:
+    """Did the instruction fail? NOT `err != 0`.
+
+    The alert bit is set on EVERY reply from a servo with a latched hardware
+    error, and says nothing about the instruction, which was carried out.
+    Treating it as failure is how a bench run died on 2026-09-18: drive A
+    tripped its overload protection, and the cut's torque-off write to it --
+    which had worked -- came back err=128 and raised. It would also have made
+    a faulted servo fail `_check_models` at startup, so a restart could never
+    reach the reboot that clears it. The fault itself is read where it
+    belongs: Hardware Error Status, every tick (HEALTH_BLOCK).
+    """
+    return rc != 0 or (err & ~ALERT_BIT) != 0
+
+
 def describe_hardware_error(raw: int) -> str:
     """Hardware Error Status -> ``"overload, overheating"`` (``"none"`` for 0)."""
     names = [n for b, n in HARDWARE_ERROR_BITS.items() if raw & (1 << b)]
@@ -186,6 +207,24 @@ CONTROL_HZ_DEFAULT = 100.0
 
 # What every servo reports each tick, in order. Contiguous once indirected.
 READ_BLOCK = ("Realtime Tick", "Present Position", "Present Velocity")
+
+# ...and what it reports ALONGSIDE, for the record and the station -- no
+# controller reads any of it. Appended after READ_BLOCK so the control fields
+# keep their offsets. 8 bytes a servo: 10 + 8 read + 4 write = 22 of block 1's
+# 28 entries, the budget `test_indirect_block_fits` holds.
+#
+# "effort" is ONE SLOT WITH TWO MEANINGS, by model: address 126 is Present
+# Current [A] on the XC330 and Present Load [fraction of max torque] on the
+# XC430, which has no current sensor at all (control_tables/README.md, verified
+# on hardware). Same address and width, so the slot lines up; the Register
+# each id resolves to carries the unit, and `Register.unit_name` says which.
+#
+# WHY PER TICK AND NOT POLLED. A post-hoc question -- was the steer saturated
+# in that wobble, did a drive brown out when the wing hit the floor -- needs
+# these at the rate the thing happened, and a hardware error latches silently
+# until someone reads 70. Measured cost on the Pi 3B+: see `read_state`.
+HEALTH_BLOCK = ("Present PWM", "effort", "Present Input Voltage",
+                "Present Temperature", "Hardware Error Status")
 
 
 class RateFilter:
@@ -576,7 +615,7 @@ class IndirectMap:
             for k in range(len(want) // 2):
                 raw, rc, err = packet.read2ByteTxRx(
                     port, i, INDIRECT_ADDRESS_1 + 2 * k)
-                if rc != 0 or err != 0:
+                if _failed(rc, err):
                     raise RuntimeError(
                         f"indirect verify id={i} entry {k + 1}: rc={rc} err={err}")
                 got = [raw & 0xFF, (raw >> 8) & 0xFF]
@@ -661,7 +700,7 @@ class DynamixelBus:
         tables = {}
         for i in ids:
             raw, rc, err = self._packet.read2ByteTxRx(self._port, i, 0)
-            if rc != 0 or err != 0:
+            if _failed(rc, err):
                 raise RuntimeError(
                     f"id {i} did not answer a Model Number read "
                     f"(rc={rc} err={err}). Check power, baud ({self.baud}) "
@@ -670,7 +709,7 @@ class DynamixelBus:
             floor = MIN_FIRMWARE.get(ct.name)
             if floor is not None:
                 fw, rc, err = self._packet.read1ByteTxRx(self._port, i, 6)
-                if rc != 0 or err != 0:
+                if _failed(rc, err):
                     raise RuntimeError(
                         f"id {i}: Firmware Version read failed (rc={rc} err={err})")
                 if fw < floor:
@@ -705,7 +744,7 @@ class DynamixelBus:
     def read_raw(self, dxl_id: int, name: str) -> int:
         reg = self.tables[dxl_id][name]
         raw, rc, err = self._rw(reg.size, False)(self._port, dxl_id, reg.address)
-        if rc != 0 or err != 0:
+        if _failed(rc, err):
             raise RuntimeError(f"read id={dxl_id} {name}: rc={rc} err={err}")
         return raw
 
@@ -716,7 +755,7 @@ class DynamixelBus:
     def write_raw(self, dxl_id: int, name: str, raw: int) -> None:
         reg = self.tables[dxl_id][name]
         rc, err = self._rw(reg.size, True)(self._port, dxl_id, reg.address, raw)
-        if rc != 0 or err != 0:
+        if _failed(rc, err):
             raise RuntimeError(f"write id={dxl_id} {name}={raw}: rc={rc} err={err}")
 
     def write(self, dxl_id: int, name: str, value: float) -> None:
@@ -1183,6 +1222,12 @@ class ServoBus:
         # Zero at open(); it is a relative angle whose origin is the start of
         # the session, which is all a rendered wheel needs.
         self._turned = {}
+        # The latest frame, raw, per id (see read_state) -- the recorder's row.
+        self.last_raw: dict = {}
+        self.rebooted: dict = {}          # {id: error bits} cleared at open()
+        self.last_voltage: float | None = None
+        self.last_read_s = float("nan")
+        self.last_goal: dict = {}
         # The bike's servos, declared so the indirect map can be built (and
         # unit-tested) without a bus present. `open()` replaces these with what
         # the hardware actually reports and raises if the two disagree, which
@@ -1220,6 +1265,7 @@ class ServoBus:
             raise RuntimeError(f"cannot set {self.baud} baud on {self.port_name}")
         self._packet = PacketHandler(PROTOCOL)
         self._check_models()
+        self.rebooted = self._clear_latched_errors()
 
         self.torque(False)                 # indirect setup wants torque off
         self._setup_indirect()
@@ -1292,12 +1338,38 @@ class ServoBus:
         imap = IndirectMap({i: self.tables[i] for i in self.ids})
         for name in READ_BLOCK:
             imap.read(name)
+        for label in HEALTH_BLOCK:
+            imap.read(self._health_spec(label), label=label)
         imap.write({i: self.goal_item[i] for i in self.ids}, label="goal")
         self.read_addr, self.read_len = imap.read_addr, imap.read_len
         self.read_offsets = imap.read_offsets
+        # (label, address, size, Register) per servo, resolved once: the
+        # per-tick loop then does no dict lookups into the tables.
+        self._health_regs = {
+            i: tuple((lbl, imap.read_addr + imap.read_offsets[lbl],
+                      imap.register(i, lbl).size, imap.register(i, lbl))
+                     for lbl in HEALTH_BLOCK)
+            for i in self.ids}
         self.write_addr, self.write_len = imap.write_addr, imap.write_len
         self._map = imap
         return imap
+
+    def _health_spec(self, label: str):
+        """`HEALTH_BLOCK` label -> an IndirectMap spec. Only "effort" differs
+        by model; see HEALTH_BLOCK."""
+        if label != "effort":
+            return label
+        return {i: ("Present Current" if "Present Current" in self.tables[i]
+                    else "Present Load") for i in self.ids}
+
+    @property
+    def roles(self) -> dict:
+        """id -> the name the station and the record use for it."""
+        out = {self.id_a: "drive_a", self.id_b: "drive_b",
+               self.id_steer: "steer"}
+        if self.id_right:
+            out[self.id_right] = "righting"
+        return out
 
     def _setup_indirect(self) -> None:
         """Build the map and install it in ONE SyncWrite. Torque must be off."""
@@ -1324,6 +1396,39 @@ class ServoBus:
         if wrong:
             raise RuntimeError("servo model mismatch (ids swapped, or the "
                                "wrong bus): " + "; ".join(wrong))
+
+    def _clear_latched_errors(self) -> dict:
+        """Reboot any servo holding a latched hardware error. -> {id: bits}.
+
+        A latched error (overload, overheating, voltage) turns that servo's
+        torque off and KEEPS it off until a reboot or power cycle: Torque
+        Enable writes are accepted and do nothing. Without this, restarting
+        run_bike after a trip would arm a bike with a dead drive and report
+        nothing wrong. Here, before any configuration, a reboot costs nothing
+        -- it wipes RAM (gains, indirect map), which open() writes next anyway.
+        Measured need: drive A's overload on 2026-09-18.
+        """
+        bad = {}
+        for i in self.ids:
+            bits = self.read_raw(i, "Hardware Error Status")
+            if bits:
+                bad[i] = bits
+        if not bad:
+            return {}
+        import time as _t
+        for i in bad:
+            rc, err = self._packet.reboot(self._port, i)
+            if rc != 0:
+                raise RuntimeError(f"reboot id={i}: rc={rc} err={err}")
+        _t.sleep(1.0)
+        still = {i: self.read_raw(i, "Hardware Error Status") for i in bad}
+        still = {i: b for i, b in still.items() if b}
+        if still:
+            raise RuntimeError(
+                "hardware error survives a reboot -- check the servo before "
+                "running: " + "; ".join(f"id {i}: {describe_hardware_error(b)}"
+                                        for i, b in still.items()))
+        return bad
 
     def _expand_gains(self, gains) -> dict:
         """{role: {register: value}} -> {id: {register: value}}.
@@ -1431,7 +1536,7 @@ class ServoBus:
         fn = {1: self._packet.read1ByteTxRx, 2: self._packet.read2ByteTxRx,
               4: self._packet.read4ByteTxRx}[size]
         raw, rc, err = fn(self._port, dxl_id, addr)
-        if rc != 0 or err != 0:
+        if _failed(rc, err):
             raise RuntimeError(f"read id={dxl_id} {name}: rc={rc} err={err}")
         return int(raw)
 
@@ -1441,10 +1546,44 @@ class ServoBus:
         self._write(dxl_id, reg.address, reg.size, int(raw))
 
     def close(self) -> None:
-        if self._port is not None:
-            self.torque(False)
-            self._port.closePort()
-            self._port = None
+        """Torque off EVERY servo, then close. The one write that must land.
+
+        TWO WAYS IT USED TO NOT LAND, both found on the Pi 2026-09-18:
+
+          * an exception raised mid-transaction -- a signal, ctrl-C -- leaves
+            the SDK's `port.is_using` set, and every later packet returns
+            COMM_PORT_BUSY (-1000) without going on the wire. Measured: a
+            SIGTERM'd run_bike's shutdown refused its own torque-off. The
+            abandoned transaction is ours and is over, so the flag is cleared
+            and the input buffer flushed first.
+          * `torque()` raises on the first servo that fails, so one bad reply
+            left every servo after it energised. Here each is tried, then
+            anything that failed is retried once and reported.
+        """
+        if self._port is None:
+            return
+        self._port.is_using = False
+        try:
+            self._port.clearPort()
+        except Exception:                    # noqa: BLE001 -- best effort
+            pass
+        failed = []
+        for i in self.ids:
+            try:
+                self.torque(False, (i,))
+            except RuntimeError:
+                failed.append(i)
+        still = []
+        for i in failed:
+            try:
+                self.torque(False, (i,))
+            except RuntimeError as e:
+                still.append(f"{i}: {e}")
+        self._port.closePort()
+        self._port = None
+        if still:
+            raise RuntimeError("torque-off FAILED -- these servos may still be "
+                               "energised: " + "; ".join(still))
 
     def __enter__(self):
         self.open()
@@ -1459,7 +1598,7 @@ class ServoBus:
         fn = {1: self._packet.write1ByteTxRx, 2: self._packet.write2ByteTxRx,
               4: self._packet.write4ByteTxRx}[width]
         rc, err = fn(self._port, dxl_id, address, value)
-        if rc != 0 or err != 0:
+        if _failed(rc, err):
             raise RuntimeError(f"write id={dxl_id} addr={address}: rc={rc} err={err}")
 
     @property
@@ -1476,12 +1615,13 @@ class ServoBus:
     def pack_voltage(self) -> float:
         """Bus voltage [V], read off a servo. The bike's only battery gauge.
 
-        Deliberately NOT in the per-tick block: it changes on a timescale of
-        minutes and the read block is worth keeping small.
+        A separate round trip, for use BEFORE the loop reads anything (the
+        preflight). Once `read_state` is running, the same register arrives
+        per tick in HEALTH_BLOCK and `last_voltage` costs nothing.
         """
         addr, _ = CT["Present Input Voltage"]
         raw, rc, err = self._packet.read2ByteTxRx(self._port, self.id_a, addr)
-        if rc != 0 or err != 0:
+        if _failed(rc, err):
             raise RuntimeError(f"voltage read: rc={rc} err={err}")
         return raw * VOLT_LSB
 
@@ -1499,8 +1639,10 @@ class ServoBus:
         servo runs its own clock, so one is chosen as the timebase rather than
         averaging clocks that were never synchronized.
         """
+        t_read = time.perf_counter()
         rc = (self._reader.fastSyncRead() if self._fast
               else self._reader.txRxPacket())
+        self.last_read_s = time.perf_counter() - t_read
         if rc != 0:
             raise RuntimeError(f"SyncRead failed: rc={rc}")
 
@@ -1515,8 +1657,16 @@ class ServoBus:
                 return self._reader.getData(i, self.read_addr + off[name], size)
 
             tick = get("Realtime Tick")
-            counts = _signed(get("Present Position"), 4)
-            vel_rep = _signed(get("Present Velocity"), 4) * VEL_LSB_RAD_S
+            pos_raw = get("Present Position")
+            vel_raw = get("Present Velocity")
+            counts = _signed(pos_raw, 4)
+            vel_rep = _signed(vel_raw, 4) * VEL_LSB_RAD_S
+            health_raw = tuple(self._reader.getData(i, addr, size)
+                               for _, addr, size, _ in self._health_regs[i])
+            # RAW, unsigned, in `read_labels` order -- exactly what
+            # bench_log stores, so the onboard record decodes later from its
+            # own meta rather than from whatever the units are on the day.
+            self.last_raw[i] = (tick, pos_raw, vel_raw) + health_raw
 
             filt = self._filters[i]
             prev = self._prev.get(i)
@@ -1560,7 +1710,10 @@ class ServoBus:
                 "vel": vel_diff if self.velocity_source == "differenced" else vel_rep,
                 "vel_reported": vel_rep,
                 "turned": self._turned.get(i, 0.0),
+                "health": {lbl: reg.decode(raw) for (lbl, _, _, reg), raw
+                           in zip(self._health_regs[i], health_raw)},
             }
+        self.last_voltage = out[self.id_a]["health"].get("Present Input Voltage")
         return {"dt": dt_s, "servos": out}
 
     def to_controller_units(self, state: dict) -> dict:
@@ -1594,6 +1747,11 @@ class ServoBus:
             # Feedback only -- no controller reads it. It is here so the
             # operator driving the mechanism by hand can see where it is.
             "righting_pos": (sv[self.id_right]["pos"] if self.id_right else None),
+            # Per ROLE, decoded, for telemetry. Servo frame and servo units:
+            # nothing here is signed into the input-shaft frame, because
+            # nothing downstream controls on it.
+            "health": {role: sv[i].get("health", {})
+                       for i, role in self.roles.items()},
         }
 
     def set_righting(self, goal_rad: float | None) -> None:
@@ -1656,6 +1814,10 @@ class ServoBus:
                     DXL_LOBYTE(DXL_HIWORD(v)), DXL_HIBYTE(DXL_HIWORD(v))]
 
         self._writer.clearParam()
+        # What went on the wire, in the write register's physical units
+        # (servo rad/s for the drives, servo-shaft rad for the rest) -- the
+        # record's `cmd` column, the same convention bench_log uses.
+        goal = {}
         for (dxl_id, key), sign in zip(((self.id_a, "drive_a"),
                                         (self.id_b, "drive_b")),
                                        self.servo_sign):
@@ -1665,17 +1827,21 @@ class ServoBus:
             # differential: the bike crabs when told to drive.
             w_servo = float(ctrl[aid[key]]) / self.belt_ratio * sign
             self._writer.addParam(dxl_id, le4(int(round(w_servo / VEL_LSB_RAD_S))))
+            goal[dxl_id] = w_servo
 
         steer_rad = clamp_extended(float(ctrl[aid["steer"]]) * self.steer_ratio
                                    + (self.steer_zero or 0.0))
         self._writer.addParam(self.id_steer,
                               le4(int(round(steer_rad * XC330_COUNTS_PER_RAD))))
+        goal[self.id_steer] = steer_rad
 
         if self.id_right and self._righting_goal is not None:
             self._writer.addParam(
                 self.id_right,
                 le4(int(round(clamp_extended(self._righting_goal)
                               * XC330_COUNTS_PER_RAD))))
+            goal[self.id_right] = clamp_extended(self._righting_goal)
+        self.last_goal = goal
 
         rc = self._writer.txPacket()
         if rc != 0:

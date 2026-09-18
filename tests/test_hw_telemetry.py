@@ -50,6 +50,52 @@ def test_the_packet_is_json_and_small_enough_to_not_think_about():
     assert len(b) < 1200, f"{len(b)} B -- fine on the radio, but say why here"
 
 
+HEALTH = {  # hw/dynamixel.HEALTH_BLOCK labels, decoded, per role
+    "drive_a": {"Present PWM": 0.12, "effort": 0.3, "Present Input Voltage": 11.9,
+                "Present Temperature": 38.0, "Hardware Error Status": 0.0},
+    "drive_b": {"Present PWM": -0.1, "effort": -0.25, "Present Input Voltage": 11.9,
+                "Present Temperature": 37.0, "Hardware Error Status": 0.0},
+    "steer": {"Present PWM": 0.05, "effort": 0.3, "Present Input Voltage": 12.0,
+              "Present Temperature": 30.0, "Hardware Error Status": 0.0},
+    "righting": {"Present PWM": 0.0, "effort": 0.0, "Present Input Voltage": 12.0,
+                 "Present Temperature": 29.0, "Hardware Error Status": 36.0},
+}
+UNITS = {"drive_a": "frac_max_torque", "drive_b": "frac_max_torque",
+         "steer": "A", "righting": "A"}
+
+
+def test_the_effort_key_names_its_unit_so_load_and_amps_never_share_a_column():
+    """Address 126 is Present Load on the drives and Present Current on the
+    XC330s. The SAME 0.3 is 30 % of max torque on one and 300 mA on the other;
+    a shared key would invite adding them up."""
+    got = T.servo_health(HEALTH, UNITS)
+    assert got["drive_a"]["load"] == 0.3 and "A" not in got["drive_a"]
+    assert got["steer"]["A"] == 0.3 and "load" not in got["steer"]
+    assert got["righting"]["err"] == 36 and got["drive_a"]["C"] == 38
+
+
+def test_the_full_packet_with_four_servos_stays_small():
+    """The number that matters is WITH the servos in -- Phase 2's packet."""
+    b = json.dumps(sample(servos=T.servo_health(HEALTH, UNITS),
+                          run="260917-221500_run_bench")).encode()
+    assert len(b) < 1200, f"{len(b)} B"
+
+
+def test_the_readout_shows_each_servo_and_puts_an_error_in_place_of_its_line():
+    tel = sample(servos=T.servo_health(HEALTH, UNITS), run="260917-221500_run")
+    left, right = T.status_text(tel)
+    labels, values = left.split("\n"), right.split("\n")
+    assert len(labels) == len(values)
+    assert labels[3:] == ["drive_a", "drive_b", "steer", "righting"]
+    row = dict(zip(labels, values))
+    assert "load  +30%" in row["drive_a"] and "+0.30 A" in row["steer"]
+    assert row["record"] == "260917-221500_run"
+    # 36 = bits 2 and 5: overheating and electrical shock
+    assert row["righting"].startswith("HARDWARE ERROR")
+    assert T.servo_errors(tel) == {"righting": row["righting"].split(": ", 1)[1]}
+    assert T.status_text(sample())[1].split("\n")[2] == "off"   # not recording
+
+
 def test_a_schema_mismatch_raises_rather_than_rendering_a_wrong_bike():
     with pytest.raises(T.SchemaMismatch, match="stale deploy"):
         T.check_version({"v": T.SCHEMA_VERSION - 1})
@@ -461,7 +507,7 @@ POSE_FIELDS = {"quat", "gyro", "v_world", "pos", "steer", "w_shaft", "shaft",
                "righting", "righting_pos"}
 DISPLAY_FIELDS = {"v", "t", "state", "cmd_v_world", "cmd_psi", "psi", "roll",
                   "roll_rate", "volts", "vlat_conf", "qos", "jitter_ms",
-                  "dt_ms", "cuts", "righting_current"}
+                  "dt_ms", "cuts", "righting_current", "servos", "run", "log"}
 
 # A perturbation per pose field, big enough to be unmistakable.
 _NUDGE = {"quat": [0.966, 0.259, 0.0, 0.0], "gyro": [1.0, -2.0, 3.0],
@@ -572,3 +618,41 @@ def test_a_bike_with_no_mechanism_grounds_on_its_wheels_exactly_as_before(built)
     front = (float(d.body("front_wheel").xpos[2])
              - float(p["bike"]["front_wheel"]["radius"]))
     assert min(rear, front) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_a_bike_message_rides_every_packet_for_a_while_then_drops_out():
+    """Loss-proof without acks: each message is repeated for `hold_s`, and a
+    quiet bike sends an empty list -- the steady-state cost is ~11 bytes."""
+    now = [0.0]
+    log = T.EventLog(hold_s=2.0, keep=4, clock=lambda: now[0])
+    assert log.recent() == []
+    log.add("cut", "CUT: roll 61 deg")
+    now[0] = 1.9
+    assert log.recent() == [[1, "cut", "CUT: roll 61 deg"]]
+    now[0] = 2.1
+    assert log.recent() == []
+    for k in range(6):                        # a burst is bounded by `keep`
+        log.add("link", f"m{k}")
+    assert [m[0] for m in log.recent()] == [4, 5, 6, 7]
+
+
+def test_the_station_prints_each_message_once_whatever_the_packet_loss():
+    seen = 0
+    printed = []
+    packets = [{"log": [[1, "cut", "a"]]}, {"log": [[1, "cut", "a"]]}, {},
+               {"log": [[1, "cut", "a"], [2, "rearm", "b"]]},
+               {"log": [[2, "rearm", "b"]]}]
+    for tel in packets:
+        msgs, seen = T.new_messages(tel, seen)
+        printed += [m[2] for m in msgs]
+    assert printed == ["a", "b"]
+    # a RESTARTED bike counts from 1 again; that must not go silent
+    msgs, seen = T.new_messages({"log": [[1, "link", "c"]]}, seen)
+    assert [m[2] for m in msgs] == ["c"]
+
+
+def test_the_readout_shows_the_bikes_latest_message():
+    tel = sample(log=[[3, "link", "LINK BACK from 192.168.0.114"]])
+    left, right = T.status_text(tel)
+    assert dict(zip(left.split("\n"), right.split("\n")))["bike"] == \
+        "LINK BACK from 192.168.0.114"

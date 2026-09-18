@@ -1896,8 +1896,9 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
 
     tel: dict = {}
     box = {"t_tel": 0.0, "shaft": (0.0, 0.0), "t_tx": 0.0, "t_frame": 0.0,
-           "checked": False, "seen": 0, "said": False, "state": None,
-           "off_stroke": False, "fresh": False}
+           "checked": False, "seen": 0, "said": False,
+           "off_stroke": False, "fresh": False,
+           "t_hud": 0.0, "hud": None, "log_seq": 0}
     # WHERE THE RENDER CALLS (0, 0). `pos` in the packet is the bike's own
     # dead-reckoned position and drifts without bound, which is worth WATCHING
     # -- the drift IS the odometry error, made visible -- right up until the
@@ -1946,7 +1947,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         inert rather than blocking a command against a heading we do not know.
         """
         actual = tel.get("psi")
-        if actual is None:
+        if actual is None or op.psi is None:
             return 0.0
         d = op.psi - float(actual)
         return float(np.arctan2(np.sin(d), np.cos(d)))
@@ -1962,6 +1963,8 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         A snap disarms the clamp until the bike catches up, since a commanded
         90/180 is meant to lead.
         """
+        if op.psi is None:                  # the bike has not said where it points
+            return
         if clamp and lead_blocks(delta, lead_now(), lead_armed[0]):
             return
         if not clamp:
@@ -2063,17 +2066,13 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         box["fresh"] = True
         if link is not None:
             link.packet(time.perf_counter())
-        # SAY WHEN THE BIKE'S STATE CHANGES. Without this a cut is a word that
-        # scrolls past in the bike's own console -- which the operator is not
-        # looking at, because they are looking at the viewer -- and `r` is a
-        # key that appears to do nothing for as long as the bike is still down.
-        st = tel.get("state")
-        if st != box["state"]:
-            if box["state"] is not None:
-                print(f"bike: {box['state']} -> {st}"
-                      + ("   — press r once it is upright and still"
-                         if st == "cut" else ""))
-            box["state"] = st
+        # WHAT THE BIKE SAYS, printed once each (telemetry.EventLog). This used
+        # to watch `state` change and compose its own message -- a second copy
+        # of a decision the bike already made. The bike is the authority; the
+        # station repeats it.
+        msgs, box["log_seq"] = T.new_messages(tel, box["log_seq"])
+        for _seq, kind, text in msgs:
+            print(f"bike [{kind}]: {text}")
         op.sync(tel)
         box["t_tel"] = time.perf_counter()
         box["seen"] += 1
@@ -2154,8 +2153,15 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
                 d.qpos[1] = float(got[1]) - origin[1]
         mujoco.mj_forward(m, d)
         apply_camera()
+        hud(wall)
         ramps(dt)
-        if wall - box["t_tx"] >= 1.0 / 50.0:
+        # EVERY RENDERED FRAME, capped at 100 Hz. The gate used to be 50 Hz,
+        # and against 60 fps frames that meant EVERY OTHER frame -- 16.7 ms
+        # is short of 20 ms -- so the bike saw 30.0 commands/s (measured from
+        # the record's link_age), not the 50 this said. Tied to the frame on
+        # purpose: a window that stops rendering is an operator who has
+        # stopped seeing, and the heartbeat should stop with it.
+        if wall - box["t_tx"] >= 1.0 / 100.0:
             box["t_tx"] = wall
             pkt = op.packet()
             # The velocity command is a world-frame VECTOR, so a crab is just a
@@ -2163,14 +2169,30 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             # `set_command_polar` does in the simulator.
             speed, course = float(np.hypot(op.v, v_lat[0])), float(
                 np.arctan2(v_lat[0], op.v))
-            th = op.psi + course
+            th = (op.psi or 0.0) + course
             pkt["v_cmd_world"] = [speed * np.cos(th), speed * np.sin(th)]
             try:
-                sock.sendto(json.dumps(pkt).encode(), dest)
+                sock.sendto(T.encode_command(pkt), dest)
             except OSError:
                 pass
         if op.quit:
             raise SystemExit("q — station stopped; the bike torques off in ~1 s")
+
+    def hud(wall):
+        """The readout (`telemetry.status_text`), at most 4 Hz and only when
+        it CHANGED. `set_texts` hands the text to the render thread, so it is
+        the same kind of cost `apply_camera` documents: not free, and there is
+        nothing a human reads at 60 Hz. Hardware errors reach the terminal
+        through the bike's own log (see `drain`), not from here."""
+        v = view[0]
+        if v is None or not tel or wall - box["t_hud"] < 0.25:
+            return
+        box["t_hud"] = wall
+        text = T.status_text(tel)
+        if text != box["hud"]:
+            box["hud"] = text
+            v.set_texts((mujoco.mjtFontScale.mjFONTSCALE_100,
+                         mujoco.mjtGridPos.mjGRID_TOPLEFT, *text))
 
     def draw(scn, m, d):
         cmd = (float(tel.get("cmd_psi", 0.0)),
@@ -2191,8 +2213,8 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
              "  o re-centre · p pin at centre (and flatten the floor)\n"
              "  9/4 righting servo · [ ] its current · r re-arm · q quit\n"
              + ("  wings DRAWN from the servo's measured angle — check "
-                "against the real\n  mechanism: righting_stow_deg and "
-                "righting_sign are still GUESSes\n" if swing_pose else "") +
+                "against the real\n  mechanism: righting_sign is still TBD "
+                "(which wing drops)\n" if swing_pose else "") +
              "  green tick = commanded heading · cyan = actual")
     started = [False]
     view = [None]

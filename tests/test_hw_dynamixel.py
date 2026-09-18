@@ -17,7 +17,8 @@ from aow_sim.hw.control_table import (MODEL_NUMBERS, table_by_name,
 from aow_sim.hw.dynamixel import (CT, INDIRECT_ADDRESS_1, INDIRECT_DATA_1,
                                   MODE_CURRENT_POSITION, MODE_EXTENDED_POSITION,
                                   MODE_VELOCITY, N_INDIRECT, POS_WRAP,
-                                  READ_BLOCK, TICK_WRAP, VEL_LSB_RAD_S,
+                                  HEALTH_BLOCK, READ_BLOCK, TICK_WRAP,
+                                  VEL_LSB_RAD_S,
                                   VELOCITY_GAIN_REGISTERS, IndirectMap,
                                   RateFilter, ServoBus, assert_alias_margin,
                                   resolve_gains, _pos_delta, _signed,
@@ -69,7 +70,30 @@ def test_read_block_maps_the_intended_registers_contiguously(bus):
             assert got[a] == src, f"id {dxl_id}: indirect {a} -> {got[a]}, want {src}"
 
     assert bus.read_addr == INDIRECT_DATA_1
-    assert bus.read_len == sum(CT[n][1] for n in READ_BLOCK) == 10
+    # The control fields first and unmoved; the health block (8 bytes) after.
+    assert sum(CT[n][1] for n in READ_BLOCK) == 10
+    assert bus.read_len == 10 + 8
+
+
+def test_the_effort_slot_is_current_on_one_model_and_load_on_the_other():
+    """Address 126 is Present Current [A] on the XC330 and Present Load
+    [fraction of max torque] on the XC430, which has no current sensor. One
+    indirect slot carries both -- same address, same width -- and each id
+    decodes by ITS OWN register, so a drive's 0.3 is 30 % load and the
+    steer's 0.3 is 300 mA. Swap them and the numbers stay plausible."""
+    b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4)
+    b._build_map()
+    got = {i: b._map.register(i, "effort") for i in b.ids}
+    assert {r.address for r in got.values()} == {126}
+    assert got[1].name == got[2].name == "Present Load"
+    assert got[3].name == got[4].name == "Present Current"
+    assert got[1].unit_name != got[3].unit_name
+    # and every servo's slot maps to 126, not just the first model's
+    off = b.read_offsets["effort"]
+    for i in b.ids:
+        m = _indirect_map(b, i)
+        assert (m[INDIRECT_DATA_1 + off], m[INDIRECT_DATA_1 + off + 1]) == (126, 127)
+    assert b._map.read_labels == READ_BLOCK + HEALTH_BLOCK
 
 
 def test_read_offsets_locate_each_field(bus):
