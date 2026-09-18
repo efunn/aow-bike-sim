@@ -41,6 +41,7 @@ from .general_spec import (ACT_DIM, ActionBounds, act_dim_for, build_obs,
                            rotate_to_body, scale_action, vel_filter_alpha,
                            vel_filter_step, wrap_pi)
 from .linearize import settle_upright
+from .steer import advance_target
 from .randomize import DomainRandomizer
 from ..sim_ahrs import rpy_from_quat
 
@@ -843,7 +844,10 @@ class GeneralEnv(gym.Env):
         action = np.asarray(action, np.float32)
         scaled = scale_action(action, self.bounds)
         steer_rate, hub, diff = scaled[0], scaled[1], scaled[2]
-        self._steer += steer_rate * self.ctrl_dt
+        # Bounded to STEER_LEAD_MAX of the measured steer -- the same call
+        # DriveController makes, so training and the bike integrate alike.
+        self._steer = advance_target(self._steer, steer_rate, self.ctrl_dt,
+                                     float(self.data.qpos[self._sj]))
         if self.act_wings or self.act_swing:
             # A RATE integrated into a position target, exactly like steer,
             # because the wing servo is the same multi-turn XC330 in extended

@@ -56,6 +56,53 @@ def nearest_multiple(x: float, period: float = np.pi) -> float:
     return float(period * np.round(x / period))
 
 
+# How far the commanded steer may LEAD the measured steer [rad]. Anti-windup
+# for the rate integrator below; None or inf = unbounded, which is what every
+# policy up to 2026-09-18 trained against.
+#
+# 45 deg BECAUSE IT CANNOT CHANGE A TORQUE. The steer actuator is a position
+# servo (kp 2.0 N.m/rad, kv 0.0676) saturating at the XC330's 0.8 N.m, so
+# the drive torque is already pinned at the limit whenever
+#     kp * lead - kv * steer_rate >= 0.8
+# At the fastest steer seen in sim (8.24 rad/s) that needs lead >= 38.9 deg,
+# so above 45 deg a larger lead is the SAME torque -- it only stores turns to
+# unwind later. `test_the_steer_lead_bound_changes_no_torque` re-derives this
+# from bike_params, so it fails if kp, kv or the stall torque move.
+#
+# MEASURED IN SIM (2026-09-18, general_rl_cmd_curriculum2b, 20 s mixed
+# commands): lead peaks at 16.3 deg and the trajectory is BIT-IDENTICAL with
+# and without the bound. With the steer held by a "rock" while turning:
+#     held    lead at release   peak unwind      bike
+#     0.2 s   40 / 40 deg       19 / 19 rad/s    upright, identical
+#     0.3 s   83 / 45 deg       42 / 22 rad/s    falls either way
+#     1.0 s   119 / 20 deg      56 / 9 rad/s     falls either way
+# (unbounded / 45 deg). Holds long enough to wind up badly drop the bike
+# anyway, and a cut stops the integrator; the unbounded case in practice is
+# a policy running on a wheel that cannot respond -- torque off.
+STEER_LEAD_MAX = float(np.deg2rad(45.0))
+
+
+def advance_target(target: float, rate: float, dt: float, measured: float,
+                   lead_max: float | None = None) -> float:
+    """One step of the steer integrator: target += rate * dt, then kept
+    within `lead_max` of where the wheel actually IS.
+
+    The policy commands a steer RATE; the servo wants a POSITION. Integrating
+    the one into the other is what every general policy trained on, and
+    unbounded it has one failure: a wheel that cannot follow (torque off, a
+    rock, a stall) lets the target run away at up to the policy's 8 rad/s,
+    and when the wheel is freed the servo unwinds every stored turn. Measured
+    on the Pi, torque off: 167 -> -4412 deg in 20 s.
+
+    The bound is anti-windup, and costs nothing while the wheel follows: see
+    STEER_LEAD_MAX's comment for why no torque changes below it."""
+    lead = STEER_LEAD_MAX if lead_max is None else lead_max
+    out = float(target) + float(rate) * float(dt)
+    if lead is not None and np.isfinite(lead):
+        out = min(max(out, measured - lead), measured + lead)
+    return out
+
+
 def clamp_extended(cmd: float) -> float:
     """Clamp an absolute multi-turn setpoint to the XC330 extended range."""
     return float(np.clip(cmd, -STEER_CMD_LIMIT, STEER_CMD_LIMIT))

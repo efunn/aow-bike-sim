@@ -67,3 +67,32 @@ def test_xc330_counts_conversion():
     assert XC330_COUNTS_PER_RAD * TWO_PI == pytest.approx(XC330_COUNTS_PER_REV)
     assert round(STEER_CMD_LIMIT * XC330_COUNTS_PER_RAD) == (
         XC330_MAX_TURNS * XC330_COUNTS_PER_REV)
+
+
+# --- the steer lead bound (control/steer.py) -------------------------------
+
+def test_the_steer_lead_bound_changes_no_torque():
+    """Above STEER_LEAD_MAX the steer actuator must ALREADY be at its torque
+    limit, even at speed -- that is the whole argument for the bound being
+    invisible to a policy trained without it. Re-derived from bike_params, so
+    moving kp, kv or the stall torque fails here instead of silently making
+    the bound bite. 10 rad/s covers the 8.24 seen in sim with margin."""
+    from aow_sim.control.steer import STEER_LEAD_MAX
+    from aow_sim.params import load_params
+    p = load_params()
+    kp, kv = p["actuators"]["steer_kp"], p["actuators"]["steer_kv"]
+    limit = (p["servos"]["xc330_t181"]["stall_torque"]
+             * p["bike"]["steering"]["gear_ratio"])
+    assert kp * STEER_LEAD_MAX - kv * 10.0 >= limit
+
+
+def test_the_steer_target_cannot_run_away_from_a_wheel_that_does_not_move():
+    """The Pi, torque off, 20 s: 167 -> -4412 deg with the wheel at 169.
+    Bounded, the same 20 s at the policy's full 8 rad/s ends 45 deg out."""
+    from aow_sim.control.steer import STEER_LEAD_MAX, advance_target
+    target, wheel = 0.0, 0.0
+    for _ in range(2000):                       # 20 s at 100 Hz
+        target = advance_target(target, -8.0, 0.01, wheel)
+    assert target == pytest.approx(-STEER_LEAD_MAX)
+    # ...and a wheel that follows is untouched
+    assert advance_target(1.0, 2.0, 0.01, 0.99) == pytest.approx(1.02)

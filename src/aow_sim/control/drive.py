@@ -27,7 +27,8 @@ import numpy as np
 
 from .balance import LQRBalance, extract_state, mix
 from .pivot import YawProfile
-from .steer import clamp_extended, nearest_multiple, wheel_heading
+from .steer import (advance_target, clamp_extended, nearest_multiple,
+                    wheel_heading)
 
 GRAVITY = 9.81
 
@@ -331,7 +332,8 @@ class DriveController(LQRBalance):
 
     # -- general (always-on) policy ----------------------------------------
 
-    def engage_general(self, data, name: str | None = None) -> None:
+    def engage_general(self, data, name: str | None = None,
+                       reuse: bool = False) -> None:
         """Hand the actuators to the general command-conditioned policy and
         leave them there. Unlike every command_* above this is NOT a
         maneuver: there is no horizon and no hand-back, so the only way out
@@ -352,11 +354,23 @@ class DriveController(LQRBalance):
 
         The `"general_rl"` fallback is kept for a params dict with no
         `control.general_move`, matching run_drive.py:1188, record.py:372 and
-        hw/run_bike.py:277."""
+        hw/run_bike.py:277.
+
+        `reuse=True` keeps the already-loaded policy when the name matches
+        instead of reading it off disk again. The policy object is stateless
+        (`MLPPolicy.action` is a pure function of the observation; every
+        per-episode state lives on this controller and is reset below), so
+        reuse is safe. It is opt-in because teleop's policy menu relies on a
+        reload picking up a fresh export. run_bike opts in: the reload is a
+        68 ms stall on a Pi 3B+, measured at a re-arm -- the first ticks after
+        a fall, handed to a policy running 68 ms late."""
         from .flick import load_move
         if name is None:
             name = self.params["control"].get("general_move", "general_rl")
-        self._gen = load_move(name)
+        if not (reuse and self._gen is not None
+                and getattr(self, "_gen_loaded", None) == name):
+            self._gen = load_move(name)
+            self._gen_loaded = name
         from .general_spec import obs_layout_for, vel_filter_alpha
         # The observation LAYOUT is a property of the policy, carried in its
         # move yaml, so a policy trained without any optional block is 15-wide
@@ -563,7 +577,8 @@ class DriveController(LQRBalance):
                 self._gen_wing + wing_rate * self.dt, lo, self._gen_wing_max))
         # Integrate at the CONTROLLER rate so the commanded steer traces the
         # same ramp the training env produced in one of its longer steps.
-        self._gen_steer += steer_rate * self.dt
+        self._gen_steer = advance_target(self._gen_steer, steer_rate, self.dt,
+                                         float(data.qpos[self._sj]))
         if pol.act_dim == 2:                 # feedforward policy: crawl balance
             diff = float(-self._K0[0] @ np.array(
                 [s.e_lat, s.roll, 0.0, 0.0, s.v_lat, s.roll_rate, 0.0, 0.0]))

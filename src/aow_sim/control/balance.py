@@ -131,11 +131,32 @@ class _Base:
         if self._ref_pos is None or data.time < self._next_t - 2 * self.dt:
             self.reset(model, data)  # first call, or viewer was reset
         if data.time + 1e-12 >= self._next_t:
-            u = np.asarray(self._compute(model, data), dtype=float)
-            self._u = np.clip(u, self.lo, self.hi)
-            self._next_t = data.time + self.dt
+            self._update(model, data)
         data.ctrl[:] = self._u
         return self._u
+
+    def tick(self, model, data) -> np.ndarray:
+        """Compute NOW, unconditionally -- for a caller that owns the clock.
+
+        `step` decides for itself whether an update is due, from `data.time`.
+        That is right in the simulator, which calls it every physics step. It
+        is wrong on the bike, whose loop IS the controller clock: `data.time`
+        there advances by the servo's own tick, 1 ms resolution, measured
+        9/10/11 ms at 100 Hz, so a 10 ms schedule would skip the ~10% of
+        ticks that read 9. The caller must construct this controller at ITS
+        OWN rate (`rate_hz` = loop rate), because `self.dt` is what every
+        integrator and hold count inside `_compute` uses -- see hw/run_bike.
+        """
+        if self._ref_pos is None:
+            self.reset(model, data)
+        self._update(model, data)
+        data.ctrl[:] = self._u
+        return self._u
+
+    def _update(self, model, data) -> None:
+        u = np.asarray(self._compute(model, data), dtype=float)
+        self._u = np.clip(u, self.lo, self.hi)
+        self._next_t = data.time + self.dt
 
     def _compute(self, model, data) -> np.ndarray:  # pragma: no cover
         raise NotImplementedError
