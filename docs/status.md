@@ -62,7 +62,7 @@ accepted red tests).
 
 **The self-righting wings came off that list on 2026-09-17: the co-rotating
 four-bar is BUILT and operating** -- this file had carried "design done, build
-last" for eight days. Open on it: read `righting_stow_deg` and `righting_sign`
+last" for eight days. Open on it: read `righting_sign` (stow is settled at 180)
 off the bike (below), and Station C / R6 for `righting_current` in counts.
 
 ---
@@ -120,9 +120,9 @@ hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 
 ## Health
 
-**Test suite, measured 2026-09-16** with `pytest -n 10 --dist load`:
+**Test suite, measured 2026-09-17** with `pytest -n 10 --dist load`:
 
-    20 failed, 358 passed, 9 skipped, 45.3 s
+    20 failed, 446 passed, 9 skipped, 39.7 s
     red set unchanged (20 accepted failures) -- tests/expected_failures.txt
 
 **Three came OFF the red list**, and by a route nobody was looking down:
@@ -496,40 +496,252 @@ The average hides it completely, which is why "95.5 Hz telemetry, zero loss"
 from the earlier bench session was true and useless for this question: it
 measured throughput, and the thing the eye sees is the tail.
 
-**THIS PROMOTES THE ACCESS POINT FROM PLAN-OF-RECORD TO THE FIX FOR A
-MEASURED FAULT.** Ethernet is ruled out by choice. Of what is left:
+**BUT THE STALLS DID NOT REPEAT, SO THEIR CAUSE IS OPEN.** Re-measured later
+the same day, same probe, same band, bike re-powered:
 
-  * **`ATA` (2.4 GHz) is there and is 13 dB better.** From the bike:
-    `ATA-5G` -70 dBm against **`ATA` -57 dBm** on 2417 MHz, same router, same
-    credentials -- about 20x the received power. What was measured is rate
-    adaptation and tx failures, i.e. a marginal link, so that margin is the
-    likeliest fix and the cheapest to try. Caveat: `CONNEX` shares 2417 at
-    -58 dBm, so 2.4 GHz here has co-channel neighbours where 5 GHz has none.
-  * **A METHOD ERROR WORTH NOT REPEATING.** This was first reported as "no
-    2.4 GHz network exists", from `nmcli dev wifi list` plus three
-    `nmcli dev wifi rescan` calls. NetworkManager RATE-LIMITS rescans and
-    coalesced all three, so what came back was its CACHE -- the associated BSS
-    and nothing else. The operator could see `ATA` from a laptop beside the
-    bike. `sudo iw dev wlan0 scan` is the measurement; `nmcli` is a cache with
-    a plausible face.
-  * **WHICH BOARD SHIPS IS OPEN.** The Zero 2 W this plan is written around is
-    effectively unobtainable and is probably NOT happening; the end state is a
-    custom or different SBC with an unknown radio. So 2.4 GHz is the right
-    bench choice on SIGNAL, not because the final chip forces it, and every
-    link number is provisional against a radio nobody has chosen -- including
-    the 95.5 Hz one.
-  * **The laptop AP, with one radio per end.** macOS Internet Sharing over
-    Wi-Fi turns the laptop's single radio into the AP, so it cannot also be a
-    client of the house network: sharing has to come from a WIRED uplink, and
-    without one the laptop is simply offline while hosting. The bike likewise
-    holds one association at a time -- but both networks can be CONFIGURED,
-    and NetworkManager picks by `autoconnect-priority`.
+| `ATA-5G` | signal | gap p99 | max | gaps >33 ms |
+|---|---|---|---|---|
+| the run above | -74 dBm | 11.8 ms | 552 ms | **6 in 8 s** |
+| 30 s | -66 | 11.4 | 23 | **0** |
+| 60 s | -70 | 10.8 | 24 | **0** |
 
-The Pi is Debian 13 + NetworkManager **configured by NETPLAN** (the live
-profile is named `netplan-wlan0-ATA-5G`, which is the tell). `nmcli` edits
-survive until the next `netplan apply` and then vanish. No SD card or monitor
-is needed to change any of this; the recipe, and the add-a-second-AP rule that
-makes it lockout-proof, are in `untethered-setup.md`.
+-70 dBm was clean for a full minute, so weak signal alone does not explain
+them. Not yet ruled out: macOS AWDL (AirDrop/Continuity takes the laptop's
+radio off-channel periodically -- the laptop end, which nothing here has
+measured), background scans on either end, other traffic on the router. **The
+link is still where the chugging came from; WHY the link stalled is not
+known.** Next time it chugs, run the probe then, and check AWDL
+(`ifconfig awdl0`) on the laptop. AWDL was `active` during all three clean
+runs, so it does not stall the link on its own; it may still be a factor.
+
+**THE BIKE IS NOW ON `ATA` (2.4 GHz)**, `autoconnect-priority` 10, with
+`ATA-5G` kept as the fallback. Same IP (192.168.0.117); the laptop stays on
+`ATA-5G` and reaches it, same router. 60 s probe on `ATA`: -54 dBm, 5862/5862,
+gap p99 13.6 ms, max 25 ms, **0 gaps >33 ms** -- as clean as `ATA-5G` was the
+same day, so this proves margin, not a cure. **The operator then ran the
+mirror on it and saw no chugging.** The between-sitting difference is most
+likely DOORS: laptop and bike were in the same spots both times, and which
+doors were open is what changed (operator's observation). 2.4 GHz goes through
+them better, which is the reason to stay on it. Getting there took the operator's
+passphrase; three things found on the way, all in `untethered-setup.md`:
+
+  * The "13 dB better" was ONE scan. Six repeat scans later: `ATA-5G` -63/-64,
+    `ATA` -58/-60, `ATA_EXT` -51/-52 -- about 5 dB. Stable within a sitting,
+    different between sittings.
+  * The Imager stores the wifi key as the 64-hex PSK, which is salted with the
+    SSID, so `ATA-5G`'s stored key cannot be reused for `ATA` even when the
+    passphrase is the same. Copying it failed at the 4-way handshake; the
+    operator then typed it at a hidden prompt.
+  * The fallback works: the failed attempt dropped ssh for ~20 s and the bike
+    returned to `ATA-5G` on its own. And a NEW `nmcli` profile persists (it is
+    a keyfile in `/etc/NetworkManager/system-connections/`); only EDITS to the
+    netplan-generated `netplan-*` profiles are lost on `netplan apply`. An
+    earlier version of this file said all nmcli changes were lost.
+
+**DECIDED: A ROUTER, NOT AN ACCESS POINT ON EITHER END.** House wifi for now;
+if trouble comes back, move the router or use a different one. The laptop and
+Pi APs are both out -- each end has one radio, so either leaves the laptop
+(and any Claude session on it) offline, there is no cell service at the bench
+to tether from, and hosting an AP on the M4 is awkward (legacy CLI routes). A
+USB wifi adapter on the Mac would not rescue it either: macOS on Apple Silicon
+has essentially no drivers for them (general knowledge, not tested here).
+Options table in `untethered-setup.md`. Consequence worth having: **the bike
+keeps internet**, so its clock stays NTP-set and offline timestamps are not a
+problem to solve yet.
+
+**WHICH BOARD SHIPS IS OPEN.** The Zero 2 W is probably not happening; the end
+state is a custom or different SBC with an unknown radio, so every link number
+here is provisional against a radio nobody has chosen, the 95.5 Hz one
+included.
+
+**`iw`, NOT `nmcli`, FOR SCANS.** NetworkManager rate-limits rescans, and
+three `nmcli dev wifi rescan` calls returned its cache, which is where "there
+is no 2.4 GHz network" came from. `sudo iw dev wlan0 scan` is the
+measurement.
+
+**PHASE 2 IS UP (2026-09-17): every servo's health in the packet, and every
+tick recorded on the bike.** Run on the Pi against the real bus, torque off.
+
+  * **Read block** +8 bytes a servo (`HEALTH_BLOCK`, `hw/dynamixel.py`): PWM,
+    effort, input voltage, temperature, Hardware Error Status. 22 of block 1's
+    28 indirect entries. "effort" is ONE slot with two meanings -- Present
+    Load (fraction of max torque) on the XC430 drives and Present Current (A)
+    on the XC330s, same address 126 -- decoded per servo by its own register,
+    and keyed `load` / `A` in the packet so the two never share a column.
+  * **Cost of the read**, 2000 reads x 4 alternating runs: mean +0.01 ms
+    (1.92 -> 1.93), p99 +0.4-0.9 ms (1.98 -> 2.37-2.89). A 10 ms tick.
+  * **Packet** 474 -> ~790 B with four servos (`servos`, and `run`, the record
+    it is being written into). 96 packets/s delivered.
+  * **The mirror shows it** as a text readout (`telemetry.status_text`):
+    state, pack, jitter, QoS, record name, and per servo temperature, effort
+    and duty. A hardware error replaces that servo's line and is printed to
+    the terminal once.
+  * **The onboard record** (`bench_log.RunRecorder`): on by default,
+    `traces/bike/<stamp>_run[_tag]/` on the Pi, loads as an ordinary bench
+    `Capture` -- raw registers decoded from its own meta, what was written to
+    each servo, and 24 columns of what the controller had (`BIKE_COLS` in
+    `run_bike.py`). meta carries the whole `bike_params`, the policy and both
+    digests. ~300 KB per 20 s compressed. `--no-record`, `--tag`.
+
+**THE RECORDER'S FIRST DESIGN STALLED THE LOOP, measured and replaced.** A
+writer thread handed 1000-row chunks to `np.savez`; at the hand-off the loop
+went 31 ticks late, worst 24 ms, starting at exactly tick 1000. The save is
+12 ms on its own -- in a thread it fights the control loop for the GIL for
+~0.4 s. Now each tick appends one 585 B row to a buffered file on the loop's
+own thread (0.105 ms mean, 0.138 p99 on the Pi), and `close()` converts it.
+
+| 30 s, link up, torque off | tick jitter p99 | max |
+|---|---|---|
+| recording off | 0.94 ms | 2.10 ms |
+| recording on | 1.02 ms | 4.30 ms |
+
+A kill or brownout loses at most the unflushed ~1 s; `Capture.load` reads the
+partial `rows.bin` and meta says `complete: false`. Pull records with
+`rsync -a efun@aowbike.local:'~/aow-bike-sim/traces/bike/' traces/bike/`.
+
+**THE CONTROLLER RAN AT HALF SPEED ON THE BIKE -- fixed 2026-09-18, before
+any torque-on run.** `control.rate_hz` is 200 (the simulator's rate, what
+the LQR was designed at) and DriveController took its `dt` from it; the bike
+ticks at 100 Hz. So on hardware the policy was queried at **25 Hz instead of
+the 50 it trained at**, the steer target integrated half the commanded rate,
+and the velocity low-pass had twice its time constant. Found by replaying a
+bench record through the controller: the policy asked for -458 deg/s and the
+target moved at -229. `run_bike` now builds its controller at the loop's
+own rate (`controller_params`) and calls `tick()`, which computes every call
+-- a 10 ms schedule would skip the ~10% of ticks the 1 ms servo clock reads
+as 9 ms (measured 9/10/11 ms: 305/2384/300 of 3000). A test pins 50 policy
+queries per second and the full integral. Cost on the Pi: `policy.action`
+0.39 ms; tick jitter p99 0.86 and 0.89 ms in two 20 s runs. One unexplained
+cluster (9 ticks, worst 15.4 ms, ~1 s into one run) did not repeat.
+
+**FIRST TORQUE-ON BENCH RUN (2026-09-18, 93 s): drive A tripped its own
+overload protection** while the operator held the wheel -- 100 % PWM at
+80-98 % load for 3.5 s in total, 44 C, latched error 32 at 88.6 s. Three
+things were wrong, all fixed and tested, the reboot verified live:
+
+  * the policy stayed engaged and drove the dead servo for 5 s. A latched
+    error on a drive or the steer is now a CUT that holds until it clears
+    (the righting servo's is announced only);
+  * the run then DIED on the cut's torque-off: the reply's error byte was
+    128, the protocol's alert bit ("a hardware error is latched"), which
+    says nothing about the instruction -- it had worked. Eight status checks
+    treated any non-zero byte as failure; now only bits 0-6 do;
+  * a latched error persists until reboot, and would have failed start-up
+    too. `ServoBus.open` now reboots any latched servo before configuring it
+    and says so; restarting run_bike is the recovery. Verified: id 101 32 ->
+    0. That first run after the reboot then failed preflight on something
+    unrecorded (the next run passed) -- open.
+
+**THE HEADING COMMAND STARTED FROM THE AHRS'S ZERO, not from the bike.**
+Reported by the operator as "the zero point is odd". The station's heading
+started at 0.0 -- the TM151's own yaw zero, an arbitrary direction -- so
+every connect commanded a turn: measured +45 to +66 deg of lead at all four
+connects of the 2026-09-18 sessions, outside the +-35 deg clamp band before a
+key was pressed. And the `psi` the bike reported was the CONTROLLER's, frozen
+through every cut (101 deg stale in one session), which the station re-aims
+and clamps against. Now: the bike reports its measured yaw; the station sends
+NO heading until it has heard one (the bike keeps its own), and while the bike
+is not engaged the command follows it, so a re-arm starts aligned. Verified
+live: 0.0 deg of lead at connect and at reconnect.
+
+**SCHED_FIFO IS NOW GRANTED ON THE PI** (2026-09-18): `ulimit -r` was 0, so
+run_bike's real-time request was refused with a warning every start. Set by
+the operator in `/etc/security/limits.d/90-aow-rtprio.conf` (`efun - rtprio
+80`; takes effect at the next login). A system setting on the Pi, not in
+this repo -- a fresh SD card needs it again. It CONTRADICTS a 09-16
+measurement (FIFO made the loop worse by starving the AHRS reader) that did
+not reproduce: 0.00% of ticks reused an IMU sample, with or without FIFO. See
+the dated note in `pi-bench-bringup.md`. One run each, so indicative:
+
+| tick lateness | median | p99 | worst |
+|---|---|---|---|
+| before, two 20 s runs | 0.09 ms | 0.86-0.90 ms | 1.6-3.6 ms |
+| after, 142 s, mirror connected | 0.03 ms | 0.76 ms | 1.12 ms |
+
+**THE BENCH WINDING IS THE ATTITUDE, as the operator suspected.** Replaying
+the torque-off bench record: with the recorded +3.4 deg roll the policy asks
+for its full -458 deg/s steer rate on 100% of queries; the same record with
+roll and pitch levelled splits 51/49 in sign. A lean the bike cannot correct
+(no wheels on the floor, and torque off) is steered into forever. With torque
+ON on the bench the wheel WILL follow, so expect the steer to spin
+continuously at up to 458 deg/s until the mount is calibrated or the bike is
+on the floor -- the lead bound caps the lead, not the rotation.
+
+**THE BIKE'S SESSION, REWORKED 2026-09-18 -- including two ways it could
+energise a bike it should not have.** All checked live on the Pi.
+
+  * **`r` ENERGISED A `--no-torque` RUN.** A re-arm called `bus.arm()`
+    unconditionally. The operator confirms it happened on the bench. Now
+    gated on `--torque`, and a test pins it.
+  * **A SIGNAL'S SHUTDOWN COULD NOT TURN TORQUE OFF.** SIGTERM and SIGHUP
+    (`kill`, `timeout`, a dropped `ssh -t`) used to skip `shutdown()`
+    entirely. Once they were routed through it, the torque-off came back
+    `COMM_PORT_BUSY` (-1000): the exception had landed mid-transaction and
+    left the SDK port marked busy. Now a signal inside the loop only requests
+    the stop, honoured between ticks, and `ServoBus.close()` clears the flag
+    and tries every servo (it used to stop at the first failure). SIGTERM,
+    SIGHUP and ctrl-C each verified clean on the Pi.
+  * **A second `run_bike` dropped the first one's bike.** Opening the bus
+    turns torque off on every servo, and that happened before the second
+    instance found port 9910 taken. The port is now bound first, as the
+    single-instance lock; verified, the second exits without touching the bus.
+  * **A dead link no longer ends the run.** Cut (policy servos limp, the
+    righting servo holds), keep sensing and recording, wait; a returning
+    station re-arms with `r`. Nothing re-arms while the link is down, not
+    even `--auto-rearm`, and the settle dwell restarts on reconnect. The
+    start-up wait is now forever by default (`--link-wait S` to bound it).
+  * **A re-arm stalled the loop 68 ms** reloading the policy from disk, so the
+    first ticks after a fall ran late. `run_bike` now reuses the loaded
+    policy (stateless); after the fix, re-arm max jitter 2.69 ms.
+  * **The mirror sent 30 commands/s, not 50** (measured from `link_age`): a
+    20 ms gate against 16.7 ms frames fires every other frame. Now every
+    frame, capped at 100 Hz, and still tied to rendering on purpose.
+  * **`r` is a COUNT now, not a one-packet flag.** `rearm: true` rode in the
+    single packet after the press, so one lost datagram ate it. The station
+    sends `rearm_n` in every packet and the bike acts on a change -- except
+    from a station it has not heard before, or while the link is down (a
+    press made blind is not consent). Verified live across a link drop.
+  * **The steer target is bounded: 45 deg of lead over the measured steer**
+    (`control/steer.py`, `advance_target`), in training AND on the bike. The
+    policy outputs a steer RATE, integrated into a position target with no
+    bound -- torque off it ran 167 -> -4412 deg in 20 s; now it stops at -45.
+    Invisible while the wheel follows: the steer actuator is already at its
+    0.8 N.m limit above ~39 deg of lead at the fastest steer seen in sim, and a
+    20 s mixed-command sim run is bit-identical with and without it (peak lead
+    16.3 deg). A steer held by a "rock" for 0.3 s or more drops the bike either
+    way; the bound halves the unwind rate (42 -> 22 rad/s at 0.3 s, 56 -> 9 at
+    1 s). Existing policies need no retraining. A servo in Velocity Control
+    Mode was rejected: it would drop the position hold the policies trained
+    against, which is a different plant.
+    On the REAL servo (P-only, Position P 900, no profile, PWM limit 885,
+    read off servo 103), MEASURED on the first torque-on bench run: PWM
+    rises ~3.3 %/deg of lead -- 37 % at 10-12 deg, 74 % at 20-30 deg -- and
+    never saturated; the largest lead was 24.8 deg with the wheel turning at
+    ~5 rad/s. Extrapolated, full PWM near ~30 deg: close to the sim's 23, so
+    45 deg is very likely past saturation on hardware too, but that is not
+    yet observed. An earlier note here predicted 11 deg from an e-manual
+    formula quoted from memory; the measurement refutes it. (Lead is target
+    minus the reading taken before the write, so it carries a few degrees of
+    timing bias at speed.)
+  * **The command is 12 packed bytes** (`telemetry.encode_command`), was
+    76-150 B of JSON: version, rearm count, velocity x/y [mm/s], heading
+    WRAPPED [1e-4 rad] (the bike only uses wrap_pi(psi_cmd - psi)), righting
+    goal [1e-3 rad] and current, with -32768 = "not commanded". A JSON
+    station is refused by name, once. Telemetry stays JSON for now.
+  * **The bike tells the station what happened** (`telemetry.EventLog`):
+    cut, re-arm, link lost/back, hardware error set/cleared, failsafe --
+    decided and worded on the bike, each message riding every packet for
+    5 s, printed once by the mirror and the terminal station and shown on the
+    readout. The mirror's own state-change message is gone. Quiet cost ~11 B
+    a packet; 791-972 B measured with messages in flight.
+  * `--bench` = `--no-torque --allow-guess-mount`; `--bench --torque`
+    energises. The steer zero stays the config's; `--steer-zero capture`
+    is still there for a bare shaft.
+
+The terminal station (`hw/ground.py`) is the fallback, not the main station,
+and its docstring now says why its local mode is bench-only: run on the Pi,
+the heartbeat comes from the bike itself, so a stalled wifi does not trip the
+link watchdog.
 
 `--frame-stats` now also prints LINK stats in `--mirror`: rx/s, inter-arrival
 gap p50/p99/max, the fraction of frames that redrew a stale pose, and packet

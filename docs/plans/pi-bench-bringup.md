@@ -460,6 +460,18 @@ nothing about balance can be read from a bench like this.
 control thread preempts the AHRS reader it is waiting on. Left off; the gate is
 met without it. Do not reach for it before the GC and the reader are right.
 
+> **2026-09-18: DID NOT REPRODUCE, and SCHED_FIFO is now on.** Granted via
+> `/etc/security/limits.d/90-aow-rtprio.conf` (`efun - rtprio 80`) -- scoped
+> to the user, unlike the `setcap` in (c) below, which lands on the system
+> interpreter. One 142 s `--no-torque` run with the mirror connected:
+> tick lateness median 0.03 ms, p99 0.76, worst 1.12 (against 0.09 / 0.86-0.90
+> / 1.6-3.6 without), and **0.00% of ticks reused the previous IMU sample**
+> in that run and in four without it -- so the reader is not being starved,
+> which was the 09-16 mechanism. The code has moved a long way since (reader,
+> GC warm-up, the loop), so the two are not the same experiment. One run: if
+> it regresses, the record shows it -- `bike_slip_ms`, and identical
+> consecutive `bike_quat` rows for a starved reader.
+
 **M1 and M2 are DONE on the Pi, 2026-09-16.**
 
 | | Mac (timer 2 ms) | **Pi 3B+ (timer 1 ms)** |

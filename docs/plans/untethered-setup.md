@@ -951,38 +951,44 @@ Measured 2026-09-17, and the reason this section exists: on house wifi at
 is what the mirror's chugging is. The average hides it entirely -- see
 `docs/status.md` for the full table.
 
-**NOTHING HERE NEEDS THE SD CARD OR A MONITOR.** It is all ssh. What it does
-need is the right file:
+**NOTHING HERE NEEDS THE SD CARD OR A MONITOR.** It is all ssh. The Pi runs
+**Debian 13 + NetworkManager**, with the Imager's network written as netplan
+(`/etc/netplan/90-NM-*.yaml`), which NM renders into `/run` as
+`netplan-wlan0-<SSID>` on every boot.
 
-  * the Pi on the bike runs **Debian 13 + NetworkManager, configured by
-    NETPLAN**. The live NM profile is named `netplan-wlan0-<SSID>`, which is
-    the tell: it is GENERATED. `nmcli con add/modify` appears to work and is
-    reverted the next time anything runs `netplan apply`.
-  * so the file to edit is `/etc/netplan/*.yaml`, under `wifis: wlan0:
-    access-points:`.
+Corrected 2026-09-17 by trying it -- an earlier version of this section said
+"edit the netplan file, never nmcli", and was wrong on both points below:
 
-**ADD A SECOND ACCESS POINT; NEVER REPLACE THE FIRST.** That is the whole
-anti-lockout property -- `access-points:` is a map and NetworkManager will
-associate with whichever is in range, so a new network that does not work
-leaves the old one still joinable and ssh still available. Replacing the entry
-is the one way to end up needing the monitor this section promises to avoid.
+  * **A NEW profile made with `nmcli con add` is permanent.** It is written to
+    `/etc/NetworkManager/system-connections/<name>.nmconnection`, a plain
+    keyfile netplan never touches. What `netplan apply` regenerates is only the
+    `netplan-*` profiles, so *editing those* with nmcli is what does not stick.
+    So: leave the Imager's profile alone and ADD one with nmcli.
+  * **"SAME PASSWORD" CANNOT BE COPIED FROM THE EXISTING PROFILE.** The Imager
+    stores the key as 64 hex characters -- the precomputed PSK, which is
+    PBKDF2 of the passphrase SALTED WITH THE SSID. Copied verbatim onto `ATA`
+    it failed at the 4-way handshake ("secrets were required"), because it is
+    `ATA-5G`'s key, not the passphrase. Only the operator can type it.
 
-```yaml
-      access-points:
-        "ATA-5G":                 # keep this. it is the way back in.
-          auth:
-            key-management: "psk"
-            password: "<unchanged>"
-        "<new SSID>":             # the 2.4 GHz band, or the laptop's AP
-          auth:
-            key-management: "psk"
-            password: "<the new passphrase>"
+**ADD A PROFILE; NEVER REPLACE THE ONE YOU ARE CONNECTED THROUGH.** That is the
+whole anti-lockout property: if the new network fails, NM falls back to the
+old profile and ssh comes back. Measured, not assumed -- the failed `ATA`
+attempt above dropped ssh for ~20 s and returned on `ATA-5G` by itself.
+
+```sh
+# 1. create it, passphrase typed at a hidden prompt (not in shell history)
+ssh -t efun@aowbike.local 'read -rsp "passphrase: " p; echo; \
+  sudo nmcli con add type wifi ifname wlan0 con-name <SSID> ssid <SSID> \
+    wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$p" wifi.powersave 2 >/dev/null'
+# 2. switch, detached so the ssh drop cannot kill it, falling back on failure
+ssh efun@aowbike.local 'sudo systemd-run --collect sh -c \
+  "nmcli --wait 30 con up <SSID> || nmcli --wait 30 con up netplan-wlan0-ATA-5G"'
+# 3. ~20 s later
+ssh efun@aowbike.local '/usr/sbin/iw dev wlan0 link'
 ```
 
-Then `sudo netplan apply`, and `iw dev wlan0 link` to see which one it took.
-`netplan try` self-reverts after 120 s but prompts on the console, which is
-the wrong shape for ssh; the second-access-point rule is the better safety
-net.
+At boot NM joins the most recently used profile among those in range; set
+`connection.autoconnect-priority` on the new one to make the choice explicit.
 
 **SCAN WITH `iw`, NOT WITH `nmcli`.** Recorded because it cost a wrong
 conclusion on 2026-09-17: `nmcli dev wifi list` returned only the associated
@@ -1006,28 +1012,58 @@ sudo iw dev wlan0 scan | grep -E "^BSS|freq:|SSID:|signal:" | paste - - - -
 | `ATA-5G_EXT` | 5745 MHz | -69 dBm |
 | `CONNEX-e04f4305d38c` | 2417 MHz | -58 dBm |
 
-`ATA` is the same router's 2.4 GHz band with the same credentials, and it is
-**13 dB stronger** than the band the bike is using -- about 20x the received
-power. Since what was measured is rate adaptation (130 -> 65 Mbit/s) and tx
-failures, both symptoms of a marginal link, that margin is the single most
-likely fix and the cheapest to try.
+`ATA` is the same router's 2.4 GHz band: its BSSID is `ATA-5G`'s plus one
+(`…f1:de` vs `…f1:dd`), so it is the same box and the same LAN -- the laptop
+can stay on `ATA-5G` and still reach the bike. **The passphrase may match; the
+stored key cannot** (see above).
 
-The honest caveat: 2417 MHz is channel 2 and `CONNEX` sits on it at -58 dBm,
-so 2.4 GHz here has CO-CHANNEL NEIGHBOURS where 5 GHz has none. Contention
-adds latency; a 13 dB margin removes retries. The payload is ~22 kB/s, which
-is nothing on either band, so signal should win -- but it is a prediction, and
-the gap-tail measurement above is how to check it.
+**THE "13 dB BETTER" WAS ONE SCAN, AND IT DID NOT REPEAT.** Six scans later the
+same day, bike re-powered and possibly moved, 3 s apart:
+
+| SSID | scan above | six scans, later | spread |
+|---|---|---|---|
+| `ATA-5G` | -70 | **-63 to -64** | 1 dB |
+| `ATA` | -57 | **-58 to -60** | 2 dB |
+| `ATA_EXT` | -63 | **-51 to -52** | 1 dB |
+
+Stable within a sitting, different between sittings -- position, not noise.
+The margin is ~5 dB today, not 13.
+
+**AND THE STALLS DID NOT REPEAT EITHER.** Same probe shape (100 Hz UDP, bike ->
+laptop, gaps timed on the laptop), on `ATA-5G`, Pi idle:
+
+| run | signal | packets | gap p99 | max | gaps >33 ms |
+|---|---|---|---|---|---|
+| the original | -74 dBm | 793/800 | -- | 552 ms | **6 in 8 s** |
+| 30 s | -66 | 2788/2789 | 11.4 ms | 23 ms | **0** |
+| 60 s | -70 | 5869/5869 | 10.8 ms | 24 ms | **0** |
+| 60 s, on **`ATA`** | -54 | 5862/5862 | 13.6 ms | 25 ms | **0** |
+
+So the stalls are INTERMITTENT and their cause is not established. -70 dBm
+was clean for a minute, so signal alone does not explain them. Candidates not
+yet ruled out, laptop side included: macOS AWDL (AirDrop/Continuity hops the
+laptop's radio off-channel periodically), a background scan on either end, or
+other traffic on the router at the time. `ATA` is still worth having for the
+margin once the bike moves around the room, but switching to it cannot be
+judged against a baseline that is already clean. The comparison needs both
+bands measured in the same sitting, and more than one sitting.
 
 **THE OPTIONS, AND WHAT EACH COSTS**
 
 | option | cost | buys |
 |---|---|---|
-| **`ATA` (2.4 GHz, same router)** | one netplan edit | +13 dB. Still house networking, still shares a channel with `CONNEX` |
-| `ATA_EXT` (2.4 GHz extender) | same edit | +7 dB, and only worth it if the extender is physically nearer the bench than the router |
-| **laptop-hosted AP** | Internet Sharing from a WIRED uplink; laptop is offline while hosting if it has none | a link that does not depend on house networking at all -- the plan of record |
-| dedicated travel router | a purchase, and a thing to power at the bench | isolated network, configured once on both ends, laptop keeps its own wifi |
-| stay on `ATA-5G` | nothing | the measured 100-150 ms stalls |
+| **`ATA` (2.4 GHz, same router)** | one `nmcli con add` + the passphrase typed once | ~5 dB today (13 in one earlier scan). Still house networking, shares channel 2 with `CONNEX`; laptop stays on `ATA-5G` |
+| `ATA_EXT` (2.4 GHz extender) | same | strongest at the bench today (-52). An extender adds a wireless hop to the laptop unless the laptop joins it too |
+| laptop-hosted AP | Internet Sharing from a WIRED uplink (Ethernet adapter, or a phone's USB tether); without one the laptop -- and any Claude session on it -- is offline | a link independent of house networking |
+| Pi-hosted AP | NM `mode=ap` profile on the bike; same laptop-offline problem, and a bad AP config is a lockout unless house wifi stays as the fallback | same, with the bike owning the network |
+| **travel router in repeater mode** | a purchase (~$30-60), a thing to power | its own SSID at the bench AND internet via the house wifi behind it -- the only option where the laptop keeps internet on one radio |
+| stay on `ATA-5G` | nothing | clean for 90 s today; stalled 6 times in 8 s last session |
 | ethernet | a cable | ruled out by the operator |
+
+**DECIDED 2026-09-17: a router.** House wifi on `ATA` now; move the router or
+use a different one if the link degrades. Both APs rejected: the laptop would
+lose internet (no cell service at the bench to tether from) and the M4 only
+hosts one through legacy CLI routes.
 
 None of these are exclusive: the anti-lockout rule means the bike can carry
 `ATA`, `ATA-5G` and the laptop AP all at once and pick by priority.
