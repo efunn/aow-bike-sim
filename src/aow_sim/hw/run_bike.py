@@ -3,7 +3,7 @@
     python -m aow_sim.hw.run_bike --bundle deploy/bundle.npz
 
 Structure (docs/plans/untethered-setup.md):
-  control thread  SCHED_FIFO, 100 Hz — SyncRead -> DriveController -> BulkWrite
+  control thread  SCHED_FIFO, 100 Hz — SyncRead -> DriveController -> SyncWrite
   ahrs thread     200 Hz             — UART -> latest-value slot
   link thread      50 Hz             — UDP command in, telemetry out
 
