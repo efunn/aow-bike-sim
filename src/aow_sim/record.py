@@ -51,6 +51,9 @@ from .control import gamepad as gp
 from .control.linearize import design_all, settle_upright
 from .control.righting import (RightingSequencer, roll_pitch,
                                settle_fallen, settle_inverted)
+import yaml
+
+from .control.flick import MOVES_DIR
 from .run_drive import (_LEAD_MAX, _TRAIL, _TURN_RATE, _command_ref,
                         _fresh, _overlay)
 
@@ -58,24 +61,57 @@ from .run_drive import (_LEAD_MAX, _TRAIL, _TURN_RATE, _command_ref,
 # the gamepad/command machinery below does not apply to them.
 _SEQUENCES = {"right", "demo"}
 
-# (t [s], label, fn(controller, psi0)) -- applied once when the clock passes t.
+# (t [s], label, fn(controller, psi0, v_max)) -- applied once when the clock
+# passes t. v_max is handed in so a script can be written in the same VELOCITY
+# FRACTIONS the eval grid uses, rather than hard-coding metres per second that
+# silently stop matching when drive.v_max moves.
 _SCRIPTS = {
     "drive": [
-        (0.5, "forward 0.8", lambda c, p: c.set_command_polar(0.8, 0.0, psi_cmd=p)),
-        (4.0, "turn +90", lambda c, p: c.set_command_polar(0.8, 0.0, psi_cmd=p + np.pi / 2)),
-        (8.0, "stop", lambda c, p: c.set_command_polar(0.0, 0.0, psi_cmd=p + np.pi / 2)),
-        (10.5, "reverse 0.5", lambda c, p: c.set_command_polar(-0.5, 0.0, psi_cmd=p + np.pi / 2)),
-        (14.0, "about-face", lambda c, p: c.set_command_polar(0.0, 0.0, psi_cmd=p - np.pi / 2)),
+        (0.5, "forward 0.8", lambda c, p, vm: c.set_command_polar(0.8, 0.0, psi_cmd=p)),
+        (4.0, "turn +90", lambda c, p, vm: c.set_command_polar(0.8, 0.0, psi_cmd=p + np.pi / 2)),
+        (8.0, "stop", lambda c, p, vm: c.set_command_polar(0.0, 0.0, psi_cmd=p + np.pi / 2)),
+        (10.5, "reverse 0.5", lambda c, p, vm: c.set_command_polar(-0.5, 0.0, psi_cmd=p + np.pi / 2)),
+        (14.0, "about-face", lambda c, p, vm: c.set_command_polar(0.0, 0.0, psi_cmd=p - np.pi / 2)),
     ],
     # The command that motivated this tool: does the bike translate sideways
     # while holding heading, or does it yaw away and slide?
     "crab": [
-        (1.0, "crab LEFT 0.4", lambda c, p: c.set_command_polar(0.4, np.pi / 2, psi_cmd=p)),
-        (5.0, "hold", lambda c, p: c.set_command_polar(0.0, 0.0, psi_cmd=p)),
-        (7.0, "crab RIGHT 0.4", lambda c, p: c.set_command_polar(0.4, -np.pi / 2, psi_cmd=p)),
-        (11.0, "hold", lambda c, p: c.set_command_polar(0.0, 0.0, psi_cmd=p)),
-        (13.0, "fwd+crab", lambda c, p: c.set_command_polar(
+        (1.0, "crab LEFT 0.4", lambda c, p, vm: c.set_command_polar(0.4, np.pi / 2, psi_cmd=p)),
+        (5.0, "hold", lambda c, p, vm: c.set_command_polar(0.0, 0.0, psi_cmd=p)),
+        (7.0, "crab RIGHT 0.4", lambda c, p, vm: c.set_command_polar(0.4, -np.pi / 2, psi_cmd=p)),
+        (11.0, "hold", lambda c, p, vm: c.set_command_polar(0.0, 0.0, psi_cmd=p)),
+        (13.0, "fwd+crab", lambda c, p, vm: c.set_command_polar(
             float(np.hypot(0.5, 0.3)), float(np.arctan2(0.3, 0.5)), psi_cmd=p)),
+    ],
+
+    # -- EVAL-GRID SINGLES, the README tiles -----------------------------
+    #
+    # Each is ONE command out of `train_general_rl._EVAL_CMDS`, applied as a
+    # STEP at t=0 and held -- which is exactly what an eval episode does. A
+    # thumbnail has to say one thing, so these are deliberately not `drive`,
+    # which runs the whole sequence back to back.
+    #
+    # The fractions below are the grid's own (0.67 fwd, -0.42 reverse, scaled
+    # by v_max) so a tile stays the command the metrics tables describe. They
+    # are duplicated rather than imported because `train_general_rl` pulls in
+    # gymnasium, SB3 and torch, and recording a video must not need any of
+    # them. If _EVAL_CMDS moves, move these with it.
+    #
+    # NOTE these are not seeded to match `_eval_episodes` (seed 10_000 + k), so
+    # a tile is the eval COMMAND from a settled standstill, not byte-for-byte
+    # the scored episode. `analysis/eval_video.py` is the tool that reproduces
+    # the scored episode exactly.
+    "eval_hold": [
+        (0.0, "hold station", lambda c, p, vm: c.set_command_polar(0.0, 0.0, psi_cmd=p)),
+    ],
+    "eval_spin180": [
+        (0.0, "standstill about-face", lambda c, p, vm: c.set_command_polar(0.0, 0.0, psi_cmd=p + np.pi)),
+    ],
+    "eval_turn_fwd": [
+        (0.0, "fwd 0.67 + 90", lambda c, p, vm: c.set_command_polar(0.67 * vm, 0.0, psi_cmd=p + np.pi / 2)),
+    ],
+    "eval_turn_rev": [
+        (0.0, "rev 0.42 + 90", lambda c, p, vm: c.set_command_polar(-0.42 * vm, 0.0, psi_cmd=p + np.pi / 2)),
     ],
 }
 
@@ -213,6 +249,11 @@ def _hud(frame, seg, pen_down, v_max, crab_max):
 # `corner` is the one to use when a run has BOTH a pitch event and a roll
 # event: a pure rear view flattens the wheelie (it happens straight down the
 # camera axis) and a side view flattens the righting. 135 deg splits them.
+# Seconds of trail drawn behind the bike, teleop's own fading line. The
+# viewer's default is 2 s; a short clip reads better with less, and an
+# accumulate-forever trail reads as clutter.
+_TRAIL_S = 1.0
+
 _CAM_PRESETS = {"rear": (-22.0, 180.0), "front": (-22.0, 0.0),
                 "side": (-12.0, 90.0), "corner": (-18.0, 135.0)}
 
@@ -269,6 +310,15 @@ _WEAVE_PERIOD_S = 3.5
 # away from where it landed, so 8 m left only 0.4 m of margin at the end of a
 # 15 s take and none at all for a longer one.
 _DEMO_FLOOR = 12.0
+# Rendered floor for every OTHER recording, and the same argument as
+# _DEMO_FLOOR above: collision is infinite, `sim.floor_size` only sets what is
+# DRAWN, so this is identical physics and a bigger picture. The config's 3.0 m
+# is sized for the viewer sitting at the origin; a tracking camera following a
+# bike that has driven 3 m puts the edge of the world in frame, and past it
+# the render is black. Raise it here rather than in bike_params.yaml -- that
+# file is hashed into `plant_digest`, and a cosmetic change to it would mark
+# every trained policy stale.
+_RENDER_FLOOR = 20.0
 # Let it stop moving before the mechanism engages. 3.0 was arbitrary; measured
 # floor is 0.75 s, and it does not fail gracefully below that -- at 0.25-0.50 s
 # the wings jam against a bike that is still rolling, the servo SATURATES at
@@ -554,8 +604,14 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
            retract_after: float = 1.0, inverted: bool = False,
            grid: float | None = None, linkage: bool = False,
            params_path=None, linkage_cfg=None, side: float = 1.0,
-           recover_deg: float | None = None) -> dict:
-    params = load_params(params_path)
+           recover_deg: float | None = None,
+           trail_s: float = _TRAIL_S,
+           floor: float = _RENDER_FLOOR, sensors: str = "policy",
+           ahrs: str | None = None, ahrs_tau: float | None = None,
+           odometry: str | None = None) -> dict:
+    params = copy.deepcopy(load_params(params_path))
+    # Visual only -- see _RENDER_FLOOR. Never written back to disk.
+    params["sim"]["floor_size"] = max(params["sim"]["floor_size"], float(floor))
     if grid:
         params["sim"]["floor_grid_m"] = grid
     righting = script in _SEQUENCES
@@ -577,7 +633,8 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
         fell, v_max, crab_max, drawing = False, 1.2, 0.0, None
         return _render(model, data, c, states, marks, out, width, height, fps,
                        distance, elevation, azimuth, camera, v_max, crab_max,
-                       {"mode": mode, "script": script, "fell": fell})
+                       {"mode": mode, "script": script, "fell": fell},
+                       drawing, trail_s)
 
     model = build_model(params, variant="full", hockey=hockey)
     data = _fresh(model, settle_upright(model).qpos)
@@ -585,8 +642,60 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
     c.reset(model, data)
 
     mode = "analytic"
+    ahrs_model = odo = None
     if not analytic:
         name = general or params["control"].get("general_move", "general_rl")
+
+        # SENSORS: MATCH WHAT THE POLICY WAS TRAINED WITH, by default.
+        #
+        # Until this existed, record.py drove every policy on MuJoCo GROUND
+        # TRUTH, while run_drive.py's teleop could put the onboard velocity
+        # estimate and the TM151 attitude error model in the loop. A
+        # sensor-trained policy was therefore recorded with perfect sensing it
+        # will never have -- which flatters it, and does not match the eval
+        # that scores it. drive.py printed a NOTE about it on every run and
+        # there was no flag to act on.
+        #
+        # Deriving the default from the move file rather than defaulting to
+        # `none` is the point: a recording is a demo artifact, and the
+        # operator should not have to remember four flags for it to be honest.
+        # --sensors truth restores the old behaviour.
+        #
+        # READ BEFORE engage_general, not after. The NOTE fires inside engage
+        # and is guarded on c._odometry_active / c._ahrs_active, so both the
+        # models and the flags have to exist by then -- and c._gen does not
+        # exist yet, so the move yaml is read directly.
+        spec = {}
+        if sensors != "truth":
+            mp = MOVES_DIR / f"{name}.yaml"
+            if mp.exists():
+                spec = yaml.safe_load(mp.read_text()) or {}
+        want_ahrs = str(spec.get("ahrs_level") or "none")
+        want_tau = spec.get("ahrs_tau_s")
+        want_odo = "front" if spec.get("obs_odometry") else None
+        want_enc = str(spec.get("odometry_encoder") or "ideal")
+        if ahrs is not None:
+            want_ahrs = ahrs
+        if ahrs_tau is not None:
+            want_tau = ahrs_tau
+        if odometry is not None:
+            want_odo = None if odometry == "none" else odometry
+        if want_ahrs != "none":
+            from .sim_ahrs import TAU_ORIENT_S, SimAhrs
+            ahrs_model = SimAhrs(model, params, level=want_ahrs,
+                                 tau_orient_s=(TAU_ORIENT_S if want_tau is None
+                                               else float(want_tau)))
+        if want_odo:
+            from .sim_odometry import SimOdometry
+            odo = SimOdometry(model, params, mode=want_odo, encoder=want_enc,
+                              ahrs=ahrs_model)
+        c._odometry_active = odo is not None
+        c._ahrs_active = ahrs_model is not None
+        print(f"  sensors: ahrs={want_ahrs}"
+              + (f" tau={float(want_tau):g}s" if ahrs_model is not None else "")
+              + f"  odometry={want_odo or 'truth'}"
+              + (f" encoder={want_enc}" if odo is not None else ""))
+
         c.engage_general(data, name=name)
         mode = f"general:{name}"
     psi0 = c._psi
@@ -634,11 +743,24 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
             c.set_command_polar(speed, course, psi_cmd=psi_cmd)
         else:
             while fired < len(events) and data.time >= events[fired][0]:
-                events[fired][2](c, psi0)
+                events[fired][2](c, psi0, v_max)
                 marks.append((len(states), events[fired][1]))
                 print(f"  t={data.time:5.2f}s  {events[fired][1]}")
                 fired += 1
-        c.step(model, data)
+        # THE CONTROLLER SEES THE ESTIMATE, PHYSICS KEEPS THE TRUTH.
+        # Safe to swap around this one call because drive.py makes no MuJoCo
+        # calls -- it reads `data` and writes `data.ctrl`. Same contract
+        # run_drive.py's teleop loop relies on.
+        if odo is not None:
+            with odo.estimated(data, model.opt.timestep):
+                c.step(model, data)
+        elif ahrs_model is not None:
+            # Orientation path only; SimOdometry would otherwise own the clock.
+            ahrs_model.tick(data, model.opt.timestep)
+            with ahrs_model.estimated(data):
+                c.step(model, data)
+        else:
+            c.step(model, data)
         mujoco.mj_step(model, data)
         if len(states) * every <= int(data.time / model.opt.timestep):
             states.append((data.qpos.copy(), data.qvel.copy(),
@@ -652,12 +774,14 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
 
     return _render(model, data, c, states, marks, out, width, height, fps,
                    distance, elevation, azimuth, camera, v_max, crab_max,
-                   {"mode": mode, "script": script, "fell": fell})
+                   {"mode": mode, "script": script, "fell": fell},
+                   drawing, trail_s)
 
 
 def _render(model, data, c, states, marks, out: Path, width: int, height: int,
             fps: int, distance: float, elevation: float, azimuth: float,
-            camera: str, v_max: float, crab_max: float, meta: dict) -> dict:
+            camera: str, v_max: float, crab_max: float, meta: dict,
+            drawing=None, trail_s: float = _TRAIL_S) -> dict:
     """PASS 2 -- frame the camera to the path actually taken, then render the
     stored states. Replaying snapshots keeps this exact: no re-simulation,
     so the video cannot drift from the run that produced the numbers."""
@@ -677,6 +801,7 @@ def _render(model, data, c, states, marks, out: Path, width: int, height: int,
     # Stream frames straight to the encoder. Accumulating them was a silent
     # killer: 500 frames at 900x640x3 is ~880 MB, and the process just died
     # mid-render with no traceback. Only the contact-sheet tiles are kept.
+    trail: list[tuple[float, float, float]] = []
     out.parent.mkdir(parents=True, exist_ok=True)
     # Land each tile inside the phase it is labelled with. Sampling a fixed
     # 1.5 s after every mark silently skipped short phases -- the wheelie is
@@ -692,20 +817,33 @@ def _render(model, data, c, states, marks, out: Path, width: int, height: int,
     for i, (qpos, qvel, cmd, pen_down, seg) in enumerate(states):
         data.qpos[:], data.qvel[:] = qpos, qvel
         mujoco.mj_forward(model, data)
+        # The trail wants a clock. Replaying snapshots does not advance
+        # data.time, so drive it off the frame index -- _overlay ages the
+        # trail against it, and nothing else in the overlay reads it.
+        data.time = i / float(fps)
         renderer.update_scene(data, camera=cam)
         # reset=False: append the dial onto the model geoms already in the
         # scene instead of clearing them (the viewer owns a private scene;
         # this one does not). `cmd is None` before a righting run hands off:
         # there is no drive command yet, so there is no dial to draw.
+        #
+        # TWO DIFFERENT TRAILS, and the difference is the pen.
+        #  - A DRAWING (o/s/t) needs the pen: spheres for every point laid
+        #    down with it DOWN, kept forever, so a pen-up gap is simply
+        #    absent rather than bridged by a stroke that was never driven.
+        #  - Everything else gets TELEOP'S OWN trail -- a fading line over
+        #    `trail_level` seconds, exactly what the viewer draws. An
+        #    accumulate-forever bead chain reads as clutter on a short clip
+        #    and buries the bike it is supposed to be behind.
         if cmd is not None:
             _overlay(renderer.scene, model, data, c, [True], v_max, reset=False,
-                     command=cmd)
-        # Only points laid down with the pen DOWN. Spheres, not a
-        # polyline, so a pen-up gap is simply absent rather than
-        # bridged by a stroke that was never driven.
-        drawn = np.array([q[:2] for q, _, _, pen, _ in states[:i + 1] if pen])
-        if len(drawn):
-            _trail(renderer.scene, drawn)
+                     command=cmd,
+                     trail=None if drawing else trail,
+                     trail_level=None if drawing else trail_s)
+        if drawing:
+            drawn = np.array([q[:2] for q, _, _, pen, _ in states[:i + 1] if pen])
+            if len(drawn):
+                _trail(renderer.scene, drawn)
         frame = (_phase_hud(renderer.render(), seg)
                  if meta["script"] in _SEQUENCES
                  else _hud(renderer.render(), seg, pen_down, v_max, crab_max))
@@ -774,6 +912,27 @@ def main() -> None:
     # sideways" can be read off the frame instead of inferred from a tilt.
     ap.add_argument("--elevation", type=float, default=-89.0)
     ap.add_argument("--azimuth", type=float, default=90.0)
+    ap.add_argument("--trail-seconds", type=float, default=_TRAIL_S,
+                    metavar="S", help="seconds of fading trail behind the "
+                    "bike (teleop's own); 0 draws none. Ignored by the "
+                    "o/s/t drawings, which own the pen")
+    ap.add_argument("--sensors", choices=("policy", "truth"), default="policy",
+                    help="`policy` (default) puts the onboard velocity "
+                         "estimate and AHRS error model the policy TRAINED "
+                         "with into the loop; `truth` drives on MuJoCo ground "
+                         "truth, which is what this tool did before the flag "
+                         "existed")
+    ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171"),
+                    default=None, help="override the AHRS error model")
+    ap.add_argument("--ahrs-tau", type=float, default=None, metavar="SECONDS",
+                    help="override the orientation-error correlation time")
+    ap.add_argument("--odometry", default=None,
+                    choices=("none", "front", "blend", "lon_only", "lat_only"),
+                    help="override the velocity estimator")
+    ap.add_argument("--floor", type=float, default=_RENDER_FLOOR, metavar="M",
+                    help="rendered floor half-extent. Visual only -- MuJoCo "
+                         "plane collision is infinite -- so this just stops a "
+                         "tracking camera showing the edge of the world")
     ap.add_argument("--hockey", action="store_true")
     # --script right only
     ap.add_argument("--arm", action="store_true",
@@ -829,7 +988,8 @@ def main() -> None:
                  a.fps, distance, a.elevation, a.azimuth, a.hockey,
                  camera, not a.arm, a.seconds, a.retract_after,
                  a.inverted, a.grid, a.linkage, a.params, a.linkage_config,
-                 -1.0 if a.mirror else 1.0, a.recover_deg))
+                 -1.0 if a.mirror else 1.0, a.recover_deg, a.trail_seconds,
+                 a.floor, a.sensors, a.ahrs, a.ahrs_tau, a.odometry))
 
 
 if __name__ == "__main__":
