@@ -267,7 +267,7 @@ model (alone: falls at 3.2 s; gyro-only, estimate-only and truth stay up), and
 the power-on misalignment does not predict it (p 0.23). The test (`tests/test_policy_endurance.py`, a
 POLICY METRIC in its own registry section: it moves with the policy, not the
 code) is 18 fixed seeds x 60 s, pass if <= 4 fall, derived from a 600 s MTBF
-target; today 11 of 18. Paths: longer standing episodes in training (evals are 5 s, episodes
+target; today 9 of 18 (11 before the 09-22 yaw-drift fix moved the AHRS rng stream). Paths: longer standing episodes in training (evals are 5 s, episodes
 <= 15 s), and a bench RMS for the TM151 -- the model uses the datasheet's
 "<1.5 deg" bound as its RMS.
 

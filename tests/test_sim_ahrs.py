@@ -108,6 +108,33 @@ def test_gyro_bias_wanders_but_stays_bounded(model, params, data):
     assert np.all(np.abs(a._gyro_bias) < 6 * sigma), a._gyro_bias
 
 
+def test_yaw_drift_is_a_steady_rate_about_the_world_vertical(model, params):
+    """"3.0 deg every 25 minutes" is a RATE, one direction per power-on. It
+    was a per-sample random walk until 2026-09-22, ~80x too small at 60 s.
+    About the WORLD vertical: tilting the bike must not turn heading drift
+    into roll or pitch."""
+    from aow_sim.sim_ahrs import YAW_DRIFT_DEG_PER_S, _quat_mul
+    d = mujoco.MjData(model)
+    d.qpos[:] = settle_upright(model).qpos
+    # Tilt the chassis 20 deg in roll so body z and world z part company.
+    h = np.deg2rad(20.0) / 2
+    d.qpos[3:7] = _quat_mul(np.array([np.cos(h), np.sin(h), 0, 0]), d.qpos[3:7])
+    mujoco.mj_forward(model, d)
+    a = SimAhrs(model, params, level="tm151", seed=3)
+    rms = ORIENT_RMS_DEG["tm151"]
+    a.orient_rms_deg = (0.0, 0.0, 0.0)          # isolate the drift
+    t = 60.0
+    q = _run(a, d, int(t / 0.01))["quat"]
+    a.orient_rms_deg = rms
+    true_rpy = _rpy(d.qpos[3:7])
+    got = _rpy(q[-1])
+    want = YAW_DRIFT_DEG_PER_S["tm151"] * t     # 0.12 deg
+    assert np.degrees(abs(got[2] - true_rpy[2])) == pytest.approx(want, rel=0.02)
+    assert np.allclose(got[:2], true_rpy[:2], atol=1e-9), "drift leaked into roll/pitch"
+    mid = _rpy(q[len(q) // 2])[2] - true_rpy[2]
+    assert mid == pytest.approx((got[2] - true_rpy[2]) / 2, rel=0.02), "not linear"
+
+
 def test_accel_misalignment_is_fixed_per_power_on_not_per_tick(model, params):
     """A build error is a constant, not a noise source. Redrawing it every tick
     would invent a disturbance the hardware does not have."""

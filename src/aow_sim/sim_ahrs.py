@@ -21,7 +21,9 @@ or measured to do nothing. The one that matters is in the DYNAMIC block:
 roll/pitch <1.5 deg (TM151) against <1.0 deg (TM171). Ablated on the eval grid,
 swapping only that row recovers 0.537 -> 0.635 of the 0.689 the full TM171
 scores, while yaw drift alone gives 0.542 and misalignment alone 0.519 --
-i.e. nothing, against a seed noise floor of about +-0.02.
+i.e. nothing, against a seed noise floor of about +-0.02. (The yaw figure was
+measured with the pre-2026-09-22 random-walk drift, ~80x too small at 60 s --
+see YAW_DRIFT_DEG_PER_S. It does not vouch for the corrected drift.)
 
 Update rate is irrelevant because the Pi senses at 100 Hz and both parts run
 at 400 Hz or better internally, with a user-configurable ODR that goes down to
@@ -216,6 +218,16 @@ ORIENT_RMS_DEG = {
 # Pure-inertial yaw drift: "3.0 deg error every 25 minutes" (TM151), 2.6 for
 # the TM171. Gyro and accelerometer rows are otherwise SHARED between the two
 # parts, so only orientation, yaw drift and misalignment change with `level`.
+#
+# A CONSTANT RATE ABOUT THE WORLD VERTICAL, sign drawn once per power-on. With
+# no magnetometer the heading is integrated gyro, and a steady rate error --
+# Earth rotation is the candidate (15.04 deg/h * sin(latitude) about the local
+# vertical) -- walks it linearly about the world axis however the bike is
+# tilted. Until 2026-09-22 this drew a fresh normal every sample, which made it
+# a random walk: ~0.0015 deg after 60 s instead of 0.12, and rate-dependent.
+# The sign stays a coin flip: if Earth rate is the whole cause it is fixed by
+# hemisphere, but the datasheet figure is a bound and the cause is unverified.
+# The gyro does NOT carry the matching rate; its bias is a separate row.
 YAW_DRIFT_DEG_PER_S = {
     "tm151_static": 3.0 / (25.0 * 60.0),
     "tm151": 3.0 / (25.0 * 60.0),
@@ -395,6 +407,10 @@ class SimAhrs:
         m = np.deg2rad(MISALIGN_DEG.get(self.level, ACCEL_MISALIGN_DEG))
         self._accel_tilt = self.rng.uniform(-m, m, size=3) if self.level != "none" \
             else np.zeros(3)
+        # Heading drift direction, also fixed per power-on (see
+        # YAW_DRIFT_DEG_PER_S). Drawn after the tilt so the tilt keeps its value.
+        self._yaw_drift_sign = float(self.rng.choice((-1.0, 1.0))) \
+            if self.level != "none" else 0.0
 
     def _raw(self, data, name):
         adr, dim = self.adr[name]
@@ -412,14 +428,17 @@ class SimAhrs:
         rms = np.deg2rad(self.orient_rms_deg)
         self._orient_err = _gm_step(self._orient_err, dt, self.tau_orient_s,
                                     rms, self.rng)
-        # Yaw additionally WALKS: the datasheet quotes it as an error per unit
+        # Yaw additionally DRIFTS: the datasheet quotes it as an error per unit
         # time rather than an RMS, because nothing bounds heading the way
-        # gravity bounds roll and pitch. Sign is a coin flip per power-on.
+        # gravity bounds roll and pitch. A steady rate about the WORLD
+        # vertical, applied as an exact rotation outermost -- it is unbounded,
+        # so it does not belong inside the small-angle error quaternion.
         self._yaw_drift += (np.deg2rad(YAW_DRIFT_DEG_PER_S[self.level]) * dt
-                            * self.rng.standard_normal())
-        err = self._orient_err + np.array([0.0, 0.0, self._yaw_drift])
-        q_err = _small_angle_quat(err)
-        quat_out = _quat_mul(q_err, quat)
+                            * self._yaw_drift_sign)
+        h = 0.5 * self._yaw_drift
+        q_drift = np.array([np.cos(h), 0.0, 0.0, np.sin(h)])
+        q_err = _small_angle_quat(self._orient_err)
+        quat_out = _quat_mul(q_drift, _quat_mul(q_err, quat))
         quat_out /= np.linalg.norm(quat_out)
 
         # Gyro: white noise + a wandering bias + g-sensitivity. The last one is

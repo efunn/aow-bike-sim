@@ -193,7 +193,9 @@ tests/test_drive.py::test_reverse_circle_tracks            # 2026-09-22 crawl-st
 # sensors (estimate + TM151, as teleop runs by default), general_rl_cmd_
 # curriculum2b FALLS: 64 seeds x 60 s, 32 fell, MTBF 79 s (95% CI 56-116);
 # teleop fell at ~35 s. The test: 18 fixed seeds x 60 s, pass if <= 4 fall,
-# derived from a 600 s MTBF target (see tests/test_policy_endurance.py). Today: 11 of 18.
+# derived from a 600 s MTBF target (see tests/test_policy_endurance.py). Today: 9 of 18
+# (11 before the 2026-09-22 yaw-drift fix, which moved the AHRS rng stream --
+# a different draw of the same statistics, not an improvement).
 #
 # It comes with the ATTITUDE model: 60 s, seed 0, orientation error alone falls
 # at 3.2 s; gyro error alone, the estimate alone and truth all stay up.
@@ -204,4 +206,4 @@ tests/test_drive.py::test_reverse_circle_tracks            # 2026-09-22 crawl-st
 #   - measurement: the model takes the datasheet's roll/pitch BOUND (<1.5 deg)
 #     as its RMS; only tau 0.19 s is measured. A bench RMS on the real unit
 #     may make the model kinder.
-tests/test_policy_endurance.py::test_policy_stands_for_a_minute_on_its_own_sensors  # 2026-09-22 TM151 attitude: 11 of 18 fall within 60 s standing
+tests/test_policy_endurance.py::test_policy_stands_for_a_minute_on_its_own_sensors  # 2026-09-22 TM151 attitude: 9 of 18 fall within 60 s standing
