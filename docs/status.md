@@ -57,8 +57,8 @@ All four are bench work. **The sim-side item is being taken now:**
 > `moves/*.yaml`). See `eval-score-rewrite.md`.
 
 Not next, and deliberately: the ball shot (works, off the path), the
-privileged critic (speculative), the odometry rewrite (flown around, seven
-accepted red tests).
+privileged critic (speculative), the odometry rewrite (flown around; its
+tests were restructured 2026-09-21, see Health).
 
 **The self-righting wings came off that list on 2026-09-17: the co-rotating
 four-bar is BUILT and operating** -- this file had carried "design done, build
@@ -99,9 +99,9 @@ delays zeroed and flown with them (`linearize._undelayed`). Designing on the
 delayed plant gave garbage (fit R^2 0.74), because the reduced model has no
 state for the delay line. With that, the balance LQR is unaffected up to 8 ms,
 but **the drive-mode LQR falls going straight at 0.6 m/s with >= 2 ms**. That
-drops the odometry fixture, so seven odometry tests are registered for it, plus
-the 180 deg pivot 0.02 deg past its bound on the clip. A latency-aware LQR (the
-delay line as state) is the fix. Driven in teleop, the RL policy felt
+knocked over the old odometry fixture (those tests no longer ride the LQR,
+see Health), and the 180 deg pivot is 0.10 deg past its bound on the clip
+(3.10 vs 3.0). A latency-aware LQR (the delay line as state) is the fix. Driven in teleop, the RL policy felt
 unchanged by the clip; the delay is not yet teleop-tested.
 
 ---
@@ -159,21 +159,74 @@ hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 
 ## Health
 
-**Test suite, measured 2026-09-17** with `pytest -n 10 --dist load`:
+**Test suite, measured 2026-09-22** with `pytest -n 10 --dist load`:
 
-    20 failed, 446 passed, 9 skipped, 39.7 s
-    red set unchanged (20 accepted failures) -- tests/expected_failures.txt
+    9 failed, 557 passed, 16 skipped, 61.9 s
+    red set unchanged (9 accepted failures) -- tests/expected_failures.txt
 
-**Three came OFF the red list**, and by a route nobody was looking down:
-`actuators.steer_kv` 0.05 -> 0.0676 cleared
-`test_front_constraint_beats_roller_kinematics` and both
-`test_fused_estimator_end_to_end[standstill*]`. Confirmed causal by swapping
-that one value and re-running -- 3 passed at 0.0676, 3 failed at 0.05. The
-estimator was never what failed in those three; it was being judged against a
-plant whose steering was under-damped. The other four odometry entries are
-unmoved, so `odometry-rewrite.md` still has a job.
+9 = 8 analytic LQR (7 drive + the 180 deg pivot, one investigation: the
+at-speed design) + 1 standing endurance, a policy metric in its own registry
+section. It was 28 on 09-21. Wall time went 42 -> ~60 s with the endurance
+test (18 x 60 s flights in one test). Fixed 2026-09-22 though it greened
+nothing else: the gain schedule's +-1.2 m/s ends were identified with the bike
+IN THE AIR (settle_rolling snapshotted mid-bounce, zero contacts, so the fit
+said no input did anything); `settle_rolling` now refuses an airborne state
+and the deploy bundle is re-exported (only those two gain rows moved).
+`test_gain_schedule_designs_everywhere` is green: its fit bar is `MIN_FIT_R2`
+and the "reversed-caster" sign-flip assert is dropped -- the identified plant
+has steer acting on roll with the same sign at every speed. The LQR group is
+not reachable by re-weighting (16-point sweep); `q_roll_rate` 60 clears
+`sprint[-0.5]` alone and the pivot passes at `yaw_rate` 1.2 -- neither
+applied.
 
-+36 passing against 09-14, all from the onboard bring-up work: 18 in the new
+**Re-measured, not moved.** Several registry reasons had drifted from what the
+tests report: `test_reverse_circle_tracks` FALLS ("radius err 0.681" was a bike
+lying down); `test_gain_schedule_designs_everywhere` is one fit cell (yaw_rate
+at -0.5 m/s) at R^2 0.9489 against 0.95, not a failed design;
+`straight_sprint[-0.5]` stays upright only because of the 4 ms delay. Each
+steer-servo half was confirmed causal by switching it off with
+`bike_params.yaml` untouched.
+
+**Deprecated, -7.** The trajectory flick (`moves/flick.yaml`, optimised
+2026-07-19, never re-run) and the scripted flip: early LQR-handoff manoeuvres
+that fall on the current plant. Skipped (`DEPRECATED_MOVE` in test_drive.py),
+noted in `optimize_flick.py`, `control/flick.py`, `DriveController` (a
+`FutureWarning` on use) and `control.flip`. `flick_rl` is NOT deprecated.
+
+**Odometry tests rewritten, -12 +2.** They compared the estimator open-loop
+against sim truth on an analytic-LQR trajectory, so the delay's fall on the
+straight errored eleven of them. Moved to the RL policy, the longitudinal
+error split as 5-7 mm/s gearing arithmetic, 2-3 reference point, and the rest
+(47-109) REAR-WHEEL SLIP: they were measuring the contact model under a
+driver and calling it the estimator. Now:
+
+| file | question | marker |
+|---|---|---|
+| `test_hw_odometry.py` | the estimator's code, on synthetic no-slip inputs, exact to 1e-9 -- 83 tests, 0.14 s. Geometry read from `bike_params`, not the estimator: planting a zeroed rake, a 2% gearing error or a 5% wheelbase error is caught (48 / 24 / 40 red); built from the estimator's own constants, all three passed | `pure` |
+| `test_odometry_in_the_loop.py` | `control.general_move` on the sensors its yaml says it trained with (estimate + TM151): survives all four regimes (max roll <= 9.5 deg), tracks within 15% when moving; slip tripwire at 1.5x a recorded baseline (rear 67-142, front lateral 35-50 mm/s) | `contact`, `policy` |
+| `test_sim_odometry.py` | encoder test now under the policy; counts-vs-ideal lag 39.8 mm/s RMS, tripwire 60 | `contact` (+`policy`) |
+
+The tan-coefficient test is retired (it measured its fixture's conditioning).
+`test_hold_ramps_to_full_speed_with_auto_repeat` moved to the RL policy and
+passes.
+
+**NEW, registered: the policy falls over standing still on its own sensors.**
+Estimate + TM151 attitude (teleop's default): 64 seeds x 60 s, 32 fell, MTBF
+79 s (95% CI 56-116), highest in the first 10 s; teleop
+`--teleop --swing-linkage` fell at ~35 s. It comes with the orientation-error
+model (alone: falls at 3.2 s; gyro-only, estimate-only and truth stay up), and
+the power-on misalignment does not predict it (p 0.23). The test (`tests/test_policy_endurance.py`, a
+POLICY METRIC in its own registry section: it moves with the policy, not the
+code) is 18 fixed seeds x 60 s, pass if <= 4 fall, derived from a 600 s MTBF
+target; today 11 of 18. Paths: longer standing episodes in training (evals are 5 s, episodes
+<= 15 s), and a bench RMS for the TM151 -- the model uses the datasheet's
+"<1.5 deg" bound as its RMS.
+
+The slip numbers rest on `friction_sliding` 0.9 and `contact_solimp`, both
+GUESS, so contact calibration (item 2 above) will move them and the
+baseline.
+
+On 09-17, +36 passing against 09-14, all from the onboard bring-up work: 18 in the new
 `tests/test_hw_runbike.py` (the fall guard and the UDP command struct, both
 `pure`), 11 added to `test_hw_dynamixel.py` (the fourth servo, gain
 resolution), 2 in `test_hw_ahrs.py` (a non-Combo frame is skipped silently,

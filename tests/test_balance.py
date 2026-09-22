@@ -10,7 +10,7 @@ from aow_sim.run_balance import push_scenario, tilt_scenario
 
 # Closed-loop balance in the sim, plus the LQR's identified-model fit.
 # See `pytest --markers` for what each one means.
-pytestmark = pytest.mark.contact
+pytestmark = [pytest.mark.contact, pytest.mark.lqr]
 
 PUSH_N = 2.0  # comfortably inside the ~4 N envelope both controllers recover
 

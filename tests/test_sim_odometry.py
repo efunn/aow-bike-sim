@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from aow_sim.build_model import build_model, load_params
+from aow_sim.control.balance import extract_state
 from aow_sim.control.drive import DriveController
 from aow_sim.control.linearize import settle_upright
 from aow_sim.control.steer import XC330_COUNTS_PER_RAD
@@ -102,6 +103,7 @@ def test_counts_encoder_quantizes_to_the_servo_resolution(model, params):
     assert arc == pytest.approx(0.0002356, abs=1e-6)
 
 
+@pytest.mark.policy
 def test_both_encoders_agree_on_ONE_trajectory(model, params):
     """`counts` is noisier -- that is the point of it -- but it must not be
     BIASED, or v_lon inherits a scale error the estimator cannot see.
@@ -113,37 +115,51 @@ def test_both_encoders_agree_on_ONE_trajectory(model, params):
     reports the travel the solver actually allowed, so they disagree by however
     much the constraint solver bled off -- an artifact of the harness, not of
     the encoder.
+
+    DRIVEN BY THE GENERAL POLICY since 2026-09-21. The analytic LQR drove it
+    before and falls on this straight at 3.6 s with the 4 ms steer delay --
+    1.2 s after this window closed, with nothing here checking roll. Now the
+    roll is checked.
     """
+    from aow_sim.control.flick import MOVES_DIR
+    name = params["control"].get("general_move", "general_rl")
+    if not (MOVES_DIR / f"{name}.npz").exists():
+        pytest.skip(f"control.general_move names {name}, which is not exported")
     data = _settled(model)
     ctl = DriveController(params, model)
     ctl.reset(model, data)
-    ctl.set_speed(0.6)
+    ctl.engage_general(data)
+    ctl.set_command_polar(0.6)
     both = {e: SimOdometry(model, params, encoder=e) for e in ENCODERS}
     vs = {e: [] for e in ENCODERS}
+    max_roll = 0.0
     for k in range(6000):
         ctl.step(model, data)
         mujoco.mj_step(model, data)
+        max_roll = max(max_roll, abs(extract_state(data, np.zeros(3)).roll))
         for e, odo in both.items():
             odo.update(data, model.opt.timestep)
             if k > 3000:
                 vs[e].append(odo._last[0])
+    assert np.degrees(max_roll) < 25.0, (
+        f"bike fell (max roll {np.degrees(max_roll):.0f} deg); comparison meaningless")
     mu = {e: float(np.mean(v)) for e, v in vs.items()}
-    sd = {e: float(np.std(v)) for e, v in vs.items()}
     for e in ENCODERS:
         assert mu[e] == pytest.approx(mu["ideal"], abs=0.015), mu
 
-    # AND "counts" IS THE QUIETER OF THE TWO, which is the opposite of what
-    # "adds quantisation noise" suggests, so it is pinned here rather than
-    # left to surprise someone: measured 15.2 mm/s of spread on `ideal`
-    # against 10.8 on `counts`. `ideal` is RAW instantaneous joint velocity
-    # with no filter at all, while `counts` goes through the same 25 ms
-    # RateFilter the Pi runs -- and that filter removes more than the 4096
-    # counts/rev quantisation puts in (one count is 0.236 mm at the wheel,
-    # worth q/T = 9.4 mm/s over a 25 ms span).
+    # AND THE PRICE OF THE HARDWARE PATH IS BOUNDED. `ideal` is instantaneous
+    # joint velocity; `counts` quantises to 4096/rev and differences through
+    # the 25 ms RateFilter the Pi runs, so under a policy that works the hub
+    # it mostly pays LAG. Measured 2026-09-21 under general_rl_cmd_curriculum2b
+    # on this straight: RMS(counts - ideal) 39.8 mm/s, (reported - ideal) 70.3,
+    # both unbiased (-1.9, -3.8). A tripwire at 1.5x on `counts`.
     #
-    # So "ideal" is not a better sensor, it is an UNFILTERED one. It is a floor
-    # on ERROR, not on noise, and the trade `counts` makes is variance for lag.
-    assert sd["counts"] < sd["ideal"], sd
+    # This replaced "counts is QUIETER than ideal" (spread 10.8 vs 15.2 mm/s),
+    # which held under the analytic LQR and says nothing under the policy: the
+    # spread there is ~140 mm/s of real motion on both, 142.7 vs 142.4.
+    err = float(np.sqrt(np.mean((np.array(vs["counts"])
+                                 - np.array(vs["ideal"])) ** 2)))
+    assert err < 0.060, f"counts vs ideal {err*1000:.1f} mm/s RMS (was 39.8)"
 
 
 def test_unknown_encoder_is_refused(model, params):

@@ -45,6 +45,7 @@ def test_yaw_profile(delta):
     assert np.max(np.abs(np.diff(rates) / dt)) <= accel * 1.01
 
 
+@pytest.mark.lqr
 def test_pivot_with_wound_steer(model, params, eq_qpos):
     """A pivot commanded with the steer joint parked at pi (post-flick, or a
     multi-turn XC330 reading) regulates about the park instead of unwinding
@@ -72,6 +73,7 @@ def test_pivot_with_wound_steer(model, params, eq_qpos):
     assert np.max(np.abs(np.array(ctrls) - np.pi)) < 0.5, "long-way unwind"
 
 
+@pytest.mark.lqr
 @pytest.mark.parametrize("delta_deg", [90.0, -90.0, 180.0])
 def test_pivot_completes_upright(model, params, eq_qpos, delta_deg):
     """Pivot tracks the commanded heading, stays upright, and the front

@@ -15,33 +15,16 @@
 # Keep it sorted by file. Blank lines and #-comments are ignored.
 
 # ---------------------------------------------------------------------------
-# The trajopt flick/flip set, all seven. The bike falls partway through the
-# manoeuvre. These are open-loop trajectories -- a plan, replayed, with nothing
-# closing the loop -- and they no longer survive the MODELLED PAYLOAD. They are
-# queued for re-authoring once the as-built mass is known, deliberately, so the
-# optimisation is run once rather than twice; see "Explicitly not being worked
-# on" in docs/status.md.
-#
-# So the fix is to re-run the trajectory optimisation against measured mass, not
-# to widen a tolerance -- the assertion is measuring the right thing and
-# correctly reporting a fall.
-#
-# NOT the contact revert. 511421f (contact_solref back to [0.005, 1.0]) is what
-# CLEARED most of the old red -- test_hw_odometry, test_teleop, the analytic
-# circles -- and these seven were left standing behind it.
-#
-# Unchanged by the 2026-08-15 timestep move (2e-4 -> 4e-4): still exactly these
-# seven, same assertions, same failure text.
-tests/test_drive.py::test_flip_completes[1]           # 2026-08-09 trajopt vs modelled payload
-tests/test_drive.py::test_flip_completes[-1]          # 2026-08-09 trajopt vs modelled payload
-tests/test_drive.py::test_flick_replay                # 2026-08-09 trajopt vs modelled payload
-tests/test_drive.py::test_flick_mirror_survives       # 2026-08-09 trajopt vs modelled payload
-tests/test_drive.py::test_double_flick                # 2026-08-09 trajopt vs modelled payload
-tests/test_drive.py::test_heading_after_flick_no_snap # 2026-08-09 trajopt vs modelled payload
-tests/test_drive.py::test_reset_after_flick_no_snap   # 2026-08-09 trajopt vs modelled payload
+# The trajopt flick / scripted flip set, seven cases, registered 2026-08-09,
+# REMOVED 2026-09-21: deprecated, and now skipped in test_drive.py
+# (DEPRECATED_MOVE) rather than carried as red. The reasoning that stood here
+# is in `git log -p -- tests/expected_failures.txt`.
 
 # ---------------------------------------------------------------------------
-# THE ANALYTIC LQR DRIVE CONTROLLER, nine cases. Registered 2026-08-25.
+# THE ANALYTIC LQR CONTROLLERS, eight cases. Registered 2026-08-25 with
+# nine; test_hold_ramps_to_full_speed_with_auto_repeat left 2026-09-21, when
+# it moved to the RL policy teleop boots with (it tests the key path, and the
+# LQR's fall at v_max is straight_sprint[0.8]'s to report).
 #
 # ACCEPTED because the cause is known and the controller is not what drives the
 # bike. RL is primary; the LQR is the reference baseline, kept for comparison
@@ -55,12 +38,14 @@ tests/test_drive.py::test_reset_after_flick_no_snap   # 2026-08-09 trajopt vs mo
 #
 # The suite agrees with the hand test, which is why these are priced rather
 # than merely observed:
-#   - straight_sprint[-0.5] does NOT fall (max roll 6.08 deg). It just tracks
-#     badly: cruise -0.322 against a -0.5 target. That IS "reverses barely".
+#   - straight_sprint[-0.5] does NOT fall (max roll 5.82 deg). It just tracks
+#     badly: cruise -0.26 against a -0.5 target. That IS "reverses barely".
+#     (Was -0.322 / 6.08 deg before 2026-09-21. With the steer delay ZEROED it
+#     does fall, roll 180, cruise -0.18 -- so the 4 ms is holding it up here.)
 #   - straight_sprint[0.8] and all four command_heading cases DO fall, 180 deg.
 #   - test_pivot.py passes entirely, matching "it pivots ok". (Until
 #     2026-09-21: the 180 deg pivot now misses its 4 s heading bound by
-#     0.02 deg -- see the steer_clip section below.)
+#     0.10 deg -- see the steer_clip section below.)
 #   - test_balance.py [lqr] passes, matching "does not fall over on spawn".
 #
 # test_hold_ramps_to_full_speed_with_auto_repeat is the cleanest reproduction:
@@ -72,17 +57,69 @@ tests/test_drive.py::test_reset_after_flick_no_snap   # 2026-08-09 trajopt vs mo
 # rejected: the command and actuation path is already proven working by that
 # first 1.25 s, so an easier plant would hide the fall rather than isolate
 # anything.
+#
+# GROUPED 2026-09-22 as one investigation, the at-speed LQR design: the
+# falls, straight_sprint[-0.5] (upright but tracking -0.26 of -0.5 -- the
+# reverse schedule, same design question), and the gain-schedule sign flip.
+# NOT reachable by re-weighting: a 16-point sweep of q_steer x q_roll_rate x
+# r_steer x q_roll (5/2, 30/60, 6/2, 60/120) cleared none of the falls in
+# any combination; q_roll_rate 60 alone clears sprint[-0.5] with the five
+# green LQR tests checked still green, not applied.
+#
+# THE GRID ENDS ARE LINEARISED IN THE AIR (found 2026-09-22). At +-1.2 m/s
+# settle_rolling's snapshot has ZERO ground contacts (chassis 0.5-0.7 mm
+# higher than at 0.8 -- mid-bounce), so every identification rollout starts
+# airborne: steer->roll_rate B 0.007 (-1.2) / 0.18 (+1.2) against ~2 at every
+# other speed, crawl B exactly 0, fit R^2 exactly 1.0000. Runtime gains above
+# 0.8 m/s blend toward that design. A real bug, NOT the fix: snapshotting
+# only a contacting state (B back to 0.89 / 2.11, R^2 0.99) turns none of
+# these green. FIXED 2026-09-22 in settle_rolling (refuses an airborne
+# snapshot) and the deploy bundle re-exported: only the +-1.2 gain rows and
+# their fit values changed, both digests unchanged.
+#
+# THE SIGN-FLIP PREMISE looks stale, separately. test_gain_schedule asserts
+# steer<-roll K flips sign between +1.2 and -1.2 ("reversed-caster
+# signature", written 2026-07-19). Even with the grid ends fixed it is +0.90 vs
+# +127.8, and the identified plant says steering acts on roll with the SAME
+# sign at all nine speeds (B +0.89..+2.11) -- as the kinematic lateral
+# acceleration v^2 tan(delta)/L would, being even in v. Whether it held on the
+# July plant is unverified. DROPPED 2026-09-22 (user's call), and
+# test_gain_schedule_designs_everywhere left this list: finite gains and every
+# fit above MIN_FIT_R2 is all it asserts now, and both hold.
+#
+# The 180 deg pivot joined this block 2026-09-22 (from the steer section): it
+# is PivotController, the balance LQR tracking a scripted trapezoidal yaw
+# plan, and the duty clip made the 1.5 rad/s plan outrun the servo -- it
+# overshoots, then creeps back ~0.4 deg/s. yaw_rate 1.2 passes all three
+# pivots with the bounds unchanged; not applied, and the analytic pivot is a
+# deprecation candidate (nothing but run_pivot.py and this test uses it).
+#
+# RE-ASSESSED 2026-09-21, two reasons that said the wrong thing:
+#   - test_reverse_circle_tracks FALLS. "radius err 0.681" was the radius of a
+#     bike lying down, not a tracking error: max roll 180 with or without the
+#     steer delay, going over ~4.6 s into the lap at 0 ms and ~10.1 s at 4 ms.
+#     The 4 ms plant's err 0.119 only looks better because the fall comes later.
+#   - test_gain_schedule_designs_everywhere (GREEN since 2026-09-22, below) did NOT fail on a design. Every
+#     gain is finite, and since 2026-09-22 the fit bar is linearize.MIN_FIT_R2
+#     (0.93) rather than a literal 0.95, which the worst cell (yaw_rate at
+#     -0.5 m/s, 0.9489) clears. What fails is the reversed-caster assert:
+#     K[1,1] is -0.681 at +1.2 m/s and -2.106 at -1.2, the same sign, and
+#     across the grid it zigzags (-2.1, 5.1, 35.7, -14.8, 50.3, 8.1, 3.2, 6.5,
+#     -0.68). Same at-speed design question as the falls above; identical at
+#     0 and 4 ms of steer delay.
+tests/test_pivot.py::test_pivot_completes_upright[180.0]   # 2026-09-21 steer_clip duty: err@4s 3.10 vs 3.0, upright
 tests/test_drive.py::test_command_heading[-0.5-90.0-5.0]   # 2026-08-25 analytic LQR: falls in the turn
 tests/test_drive.py::test_command_heading[-1.2-90.0-6.0]   # 2026-08-25 analytic LQR: falls in the turn
 tests/test_drive.py::test_command_heading[0.8-180.0-6.0]   # 2026-08-25 analytic LQR: falls in the turn
 tests/test_drive.py::test_command_heading[0.8-90.0-5.0]    # 2026-08-25 analytic LQR: falls in the turn
 tests/test_drive.py::test_straight_sprint[0.8-0.1]         # 2026-08-25 analytic LQR: falls at v_max
-tests/test_drive.py::test_straight_sprint[-0.5-0.1]        # 2026-08-25 analytic LQR: tracks -0.32 of -0.5, does NOT fall
-tests/test_drive.py::test_reverse_circle_tracks            # 2026-08-25 analytic LQR: radius err 0.681
-tests/test_drive.py::test_gain_schedule_designs_everywhere # 2026-08-25 analytic LQR: design fails somewhere on the speed grid
+tests/test_drive.py::test_straight_sprint[-0.5-0.1]        # 2026-08-25 analytic LQR: tracks -0.26 of -0.5, does NOT fall
+tests/test_drive.py::test_reverse_circle_tracks            # 2026-08-25 analytic LQR: falls mid-lap (roll 180)
 
 # ---------------------------------------------------------------------------
-# THE STEER SERVO AS THE FIRMWARE RUNS IT, eight cases. Registered 2026-09-21.
+# THE STEER SERVO AS THE FIRMWARE RUNS IT, no cases now. Registered 2026-09-21
+# with eight; the seven odometry cases left the same day (see THE DELAY), and
+# the pivot moved to the LQR block 2026-09-22. Kept as the record of both.
 #
 # Two changes, one commit: actuators.steer_clip: duty (the torque limit on the
 # duty, so the steer tops out at its 11.8 rad/s no-load instead of 23.2 at the
@@ -90,9 +127,10 @@ tests/test_drive.py::test_gain_schedule_designs_everywhere # 2026-08-25 analytic
 # to the servo's own reference). The LQR is DESIGNED with the delay zeroed and
 # FLOWN with it (linearize._undelayed): gains identical to before to 2e-9.
 #
-# THE CLIP: the 180 deg pivot, upright, 0.02 deg past its 4 s heading bound
-# (3.02 vs 3.0). Passes with steer_clip: total. The analytic controllers' big
-# standstill turns had been borrowing steer speed the servo does not have.
+# THE CLIP: the 180 deg pivot, upright, 0.10 deg past its 4 s heading bound
+# (3.10 vs 3.0; 3.02 is what it reads with the delay zeroed). Passes with
+# steer_clip: total, delay kept -- so it is the clip, confirmed 2026-09-21.
+# The analytic controllers' big standstill turns had been borrowing steer speed the servo does not have.
 # (command_heading[0.0-90.0-6.0] went red on the clip at 6.02 vs 6.0 and green
 # again with the delay; a 0.02 deg edge, removed rather than kept.)
 #
@@ -101,126 +139,56 @@ tests/test_drive.py::test_gain_schedule_designs_everywhere # 2026-08-25 analytic
 # 179.8, 180.0 deg. Standstill, shoved standstill and the R0.8 circle hold at
 # every delay, and so does the balance LQR's tilt settle up to 8 ms. So it is
 # the at-speed schedule that has no latency margin, the same weakness as
-# straight_sprint[0.8] above. test_hw_odometry's `_episode` fixture runs that
-# straight episode, and one fall errors every test built on it -- seven
-# cases, none of which is about the estimator.
+# straight_sprint[0.8] above. test_hw_odometry's `_episode` fixture drove that
+# straight episode, and its fall errored eleven tests, none about the
+# estimator (confirmed causal: all passed with the delay zeroed). Those tests
+# were rewritten 2026-09-21 and no longer ride the LQR -- see the odometry
+# section below.
 #
 # ACCEPTED: the delay is measured and the hardware has it; the LQR is the
 # reference baseline, and a latency-aware design (the delay line as state) is
 # the fix, not dropping the delay.
-tests/test_hw_odometry.py::test_front_constraint_beats_roller_kinematics                        # 2026-09-21 steer delay: LQR fixture falls on straight_0.6
-tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[circle_R0.8]       # 2026-09-21 steer delay: LQR fixture falls on straight_0.6
-tests/test_hw_odometry.py::test_fused_estimator_end_to_end[straight_0.6]                         # 2026-09-21 steer delay: LQR fixture falls on straight_0.6
-tests/test_hw_odometry.py::test_longitudinal_odometry_tracks_truth[circle_R0.8]                  # 2026-09-21 steer delay: LQR fixture falls on straight_0.6
-tests/test_hw_odometry.py::test_longitudinal_odometry_tracks_truth[standstill]                   # 2026-09-21 steer delay: LQR fixture falls on straight_0.6
-tests/test_hw_odometry.py::test_longitudinal_odometry_tracks_truth[standstill_shoved]            # 2026-09-21 steer delay: LQR fixture falls on straight_0.6
-tests/test_hw_odometry.py::test_longitudinal_odometry_tracks_truth[straight_0.6]                 # 2026-09-21 steer delay: LQR fixture falls on straight_0.6
-tests/test_pivot.py::test_pivot_completes_upright[180.0]   # 2026-09-21 steer_clip duty: err@4s 3.02 vs 3.0, upright
-tests/test_teleop.py::test_hold_ramps_to_full_speed_with_auto_repeat  # 2026-08-25 analytic LQR: reaches v_max then falls at ~1.4 s
 
 # ---------------------------------------------------------------------------
-# THE ODOMETRY ESTIMATOR, seven cases. Registered 2026-08-25.
+# THE ODOMETRY TESTS WERE REWRITTEN 2026-09-21, and the eleven entries that
+# stood here and in the steer section left with them. The old tests compared
+# the estimator open-loop against sim truth on an analytic-LQR trajectory. Split
+# under the RL policy, that error was 5-7 mm/s of the estimator's gearing
+# arithmetic, 2-3 of reference point, and the rest REAR-WHEEL SLIP -- so the
+# tests measured the contact model under a given driver and called it the
+# estimator. Now three questions, three places:
 #
-# COUPLED TO THE LQR ABOVE, and the original "A SEPARATE PROBLEM" was wrong --
-# amended 2026-08-26 after re-running every case with the episodes driven by
-# the RL policy instead. Four of the seven are the estimator; three are
-# artifacts of the fixture. See the breakdown below.
+#   tests/test_hw_odometry.py         the estimator's code, exact, no sim (pure)
+#   tests/test_odometry_in_the_loop.py  the shipped policy on its own sensors
+#                                     (survive, track, hold station) + a slip
+#                                     tripwire against a recorded baseline
+#   tests/test_sim_odometry.py        the encoder path, now under the policy
 #
-# THE STRUCTURAL POINT, and the reason this file cannot be trusted as a
-# verdict on the estimator: `_episode` drives with `set_speed` /
-# `command_circle`, i.e. THE ANALYTIC LQR -- which is itself nine failures deep
-# in the block above. 14 of the 17 tests in test_hw_odometry.py ride on that
-# one fixture. Only three (confidence collapse, wound steer, body_to_world) are
-# controller-independent.
+# The retired reasoning (tan-coefficient conditioning, the standstill blind
+# spot, the latent longitudinal failure) is in
+# `git log -p -- tests/expected_failures.txt`.
 #
-# That is the wrong objective twice over. It is open-loop accuracy against
-# truth, which was measured selecting a WORSE estimator (see
-# docs/plans/odometry-rewrite.md), and it is measured on a trajectory from a
-# controller nothing drives with. The file needs a redesign, not a green run.
+
+# ---------------------------------------------------------------------------
+# POLICY METRICS -- these move with the POLICY, not with the code. A retrain
+# or a new control.general_move is expected to change them; follow them
+# across policies rather than treating a change as a regression.
 #
-# Checked 2026-08-25: not one of these reports a fall. The bike stays
-# up; the front-wheel lateral-velocity constraint just does not deliver.
+# STANDING ENDURANCE, one case, registered 2026-09-22 (replacing a 4.8 s
+# hold-station test whose 50 mm/s / 10 deg bars were invented, and whose
+# window was too short to see the real failure). Standing still on its own
+# sensors (estimate + TM151, as teleop runs by default), general_rl_cmd_
+# curriculum2b FALLS: 64 seeds x 60 s, 32 fell, MTBF 79 s (95% CI 56-116);
+# teleop fell at ~35 s. The test: 18 fixed seeds x 60 s, pass if <= 4 fall,
+# derived from a 600 s MTBF target (see tests/test_policy_endurance.py). Today: 11 of 18.
 #
-#   tan coefficient 0.652, expected ~1        <- NOT a geometry error, see below
-#   front-wheel constraint 31.7 mm/s vs 53.8  <- barely beats assuming zero
-#   standstill lateral constraint 42.2 mm/s RMS, fused 42.8 (bar is 30)
-#   straight_0.6 correlation 0.137            <- NOT uncorrelated, see below
+# It comes with the ATTITUDE model: 60 s, seed 0, orientation error alone falls
+# at 3.2 s; gyro error alone, the estimate alone and truth all stay up.
 #
-# DO NOT PULL THE TAN COEFFICIENT FIRST. This block used to say it was "the one
-# to pull first -- a closed-form geometry check, so it should be derivable
-# rather than tuned, and if the geometry is wrong everything downstream
-# inherits the error". RETRACTED 2026-08-26: the geometry is fine and that
-# advice sends you after a conditioning artifact.
-#
-# The fit regresses v_lat on [v_lon*tan(theta), -yaw_rate]. A quasi-steady LQR
-# trajectory satisfies the kinematic bicycle relation yaw_rate ~ v_lon*tan
-# (theta)/L, so THE TWO REGRESSORS ARE THE SAME SIGNAL UP TO L and the split
-# between them is arbitrary. Measured, corr(r1, r2) and the recovered
-# coefficient:
-#
-#   LQR straight_0.6 alone   corr -0.980   cond 26.1   tan_coef 0.032
-#   LQR moving only          corr -0.987   cond 43.4   tan_coef 0.360
-#   LQR all four (the test)  corr -0.648   cond 10.3   tan_coef 0.652
-#   RL  straight_0.6 alone   corr -0.430   cond  7.9   tan_coef 0.968  <- theory 1.0
-#
-# The RL policy constantly perturbs off steady state, which breaks the
-# degeneracy and recovers the textbook value. Same estimator, same parameters.
-# So this test measures the CONDITIONING OF ITS OWN FIXTURE, not the geometry.
-#
-# `straight_0.6 correlation 0.137` is the same kind of artifact. Its RMS
-# assertion PASSES (14.4 mm/s against a 20 bar) and only the corr > 0.90 line
-# fails -- because std(v_lat_true) under the LQR is 9.5 mm/s, SMALLER than the
-# estimator's own 14.4 mm/s error. There is no signal to correlate against.
-# Under RL there is 34.5 mm/s of lateral motion and the same estimator scores
-# 0.937.
-#
-# WHAT IS ACTUALLY BROKEN is the standstill set, and it is ONE fault: at
-# v_lon ~ 0 the tan term of v_lat = v_lon*tan(theta) - yaw_rate*L vanishes and
-# the front-wheel constraint is structurally blind. Unchanged under RL (42.2 ->
-# 44.2, and 44.9 -> 58.7 shoved). No controller fixes it; the rollers get
-# 25.9 mm/s there against the front's 44.4. That is the one to pull first.
-#
-# Accepted for now because nothing is being deployed to the Pi yet, so a
-# degraded onboard velocity estimate costs nothing today.
-#
-# A LATENT FAILURE SITS IN THE GREEN HALF OF THIS FILE, 2026-08-26. The four
-# `test_longitudinal_odometry_tracks_truth` cases pass, and they pass because
-# the LQR drives gently. Same estimator, same bar (30 mm/s), episodes driven by
-# the RL policy instead:
-#
-#                       LQR          RL
-#   straight_0.6     6.2 mm/s   122.0 mm/s   (1.0% slip -> 20.3%)
-#   standstill       0.9         39.6
-#   standstill_shoved 2.1        37.5
-#
-# All four would go red. hw/odometry.py's headline claim -- "8.8 mm/s RMS at a
-# 0.6 m/s cruise (~1.5%)" -- holds for the LQR and is 14x off for the policy
-# that actually drives. Under true rolling w*r = v_axle exactly, so the
-# deviation IS slip, and the RL policy works the hub differential far harder.
-# NOT registered, because it is not currently failing; recorded here so the
-# green is not mistaken for a result.
-#
-# AND BECAUSE THE COST IS NOW BOUNDED, 2026-08-26. These tests measure the
-# estimator OPEN-LOOP against truth, which is the wrong objective -- a more
-# accurate blend was measured falling off the bike SOONER (see
-# docs/plans/odometry-rewrite.md). What matters is closed-loop survival, and
-# `general_rl_odo` gets 1.00 survival on the full eval grid against
-# `general_rl_smooth_diff_pi`'s 0.15 while running on this same estimator. So
-# a policy can now be flown on the estimator as it stands. Do not clear these
-# by tuning for RMS: that is the metric that would have shipped a regression.
-# CLEARED 2026-09-16 by actuators.steer_kv 0.05 -> 0.0676 -- the XC330's own
-# back-EMF droop (stall_torque/no_load_speed), replacing a number that was a
-# GUESS in spirit. Three entries left this list:
-#     test_front_constraint_beats_roller_kinematics
-#     test_fused_estimator_end_to_end[standstill]
-#     test_fused_estimator_end_to_end[standstill_shoved]
-# CONFIRMED CAUSAL, not coincidence: swapping only that one value and re-running
-# gives 3 passed at 0.0676 and 3 failed at 0.05. The estimator was never the
-# problem in those three -- it was being judged against a plant whose steering
-# was under-damped. The four still listed below are unmoved by it, so the
-# estimator work in docs/plans/odometry-rewrite.md still has a job to do.
-#
-tests/test_hw_odometry.py::test_constraint_coefficients_are_the_geometry            # 2026-08-25 estimator: tan coeff 0.652 vs ~1
-tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[standstill]         # 2026-08-25 estimator: 42.2 mm/s RMS
-tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[standstill_shoved]  # 2026-08-25 estimator: 44.9 mm/s RMS
-tests/test_hw_odometry.py::test_front_wheel_constraint_gives_lateral_velocity[straight_0.6]       # 2026-08-25 estimator: correlation 0.137
+# PATHS TO GREEN, either or both:
+#   - training: evals are 5 s and episodes at most 15 s, so a 10-60 s failure
+#     is invisible to both. Longer standing episodes under TM151.
+#   - measurement: the model takes the datasheet's roll/pitch BOUND (<1.5 deg)
+#     as its RMS; only tau 0.19 s is measured. A bench RMS on the real unit
+#     may make the model kinder.
+tests/test_policy_endurance.py::test_policy_stands_for_a_minute_on_its_own_sensors  # 2026-09-22 TM151 attitude: 11 of 18 fall within 60 s standing

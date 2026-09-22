@@ -78,6 +78,7 @@ def _replay(controller, model, frames, nq, nv, nu, sj, sd, setup=None):
     return out
 
 
+@pytest.mark.lqr
 def test_hardware_data_covers_the_control_path():
     """A controller replayed through HardwareData emits identical commands.
 
@@ -155,6 +156,7 @@ def test_hardware_data_covers_the_general_policy():
 @pytest.mark.deploy
 @pytest.mark.skipif(not BUNDLE.exists(),
                     reason="run `python -m aow_sim.export_deploy` first")
+@pytest.mark.lqr
 def test_bundle_controller_matches_mujoco_controller():
     """A controller built from deploy/bundle.npz alone == the MuJoCo one.
 

@@ -162,6 +162,7 @@ def _hold(g, seconds, key, repeat_delay=0.4, repeat_hz=30.0):
         mujoco.mj_step(m, d)
 
 
+@pytest.mark.lqr
 def test_taps_accumulate_without_auto_repeat(monkeypatch, model, params,
                                              eq_qpos):
     """Regression for "the arrows don't do much": MuJoCo may deliver only one
@@ -198,6 +199,7 @@ class _FakeKeys:
         return self.state[name]
 
 
+@pytest.mark.lqr
 def test_true_key_state_holds_then_releases_instantly(monkeypatch, model,
                                                       params, eq_qpos):
     """With real key up/down available, holding ramps and letting go coasts
@@ -226,17 +228,26 @@ def test_true_key_state_holds_then_releases_instantly(monkeypatch, model,
 
 def test_hold_ramps_to_full_speed_with_auto_repeat(monkeypatch, model,
                                                    params, eq_qpos):
-    g = _capture(monkeypatch, model, params, eq_qpos, analytic=True)
+    """A held key, reported as an OS auto-repeat stream, ramps the command to
+    v_max -- and the bike is actually driving at the end of it.
+
+    DRIVEN BY THE GENERAL POLICY since 2026-09-21, the controller teleop boots
+    with. It was the analytic LQR, which tracked the ramp cleanly to v_max
+    (1.173 of 1.20 at t=1.25 s, roll inside 1.1 deg, measured 2026-08-25) and
+    then fell at ~1.4 s. That fall is the LQR's, and test_straight_sprint[0.8]
+    already registers it; here it only hid whether the key path works."""
+    _needs_general()
+    from aow_sim.run_drive import _command_ref
+    g = _capture(monkeypatch, model, params, eq_qpos)
     c = g["c"]
+    assert c.mode == "general", "teleop should boot with the policy engaged"
     _hold(g, 2.0, UP)
-    assert c.profile.target == pytest.approx(c.profile.v_max, abs=1e-6)
+    _h, v_cmd = _command_ref(c, g["data"])
+    assert np.linalg.norm(v_cmd) == pytest.approx(c.profile.v_max, abs=1e-6), (
+        f"hold did not ramp the command to v_max: |v_cmd|={np.linalg.norm(v_cmd):.3f}")
     s = extract_state(g["data"], c._ref_pos)
-    # REPORT ROLL. This assert reads as "never accelerated", and that is not
-    # the failure mode. Measured 2026-08-25: the analytic controller tracks the
-    # ramp cleanly to v_max -- 1.173 against a 1.20 target at t=1.25 s, roll
-    # inside 1.1 deg -- and then falls over at about t=1.4 s. The v_lon read at
-    # the end is a bike lying on its side, not a bike that failed to start, and
-    # without roll in the message that distinction costs an hour to find.
+    # REPORT ROLL: a low v_lon with a large roll is a bike lying on its side,
+    # not one that failed to start, and without it that costs an hour to find.
     assert s.v_lon > 0.8, (
         f"bike is not driving at the end of the hold: v={s.v_lon:.2f}, "
         f"roll={np.degrees(s.roll):.1f} deg. A LARGE ROLL means it "
@@ -244,6 +255,7 @@ def test_hold_ramps_to_full_speed_with_auto_repeat(monkeypatch, model,
         f"actuation one; the ramp assert above already passed.")
 
 
+@pytest.mark.lqr
 def test_brake_carries_through_zero_into_reverse(monkeypatch, model, params,
                                                  eq_qpos):
     g = _capture(monkeypatch, model, params, eq_qpos, analytic=True)
@@ -254,6 +266,7 @@ def test_brake_carries_through_zero_into_reverse(monkeypatch, model, params,
     assert c.profile.target < -0.05, "brake did not carry into reverse"
 
 
+@pytest.mark.lqr
 def test_held_turn_is_lead_clamped(monkeypatch, model, params, eq_qpos):
     """A held turn must not wind the command past what the bike can follow —
     otherwise it keeps spinning long after release."""
@@ -268,6 +281,7 @@ def test_held_turn_is_lead_clamped(monkeypatch, model, params, eq_qpos):
         "the turn should have moved the reference"
 
 
+@pytest.mark.lqr
 def test_turn_reverses_and_heading_holds_after_release(monkeypatch, model,
                                                        params, eq_qpos):
     """Heading is a setpoint: it does not decay the way velocity does."""
@@ -283,6 +297,7 @@ def test_turn_reverses_and_heading_holds_after_release(monkeypatch, model,
     assert c._psi_path_target == pytest.approx(parked, abs=1e-9)
 
 
+@pytest.mark.lqr
 @pytest.mark.parametrize("key", ["/", "5"])
 def test_zero_and_stop_are_immediate(monkeypatch, model, params, eq_qpos, key):
     g = _capture(monkeypatch, model, params, eq_qpos, analytic=True)
@@ -306,16 +321,19 @@ def test_overlay_draws_and_toggles(monkeypatch, model, params, eq_qpos):
     assert scn.ngeom == 0, "overlay toggle did not clear the dial"
 
 
+@pytest.mark.lqr
 def test_maneuver_key_zeroes_the_speed_intent(monkeypatch, model, params,
                                               eq_qpos):
+    # Key 3 (flick_rl), not 8: 8 is the trajectory flick, deprecated
+    # 2026-09-21. Any manoeuvre key exercises the same zeroing.
     from aow_sim.control.flick import MOVES_DIR
-    if not (MOVES_DIR / "flick.yaml").exists():
-        pytest.skip("needs moves/flick.yaml")
+    if not (MOVES_DIR / "flick_rl.yaml").exists():
+        pytest.skip("needs moves/flick_rl.yaml")
     g = _capture(monkeypatch, model, params, eq_qpos, analytic=True)
     c = g["c"]
     _hold(g, 1.0, UP)
     assert c.profile.target > 0.3
-    g["on_key"](ord("8"))
+    g["on_key"](ord("3"))
     _idle(g, 3 * model.opt.timestep)
     assert c.mode == "flick"
     assert c.profile.target == pytest.approx(0.0, abs=1e-9)
@@ -385,6 +403,7 @@ def test_general_policy_survives_a_viewer_reset(monkeypatch, model, params,
     assert c.mode == "general"
 
 
+@pytest.mark.lqr
 def test_engaging_general_zeroes_a_stale_command(monkeypatch, model, params,
                                                  eq_qpos):
     """Starting the policy must never inherit leftover speed or heading."""
@@ -783,6 +802,7 @@ def test_slowmo_badge_formats_without_trailing_zeros():
         assert v.texts[0][2] == want
 
 
+@pytest.mark.lqr
 def test_viewer_reset_re_anchors_the_heading_command(monkeypatch, model,
                                                     params, eq_qpos):
     """Backspace rewinds the POSE; the command is operator intent and does not
