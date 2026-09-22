@@ -83,7 +83,11 @@ def test_the_steer_lead_bound_changes_no_torque():
     kp, kv = p["actuators"]["steer_kp"], p["actuators"]["steer_kv"]
     limit = (p["servos"]["xc330_t181"]["stall_torque"]
              * p["bike"]["steering"]["gear_ratio"])
-    assert kp * STEER_LEAD_MAX - kv * 10.0 >= limit
+    if p["actuators"]["steer_clip"] == "duty":
+        # the droop is OUTSIDE the clip: saturation is speed-independent
+        assert kp * STEER_LEAD_MAX >= limit
+    else:
+        assert kp * STEER_LEAD_MAX - kv * 10.0 >= limit
 
 
 def test_the_steer_target_cannot_run_away_from_a_wheel_that_does_not_move():

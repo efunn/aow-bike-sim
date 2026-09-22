@@ -61,13 +61,16 @@ def nearest_multiple(x: float, period: float = np.pi) -> float:
 # policy up to 2026-09-18 trained against.
 #
 # 45 deg BECAUSE IT CANNOT CHANGE A TORQUE. The steer actuator is a position
-# servo (kp 2.0 N.m/rad, kv 0.0676) saturating at the XC330's 0.8 N.m, so
-# the drive torque is already pinned at the limit whenever
-#     kp * lead - kv * steer_rate >= 0.8
-# At the fastest steer seen in sim (8.24 rad/s) that needs lead >= 38.9 deg,
-# so above 45 deg a larger lead is the SAME torque -- it only stores turns to
+# servo (kp 2.0 N.m/rad) whose DUTY saturates at the XC330's 0.8 N.m
+# (actuators.steer_clip: duty, the firmware's mode-4 law), so the drive torque
+# is already pinned at the limit whenever
+#     kp * lead >= 0.8,   i.e. lead >= 22.9 deg, at ANY steer rate
+# and above 45 deg a larger lead is the SAME torque -- it only stores turns to
 # unwind later. `test_the_steer_lead_bound_changes_no_torque` re-derives this
-# from bike_params, so it fails if kp, kv or the stall torque move.
+# from bike_params, so it fails if kp, the clip law or the stall torque move.
+# (Under the old `total` clip the droop sat inside the clip, the threshold was
+# 38.9 deg at 8.24 rad/s, and the unwind rates below could exceed the motor's
+# own 11.8 rad/s no-load speed -- 19-22 rad/s, which the servo cannot do.)
 #
 # MEASURED IN SIM (2026-09-18, general_rl_cmd_curriculum2b, 20 s mixed
 # commands): lead peaks at 16.3 deg and the trajectory is BIT-IDENTICAL with

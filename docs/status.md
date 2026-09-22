@@ -65,6 +65,25 @@ four-bar is BUILT and operating** -- this file had carried "design done, build
 last" for eight days. Open on it: read `righting_sign` (stow is settled at 180)
 off the bike (below), and Station C / R6 for `righting_current` in counts.
 
+**The steer servo is modelled as the firmware runs it (2026-09-21).**
+`actuators.steer_clip: duty` builds the mode-4 law, clip(kp e) - kv w,
+natively: a kp-only actuator plus kv as joint damping. It is identical below
+saturation (lead < 22.9 deg), and capped at 11.8 rad/s above it, where the old
+clip held 23.2. `actuators.steer_command_delay_s` adds a 4 ms native actuator
+delay. That was measured on both XC330s, frame to the servo's own Position
+Trajectory (`xc330_command_delay`), and the same 4.0 ms held in mode 5. It is
+frame-quantised: the true value lies in (2, 4] ms. **The plant digest moves**
+to `8d8b25a809ea2f1a`, and the deploy bundle is re-exported. No `moves/` export
+matched the previous digest anyway. The LQR is now DESIGNED with actuator
+delays zeroed and flown with them (`linearize._undelayed`). Designing on the
+delayed plant gave garbage (fit R^2 0.74), because the reduced model has no
+state for the delay line. With that, the balance LQR is unaffected up to 8 ms,
+but **the drive-mode LQR falls going straight at 0.6 m/s with >= 2 ms**. That
+drops the odometry fixture, so seven odometry tests are registered for it, plus
+the 180 deg pivot 0.02 deg past its bound on the clip. A latency-aware LQR (the
+delay line as state) is the fix. Driven in teleop, the RL policy felt
+unchanged by the clip; the delay is not yet teleop-tested.
+
 ---
 
 ## The five workstreams

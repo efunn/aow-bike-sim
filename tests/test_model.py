@@ -51,6 +51,74 @@ def test_steering_joint_unlimited(full_model):
     assert not j.limited[0], "steering must allow continuous 360°+ rotation"
 
 
+def _held_lead_speed(params, clip, lead_deg, seconds=0.6):
+    """Steady steer speed with the target held `lead_deg` ahead of the wheel,
+    bike held still in the air -- the unwind regime of steer.py's rock test."""
+    p = copy.deepcopy(params)
+    p["actuators"]["steer_clip"] = clip
+    m = build_model(p)
+    m.opt.gravity[:] = 0.0
+    d = mujoco.MjData(m)
+    d.qpos[2] += 0.5
+    mujoco.mj_forward(m, d)
+    aid = m.actuator("steer").id
+    j = m.joint("steer_joint")
+    qa, da = j.qposadr[0], j.dofadr[0]
+    w = []
+    for _ in range(int(seconds / m.opt.timestep)):
+        d.qvel[:6] = 0.0
+        d.ctrl[aid] = d.qpos[qa] + np.radians(lead_deg)
+        mujoco.mj_step(m, d)
+        w.append(d.qvel[da])
+    return float(np.mean(w[len(w) // 2:]))
+
+
+def test_steer_cannot_outrun_its_motor(params):
+    """actuators.steer_clip: duty is the firmware's mode-4 law, clip(kp e) -
+    kv w: identical to the old clip below saturation, and capped at the
+    no-load speed above it. The `total` arm must outrun the motor at the
+    45 deg lead bound, or this test is not reaching the limit at all."""
+    assert params["actuators"]["steer_clip"] == "duty"
+    w0 = params["servos"]["xc330_t181"]["no_load_rpm"] * 2 * np.pi / 60
+    assert _held_lead_speed(params, "duty", 10) == pytest.approx(
+        _held_lead_speed(params, "total", 10), rel=1e-3)
+    assert _held_lead_speed(params, "total", 45) > 1.5 * w0
+    assert _held_lead_speed(params, "duty", 45) == pytest.approx(w0, rel=0.01)
+
+
+def test_steer_acts_on_the_command_from_one_delay_ago(params):
+    """actuators.steer_command_delay_s, as MuJoCo's native actuator delay: a
+    goal step moves no force until the delay has passed, and a reset clears
+    the history rather than replaying the last command."""
+    delay = params["actuators"]["steer_command_delay_s"]
+    assert delay > 0.0
+    m = build_model(params)
+    m.opt.gravity[:] = 0.0
+    d = mujoco.MjData(m)
+    aid = m.actuator("steer").id
+    n = int(round(delay / m.opt.timestep))
+
+    def run(steps, ctrl):
+        out = []
+        for _ in range(steps):
+            d.qvel[:6] = 0.0
+            d.ctrl[aid] = ctrl
+            mujoco.mj_step(m, d)
+            out.append(float(d.actuator_force[aid]))
+        return np.array(out)
+
+    d.qpos[2] += 0.5
+    mujoco.mj_forward(m, d)
+    run(5, 0.0)
+    f = run(n + 3, 0.2)
+    assert np.abs(f[:n]).max() < 1e-9
+    assert abs(f[n + 1]) > 0.1
+    mujoco.mj_resetData(m, d)
+    d.qpos[2] += 0.5
+    mujoco.mj_forward(m, d)
+    assert abs(run(1, 0.0)[0]) < 1e-9
+
+
 def test_envelope_matches_outer_radius(params):
     ow = params["omni_wheel"]
     dev = geometry.envelope_deviation(

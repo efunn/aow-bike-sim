@@ -1924,11 +1924,20 @@ def build_spec(
     steer = chassis.add_body(
         name="steer", pos=[bike["wheelbase"], 0, r_front - r_rear]  # origin at front axle
     )
+    # steer_clip decides whether the back-EMF droop kv lives on the actuator,
+    # INSIDE its force clip (`total`), or on the joint, OUTSIDE it (`duty`, the
+    # firmware's mode-4 law). See the note at actuators.steer_clip.
+    steer_clip = p["actuators"].get("steer_clip", "total")
+    if steer_clip not in ("duty", "total"):
+        raise ValueError(f"actuators.steer_clip: 'duty' or 'total', "
+                         f"got {steer_clip!r}")
+    steer_kv = p["actuators"]["steer_kv"]
     steer.add_joint(
         name="steer_joint",
         type=mujoco.mjtJoint.mjJNT_HINGE,
         axis=steer_axis,
         pos=-bike["fork_offset"] * offset_dir,  # axis line passes behind the axle
+        damping=[steer_kv if steer_clip == "duty" else 0.0, 0, 0],
     )
     fork_top = -bike["fork_offset"] * offset_dir + 0.10 * steer_axis
     steer.add_geom(
@@ -1967,11 +1976,23 @@ def build_spec(
     xc330 = p["servos"]["xc330_t181"]
     ratio = bike["steering"]["gear_ratio"]
     act = spec.add_actuator(name="steer")
-    act.set_to_position(kp=p["actuators"]["steer_kp"], kv=p["actuators"]["steer_kv"])
+    # Under `duty` the actuator is kp ONLY, so forcerange clips kp*err alone --
+    # the duty -- and the joint's damping subtracts kv*w after it. Exactly
+    # tau = clip(kp*err, +-stall) - kv*w, with no per-step Python.
+    act.set_to_position(kp=p["actuators"]["steer_kp"],
+                        kv=0.0 if steer_clip == "duty" else steer_kv)
     act.trntype = mujoco.mjtTrn.mjTRN_JOINT
     act.target = "steer_joint"
     act.forcerange = [-xc330["stall_torque"] * ratio, xc330["stall_torque"] * ratio]
     # no ctrlrange: continuous 360°+ steering, joint is unlimited
+    # Command delay, native: the actuator keeps its own ctrl history and acts
+    # on the value from `delay` seconds ago (zero-order, interp 0). nsample
+    # must cover the delay in physics steps.
+    delay = float(p["actuators"].get("steer_command_delay_s", 0.0))
+    if delay > 0.0:
+        act.delay = delay
+        act.nsample = int(np.ceil(delay / p["sim"]["timestep"])) + 1
+        act.interp = 0
 
     for stype, name in (
         (mujoco.mjtSensor.mjSENS_GYRO, "ahrs_gyro"),

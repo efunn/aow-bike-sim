@@ -79,8 +79,13 @@ def test_the_split_did_not_move_the_plant_digest():
                           XC330's back-EMF droop, derived, replacing a guess)
                           and righting.{arm,wings}.servo_kp/kv from tuning
                           knobs to the servo's own firmware gains
+        8d8b25a809ea2f1a  2026-09-21  the steer servo as the firmware runs it:
+                          actuators.steer_clip: duty (torque limit on the duty,
+                          so it cannot outrun its motor, 23.2 -> 11.8 rad/s at
+                          45 deg lead) and steer_command_delay_s 4 ms (measured
+                          frame -> servo reference, frame-quantised)
     """
-    assert plant_digest(load_params()) == "eda849e7afaaca0f"
+    assert plant_digest(load_params()) == "8d8b25a809ea2f1a"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

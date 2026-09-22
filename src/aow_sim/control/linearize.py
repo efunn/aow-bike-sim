@@ -21,6 +21,7 @@ with weights from the YAML control.lqr block.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import warnings
@@ -266,11 +267,37 @@ def _warn_fit(r2_grid, speeds=None) -> None:
         RuntimeWarning, stacklevel=3)
 
 
+@contextmanager
+def _undelayed(model: mujoco.MjModel):
+    """Every actuator delay zeroed for the duration, restored after.
+
+    BOTH DESIGNERS RUN INSIDE THIS. The identification fits x' = A x + B u over
+    ONE control period with the input held, so an actuator acting on the
+    command from `delay` ago -- the steer's 4 ms against a 5 ms period -- sees
+    the new input for 1 ms of it, and the fit reads that as a nearly dead
+    steer channel: min R^2 0.977 -> 0.741 and gains 6x off. The reduced model
+    has no state for the delay line, so the design is done on the plant it CAN
+    describe and the gains are flown on the real one -- the move run_drive
+    already makes for the detailed drivetrain. Whether they then survive the
+    delay is the controller's question: measured 2026-09-21, the 3 deg tilt
+    settle is unchanged (tail roll RMS 0.78-0.80 deg) from 0 to 8 ms. An
+    earlier reading that 1 ms broke it had zeroed the delay in `design_all`
+    only, so `design_lqr`'s direct callers still designed on the delayed plant
+    -- it measured this artefact, not the controller. Hence BOTH designers."""
+    saved = model.actuator_delay.copy()
+    model.actuator_delay[:] = 0.0
+    try:
+        yield model
+    finally:
+        model.actuator_delay[:] = saved
+
+
 def design_lqr(params: dict, model: mujoco.MjModel, v: float = 0.0):
     """Returns (K over the reduced state, equilibrium qpos, fit R^2 per state)."""
     Q, R = _weights(params["control"]["lqr"])
-    eq = settle_rolling(model, params, v)
-    A, B, r2 = identify_lateral_model(params, model, eq)
+    with _undelayed(model):
+        eq = settle_rolling(model, params, v)
+        A, B, r2 = identify_lateral_model(params, model, eq)
     K = _dlqr_checked(A, B, Q, R, f"v={v:.2f}")
     _warn_fit(r2)
     return K, eq.qpos.copy(), r2
@@ -286,8 +313,9 @@ def design_gain_schedule(params: dict, model: mujoco.MjModel):
     Q, R = _weights(params["control"]["lqr"])
     Ks, r2s = [], []
     for v in speeds:
-        eq = settle_rolling(model, params, v)
-        A, B, r2 = identify_lateral_model(params, model, eq)
+        with _undelayed(model):
+            eq = settle_rolling(model, params, v)
+            A, B, r2 = identify_lateral_model(params, model, eq)
         Ks.append(_dlqr_checked(A, B, Q, R, f"v={v:.2f}"))
         r2s.append(r2)
     _warn_fit(np.stack(r2s), np.array(speeds))

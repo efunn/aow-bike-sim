@@ -296,6 +296,24 @@ actuators:
   # bench, not before.
   steer_kp: 2.0
   steer_kv: 0.0676
+  # WHERE THE TORQUE LIMIT SITS, which the affine map above does not say. The
+  # firmware clips the DUTY, then the motor subtracts its back-EMF:
+  #   duty: tau = clip(kp*err, +-stall) - kv*w      (mode 4, the real servo)
+  #   total: tau = clip(kp*err - kv*w, +-stall)      (MuJoCo's native clip)
+  # They agree until the P term saturates. Past it, `total` lets the steer
+  # outrun the motor: at the 45 deg lead bound it held 23.2 rad/s against an
+  # 11.8 no-load, which is the unwind regime of control/steer.py's rock test.
+  # `duty` builds it as a kp-only position actuator plus kv as joint damping,
+  # native MuJoCo, no per-step hook. `total` is kept so a pre-2026-09-21
+  # policy's training plant can still be built. Moves plant_digest, on purpose.
+  steer_clip: duty
+  # Frame that computes a steer goal -> the servo's own reference moving:
+  # 4.0 ms on both XC330s in mode 4 (servo-measurements.yaml,
+  # `xc330_command_delay`), the XC430's method, bus and landing included.
+  # FRAME-QUANTISED -- the true value lies in (2, 4] ms -- and the same figure
+  # the XC430 overlay carries. Built as MuJoCo's native actuator delay, so no
+  # per-step hook; mj_resetData clears the history.
+  steer_command_delay_s: {value: 0.004, source: measured}
 
 control:
   # Balance controller settings (tuning knobs, not measurements).
