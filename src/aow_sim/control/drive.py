@@ -23,6 +23,8 @@ bike's left and requires roll_ref < 0 (lean left) and steer_ff > 0.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 from .balance import LQRBalance, extract_state, mix
@@ -227,7 +229,16 @@ class DriveController(LQRBalance):
     def command_flip(self, data, direction: int = 1) -> float:
         """180-degree swap-ends about the midline, from ~standstill. Pre-steers
         the front to ~90 deg (frees it to roll laterally), holds while the rear
-        crawls the 180 spin, then unwinds. Returns the total duration [s]."""
+        crawls the 180 spin, then unwinds. Returns the total duration [s].
+
+        DEPRECATED 2026-09-21: an early attempt at a manoeuvre that hands back
+        to the analytic LQR. Hand-scripted (control.flip in bike_params), not
+        optimised, and tuned against the July 2026 plant; it falls on the
+        current one and is no longer supported. Expect to re-tune or replace
+        it before relying on it."""
+        warnings.warn("command_flip is deprecated: an early LQR-handoff "
+                      "manoeuvre that falls on the current plant",
+                      FutureWarning, stacklevel=2)
         d = 1 if direction >= 0 else -1
         self.mode = "flip"
         self._flip_profile = YawProfile(
@@ -247,9 +258,19 @@ class DriveController(LQRBalance):
         """Two-arc 180 flick (front sweeps 0->180), from ~standstill. Replays
         the offline-optimized `moves/<name>.yaml` feedforward with crawl balance
         underneath. `name`: "flick" (reverse-first) or "flick_fwd" (forward-
-        first). Returns the horizon [s]."""
+        first). Returns the horizon [s].
+
+        The TRAJECTORY kind is DEPRECATED 2026-09-21: an early attempt at a
+        manoeuvre that hands back to the analytic LQR, optimised against the
+        July 2026 plant and never re-run. It falls on the current one and is
+        no longer supported; re-optimise before relying on it. A policy-kind
+        move (flick_rl) is not covered by this note."""
         from .flick import load_move
         self._flick = load_move(name)
+        if getattr(self._flick, "kind", "trajectory") != "policy":
+            warnings.warn(f"moves/{name} is a deprecated trajectory flick: an "
+                          "early LQR-handoff manoeuvre that falls on the "
+                          "current plant", FutureWarning, stacklevel=2)
         if getattr(self._flick, "kind", "trajectory") == "policy":
             from .flick_spec import OBS_DIM
             if self._flick.obs_dim != OBS_DIM:

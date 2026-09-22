@@ -1,5 +1,10 @@
 """Offline trajectory optimization for the two-arc 180-degree flick.
 
+DEPRECATED 2026-09-21: an early attempt at a manoeuvre that hands back to
+the analytic LQR. moves/flick.yaml was written by this script on 2026-07-19,
+against that plant, and never re-run; it falls on the current one. No longer
+supported -- a re-run here is the fix if the trajectory flick is ever wanted.
+
 Direct shooting: differential_evolution over the 7 flick parameters, each
 candidate scored by a full MuJoCo rollout with roll/lateral crawl-balance
 underneath (see control/flick.py). Writes the winner to moves/flick.yaml.
@@ -51,6 +56,8 @@ WARM_START = np.array([2.6, np.pi * 0.30, np.pi * 0.55, np.pi * 0.80,
 
 
 def main() -> None:
+    print("DEPRECATED: the trajectory flick is no longer supported (see this "
+          "module's docstring).")
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--maxiter", type=int, default=40)
     ap.add_argument("--popsize", type=int, default=15)

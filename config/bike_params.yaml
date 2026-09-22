@@ -687,6 +687,8 @@ control:
     # -> recalibrate on hardware; stage-2 turning-equilibrium ID would shrink it.
     reverse_avoid_band: [-1.2, -0.72]
   flip:                 # 180-degree swap-ends about the midline (standstill<->standstill)
+    # DEPRECATED 2026-09-21 (DriveController.command_flip): an early LQR-handoff
+    # manoeuvre, tuned against the July 2026 plant; falls on the current one.
     # Realization: pre-steer the front to ~90 deg (frees it to roll laterally so
     # the bike can rotate about the midline, not the front contact), hold while
     # the rear crawls the spin, then unwind. See the decisions doc: exact

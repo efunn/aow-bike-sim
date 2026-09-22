@@ -11,6 +11,13 @@ This module holds the pieces the optimizer and the replay controller share:
   FlickTrajectory  — the parameterized feedforward schedules.
   rollout / cost   — simulate a candidate and score it.
   load_move/save   — read/write moves/<name>.yaml (the optimizer's output).
+
+THE TRAJECTORY FLICK IS DEPRECATED (2026-09-21): an early attempt at a
+manoeuvre that hands back to the analytic LQR, optimised against the July 2026
+plant and never re-run. It falls on the current one and is no longer
+supported; re-optimise before relying on it.
+`load_move` and `MOVES_DIR` are NOT deprecated -- every RL move loads through
+them, flick_rl included.
 """
 
 from __future__ import annotations
