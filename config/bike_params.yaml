@@ -658,10 +658,40 @@ control:
     # Raising r_steer instead also works (60.0 gives 2% saturation) but costs
     # roll -- 4.0 deg against 1.17 -- because it weakens the whole loop rather
     # than just the part that was asking for too much.
+    #
+    # THE TABLE ABOVE NO LONGER HOLDS (re-measured 2026-09-22, same 3 deg tilt,
+    # 40 s hold). Saturation is now 73-97% for EVERY q_steer 5-40 x r_steer
+    # 6/20, and rises with q_steer. The standstill steer row asks for ~50 rad
+    # per rad of roll and ~45 per m/s of v_lat, i.e. 40-90 deg of steer for
+    # sub-degree roll -- 3-6x the clamp -- so the steer runs as a +-15 deg
+    # relay (4 sign changes/s) and holds at 0.85 deg tail roll RMS anyway.
+    # Weights cannot fix that; it is the design, not the tuning.
     q_steer: 5.0        #   rings against the steer clamp; 8/12 also tracks pivots.
     r_drive: 0.05       # balance of authority vs. saturation margin on pushes
-    r_steer: 6.0
+    # 20.0, was 6.0 (2026-09-22). `pytest -m lqr` 8 -> 6 red, nothing new red
+    # (pivot[180] and reverse_circle clear); 40 s hold unchanged (0.83 vs 0.85
+    # deg tail RMS). It does NOT unpin the clamp at standstill (75.5%); at
+    # 0.3 m/s it does (100% -> 13%). Tried 30 (pivot[-90] goes red) and 60
+    # (three wound-steer balance tests go red).
+    r_steer: 20.0
     steer_limit_deg: 15.0   # keep steering inside the identified linear region
+    # The two drive-servo states (linearize.STATE_NAMES), added 2026-09-22.
+    # Light on purpose: they are there so the design can SEE the crawl it has
+    # commanded, not to be regulated. Standstill hold, swing-linkage bike,
+    # truth attitude: steer 9.5 -> 0.05 deg RMS, pinned 99% -> 0%.
+    q_crawl_rate: 0.01  # differential shaft speed [rad/s]
+    q_crawl_lag: 0.01   # differential servo lag [rad]
+    # crawl_lag FORGETS with this time constant (balance.CrawlSensor). A
+    # deliberate steady crawl -- pivot, arc turn -- holds a constant servo lag
+    # that a pure integral reads as error, so turns under-rotated ~25% (pivot
+    # err -22 deg on 90). pytest -m lqr reds, and teleop's sensors at rest
+    # (swing linkage, TM151 + odometry, 3 seeds x 20 s):
+    #     tau      lqr reds        teleop at rest
+    #     none        11           (not run)
+    #     0.05         2           falls 3.3 / 10.5 / 3.3 s
+    #     0.2          2           held x3
+    #     0.5          4           (not run)
+    crawl_lag_tau_s: 0.2
   drive:                # line/circle driving on the gain-scheduled LQR
     v_max: 1.2          # m/s; ~70% of the 1.7 no-load ceiling (torque margin)
     accel: 1.5          # m/s^2 speed-profile limit; harness sweep finds true max

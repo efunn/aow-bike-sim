@@ -71,7 +71,7 @@ from __future__ import annotations
 # older station -- but a station reading a renamed field silently gets zero,
 # which is exactly the class of bug the version check exists to turn into an
 # error at connect time instead of a wrong picture ten minutes in.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3   # 3: `controller` (2026-09-22)
 
 # Every key `build` emits. The test walks this, so a field added without a
 # reader (or read without being sent) fails rather than rotting.
@@ -81,7 +81,7 @@ FIELDS = (
     "cmd_v_world", "cmd_psi", "psi",
     "roll", "roll_rate", "volts", "vlat_conf", "qos",
     "jitter_ms", "dt_ms", "cuts", "righting", "righting_pos",
-    "righting_current", "servos", "run", "log", "hold", "warn",
+    "righting_current", "servos", "run", "log", "hold", "warn", "controller",
 )
 
 # The effort slot's key names ITS UNIT, because address 126 means different
@@ -116,7 +116,7 @@ def servo_health(health: dict, effort_unit: dict) -> dict:
 def build(*, t, state, quat, gyro, v_world, pos, steer, w_shaft, shaft, psi,
           cmd_v_world, cmd_psi, roll, roll_rate, volts, vlat_conf, qos,
           jitter_ms, dt_ms, cuts, righting, righting_pos,
-          righting_current, servos=None, run=None, log=None,
+          righting_current, controller, servos=None, run=None, log=None,
           hold=None, warn=None) -> dict:
     """The packet. Pure, keyword-only, and rounded HERE rather than at the
     call site so the wire format is one decision in one place.
@@ -136,6 +136,10 @@ def build(*, t, state, quat, gyro, v_world, pos, steer, w_shaft, shaft, psi,
         "v": SCHEMA_VERSION,
         "t": round(float(t), 3),
         "state": state,
+        # What the bike IS flying, "policy" or "lqr" -- not what the station
+        # asked for: the bike refuses the LQR when its bundle has no gains at
+        # the loop rate, and the operator has to see that.
+        "controller": str(controller),
         # -- pose, for the mirror ------------------------------------------
         "quat": [round(float(x), 6) for x in quat],
         "gyro": [round(float(x), 4) for x in gyro],
@@ -306,11 +310,16 @@ def status_text(tel: dict) -> tuple[str, str]:
 #   byte  0      version (COMMAND_VERSION)
 #   byte  1      rearm_n, uint8 -- a press COUNT, wraps at 256; the bike acts
 #                on a change, so the wrap is harmless
-#   bytes 2-5    v_cmd_world x, y     int16  [mm/s]    +-32.7 m/s
-#   bytes 6-7    psi_cmd, WRAPPED     int16  [1e-4 rad]  +-pi fits in +-31416;
+#   byte  2      controller, uint8 -- CONTROLLERS index: 0 policy, 1 lqr (v2)
+#   bytes 3-6    v_cmd_world x, y     int16  [mm/s]    +-32.7 m/s
+#   bytes 7-8    psi_cmd, WRAPPED     int16  [1e-4 rad]  +-pi fits in +-31416;
 #                ABSENT = the station does not know the bike's heading yet
-#   bytes 8-9    righting_rad         int16  [1e-3 rad]  +-32.7 rad, ~5 turns
-#   bytes 10-11  righting_current     int16  [raw counts]
+#   bytes 9-10   righting_rad         int16  [1e-3 rad]  +-32.7 rad, ~5 turns
+#   bytes 11-12  righting_current     int16  [raw counts]
+#
+# v2 (2026-09-22) added the controller byte. A v1 datagram (12 B, no
+# controller) still decodes -- with no `controller` key, which the bike reads
+# as "no request" and keeps flying what it is flying.
 #
 # ABSENT (-32768) in a righting slot means "not commanded": the bike then
 # writes no goal at all, which is different from a goal of zero.
@@ -327,10 +336,13 @@ def status_text(tel: dict) -> tuple[str, str]:
 # (the servo resolves 0.088).
 # ---------------------------------------------------------------------------
 
-COMMAND_VERSION = 1
-_CMD = __import__("struct").Struct("<BBhhhhh")
-COMMAND_BYTES = _CMD.size          # 12
+COMMAND_VERSION = 2
+_CMD = __import__("struct").Struct("<BBBhhhhh")
+_CMD_V1 = __import__("struct").Struct("<BBhhhhh")
+COMMAND_BYTES = _CMD.size          # 13
 ABSENT = -32768
+# What the operator can ask the bike to fly. The index is the wire value.
+CONTROLLERS = ("policy", "lqr")
 
 
 class CommandFormatError(ValueError):
@@ -351,7 +363,8 @@ def encode_command(pkt: dict) -> bytes:
         psi = math.atan2(math.sin(float(psi)), math.cos(float(psi)))
     r = pkt.get("righting_rad")
     cur = pkt.get("righting_current")
-    return _CMD.pack(COMMAND_VERSION, int(pkt.get("rearm_n", 0)) & 0xFF,
+    ctl = CONTROLLERS.index(pkt.get("controller", "policy"))
+    return _CMD.pack(COMMAND_VERSION, int(pkt.get("rearm_n", 0)) & 0xFF, ctl,
                      _i16(vx * 1e3), _i16(vy * 1e3),
                      ABSENT if psi is None else _i16(psi * 1e4),
                      ABSENT if r is None else _i16(r * 1e3),
@@ -365,13 +378,22 @@ def decode_command(data: bytes) -> dict:
         raise CommandFormatError(
             "the station is sending JSON -- it predates the packed command "
             "format. Update the station (this repo, same commit as the bike).")
-    if len(data) != COMMAND_BYTES:
-        raise CommandFormatError(f"{len(data)} B, expected {COMMAND_BYTES}")
-    ver, n, vx, vy, psi, r, cur = _CMD.unpack(data)
-    if ver != COMMAND_VERSION:
+    ver = data[0] if data else None
+    if ver == 1 and len(data) == _CMD_V1.size:
+        _, n, vx, vy, psi, r, cur = _CMD_V1.unpack(data)
+        ctl = None                    # v1 carried no controller request
+    elif ver == COMMAND_VERSION and len(data) == COMMAND_BYTES:
+        _, n, ctl, vx, vy, psi, r, cur = _CMD.unpack(data)
+        if ctl >= len(CONTROLLERS):
+            raise CommandFormatError(f"controller {ctl} is not one of {CONTROLLERS}")
+    elif ver in (1, COMMAND_VERSION):
+        raise CommandFormatError(f"{len(data)} B is not a v{ver} command")
+    else:
         raise CommandFormatError(
-            f"command format v{ver}, this bike reads v{COMMAND_VERSION}")
+            f"command format v{ver}, this bike reads v1 and v{COMMAND_VERSION}")
     out = {"v_cmd_world": [vx * 1e-3, vy * 1e-3], "rearm_n": n}
+    if ctl is not None:
+        out["controller"] = CONTROLLERS[ctl]
     if psi != ABSENT:
         out["psi_cmd"] = psi * 1e-4
     if r != ABSENT:

@@ -96,6 +96,87 @@ def extract_state(data, ref_pos: np.ndarray) -> BikeState:
                      pitch, -data.qvel[4])
 
 
+class CrawlSensor:
+    """The LQR's two drive-servo states, MEASURED the way the bike can.
+
+    Nothing here reads a simulator velocity or servo state. Both come from
+    the two drive servos (XC430, Velocity Control Mode) and from what the
+    controller itself commanded:
+
+      crawl_rate = (w_servo_a - w_servo_b) * belt_ratio            [rad/s]
+          each w_servo from Present Position count differences through a
+          RateFilter (25 ms, taper 0.5) -- on the Pi that is exactly
+          `s["w_servo_a"]` / `s["w_servo_b"]` from hw/dynamixel, the same
+          numbers odometry uses, handed in with `feed()`. In the simulator
+          the sensor makes them itself: shaft angle -> quantised servo counts
+          (4096/rev, belt_ratio behind the input shaft) -> differenced per
+          control tick -> the same filter.
+      crawl_lag  = sum of (d_commanded - crawl_rate) * dt              [rad]
+          d_commanded is the differential of the Goal Velocities the
+          controller wrote LAST tick (after saturation). This stands in for
+          the servo's own velocity-loop integrator, which the firmware does
+          not expose; in the simulator it is the drive actuator's integrator
+          (act - qpos), which the identification uses. How closely the XC430
+          firmware's integrator follows it is NOT measured.
+
+    Ticked once per control update by `_Base._update`, in EVERY mode, so the
+    states are already warm when the analytic controller takes over from a
+    policy mid-drive.
+    """
+
+    def __init__(self, params: dict, model, dt: float):
+        from ..hw.dynamixel import RateFilter        # numpy only; Pi-safe
+        from .steer import XC330_COUNTS_PER_RAD
+        self.dt = float(dt)
+        self.belt = float(params["drivetrain"]["belt_ratio"])
+        self._cpr = XC330_COUNTS_PER_RAD
+        try:                                          # simulator: own encoders
+            self._qa = model.joint("input_a_spin").qposadr[0]
+            self._qb = model.joint("input_b_spin").qposadr[0]
+        except (KeyError, ValueError, AttributeError):
+            self._qa = self._qb = None                # the bike: feed() it
+        self._filt = {k: RateFilter(25.0, 0.5, 1000.0 * self.dt) for k in "ab"}
+        # 0.2 s is config/bike_params.yaml's value (and its table); the
+        # default only covers a variant yaml that predates the key.
+        self.lag_tau_s = float(params["control"]["lqr"].get("crawl_lag_tau_s", 0.2))
+        self.reset()
+
+    def reset(self) -> None:
+        self._prev = None
+        self._fed = None
+        self.rate = 0.0
+        self.lag = 0.0
+        self.w_servo = (0.0, 0.0)          # last servo-side rates used
+        for f in self._filt.values():
+            f.reset()
+
+    def feed(self, w_servo_a: float, w_servo_b: float) -> None:
+        """The bike's path: servo-side rad/s as hw/dynamixel reports them."""
+        self._fed = (float(w_servo_a), float(w_servo_b))
+
+    def _servo_rates(self, data) -> tuple[float, float]:
+        if self._fed is not None:
+            return self._fed
+        if self._qa is None:
+            return 0.0, 0.0
+        counts = (round(float(data.qpos[self._qa]) / self.belt * self._cpr),
+                  round(float(data.qpos[self._qb]) / self.belt * self._cpr))
+        prev, self._prev = self._prev, counts
+        if prev is None:
+            return self._filt["a"].peek(), self._filt["b"].peek()
+        return tuple(self._filt[k].update((c - p) / self._cpr / self.dt)
+                     for k, c, p in zip("ab", counts, prev))
+
+    def update(self, data, d_commanded: float) -> tuple[float, float]:
+        wa, wb = self._servo_rates(data)
+        self.w_servo = (float(wa), float(wb))
+        self.rate = (wa - wb) * self.belt
+        self.lag += (float(d_commanded) - self.rate) * self.dt
+        if self.lag_tau_s:
+            self.lag -= self.lag * self.dt / self.lag_tau_s
+        return self.rate, self.lag
+
+
 class _Base:
     """Shared ZOH scheduling, actuator lookup, and saturation."""
 
@@ -120,11 +201,15 @@ class _Base:
         self._ref_pos: np.ndarray | None = None
         self._next_t = 0.0
         self._u = np.zeros(model.nu)
+        self.crawl = CrawlSensor(params, model, self.dt)
+        self._crawl_x = np.zeros(2)       # (crawl_rate, crawl_lag), this tick
 
     def reset(self, model, data) -> None:
         self._ref_pos = data.qpos[:3].copy()
         self._next_t = data.time
         self._u = np.zeros(model.nu)
+        self.crawl.reset()
+        self._crawl_x = np.zeros(2)
 
     def step(self, model, data) -> np.ndarray:
         """Call every physics step; writes data.ctrl with ZOH at rate_hz."""
@@ -154,6 +239,8 @@ class _Base:
         return self._u
 
     def _update(self, model, data) -> None:
+        d_prev = self._u[self.aid["drive_a"]] - self._u[self.aid["drive_b"]]
+        self._crawl_x = np.array(self.crawl.update(data, d_prev))
         u = np.asarray(self._compute(model, data), dtype=float)
         self._u = np.clip(u, self.lo, self.hi)
         self._next_t = data.time + self.dt
@@ -270,6 +357,7 @@ class LQRBalance(_Base):
             s.e_lat, s.roll, yaw_err,
             self.steer_frame.measured(data.qpos[self._sj]),
             s.v_lat, s.roll_rate, data.qvel[5], data.qvel[self._sd],
+            *self._crawl_x,
         ])
         d, steer = -self.K @ x
         steer = np.clip(steer, -self.steer_limit, self.steer_limit)

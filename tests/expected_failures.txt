@@ -21,7 +21,7 @@
 # is in `git log -p -- tests/expected_failures.txt`.
 
 # ---------------------------------------------------------------------------
-# THE ANALYTIC LQR CONTROLLERS, eight cases. Registered 2026-08-25 with
+# THE ANALYTIC LQR CONTROLLERS, two cases. Registered 2026-08-25 with
 # nine; test_hold_ramps_to_full_speed_with_auto_repeat left 2026-09-21, when
 # it moved to the RL policy teleop boots with (it tests the key path, and the
 # LQR's fall at v_max is straight_sprint[0.8]'s to report).
@@ -94,6 +94,25 @@
 # pivots with the bounds unchanged; not applied, and the analytic pivot is a
 # deprecation candidate (nothing but run_pivot.py and this test uses it).
 #
+# r_steer 6.0 -> 20.0 (2026-09-22) took pivot[180] and reverse_circle off
+# this list and turned nothing red. It is NOT the at-speed fix: the steer
+# still sits on its +-15 deg clamp ~95% of the last 0.5 s before the
+# sprint[0.8] fall, and ~75% of a standstill hold for every q_steer x
+# r_steer tried (bike_params.yaml, at r_steer). The design asks 40-90 deg of
+# steer for sub-degree roll; the clamp makes it a relay. And it is not the
+# contact either: all six stay red at contact_solref dampratio 0.5/1/2/4.
+#
+# THE CRAWL STATES (2026-09-22) took it 6 -> 2. The identified model had no
+# state for the drive servos, so the crawl (which acts through the servo
+# loop, nothing in one 5 ms period) fitted as a column of zeros and the design
+# balanced on steer alone -- that was the relay above. With the differential
+# shaft speed and servo lag added (linearize.STATE_NAMES, measured by
+# balance.CrawlSensor, crawl_lag_tau_s 0.2) both sprints and three of the four
+# command_heading cases pass. What is left is REVERSE: both remaining cases
+# fall turning at -0.5 m/s. reverse_circle was green under r_steer 20 alone
+# (radius err 0.119 -> passing) and is red again here, now as a fall with
+# radius err 0.064 -- one question, the reverse-turn design, not two.
+#
 # RE-ASSESSED 2026-09-21, two reasons that said the wrong thing:
 #   - test_reverse_circle_tracks FALLS. "radius err 0.681" was the radius of a
 #     bike lying down, not a tracking error: max roll 180 with or without the
@@ -107,14 +126,8 @@
 #     across the grid it zigzags (-2.1, 5.1, 35.7, -14.8, 50.3, 8.1, 3.2, 6.5,
 #     -0.68). Same at-speed design question as the falls above; identical at
 #     0 and 4 ms of steer delay.
-tests/test_pivot.py::test_pivot_completes_upright[180.0]   # 2026-09-21 steer_clip duty: err@4s 3.10 vs 3.0, upright
-tests/test_drive.py::test_command_heading[-0.5-90.0-5.0]   # 2026-08-25 analytic LQR: falls in the turn
-tests/test_drive.py::test_command_heading[-1.2-90.0-6.0]   # 2026-08-25 analytic LQR: falls in the turn
-tests/test_drive.py::test_command_heading[0.8-180.0-6.0]   # 2026-08-25 analytic LQR: falls in the turn
-tests/test_drive.py::test_command_heading[0.8-90.0-5.0]    # 2026-08-25 analytic LQR: falls in the turn
-tests/test_drive.py::test_straight_sprint[0.8-0.1]         # 2026-08-25 analytic LQR: falls at v_max
-tests/test_drive.py::test_straight_sprint[-0.5-0.1]        # 2026-08-25 analytic LQR: tracks -0.26 of -0.5, does NOT fall
-tests/test_drive.py::test_reverse_circle_tracks            # 2026-08-25 analytic LQR: falls mid-lap (roll 180)
+tests/test_drive.py::test_command_heading[-0.5-90.0-5.0]   # 2026-08-25 analytic LQR: falls in the turn (reverse)
+tests/test_drive.py::test_reverse_circle_tracks            # 2026-09-22 crawl-state LQR: falls mid-lap in reverse (err 0.064)
 
 # ---------------------------------------------------------------------------
 # THE STEER SERVO AS THE FIRMWARE RUNS IT, no cases now. Registered 2026-09-21

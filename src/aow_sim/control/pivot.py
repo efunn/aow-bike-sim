@@ -149,6 +149,9 @@ class PivotController(LQRBalance):
             self.steer_frame.measured(data.qpos[self._sj]),
             s.v_lat - v_lat_ref, s.roll_rate, data.qvel[5] - rate,
             data.qvel[self._sd],
+            # measured crawl about the feedforward crawl the pivot asks for
+            self._crawl_x[0] - self.ff_gain * v_lat_ref / self.lat_per_d,
+            self._crawl_x[1],
         ])
         d, steer = -self.K @ x
         d += self.ff_gain * v_lat_ref / self.lat_per_d

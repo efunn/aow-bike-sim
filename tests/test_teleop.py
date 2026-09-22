@@ -1017,3 +1017,63 @@ def test_the_mirror_does_not_take_the_viewer_lock_on_an_idle_frame():
         "taking the render mutex again")
     assert seen["after_zoom"] == 1, seen
     assert seen["settled"] == 1, "the flag should clear after one push"
+
+
+# -- the recording: both controllers logged in one convention ---------------
+
+def _rec_rows(model, params, eq_qpos, engage_policy, seconds=0.6):
+    from aow_sim.control.drive import DriveController
+    from aow_sim.run_drive import _REC_COLUMNS, _rec_sample
+    data = mujoco.MjData(model)
+    data.qpos[:] = eq_qpos
+    mujoco.mj_forward(model, data)
+    c = DriveController(params, model)
+    c.reset(model, data)
+    fed = []
+    if engage_policy:
+        c.engage_general(data)
+        act = c._gen.action
+        c._gen.action = lambda obs: (fed.append(np.array(obs, float)), act(obs))[1]
+    rec = {"t_last": -1.0, "rows": []}
+    state = {"v": 0.0, "v_lat": 0.0, "psi": 0.0, "psi_sent": 0.0}
+    pairs = []                   # (obs fed, view logged) on the SAME tick
+    for _ in range(int(seconds / model.opt.timestep)):
+        n = len(fed)
+        c.step(model, data)
+        if len(fed) > n:         # the policy was queried on this tick
+            pairs.append((fed[-1], c.rl_view.copy()))
+        _rec_sample(rec, model, data, c, state, "x", params)
+        mujoco.mj_step(model, data)
+    return c, pairs, np.array(rec["rows"]), list(_REC_COLUMNS)
+
+
+@pytest.mark.lqr
+def test_recording_logs_the_lqr_state_and_the_rl_view(model, params, eq_qpos):
+    """Every row is as wide as its header, and under the analytic LQR both the
+    LQR's own state and the RL-convention view are filled in."""
+    c, _, rows, cols = _rec_rows(model, params, eq_qpos, engage_policy=False)
+    assert c.mode != "general"
+    assert rows.shape[1] == len(cols)
+    lqr = [i for i, n in enumerate(cols) if n.startswith("lqr_")]
+    rl = [i for i, n in enumerate(cols) if n.startswith("rl_")]
+    assert len(lqr) == 10 and len(rl) == 17
+    assert np.all(np.isfinite(rows[:, lqr])) and np.all(np.isfinite(rows[:, rl]))
+
+
+@pytest.mark.policy
+def test_rl_view_is_what_the_policy_was_fed(model, params, eq_qpos):
+    """In policy mode the logged view IS the policy's observation for every
+    state and command entry (roll .. cos_psi_err, and pitch when the policy
+    observes it). Only prev_* differ -- physical units against normalised --
+    and the LQR columns are NaN because the analytic law is not flying."""
+    _needs_general()
+    from aow_sim.control.general_spec import OBS_NAMES_BASE
+    c, pairs, rows, cols = _rec_rows(model, params, eq_qpos, engage_policy=True)
+    assert c.mode == "general" and len(pairs) > 10
+    n_state = OBS_NAMES_BASE.index("prev_steer_rate")
+    for obs, view in pairs:      # the policy holds between its 50 Hz queries
+        np.testing.assert_allclose(view[:n_state], obs[:n_state], atol=1e-6)
+        if c._gen_obs_pitch:
+            np.testing.assert_allclose(view[-2:], obs[-2:], atol=1e-6)
+    lqr = [i for i, n in enumerate(cols) if n.startswith("lqr_")]
+    assert np.all(np.isnan(rows[:, lqr]))

@@ -30,6 +30,7 @@ robot is a fall, not a warning.
 from __future__ import annotations
 
 import argparse
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -80,6 +81,16 @@ def build_bundle(params: dict, payload: bool = True,
                  ahrs_mount: tuple[np.ndarray, str] | None = None) -> dict:
     model = build_model(params, variant="full", payload=payload)
     design = design_all(params, model)
+    # AND AT THE BIKE'S RATE. `control.rate_hz` (200) is the simulator's; the
+    # bike's loop ticks at hw/dynamixel.CONTROL_HZ_DEFAULT (100), and a
+    # discrete LQR is only the design at its own rate. Measured 2026-09-22
+    # with gains designed AT 100 Hz: the standstill hold on teleop's sensors
+    # held 12 of 12; `pytest -m lqr` at 100 Hz is 6 red of 36 (circles and
+    # two forward turns). The bike's LQR mode flies this schedule.
+    from .hw.dynamixel import CONTROL_HZ_DEFAULT
+    p_on = copy.deepcopy(params)
+    p_on["control"]["rate_hz"] = float(CONTROL_HZ_DEFAULT)
+    onboard = design_all(p_on, model)
     sj = model.joint(STEER_JOINT)
     q_mount, mount_source = ahrs_mount or (np.array([1.0, 0.0, 0.0, 0.0]), "absent")
     return {
@@ -89,6 +100,15 @@ def build_bundle(params: dict, payload: bool = True,
         "fit_r2": design.fit_r2,
         "speeds": design.speeds,
         "Ks": design.Ks,
+        "K0_legacy": design.K0_legacy,
+        "rate_hz": np.array(design.rate_hz),
+        # the same design at the bike's own loop rate (see above)
+        "onboard_rate_hz": np.array(onboard.rate_hz),
+        "K_onboard": onboard.K,
+        "fit_r2_onboard": onboard.fit_r2,
+        "Ks_onboard": onboard.Ks,
+        "fit_r2_grid_onboard": onboard.fit_r2_grid,
+        "K0_legacy_onboard": onboard.K0_legacy,
         "fit_r2_grid": design.fit_r2_grid,
         # -- model constants the controllers read --
         "nq": np.array(model.nq),
@@ -155,7 +175,14 @@ def main() -> None:
     from .hw.state import DeployModel, load_bundle
     design, dm = load_bundle(out, params)
     DriveController(params, dm, design)
-    print("  rebuild     OK (DriveController constructed from the bundle alone)")
+    rate = float(bundle["onboard_rate_hz"])
+    design_on, _ = load_bundle(out, params, rate_hz=rate)
+    assert design_on.rate_hz == rate
+    p_on = copy.deepcopy(params)
+    p_on["control"]["rate_hz"] = rate
+    DriveController(p_on, dm, design_on)
+    print(f"  rebuild     OK (DriveController constructed from the bundle alone, "
+          f"at {design.rate_hz:g} and {rate:g} Hz)")
 
 
 if __name__ == "__main__":

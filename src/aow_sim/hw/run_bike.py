@@ -88,6 +88,7 @@ BIKE_COLS = {
     "ctrl": 3,                      # drive_a, drive_b [input-shaft rad/s], steer [rad]
     "cmd_v_world": 2, "cmd_psi": 1, "link_age": 1,
     "righting_goal": 1, "righting_current": 1, "volts": 1,
+    "controller": 1,                # index into telemetry.CONTROLLERS
 }
 STATES = ("engaged", "cut")   # FallGuard.state
 
@@ -419,7 +420,16 @@ class BikeRunner:
         self.rec: RunRecorder | None = None
         self.run_id: str | None = None
         self._stopped_by: str | None = None
-        self.design, self.model = load_bundle(bundle_path, self.params)
+        self.design, self.model = load_bundle(bundle_path, self.params,
+                                              rate_hz=control_hz)
+        # WHICH CONTROLLER: the general policy unless the operator asks for
+        # the LQR (station key `l`). The LQR only flies gains designed at THIS
+        # loop's rate -- a discrete design is only itself at its own rate --
+        # and only the 10-state (crawl-state) design; anything else refuses,
+        # by name, rather than flying a controller nobody tested.
+        self.controller = "policy"
+        self.lqr_why = lqr_unavailable(self.design, control_hz)
+        self._lqr_refused: str | None = None   # say a refusal once, not per tick
         self.dt = 1.0 / control_hz
         self.ctl = DriveController(controller_params(self.params, control_hz),
                                    self.model, self.design)
@@ -544,6 +554,10 @@ class BikeRunner:
         self.data.set_orientation(a.quat, a.gyro)
         self.data.qpos[self.ctl._sj] = s["steer_pos"]
         self.data.qvel[self.ctl._sd] = s["steer_vel"]
+        # The LQR's crawl states come from the drive servos' own position
+        # counts (balance.CrawlSensor): these are the same filtered rates
+        # odometry reads below. Untested on hardware as of 2026-09-22.
+        self.ctl.crawl.feed(s["w_servo_a"], s["w_servo_b"])
 
         roll, pitch, yaw = _rpy(a.quat)
         v_lon, v_lat = self.est.update(
@@ -576,11 +590,39 @@ class BikeRunner:
         if age > CMD_STALE_S:
             # Hold heading, zero velocity: keep balancing, stop travelling.
             self.ctl.set_command(v_cmd_world=[0.0, 0.0])
+            if self.controller == "lqr":
+                self.ctl.set_speed(0.0)
             return
         c = self.link.cmd
+        want = c.get("controller")
+        if want is not None and want != self.controller:
+            self._switch_controller(want)
         self.ctl.set_command(v_cmd_world=c.get("v_cmd_world", [0.0, 0.0]),
                              psi_cmd=c.get("psi_cmd"))
+        if self.controller == "lqr":
+            self.ctl.follow_command(self.data, c.get("v_cmd_world", [0.0, 0.0]),
+                                    c.get("psi_cmd"))
         self._apply_operator(c)
+
+    def _switch_controller(self, want: str) -> None:
+        """Policy <-> LQR, on the operator's request. Refused, and SAID,
+        when the bundle cannot fly the LQR at this loop rate; the station
+        shows what the bike is actually flying, so a refusal is visible."""
+        if want == "lqr" and self.lqr_why is not None:
+            if self._lqr_refused != self.lqr_why:
+                self._event("mode", f"LQR refused: {self.lqr_why}")
+                self._lqr_refused = self.lqr_why
+            return
+        self.controller = want
+        self._lqr_refused = None
+        if want == "lqr":
+            self.ctl.follow_reset(self.data)
+            self._event("mode", "LQR engaged -- position is DEAD-RECKONED and "
+                                "re-anchors on each heading key")
+        else:
+            self.ctl.engage_general(self.data, name=self.gen_name, reuse=True)
+            self.ctl.set_command(v_cmd_world=[0.0, 0.0])
+            self._event("mode", f"policy {self.gen_name} engaged")
 
     def _apply_operator(self, c: dict) -> None:
         """The parts of the command struct the POLICY does not own.
@@ -905,7 +947,12 @@ class BikeRunner:
         self.est = VelocityEstimator(self.params)
         self._sense()
         self.ctl.reset(self.model, self.data)
-        self.ctl.engage_general(self.data, name=self.gen_name, reuse=True)
+        if self.controller == "lqr":
+            # reset() already dropped a fresh line anchor where the bike
+            # stands; this also zeroes the speed and re-adopts the heading.
+            self.ctl.follow_reset(self.data)
+        else:
+            self.ctl.engage_general(self.data, name=self.gen_name, reuse=True)
         # The operator's last command predates the fall. Re-anchor to standing
         # still and let them ask again.
         self.ctl.set_command(v_cmd_world=[0.0, 0.0])
@@ -1136,6 +1183,7 @@ class BikeRunner:
                 # -- 101 deg stale in one bench session -- and the station
                 # re-aims and clamps against this number.
                 psi=self._yaw,
+                controller=self.controller,
                 cmd_v_world=self.ctl._gen_v_cmd,
                 cmd_psi=self.ctl._gen_psi_cmd,
                 roll=self._roll,
@@ -1217,6 +1265,7 @@ class BikeRunner:
             "righting_current": (np.nan if self._righting_current is None
                                  else self._righting_current),
             "volts": voltage,
+            "controller": telemetry.CONTROLLERS.index(self.controller),
         })
 
     def shutdown(self) -> None:
@@ -1241,6 +1290,20 @@ class BikeRunner:
                      f"p99 {np.percentile(j, 99):.2f} ms  max {j.max():.2f} ms")
                 if self._late:
                     _say(f"  ticks over 10 ms late: {self._late}")
+
+
+def lqr_unavailable(design, loop_hz: float) -> str | None:
+    """Why this bundle cannot fly the LQR at `loop_hz`, or None if it can."""
+    from ..control.lqr_design import STATE_NAMES
+    if design.rate_hz is None or abs(design.rate_hz - loop_hz) > 1e-6:
+        got = "an unstated rate" if design.rate_hz is None else f"{design.rate_hz:g} Hz"
+        return (f"the bundle's gains are designed at {got}, this loop runs at "
+                f"{loop_hz:g} Hz -- re-run `python -m aow_sim.export_deploy` "
+                f"and copy deploy/bundle.npz to the bike")
+    if design.Ks.shape[-1] != len(STATE_NAMES):
+        return (f"the bundle's gains are {design.Ks.shape[-1]}-state, this code "
+                f"flies {len(STATE_NAMES)} -- re-export and copy the bundle")
+    return None
 
 
 def controller_params(params: dict, loop_hz: float) -> dict:

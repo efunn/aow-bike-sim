@@ -121,6 +121,39 @@ def test_controller_stack_is_reachable_without_mujoco(without_laptop_packages):
     assert params["bike"]["wheelbase"] > 0
 
 
+def test_bike_constructs_its_controller_from_a_bundle_without_mujoco(
+        without_laptop_packages):
+    """What run_bike actually does at startup: DriveController(params,
+    DeployModel, design) -- for the current bundle AND for one exported before
+    the crawl states (no K0_legacy, 8-state Ks). The pre-crawl case once fell
+    through to linearize.design_crawl_fallback, which imports mujoco, so a Pi
+    with new code and an old bundle could not start."""
+    from dataclasses import replace
+    from pathlib import Path
+
+    from aow_sim.control.drive import DriveController
+    from aow_sim.hw.state import load_bundle
+    from aow_sim.params import load_params
+
+    bundle = Path(__file__).resolve().parents[1] / "deploy" / "bundle.npz"
+    if not bundle.exists():
+        pytest.skip("run `python -m aow_sim.export_deploy` first")
+    params = load_params()
+    design, deploy_model = load_bundle(bundle, params)
+    DriveController(params, deploy_model, design)
+    old = replace(design, K0_legacy=None, Ks=design.Ks[:, :, :8])
+    c = DriveController(params, deploy_model, old)
+    assert c._K0.shape == (2, 8)
+
+    # ...and the LQR mode: the bundle carries a design at the bike's own loop
+    # rate, and at that rate nothing stands between the operator and it.
+    from aow_sim.hw.run_bike import CONTROL_HZ, controller_params, lqr_unavailable
+    onboard, _ = load_bundle(bundle, params, rate_hz=CONTROL_HZ)
+    assert onboard.rate_hz == CONTROL_HZ
+    assert lqr_unavailable(onboard, CONTROL_HZ) is None
+    DriveController(controller_params(params, CONTROL_HZ), deploy_model, onboard)
+
+
 def test_lazy_control_reexports_still_work():
     """The lazy __getattr__ in control/__init__ must not break the sim-side
     `from aow_sim.control import DriveController` spelling."""

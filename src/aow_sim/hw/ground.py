@@ -62,6 +62,12 @@ eats escape sequences (ssh through something odd, tmux misconfigured).
               heading snaps
     [ / ]     righting goal current, down / up. RAW counts; see
               ServoBus.set_righting_current for why it is not milliamps
+    l         switch controller: the general policy <-> the analytic LQR.
+              The status line shows what the bike IS flying, which is not
+              always what was asked: it refuses the LQR when its bundle has
+              no gains at its loop rate. The LQR regulates a DEAD-RECKONED
+              position (it re-anchors on every heading key) -- a bench and
+              comparison mode, see docs/plans/untethered-setup.md
     r         request re-arm after a fall cut (the bike will not come back on
               its own unless it was started with --auto-rearm)
     q         quit -- and quitting stops the heartbeat: a second later the
@@ -143,6 +149,10 @@ class OperatorState:
         # ate the operator's re-arm; a count survives any number of losses
         # (the next packet carries it) and duplicates are harmless.
         self.rearms = 0
+        # A LEVEL, like everything in the packet: which controller the
+        # operator wants. `controller_actual` is the bike's answer.
+        self.controller = "policy"
+        self.controller_actual = None
         self.quit = False
         # The bike's own heading, from telemetry. None until the first packet.
         # `/` needs it to do what teleop's `/` does; without it that key
@@ -180,6 +190,8 @@ class OperatorState:
                 self.psi = _wrap(self.psi_actual)
                 if telemetry.get("state") != "engaged":
                     self.v = 0.0
+        if telemetry.get("controller") is not None:
+            self.controller_actual = str(telemetry["controller"])
         if self.righting_current is None:
             got = telemetry.get("righting_current")
             if got is not None:
@@ -208,6 +220,8 @@ class OperatorState:
             base = 0 if self.righting_current is None else self.righting_current
             self.righting_current = base + (CURRENT_STEP if ch == "]"
                                             else -CURRENT_STEP)
+        elif ch == "l":
+            self.controller = "lqr" if self.controller == "policy" else "policy"
         elif ch == "r":
             self.rearms += 1
         elif ch in ("q", "\x03"):          # q or ctrl-C
@@ -218,13 +232,10 @@ class OperatorState:
         operator's inputs -- re-sent whole every packet, so a lost one costs
         nothing. `rearm_n` is how the one event (a press of `r`) becomes a
         level: see `self.rearms`."""
-        # NO `mode` FIELD. The struct used to carry one and the bike never
-        # read it: `general_rl` is the only deployable controller (the LQR
-        # needs a world anchor it cannot have onboard -- see
-        # docs/plans/untethered-setup.md, "Which controller deploys"), so a
-        # mode key would be a control the operator believes they have. When a
-        # second onboard controller exists it goes into both halves at once,
-        # which is what test_every_field_the_station_sends_is_read pins.
+        # `controller` (2026-09-22): the operator's choice of policy or LQR,
+        # read by BikeRunner._apply_command. An earlier struct carried a
+        # `mode` the bike never read; test_every_field_the_station_sends_is_read
+        # is what stops that recurring.
         th = 0.0 if self.psi is None else self.psi
         out = {"v_cmd_world": [self.v * math.cos(th), self.v * math.sin(th)]}
         if self.psi is not None:          # absent: the bike keeps its own
@@ -234,6 +245,7 @@ class OperatorState:
         if self.righting_current is not None:
             out["righting_current"] = self.righting_current
         out["rearm_n"] = self.rearms
+        out["controller"] = self.controller
         return out
 
 
@@ -305,8 +317,13 @@ def _status(op: OperatorState, telemetry: dict, age: float) -> str:
     # `v_world`, not `v`: since schema v2 the key `v` is the SCHEMA VERSION.
     # This line read `t.get("v", [0, 0])` and would have printed the integer 2
     # as the velocity vector -- a rename that a .get() default swallows.
+    ctl = t.get("controller", "?")
+    # Asked for one, flying the other: the bike refused (it says why in its
+    # event log) or has not caught up yet. Shout it, since it is the one
+    # mismatch the operator cannot see from how the bike moves.
+    ctl = ctl.upper() if ctl != op.controller else ctl
     return (f"v {op.v:+.2f} psi {math.degrees(op.psi or 0.0):+6.1f} | "
-            f"{t.get('state', '?'):7s} roll {math.degrees(t.get('roll', 0)):+6.1f} "
+            f"{ctl:6s} {t.get('state', '?'):7s} roll {math.degrees(t.get('roll', 0)):+6.1f} "
             f"vel {t.get('v_world', [0, 0])} steer {t.get('steer', 0):+.3f} "
             f"{t.get('volts', 0):.1f}V qos {t.get('qos', '?')} "
             f"jit {t.get('jitter_ms', 0):.2f}ms cuts {t.get('cuts', 0)}{stale}"

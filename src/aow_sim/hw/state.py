@@ -106,9 +106,15 @@ class HardwareData:
         self.qpos[0:2] += self.qvel[0:2] * dt
 
 
-def load_bundle(path: str | Path, params: dict | None = None
+def load_bundle(path: str | Path, params: dict | None = None,
+                rate_hz: float | None = None
                 ) -> tuple[LQRDesign, DeployModel]:
     """Load deploy/bundle.npz -> (LQRDesign, DeployModel).
+
+    `rate_hz`: the loop rate the caller will tick the controller at. When the
+    bundle carries a design at that rate (`onboard_rate_hz`, the bike's), that
+    one is returned; otherwise the main one, whose `rate_hz` then says it is
+    not the caller's -- the bike checks that before it will fly the LQR.
 
     If `params` is given, the bundle's digest is checked against it. A gain
     schedule designed for different parameters than the bike is running is a
@@ -153,9 +159,17 @@ def load_bundle(path: str | Path, params: dict | None = None
                     f"for params digest {got}, but bike_params.yaml now hashes "
                     f"to {want}. Re-run `python -m aow_sim.export_deploy`.")
 
+    sfx = ""
+    if (rate_hz is not None and "onboard_rate_hz" in d.files
+            and float(d["onboard_rate_hz"]) == float(rate_hz)):
+        sfx = "_onboard"
     design = LQRDesign(
-        K=d["K"], qpos_eq=d["qpos_eq"], fit_r2=d["fit_r2"],
-        speeds=d["speeds"], Ks=d["Ks"], fit_r2_grid=d["fit_r2_grid"],
+        K=d["K" + sfx], qpos_eq=d["qpos_eq"], fit_r2=d["fit_r2" + sfx],
+        speeds=d["speeds"], Ks=d["Ks" + sfx], fit_r2_grid=d["fit_r2_grid" + sfx],
+        K0_legacy=(d["K0_legacy" + sfx] if "K0_legacy" + sfx in d.files
+                   else None),
+        rate_hz=(float(d["onboard_rate_hz"]) if sfx else
+                 float(d["rate_hz"]) if "rate_hz" in d.files else None),
     )
     names = [str(n) for n in d["actuator_names"]]
     model = DeployModel(

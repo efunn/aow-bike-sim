@@ -39,9 +39,39 @@ from .lqr_design import LQRDesign  # noqa: F401
 # that the bike needs neither scipy nor a Riccati solve. A module-level import
 # would drag scipy onto the Pi for a dataclass.
 
-N_STATE = 8
+N_STATE = 10
 IDX_POS = slice(0, 4)   # e_lat, roll, yaw, steer
 IDX_VEL = slice(4, 8)
+IDX_CRAWL = slice(8, 10)
+from .lqr_design import STATE_NAMES  # noqa: E402  (numpy-only; the bike reads it)
+"""The reduced state, and the names the controllers and RL share.
+
+THE LAST TWO ARE THE DRIVE SERVOS (2026-09-22), and without them the LQR could
+not use the crawl at all. The differential d reaches roll only through the
+servo loop -- nothing in the first 5 ms, -0.38 rad/s of roll rate by 80 ms --
+so a fit over ONE control period saw a column of zeros, the design balanced on
+steer alone, and at standstill it asked 50-330 rad of steer per rad of roll:
+a +-15 deg relay, 4-11 switches a second, 5 deg of roll RMS. No weight moved
+it (r_steer 1000 barely dented the gains). With them the same hold is dead
+still (steer 0.05 deg RMS, 10 of 10 identification seeds, plain and
+swing-linkage). The 9-state version (crawl_rate only) chattered on 3 of 10.
+
+  crawl_rate  differential input-shaft speed, w_a - w_b [rad/s], the same
+              units as the command d. The RL policy's nearest observation is
+              `prev_diff` (the last COMMANDED d); this is what the servo
+              actually delivered.
+  crawl_lag   differential servo error, integral of (d - crawl_rate) dt [rad]:
+              how far the shafts are behind what was commanded. Identified
+              from the sim servo's own state (act - qpos, which is exactly
+              that integral); FLOWN from the controller's own commands and
+              MEASURED shaft speed -- see balance.CrawlSensor. Neither flies
+              on ground truth.
+
+`N_STATE_LEGACY` (the first eight) is kept for the RL environments'
+crawl-balance fallback, `DriveController._K0`: trained policies replay
+against it, so it must not move with this design.
+"""
+N_STATE_LEGACY = 8
 
 
 def settle_upright(model: mujoco.MjModel, duration: float = 0.5) -> mujoco.MjData:
@@ -130,17 +160,35 @@ def _both_wheels_down(model, data) -> bool:
     return front and rear
 
 
-def _reduced_state(model, data) -> np.ndarray:
+def _drive_addrs(model):
+    """(qvel a, qvel b, qpos a, qpos b, act a, act b) of the drive shafts."""
+    ja, jb = model.joint("input_a_spin"), model.joint("input_b_spin")
+    ia, ib = model.actuator("drive_a").id, model.actuator("drive_b").id
+    return (ja.dofadr[0], jb.dofadr[0], ja.qposadr[0], jb.qposadr[0],
+            model.actuator_actadr[ia], model.actuator_actadr[ib])
+
+
+def _crawl_truth(model, data) -> tuple[float, float]:
+    """(crawl_rate, crawl_lag) from the simulator's own state. For
+    IDENTIFICATION only -- a controller measures these (balance.CrawlSensor)."""
+    va, vb, pa, pb, aa, ab = _drive_addrs(model)
+    lag = ((data.act[aa] - data.qpos[pa]) - (data.act[ab] - data.qpos[pb])
+           if aa >= 0 and ab >= 0 else 0.0)
+    return float(data.qvel[va] - data.qvel[vb]), float(lag)
+
+
+def _reduced_state(model, data, n_state: int = N_STATE) -> np.ndarray:
     R = np.zeros(9)
     mujoco.mju_quat2Mat(R, data.qpos[3:7])
     R = R.reshape(3, 3)
     roll = np.arctan2(R[2, 1], R[2, 2])
     yaw = np.arctan2(R[1, 0], R[0, 0])
     sj, sd = model.joint("steer_joint").qposadr[0], model.joint("steer_joint").dofadr[0]
-    return np.array([
-        data.qpos[1], roll, yaw, data.qpos[sj],
-        data.qvel[1], data.qvel[3], data.qvel[5], data.qvel[sd],
-    ])
+    x = [data.qpos[1], roll, yaw, data.qpos[sj],
+         data.qvel[1], data.qvel[3], data.qvel[5], data.qvel[sd]]
+    if n_state > N_STATE_LEGACY:
+        x.extend(_crawl_truth(model, data))
+    return np.array(x)
 
 
 def _set_reduced_state(model, data, eq: mujoco.MjData, x) -> None:
@@ -166,6 +214,15 @@ def _set_reduced_state(model, data, eq: mujoco.MjData, x) -> None:
     # episode's wind-up as a random unmodelled input. Worst fit R^2 measured
     # 0.7543 without this, 0.9412 with it.
     reset_actuator_state(model, data, eq.act)
+    if len(x) > N_STATE_LEGACY:
+        # Split the differential evenly across the two shafts, about the
+        # equilibrium's (common-mode) speed and servo error.
+        va, vb, _, _, aa, ab = _drive_addrs(model)
+        data.qvel[va] = eq.qvel[va] + x[8] / 2
+        data.qvel[vb] = eq.qvel[vb] - x[8] / 2
+        if aa >= 0 and ab >= 0:
+            data.act[aa] = eq.act[aa] + x[9] / 2
+            data.act[ab] = eq.act[ab] - x[9] / 2
     mujoco.mj_forward(model, data)
 
 
@@ -175,6 +232,7 @@ def identify_lateral_model(
     eq: mujoco.MjData,
     n_episodes: int = 400,
     seed: int = 0,
+    n_state: int = N_STATE,
 ):
     """Least-squares discrete (A, B) over one control period, at finite
     amplitude, about the (possibly rolling) equilibrium `eq` — whose ctrl
@@ -183,7 +241,8 @@ def identify_lateral_model(
                               / model.opt.timestep)))
     rng = np.random.default_rng(seed)
     scale_x = np.array([0.01, 0.02, 0.02, 0.10,    # m, rad, rad, rad
-                        0.05, 0.20, 0.10, 0.50])   # m/s, rad/s x3
+                        0.05, 0.20, 0.10, 0.50,    # m/s, rad/s x3
+                        6.0, 0.05])[:n_state]      # crawl rad/s, rad
     scale_u = np.array([6.0, 0.15])                # diff rad/s, steer rad
     data = mujoco.MjData(model)
     aid = {n: model.actuator(n).id for n in ("drive_a", "drive_b", "steer")}
@@ -191,7 +250,7 @@ def identify_lateral_model(
 
     X, U, Xn = [], [], []
     for _ in range(n_episodes):
-        x0 = rng.uniform(-1, 1, N_STATE) * scale_x
+        x0 = rng.uniform(-1, 1, n_state) * scale_x
         u = rng.uniform(-1, 1, 2) * scale_u
         _set_reduced_state(model, data, eq, x0)
         data.ctrl[:] = 0.0
@@ -202,23 +261,25 @@ def identify_lateral_model(
             mujoco.mj_step(model, data)
         X.append(x0)
         U.append(u)
-        Xn.append(_reduced_state(model, data))
+        Xn.append(_reduced_state(model, data, n_state))
     X, U, Xn = np.array(X), np.array(U), np.array(Xn)
 
     Z = np.hstack([X, U])
     theta, *_ = np.linalg.lstsq(Z, Xn, rcond=None)
-    A, B = theta[:N_STATE].T, theta[N_STATE:].T
+    A, B = theta[:n_state].T, theta[n_state:].T
     resid = Xn - Z @ theta
     r2 = 1.0 - resid.var(axis=0) / np.maximum(Xn.var(axis=0), 1e-12)
     return A, B, r2
 
 
-def _weights(cfg) -> tuple[np.ndarray, np.ndarray]:
-    Q = np.diag([
+def _weights(cfg, n_state: int = N_STATE) -> tuple[np.ndarray, np.ndarray]:
+    q = [
         cfg["q_ypos"], cfg["q_roll"], cfg["q_yaw"], cfg["q_steer"],
         cfg["q_yvel"], cfg["q_roll_rate"],
         cfg.get("q_yaw_rate", 0.2 * cfg["q_yaw"]), 0.1 * cfg["q_steer"],
-    ])
+        cfg.get("q_crawl_rate", 0.01), cfg.get("q_crawl_lag", 0.01),
+    ]
+    Q = np.diag(q[:n_state])
     R = np.diag([cfg["r_drive"], cfg["r_steer"]])
     return Q, R
 
@@ -328,15 +389,25 @@ def _undelayed(model: mujoco.MjModel):
         model.actuator_delay[:] = saved
 
 
-def design_lqr(params: dict, model: mujoco.MjModel, v: float = 0.0):
+def design_lqr(params: dict, model: mujoco.MjModel, v: float = 0.0,
+               n_state: int = N_STATE):
     """Returns (K over the reduced state, equilibrium qpos, fit R^2 per state)."""
-    Q, R = _weights(params["control"]["lqr"])
+    Q, R = _weights(params["control"]["lqr"], n_state)
     with _undelayed(model):
         eq = settle_rolling(model, params, v)
-        A, B, r2 = identify_lateral_model(params, model, eq)
+        A, B, r2 = identify_lateral_model(params, model, eq, n_state=n_state)
     K = _dlqr_checked(A, B, Q, R, f"v={v:.2f}")
     _warn_fit(r2)
     return K, eq.qpos.copy(), r2
+
+
+def design_crawl_fallback(params: dict, model: mujoco.MjModel) -> np.ndarray:
+    """The standstill 8-state K the RL environments' crawl-balance fallback
+    multiplies (`DriveController._K0`). Designed exactly as before the crawl
+    states existed, so every trained policy replays against what it trained
+    against. Not for flying: it is the design that balances on steer alone."""
+    K, _, _ = design_lqr(params, model, 0.0, n_state=N_STATE_LEGACY)
+    return K
 
 
 def design_gain_schedule(params: dict, model: mujoco.MjModel):
@@ -364,4 +435,6 @@ def design_all(params: dict, model: mujoco.MjModel) -> LQRDesign:
     run at startup, which is what every in-sim path does."""
     K, qpos_eq, fit_r2 = design_lqr(params, model)
     speeds, Ks, r2s = design_gain_schedule(params, model)
-    return LQRDesign(K, qpos_eq, fit_r2, speeds, Ks, r2s)
+    return LQRDesign(K, qpos_eq, fit_r2, speeds, Ks, r2s,
+                     K0_legacy=design_crawl_fallback(params, model),
+                     rate_hz=float(params["control"]["rate_hz"]))

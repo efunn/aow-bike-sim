@@ -422,6 +422,10 @@ def main() -> None:
                     dest="odometry",
                     help="drive on MuJoCo truth instead of the onboard "
                          "estimate (--odometry is ON by default)")
+    ap.add_argument("--lqr", action="store_true",
+                    help="--teleop starts on the analytic LQR instead of the "
+                         "general policy (same as ', ENTER' at startup); ',' "
+                         "still opens the policy menu.")
     ap.add_argument("--general", default=None, metavar="NAME",
                     help="always-on policy to drive with (moves/NAME.{yaml,npz}) "
                          "for this session. Default: `control.general_move` in "
@@ -601,7 +605,7 @@ def main() -> None:
                 odometry_encoder=args.odometry_encoder, ahrs=args.ahrs,
                 ahrs_tau=args.ahrs_tau, design=design,
                 drivetrain_base=drivetrain_base, servo_gains=servo_gains,
-                drivetrain_source=drivetrain_source)
+                drivetrain_source=drivetrain_source, start_lqr=args.lqr)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1688,6 +1692,11 @@ def _reset_ball(model, data, params):
 
 # -- teleop session recording ----------------------------------------------
 
+from .control.general_spec import OBS_NAMES_BASE as _OBS_NAMES_BASE  # noqa: E402
+from .control.linearize import STATE_NAMES as _LQR_STATE_NAMES      # noqa: E402
+
+_RL_VIEW_NAMES = _OBS_NAMES_BASE + ("pitch", "pitch_rate")
+
 # Column order for the recorded row stream. Written into the npz as `columns`
 # so the reader never has to hard-code it -- add a column here and old traces
 # still load, because they carry their own header.
@@ -1698,7 +1707,14 @@ _REC_COLUMNS = (
     "x", "y", "yaw", "roll", "pitch",      # where the bike is
     "v_lon", "v_lat", "speed",             # what it is doing
     "steer", "hub_rate", "ctrl_a", "ctrl_b",
-)
+) + tuple(f"rl_{n}" for n in _RL_VIEW_NAMES
+        # What the general policy would observe -- whichever controller is
+        # flying, from the SAME sensor estimate the controller read
+        # (DriveController._rl_view; prev_* in physical units).
+        ) + tuple(f"lqr_{n}" for n in _LQR_STATE_NAMES
+        # The analytic LQR's error state as it fed the gains; NaN whenever
+        # the analytic line/arc/circle law is not flying.
+        )
 _REC_HZ = 50.0        # sample rate; the policy's own control rate
 
 
@@ -1735,6 +1751,10 @@ def _rec_sample(rec, m, d, c, state, gen_name, params):
         float(np.linalg.norm(v)),
         steer, hub,
         float(d.ctrl[aid["drive_a"]]), float(d.ctrl[aid["drive_b"]]),
+        *(c.rl_view if getattr(c, "rl_view", None) is not None
+          else np.full(len(_RL_VIEW_NAMES), np.nan)),
+        *(c._lqr_x if getattr(c, "_lqr_x", None) is not None
+          else np.full(len(_LQR_STATE_NAMES), np.nan)),
     ))
 
 
@@ -2293,7 +2313,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             righting_ideal=False, record=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
             ahrs="none", ahrs_tau=None, design=None, drivetrain_base=None,
-            servo_gains=None, drivetrain_source="", frame_stats=None):
+            servo_gains=None, drivetrain_source="", frame_stats=None,
+            start_lqr=False):
     from .interactive import FrameStats, teleop_loop
 
     from . import policy_menu
@@ -2383,7 +2404,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # the general policy takes a velocity VECTOR, so crab is a first-class
     # command rather than a maneuver.
     state = {"v": 0.0, "v_lat": 0.0, "psi": c._psi, "psi_sent": c._psi,
-             "want_general": True}
+             "want_general": not start_lqr}
     overlay_on = [True]
     trail = []                 # (t, x, y) history for the red path trace
     # -- session recorder ---------------------------------------------------
@@ -3459,7 +3480,12 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # depends on whether real key state is readable — say which one is live.
     # The general policy is the default driver; fall back to the analytic
     # controller (with a reason) if there is no usable one.
-    engage(data)
+    if start_lqr:
+        # --lqr: start on the analytic controller, exactly what the menu's
+        # "[LQR - analytic]" entry does. ',' still opens the menu.
+        select(data, policy_menu.ANALYTIC)
+    else:
+        engage(data)
     mode_help = (
         f"\n  driving moves/{gen_name[0]} — ',' opens the policy menu; the "
         "analytic LQR is\n  its first entry and the cursor starts there, so "

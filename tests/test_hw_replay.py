@@ -44,13 +44,19 @@ def _record(model, data, ctrl_source, n_steps):
             "freejoint_qvel": data.qvel[0:6].copy(),
             "steer_qpos": float(data.qpos[sj]),
             "steer_qvel": float(data.qvel[sd]),
+            # The drive servos' rates as the bike reads them (Present
+            # Position through the RateFilter) -- what run_bike hands the
+            # LQR's crawl states via `crawl.feed`.
+            "w_servo": ctrl_source.crawl.w_servo,
             "ctrl": data.ctrl.copy(),
         })
         mujoco.mj_step(model, data)
     return frames
 
 
-def _fill(hd, f, sj, sd):
+def _fill(hd, f, sj, sd, controller=None):
+    if controller is not None:
+        controller.crawl.feed(*f["w_servo"])
     hd.time = f["time"]
     hd.qpos[0:7] = f["freejoint_qpos"]
     hd.qvel[0:6] = f["freejoint_qvel"]
@@ -72,7 +78,7 @@ def _replay(controller, model, frames, nq, nv, nu, sj, sd, setup=None):
         setup(controller, hd)
     out = []
     for f in frames:
-        _fill(hd, f, sj, sd)
+        _fill(hd, f, sj, sd, controller)
         controller.step(model, hd)
         out.append(hd.ctrl.copy())
     return out
@@ -83,7 +89,8 @@ def test_hardware_data_covers_the_control_path():
     """A controller replayed through HardwareData emits identical commands.
 
     This is the shim's contract: the four attributes HardwareData exposes, and
-    the ~14 numbers it fills, are all the balance/drive path reads.
+    the ~14 numbers it fills, plus the two drive-servo rates `crawl.feed`
+    takes, are all the balance/drive path reads.
     """
     params = load_params()
     model = build_model(params)

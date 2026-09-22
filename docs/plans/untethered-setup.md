@@ -744,6 +744,20 @@ which onboard can only be dead-reckoned and will drift. That is fine for the
 seconds-long horizon following a fresh anchor, and fine on the bench — but it
 is not a controller you leave running.
 
+**2026-09-22: the LQR is switchable on the bike, as that bench mode.** Station
+key `l` asks for it (command v2 carries a `controller` byte); `run_bike`
+switches, or refuses by name when the bundle has no gains at its loop rate,
+and telemetry's `controller` says which one is actually flying.
+`DriveController.follow_command` turns the station's velocity + heading into
+the LQR's speed + heading changes, and every heading change re-anchors the
+path, so the dead-reckoned drift above only accumulates while nobody touches
+the keys. The bundle carries a second design at the bike's 100 Hz
+(`*_onboard`), because a discrete LQR is only itself at its own rate.
+Measured in sim at 100 Hz: it stands on the bike's sensors (12 of 12 x 20 s),
+but DRIVING on them it falls within 2-6 s -- the TM151 attitude error does it
+(with odometry alone it drives and turns). So on hardware: stand and
+compare, not drive. On the Pi: 1.15 ms median tick, 2.0 ms worst.
+
 ### Process structure
 
 One Python process, three threads:

@@ -17,6 +17,14 @@ from dataclasses import dataclass
 import numpy as np
 
 
+# The reduced state, in order -- linearize.py documents each entry. Here, not
+# there, because the bike needs the names and must not import linearize
+# (MuJoCo). The last two are the drive servos (balance.CrawlSensor).
+STATE_NAMES = ("e_lat", "roll", "yaw", "steer",
+               "v_lat", "roll_rate", "yaw_rate", "steer_rate",
+               "crawl_rate", "crawl_lag")
+
+
 @dataclass
 class LQRDesign:
     """Everything LQRBalance/DriveController need from the linearization.
@@ -28,5 +36,13 @@ class LQRDesign:
     qpos_eq: np.ndarray      # upright equilibrium pose
     fit_r2: np.ndarray       # per-state fit quality at standstill
     speeds: np.ndarray       # gain-schedule breakpoints [m/s]
-    Ks: np.ndarray           # (n_speeds, 2, 8) scheduled gains
+    Ks: np.ndarray           # (n_speeds, 2, 10) scheduled gains
     fit_r2_grid: np.ndarray  # per-speed fit quality
+    # (2, 8) standstill gain on the pre-crawl-state design, for the
+    # crawl-balance fallback only (DriveController._K0). None on a bundle
+    # exported before 2026-09-22.
+    K0_legacy: np.ndarray | None = None
+    # The control rate [Hz] the gains were designed at. A discrete design is
+    # only the design at its own rate: 200 Hz gains held for 10 ms are a
+    # different, untested controller. None on a bundle that did not say.
+    rate_hz: float | None = None

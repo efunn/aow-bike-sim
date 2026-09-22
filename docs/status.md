@@ -100,8 +100,10 @@ delayed plant gave garbage (fit R^2 0.74), because the reduced model has no
 state for the delay line. With that, the balance LQR is unaffected up to 8 ms,
 but **the drive-mode LQR falls going straight at 0.6 m/s with >= 2 ms**. That
 knocked over the old odometry fixture (those tests no longer ride the LQR,
-see Health), and the 180 deg pivot is 0.10 deg past its bound on the clip
-(3.10 vs 3.0). A latency-aware LQR (the delay line as state) is the fix. Driven in teleop, the RL policy felt
+see Health). The 180 deg pivot's 0.10 deg overshoot on the clip cleared at
+`r_steer` 20. A latency-aware LQR (the delay line as state) is NOT the fix for
+the at-speed reds: re-measured 2026-09-22, the same six are red with the delay
+at 0 and the clip at `total` (see Health). Driven in teleop, the RL policy felt
 unchanged by the clip; the delay is not yet teleop-tested.
 
 ---
@@ -161,11 +163,11 @@ hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 
 **Test suite, measured 2026-09-22** with `pytest -n 10 --dist load`:
 
-    9 failed, 557 passed, 16 skipped, 61.9 s
-    red set unchanged (9 accepted failures) -- tests/expected_failures.txt
+    3 failed, 563 passed, 16 skipped, 66.8 s
+    red set unchanged (3 accepted failures) -- tests/expected_failures.txt
 
-9 = 8 analytic LQR (7 drive + the 180 deg pivot, one investigation: the
-at-speed design) + 1 standing endurance, a policy metric in its own registry
+3 = 2 analytic LQR (both REVERSE turns at -0.5 m/s: command_heading[-0.5-90]
+and reverse_circle) + 1 standing endurance, a policy metric in its own registry
 section. It was 28 on 09-21. Wall time went 42 -> ~60 s with the endurance
 test (18 x 60 s flights in one test). Fixed 2026-09-22 though it greened
 nothing else: the gain schedule's +-1.2 m/s ends were identified with the bike
@@ -176,8 +178,55 @@ and the deploy bundle is re-exported (only those two gain rows moved).
 and the "reversed-caster" sign-flip assert is dropped -- the identified plant
 has steer acting on roll with the same sign at every speed. The LQR group is
 not reachable by re-weighting (16-point sweep); `q_roll_rate` 60 clears
-`sprint[-0.5]` alone and the pivot passes at `yaw_rate` 1.2 -- neither
-applied.
+`sprint[-0.5]` alone -- not applied.
+
+**THE LQR NOW SEES THE DRIVE SERVOS (2026-09-22), 7 -> 3.** The identified
+model had no state for them, and the crawl acts only through the servo loop
+(nothing in the first 5 ms, -0.38 rad/s of roll rate by 80 ms), so a fit over
+one control period read its column as zeros and the design balanced on steer
+alone: 50-330 rad of steer per rad of roll, the +-15 deg relay below. Two
+states added (`linearize.STATE_NAMES`): `crawl_rate`, the differential shaft
+speed, and `crawl_lag`, the differential servo lag. Both are MEASURED
+(`balance.CrawlSensor`), never read from the simulator: the drive servos'
+Present Position counts through the odometry RateFilter (on the Pi,
+`w_servo_a/b` via `crawl.feed`), and the integral of commanded minus measured
+differential, leaking at `crawl_lag_tau_s` 0.2. Swing-linkage standstill hold:
+steer 9.4 -> 0.1 deg RMS, pinned 100% -> 0%, roll 5.0 -> 0.05 deg RMS. At rest
+on teleop's sensors (TM151 + odometry, 3 seeds x 20 s) it now holds all three,
+where it fell in 1-7 s. Both sprints and three command_heading cases went
+green; reverse_circle went red again. `DriveController._K0`, the RL envs'
+feedforward crawl fallback, stays the 8-state design (no exported move uses
+it: all 66 are `action_space: full`). `--lqr` starts teleop on it, and a
+`--record` trace logs both controllers in one convention: `rl_*` (what the
+general policy would observe, from the same sensor estimate) and `lqr_*`
+(the LQR's error state). Not LQR states, measured: pitch moves 0.06 deg std
+while driving against the TM151's 1.5 deg RMS error; forward speed is held
+within 0.01 m/s by the separate speed loop.
+NOT on hardware: the crawl_lag stand-in for the XC430's internal integrator
+is unmeasured.
+
+**THE BIKE CAN FLY IT (2026-09-22), as a bench mode.** Station key `l`
+switches `run_bike` between the policy and the LQR; the station's status line
+shows what the bike is actually flying. The bundle now carries the design at
+the bike's 100 Hz too. In sim at 100 Hz on the bike's sensors it STANDS (12 of
+12 x 20 s) but falls within 2-6 s of starting to DRIVE, from the TM151
+attitude error (odometry alone: drives and turns, falls in a standing 180).
+`pytest -m lqr` at 100 Hz is 6 red of 36 (circles, two forward turns) against
+2 at 200. Checked on the Pi itself, from /tmp: builds from the bundle with no
+mujoco, 1.15 ms median tick. Nothing has run with torque.
+
+**`r_steer` 6 -> 20 (2026-09-22), 9 -> 7.** Clears pivot[180] and
+reverse_circle, turns nothing red, leaves the 40 s standstill hold unchanged
+(0.83 vs 0.85 deg tail roll RMS). Found on the way, and NOT fixed by it: the
+LQR's steer runs as a +-15 deg relay. The standstill design asks ~50 rad of
+steer per rad of roll (40-90 deg for sub-degree motion), so the command sits
+on `steer_limit_deg` 73-97% of a hold for every `q_steer` 5-40 x `r_steer`
+6/20, and ~95% of the last 0.5 s before the sprint[0.8] fall. Not the steer
+servo model (76-79% with the delay or the clip off) and not the contact: all
+six stay red at `contact_solref` dampratio 0.5 / 1 / 2 / 4, and 1.0 is the
+LQR's best (22 / 8 / 17 / 19 red of 35). A constraint-aware controller (MPC)
+is the candidate; the box-constrained solve fits the Pi 3B+ (N=40, 200 ms
+horizon, 20 warm-started iterations: 2.1 ms against the 5 ms tick, numpy only).
 
 **Re-measured, not moved.** Several registry reasons had drifted from what the
 tests report: `test_reverse_circle_tracks` FALLS ("radius err 0.681" was a bike
@@ -1010,12 +1059,13 @@ part. Landed as a **bit-exact no-op**, verified over a 3000-step driven rollout:
 the no-op *and* that an override bites, because a bug dropping `contact_parts`
 would otherwise pass as a perfect no-op.
 
-**Digests, re-verified 2026-09-11 — `deploy/bundle.npz` matches all three
-(`plant_digest`, `design_digest`, and the legacy whole-file
-`params_digest` aa232834f462a229):**
+**Digests, re-verified 2026-09-22 — `deploy/bundle.npz` re-exported for the
+10-state LQR (gains 9 x 2 x 10, plus `K0_legacy`) and matches all three
+(`plant_digest`, `design_digest`, and the legacy whole-file `params_digest`
+c70acbea4b2ba655):**
 
-    plant_digest   eda849e7afaaca0f    was this trained against the machine I am running?
-    design_digest  2db6c647ff3a2d59    were these gains designed against the weights I am running?
+    plant_digest   8d8b25a809ea2f1a    was this trained against the machine I am running?
+    design_digest  a973a9ca3d503b6d    were these gains designed against the weights I am running?
 
 **`plant_digest` MOVED on 2026-09-16** (was `e1ec36bfa670217e`), and everything
 in `moves/` is now an artifact of a different machine — `load_move` says so on

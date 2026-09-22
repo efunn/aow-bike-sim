@@ -15,6 +15,7 @@ sends_is_read` is for.
 
 import math
 
+import numpy as np
 import pytest
 
 from aow_sim.hw.ground import OperatorState
@@ -275,7 +276,7 @@ def test_every_field_the_station_sends_is_read_by_the_bike():
     from aow_sim.hw import run_bike
 
     op = OperatorState()
-    for ch in "wasd 94[]r":
+    for ch in "wasd 94[]rl":
         op.key(ch)
     src = (inspect.getsource(run_bike.BikeRunner._apply_command)
            + inspect.getsource(run_bike.BikeRunner._apply_operator))
@@ -789,14 +790,15 @@ def test_a_latched_error_is_rebooted_away_at_startup():
 
 # --- the packed command (hw/telemetry.encode_command) ----------------------
 
-def test_the_command_is_twelve_bytes_and_round_trips():
+def test_the_command_is_thirteen_bytes_and_round_trips():
     from aow_sim.hw import telemetry as T
     op = OperatorState(travel_rad=2.4)
     op.v, op.psi = 0.37, 1.234
-    op.key("9"), op.key("]"), op.key("r")
+    op.key("9"), op.key("]"), op.key("r"), op.key("l")
     pkt = op.packet()
     wire = T.encode_command(pkt)
-    assert len(wire) == T.COMMAND_BYTES == 12
+    assert len(wire) == T.COMMAND_BYTES == 13
+    assert pkt["controller"] == "lqr" and T.decode_command(wire)["controller"] == "lqr"
     got = T.decode_command(wire)
     assert set(got) == set(pkt)               # same fields, same names
     assert got["v_cmd_world"] == pytest.approx(pkt["v_cmd_world"], abs=1e-3)
@@ -970,3 +972,71 @@ def test_a_pack_warning_stands_until_it_becomes_a_hold():
     r.pack.v, r._health = 9.5, {"drive_a": {"Present Input Voltage": 9.5}}
     RB.BikeRunner._watch_pack(r)
     assert RB.BikeRunner._warning(r) is None and r._hold_reason()
+
+
+# --- the controller switch: policy <-> LQR --------------------------------
+
+def test_a_v1_station_decodes_and_requests_no_controller():
+    """A 12-byte v1 datagram (from before the controller byte) still flies;
+    it carries no request, so the bike keeps what it is flying."""
+    import struct
+    from aow_sim.hw import telemetry as T
+    wire = struct.pack("<BBhhhhh", 1, 3, 500, 0, T.ABSENT, T.ABSENT, T.ABSENT)
+    got = T.decode_command(wire)
+    assert "controller" not in got
+    assert got["v_cmd_world"] == pytest.approx([0.5, 0.0]) and got["rearm_n"] == 3
+
+
+def test_l_toggles_the_controller_and_the_station_shows_what_the_bike_flies():
+    from aow_sim.hw.ground import OperatorState, _status
+    op = OperatorState()
+    assert op.packet()["controller"] == "policy"
+    op.key("l")
+    assert op.packet()["controller"] == "lqr"
+    op.sync({"state": "engaged", "psi": 0.0, "controller": "policy"})
+    assert op.controller_actual == "policy"
+    # asked for the LQR, the bike is flying the policy: shouted
+    assert "POLICY" in _status(op, {"state": "engaged", "controller": "policy"}, 0.0)
+    op.key("l")
+    assert op.packet()["controller"] == "policy"
+
+
+def test_the_lqr_is_refused_by_name_off_its_design_rate():
+    from aow_sim.control.lqr_design import LQRDesign
+    z = np.zeros
+    d = LQRDesign(K=z((2, 10)), qpos_eq=z(7), fit_r2=z(10), speeds=z(9),
+                  Ks=z((9, 2, 10)), fit_r2_grid=z((9, 10)), rate_hz=200.0)
+    assert "200 Hz" in RB.lqr_unavailable(d, 100.0)
+    d.rate_hz = 100.0
+    assert RB.lqr_unavailable(d, 100.0) is None
+    d.Ks = z((9, 2, 8))
+    assert "8-state" in RB.lqr_unavailable(d, 100.0)
+
+
+def _switcher(why=None):
+    calls, said = [], []
+    ctl = SimpleNamespace(
+        follow_reset=lambda data: calls.append("follow_reset"),
+        engage_general=lambda data, name, reuse: calls.append(("engage", name)),
+        set_command=lambda **kw: calls.append(("set_command", kw)))
+    r = SimpleNamespace(controller="policy", lqr_why=why, _lqr_refused=None,
+                        ctl=ctl, data=None, gen_name="pol",
+                        _event=lambda kind, text: said.append((kind, text)))
+    return r, calls, said
+
+
+def test_switching_to_the_lqr_re_anchors_and_back_re_engages_the_policy():
+    r, calls, said = _switcher()
+    RB.BikeRunner._switch_controller(r, "lqr")
+    assert r.controller == "lqr" and calls == ["follow_reset"]
+    RB.BikeRunner._switch_controller(r, "policy")
+    assert r.controller == "policy" and ("engage", "pol") in calls
+    assert [k for k, _ in said] == ["mode", "mode"]
+
+
+def test_a_refused_switch_is_said_once_and_changes_nothing():
+    r, calls, said = _switcher(why="gains designed at 200 Hz")
+    for _ in range(50):                   # the station re-sends every packet
+        RB.BikeRunner._switch_controller(r, "lqr")
+    assert r.controller == "policy" and calls == []
+    assert said == [("mode", "LQR refused: gains designed at 200 Hz")]

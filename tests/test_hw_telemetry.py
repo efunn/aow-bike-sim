@@ -31,7 +31,7 @@ def sample(**over):
               cmd_v_world=[0.7, 0.0], cmd_psi=0.35, roll=0.174, roll_rate=0.1,
               volts=11.9, vlat_conf=0.87, qos=5, jitter_ms=0.14, dt_ms=10.0,
               cuts=0, righting=None, righting_pos=None,
-              righting_current=300)
+              righting_current=300, controller="policy")
     kw.update(over)
     return T.build(**kw)
 
@@ -508,7 +508,7 @@ POSE_FIELDS = {"quat", "gyro", "v_world", "pos", "steer", "w_shaft", "shaft",
 DISPLAY_FIELDS = {"v", "t", "state", "cmd_v_world", "cmd_psi", "psi", "roll",
                   "roll_rate", "volts", "vlat_conf", "qos", "jitter_ms",
                   "dt_ms", "cuts", "righting_current", "servos", "run", "log",
-                  "hold", "warn"}
+                  "hold", "warn", "controller"}
 
 # A perturbation per pose field, big enough to be unmistakable.
 _NUDGE = {"quat": [0.966, 0.259, 0.0, 0.0], "gyro": [1.0, -2.0, 3.0],

@@ -85,11 +85,31 @@ class DriveController(LQRBalance):
                 design.speeds, design.Ks, design.fit_r2_grid)
         # Standstill gains: crawl-vs-roll response used as a self-consistent
         # roll-PD for balance during scripted maneuvers (steer committed).
-        self._K0 = self.Ks[int(np.argmin(np.abs(self.speeds)))]
+        # THE CRAWL-BALANCE FALLBACK stays the 8-state standstill design:
+        # policies with a 2-wide (feedforward) action space, the four RL envs'
+        # feedforward mode and the deprecated flick/flip multiply it by an
+        # 8-vector. None of the 66 exported moves uses it (all are
+        # action_space: full), but a retrain in that mode must see what the
+        # earlier ones did. See linearize.design_crawl_fallback.
+        #
+        # WITH A DESIGN (the bundle path, i.e. the Pi) this must never reach
+        # linearize, which imports mujoco. A bundle from before the crawl
+        # states has no K0_legacy, but its Ks ARE the 8-state schedule, so
+        # its standstill row is exactly the old fallback.
+        if design is not None:
+            k0 = getattr(design, "K0_legacy", None)
+            self._K0 = k0 if k0 is not None else self.Ks[
+                int(np.argmin(np.abs(self.speeds)))]
+        else:
+            from .linearize import design_crawl_fallback
+            self._K0 = design_crawl_fallback(params, model)
         # mode state
         self.mode = "line"
         self._anchor = np.zeros(2)
         self._psi_path = 0.0
+        self.rl_view = None             # see _rl_view
+        self._follow_psi = None         # see follow_command
+        self._lqr_x = None
         self._center = np.zeros(2)
         self._radius = 1.0
         self._dir = 1
@@ -643,6 +663,43 @@ class DriveController(LQRBalance):
             return self._psi_path, 0.0
         return self._psi_path, self.profile.v_ref   # line
 
+    def follow_command(self, data, v_cmd_world, psi_cmd: float | None) -> None:
+        """Fly the general policy's command -- a world velocity and an
+        absolute heading, what the ground station streams -- on the ANALYTIC
+        controller. The bike's LQR mode calls this every tick.
+
+        Speed is the velocity's component along the commanded heading (the
+        station sends v * (cos psi, sin psi), so that is its signed speed).
+        Heading goes in as CHANGES: the first heading seen after
+        `follow_reset` is adopted without turning, and every change after it
+        is handed to `command_heading`, which re-anchors the path (arc at low
+        speed, a slewed line at speed). That re-anchor is what keeps the
+        dead-reckoned position the LQR regulates against from drifting far
+        from where the operator last pointed it.
+        """
+        from .steer import wrap_pi
+        th = self._psi if psi_cmd is None else float(psi_cmd)
+        v = np.asarray(v_cmd_world, dtype=float)[:2]
+        self.set_speed(float(v[0] * np.cos(th) + v[1] * np.sin(th)))
+        if psi_cmd is None:
+            return
+        if self._follow_psi is None:
+            self._follow_psi = float(psi_cmd)
+            return
+        delta = float(wrap_pi(float(psi_cmd) - self._follow_psi))
+        if abs(delta) > 1e-4:
+            self.command_heading(data, delta)
+            self._follow_psi = float(psi_cmd)
+
+    def follow_reset(self, data) -> None:
+        """Hand the bike to the analytic controller where it stands: a fresh
+        line anchor at the current pose and heading, speed target zero, and
+        the next commanded heading adopted rather than turned to."""
+        self.command_line(data)
+        self.profile.v_ref = 0.0
+        self.profile.target = 0.0
+        self._follow_psi = None
+
     def set_speed(self, v: float) -> None:
         """Set the speed target; targets inside the reverse instability pocket
         snap to the nearest band edge (dwelling there diverges — transiting
@@ -953,6 +1010,47 @@ class DriveController(LQRBalance):
             self.set_speed(-self._pivot_vend)
         return u
 
+    # -- the RL-convention view ------------------------------------------
+
+    def _update(self, model, data) -> None:
+        self._lqr_x = None               # set by the analytic _compute only
+        super()._update(model, data)
+        self.rl_view = self._rl_view(data)
+
+    def _rl_view(self, data) -> np.ndarray:
+        """What the general policy WOULD observe this tick, in its layout
+        (general_spec.OBS_NAMES_BASE, then pitch, pitch_rate) -- from the same
+        `data` the controller just read, so inside teleop's sensor wrapper it
+        is the estimate, not the truth. Logged beside the LQR's own state so
+        a trace reads the same way whichever controller is flying.
+
+        Two departures from build_obs, both deliberate:
+          * the command is the ANALYTIC controller's own in its modes: the
+            speed profile's v_ref along the current path heading (in circle
+            mode the path heading is the anchor's, not the tangent);
+          * prev_steer_rate / prev_hub / prev_diff are the command THIS tick
+            in physical units -- rad/s, m/s, rad/s -- not normalised, because
+            the analytic controller has no action bounds to normalise by.
+        """
+        from .general_spec import build_obs, command_to_body
+        s = extract_state(data, self._ref_pos)
+        if self.mode == "general":
+            v_cmd_w, psi_cmd = self._gen_v_cmd, self._gen_psi_cmd
+        else:
+            psi_cmd = self._psi_path
+            v_cmd_w = self.profile.v_ref * np.array([np.cos(psi_cmd), np.sin(psi_cmd)])
+        v_cl, v_ct, psi_err = command_to_body(v_cmd_w, psi_cmd, self._psi)
+        ua, ub = self._u[self.aid["drive_a"]], self._u[self.aid["drive_b"]]
+        steer_cmd = float(self._u[self.aid["steer"]])
+        prev = getattr(self, "_rl_view_steer", steer_cmd)
+        self._rl_view_steer = steer_cmd
+        act = ((steer_cmd - prev) / self.dt, 0.5 * (ua + ub) * self.r_wheel, ua - ub)
+        obs = build_obs(s.roll, s.roll_rate, data.qvel[5],
+                        float(data.qpos[self._sj]), float(data.qvel[self._sd]),
+                        s.v_lon, s.v_lat, v_cl, v_ct, psi_err, act,
+                        pitch=(s.pitch, s.pitch_rate))
+        return obs.astype(float)
+
     def _compute(self, model, data):
         s = extract_state(data, self._ref_pos)
         dpsi = np.arctan2(np.sin(s.yaw - self._psi_raw_prev),
@@ -1097,7 +1195,10 @@ class DriveController(LQRBalance):
             e_lat, s.roll - roll_ref, e_psi, steer_meas - steer_ff,
             e_lat_rate, s.roll_rate, data.qvel[5] - yaw_rate_ref,
             data.qvel[sd],
+            # measured crawl about the arc's feedforward crawl (CrawlSensor)
+            self._crawl_x[0] - d_ff, self._crawl_x[1],
         ])
+        self._lqr_x = x.copy()
         d_cmd, steer_fb = -self._K(s.v_lon) @ x
         d_cmd += d_ff
         steer = steer_ff + float(np.clip(steer_fb, -self.steer_limit,

@@ -6,6 +6,7 @@ import pytest
 
 from aow_sim.build_model import build_model, load_params
 from aow_sim.control import DriveController, SpeedProfile
+from aow_sim.control.balance import extract_state
 from aow_sim.control.linearize import settle_upright
 from aow_sim.run_drive import circle_ok, flip_scenario, sprint_scenario
 
@@ -309,3 +310,36 @@ def test_command_heading(model, params, eq_qpos, v, delta_deg, tol):
     err = np.degrees(c._psi - psi0) - delta_deg
     assert max_roll < 20.0, f"fell during turn (max roll {max_roll:.1f} deg)"
     assert abs(err) < tol, f"heading error {err:+.1f} deg"
+
+
+@pytest.mark.lqr
+def test_follow_command_drives_the_analytic_controller_like_the_station_does(
+        model, params, eq_qpos):
+    """The bike's LQR mode: a world velocity and an absolute heading, streamed
+    as the ground station does, flown by follow_command. Forward at 0.5 m/s,
+    then a 90 deg heading change while moving; truth sensors (the bike's own
+    sensors are the open question -- docs/status.md)."""
+    data = mujoco.MjData(model)
+    data.qpos[:] = eq_qpos
+    mujoco.mj_forward(model, data)
+    c = DriveController(params, model)
+    c.reset(model, data)
+    c.follow_reset(data)
+    psi0 = extract_state(data, np.zeros(3)).yaw
+    dt = model.opt.timestep
+    v_seen, roll_max = [], 0.0
+    for k in range(int(8.0 / dt)):
+        t = k * dt
+        psi = psi0 + (np.pi / 2 if t >= 4.0 else 0.0)
+        v = 0.5 if t >= 1.0 else 0.0
+        c.follow_command(data, (v * np.cos(psi), v * np.sin(psi)), psi)
+        c.step(model, data)
+        mujoco.mj_step(model, data)
+        s = extract_state(data, np.zeros(3))
+        roll_max = max(roll_max, abs(s.roll))
+        if 3.0 <= t < 4.0:
+            v_seen.append(s.v_lon)
+    assert np.degrees(roll_max) < 20.0, f"fell (max roll {np.degrees(roll_max):.0f})"
+    assert np.mean(v_seen) == pytest.approx(0.5, abs=0.05)
+    turned = np.degrees(np.arctan2(np.sin(s.yaw - psi0), np.cos(s.yaw - psi0)))
+    assert turned == pytest.approx(90.0, abs=10.0), f"heading {turned:.1f} deg"
