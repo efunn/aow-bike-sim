@@ -271,6 +271,42 @@ target; today 9 of 18 (11 before the 09-22 yaw-drift fix moved the AHRS rng stre
 <= 15 s), and a bench RMS for the TM151 -- the model uses the datasheet's
 "<1.5 deg" bound as its RMS.
 
+**What makes it fall** (`analysis/ahrs_fall_cause.py`, 2026-09-22, 64 seeds):
+the ROLL orientation error, and nothing else to speak of -- roll-only error
+36 -> 24/64 falls, everything-but-roll 3/64. ALL 36 falls go LEFT (-roll).
+Not one tick: the bike is savable on clean sensors until 0.3-0.8 s before the
+fall, preceded by a ~1 deg roll-error excursion held ~0.5 s. But no excursion
+does it ALONE: pulses up to 3 deg on a calm clean-sensor bike never fall, and
+replaying each fall's own recorded error onto a calm bike reproduces 0/36 from
+the last 2 s and 5/36 from the last 12 s. The fall needs the sustained sway
+the error keeps up (roll RMS 2.4 vs 1.1 deg clean) -- a trajectory, not a
+pattern -- which is why a bench DYNAMIC RMS is the number that decides it.
+Handedness is the policy's, not the sensor's: injected phantom leans that
+push the bike left fall 3x as often as ones that push it right.
+
+Standing is not still, and the falls are failed CATCHES. The rear wheel makes
+a forward excursion (~220 mm in ~0.85 s, steer swinging 30-45 deg each way)
+5.3 times a minute -- the forward creep on a zero command is their sum -- and
+32 of 36 falls are one that is not caught. Nothing in the rear-wheel motion
+warns before it. Excursions go both ways equally, but only LEFT ones fail
+(32/142 vs 0/98); nearly all follow ~1 s of roll error claiming a left lean,
+and a failed one over-steers ~100 deg. But that average trigger does not
+CAUSE falls: injected at up to 3x, a clean bike never falls (0/60), and on
+top of the normal error it moves which windows fall without raising the rate
+(7.0% control, 7.0-8.3% injected, 470 paired windows). Figures:
+`analysis/plots/ahrs_fall_cause_excursions.png` (group means) and
+`..._excursion_examples.png` (three single events per group).
+
+**It is this policy, not the sensor model.** The same standing flight across
+`moves/personality0..11` (64 seeds x 60 s each): `personality1` -- byte-
+identical to curriculum2b -- is the WORST of twelve (36/64, MTBF 75 s);
+`personality0` and `personality8` never fell (MTBF > 1041 s at 95%), 6, 7
+and 11 fell once each. Fall side is per policy (1 and 5 left, 2 and 10
+right). But every good stander is one seed-sweep-and-personalities.md
+records as ignoring heading commands; `personality1` is the only one that
+turns as told. So repointing `control.general_move` buys standing at the cost
+of driving -- the fix is a policy that does both, not a pointer edit.
+
 The slip numbers rest on `friction_sliding` 0.9 and `contact_solimp`, both
 GUESS, so contact calibration (item 2 above) will move them and the
 baseline.
