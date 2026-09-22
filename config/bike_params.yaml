@@ -505,11 +505,12 @@ control:
     # 10.05, |accel| 9.872. The earlier attempt from the QEMU/Linux GUI
     # applied live and was gone at the next power cycle.
     #
-    # It still streams status(22), rpy(35) and raw_gyro_acc_mag(41) at 200 Hz
-    # each alongside it -- 33.7 kB/s total, of which Combo is 8.7. Harmless on
-    # USB CDC, and `parse_frame` drops the other three on the command check.
-    # It would NOT fit a 460800 UART (336 kbps of 460.8, no flow control), so
-    # untie those three before moving the sensor to the Pi's GPIO UART.
+    # COMBO ONLY now. Listened to passively on the Pi 2026-09-22: cmd 43 at
+    # 200.1 Hz and nothing else, 14.6 kB/s. (On 09-16 it also streamed
+    # status(22), rpy(35) and raw_gyro_acc_mag(41) at 200 Hz each, 33.7 kB/s,
+    # which would not have fit a 460800 UART; those have since been untied.)
+    # The FIRST frame after opening the port is the last one from the previous
+    # session -- one stale frame per open, device clock 2-21 s behind.
     #
     # Poll mode still works and is the fallback if a unit turns up unconfigured:
     # 199 Hz with the device streaming nothing, 204 Hz alongside other
