@@ -228,6 +228,70 @@ r5_control_mode_comparison:
   # against a Coulomb band -- a different question. Re-run against the R1/R2
   # load fixture before applying any of this to the self-righting mechanism.
 
+xc330_current_position:
+  # Current-based position (5) on BOTH bike XC330-T181s, bare shafts, 12.0 V,
+  # factory P 700 / D 1400, Goal Current 600, 500 Hz, 2026-09-21. The two open
+  # inputs of src/aow_sim/righting_servo.py. One run, but the units agree.
+  #
+  # REPRODUCE (on the Pi -- the script no longer imports mujoco):
+  #   python analysis/servo_modes.py --port <port> --ids 103,104 current-position
+  date: 2026-09-21
+  rig: bare_shaft
+  ids: [103, 104]
+  # 1. GOAL PWM IS NOT A DUTY CEILING IN MODE 5. Present PWM obeys it exactly
+  #    (reads 0.800 / 0.600 / 0.400 through the slew), but the shaft barely
+  #    slows -- against PWM mode (16), where duty 0.4 gives 4.60 rad/s on the
+  #    same unit in the same session. 120 deg steps, steady slew speed:
+  goal_pwm_vs_speed_rad_s:
+    - {goal_pwm: 1.00, id103: 12.3, id104: 11.5}   # datasheet no-load 11.83
+    - {goal_pwm: 0.80, id103: 11.2, id104: 11.0}
+    - {goal_pwm: 0.60, id103: 10.9, id104: 10.7}
+    - {goal_pwm: 0.40, id103: 10.2, id104: 9.4}
+  mode16_duty_0p4_rad_s: 4.60
+  goal_pwm_limits_duty_in_mode_5: false   # what it DOES limit is not known
+  full_pwm_ceiling_is_no_load: true      # the model's motor line holds here
+  # 2. THE D TERM'S SCALE. Regressing Present Current on error and speed over
+  #    1-20 deg steps, I = a*e - b*w, scanning the goal's arrival lag 0-12 ms:
+  #    b = 0.25-0.70 x D*KD_PER_UNIT (the per-1-ms-tick reading) as the lag
+  #    moves, a = 0.33-0.90 x P*k5. The FIT IS POOR (R2 <= 0.66) -- a bare rotor
+  #    reaches speed in a few samples, and mode 5 is known to be nonlinear in
+  #    error (r5 above) -- so neither coefficient is pinned. What survives: b is
+  #    order 1x the per-tick reading, against 1000x for a true d/dt.
+  d_term_per_tick_reading: supported_to_order_of_magnitude
+  linear_pd_fit_r2_max: 0.66
+  # 3. Coarse command latency: the first frame with |I| > 20 mA comes ~6 ms
+  #    after the frame that sent the step, 2 ms-quantised, including one sample
+  #    period and a threshold crossing. SUPERSEDED by `xc330_command_delay`
+  #    below, which measures the transport itself: 4.0 ms.
+  latency_ms_coarse: 6
+  outstanding:
+    - Which current the loop REGULATES (bus or phase), and a clean a/b, both
+      need a HELD output; a bare shaft cannot give either.
+
+xc330_command_delay:
+  # Frame that computes a goal -> the servo's own Position Trajectory(140), by
+  # the XC430's method (drivetrain-measurements.yaml, `latency`): a multi-sine
+  # goal every frame, the shift that best aligns trajectory to goal, both on
+  # the host frame clock -- so bus and landing time are INSIDE the number, as
+  # they are for a policy. Profile Velocity 0, so the trajectory is the goal.
+  # Bare shafts, 12.0 V, 500 Hz, 6 s per mode, 2026-09-21.
+  #
+  # REPRODUCE (on the Pi):
+  #   python analysis/servo_modes.py --port <port> --ids 103,104 command-delay
+  date: 2026-09-21
+  rig: bare_shaft
+  delay_ms:
+    - {mode: 4, id103: 4.0, id104: 4.0, resid_pct: 1.7}   # the steer's mode
+    - {mode: 5, id103: 4.0, id104: 4.0, resid_pct: 1.0}   # the righting servo's
+  # FRAME-QUANTISED. The goal changes once per 2 ms frame and the reference is
+  # seen exactly two frames later on every unit and mode, so the true figure
+  # lies in (2, 4] ms on this clock -- identical 4.0s are the resolution, not
+  # agreement to 0.1 ms. The XC430's 4.1-4.5 came from a trajectory that RAMPS
+  # between frames, which is what gave it sub-frame resolution. The jitter
+  # trick in servo_step.py would resolve this one if it ever matters.
+  resolution_ms: 2.0
+  sim_value_ms: 4.0     # actuators.steer_command_delay_s, righting_servo.COMMAND_DELAY_S
+
 s5_hold_at_zero:
   holds: null                   # false -> low drive_kv is not viable
   position_error_under_load_deg: null

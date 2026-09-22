@@ -1,6 +1,6 @@
 """Where the servo lag comes from, and how the control modes differ.
 
-Three studies behind `docs/measurements/servo-measurements.yaml`. Each was got
+Five studies behind `docs/measurements/servo-measurements.yaml`. Each was got
 WRONG at least once before it was got right, and each wrong answer was
 plausible, so the traps are encoded as guards here rather than left as prose:
 
@@ -15,11 +15,23 @@ plausible, so the traps are encoded as guards here rather than left as prose:
   no-load     Duty sweep on a bare shaft: speed confirms the datasheet no-load,
               and the reported current fails a consistency check that matters.
               -> xc330_no_load
+  current-position
+              Current-based position on a bare shaft: regress Present Current
+              on error and speed to pin the D term's units, and step at
+              several Goal PWM values to see whether Goal PWM limits duty in
+              this mode. The two open inputs of src/aow_sim/righting_servo.py.
+              -> xc330_current_position
+  command-delay
+              Frame to the servo's own Position Trajectory, cross-correlated
+              on a multi-sine goal -- the XC430's 4 ms method, per mode.
+              -> xc330_command_delay
 
     python analysis/servo_modes.py --port /dev/cu.usbserial-XXXX \
         --ids 101,102 lag-origin
     python analysis/servo_modes.py --port ... --ids 103,104 modes
     python analysis/servo_modes.py --port ... --ids 103,104 no-load
+    python analysis/servo_modes.py --port ... --ids 103,104 current-position
+    python analysis/servo_modes.py --port ... --ids 103,104 command-delay
 
 THE FOUR TRAPS, ALL OF WHICH PRODUCED A CONFIDENT WRONG NUMBER FIRST:
 
@@ -65,14 +77,21 @@ sys.path.insert(0, "src")
 
 from aow_sim.hw.dynamixel import DynamixelBus, IndirectMap   # noqa: E402
 
-try:                                    # shared with the reversal study
-    from servo_reversal import _unwrap
-except ImportError:                     # when run from the repo root
-    sys.path.insert(0, "analysis")
-    from servo_reversal import _unwrap
-
 TICK_WRAP = 32768
 CPR = 4096.0
+
+
+def _unwrap(counts: np.ndarray) -> np.ndarray:
+    """Single-turn position -> continuous, in counts. A copy of
+    servo_reversal._unwrap rather than an import of it: that module imports
+    build_model, i.e. mujoco, which the Pi does not install -- and the Pi is
+    where the servos are."""
+    wrap = int(CPR)
+    d = np.diff(counts)
+    d = ((d + wrap // 2) % wrap) - wrap // 2
+    return np.concatenate([[counts[0]], counts[0] + np.cumsum(d)])
+
+
 COUNT_DEG = 360.0 / CPR
 MODE_VELOCITY, MODE_POSITION, MODE_CURRENT_POSITION, MODE_PWM = 1, 3, 5, 16
 
@@ -374,6 +393,257 @@ def cmd_no_load(bus, args) -> None:
 
 
 # --------------------------------------------------------------------------
+# current-position
+# --------------------------------------------------------------------------
+
+# The two numbers src/aow_sim/righting_servo.py is built on, restated here so
+# this runs on the Pi, which installs no mujoco. Same derivations as there.
+K5 = (4096 / (2 * np.pi)) / (256 * 1000)          # A/(Kp.rad)
+KD_PER_UNIT = (1 / 16) * (256 * K5) * 1e-3         # A.s/rad per D unit
+W0_12V = 113.0 * 2 * np.pi / 60                    # XC330-T181 datasheet
+
+
+def _velocity(t, rad, half=2):
+    """Central difference over +-`half` frames. The tick has 1 ms resolution,
+    so single-frame differences at 500 Hz carry +-50 % timing noise."""
+    w = np.full_like(rad, np.nan)
+    if len(t) > 2 * half:
+        dt = t[2 * half:] - t[:-2 * half]
+        ok = dt > 0
+        w[half:-half][ok] = (rad[2 * half:] - rad[:-2 * half])[ok] / dt[ok]
+    return w
+
+
+def _step(bus, ids, start, delta, seconds, rate, t_cmd=0.05):
+    """Hold `start`, step every id by `delta` at t_cmd, capture. -> rows, and
+    the host time of the first frame that sent the step."""
+    sent = {}
+
+    def cmd(t, _row):
+        if t >= t_cmd:
+            sent.setdefault("t", t)
+            return {i: start[i] + delta for i in ids}
+        return {i: start[i] for i in ids}
+    rows = bus.capture(seconds=seconds, rate_hz=rate, command=cmd,
+                       warn_overrun=False)
+    return rows, sent.get("t", float("nan"))
+
+
+def cmd_current_position(bus, args) -> None:
+    """Current-based position on the bare shaft: the D term, and the ceiling.
+
+    A. SMALL STEPS at factory P/D with Goal Current high enough never to bind.
+       Present Current is the position PID's output (the current loop tracked
+       its setpoint to the milliamp on the XL330), so regressing it on error and
+       speed recovers the PID directly:  I = a*e - b*w.
+         a should be P*k5 -- the XC330's own check on the XL330 constant;
+         b decides the D term: D*KD_PER_UNIT if the firmware's D acts on the
+         error change PER 1 ms TICK, 1000x that if it is a true d/dt. That
+         factor is why bike_params.yaml calls servo_kv "the soft number".
+       Frames where the duty or the cap is saturated are excluded: there the
+       reading is the limiter, not the PID.
+    B. BIG STEPS at several Goal PWM values. If Goal PWM limits the current
+       controller's duty in mode 5 (the block diagram), top speed is
+       pwm * (vin/12) * w0; if it does not apply in this mode, every row reads
+       the full no-load speed.
+    """
+    ids = bus.ids
+    for i in ids:
+        set_mode_and_gains(bus, i, MODE_CURRENT_POSITION,
+                           Position_P_Gain=args.pgain, Position_I_Gain=0,
+                           Position_D_Gain=args.dgain)
+    ceiling = {i: bus.read_raw(i, "Current Limit") for i in ids}
+    goal_i = {i: min(args.goal_current, ceiling[i]) for i in ids}
+    m = (IndirectMap({i: bus.tables[i] for i in ids})
+         .read("Realtime Tick").read("Present Position")
+         .read("Present Current", label="current")
+         .read("Present PWM", label="pwm")
+         .read("Present Input Voltage")
+         .write("Goal Position", label="goal"))
+    bus.apply_map(m)
+    try:
+        for i in ids:
+            bus.write_raw(i, "Goal Current", goal_i[i])
+            bus.write_raw(i, "Goal PWM", 885)
+        bus.torque(True, ids)
+        row = bus.read_frame()
+        start = {i: row[i]["Present Position"] for i in ids}
+        time.sleep(0.3)
+
+        print(f"\nA. SMALL STEPS, mode 5, P {args.pgain} D {args.dgain}, "
+              f"Goal Current {goal_i} counts")
+        caps = {i: [] for i in ids}
+        lat = {i: [] for i in ids}
+        for amp in args.amps:
+            for sgn in (1, -1):
+                d = sgn * np.radians(amp)
+                rows, t_sent = _step(bus, ids, start, d, 0.35, args.rate)
+                for i in ids:
+                    caps[i].append((rows, start[i] + d, t_sent))
+                # back to start, uncaptured
+                settle_at(bus, ids, start, tol_deg=0.5, timeout=1.0)
+                time.sleep(0.15)
+        a_pred = args.pgain * K5
+        b_pred = args.dgain * KD_PER_UNIT
+        print(f"   predicted: a = P*k5 = {a_pred:.4f} A/rad, "
+              f"b = D*KD = {b_pred:.5f} A.s/rad  (true d/dt reading: "
+              f"{1000 * b_pred:.2f})")
+        print(f"{'id':>5s} {'n':>6s} {'a A/rad':>9s} {'a/pred':>7s} "
+              f"{'b A.s/rad':>10s} {'b/pred':>7s} {'R2':>6s} {'lat ms':>7s}")
+        for i in ids:
+            E, W, I = [], [], []
+            for rows, goal, t_sent in caps[i]:
+                t, rad = timebase(rows, i)
+                cur = np.array([r["servos"][i]["current"] for r in rows])
+                pwm = np.array([r["servos"][i]["pwm"] for r in rows])
+                th = np.array([r["t_host"] for r in rows])
+                w = _velocity(t, rad)
+                after = th >= t_sent + 0.004
+                ok = (after & np.isfinite(w) & (np.abs(pwm) < 0.97)
+                      & (np.abs(cur) < 0.95 * goal_i[i] * 1e-3))
+                E.append(goal - rad[ok])
+                W.append(w[ok])
+                I.append(cur[ok])
+                # coarse latency: first frame after the send with |I| > 20 mA,
+                # on the servo's own clock relative to the sending frame
+                k0 = int(np.argmax(th >= t_sent))
+                rise = np.nonzero((np.arange(len(cur)) >= k0)
+                                  & (np.abs(cur) > 0.02))[0]
+                if len(rise):
+                    lat[i].append(1000 * (t[rise[0]] - t[k0]))
+            E, W, I = map(np.concatenate, (E, W, I))
+            A = np.column_stack([E, -W])
+            (a, b), *_ = np.linalg.lstsq(A, I, rcond=None)
+            res = I - A @ [a, b]
+            r2 = 1 - res.var() / I.var() if I.var() > 0 else float("nan")
+            print(f"{i:5d} {len(I):6d} {a:9.4f} {a / a_pred:7.3f} "
+                  f"{b:10.5f} {b / b_pred:7.3f} {r2:6.3f} "
+                  f"{np.median(lat[i]) if lat[i] else float('nan'):7.1f}")
+        print("   READ: b/pred of order 1 is the per-tick D reading (servo_kv "
+              "stands); ~1000 is a\n   true derivative. Check R2 before "
+              "reading a or b as numbers: on a bare shaft\n   it came back "
+              "<= 0.66 (2026-09-21, xc330_current_position) -- the rotor reaches speed "
+              "in a\n   few samples and mode 5 is nonlinear in error -- which "
+              "separates 1x from 1000x\n   and nothing finer. Latency is 2 "
+              "ms-coarse and includes the bus round trip.")
+
+        print(f"\nB. GOAL PWM CEILING, {args.big_deg:.0f} deg steps, "
+              f"Goal Current {goal_i}")
+        print(f"{'pwm':>6s} {'id':>4s} {'vin':>5s} {'w_pk':>7s} {'pred':>7s} "
+              f"{'ratio':>6s} {'|pwm|max':>9s}")
+        here = dict(start)
+        for frac in args.pwms:
+            for i in ids:
+                bus.write_raw(i, "Goal PWM", int(round(frac * 885)))
+            time.sleep(0.05)
+            for sgn in (1, -1):
+                d = sgn * np.radians(args.big_deg)
+                rows, _ = _step(bus, ids, here, d, 0.6, args.rate)
+                here = {i: here[i] + d for i in ids}
+                for i in ids:
+                    t, rad = timebase(rows, i)
+                    w = _velocity(t, rad)
+                    vin = float(np.median([r["servos"][i]["Present Input Voltage"]
+                                           for r in rows]))
+                    pwm = np.array([r["servos"][i]["pwm"] for r in rows])
+                    w_pk = float(np.nanmax(np.abs(w)))
+                    pred = frac * vin / 12.0 * W0_12V
+                    print(f"{frac:6.2f} {i:4d} {vin:5.1f} {w_pk:7.2f} "
+                          f"{pred:7.2f} {w_pk / pred:6.2f} "
+                          f"{np.abs(pwm).max():9.3f}")
+                time.sleep(0.15)
+        print("   READ: ratio ~1 on every row -> Goal PWM limits duty in mode 5 "
+              "and the\n   duty ceiling is the motor line. Ratio rising as pwm "
+              "falls -> it does not.\n   Measured 2026-09-21: 1.02-1.05 at "
+              "1.0 but ~2.1 at 0.4, i.e. Goal PWM caps the\n   REPORTED Present "
+              "PWM and barely slows the shaft (xc330_current_position).")
+    finally:
+        # RAM, but a later mode-5 run in the same power cycle would inherit
+        # them, so leave the factory values rather than the last condition.
+        for i in ids:
+            try:
+                bus.torque(False, [i])
+                bus.write_raw(i, "Goal PWM", 885)
+                bus.write_raw(i, "Goal Current", ceiling[i])
+            except Exception as e:                     # noqa: BLE001
+                print(f"RESTORE FAILED id {i}: {e}")
+
+
+# --------------------------------------------------------------------------
+# command-delay
+# --------------------------------------------------------------------------
+
+def _multisine(t, amp, freqs, phases):
+    return amp * sum(np.sin(2 * np.pi * f * t + ph)
+                     for f, ph in zip(freqs, phases)) / len(freqs)
+
+
+def cmd_command_delay(bus, args) -> None:
+    """How long from the frame that computes a goal to the servo's own
+    reference moving -- the XC330 counterpart of the XC430's 4.1-4.5 ms
+    (drivetrain-measurements.yaml, `latency.velocity_trajectory_delay_ms`),
+    measured the same way so the two compare.
+
+    A multi-sine goal goes out every frame; Position Trajectory(140), the
+    servo's internal reference, is read back. With Profile Velocity 0 the
+    trajectory IS the goal, so it is the same signal shifted by the delay, and
+    the delay is the shift that best aligns them -- on the HOST clock, goal at
+    the frame that wrote it, trajectory at the frame that read it, so bus and
+    landing time are inside the number, as they are for the policy. A
+    continuous signal gives sub-frame resolution without the jitter trick.
+
+    Each mode is measured with the servo in it: 4 is the steer's, 5 the
+    righting servo's. Present Position is not used -- it would fold the
+    mechanical response into what is meant to be a transport delay.
+    """
+    ids = bus.ids
+    rng = np.random.default_rng(0)
+    freqs = np.array(args.freqs, float)
+    print(f"\nCOMMAND DELAY, multi-sine {args.amp_deg:.0f} deg over "
+          f"{freqs.min():g}-{freqs.max():g} Hz, {args.seconds:.0f} s per mode, "
+          f"{args.rate:.0f} Hz")
+    print(f"{'mode':>5s} {'id':>4s} {'delay ms':>9s} {'resid %':>8s} "
+          f"{'frames':>7s}")
+    for mode in args.modes:
+        for i in ids:
+            set_mode_and_gains(bus, i, mode)          # that mode's factory gains
+        m = (IndirectMap({i: bus.tables[i] for i in ids})
+             .read("Realtime Tick").read("Present Position")
+             .read("Position Trajectory", label="traj")
+             .write("Goal Position", label="goal"))
+        bus.apply_map(m)
+        bus.torque(True, ids)
+        row = bus.read_frame()
+        c0 = {i: row[i]["Present Position"] for i in ids}
+        time.sleep(0.2)
+        phases = rng.uniform(0, 2 * np.pi, len(freqs))
+        amp = np.radians(args.amp_deg)
+        rows = bus.capture(
+            seconds=args.seconds, rate_hz=args.rate, warn_overrun=False,
+            command=lambda t, _r: {i: c0[i] + _multisine(t, amp, freqs, phases)
+                                   for i in ids})
+        bus.torque(False, ids)
+        th = np.array([r["t_host"] for r in rows])
+        for i in ids:
+            goal = np.array([r["command"][i] for r in rows])
+            traj = np.array([r["servos"][i]["traj"] for r in rows])
+            lags = np.arange(0.0, args.max_lag_ms + 0.01, 0.1) * 1e-3
+            keep = th > th[0] + args.max_lag_ms * 1e-3
+            err = []
+            for L in lags:
+                g = np.interp(th[keep] - L, th, goal)
+                err.append(np.mean((traj[keep] - g) ** 2))
+            k = int(np.argmin(err))
+            resid = np.sqrt(err[k]) / (np.std(traj[keep]) or 1.0)
+            print(f"{mode:5d} {i:4d} {1000 * lags[k]:9.1f} {100 * resid:8.1f} "
+                  f"{int(keep.sum()):7d}")
+    print("   READ: this is transport only -- frame to the servo's reference. "
+          "The sim's\n   actuator delay is the same quantity. A residual "
+          "above ~10 % means the\n   trajectory is not a shifted copy of the "
+          "goal (profile shaping, a refused goal).")
+
+
+# --------------------------------------------------------------------------
 
 def main() -> int:
     ap = argparse.ArgumentParser(
@@ -409,6 +679,28 @@ def main() -> int:
                    default=[0.05, 0.15, 0.25, 0.40, 0.60, 0.80, 1.00])
     c.add_argument("--dwell", type=float, default=0.35, help="s, >> 5 tau")
     c.set_defaults(fn=cmd_no_load)
+
+    d = sub.add_parser("current-position", help="current-based position: D term, Goal PWM")
+    d.add_argument("--pgain", type=int, default=700, help="mode-5 factory")
+    d.add_argument("--dgain", type=int, default=1400, help="mode-5 factory")
+    d.add_argument("--goal-current", type=int, default=600,
+                   help="counts; clamped to Current Limit")
+    d.add_argument("--amps", type=float, nargs="+", default=[1.0, 3.0, 8.0],
+                   help="degrees, part A")
+    d.add_argument("--big-deg", type=float, default=120.0, help="part B")
+    d.add_argument("--pwms", type=float, nargs="+",
+                   default=[1.0, 0.8, 0.6, 0.4], help="Goal PWM fractions")
+    d.set_defaults(fn=cmd_current_position)
+
+    e = sub.add_parser("command-delay",
+                       help="frame -> Position Trajectory, per mode")
+    e.add_argument("--modes", type=int, nargs="+", default=[4, 5])
+    e.add_argument("--amp-deg", type=float, default=30.0)
+    e.add_argument("--freqs", type=float, nargs="+",
+                   default=[0.7, 1.9, 3.1, 5.3, 8.9])
+    e.add_argument("--seconds", type=float, default=6.0)
+    e.add_argument("--max-lag-ms", type=float, default=20.0)
+    e.set_defaults(fn=cmd_command_delay)
 
     args = ap.parse_args()
 
