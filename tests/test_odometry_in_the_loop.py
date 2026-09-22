@@ -57,14 +57,24 @@ REGIMES = {
 }
 MOVING = ["straight_0.6", "circle_R0.8"]
 
-# RMS slip [mm/s], seed 0, measured 2026-09-21 on general_rl_cmd_curriculum2b
-# flown on its own sensors. A TRIPWIRE, not a spec: the assert is "not more
-# than 1.5x this". Re-measure and rewrite when the policy or the contact moves.
+# RMS slip [mm/s], MEDIAN over AHRS seeds SLIP_SEEDS, measured 2026-09-22 on
+# general_rl_cmd_curriculum2b flown on its own sensors. A TRIPWIRE, not a spec:
+# the assert is "the same median is not more than 1.5x this". Re-measure and
+# rewrite when the policy or the contact moves.
+#
+# A MEDIAN, BECAUSE ONE SEED IS ONE DRAW. It was seed 0 alone until the
+# yaw-drift fix moved the AHRS rng stream and straight_0.6 went 67.2 -> 120.8
+# with nothing physical changed. Rear slip across 8 seeds spans 30-119
+# (standstill) and 61-121 (straight), so a single draw against a 1.5x margin
+# was a coin toss; seeds 4 and 7 were already over it before the fix. The
+# 5-seed median moved at most 1.22x across that fix (straight 84.5 -> 102.8)
+# and at most 1.36x between two disjoint 5-seed sets.
 SLIP_BASELINE_POLICY = "general_rl_cmd_curriculum2b"
-REAR_SLIP_BASELINE = {"standstill": 88.9, "standstill_shoved": 84.7,
-                      "straight_0.6": 67.2, "circle_R0.8": 141.8}
-FRONT_SLIP_BASELINE = {"standstill": 35.4, "standstill_shoved": 40.2,
-                       "straight_0.6": 39.0, "circle_R0.8": 49.9}
+SLIP_SEEDS = range(5)
+REAR_SLIP_BASELINE = {"standstill": 64.6, "standstill_shoved": 75.3,
+                      "straight_0.6": 102.8, "circle_R0.8": 115.8}
+FRONT_SLIP_BASELINE = {"standstill": 27.2, "standstill_shoved": 37.0,
+                       "straight_0.6": 38.8, "circle_R0.8": 48.1}
 SLIP_MARGIN = 1.5
 
 
@@ -92,7 +102,8 @@ def _fly(params, model, policy, regime, seed=0):
 
     Mirrors record.py: the move yaml says which AHRS level / tau and which
     odometry encoder, and the controller sees the ESTIMATE while physics
-    keeps the truth. `seed` seeds the AHRS error model.
+    keeps the truth. `seed` seeds the AHRS error model AND, in
+    standstill_shoved, the shoves.
     """
     name, spec = policy
     speed, yaw_rate, shove = REGIMES[regime]
@@ -192,10 +203,17 @@ def test_policy_tracks_the_command_on_its_own_sensors(params, model, policy, reg
 
 # -- slip tripwire -----------------------------------------------------------
 
+def _median_slip(params, model, policy, regime, col):
+    """Median over SLIP_SEEDS of the RMS slip in column `col` [mm/s]."""
+    return float(np.median([_rms_mm(_episode(params, model, policy, regime, s)[1][:, col])
+                            for s in SLIP_SEEDS]))
+
+
 def _slip_check(policy, regime, measured, baseline, what):
     bar = SLIP_MARGIN * baseline[regime]
     assert measured < bar, (
-        f"{regime}: {what} slip {measured:.1f} mm/s RMS, over {SLIP_MARGIN}x the "
+        f"{regime}: {what} slip {measured:.1f} mm/s RMS (median of "
+        f"{len(SLIP_SEEDS)} AHRS seeds), over {SLIP_MARGIN}x the "
         f"{baseline[regime]:.1f} recorded for {SLIP_BASELINE_POLICY} "
         f"(now flying {policy[0]}). The POLICY is working this wheel harder than "
         f"the baseline did, or the contact moved -- this is not an estimator "
@@ -207,8 +225,8 @@ def test_rear_wheel_slip_under_the_shipped_policy(params, model, policy, regime)
     """Hub spin x outer radius against the hub centre's velocity along the
     heading. This IS the longitudinal odometry error: the estimate is hub
     kinematics, so estimate minus truth equals this slip by construction."""
-    _, A = _episode(params, model, policy, regime)
-    _slip_check(policy, regime, _rms_mm(A[:, 3]), REAR_SLIP_BASELINE, "rear-wheel")
+    _slip_check(policy, regime, _median_slip(params, model, policy, regime, 3),
+                REAR_SLIP_BASELINE, "rear-wheel")
 
 
 @pytest.mark.parametrize("regime", list(REGIMES))
@@ -217,6 +235,5 @@ def test_front_wheel_lateral_slip_under_the_shipped_policy(params, model, policy
     """The front wheel's velocity along its own axle. The lateral estimate
     assumes this is zero (v_lat = v_lon*tan(theta) - yaw_rate*L); at
     35-50 mm/s it is the same size as the lateral estimation error."""
-    _, A = _episode(params, model, policy, regime)
-    _slip_check(policy, regime, _rms_mm(A[:, 4]), FRONT_SLIP_BASELINE,
-                "front-wheel lateral")
+    _slip_check(policy, regime, _median_slip(params, model, policy, regime, 4),
+                FRONT_SLIP_BASELINE, "front-wheel lateral")
