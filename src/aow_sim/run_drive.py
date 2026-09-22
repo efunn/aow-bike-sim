@@ -49,6 +49,7 @@ from .wheel_overlay import (STRIPE_RADIUS_TELEOP, add_stripes,
 from .control import DriveController, run
 from .control.balance import extract_state
 from .control.linearize import settle_upright
+from .hw.ground import CURRENT_STEP as _CURRENT_STEP
 from .params import params_digest
 
 UPRIGHT_LIMIT_DEG = 60.0
@@ -495,6 +496,11 @@ def main() -> None:
                          "build_model.SWING_LINKAGE_CFG "
                          "(config/swing_linkage_smaller.yaml, what the CAD "
                          "path builds).")
+    ap.add_argument("--righting-ideal", action="store_true",
+                    help="under --swing-linkage, drive the crank with the "
+                         "bare PD + torque clip instead of the current-based "
+                         "position servo model (righting_servo.py): no duty ceiling, no "
+                         "command delay, and the crank can outrun the motor")
     ap.add_argument("--swing", action="store_true",
                     help="co-rotating wing pair (config/swing_wings.yaml): one "
                          "side down, other side tucked. 3 teleop positions.")
@@ -589,6 +595,7 @@ def main() -> None:
                 general=args.general, show_ui=args.ui,
                 wings=args.wings, linkage=args.linkage,
                 swing=args.swing or args.swing_linkage,
+                righting_ideal=args.righting_ideal,
                 record=args.record,
                 slowmo_x=args.slowmo, odometry=args.odometry,
                 odometry_encoder=args.odometry_encoder, ahrs=args.ahrs,
@@ -1612,6 +1619,9 @@ _PELT_MAX = 8.0        # m/s; well past the topple threshold, which is ~4.5
 # camera mode apply_camera returns early, so there a press will also nudge the
 # viewer's camera -- switch to a tracked mode if that gets annoying.
 _KEY_PELT_DOWN, _KEY_PELT_UP = ord("["), ord("]")
+# The same two keys step the righting servo's Goal Current under
+# --swing-linkage, in counts, by the ground station's step (_CURRENT_STEP).
+# --hockey wins if both are on.
 
 
 def _pelt_ball(model, data, params, speed=_PELT_SPEED, side=1.0, rng=None):
@@ -1734,7 +1744,10 @@ def _rec_sample(rec, m, d, c, state, gen_name, params):
 _REC_KEY_LABELS = {
     ord("6"): "snap +90", ord("7"): "snap -90", ord("8"): "snap 180",
     ord("1"): "crab left", ord("3"): "crab right", ord("5"): "stop",
-    ord("2"): "overlay", ord("9"): "wing extend", ord("4"): "wing retract",
+    # 9/4 extend/retract the mirrored --wings/--linkage, or step right/left
+    # through the three positions of the co-rotating --swing/--swing-linkage.
+    ord("2"): "overlay", ord("9"): "wing extend / step right",
+    ord("4"): "wing retract / step left",
     ord("."): "shove", ord("/"): "re-zero", ord(","): "policy menu",
     265: "throttle up", 264: "brake/reverse", 263: "turn left", 262: "turn right",
     259: "reset",
@@ -2276,7 +2289,8 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
 
 
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
-            show_ui=False, wings=False, linkage=False, swing=False, record=None,
+            show_ui=False, wings=False, linkage=False, swing=False,
+            righting_ideal=False, record=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
             ahrs="none", ahrs_tau=None, design=None, drivetrain_base=None,
             servo_gains=None, drivetrain_source="", frame_stats=None):
@@ -2514,31 +2528,11 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "jadr": model.joint("swing_crank_joint" if linkage_form
                                     else "swing_right_joint").qposadr[0],
                 "stow": 0.0, "deploy": dep, "deploy_left": -dep,
-                # SLEW-LIMITED FOR THE FOUR-BAR, free for the geared pair.
-                # The old reasoning -- "the joint carries DC-motor damping, so
-                # the position actuator already cannot drive it past no-load
-                # speed, and ramping on top would understate the strike" --
-                # holds for the GEARED pair, where the wing angle is the servo
-                # angle over a fixed ratio. A four-bar has no fixed ratio: its
-                # transmission varies through the stroke and goes large near
-                # toggle, so a step command there is not a strike, it is a
-                # launch, and the bike leaves the ground.
-                #
-                # This is a TELEOP HANDLING LIMIT, not a modelled servo
-                # property: the servo block carries only `stall_torque`, with
-                # no no-load speed to derive a real figure from. Treat it the
-                # way `bike_params.yaml` treats a GUESS -- it wants replacing
-                # with the datasheet speed over the linkage's own transmission.
-                # The alternative fix is a current limit (shrink the
-                # actuator's forcerange), which is equally real and changes
-                # what the mechanism can HOLD as well as how fast it moves.
-                # No slew limit, for BOTH forms. A guessed ramp was tried here
-                # for the four-bar and is WITHDRAWN: the launch was the
-                # actuator running at the servo's full stall torque instead of
-                # the limit its own config specifies, which
-                # `_add_swing_linkage` now honours. Capping the torque is the
-                # real mechanism -- it is what a Dynamixel's goal_current does
-                # -- and unlike a ramp it also changes what the wing can HOLD.
+                # NO SLEW LIMIT, for either form: the step goes straight to the
+                # servo, as a current-based position servo receives it (Profile
+                # Velocity does not apply in mode 5). What throttles the stroke
+                # is the servo itself -- Goal Current and the duty ceiling --
+                # which `righting_servo.CurrentBasedPositionServo` models for the four-bar.
                 "rate": float("inf"), "gear": ratio, "linkage": False,
                 "swing": True, "cmd": 0.0, "target": 0.0, "pos": 0,
                 "manual": False,
@@ -2598,6 +2592,26 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "push_n": 0, "push_dir": 1.0, "push_force": 8.0,
                 "push_s": 0.35, "body": model.body("chassis").id}
 
+    # THE FOUR-BAR'S SERVO FIRMWARE: current-based position mode with its duty
+    # ceiling, instead of the bare PD + clip (see righting_servo.py). Starts at
+    # the cap the linkage config specifies, which `_add_swing_linkage` has
+    # already put in the actuator's forcerange -- not at the bike's
+    # `righting_current`, which is untuned and too low to lift. [ and ] move it
+    # in Goal Current counts, as the ground station does.
+    crank_servo = None
+    if wing is not None and wing.get("swing") and not righting_ideal:
+        from .righting_servo import CurrentBasedPositionServo
+        crank_servo = CurrentBasedPositionServo.attach(
+            model, params,
+            torque_nm=float(model.actuator_forcerange[wing["aid"], 1]))
+        if crank_servo is not None:
+            print(f"righting servo: current-based position (mode 5), "
+                  f"Goal Current {crank_servo.goal_current} "
+                  f"counts ({crank_servo.cap_nm:.2f} N.m), 12 V   "
+                  f"[ / ] +-{_CURRENT_STEP} counts"
+                  f"   (the bike's righting_current is "
+                  f"{params['control']['onboard']['righting_current']})")
+
     def policy_owns_wings() -> bool:
         """True when the engaged general policy is DRIVING the wings itself.
 
@@ -2643,6 +2657,15 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             wing["push_n"] -= 1
             d.xfrc_applied[wing["body"], 1] = (
                 wing["push_dir"] * wing["push_force"] if wing["push_n"] else 0.0)
+
+    def pre_step(d):
+        """Everything that must run immediately before each mj_step. Through
+        the list, not a bound method: a menu swap replaces the DrivetrainSim
+        and the loop has to step the new one."""
+        if drive_sim[0] is not None:
+            drive_sim[0].pre_step(d)
+        if crank_servo is not None:
+            crank_servo.pre_step(d)
 
     def on_key(keycode):
         pending.append(keycode)
@@ -3293,6 +3316,11 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                       f"{mb * pelt_speed[0]:.3f} N.s)"
                       + ("   [0 = the ball just drops where it is]"
                          if pelt_speed[0] == 0.0 else ""))
+            elif k in (_KEY_PELT_DOWN, _KEY_PELT_UP) and crank_servo is not None:
+                crank_servo.set_goal_current(crank_servo.goal_current + (
+                    _CURRENT_STEP if k == _KEY_PELT_UP else -_CURRENT_STEP))
+                print(f"righting Goal Current: {crank_servo.goal_current} counts "
+                      f"({crank_servo.cap_nm:.2f} N.m at the crank)")
             elif wing is not None and k == ord("."):
                 # Shove it over, alternating sides so both get tested -- the
                 # policy is measurably worse to the left (see
@@ -3491,10 +3519,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 slowmo=slowmo,
                 paused=paused,
                 on_start=lambda v: view.__setitem__(0, v),
-                # Through the list, not a bound method: a menu swap replaces
-                # the DrivetrainSim and the loop has to step the new one.
-                pre_step=(None if drive_sim[0] is None
-                          else lambda d: drive_sim[0].pre_step(d)),
+                pre_step=(None if drive_sim[0] is None and crank_servo is None
+                          else pre_step),
                 stats=None if frame_stats is None else FrameStats(frame_stats))
     # teleop_loop returns when the operator closes the viewer, so this is the
     # natural flush point. Ctrl-C bypasses it -- accepted, since a session

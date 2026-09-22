@@ -433,11 +433,15 @@ control:
     # and the whole reason the righting servo runs in mode 5 is that it can be
     # driven into the floor and stall instead of levering the bike off it.
     #
-    # 300 is a STARTING POINT, not a measurement. `self_righting.py lift
-    # --sweep` prices the stroke at 0.65-0.75 N.m AT THE ARM, which through the
-    # 4:1 reduction and kt = stall_torque/stall_current = 0.909 N.m/A is
-    # 179-206 mA; 300 leaves margin for friction and a sagging pack while
-    # staying a third of stall. At 910 the arm would see 3.2 N.m.
+    # 300 is a PLACEHOLDER, NOT TUNED FOR ANY BUILT MECHANISM. It was sized for
+    # the geared single arm (4:1), which was never built; it needs re-deriving
+    # for whichever mechanism is, once the bike's mass is known. For the
+    # direct-drive swing linkage it is MARGINAL: the loop regulates BUS
+    # current, so at stall tau = stall_torque * sqrt(I / stall_current), and 300
+    # counts at ~1 mA/LSB is ~0.47 N.m at 12 V (not the 0.27 a phase-current
+    # reading gives). In sim that lifts the bike at 12 V and not at 11.1.
+    # Sim teleop starts from the linkage config's `limits.torque_nm` (0.55 N.m,
+    # 416 counts) instead; see righting_servo.py.
     #
     # COUNTS, not mA, because the two sources disagree: ROBOTIS's e-manual
     # gives ~1 mA/LSB while the vendored model file declares 6.709e-4 with

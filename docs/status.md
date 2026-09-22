@@ -65,6 +65,26 @@ four-bar is BUILT and operating** -- this file had carried "design done, build
 last" for eight days. Open on it: read `righting_sign` (stow is settled at 180)
 off the bike (below), and Station C / R6 for `righting_current` in counts.
 
+**The crank's servo is now modelled as the firmware runs it (2026-09-21).**
+`righting_servo.CurrentBasedPositionServo`, on by default under teleop
+`--swing-linkage` (`--righting-ideal` for the old PD + clip). The loop
+regulates BUS current: the position PID is converted to amps, Goal Current caps
+it, and the motor line is the duty ceiling. So stall torque follows
+sqrt(Goal Current), and **300 counts is ~0.47 N.m at 12 V, not 0.27**. It
+brakes by PLUGGING (reverse duty), which is measured: 242/243 bench frames
+braking against the motion had reversed PWM. The 4 ms command delay is measured
+(frame-quantised; see below). The
+old clip let the crank reach 17.5 rad/s against an 11.8 no-load. `[` / `]`
+step Goal Current by 20 counts, as the ground station does. Fall set, policy
+on throughout, crank to centre at the hand-off gate, 416 counts (0.55 N.m at
+stall): **2/2 at 12 V, 1/2 at 11.1 V, 2/2 at 9.9 V**, and latching the
+endpoint recovers the fall to the left only. That is one pose per side and not
+monotonic in voltage, so it is marginal, not settled. Under the unmeasured
+alternative braking reading ("regen") it is 1/2 everywhere, which is why the
+braking data matters. Bench results are under `xc330_current_position` in
+servo-measurements.yaml: Goal PWM is NOT a duty ceiling in mode 5, and the D
+term's per-tick reading holds to order of magnitude.
+
 **The steer servo is modelled as the firmware runs it (2026-09-21).**
 `actuators.steer_clip: duty` builds the mode-4 law, clip(kp e) - kv w,
 natively: a kp-only actuator plus kv as joint damping. It is identical below
@@ -96,7 +116,7 @@ unchanged by the clip; the delay is not yet teleop-tested.
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
 | **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency`. **Onboard software readied for a Pi bench session 2026-09-15** — ground station, firmware-gain writes, fourth servo, fall cut/re-arm; none of it has touched hardware | Firmware P-gain choice, torque calibration, then the chassis | `pi-bench-bringup.md`, `first-physical-test.md`, `drivetrain-measurements.yaml` |
 | **CAD** | Layout, drivetrain, steering and righting stations pinned. Electronics packing deferred on purpose | Nothing — it is being worked on | `cad-onshape-workflow.md` |
-| **Self-righting mechanism** | Side project. Moved to asymmetric output / symmetric layout; torque analysis not trusted | Will be resolved by building, not by analysis | `wing-linkage-design-and-optimization.md` |
+| **Self-righting mechanism** | Four-bar built and operating. Its servo is modelled in current-based position mode, bus-regulated, plugging (2026-09-21); centring at hand-off recovers marginally | `righting_current` untuned; D gain and braking near zero current unmeasured | `wing-linkage-design-and-optimization.md`, `righting_servo.py` |
 
 ---
 
