@@ -67,7 +67,16 @@ def settle_rolling(
     common-mode speed, then snapshot a kinematically consistent state.
 
     The returned data carries the equilibrium ctrl (common-mode hold) — the
-    caller must keep/offset it, not zero it."""
+    caller must keep/offset it, not zero it.
+
+    THE SNAPSHOT MUST BE ON THE GROUND. Until 2026-09-22 it was taken at a fixed
+    step count, and at +-1.2 m/s that step landed mid-bounce with ZERO contacts
+    (chassis 0.5-0.7 mm high). Every identification rollout then started in
+    the air, so the fitted model said no input did anything -- steer->roll_rate
+    B 0.007 / 0.18 against ~2 at every other speed, crawl B exactly 0, fit R^2
+    exactly 1.0000 -- and the grid-end gains were designed on that. Now the
+    projected rolling continues, one step at a time, until both wheels touch,
+    and an airborne state is refused rather than returned."""
     if v == 0.0:
         return settle_upright(model, duration)
     r_wheel = params["omni_wheel"]["outer_radius"]
@@ -76,13 +85,27 @@ def settle_rolling(
     data = mujoco.MjData(model)
     for name in ("drive_a", "drive_b"):
         data.ctrl[model.actuator(name).id] = hub_rate  # common mode = hub rate
-    for _ in range(int(round(duration / model.opt.timestep))):
+    def project_step():
         mujoco.mj_step(model, data)
         data.qpos[1] = 0.0                 # x advances freely
         data.qpos[3:7] = (1, 0, 0, 0)
         data.qvel[0] = v
         data.qvel[1] = 0.0
         data.qvel[3:6] = 0.0
+
+    for _ in range(int(round(duration / model.opt.timestep))):
+        project_step()
+    # Carry on until both wheels are down: one bounce period is a few ms, so
+    # 0.05 s is generous. Contacts depend on positions only, so the check holds
+    # for the snapshot below, which replaces only velocities.
+    for _ in range(int(round(0.05 / model.opt.timestep))):
+        mujoco.mj_forward(model, data)
+        if _both_wheels_down(model, data):
+            break
+        project_step()
+    else:
+        raise RuntimeError(f"settle_rolling(v={v:+.2f}): no step in 50 ms had "
+                           "both wheels on the ground")
     # Consistent snapshot: only the rolling DOFs move.
     qvel = np.zeros(model.nv)
     qvel[0] = v
@@ -92,6 +115,19 @@ def settle_rolling(
     data.qvel[:] = qvel
     mujoco.mj_forward(model, data)
     return data
+
+
+def _both_wheels_down(model, data) -> bool:
+    """True when the front wheel and some part of the rear AOW wheel (hub,
+    ring or a roller) are in contact with anything but the bike itself."""
+    front = rear = False
+    for i in range(data.ncon):
+        c = data.contact[i]
+        for g in (c.geom1, c.geom2):
+            name = model.body(model.geom_bodyid[g]).name
+            front |= name == "front_wheel"
+            rear |= ("roller" in name) or name == "aow_hub"
+    return front and rear
 
 
 def _reduced_state(model, data) -> np.ndarray:
