@@ -215,6 +215,10 @@ def record(bus, imap, segments, rate_hz: float, log=print,
         "version": FORMAT_VERSION,
         "created": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "rate_hz": rate_hz,
+        # `time.perf_counter()` at t_host = 0, so a logger on another thread
+        # (the AHRS, say) stamping with the same clock can be put on this
+        # capture's timebase by subtraction. Monotonic on Linux and macOS.
+        "t0_perf_counter": t0,
         "ids": list(ids),
         "read": [{"label": lbl, "key": raw_key(lbl),
                   "registers": reg_meta(lambda i, lbl=lbl: regs[i, lbl])}
