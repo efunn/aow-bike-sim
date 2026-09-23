@@ -40,8 +40,9 @@ Ranked by what unblocks the most, not by interest.
 | 2 | **Contact calibration — P0, P0b, P1, once per floor** | Needs no printing: a weight, a caliper, slow-mo, a tilting board. The contact is the least-measured thing in the sim and the one no policy has been randomised over — and the SPREAD across surfaces is what sets the randomization range | `floors-and-the-contact-model.md` |
 | 3 | **Finish the drivetrain station** | Built and characterised 2026-09-12/13: belt ratio 3.0 confirmed, a 7.5° detent in the differential, and a velocity-loop resonance at ~22 Hz at firmware P 400 that P 200 does not have. Roller slop measured by hand 2026-09-13: ±1.5 mm at the roller's 22 mm diameter, 15.6° p-p, from the same gear chain as the detent (20 detents per roller turn). `k_roller` 2.4 confirmed by counting roller turns. Open: choose the firmware Velocity P **and I** gains — a P/I grid cut time stuck at the diff detents from 49 % (factory) to 12 % at P 400 / I 3840, but P 400 rings near 22 Hz and I 3840 rings harder (peak 1.09–1.20), and the sim must model whichever ships — then a torque-scale check (D5, a known added inertia -- no lever arm needed) and fitting the five drivetrain `GUESS`es from the captures. **The sim cannot pick the gain (2026-09-14):** on the drive model fitted to these captures, policies trained at each gain tie — 3 seeds each, median 0.749 at P 100 against 0.750 at P 400, each on its own plant — but P 400 buzzes the rear wheel ~3× harder at 8–32 Hz. Decide on the physical bike, with a policy trained at the gain that ships | `drivetrain-measurements.yaml`, `drivetrain-model.md` |
 | 4 | **Umbilical bring-up on the laptop** | Verification steps 1–2 need no pack at all | `untethered-setup.md` §"Bench power" |
+| 5 | **CAD the AHRS fixture's bracket and mount, then run `session` at each height** | The software is done and proven on bare servos (2026-09-23); the one missing piece is plastic. It measures the TM151's DYNAMIC roll error -- the thing the standing falls hinge on, carried in the sim as the datasheet's "<1.5 deg" -- and prices AHRS mounting positions. Bracket requirements: roll axis INTERSECTING the yaw axis (the lever-arm fit assumes it); AHRS x along the roll axis; mount at 0, ~70 above AND ~70 below (the sign test: below the roll centre the accelerometer under-reads the lean, above it over-reads), and ~200 mm; +-45 deg per joint for the cables. Then `tune` loaded, then `session` per height | "AHRS fixture" below |
 
-All four are bench work. **The sim-side item is being taken now:**
+All five are bench work. **The sim-side item is being taken now:**
 
 > ### → NEXT, in progress: fix the eval score's directional gate
 >
@@ -114,7 +115,7 @@ unchanged by the clip; the delay is not yet teleop-tested.
 |---|---|---|---|
 | **Simulation & model** | Working. 17 parameters still `GUESS`. A detailed drivetrain (fitted XC430 loop, diff detent, roller slop) exists as an opt-in overlay, in the eval env, teleop and training (per config). Trained at P 100 and P 400, 3 seeds each (2026-09-14): a tie on score. Teleop builds a policy's own drivetrain from its record | Physical parts to measure; the built bike, to confirm the drivetrain model | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
 | **Control — RL** | Working, and primary. Trains against the onboard sensors | Crab still one-sided; `turn_asym` stuck ~0.2 | `general-rl-improvements.md` |
-| **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy needs a moving bike | `sensor-workstream.md` |
+| **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy: the yaw-roll fixture (`analysis/ahrs_fixture.py`, 2x XL330 ids 151/152) runs end to end on the Pi, **no mounted capture yet** -- next: CAD the bracket and mount ("What to do next" #5) | `sensor-workstream.md` |
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
 | **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency`. **Onboard software readied for a Pi bench session 2026-09-15** — ground station, firmware-gain writes, fourth servo, fall cut/re-arm; none of it has touched hardware | Firmware P-gain choice, torque calibration, then the chassis | `pi-bench-bringup.md`, `first-physical-test.md`, `drivetrain-measurements.yaml` |
 | **CAD** | Layout, drivetrain, steering and righting stations pinned. Electronics packing deferred on purpose | Nothing — it is being worked on | `cad-onshape-workflow.md` |
@@ -342,6 +343,33 @@ decodes real TM151 Ep_Combo frames — quaternion, gyro 0.2 deg/s at rest,
 switched off: **230 Hz, age-at-tick 4.7 ms mean / 10.4 ms max, zero stale
 raises in 300 ticks**. Detail and the three ways the "no configuration API"
 claim was checked: `pi-bench-bringup.md`.
+
+**AHRS fixture (2026-09-23), for the DYNAMIC error the standing falls hinge
+on, and for where the AHRS may go.** `analysis/ahrs_fixture.py`: yaw servo 151
+carrying roll servo 152 carrying the TM151, encoders as truth, on the Pi.
+`session` (15.5 min) runs rest, fast steps, chirps, a replay of the sim's own
+standing flights, yaw-only replay and random sway behind one ident prologue;
+the joint axes and the accelerometer's lever arm are fitted from each capture.
+Chirps report the AHRS's GAIN AND PHASE about the roll joint per octave, which
+separates under-reading the lean from over-reading it where an RMS cannot.
+`tune` sweeps the servos' P/I/D on a replayed flight, no AHRS needed.
+
+*Where the sim bike rolls:* NOT about its ground contact. Over 60 standing
+flights the instantaneous roll centre (v_lat / roll rate at the rear axle,
+|roll rate| > 30 deg/s) is a median 261 mm above the ground, p25-p75 202-319;
+one fixed centre at 252 mm explains 69% of the axle's lateral velocity. The
+same on the 28 flights that never fell (253 / 262 mm). That is ABOVE the
+as-built AHRS (~180 mm) and ~130 mm above the CoM, so the fixture's lever arm
+stands for distance from that centre, and 0 mm is a real configuration.
+
+*Proven on bare servos, AHRS NOT mounted:* 200 Hz, 0 dropped frames in 72600.
+Servo P 1000, not the default 400, which delivered 20 of 34 deg/s RMS of the
+replayed roll rate; `tune` put P 1500 / D 1000 marginally ahead (0.149 vs
+0.199 deg shape error, one run each) -- re-run it loaded. **The TM151's clock
+runs 0.3% fast** (200.00 Hz by its stamps, 200.61 by the Pi's): the 200.6 /
+201.4 Hz below is the sensor, not the reader. Raw(41) is not needed; it
+matches Combo at rest and can be polled without touching flash. **No dynamic
+number yet** -- next is the CAD, "What to do next" #5.
 
 **PUSH IS BACK, and this time it is in flash (2026-09-16).** The Combo output
 profile was ticked from a Windows machine; the earlier attempt through the
