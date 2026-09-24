@@ -29,7 +29,7 @@ export const SERVO_MOUNT_TABLE = {
         "hornDiameter" : 16 * millimeter,
         "hornThickness" : 3 * millimeter,
         "pinClearance" : 0.2 * millimeter,
-        "pinLength" : 2.6 * millimeter,
+        "pinLength" : 1.3 * millimeter,
         "tipChamfer" : 0 * millimeter,
         "rootRelief" : 0.8 * millimeter,
         "rootWidth" : 1 * millimeter,
@@ -42,8 +42,10 @@ export const SERVO_MOUNT_TABLE = {
         "collarOuterDia" : 20 * millimeter,
         "collarRoof" : 2 * millimeter,
         "caseReliefDia" : 2 * millimeter,
+        "caseReliefDepthHorn" : 3.5 * millimeter,
+        "caseReliefDepthBack" : 4.5 * millimeter,
         "casePinClearance" : 0.1 * millimeter,
-        "casePinLength" : 3 * millimeter,
+        "casePinLength" : 1.5 * millimeter,
         "casePinReliefDia" : 4.3 * millimeter,
         "casePinReliefDepth" : 0.8 * millimeter,
         "casePinRootChamfer" : 0.6 * millimeter,
@@ -53,10 +55,22 @@ export const SERVO_MOUNT_TABLE = {
         "caseNestLength" : 6.8 * millimeter,
         "caseTopWall" : 2.3 * millimeter,
         "caseBottomWall" : 1.6 * millimeter,
-        "caseGripLength" : 2 * millimeter,
+        "caseGripLength" : 11.5 * millimeter,
         "caseCapThickness" : 4 * millimeter,
         "caseFaceClearance" : 0 * millimeter,
         "caseWrapLength" : 10 * millimeter,
+        "caseWindowNear" : 3.5 * millimeter,
+        "caseWindowDepth" : 9.55 * millimeter,
+        "caseWrapOverhang" : 70 * degree,
+        "idlerRecessOuterDia" : 6.7 * millimeter,
+        "idlerRecessOuterDepth" : 1.2 * millimeter,
+        "idlerRecessInnerDia" : 5.2 * millimeter,
+        "idlerRecessInnerDepth" : 0.6 * millimeter,
+        "idlerPlugClearance" : 0.2 * millimeter,
+        "idlerEndGap" : 0 * millimeter,
+        "idlerFaceGap" : 0 * millimeter,
+        "idlerCollarDia" : 11 * millimeter,
+        "idlerCollarThickness" : 3 * millimeter,
         "caseDepth" : 23 * millimeter,
         "caseWidth" : 20 * millimeter,
         "caseHeight" : 34 * millimeter,
@@ -71,7 +85,7 @@ export const SERVO_MOUNT_TABLE = {
         "hornDiameter" : 16 * millimeter,
         "hornThickness" : 3 * millimeter,
         "pinClearance" : 0.2 * millimeter,
-        "pinLength" : 2.6 * millimeter,
+        "pinLength" : 1.3 * millimeter,
         "tipChamfer" : 0 * millimeter,
         "rootRelief" : 0.8 * millimeter,
         "rootWidth" : 1 * millimeter,
@@ -84,8 +98,10 @@ export const SERVO_MOUNT_TABLE = {
         "collarOuterDia" : 20 * millimeter,
         "collarRoof" : 2 * millimeter,
         "caseReliefDia" : 2 * millimeter,
+        "caseReliefDepthHorn" : 3.5 * millimeter,
+        "caseReliefDepthBack" : 4.5 * millimeter,
         "casePinClearance" : 0.1 * millimeter,
-        "casePinLength" : 3 * millimeter,
+        "casePinLength" : 1.5 * millimeter,
         "casePinReliefDia" : 4.3 * millimeter,
         "casePinReliefDepth" : 0.8 * millimeter,
         "casePinRootChamfer" : 0.6 * millimeter,
@@ -95,10 +111,22 @@ export const SERVO_MOUNT_TABLE = {
         "caseNestLength" : 6.8 * millimeter,
         "caseTopWall" : 2.3 * millimeter,
         "caseBottomWall" : 1.6 * millimeter,
-        "caseGripLength" : 2 * millimeter,
+        "caseGripLength" : 11.5 * millimeter,
         "caseCapThickness" : 4 * millimeter,
         "caseFaceClearance" : 0 * millimeter,
         "caseWrapLength" : 10 * millimeter,
+        "caseWindowNear" : 3.5 * millimeter,
+        "caseWindowDepth" : 9.55 * millimeter,
+        "caseWrapOverhang" : 70 * degree,
+        "idlerRecessOuterDia" : 6.7 * millimeter,
+        "idlerRecessOuterDepth" : 1.2 * millimeter,
+        "idlerRecessInnerDia" : 5.2 * millimeter,
+        "idlerRecessInnerDepth" : 0.6 * millimeter,
+        "idlerPlugClearance" : 0.2 * millimeter,
+        "idlerEndGap" : 0 * millimeter,
+        "idlerFaceGap" : 0 * millimeter,
+        "idlerCollarDia" : 11 * millimeter,
+        "idlerCollarThickness" : 3 * millimeter,
         "caseDepth" : 23 * millimeter,
         "caseWidth" : 20 * millimeter,
         "caseHeight" : 34 * millimeter,
@@ -308,6 +336,27 @@ export function boxSolid(context is Context, id is Id, tag is string,
 }
 
 /**
+ * A closed polygon sketched on plane(origin, normal, xDir) -- (u, v) along
+ * xDir and normal x xDir -- and extruded `depth` along the normal.
+ */
+export function polyPrism(context is Context, id is Id, tag is string,
+                          origin is Vector, normal is Vector, xDir is Vector,
+                          pts is array, depth is ValueWithUnits)
+{
+    var sk = newSketchOnPlane(context, id + tag, {
+            "sketchPlane" : plane(origin, normal, xDir) });
+    skPolygon(sk, pts);
+    skSolve(sk);
+    opExtrude(context, id + (tag ~ "Ext"), {
+            "entities"  : qSketchRegion(id + tag),
+            "direction" : normal,
+            "endBound"  : BoundingType.BLIND,
+            "endDepth"  : depth });
+    opDeleteBodies(context, id + (tag ~ "Del"), {
+            "entities" : qCreatedBy(id + tag, EntityType.BODY) });
+}
+
+/**
  * One half of the two-part case shell, about the SAME datum as the horn pin:
  * the horn's outer face, +Z out of the servo, +Y toward the far end.
  *
@@ -365,28 +414,87 @@ export function caseShellGeometry(context is Context, id is Id, cs is CoordSyste
     const fc    = opt.caseFaceClearance;
     const seatZ = top ? hornZ + fc : backZ - fc;
     const outZ  = top ? cs.zAxis : -cs.zAxis;
+    const capT  = opt.caseCapThickness;
+
+    // FULL WRAP, the COVER (top half) only: its walls run the whole servo,
+    // round the shaft end too, and only the CAP stays at the far end (the
+    // horn needs the rest of the face). Printed cap-down, a wall past the cap
+    // has nothing under it, so its edge nearest the cap face slopes at the
+    // overhang limit from the cap's edge toward the shaft end, and the end
+    // wall's edge is a V at the same slope. Where the base is not, the walls
+    // run on down: to just above the cable connectors in their window, and to
+    // the back face beyond it. From the hand-drawn case-side-wall /
+    // case-end-wall in wing-linkage-shorter, 2026-09-23.
+    //
+    // NOT the base: a base wrapped the same way would need walls hanging
+    // above its cap-down bed with nothing under them, and it cannot be
+    // printed (the user, 2026-09-23). It keeps the far-end wrap.
+    const full  = opt.fullWrap == true && top;
+    const yNi   = -(t.shaftFromEnd + sc);          // the end wall's inner face
+    const outer = top ? topOuter : botOuter;
+    const yS    = full ? yNi - (outer - inner) : y0;
+    const yC    = full ? yNi : y0 - over;
 
     if (top)
     {
         boxSolid(context, id, "shell", cs, topOuter,
-                 y0, endY + sc + opt.caseTopWall,
-                 hornZ - skirt, seatZ + opt.caseCapThickness);
+                 yS, endY + sc + opt.caseTopWall,
+                 full ? backZ : hornZ - skirt, seatZ + capT);
         boxSolid(context, id, "cav", cs, inner,
-                 y0 - over, endY + sc, hornZ - skirt - over, seatZ);
+                 yC, endY + sc, (full ? backZ : hornZ - skirt) - over, seatZ);
     }
     else
     {
         boxSolid(context, id, "shell", cs, botOuter,
-                 y0, endY + sc + opt.caseTopWall + opt.caseNestClearance
+                 yS, endY + sc + opt.caseTopWall + opt.caseNestClearance
                      + opt.caseBottomWall,
-                 seatZ - opt.caseCapThickness,
+                 seatZ - capT,
                  backZ + opt.caseGripLength + opt.caseNestLength);
         boxSolid(context, id, "cav", cs, inner,
-                 y0 - over, endY + sc, seatZ, backZ + opt.caseGripLength);
+                 yC, endY + sc, seatZ, backZ + opt.caseGripLength);
         boxSolid(context, id, "nest", cs, nestBore,
-                 y0 - over, endY + sc + opt.caseTopWall + opt.caseNestClearance,
+                 full ? yNi - opt.caseTopWall - opt.caseNestClearance : y0 - over,
+                 endY + sc + opt.caseTopWall + opt.caseNestClearance,
                  backZ + opt.caseGripLength,
                  backZ + opt.caseGripLength + opt.caseNestLength + over);
+    }
+
+    var wrapCut = [];
+    if (full)
+    {
+        const tanS = tan(90 * degree - t.caseWrapOverhang);
+        const W    = outer + 1 * millimeter;
+        const yA0  = cross(cs.zAxis, cs.xAxis);
+        const zCap = top ? seatZ + capT : seatZ - capT;   // the bed, as printed
+        const sgn  = top ? 1 : -1;                          // bed-ward along z
+        const far  = zCap + sgn * 1 * millimeter;           // past the bed
+        const e    = 1 * millimeter;
+        // the cap, cut back to the far-end wrap
+        boxSolid(context, id, "capCut", cs, W, yS - e, y0,
+                 top ? seatZ : far, top ? far : seatZ);
+        // the walls' bed-ward edge: through (y0, cap face) at the overhang slope
+        const zFace = top ? hornZ : seatZ - capT;
+        const zAt = function(y) { return zFace - sgn * (y0 - y) * tanS; };
+        polyPrism(context, id, "slopeCut", cs.origin - W * cs.xAxis, cs.xAxis, yA0,
+                  [vector(y0, zFace), vector(yS - e, zAt(yS - e)),
+                   vector(yS - e, far), vector(y0, far)], 2 * W);
+        // the end wall's edge: a V, deepest (furthest from the bed) mid-width
+        const zE = zAt(yS);
+        polyPrism(context, id, "vCut", cs.origin + (yS - e) * yA0, yA0, -cs.xAxis,
+                  [vector(-W, zE + sgn * e * tanS), vector(0 * millimeter, zE - sgn * outer * tanS),
+                   vector(W, zE + sgn * e * tanS), vector(W, far), vector(-W, far)],
+                  yNi - yS + e);
+        // the cable connectors' window, both sides, back face up
+        boxSolid(context, id, "window", cs, W, t.caseWindowNear, y0,
+                 backZ - fc - capT - e, backZ + t.caseWindowDepth);
+        // and over the base, the cover stops where the base's nest takes it
+        boxSolid(context, id, "baseZone", cs, W, y0, endY + sc + opt.caseTopWall + e,
+                 backZ - e, hornZ - skirt);
+        wrapCut = [qCreatedBy(id + "capCutExt", EntityType.BODY),
+                   qCreatedBy(id + "slopeCutExt", EntityType.BODY),
+                   qCreatedBy(id + "vCutExt", EntityType.BODY),
+                   qCreatedBy(id + "windowExt", EntityType.BODY),
+                   qCreatedBy(id + "baseZoneExt", EntityType.BODY)];
     }
 
     // One pin at +rowX, mirrored to -rowX. Two per face, not four: see above.
@@ -422,10 +530,10 @@ export function caseShellGeometry(context is Context, id is Id, cs is CoordSyste
         "shell" : qCreatedBy(id + "shellExt", EntityType.BODY),
         "pins"  : qUnion([qCreatedBy(id + "pinRev", EntityType.BODY),
                           qCreatedBy(id + "pinRing", EntityType.BODY)]),
-        "cutters" : qUnion([qCreatedBy(id + "cavExt", EntityType.BODY),
+        "cutters" : qUnion(concatenateArrays([wrapCut, [qCreatedBy(id + "cavExt", EntityType.BODY),
                             qCreatedBy(id + "nestExt", EntityType.BODY),
                             qCreatedBy(id + "reliefRev", EntityType.BODY),
-                            qCreatedBy(id + "reliefRing", EntityType.BODY)])
+                            qCreatedBy(id + "reliefRing", EntityType.BODY)]]))
     };
 }
 
@@ -485,6 +593,102 @@ export function caseShellPair(context is Context, id is Id, cs is CoordSystem,
     return qUnion(made);
 }
 
+/**
+ * The idler plug: two steps into the back-face recess and a collar outside.
+ *
+ * Off the SAME datum as the horn features -- the horn's outer face, +Z out of
+ * the horn side -- so one mate connector drives both ends of the servo. The
+ * back face is hornThickness + caseDepth down -Z, and the profile is revolved
+ * with its axial coordinate turned round to point out of the BACK.
+ */
+export function idlerGeometry(context is Context, id is Id, cs is CoordSystem,
+                              opt is map) returns Query
+{
+    const t = SERVO_MOUNT_TABLE[opt.servo];
+    const idlerRo      = (t.idlerRecessOuterDia - opt.idlerPlugClearance) / 2;
+    const idlerRi      = (t.idlerRecessInnerDia - opt.idlerPlugClearance) / 2;
+    const idlerDo      = t.idlerRecessOuterDepth;
+    const idlerDi      = t.idlerRecessInnerDepth;
+    const idlerEndGap  = opt.idlerEndGap;
+    const idlerFaceGap = opt.idlerFaceGap;
+    const idlerRc      = opt.idlerCollarDia / 2;
+    const idlerT       = opt.idlerCollarThickness;
+
+    const out   = -cs.zAxis;
+    const o     = cs.origin - (t.hornThickness + t.caseDepth) * cs.zAxis;
+    const yA    = cross(out, cs.xAxis);
+    revolveProfile(context, id, "idler", plane(o, -yA, cs.xAxis), line(o, out),
+        [vector(0 * millimeter, -idlerDo - idlerDi + idlerEndGap),
+            vector(idlerRi, -idlerDo - idlerDi + idlerEndGap),
+            vector(idlerRi, -idlerDo + idlerEndGap),
+            vector(idlerRo, -idlerDo + idlerEndGap),
+            vector(idlerRo, idlerFaceGap),
+            vector(idlerRc, idlerFaceGap),
+            vector(idlerRc, idlerFaceGap + idlerT),
+            vector(0 * millimeter, idlerFaceGap + idlerT)]);
+    return qCreatedBy(id + "idlerRev", EntityType.BODY);
+}
+
+/** The plug, merged into `target` when one is picked. */
+export function idlerBuild(context is Context, id is Id, cs is CoordSystem,
+                           opt is map, target is Query) returns Query
+{
+    const plug = idlerGeometry(context, id + "geom", cs, opt);
+    if (isQueryEmpty(context, target))
+        return plug;
+    opBoolean(context, id + "add", {
+            "tools"         : qUnion([plug, target]),
+            "operationType" : BooleanOperationType.UNION });
+    return target;
+}
+
+/**
+ * A flat-head screw and a captive nut: countersink, clearance hole, and a
+ * slot the nut slides into sideways.
+ *
+ * `cs` is on the surface the head sits in with +Z INTO the part along the
+ * shank (the dialog flips a picked mate connector, whose Z points out of its
+ * face). The slot runs out along +X by nutSlotLength; its closed end is the
+ * nut's circumradius behind the axis, so the hex corners are not clipped --
+ * or, with bothWays, the slot runs nutSlotLength out along -X as well.
+ * Optional opt.headPocket extends the head's bore outward past the surface.
+ *
+ * Returns the cutter bodies; booleans nothing.
+ */
+export function screwJointGeometry(context is Context, id is Id,
+                                   cs is CoordSystem, opt is map) returns Query
+{
+    const headR     = opt.headDia / 2;
+    const holeR     = opt.holeDia / 2;
+    const holeDepth = opt.holeDepth;
+    const cskDepth  = (headR - holeR) / tan(opt.cskAngle / 2);
+    // headPocket, when given, runs the head's bore on OUTWARD past the
+    // surface: a countersink at the bottom of a pocket, for a part thicker
+    // than the screw can reach through. The dialog does not offer it; the
+    // fixture generator does.
+    const over      = 1 * millimeter
+                      + (opt.headPocket == undefined ? 0 * millimeter : opt.headPocket);
+    const yA        = cross(cs.zAxis, cs.xAxis);
+
+    revolveProfile(context, id, "screw", plane(cs.origin, -yA, cs.xAxis),
+        line(cs.origin, cs.zAxis), [vector(0 * millimeter, -over),
+            vector(headR, -over),
+            vector(headR, 0 * millimeter),
+            vector(holeR, cskDepth),
+            vector(holeR, holeDepth),
+            vector(0 * millimeter, holeDepth)]);
+
+    // boxSolid wants the slot's WIDTH on its x, so turn the frame a quarter:
+    // x' = the datum's Y, y' = -X. Out along +X is then y' negative.
+    const w      = opt.nutSlotWidth;
+    const back   = opt.bothWays ? opt.nutSlotLength : w / sqrt(3);
+    const slotCs = coordSystem(cs.origin, yA, cs.zAxis);
+    boxSolid(context, id, "slot", slotCs, w / 2, -opt.nutSlotLength, back,
+             opt.nutDepth, opt.nutDepth + opt.nutSlotThickness);
+    return qUnion([qCreatedBy(id + "screwRev", EntityType.BODY),
+                   qCreatedBy(id + "slotExt", EntityType.BODY)]);
+}
+
 
 // ==== UI LAYER BELOW -- dropped by --check ====
 
@@ -527,7 +731,7 @@ export const x330HornPin = defineFeature(function(context is Context, id is Id,
             isLength(definition.pinClearance, { (millimeter) : [0.0, 0.2, 1.0] } as LengthBoundSpec);
 
             annotation { "Name" : "Pin length" }
-            isLength(definition.pinLength, { (millimeter) : [0.5, 2.6, 3.0] } as LengthBoundSpec);
+            isLength(definition.pinLength, { (millimeter) : [0.5, 1.3, 3.0] } as LengthBoundSpec);
 
             annotation { "Name" : "Pin tip lead-in" }
             isLength(definition.tipChamfer, { (millimeter) : [0.0, 0, 1.0] } as LengthBoundSpec);
@@ -610,13 +814,20 @@ export const x330CaseShell = defineFeature(function(context is Context, id is Id
         annotation { "Name" : "Flip 180 degrees about the datum" }
         definition.flip is boolean;
 
+        // The COVER's walls round the whole servo, the shaft end included,
+        // sloped at the overhang limit so it prints cap-down, down to the
+        // back face where the base is not, clear of the cable connectors.
+        // The base keeps the far-end wrap either way.
+        annotation { "Name" : "Cover wraps the whole servo" }
+        definition.fullWrap is boolean;
+
         annotation { "Group Name" : "Fit", "Collapsed By Default" : true }
         {
             annotation { "Name" : "Pin clearance (diametral, in the Phi 2 bore)" }
             isLength(definition.casePinClearance, { (millimeter) : [0.0, 0.1, 1.0] } as LengthBoundSpec);
 
             annotation { "Name" : "Pin length" }
-            isLength(definition.casePinLength, { (millimeter) : [0.5, 3, 4.0] } as LengthBoundSpec);
+            isLength(definition.casePinLength, { (millimeter) : [0.5, 1.5, 4.0] } as LengthBoundSpec);
 
             annotation { "Name" : "Root relief diameter" }
             isLength(definition.casePinReliefDia, { (millimeter) : [0.0, 4.3, 8.0] } as LengthBoundSpec);
@@ -640,7 +851,7 @@ export const x330CaseShell = defineFeature(function(context is Context, id is Id
             isLength(definition.caseBottomWall, { (millimeter) : [0.5, 1.6, 6.0] } as LengthBoundSpec);
 
             annotation { "Name" : "Bottom half grip on the servo" }
-            isLength(definition.caseGripLength, { (millimeter) : [0.0, 2, 10.0] } as LengthBoundSpec);
+            isLength(definition.caseGripLength, { (millimeter) : [0.0, 11.5, 16.0] } as LengthBoundSpec);
 
             annotation { "Name" : "Nest engagement" }
             isLength(definition.caseNestLength, { (millimeter) : [0.0, 6.8, 20.0] } as LengthBoundSpec);
@@ -662,6 +873,7 @@ export const x330CaseShell = defineFeature(function(context is Context, id is Id
                   "makeTop" : definition.makeTop,
                   "makeBottom" : definition.makeBottom,
                   "flip" : definition.flip,
+                  "fullWrap" : definition.fullWrap,
                   "casePinClearance" : definition.casePinClearance,
                   "casePinLength" : definition.casePinLength,
                   "casePinReliefDia" : definition.casePinReliefDia,
@@ -676,4 +888,125 @@ export const x330CaseShell = defineFeature(function(context is Context, id is Id
                   "caseCapThickness" : definition.caseCapThickness,
                   "caseFaceClearance" : definition.caseFaceClearance,
                   "caseWrapLength" : definition.caseWrapLength });
+    });
+
+annotation { "Feature Type Name" : "X330 idler",
+             "Filter Selector" : "allparts" }
+export const x330Idler = defineFeature(function(context is Context, id is Id,
+                                                definition is map)
+    precondition
+    {
+        annotation { "Name" : "Servo" }
+        definition.servo is ServoModel;
+
+        // The HORN datum, not one on the back face: the plug is built
+        // caseDepth + hornThickness behind it, so the connector that drives
+        // the horn pin drives this too.
+        annotation { "Name" : "Horn datum (the plug goes on the back face)",
+                     "Filter" : BodyType.MATE_CONNECTOR,
+                     "MaxNumberOfPicks" : 1 }
+        definition.datum is Query;
+
+        annotation { "Name" : "Part to merge into (leave empty for a loose idler)",
+                     "Filter" : EntityType.BODY && BodyType.SOLID }
+        definition.target is Query;
+
+        annotation { "Group Name" : "Fit", "Collapsed By Default" : true }
+        {
+            annotation { "Name" : "Plug clearance (diametral)" }
+            isLength(definition.idlerPlugClearance, { (millimeter) : [0.0, 0.2, 1.0] } as LengthBoundSpec);
+
+            annotation { "Name" : "Gap at the recess floors" }
+            isLength(definition.idlerEndGap, { (millimeter) : [0.0, 0, 0.5] } as LengthBoundSpec);
+
+            annotation { "Name" : "Collar gap to the back face" }
+            isLength(definition.idlerFaceGap, { (millimeter) : [0.0, 0, 2.0] } as LengthBoundSpec);
+
+            annotation { "Name" : "Collar diameter" }
+            isLength(definition.idlerCollarDia, { (millimeter) : [7.0, 11, 40.0] } as LengthBoundSpec);
+
+            annotation { "Name" : "Collar thickness" }
+            isLength(definition.idlerCollarThickness, { (millimeter) : [0.5, 3, 30.0] } as LengthBoundSpec);
+        }
+    }
+    {
+        idlerBuild(context, id + "build",
+                evMateConnector(context, { "mateConnector" : definition.datum }),
+                { "servo" : servoKey(definition.servo),
+                  "idlerPlugClearance" : definition.idlerPlugClearance,
+                  "idlerEndGap" : definition.idlerEndGap,
+                  "idlerFaceGap" : definition.idlerFaceGap,
+                  "idlerCollarDia" : definition.idlerCollarDia,
+                  "idlerCollarThickness" : definition.idlerCollarThickness },
+                definition.target);
+    });
+
+annotation { "Feature Type Name" : "6-32 screw and nut",
+             "Filter Selector" : "allparts" }
+export const screwAndNut632 = defineFeature(function(context is Context, id is Id,
+                                                     definition is map)
+    precondition
+    {
+        annotation { "Name" : "Head datum (on the face the head sits in)",
+                     "Filter" : BodyType.MATE_CONNECTOR,
+                     "MaxNumberOfPicks" : 1 }
+        definition.datum is Query;
+
+        // A mate connector on a face points OUT of it, and the screw goes in;
+        // so the default drills along -Z. Tick if the connector already
+        // points into the part.
+        annotation { "Name" : "Datum Z already points into the part" }
+        definition.flip is boolean;
+
+        annotation { "Name" : "Parts to cut",
+                     "Filter" : EntityType.BODY && BodyType.SOLID }
+        definition.targets is Query;
+
+        annotation { "Name" : "Nut slot open both ways along X" }
+        definition.bothWays is boolean;
+
+        annotation { "Group Name" : "Fit", "Collapsed By Default" : true }
+        {
+            annotation { "Name" : "Clearance hole diameter" }
+            isLength(definition.holeDia, { (millimeter) : [2.0, 3.6, 6.0] } as LengthBoundSpec);
+
+            annotation { "Name" : "Countersink diameter at the surface" }
+            isLength(definition.headDia, { (millimeter) : [3.0, 7.5, 12.0] } as LengthBoundSpec);
+
+            annotation { "Name" : "Hole depth" }
+            isLength(definition.holeDepth, { (millimeter) : [1.0, 12, 60.0] } as LengthBoundSpec);
+
+            annotation { "Name" : "Nut slot: near face below the surface" }
+            isLength(definition.nutDepth, { (millimeter) : [0.0, 6.6, 60.0] } as LengthBoundSpec);
+
+            annotation { "Name" : "Nut slot width (across flats + clearance)" }
+            isLength(definition.nutSlotWidth, { (millimeter) : [3.0, 6.55, 12.0] } as LengthBoundSpec);
+
+            annotation { "Name" : "Nut slot thickness" }
+            isLength(definition.nutSlotThickness, { (millimeter) : [1.0, 3, 8.0] } as LengthBoundSpec);
+
+            annotation { "Name" : "Nut slot length from the axis" }
+            isLength(definition.nutSlotLength, { (millimeter) : [3.0, 12, 60.0] } as LengthBoundSpec);
+
+            annotation { "Name" : "Countersink included angle" }
+            isAngle(definition.cskAngle, { (degree) : [60, 90, 120] } as AngleBoundSpec);
+        }
+    }
+    {
+        const mc = evMateConnector(context, { "mateConnector" : definition.datum });
+        const cs = definition.flip ? mc : coordSystem(mc.origin, mc.xAxis, -mc.zAxis);
+        const cutters = screwJointGeometry(context, id + "geom", cs, {
+                  "holeDia" : definition.holeDia,
+                  "headDia" : definition.headDia,
+                  "holeDepth" : definition.holeDepth,
+                  "nutDepth" : definition.nutDepth,
+                  "nutSlotWidth" : definition.nutSlotWidth,
+                  "nutSlotThickness" : definition.nutSlotThickness,
+                  "nutSlotLength" : definition.nutSlotLength,
+                  "cskAngle" : definition.cskAngle,
+                  "bothWays" : definition.bothWays });
+        opBoolean(context, id + "cut", {
+                "tools"         : cutters,
+                "targets"       : definition.targets,
+                "operationType" : BooleanOperationType.SUBTRACTION });
     });

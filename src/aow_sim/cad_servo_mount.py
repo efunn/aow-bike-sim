@@ -8,6 +8,13 @@ not equal partners: the pins locate and drive, but most of the STABILITY is the
 collar latching round the outside of the Phi 16 horn, which is why the well is
 always cut and is not an option.
 
+THE IDLER SIDE. Without the optional ROBOTIS idler horn, the back face has
+only a stepped recess round the shaft axis, and a printed stepped plug turning
+in it is the back bearing -- `X330 idler` builds that plug, off the SAME horn
+datum as the other two features, so one mate connector drives both ends. Parts
+joined across the servo (a crank on the horn, an idler behind) are held by one
+6-32 flat head and a nut in a slot: `6-32 screw and nut` cuts both.
+
 WHY THE PROFILES LIVE IN PYTHON. Every revolved shape here -- pin, root relief,
 horn well, collar -- is emitted as a polygon by the functions below, and the
 same polygon is fed to `revolve_volume` to say what the result should measure.
@@ -77,6 +84,8 @@ FIELDS = {
     "horn_collar_outer_dia":   "collarOuterDia",
     "horn_collar_roof":        "collarRoof",
     "case_relief_dia":            "caseReliefDia",
+    "case_relief_depth_horn":     "caseReliefDepthHorn",
+    "case_relief_depth_back":     "caseReliefDepthBack",
     "case_pin_clearance":         "casePinClearance",
     "case_pin_length":            "casePinLength",
     "case_pin_root_relief_dia":   "casePinReliefDia",
@@ -92,8 +101,21 @@ FIELDS = {
     "case_cap_thickness":         "caseCapThickness",
     "case_face_clearance":        "caseFaceClearance",
     "case_wrap_length":           "caseWrapLength",
+    "case_window_near":           "caseWindowNear",
+    "case_window_depth":          "caseWindowDepth",
+    "case_wrap_overhang_deg":     "caseWrapOverhang",
+    "idler_recess_outer_dia":     "idlerRecessOuterDia",
+    "idler_recess_outer_depth":   "idlerRecessOuterDepth",
+    "idler_recess_inner_dia":     "idlerRecessInnerDia",
+    "idler_recess_inner_depth":   "idlerRecessInnerDepth",
+    "idler_plug_clearance":       "idlerPlugClearance",
+    "idler_plug_end_gap":         "idlerEndGap",
+    "idler_face_gap":             "idlerFaceGap",
+    "idler_collar_dia":           "idlerCollarDia",
+    "idler_collar_thickness":     "idlerCollarThickness",
 }
 COUNTS = {"hornHoleCount"}   # emitted bare, not as a length
+ANGLES = {"caseWrapOverhang"}  # emitted in degrees
 
 # The dialog parameters, in the order they appear in the Fit group. Each is a
 # FeatureScript `const` inside servoMountGeometry, so profile expressions stay
@@ -107,6 +129,22 @@ CASE_DIALOG = ("casePinClearance", "casePinLength", "casePinReliefDia",
                "caseNestClearance", "caseTopWall", "caseBottomWall",
                "caseGripLength", "caseNestLength", "caseCapThickness",
                "caseFaceClearance", "caseWrapLength")
+
+IDLER_DIALOG = ("idlerPlugClearance", "idlerEndGap", "idlerFaceGap",
+                "idlerCollarDia", "idlerCollarThickness")
+
+# The screw feature's dialog: fastener yaml key -> FeatureScript field. Its
+# numbers are dialog DEFAULTS only; nothing servo-specific, so no table.
+SCREW = "screw_6_32_flat_3_8"
+SCREW_FIELDS = {
+    "hole_dia":           "holeDia",
+    "head_dia":           "headDia",
+    "hole_depth":         "holeDepth",
+    "nut_slot_width":     "nutSlotWidth",
+    "nut_slot_thickness": "nutSlotThickness",
+    "nut_depth":          "nutDepth",
+    "nut_slot_length":    "nutSlotLength",
+}
 
 BORE_OVERSHOOT = 1.0    # mm the well cutter runs past the case face
 CAVITY_OVERSHOOT = 1.0  # mm a cavity runs past the shell it is cut from
@@ -237,6 +275,35 @@ def collar_profile() -> list[tuple[Lin, Lin]]:
     return [(ZERO, -T), (Rc, -T), (Rc, roof), (ZERO, roof)]
 
 
+def idler_profile() -> list[tuple[Lin, Lin]]:
+    """The stepped plug and its collar, revolved about the shaft axis.
+
+    (u, v) with v = 0 at the case's BACK face and +v pointing out of the back
+    of the servo, so the plug is v < 0 and the collar v > 0. Both steps stop
+    `idlerEndGap` short of their floors; the collar stands `idlerFaceGap` off
+    the face, and the outer step runs on across that gap to meet it.
+    """
+    ro, ri = S("idlerRo"), S("idlerRi")
+    do, di = S("idlerDo"), S("idlerDi")
+    g, fg = S("idlerEndGap"), S("idlerFaceGap")
+    rc, T = S("idlerRc"), S("idlerT")
+    floor = -(do + di) + g
+    return [(ZERO, floor), (ri, floor), (ri, -do + g), (ro, -do + g),
+            (ro, fg), (rc, fg), (rc, fg + T), (ZERO, fg + T)]
+
+
+def screw_profile() -> list[tuple[Lin, Lin]]:
+    """Countersink and clearance hole, revolved about the screw axis.
+
+    v = 0 on the surface the head sits in, +v INTO the part along the shank.
+    The cutter starts `over` above the surface so the boolean has no sliver.
+    """
+    rh, rH = S("headR"), S("holeR")
+    csk, depth, over = S("cskDepth"), S("holeDepth"), S("over")
+    return [(ZERO, -over), (rh, -over), (rh, ZERO), (rH, csk), (rH, depth),
+            (ZERO, depth)]
+
+
 def revolve_volume(poly: list[tuple[float, float]]) -> float:
     """Exact volume of a closed polygon revolved about u = 0.
 
@@ -316,6 +383,34 @@ def env(table: dict[str, dict], servo: str = "XC330") -> dict[str, float]:
     }
 
 
+def idler_env(table: dict[str, dict], servo: str = "XC330") -> dict[str, float]:
+    t = {k: v * 1000 for k, v in table[servo].items() if k not in COUNTS}
+    return {
+        "idlerRo": (t["idlerRecessOuterDia"] - t["idlerPlugClearance"]) / 2,
+        "idlerRi": (t["idlerRecessInnerDia"] - t["idlerPlugClearance"]) / 2,
+        "idlerDo": t["idlerRecessOuterDepth"], "idlerDi": t["idlerRecessInnerDepth"],
+        "idlerEndGap": t["idlerEndGap"], "idlerFaceGap": t["idlerFaceGap"],
+        "idlerRc": t["idlerCollarDia"] / 2, "idlerT": t["idlerCollarThickness"],
+        "backZ": -(t["hornThickness"] + t["caseDepth"]),
+    }
+
+
+def screw_table(mounts: dict | None = None) -> dict[str, float]:
+    """Dialog defaults for the screw feature, mm (and the csk angle, deg)."""
+    mounts = load_mounts() if mounts is None else mounts
+    f = mounts["fasteners"][SCREW]
+    out = {fs: f[k] * 1000 for k, fs in SCREW_FIELDS.items()}
+    out["cskAngle"] = f["csk_angle_deg"]
+    return out
+
+
+def screw_env(sc: dict[str, float]) -> dict[str, float]:
+    rh, rH = sc["headDia"] / 2, sc["holeDia"] / 2
+    return {"headR": rh, "holeR": rH, "holeDepth": sc["holeDepth"],
+            "cskDepth": (rh - rH) / math.tan(math.radians(sc["cskAngle"] / 2)),
+            "over": BORE_OVERSHOOT}
+
+
 def case_env(table: dict[str, dict], servo: str = "XC330") -> dict[str, float]:
     """Millimetre values for the case shell, at the defaults.
 
@@ -358,6 +453,8 @@ def case_env(table: dict[str, dict], servo: str = "XC330") -> dict[str, float]:
 def _fs_num(field: str, v: float) -> str:
     if field in COUNTS:
         return str(int(v))
+    if field in ANGLES:
+        return f"{v:g} * degree"
     return f"{v * 1000:.4g} * millimeter"    # yaml is metres, CAD reads mm
 
 
@@ -373,6 +470,48 @@ def lint_fs(text: str) -> None:
     A literal brace pair can never be valid here -- nothing generated emits
     one -- so its presence is unambiguous.
     """
+    # Brackets must balance. A compile failure is a BILLED call, and an
+    # unclosed paren from a generator edit cost one on 2026-09-23 -- checked
+    # here for free, skipping strings and // and /* */ comments.
+    stack, pairs, line = [], {")": "(", "]": "[", "}": "{"}, 1
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\n":
+            line += 1
+        elif text.startswith("//", i):
+            i = text.find("\n", i) - 1 if "\n" in text[i:] else n
+        elif text.startswith("/*", i):
+            j = text.find("*/", i)
+            line += text.count("\n", i, j)
+            i = j + 1
+        elif c == '"':
+            j = i + 1
+            while text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            i = j
+        elif c in "([{":
+            stack.append((c, line))
+        elif c in ")]}":
+            if not stack or stack[-1][0] != pairs[c]:
+                raise SystemExit(f"generated FeatureScript: unbalanced {c!r} at line {line}"
+                                 + (f" (open {stack[-1][0]!r} from line {stack[-1][1]})"
+                                    if stack else ""))
+            stack.pop()
+        i += 1
+    if stack:
+        raise SystemExit(f"generated FeatureScript: {stack[-1][0]!r} from line "
+                         f"{stack[-1][1]} never closed")
+    # Every dialog default inside its own bounds. An out-of-range default
+    # makes the WHOLE feature fail to compile, which --check cannot see (it
+    # drops the UI layer): a grip default of 11.5 against a max of 10 took
+    # the case shell out of the studio on 2026-09-23.
+    for m in re.finditer(r"\[\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\]\s*\}\s*as\s*(?:Length|Angle)BoundSpec", text):
+        lo, d, hi = (float(g) for g in m.groups())
+        if not lo <= d <= hi:
+            ln = text.count("\n", 0, m.start()) + 1
+            raise SystemExit(f"generated FeatureScript line {ln}: dialog default {d:g} "
+                             f"outside its bounds [{lo:g}, {hi:g}]")
     if bad := [f"line {i}: {l.strip()}" for i, l in enumerate(text.splitlines(), 1)
                if "{{" in l or "}}" in l]:
         raise SystemExit("generated FeatureScript has literal doubled braces, "
@@ -385,7 +524,9 @@ def _fs_poly(poly: list[tuple[Lin, Lin]]) -> str:
     return f"[{pts}]"
 
 
-def build_fs(table: dict[str, dict], fs_version: str = "3044") -> str:
+def build_fs(table: dict[str, dict], fs_version: str = "3044",
+             screw: dict[str, float] | None = None) -> str:
+    screw = screw_table() if screw is None else screw
     rows = []
     for name, t in table.items():
         fields = ",\n".join(f'        "{k}" : {_fs_num(k, v)}'
@@ -434,6 +575,7 @@ def build_fs(table: dict[str, dict], fs_version: str = "3044") -> str:
     # The case shell reuses these two polygons verbatim -- the FeatureScript
     # binds pinR/relD/relW/relCh to the case numbers before they are read.
     pin_poly, relief_poly = _fs_poly(pin_profile()), _fs_poly(relief_profile())
+    idler_poly, screw_poly = _fs_poly(idler_profile()), _fs_poly(screw_profile())
     case_labels = {
         "caseFaceClearance":  ("Clearance on the horn/back faces", 0.0, 2.0),
         "casePinClearance":   ("Pin clearance (diametral, in the Phi 2 bore)", 0.0, 1.0),
@@ -445,7 +587,8 @@ def build_fs(table: dict[str, dict], fs_version: str = "3044") -> str:
         "caseNestClearance":  ("Nest clearance (per side)", 0.0, 1.0),
         "caseTopWall":        ("Top half wall", 0.5, 6.0),
         "caseBottomWall":     ("Bottom half wall", 0.5, 6.0),
-        "caseGripLength":     ("Bottom half grip on the servo", 0.0, 10.0),
+        # up to the case depth less the nest: the halves must still meet
+        "caseGripLength":     ("Bottom half grip on the servo", 0.0, 16.0),
         "caseNestLength":     ("Nest engagement", 0.0, 20.0),
         "caseCapThickness":   ("Cap thickness over the face", 0.5, 20.0),
         # 16.5 is not a taste bound: past it the cap fouls the Phi 16 horn.
@@ -463,6 +606,37 @@ def build_fs(table: dict[str, dict], fs_version: str = "3044") -> str:
         for k in CASE_DIALOG)
     case_dialog_pass = ",\n".join(f'                  "{k}" : definition.{k}'
                                    for k in CASE_DIALOG)
+
+    def length_ui(k, label, lo, hi, d):
+        return (f"""            annotation {{ "Name" : "{label}" }}
+            isLength(definition.{k}, {{ (millimeter) : [{lo}, {d:g}, {hi}] }} as LengthBoundSpec);""")
+
+    idler_labels = {
+        "idlerPlugClearance":   ("Plug clearance (diametral)", 0.0, 1.0),
+        "idlerEndGap":          ("Gap at the recess floors", 0.0, 0.5),
+        "idlerFaceGap":         ("Collar gap to the back face", 0.0, 2.0),
+        "idlerCollarDia":       ("Collar diameter", 7.0, 40.0),
+        "idlerCollarThickness": ("Collar thickness", 0.5, 30.0),
+    }
+    idler_dialog_ui = "\n\n".join(
+        length_ui(k, *idler_labels[k], table[default][k] * 1000)
+        for k in IDLER_DIALOG)
+    idler_dialog_pass = ",\n".join(f'                  "{k}" : definition.{k}'
+                                    for k in IDLER_DIALOG)
+    screw_labels = {
+        "holeDia":          ("Clearance hole diameter", 2.0, 6.0),
+        "headDia":          ("Countersink diameter at the surface", 3.0, 12.0),
+        "holeDepth":        ("Hole depth", 1.0, 60.0),
+        "nutDepth":         ("Nut slot: near face below the surface", 0.0, 60.0),
+        "nutSlotWidth":     ("Nut slot width (across flats + clearance)", 3.0, 12.0),
+        "nutSlotThickness": ("Nut slot thickness", 1.0, 8.0),
+        "nutSlotLength":    ("Nut slot length from the axis", 3.0, 60.0),
+    }
+    screw_dialog_ui = "\n\n".join(
+        length_ui(k, *screw_labels[k], screw[k]) for k in screw_labels)
+    screw_dialog_pass = ",\n".join(
+        f'                  "{k}" : definition.{k}'
+        for k in list(screw_labels) + ["cskAngle", "bothWays"])
 
     return f"""FeatureScript {fs_version};
 import(path : "onshape/std/geometry.fs", version : "{fs_version}.0");
@@ -673,6 +847,27 @@ export function boxSolid(context is Context, id is Id, tag is string,
 }}
 
 /**
+ * A closed polygon sketched on plane(origin, normal, xDir) -- (u, v) along
+ * xDir and normal x xDir -- and extruded `depth` along the normal.
+ */
+export function polyPrism(context is Context, id is Id, tag is string,
+                          origin is Vector, normal is Vector, xDir is Vector,
+                          pts is array, depth is ValueWithUnits)
+{{
+    var sk = newSketchOnPlane(context, id + tag, {{
+            "sketchPlane" : plane(origin, normal, xDir) }});
+    skPolygon(sk, pts);
+    skSolve(sk);
+    opExtrude(context, id + (tag ~ "Ext"), {{
+            "entities"  : qSketchRegion(id + tag),
+            "direction" : normal,
+            "endBound"  : BoundingType.BLIND,
+            "endDepth"  : depth }});
+    opDeleteBodies(context, id + (tag ~ "Del"), {{
+            "entities" : qCreatedBy(id + tag, EntityType.BODY) }});
+}}
+
+/**
  * One half of the two-part case shell, about the SAME datum as the horn pin:
  * the horn's outer face, +Z out of the servo, +Y toward the far end.
  *
@@ -730,28 +925,87 @@ export function caseShellGeometry(context is Context, id is Id, cs is CoordSyste
     const fc    = opt.caseFaceClearance;
     const seatZ = top ? hornZ + fc : backZ - fc;
     const outZ  = top ? cs.zAxis : -cs.zAxis;
+    const capT  = opt.caseCapThickness;
+
+    // FULL WRAP, the COVER (top half) only: its walls run the whole servo,
+    // round the shaft end too, and only the CAP stays at the far end (the
+    // horn needs the rest of the face). Printed cap-down, a wall past the cap
+    // has nothing under it, so its edge nearest the cap face slopes at the
+    // overhang limit from the cap's edge toward the shaft end, and the end
+    // wall's edge is a V at the same slope. Where the base is not, the walls
+    // run on down: to just above the cable connectors in their window, and to
+    // the back face beyond it. From the hand-drawn case-side-wall /
+    // case-end-wall in wing-linkage-shorter, 2026-09-23.
+    //
+    // NOT the base: a base wrapped the same way would need walls hanging
+    // above its cap-down bed with nothing under them, and it cannot be
+    // printed (the user, 2026-09-23). It keeps the far-end wrap.
+    const full  = opt.fullWrap == true && top;
+    const yNi   = -(t.shaftFromEnd + sc);          // the end wall's inner face
+    const outer = top ? topOuter : botOuter;
+    const yS    = full ? yNi - (outer - inner) : y0;
+    const yC    = full ? yNi : y0 - over;
 
     if (top)
     {{
         boxSolid(context, id, "shell", cs, topOuter,
-                 y0, endY + sc + opt.caseTopWall,
-                 hornZ - skirt, seatZ + opt.caseCapThickness);
+                 yS, endY + sc + opt.caseTopWall,
+                 full ? backZ : hornZ - skirt, seatZ + capT);
         boxSolid(context, id, "cav", cs, inner,
-                 y0 - over, endY + sc, hornZ - skirt - over, seatZ);
+                 yC, endY + sc, (full ? backZ : hornZ - skirt) - over, seatZ);
     }}
     else
     {{
         boxSolid(context, id, "shell", cs, botOuter,
-                 y0, endY + sc + opt.caseTopWall + opt.caseNestClearance
+                 yS, endY + sc + opt.caseTopWall + opt.caseNestClearance
                      + opt.caseBottomWall,
-                 seatZ - opt.caseCapThickness,
+                 seatZ - capT,
                  backZ + opt.caseGripLength + opt.caseNestLength);
         boxSolid(context, id, "cav", cs, inner,
-                 y0 - over, endY + sc, seatZ, backZ + opt.caseGripLength);
+                 yC, endY + sc, seatZ, backZ + opt.caseGripLength);
         boxSolid(context, id, "nest", cs, nestBore,
-                 y0 - over, endY + sc + opt.caseTopWall + opt.caseNestClearance,
+                 full ? yNi - opt.caseTopWall - opt.caseNestClearance : y0 - over,
+                 endY + sc + opt.caseTopWall + opt.caseNestClearance,
                  backZ + opt.caseGripLength,
                  backZ + opt.caseGripLength + opt.caseNestLength + over);
+    }}
+
+    var wrapCut = [];
+    if (full)
+    {{
+        const tanS = tan(90 * degree - t.caseWrapOverhang);
+        const W    = outer + 1 * millimeter;
+        const yA0  = cross(cs.zAxis, cs.xAxis);
+        const zCap = top ? seatZ + capT : seatZ - capT;   // the bed, as printed
+        const sgn  = top ? 1 : -1;                          // bed-ward along z
+        const far  = zCap + sgn * 1 * millimeter;           // past the bed
+        const e    = 1 * millimeter;
+        // the cap, cut back to the far-end wrap
+        boxSolid(context, id, "capCut", cs, W, yS - e, y0,
+                 top ? seatZ : far, top ? far : seatZ);
+        // the walls' bed-ward edge: through (y0, cap face) at the overhang slope
+        const zFace = top ? hornZ : seatZ - capT;
+        const zAt = function(y) {{ return zFace - sgn * (y0 - y) * tanS; }};
+        polyPrism(context, id, "slopeCut", cs.origin - W * cs.xAxis, cs.xAxis, yA0,
+                  [vector(y0, zFace), vector(yS - e, zAt(yS - e)),
+                   vector(yS - e, far), vector(y0, far)], 2 * W);
+        // the end wall's edge: a V, deepest (furthest from the bed) mid-width
+        const zE = zAt(yS);
+        polyPrism(context, id, "vCut", cs.origin + (yS - e) * yA0, yA0, -cs.xAxis,
+                  [vector(-W, zE + sgn * e * tanS), vector(0 * millimeter, zE - sgn * outer * tanS),
+                   vector(W, zE + sgn * e * tanS), vector(W, far), vector(-W, far)],
+                  yNi - yS + e);
+        // the cable connectors' window, both sides, back face up
+        boxSolid(context, id, "window", cs, W, t.caseWindowNear, y0,
+                 backZ - fc - capT - e, backZ + t.caseWindowDepth);
+        // and over the base, the cover stops where the base's nest takes it
+        boxSolid(context, id, "baseZone", cs, W, y0, endY + sc + opt.caseTopWall + e,
+                 backZ - e, hornZ - skirt);
+        wrapCut = [qCreatedBy(id + "capCutExt", EntityType.BODY),
+                   qCreatedBy(id + "slopeCutExt", EntityType.BODY),
+                   qCreatedBy(id + "vCutExt", EntityType.BODY),
+                   qCreatedBy(id + "windowExt", EntityType.BODY),
+                   qCreatedBy(id + "baseZoneExt", EntityType.BODY)];
     }}
 
     // One pin at +rowX, mirrored to -rowX. Two per face, not four: see above.
@@ -779,10 +1033,10 @@ export function caseShellGeometry(context is Context, id is Id, cs is CoordSyste
         "shell" : qCreatedBy(id + "shellExt", EntityType.BODY),
         "pins"  : qUnion([qCreatedBy(id + "pinRev", EntityType.BODY),
                           qCreatedBy(id + "pinRing", EntityType.BODY)]),
-        "cutters" : qUnion([qCreatedBy(id + "cavExt", EntityType.BODY),
+        "cutters" : qUnion(concatenateArrays([wrapCut, [qCreatedBy(id + "cavExt", EntityType.BODY),
                             qCreatedBy(id + "nestExt", EntityType.BODY),
                             qCreatedBy(id + "reliefRev", EntityType.BODY),
-                            qCreatedBy(id + "reliefRing", EntityType.BODY)])
+                            qCreatedBy(id + "reliefRing", EntityType.BODY)]]))
     }};
 }}
 
@@ -840,6 +1094,90 @@ export function caseShellPair(context is Context, id is Id, cs is CoordSystem,
         made = append(made, caseShellBuild(context, id + "bot", useCS,
                 mergeMaps(opt, {{ "part" : "BOTTOM" }}), qNothing()));
     return qUnion(made);
+}}
+
+/**
+ * The idler plug: two steps into the back-face recess and a collar outside.
+ *
+ * Off the SAME datum as the horn features -- the horn's outer face, +Z out of
+ * the horn side -- so one mate connector drives both ends of the servo. The
+ * back face is hornThickness + caseDepth down -Z, and the profile is revolved
+ * with its axial coordinate turned round to point out of the BACK.
+ */
+export function idlerGeometry(context is Context, id is Id, cs is CoordSystem,
+                              opt is map) returns Query
+{{
+    const t = SERVO_MOUNT_TABLE[opt.servo];
+    const idlerRo      = (t.idlerRecessOuterDia - opt.idlerPlugClearance) / 2;
+    const idlerRi      = (t.idlerRecessInnerDia - opt.idlerPlugClearance) / 2;
+    const idlerDo      = t.idlerRecessOuterDepth;
+    const idlerDi      = t.idlerRecessInnerDepth;
+    const idlerEndGap  = opt.idlerEndGap;
+    const idlerFaceGap = opt.idlerFaceGap;
+    const idlerRc      = opt.idlerCollarDia / 2;
+    const idlerT       = opt.idlerCollarThickness;
+
+    const out   = -cs.zAxis;
+    const o     = cs.origin - (t.hornThickness + t.caseDepth) * cs.zAxis;
+    const yA    = cross(out, cs.xAxis);
+    revolveProfile(context, id, "idler", plane(o, -yA, cs.xAxis), line(o, out),
+        {idler_poly});
+    return qCreatedBy(id + "idlerRev", EntityType.BODY);
+}}
+
+/** The plug, merged into `target` when one is picked. */
+export function idlerBuild(context is Context, id is Id, cs is CoordSystem,
+                           opt is map, target is Query) returns Query
+{{
+    const plug = idlerGeometry(context, id + "geom", cs, opt);
+    if (isQueryEmpty(context, target))
+        return plug;
+    opBoolean(context, id + "add", {{
+            "tools"         : qUnion([plug, target]),
+            "operationType" : BooleanOperationType.UNION }});
+    return target;
+}}
+
+/**
+ * A flat-head screw and a captive nut: countersink, clearance hole, and a
+ * slot the nut slides into sideways.
+ *
+ * `cs` is on the surface the head sits in with +Z INTO the part along the
+ * shank (the dialog flips a picked mate connector, whose Z points out of its
+ * face). The slot runs out along +X by nutSlotLength; its closed end is the
+ * nut's circumradius behind the axis, so the hex corners are not clipped --
+ * or, with bothWays, the slot runs nutSlotLength out along -X as well.
+ * Optional opt.headPocket extends the head's bore outward past the surface.
+ *
+ * Returns the cutter bodies; booleans nothing.
+ */
+export function screwJointGeometry(context is Context, id is Id,
+                                   cs is CoordSystem, opt is map) returns Query
+{{
+    const headR     = opt.headDia / 2;
+    const holeR     = opt.holeDia / 2;
+    const holeDepth = opt.holeDepth;
+    const cskDepth  = (headR - holeR) / tan(opt.cskAngle / 2);
+    // headPocket, when given, runs the head's bore on OUTWARD past the
+    // surface: a countersink at the bottom of a pocket, for a part thicker
+    // than the screw can reach through. The dialog does not offer it; the
+    // fixture generator does.
+    const over      = {BORE_OVERSHOOT:g} * millimeter
+                      + (opt.headPocket == undefined ? 0 * millimeter : opt.headPocket);
+    const yA        = cross(cs.zAxis, cs.xAxis);
+
+    revolveProfile(context, id, "screw", plane(cs.origin, -yA, cs.xAxis),
+        line(cs.origin, cs.zAxis), {screw_poly});
+
+    // boxSolid wants the slot's WIDTH on its x, so turn the frame a quarter:
+    // x' = the datum's Y, y' = -X. Out along +X is then y' negative.
+    const w      = opt.nutSlotWidth;
+    const back   = opt.bothWays ? opt.nutSlotLength : w / sqrt(3);
+    const slotCs = coordSystem(cs.origin, yA, cs.zAxis);
+    boxSolid(context, id, "slot", slotCs, w / 2, -opt.nutSlotLength, back,
+             opt.nutDepth, opt.nutDepth + opt.nutSlotThickness);
+    return qUnion([qCreatedBy(id + "screwRev", EntityType.BODY),
+                   qCreatedBy(id + "slotExt", EntityType.BODY)]);
 }}
 
 
@@ -914,6 +1252,13 @@ export const x330CaseShell = defineFeature(function(context is Context, id is Id
         annotation {{ "Name" : "Flip 180 degrees about the datum" }}
         definition.flip is boolean;
 
+        // The COVER's walls round the whole servo, the shaft end included,
+        // sloped at the overhang limit so it prints cap-down, down to the
+        // back face where the base is not, clear of the cable connectors.
+        // The base keeps the far-end wrap either way.
+        annotation {{ "Name" : "Cover wraps the whole servo" }}
+        definition.fullWrap is boolean;
+
         annotation {{ "Group Name" : "Fit", "Collapsed By Default" : true }}
         {{
 {case_dialog_ui}
@@ -926,7 +1271,85 @@ export const x330CaseShell = defineFeature(function(context is Context, id is Id
                   "makeTop" : definition.makeTop,
                   "makeBottom" : definition.makeBottom,
                   "flip" : definition.flip,
+                  "fullWrap" : definition.fullWrap,
 {case_dialog_pass} }});
+    }});
+
+annotation {{ "Feature Type Name" : "X330 idler",
+             "Filter Selector" : "allparts" }}
+export const x330Idler = defineFeature(function(context is Context, id is Id,
+                                                definition is map)
+    precondition
+    {{
+        annotation {{ "Name" : "Servo" }}
+        definition.servo is ServoModel;
+
+        // The HORN datum, not one on the back face: the plug is built
+        // caseDepth + hornThickness behind it, so the connector that drives
+        // the horn pin drives this too.
+        annotation {{ "Name" : "Horn datum (the plug goes on the back face)",
+                     "Filter" : BodyType.MATE_CONNECTOR,
+                     "MaxNumberOfPicks" : 1 }}
+        definition.datum is Query;
+
+        annotation {{ "Name" : "Part to merge into (leave empty for a loose idler)",
+                     "Filter" : EntityType.BODY && BodyType.SOLID }}
+        definition.target is Query;
+
+        annotation {{ "Group Name" : "Fit", "Collapsed By Default" : true }}
+        {{
+{idler_dialog_ui}
+        }}
+    }}
+    {{
+        idlerBuild(context, id + "build",
+                evMateConnector(context, {{ "mateConnector" : definition.datum }}),
+                {{ "servo" : servoKey(definition.servo),
+{idler_dialog_pass} }},
+                definition.target);
+    }});
+
+annotation {{ "Feature Type Name" : "6-32 screw and nut",
+             "Filter Selector" : "allparts" }}
+export const screwAndNut632 = defineFeature(function(context is Context, id is Id,
+                                                     definition is map)
+    precondition
+    {{
+        annotation {{ "Name" : "Head datum (on the face the head sits in)",
+                     "Filter" : BodyType.MATE_CONNECTOR,
+                     "MaxNumberOfPicks" : 1 }}
+        definition.datum is Query;
+
+        // A mate connector on a face points OUT of it, and the screw goes in;
+        // so the default drills along -Z. Tick if the connector already
+        // points into the part.
+        annotation {{ "Name" : "Datum Z already points into the part" }}
+        definition.flip is boolean;
+
+        annotation {{ "Name" : "Parts to cut",
+                     "Filter" : EntityType.BODY && BodyType.SOLID }}
+        definition.targets is Query;
+
+        annotation {{ "Name" : "Nut slot open both ways along X" }}
+        definition.bothWays is boolean;
+
+        annotation {{ "Group Name" : "Fit", "Collapsed By Default" : true }}
+        {{
+{screw_dialog_ui}
+
+            annotation {{ "Name" : "Countersink included angle" }}
+            isAngle(definition.cskAngle, {{ (degree) : [60, {screw['cskAngle']:g}, 120] }} as AngleBoundSpec);
+        }}
+    }}
+    {{
+        const mc = evMateConnector(context, {{ "mateConnector" : definition.datum }});
+        const cs = definition.flip ? mc : coordSystem(mc.origin, mc.xAxis, -mc.zAxis);
+        const cutters = screwJointGeometry(context, id + "geom", cs, {{
+{screw_dialog_pass} }});
+        opBoolean(context, id + "cut", {{
+                "tools"         : cutters,
+                "targets"       : definition.targets,
+                "operationType" : BooleanOperationType.SUBTRACTION }});
     }});
 """
 # --------------------------------------------------------------------------
@@ -980,22 +1403,12 @@ def _strip_comments(fs: str) -> str:
     return "\n".join(l for l in fs.splitlines() if l.strip())
 
 
-def check_wrapper(fs: str) -> str:
-    """Rewrite the geometry layer into the bare function expression eval wants.
+def geometry_layer(fs: str, mark: str = SPLIT_MARK) -> str:
+    """Everything above `mark`, as statements for the inside of one function.
 
-    DEFINITION ORDER MATTERS HERE AND NOWHERE ELSE. Top-level FeatureScript
-    lets one function call another declared later in the file; this rewrite
-    turns each into a `const f = function(...)` STATEMENT inside one body, and
-    a statement cannot call a const declared below it. So a caller must sit
-    after its callee in the generated file -- which is why caseShellBuild is
-    written before caseShellPair even though the pair reads as the outer idea.
-
-    Simpler than `cad_layout._eval_wrapper` because the split earns it: there
-    are no enums, no `precondition` and no synthesised definition map to get
-    wrong, since everything that needs a human is below SPLIT_MARK and gets
-    thrown away. What is left is one const and one function.
+    Shared with `cad_ahrs_fixture`, whose studio has the same split.
     """
-    head = _strip_comments(fs.split(SPLIT_MARK)[0]).splitlines()
+    head = _strip_comments(fs.split(mark)[0]).splitlines()
     out, i = [], 0
     while i < len(head):
         line = head[i]
@@ -1012,6 +1425,25 @@ def check_wrapper(fs: str) -> str:
         else:
             out.append(re.sub(r"^export const ", "const ", line))
             i += 1
+    return "\n".join(out)
+
+
+def check_wrapper(fs: str) -> str:
+    """Rewrite the geometry layer into the bare function expression eval wants.
+
+    DEFINITION ORDER MATTERS HERE AND NOWHERE ELSE. Top-level FeatureScript
+    lets one function call another declared later in the file; this rewrite
+    turns each into a `const f = function(...)` STATEMENT inside one body, and
+    a statement cannot call a const declared below it. So a caller must sit
+    after its callee in the generated file -- which is why caseShellBuild is
+    written before caseShellPair even though the pair reads as the outer idea.
+
+    Simpler than `cad_layout._eval_wrapper` because the split earns it: there
+    are no enums, no `precondition` and no synthesised definition map to get
+    wrong, since everything that needs a human is below SPLIT_MARK and gets
+    thrown away. What is left is one const and one function.
+    """
+    body = geometry_layer(fs)
 
     default = next(iter(TABLE_FOR_CHECK))
     opt = ", ".join([f'"servo" : "{default}"'] +
@@ -1039,7 +1471,6 @@ def check_wrapper(fs: str) -> str:
         println("{tag}_zmax=" ~ toString(b.maxCorner[2] / millimeter));
     }}"""
 
-    body = "\n".join(out)
     # Case A is world-aligned so every bounding box is checkable against the
     # drawing. Case B is a rigid motion of it: the boxes are then meaningless
     # but the VOLUME must be identical, which is what catches geometry quietly
@@ -1053,10 +1484,11 @@ def check_wrapper(fs: str) -> str:
                      [f'"{k}" : {TABLE_FOR_CHECK[default][k] * 1000:.4g} * millimeter'
                       for k in CASE_DIALOG])
 
-    def shell(tag: str, top: bool, bottom: bool, flip: bool, cs: str) -> str:
+    def shell(tag: str, top: bool, bottom: bool, flip: bool, cs: str,
+              full: bool = False) -> str:
         flags = (f'"makeTop" : {str(top).lower()}, '
                  f'"makeBottom" : {str(bottom).lower()}, '
-                 f'"flip" : {str(flip).lower()}')
+                 f'"flip" : {str(flip).lower()}, "fullWrap" : {str(full).lower()}')
         return f"""
     {{
         const id = makeId("chk{tag}");
@@ -1085,13 +1517,64 @@ def check_wrapper(fs: str) -> str:
                "coordSystem(vector(-19, 6, 23) * millimeter, "
                "vector(2, -1, 2) / 3, vector(2, 2, -1) / 3)")
     f = shell("F", True, True, True, world)       # flipped: Y must mirror
+    full = shell("L", True, True, False, world, full=True)   # the full wrap
+
+    iopt = ", ".join([f'"servo" : "{default}"'] +
+                     [f'"{k}" : {TABLE_FOR_CHECK[default][k] * 1000:.4g} * millimeter'
+                      for k in IDLER_DIALOG])
+
+    def measure(tag: str, q: str) -> str:
+        return f"""
+        const q = {q};
+        println("{tag}_bodies=" ~ toString(size(evaluateQuery(context, q))));
+        println("{tag}_vol="    ~ toString(evVolume(context,
+                {{ "entities" : q }}) / MM3));
+        const b = evBox3d(context, {{ "topology" : q, "tight" : true }});
+        println("{tag}_xmin=" ~ toString(b.minCorner[0] / millimeter));
+        println("{tag}_xmax=" ~ toString(b.maxCorner[0] / millimeter));
+        println("{tag}_ymin=" ~ toString(b.minCorner[1] / millimeter));
+        println("{tag}_ymax=" ~ toString(b.maxCorner[1] / millimeter));
+        println("{tag}_zmin=" ~ toString(b.minCorner[2] / millimeter));
+        println("{tag}_zmax=" ~ toString(b.maxCorner[2] / millimeter));"""
+
+    def idler(tag: str, cs: str) -> str:
+        return f"""
+    {{
+        const id = makeId("chk{tag}");
+        idlerBuild(context, id, {cs}, {{ {iopt} }}, qNothing());{measure(tag,
+            "qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID)")}
+    }}"""
+
+    sc = SCREW_FOR_CHECK
+    sopt = ", ".join([f'"{k}" : {v:.4g} * millimeter' for k, v in sc.items()
+                      if k != "cskAngle"] + [f'"cskAngle" : {sc["cskAngle"]:g} * degree'])
+
+    def screw(tag: str, both: bool) -> str:
+        # The two cutters overlap where the shank crosses the slot, so they
+        # are unioned first: summing the two volumes would count it twice.
+        return f"""
+    {{
+        const id = makeId("chk{tag}");
+        const cut = screwJointGeometry(context, id, {world},
+                {{ {sopt}, "bothWays" : {str(both).lower()} }});
+        opBoolean(context, id + "u", {{ "tools" : cut,
+                "operationType" : BooleanOperationType.UNION }});{measure(tag,
+            "qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID)")}
+    }}"""
+
+    g = idler("G", world)
+    h = idler("H", "coordSystem(vector(37, -11, 5) * millimeter, "
+                   "vector(2, 1, 2) / 3, vector(1, 2, -2) / 3)")
+    j = screw("J", False)
+    k = screw("K", True)
     return (f"function(context is Context, queries)\n{{\n{body}\n"
             f"    const MM3 = millimeter * millimeter * millimeter;\n"
-            f"{a}\n{b}\n{c}\n{d}\n{ee}\n{f}\n"
+            f"{a}\n{b}\n{c}\n{d}\n{ee}\n{f}\n{full}\n{g}\n{h}\n{j}\n{k}\n"
             f'    return "ran to completion";\n}}\n')
 
 
 TABLE_FOR_CHECK: dict = {}
+SCREW_FOR_CHECK: dict = {}
 
 
 def expected(table: dict[str, dict], servo: str = "XC330") -> dict[str, float]:
@@ -1124,6 +1607,52 @@ def expected(table: dict[str, dict], servo: str = "XC330") -> dict[str, float]:
         # further. With caseOffset backing the rim off, that is now the pins.
         "zmin": -max(e["wellT"], e["pinL"]), "zmax": e["roof"],
     }
+
+
+def expected_full_wrap(table: dict[str, dict], servo: str = "XC330") -> dict[str, float]:
+    """The full-wrap pair: two bodies, and a box whose near end is now the
+    COVER's end wall round the shaft end. No volume -- the slopes and the V
+    make the arithmetic a second copy of the geometry; the fixture's clash
+    and print checks are what exercise it."""
+    e = case_env(table, servo)
+    y_near = -(table[servo]["shaftFromEnd"] * 1000 + e["sc"]) - e["topWall"]
+    return {"bodies": 2.0,
+            "xmin": -e["botOuter"], "xmax": e["botOuter"],
+            "ymin": y_near,
+            "ymax": e["endY"] + e["sc"] + e["topWall"] + e["nestClr"] + e["botWall"],
+            "zmin": e["backZ"] - e["faceClr"] - e["capT"],
+            "zmax": e["hornZ"] + e["faceClr"] + e["capT"]}
+
+
+def expected_idler(table: dict[str, dict], servo: str = "XC330") -> dict[str, float]:
+    """The loose idler, at the world datum: +Z out of the horn, so the back
+    face is at backZ and the collar hangs BELOW it, in -Z."""
+    e = idler_env(table, servo)
+    poly = [(u.val(e), v.val(e)) for u, v in idler_profile()]
+    vs = [v for _, v in poly]
+    return {"bodies": 1.0, "vol": revolve_volume(poly),
+            "xmin": -e["idlerRc"], "xmax": e["idlerRc"],
+            "ymin": -e["idlerRc"], "ymax": e["idlerRc"],
+            "zmin": e["backZ"] - max(vs), "zmax": e["backZ"] - min(vs)}
+
+
+def expected_screw(sc: dict[str, float], both: bool) -> dict[str, float]:
+    """The unioned cutter at the world datum, +Z into the part.
+
+    Revolve + slot box - the shank inside the slot. That last term is exact
+    only while the slot sits wholly within the hole's depth and is wider than
+    the hole, both true at the defaults; the check says so if either breaks.
+    """
+    e = screw_env(sc)
+    rev = revolve_volume([(u.val(e), v.val(e)) for u, v in screw_profile()])
+    w, T, L = sc["nutSlotWidth"], sc["nutSlotThickness"], sc["nutSlotLength"]
+    back = L if both else w / math.sqrt(3)
+    box = w * T * (L + back)
+    shank = math.pi * e["holeR"] ** 2 * T
+    return {"bodies": 1.0, "vol": rev + box - shank,
+            "xmin": -max(back, e["headR"]), "xmax": L,
+            "ymin": -max(w / 2, e["headR"]), "ymax": max(w / 2, e["headR"]),
+            "zmin": -e["over"], "zmax": e["holeDepth"]}
 
 
 def _bvol(b) -> float:
@@ -1215,7 +1744,11 @@ def check(text: str, table: dict[str, dict], target: str | None) -> bool:
             ("C", expected_pair(table, ("TOP", "BOTTOM")), True),
             ("D", expected_pair(table, ("TOP",)), True),
             ("E", expected_pair(table, ("TOP", "BOTTOM")), False),
-            ("F", expected_pair(table, ("TOP", "BOTTOM"), flip=True), True)]
+            ("F", expected_pair(table, ("TOP", "BOTTOM"), flip=True), True),
+            ("L", expected_full_wrap(table), True),
+            ("G", expected_idler(table), True), ("H", expected_idler(table), False),
+            ("J", expected_screw(SCREW_FOR_CHECK, False), True),
+            ("K", expected_screw(SCREW_FOR_CHECK, True), True)]
     print(f"  {'measurement':14} {'wanted':>10} {'got':>10}  (mm, mm^3)")
     for tag, want, boxes in plan:
         for k, w in want.items():
@@ -1302,7 +1835,9 @@ def main() -> None:
     if not table:
         raise SystemExit("no servo has a complete horn fastener interface")
     globals()["TABLE_FOR_CHECK"] = table
-    text = build_fs(table, args.fs_version)
+    screw = screw_table(load_mounts(args.mounts))
+    globals()["SCREW_FOR_CHECK"] = screw
+    text = build_fs(table, args.fs_version, screw)
     lint_fs(text)
     Path(args.output).write_text(text)
     print(f"wrote {len(text)} chars -> {args.output}  "
