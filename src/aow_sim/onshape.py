@@ -95,6 +95,14 @@ def tab_url(tab: str = "feature_studio", cfg: str = DOC_CFG) -> str:
             f"/w/{d['workspace']}/e/{d['tabs'][tab]}")
 
 
+def feature_id(name: str, cfg: str = DOC_CFG) -> dict | None:
+    """An inserted custom feature's {"id", "node"}, from the `features:`
+    block of config/onshape.yaml -- what `update_custom_feature` needs,
+    without listing the tree to find it."""
+    import yaml
+    return (yaml.safe_load(Path(cfg).read_text()).get("features") or {}).get(name)
+
+
 def resolve(target: str | None, default_tab: str) -> str:
     """A full URL, a tab NAME from the config, or None for the default tab."""
     if target and "/" in target:
@@ -212,8 +220,12 @@ def _call(method: str, path: str, body: dict | None = None,
             "  (failed calls do not count against the API quota)") from None
 
 
-def push_feature_studio(text: str, url: str) -> int:
+def push_feature_studio(text: str, url: str) -> dict:
     """Replace a Feature Studio's entire contents. One billable call.
+
+    Returns Onshape's reply without its echoed `contents`: whatever else it
+    carries (the studio's new microversion, for one) saves a second call to
+    read it.
 
     `sourceMicroversion` + `rejectMicroversionSkew` would make this fail rather
     than clobber a concurrent edit. Omitted on purpose: the studio is generated
@@ -224,9 +236,13 @@ def push_feature_studio(text: str, url: str) -> int:
     if wvm != "w":
         raise OnshapeError("push needs a WORKSPACE url (/w/), not a version or "
                            "microversion — those are read-only")
-    _call("POST", f"/featurestudios/d/{did}/w/{wid}/e/{eid}", {"contents": text},
-          what=f"push {len(text)} chars of FeatureScript", doc=did, elem=eid)
-    return billed()
+    raw, _ = _call("POST", f"/featurestudios/d/{did}/w/{wid}/e/{eid}", {"contents": text},
+                   what=f"push {len(text)} chars of FeatureScript", doc=did, elem=eid)
+    try:
+        reply = json.loads(raw)
+    except ValueError:
+        return {}
+    return {k: v for k, v in reply.items() if k != "contents"}
 
 
 def create_feature_studio(name: str, cfg: str = DOC_CFG) -> tuple[str, str]:
@@ -273,10 +289,42 @@ def create_part_studio(name: str, cfg: str = DOC_CFG) -> tuple[str, str]:
 
 
 
+def _feature_params(params: dict, ns: str) -> list:
+    """Dialog values in the only JSON form the features endpoint accepts."""
+    plist = []
+    for pid, v in params.items():
+        if isinstance(v, tuple) and v[0] == "enum":
+            plist.append({"type": 145, "typeName": "BTMParameterEnum",
+                          "message": {"parameterId": pid, "enumName": v[1],
+                                      "value": v[2], "namespace": ns}})
+        elif isinstance(v, bool):
+            plist.append({"type": 144, "typeName": "BTMParameterBoolean",
+                          "message": {"parameterId": pid, "value": v}})
+        else:
+            plist.append({"type": 147, "typeName": "BTMParameterQuantity",
+                          "message": {"parameterId": pid, "expression": v,
+                                      "isInteger": False, "units": "", "value": 0.0}})
+    return plist
+
+
+def _feature_body(feature_type: str, name: str, ns: str, params: dict,
+                  feature_id: str | None = None, node_id: str | None = None) -> dict:
+    msg = {"featureType": feature_type, "name": name, "namespace": ns,
+           "parameters": _feature_params(params, ns)}
+    if feature_id:
+        msg["featureId"] = feature_id
+    if node_id:
+        msg["nodeId"] = node_id
+    return {"feature": {"type": 134, "typeName": "BTMFeature", "message": msg},
+            "serializationVersion": "1.2.21", "sourceMicroversion": "",
+            "rejectMicroversionSkew": False}
+
+
 def insert_custom_feature(part_studio_url: str, studio_url: str, feature_type: str,
-                          name: str, params: dict) -> dict:
+                          name: str, params: dict, mv: str | None = None) -> dict:
     """Insert a custom feature from a Feature Studio into a Part Studio.
-    Two calls: one to read the studio's microversion, one to insert.
+    One call given `mv` (the studio microversion `push_feature_studio`
+    returns), two without it.
 
     `params` maps parameter id -> a length/angle EXPRESSION string ("30 mm",
     "45 deg"), a bool, or ("enum", EnumTypeName, "VALUE") for a dialog enum
@@ -291,39 +339,70 @@ def insert_custom_feature(part_studio_url: str, studio_url: str, feature_type: s
     had been lost.
 
     The insert reply may say ERROR even when it worked: the namespace wants
-    the studio ELEMENT's microversion, and the document microversion read
-    here is what is available in one call. Onshape re-pins it to the right
-    one on regeneration -- the fixture layout came back INFO on the next read
-    -- so read the feature state back rather than trusting the reply.
+    the studio ELEMENT's microversion, and the document microversion is what
+    a push or a GET of the studio returns. Onshape re-pins it to the right
+    one on regeneration -- every insert here came back INFO on the next read.
+
+    AFTER THE INSERT, A PUSH IS ENOUGH (same document): the inserted feature
+    follows its studio, and the stored namespace moves to the studio's new
+    microversion on its own. Tested 2026-09-23 with a marker attribute pushed
+    without any re-pin: on the Part Studio's bodies after the push, gone
+    after the revert, namespace changed both times. Never delete + insert to
+    "refresh" one: that moves it to the end of the tree and orphans every
+    hand-made feature that picked its edges.
     """
     did, _, wid, sid = parse_url(studio_url)
-    raw, _ = _call("GET", f"/featurestudios/d/{did}/w/{wid}/e/{sid}",
-                   what="read studio microversion for a feature insert",
-                   doc=did, elem=sid)
-    mv = json.loads(raw)["sourceMicroversion"]
-    plist = []
-    ns = f"e{sid}::m{mv}"
-    for pid, v in params.items():
-        if isinstance(v, tuple) and v[0] == "enum":
-            plist.append({"type": 145, "typeName": "BTMParameterEnum",
-                          "message": {"parameterId": pid, "enumName": v[1],
-                                      "value": v[2], "namespace": ns}})
-        elif isinstance(v, bool):
-            plist.append({"type": 144, "typeName": "BTMParameterBoolean",
-                          "message": {"parameterId": pid, "value": v}})
-        else:
-            plist.append({"type": 147, "typeName": "BTMParameterQuantity",
-                          "message": {"parameterId": pid, "expression": v,
-                                      "isInteger": False, "units": "", "value": 0.0}})
-    body = {"feature": {"type": 134, "typeName": "BTMFeature", "message": {
-                "featureType": feature_type, "name": name,
-                "namespace": ns, "parameters": plist}},
-            "serializationVersion": "1.2.21", "sourceMicroversion": "",
-            "rejectMicroversionSkew": False}
+    if mv is None:
+        raw, _ = _call("GET", f"/featurestudios/d/{did}/w/{wid}/e/{sid}",
+                       what="read studio microversion for a feature insert",
+                       doc=did, elem=sid)
+        mv = json.loads(raw)["sourceMicroversion"]
+    body = _feature_body(feature_type, name, f"e{sid}::m{mv}", params)
     pdid, _, pwid, peid = parse_url(part_studio_url)
     raw, _ = _call("POST", f"/partstudios/d/{pdid}/w/{pwid}/e/{peid}/features", body,
                    what=f"insert custom feature {feature_type!r}", doc=pdid, elem=peid)
     return json.loads(raw)
+
+
+def update_custom_feature(part_studio_url: str, studio_url: str, feature: dict,
+                          feature_type: str, name: str, params: dict,
+                          mv: str) -> dict:
+    """Re-pin an inserted custom feature to the studio's new microversion,
+    IN PLACE: same feature id, same place in the tree, so hand-made features
+    after it keep their references. One call, given the `mv` a push returns.
+    `params` as for `insert_custom_feature`; send all of them, since the
+    message replaces the feature's whole parameter list.
+
+    `feature` is {"id": featureId, "node": nodeId} as GET .../features gives
+    them (config/onshape.yaml `features:`).
+
+    NOT NEEDED AFTER A PUSH in the same document -- the feature follows its
+    studio on its own (see `insert_custom_feature`). What this is for:
+    changing an inserted feature's dialog values from a script, or a studio
+    in ANOTHER document, where references are pinned to a version.
+
+    THE ENDPOINT IS THE BATCH ONE, `.../features/updates` with a list. The
+    single-feature `.../features/featureid/{id}` answered a free 400,
+    "Feature does not match", to every form tried on 2026-09-23 -- even the
+    GET's own message sent back verbatim -- and the btType form is "Error
+    processing json" there as everywhere. Like an insert, the reply says
+    ERROR and a read back says INFO.
+    """
+    _, _, _, sid = parse_url(studio_url)
+    body = _feature_body(feature_type, name, f"e{sid}::m{mv}", params,
+                         feature["id"], feature.get("node"))
+    body = {"features": [body["feature"]], **{k: v for k, v in body.items() if k != "feature"}}
+    pdid, _, pwid, peid = parse_url(part_studio_url)
+    raw, _ = _call("POST", f"/partstudios/d/{pdid}/w/{pwid}/e/{peid}/features/updates",
+                   body, what=f"update custom feature {feature_type!r} in place",
+                   doc=pdid, elem=peid)
+    return json.loads(raw)
+
+
+def feature_states(reply: dict) -> dict[str, str]:
+    """featureId -> OK / INFO / WARNING / ERROR, from any features reply."""
+    return {s["key"]: s["value"]["message"]["featureStatus"]
+            for s in reply.get("featureStates", [])}
 
 
 def shaded_view(url: str, out: Path, width: int = 1600, height: int = 1200,

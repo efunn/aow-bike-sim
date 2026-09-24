@@ -212,6 +212,36 @@ compile renders the error rather than the previous geometry.
 There is no official local↔Onshape sync, no LSP, and no first-party editor
 integration; the community VS Code extension is syntax highlighting only.
 
+### A generated feature in a Part Studio people also edit (2026-09-23)
+
+The AHRS fixture made this concrete: `AHRS fixture` is inserted into
+`ahrs-fixture` by API, and the user then added seven chamfers and fillets
+after it by hand. Every publish before that had been delete + re-insert (4-6
+calls), which would have moved the feature to the end of the tree and
+orphaned all seven -- and none of it was ever needed.
+
+**A push alone updates a same-document inserted feature.** Tested
+2026-09-23 in 6 calls: push the studio with one added `setAttribute` on the
+fixture's bodies and NO re-pin; an eval in the Part Studio found 19 tagged
+bodies, and the feature's stored namespace had moved to a new microversion
+by itself (`eb89a8..` -> `d968fa..`). Push the real studio back: 0 tagged,
+namespace moved again (`7c623d..`), every feature OK/INFO both times. The
+belief it replaced -- "the render after a push showed the old geometry" --
+was inferred from a timed-out swap; nobody had looked at that render.
+
+So a publish is push + render, 2 calls. `onshape.update_custom_feature`
+(`POST .../features/updates`, featureId + nodeId from `config/onshape.yaml`
+`features:`) stays for changing an inserted feature's dialog values from a
+script; the single-feature `.../features/featureid/{id}` refused every form
+with `Feature does not match` (free 400s). A studio in ANOTHER document is
+referenced by version, which this test says nothing about.
+
+`cad_ahrs_fixture --check` builds all three TM151 mounts in one eval since the
+same day (build, report, delete, next), and `lint_fs` refuses reserved-word
+names and out-of-range dialog defaults before anything is sent. Classified
+call by call, the session that built the fixture spent 97 calls, about 45 of
+them on what these now avoid; CLAUDE.md carries the table.
+
 ## The belts, and what "symmetric" costs
 
 The belts were four clearance PLANES and are now also eight SOLIDS. A plane has

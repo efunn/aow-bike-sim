@@ -75,6 +75,20 @@ tabs:
   # Listed 2026-09-08; it had been recorded only in a comment in
   # config/swing_linkage.yaml.
   wing_linkage_straight: 011b691f0af4ce5194344456
+  # Hand-drawn Part Studio holding the as-built idler, 6-32 joint and the
+  # case-side-wall / case-end-wall sketches that the X330 idler, screw and
+  # full-wrap case features were read from (2026-09-23). Read-only for us.
+  # Recorded here because finding it cost a billed tab listing.
+  wing_linkage_shorter: 3373737858fdf3ee8595a8f2
+
+# Inserted custom features, by the tab they live in: the id + nodeId that
+# onshape.update_custom_feature needs to change one's dialog values in place.
+# NOT needed to pick up a push -- a same-document feature follows its studio
+# (tested 2026-09-23). Never delete + re-insert one: it moves to the end of
+# the tree and orphans the hand-made chamfers and fillets after it.
+# Read off GET .../features on 2026-09-23.
+features:
+  ahrs_fixture: {id: Fln3klct5K8jQ2e_0, node: MvB9luGDi9JjuG/KU}
 
 # ---------------------------------------------------------------------------
 # OTHER DOCUMENTS TOUCHED, none of them driven by this repo's generators.
