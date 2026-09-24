@@ -40,9 +40,8 @@ Ranked by what unblocks the most, not by interest.
 | 2 | **Contact calibration — P0, P0b, P1, once per floor** | Needs no printing: a weight, a caliper, slow-mo, a tilting board. The contact is the least-measured thing in the sim and the one no policy has been randomised over — and the SPREAD across surfaces is what sets the randomization range | `floors-and-the-contact-model.md` |
 | 3 | **Finish the drivetrain station** | Built and characterised 2026-09-12/13: belt ratio 3.0 confirmed, a 7.5° detent in the differential, and a velocity-loop resonance at ~22 Hz at firmware P 400 that P 200 does not have. Roller slop measured by hand 2026-09-13: ±1.5 mm at the roller's 22 mm diameter, 15.6° p-p, from the same gear chain as the detent (20 detents per roller turn). `k_roller` 2.4 confirmed by counting roller turns. Open: choose the firmware Velocity P **and I** gains — a P/I grid cut time stuck at the diff detents from 49 % (factory) to 12 % at P 400 / I 3840, but P 400 rings near 22 Hz and I 3840 rings harder (peak 1.09–1.20), and the sim must model whichever ships — then a torque-scale check (D5, a known added inertia -- no lever arm needed) and fitting the five drivetrain `GUESS`es from the captures. **The sim cannot pick the gain (2026-09-14):** on the drive model fitted to these captures, policies trained at each gain tie — 3 seeds each, median 0.749 at P 100 against 0.750 at P 400, each on its own plant — but P 400 buzzes the rear wheel ~3× harder at 8–32 Hz. Decide on the physical bike, with a policy trained at the gain that ships | `drivetrain-measurements.yaml`, `drivetrain-model.md` |
 | 4 | **Umbilical bring-up on the laptop** | Verification steps 1–2 need no pack at all | `untethered-setup.md` §"Bench power" |
-| 5 | **Print the AHRS fixture, then run `session` at each mount** | The software is proven on bare servos, and every printed part is generated and checked (2026-09-23, `ahrs-fixture` Part Studio): nine parts, clash-free over both joints' +-45 deg with real pin holes in the envelopes, overhangs only where they are bridges, nut-slot bridging in. d = 30 first (fast prints, prove the interfaces), then ~70 for the sign test. It measures the TM151's DYNAMIC roll error -- the thing the standing falls hinge on, carried in the sim as the datasheet's "<1.5 deg". After assembly: `tune` loaded, then `session` per mount (0, below, above -- the d mount turned over) | "AHRS fixture" below |
 
-All five are bench work. **The sim-side item is being taken now:**
+All four are bench work. **The sim-side item is being taken now:**
 
 > ### → NEXT, in progress: fix the eval score's directional gate
 >
@@ -115,7 +114,7 @@ unchanged by the clip; the delay is not yet teleop-tested.
 |---|---|---|---|
 | **Simulation & model** | Working. 17 parameters still `GUESS`. A detailed drivetrain (fitted XC430 loop, diff detent, roller slop) exists as an opt-in overlay, in the eval env, teleop and training (per config). Trained at P 100 and P 400, 3 seeds each (2026-09-14): a tie on score. Teleop builds a policy's own drivetrain from its record | Physical parts to measure; the built bike, to confirm the drivetrain model | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
 | **Control — RL** | Working, and primary. Trains against the onboard sensors | Crab still one-sided; `turn_asym` stuck ~0.2 | `general-rl-improvements.md` |
-| **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy: the yaw-roll fixture (`analysis/ahrs_fixture.py`, 2x XL330 ids 151/152) runs end to end on the Pi, **no mounted capture yet** -- next: CAD the bracket and mount ("What to do next" #5) | `sensor-workstream.md` |
+| **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy: measured at one mount (2026-09-23): ~0.2-0.3 deg RMS on replayed standing flights against the sim's 1.5, most of it the sensor's own acceleration read as tilt through a complementary filter (tau 0.19 s at rest rising continuously to ~1 s in motion); the sim's error model is not re-fitted yet. Next: the other mounts ("What to do next" #5) | `sensor-workstream.md` |
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
 | **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency`. **Onboard software readied for a Pi bench session 2026-09-15** — ground station, firmware-gain writes, fourth servo, fall cut/re-arm; none of it has touched hardware | Firmware P-gain choice, torque calibration, then the chassis | `pi-bench-bringup.md`, `first-physical-test.md`, `drivetrain-measurements.yaml` |
 | **CAD** | Layout, drivetrain, steering and righting stations pinned. Electronics packing deferred on purpose. The X330 idler side and the 6-32 crank/idler joint are generated features now (2026-09-23), beside the horn pin and case shell | AHRS fixture brackets, "What to do next" #5 | `cad-onshape-workflow.md` |
@@ -362,14 +361,146 @@ same on the 28 flights that never fell (253 / 262 mm). That is ABOVE the
 as-built AHRS (~180 mm) and ~130 mm above the CoM, so the fixture's lever arm
 stands for distance from that centre, and 0 mm is a real configuration.
 
-*Proven on bare servos, AHRS NOT mounted:* 200 Hz, 0 dropped frames in 72600.
-Servo P 1000, not the default 400, which delivered 20 of 34 deg/s RMS of the
-replayed roll rate; `tune` put P 1500 / D 1000 marginally ahead (0.149 vs
-0.199 deg shape error, one run each) -- re-run it loaded. **The TM151's clock
-runs 0.3% fast** (200.00 Hz by its stamps, 200.61 by the Pi's): the 200.6 /
-201.4 Hz below is the sensor, not the reader. Raw(41) is not needed; it
-matches Combo at rest and can be polled without touching flash. **No dynamic
-number yet** -- next is printing the brackets, "What to do next" #5.
+*Measured, d = 30 mount (2026-09-23), two `session`s with the same seeds,
+servos P 1500 / D 1000 (`tune`, loaded: best on both joints, stable at every
+setting up to P 2500).* The sensing point fits 32-41 mm BELOW the roll axis
+(the vendor accelerometer reads -1 g face up -- easy to invert), so this mount
+stands for an AHRS ~35 mm below the roll centre; the as-built one is ~80.
+
+**The encoders are not the truth at this resolution.** Between each servo's
+output shaft and the sensor are a horn, screws and a printed bracket. In the
+step holds the plate sat 0.13-0.54 deg from where the encoder said, depending
+on which way it leaned, while the fused output matched its own accelerometer to
+0.01 deg; a hand wiggle with torque on moved the plate ~2 deg about roll for
+~1 deg at the shaft (XL330 backlash, about right by hand), and 1 deg in pitch,
+which no joint drives. Heading ran off -4.0 deg over one session and -1.9 over
+the identical repeat, then held flat for 10 min torque-off: the yaw stage
+settling, not a gyro property (it would repeat). So the headline is ENCODER-
+FREE: the TM151's raw gyro integrated through each segment, pinned to its
+accelerometer in the still holds either side (`self_reference`). Its gyro scale
+checks against the accelerometer to 0.3-0.4% over the step holds; the
+encoder-based fit said 0.95-0.98, which was the mechanism losing motion.
+
+**The TM151 is, to a good approximation, a complementary filter whose time
+constant rises CONTINUOUSLY with motion** (`filter-model`; `rest_model` in
+the report). tau fitted per 2 s window, ~490 windows a session, both runs:
+
+| mean deviation of \|acc\| from its median | tau, median | mean rotation rate | tau, median |
+|---|---|---|---|
+| < 2 mg | 0.20 s | < 1 deg/s | 0.22 s |
+| 2-5 mg | 0.35-0.43 s | 1-15 deg/s | 0.49-0.51 s |
+| 5-10 mg | 0.58-0.64 s | 15-60 deg/s | 1.0-1.1 s |
+| 10-50 mg | 1.0 s | > 60 deg/s | 0.8 s |
+
+So "at rest" is below a few mg, and a standing bike is always past ~10 mg:
+**~1 s while riding**, never gyro-only (the resting 0.19 s is 0.41 deg off
+in motion, gyro alone 0.39). At rest the same filter at 0.19 s tracks the
+fused tilt at r 0.92-0.93 (the accelerometer alone 0.84).
+
+*What raises tau* (`sweep`, 2026-09-24: constant-rate yaw sweeps at 5-40
+deg/s): **not slow acceleration.** In the cruises the |acc| deviation below
+~2 Hz was 0.72-0.92 mg (holds 0.33-0.41) and tau still went to 0.5-5 s
+(median ~2); the 9-12 mg of |acc| deviation there is ABOVE 2 Hz -- the
+stage vibrating as it turns. So rotation, or fast vibration, and this rig
+cannot give one without the other. For turning that is the useful half:
+the slow lateral acceleration of a turn is not what the gate looks at.
+
+**The rig is PARKED (2026-09-24)**: no new mounts; the bike gets built,
+and the fixture comes back only if the bike's AHRS misbehaves.
+
+*Where the accelerometer is, settled by turning the mount over* (d = 30 mount
+turned 180 deg about x, 2026-09-24; the sensing point now ABOVE the roll
+axis). Every fit keeps it ~12 mm off the yaw axis the SAME way round in the
+sensor frame -- sessions (10.4, 10.0) -> (8.8, 9.5) mm, yaw chirps (6.2,
+10.1) -> (8.0, 7.9) -- so it is the part, not the servos: not the fit's
+signs (synthetic check), not gyro/accelerometer timing (+-5 ms moves it
+< 1 mm). The roll-rich sessions put it 32.6 mm from the roll axis below and
+40.8 above; a rattle fixed to the rig adds to one side and takes from the
+other (synthetic rig: a phantom arm that does not turn over), so the chip is
+~36.7 mm out, down at the circuit board. `sim_ahrs.TM151_ACCEL_OFFSET_M` =
+(8.4, 9.4, -5.5) mm from the housing's centre at mid-height. The datasheet
+drawing's triad sits ~5 mm the other way: illustrative. (A flipped `jog`
+said 58 mm: 6 s of roll, before the tape was re-pressed.)
+
+*The flipped mount filtered harder.* Rest tau 0.35 s (0.19 upright), best
+moving tau ~2 s (0.7-1), and the varying part of the replay error 0.10-0.13
+deg (0.16-0.19 upright; with the mean offset 0.28-0.34). The lever-arm
+prediction at tau 2 is small (0.06 deg) and NOT found (k -0.1 to -0.55): at
+that tau there is little to find, so the sign test is inconclusive rather
+than failed. The plate is top-heavy that way up and rattles more at rest
+(accelerometer tilt std 0.12-0.14 deg against 0.10-0.11): **the vibration the
+part feels moves tau, not only rotation**, which fits the sweep. The sim
+cannot know its bike's vibration, so tau_motion is a range to randomise.
+In that session the 8 steps and 2 chirps ran on YAW, not roll: `sweep`'s
+`set_defaults(axis=...)` had rewritten the --axis default every command
+shares. Fixed (`--sweep-axis`, and a test on every command's default); the
+rest, replays, yaw replays and sway are unaffected.
+
+The error column is the segment's varying part. What the model leaves wanders
+with a 1/e time of 1-4 s (0.5-5), worst excursion 0.28-0.62 deg: the
+accelerometer pulls it back on the ~1 s tau, so in standing it is BOUNDED.
+Open: **every moving segment also sits at a steady -0.15 to -0.28 deg**
+(always negative, both runs; yaw-only -0.05 to -0.08) of which the lever arm
+explains -0.04 -- the sensor, or the reference's gyro integration in motion,
+not yet told apart. The same filter prices other placements (same motion,
+same side): 0 mm -> ~0.1 left, **80 mm -> 0.37-0.39 on the replays**,
+150 mm -> 0.8. Beyond ~35 mm that is extrapolation; the flipped mount (35 mm
+on the other side) is its test -- same size, opposite sign.
+
+- NOT CIRCULAR where it matters: gyro scale against the accelerometer
+  (0.3%); timing against the ENCODERS, which backlash moves in amplitude, not
+  time (gyro 1-3 ms late, fused 1-5 ms early, encoder timing good to ~1-2
+  ms); the rest noise explained by the accelerometer; the lever arm fitted
+  separately (from alpha x r + w x (w x r)) and then predicting the error.
+- It REPEATS: run-to-run, the fused error varies no more than the plate does.
+- Static: 0.015 deg RMS noise; absolute level is unmeasured (no level
+  reference), bounded by the fitted accelerometer bias, 1-2.5 mg ~ 0.1 deg.
+- The sim's `tm151` level is 1.5 deg RMS of independent Gauss-Markov noise at
+  0.19 s -- the right tau AT REST, the wrong shape in motion, and 5-10x too
+  large for standing at this height. **New, opt-in: `ahrs_level:
+  tm151_filter`** runs this filter on the sim's own (corrupted) gyro and
+  accelerometer at the AHRS site, with the chip offset, tau gated on the
+  smoothed rotation rate (0.19 s -> 1.0 s between 1 and 15 deg/s) and a
+  0.1 deg / 2 s residual wander. On the fixture's raw data it matches the
+  real fused output to 0.103 deg moving / 0.006 at rest (upright mount) and
+  0.195 / 0.012 (flipped). No policy trains on it yet; `tm151_to_site` is
+  identity (TM151 x forward, z up) until the bike's mount exists.
+  **Not yet a drop-in on the sim bike** (eval grid, 2026-09-24, 15 s
+  fixed-command episodes,
+  `general_rl_cmd_curriculum2b`, same seeds): survival 0.95 truth, 0.90
+  `tm151`, **0.05 `tm151_filter`** (it drives, then falls after 0.8-11 s,
+  median ~3.5; the AHRS is reset each episode, so not a reset fault) -- the estimate's PITCH runs to +10-17
+  deg on a pure hold. The sim's accelerometer on a standing bike is violent:
+  |acc| > 0.2 g off 1 g in 60% of samples, > 0.5 g in 34% (near free fall to
+  3 g within half a second -- contact bounce, sampled at an instant), and
+  ungated that averages to ~8 deg of tilt. Skipping the accelerometer beyond
+  a gate (`FILTER_ACC_GATE`, `run_drive --ahrs-gate`) gives 0.55 at 0.3 g,
+  0.65 at 0.1 g, 0.70 at 0.05 g -- still well short of 0.90. Open, and not
+  answerable on the fixture (it never saw > ~50 mg): is the sim's
+  accelerometer realistic (item 2, the contact), and does the TM151 gate on
+  |acc|. The real bike's AHRS log answers both. **Kept as a WORK IN
+  PROGRESS** (2026-09-24): driven in teleop it "doesn't drive THAT bad",
+  a bit better with `--ahrs-gate 0.1`; it improves as the bike does. Teleop's
+  respawn now calls `SimAhrs.restart()` -- without it the filter kept the
+  fallen attitude and the fresh bike fell at once. If the real AHRS
+  misbehaves, the next rig is likely a pseudo-treadmill for the whole bike
+  rather than more fixture mounts. One unit, room temperature, standing motion only: a steady turn
+  or forward acceleration lasting more than ~1 s is exactly what such a
+  filter reads as tilt -- in a coordinated turn the specific force lies in
+  the bike's plane, so it would pull the reading toward UPRIGHT, by up to
+  the lean itself -- and nothing here has measured it.
+- The fixture's AHRS logger stalls 0.19 s at t = 183.5 s in BOTH sessions
+  (inside `rest`; harmless there). Whether the onboard reader has the same
+  stall is unchecked.
+
+    python analysis/ahrs_fixture.py analyse traces/ahrs_fixture/260923-221539_session_loaded_p1500d1000
+    python analysis/ahrs_fixture.py repeat traces/ahrs_fixture/260923-221539_session_loaded_p1500d1000 \
+        traces/ahrs_fixture/260923-224528_session_loaded_p1500d1000_repeat
+    python analysis/ahrs_fixture.py filter-model traces/ahrs_fixture/260923-224528_session_loaded_p1500d1000_repeat
+
+Also: **the TM151's clock runs 0.3% fast**; the Combo gyro is in rad/s; the
+Pi logged undervoltage on a different supply brick that session and none on
+the usual 5 V 2 A one. Captures under `traces/ahrs_fixture/` (Dropbox).
 
 *The fixture CAD (2026-09-23).* `python -m aow_sim.cad_ahrs_fixture` writes
 the `AHRS fixture` feature (studio `ahrs-fixture-gen`), inserted into the
