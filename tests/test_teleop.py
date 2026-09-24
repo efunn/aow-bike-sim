@@ -99,7 +99,8 @@ def test_axis_release_is_detected_by_silence():
 
 # -- driving the real teleop closures -------------------------------------
 
-def _capture(monkeypatch, model, params, eq_qpos, hockey=False, analytic=False):
+def _capture(monkeypatch, model, params, eq_qpos, hockey=False, analytic=False,
+             **teleop_kw):
     """Run _teleop but capture its callbacks instead of opening a viewer.
 
     Teleop now boots with the general policy engaged when one exists, so
@@ -113,7 +114,7 @@ def _capture(monkeypatch, model, params, eq_qpos, hockey=False, analytic=False):
 
     monkeypatch.setattr("aow_sim.interactive.teleop_loop", fake_loop)
     from aow_sim.run_drive import _teleop
-    g["c"] = _teleop(model, params, eq_qpos, hockey=hockey)
+    g["c"] = _teleop(model, params, eq_qpos, hockey=hockey, **teleop_kw)
     if analytic and g["c"].mode == "general":
         _toggle_controller(g)
         for _ in range(3):
@@ -401,6 +402,30 @@ def test_general_policy_survives_a_viewer_reset(monkeypatch, model, params,
     _toggle_controller(g)               # and it can be turned back on
     _idle(g, 0.05)
     assert c.mode == "general"
+
+
+def test_a_respawn_does_not_inherit_the_fallen_bikes_ahrs(monkeypatch, model,
+                                                         params, eq_qpos):
+    """BACKSPACE after a fall, under --ahrs tm151_filter: the filter still held
+    the fallen attitude and a slow tau, so the fresh bike read itself as
+    falling and fell at once (the user's report, 2026-09-24). The respawn now
+    restarts the AHRS; the noise levels never had a state to carry."""
+    _needs_general()
+    g = _capture(monkeypatch, model, params, eq_qpos, ahrs="tm151_filter")
+    m, d = g["model"], g["data"]
+    _idle(g, 0.3)
+    d.qvel[3] = 6.0                          # shove it over in roll
+    _idle(g, 1.5)
+    w, x, y, z = d.qpos[3:7]
+    assert abs(np.degrees(np.arctan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)))) > 30
+
+    mujoco.mj_resetData(m, d)               # what the viewer's reset does
+    d.qpos[:] = eq_qpos
+    mujoco.mj_forward(m, d)
+    _idle(g, 2.0)
+    w, x, y, z = d.qpos[3:7]
+    roll = np.degrees(np.arctan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)))
+    assert abs(roll) < 15, f"fell straight after the respawn: roll {roll:.0f} deg"
 
 
 @pytest.mark.lqr

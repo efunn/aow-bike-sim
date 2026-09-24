@@ -220,15 +220,17 @@ class GeneralEnv(gym.Env):
         # Default "none" so every policy trained before it reproduces.
         self._ahrs = None
         if env.get("ahrs_level", "none") != "none":
-            from ..sim_ahrs import TAU_ORIENT_S, SimAhrs
+            from ..sim_ahrs import SimAhrs
             # `self.p`, NOT the `params` argument: it is None whenever the
             # caller passed only an rl_cfg (every GeneralEnv in
             # tests/test_general_rl.py does), and `self.p` is the resolved
             # one. SimOdometry below took the same wrong name, which is why an
             # odometry env could not be built that way at all.
             self._ahrs = SimAhrs(self.model, self.p, level=env["ahrs_level"],
-                                 tau_orient_s=float(env.get("ahrs_tau_s",
-                                                            TAU_ORIENT_S)),
+                                 # None: the level's own (0.19 s, or the
+                                 # tm151_filter wander's 2 s)
+                                 tau_orient_s=(None if env.get("ahrs_tau_s") is None
+                                               else float(env["ahrs_tau_s"])),
                                  channels=env.get("ahrs_channels", "both"))
         self._ahrs_acc = 0.0        # AHRS clock, used when there is no odometry
         # THE PARAMETERS of the AHRS error, randomised per episode. The

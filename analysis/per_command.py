@@ -512,18 +512,24 @@ def main():
                          "leaves each on its own declaration, which is not "
                          "comparable across a set that mixes them")
     ap.add_argument("--ahrs", default="tm151",
-                    choices=("none", "tm151_static", "tm151", "tm171"),
+                    choices=("none", "tm151_static", "tm151", "tm171",
+                             "tm151_filter"),
                     help="force every policy onto ONE attitude error model, "
                          "for the same reason --encoder forces one encoder: a "
                          "set that mixes them is not comparable. Binds even "
                          "on policies that declare their own.")
-    ap.add_argument("--ahrs-tau", type=float, default=0.19,
-                    help="correlation time [s]; the measured value by default")
+    ap.add_argument("--ahrs-tau", type=float, default=None,
+                    help="correlation time [s]; the level's own measured value "
+                         "by default (0.19; 2.0, the residual wander's, for "
+                         "tm151_filter)")
     ap.add_argument("--tag", default="",
                     help="suffix for the output filenames. REQUIRED in spirit "
                          "whenever --policies is not the default, or the new "
                          "figure silently overwrites the tracked one")
     args = ap.parse_args()
+    if args.ahrs_tau is None:
+        from aow_sim.sim_ahrs import level_tau_orient_s
+        args.ahrs_tau = level_tau_orient_s(args.ahrs)
     args.tag = f"_{args.tag}" if args.tag and not args.tag.startswith("_") \
         else args.tag
 

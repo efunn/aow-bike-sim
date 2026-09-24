@@ -417,3 +417,57 @@ def test_absent_ranges_leave_the_rng_stream_untouched(params):
         lo, hi = cfg["randomization"]["ahrs_tau_s_range"]
         assert lo <= env._ahrs.tau_orient_s <= hi
     assert len(seen) == 4, "the parameters must move between episodes"
+
+
+# -- "tm151_filter" ----------------------------------------------------------
+# NOT on the `data` fixture: that is the settled pose after one mj_forward,
+# not an equilibrium -- qacc 12.8, the accelerometer 8.6 deg off vertical --
+# and this level, unlike the noise levels, believes its accelerometer. So
+# these tests set the sensor readings directly: identity attitude, zero
+# rate, pure gravity.
+
+def _still(model, adr, quat=(1.0, 0.0, 0.0, 0.0), gyro=(0.0, 0.0, 0.0),
+           accel=(0.0, 0.0, 9.81)):
+    from types import SimpleNamespace
+    sd = np.zeros(model.nsensordata)
+    for name, v in (("ahrs_quat", quat), ("ahrs_gyro", gyro), ("ahrs_accel", accel)):
+        a, n = adr[name]
+        sd[a:a + n] = v
+    return SimpleNamespace(sensordata=sd)
+
+
+def test_the_filter_level_at_rest_is_its_misalignment_plus_the_wander(model, params):
+    """Still and level: the reading settles on the accelerometer's own (fixed,
+    <0.5 deg) misalignment and wanders ~0.1 deg about it -- the measured
+    residual -- plus the filter's share of the accelerometer noise."""
+    for seed in (1, 2, 3):
+        a = SimAhrs(model, params, level="tm151_filter", seed=seed)
+        d = _still(model, a.adr)
+        err = np.degrees(np.array([_rpy(q) for q in _run(a, d, 20000)["quat"]]))[2000:]
+        assert np.all(np.abs(err[:, :2].mean(0)) < 0.6)
+        assert np.all((0.07 < err[:, :2].std(0)) & (err[:, :2].std(0) < 0.15))
+
+
+def test_the_filter_level_reads_a_held_sideways_force_as_lean(model, params):
+    """0.1 g held sideways, sensor level and still: the reading leans ~5.7 deg
+    toward it. The same model the fixture validated; the case it never saw."""
+    a = SimAhrs(model, params, level="tm151_filter", seed=1)
+    d = _still(model, a.adr, accel=(0.0, 0.981, 9.81))
+    roll = np.degrees(np.array([_rpy(q) for q in _run(a, d, 1500)["quat"]])[-200:, 0])
+    assert abs(roll.mean()) == pytest.approx(np.degrees(np.arctan(0.1)), abs=0.6)
+
+
+def test_restart_starts_the_filter_from_the_true_attitude(model, params):
+    """Teleop's respawn: after a long lean the filter's state is the lean;
+    `restart` must drop it (a fresh upright bike otherwise reads the fallen
+    one and falls) while keeping the unit's fixed misalignment."""
+    a = SimAhrs(model, params, level="tm151_filter", seed=1)
+    lean = _still(model, a.adr, accel=(0.0, 9.81 * np.sin(0.5), 9.81 * np.cos(0.5)))
+    _run(a, lean, 600)                                     # 6 s: the state is ~29 deg over
+    tilt0 = a._accel_tilt.copy()
+    level = _still(model, a.adr)
+    stale = np.degrees(_rpy(a.sample(level, 0.01)["quat"])[0])
+    a.restart()
+    fresh = np.degrees(_rpy(a.sample(level, 0.01)["quat"])[0])
+    assert abs(stale) > 20 and abs(fresh) < 1.0
+    assert np.array_equal(a._accel_tilt, tilt0)

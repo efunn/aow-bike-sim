@@ -356,7 +356,8 @@ def main() -> None:
                          "`python analysis/teleop_review.py <path>`")
     ap.add_argument("--hockey", action="store_true",
                     help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
-    ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171"),
+    ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171",
+                                       "tm151_filter"),
                     nargs="?", const="tm151", default="tm151", metavar="LEVEL",
                     help="TM151 error model on the ATTITUDE the controller "
                          "reads -- roll, roll_rate, yaw_rate, i.e. the fast "
@@ -365,6 +366,9 @@ def main() -> None:
                          "roll/pitch, which is what a moving bike gets; "
                          "`static` is its 0.5 deg bench figure; `tm171` prices "
                          "the better part in the same datasheet at 1.0 deg. "
+                         "`tm151_filter` is the MEASURED part instead: its own "
+                         "complementary filter on its own gyro and "
+                         "accelerometer (sim_ahrs, from the yaw-roll fixture). "
                          "INDEPENDENT of --odometry: this is the orientation "
                          "path, that is the velocity path, and they can be "
                          "turned on separately. Expect this to be the one you "
@@ -383,6 +387,12 @@ def main() -> None:
                          "analysis/ahrs_tau.py). This exists so the banner "
                          "can tell the truth about what is flying, not "
                          "because tau is a live risk.")
+    ap.add_argument("--ahrs-gate", type=float, default=None, metavar="FRACTION",
+                    help="tm151_filter only: ignore the accelerometer while "
+                         "|acc| is further than this fraction from 1 g (0.1 = "
+                         "100 mg). UNMEASURED on the part; default none. The "
+                         "sim's accelerometer on a standing bike is violent, "
+                         "and ungated the filter reads it as pitch.")
     ap.add_argument("--odometry-encoder", choices=("ideal", "counts"),
                     default="counts", metavar="MODEL",
                     help="how the wheel encoders are read under --odometry. "
@@ -522,6 +532,9 @@ def main() -> None:
                          "the MAGNITUDE; direction comes from steering or "
                          "from respawning on a different heading.")
     args = ap.parse_args()
+    if args.ahrs_gate is not None:
+        from . import sim_ahrs
+        sim_ahrs.FILTER_ACC_GATE = float(args.ahrs_gate)
     params = load_params(args.params)
     # Compile the spare floors so the spawn dial has something to switch to.
     # In-memory only -- `bike_params.yaml` is untouched, so neither digest
@@ -2331,21 +2344,31 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # make every recorded comparison incomparable.
     ahrs_model = None
     if ahrs != "none":
-        from .sim_ahrs import ORIENT_RMS_DEG, TAU_ORIENT_S, SimAhrs
-        tau = TAU_ORIENT_S if ahrs_tau is None else ahrs_tau
+        from .sim_ahrs import (FILTER_TAU_MOTION_S, FILTER_TAU_REST_S,
+                               ORIENT_RMS_DEG, SimAhrs, level_tau_orient_s)
+        tau = level_tau_orient_s(ahrs) if ahrs_tau is None else ahrs_tau
         ahrs_model = SimAhrs(model, params, level=ahrs, tau_orient_s=tau)
         r, _p, y = ORIENT_RMS_DEG[ahrs]
         # Print the tau ACTUALLY IN FORCE and call it a guess only when it is
         # the default: a policy trained at one tau and flown at another gives
         # back gain, and a banner that names the wrong one hides exactly that.
-        why = ("sim_ahrs.TAU_ORIENT_S, measured on the part"
+        why = ("the level's own, measured on the part"
                if ahrs_tau is None else "from --ahrs-tau")
-        print(f"AHRS ERROR MODEL ({ahrs}): roll/pitch {r} deg RMS, yaw {y} deg,"
-              f"\n  on the ATTITUDE the controller reads. The bike holds "
-              f"0.2-3.3 deg of roll, so this is the same size as the signal.\n"
-              f"  Orientation error correlation time is {tau:g} s ({why}) -- "
-              f"the RMS above\n  is what you will feel; the correlation time "
-              f"measurably is not.")
+        if ahrs == "tm151_filter":
+            print(f"AHRS MODEL (tm151_filter): the part's own complementary "
+                  f"filter on its own gyro and\n  accelerometer (the chip, ~1 cm "
+                  f"off the site), tau {FILTER_TAU_REST_S:g} s still -> "
+                  f"{FILTER_TAU_MOTION_S:g} s turning,\n  plus {r} deg RMS of "
+                  f"wander at {tau:g} s ({why}); yaw {y} deg. Error grows with "
+                  f"what the\n  sensor FEELS -- hard turns and sustained "
+                  f"acceleration read as lean.")
+        else:
+            print(f"AHRS ERROR MODEL ({ahrs}): roll/pitch {r} deg RMS, yaw {y} deg,"
+                  f"\n  on the ATTITUDE the controller reads. The bike holds "
+                  f"0.2-3.3 deg of roll, so this is the same size as the signal.\n"
+                  f"  Orientation error correlation time is {tau:g} s ({why}) -- "
+                  f"the RMS above\n  is what you will feel; the correlation time "
+                  f"measurably is not.")
     odo = None
     if odometry:
         from .sim_odometry import SimOdometry
@@ -2847,6 +2870,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             place_bike(m, d, spawn["heading"], collidable_floor_index(m))
         if rewound:
             c.reset(m, d)           # re-read _psi from the REWOUND data
+            if ahrs_model is not None:
+                ahrs_model.restart()    # tm151_filter keeps a fallen attitude
         if state["want_general"] and c.mode != "general":
             engage(d, quiet=True)
         if rewound:

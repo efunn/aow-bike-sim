@@ -214,6 +214,8 @@ ORIENT_RMS_DEG = {
     "tm151_static": (0.5, 0.5, 1.0),
     "tm151": (1.5, 1.5, 1.0),
     "tm171": (1.0, 1.0, 0.8),
+    # Only the residual WANDER (FILTER_WANDER_DEG): the filter makes the rest.
+    "tm151_filter": (0.1, 0.1, 1.0),
 }
 # Pure-inertial yaw drift: "3.0 deg error every 25 minutes" (TM151), 2.6 for
 # the TM171. Gyro and accelerometer rows are otherwise SHARED between the two
@@ -232,8 +234,9 @@ YAW_DRIFT_DEG_PER_S = {
     "tm151_static": 3.0 / (25.0 * 60.0),
     "tm151": 3.0 / (25.0 * 60.0),
     "tm171": 2.6 / (25.0 * 60.0),
+    "tm151_filter": 3.0 / (25.0 * 60.0),
 }
-MISALIGN_DEG = {"tm151_static": 0.5, "tm151": 0.5, "tm171": 0.3}
+MISALIGN_DEG = {"tm151_static": 0.5, "tm151": 0.5, "tm171": 0.3, "tm151_filter": 0.5}
 
 # The TM171's STATIC roll/pitch, recorded as a datasheet fact even though it is
 # not a usable level. It is 0.5 deg -- IDENTICAL to the TM151 -- which is the
@@ -261,7 +264,71 @@ TAU_ORIENT_S = 0.19
 # flicker process; a long-tau Gauss-Markov is the usual tractable stand-in.
 TAU_BIAS_S = 100.0
 
-LEVELS = ("none", "tm151_static", "tm151", "tm171")
+# -- "tm151_filter": the TM151 as its own fusion filter ----------------------
+#
+# MEASURED on the yaw-roll fixture, 2026-09-23/24 (`analysis/ahrs_fixture.py`,
+# docs/status.md "AHRS fixture"). The noise levels above add random,
+# slowly-varying noise (a Gauss-Markov process) to the true
+# attitude with independent noise; the real part is better described as a
+# complementary filter on its OWN gyro and accelerometer:
+#
+#   at rest   the fused tilt is the accelerometer's, low-passed at 0.19 s, plus
+#             the integrated gyro high-passed at the same tau: r 0.92-0.93
+#   moving    the same filter fits at ~1 s. tau rises CONTINUOUSLY with the
+#             motion -- 0.20 s under ~1 deg/s, ~0.5 at 1-15, ~1.0 past ~15 --
+#             and constant-rate yaw sweeps (slow acceleration < 1 mg) still
+#             raised it: ROTATION (or vibration), not slow acceleration, is
+#             what it keys on. So the gate here is on the rotation rate.
+#   error     most of the dynamic error on the fixture was the sensor's own
+#             acceleration read as tilt through that filter, which this level
+#             gets from the physics at the AHRS site -- including what a turn
+#             or a forward acceleration does, which the fixture never saw:
+#             a sustained lateral specific force pulls the reading toward it.
+#   left over ~0.1 deg RMS wandering over 1-4 s, carried as small slowly-varying noise.
+#
+# The same sensor turned over on a more rattly (top-heavy) mount fitted tau
+# 0.35 s AT REST and ~2 s moving, where this rate gate matches it to 0.195 deg
+# against 0.103 on the first mount: the vibration the part feels moves tau as
+# well as rotation does, and the sim barely has vibration. So randomise
+# FILTER_TAU_MOTION_S over ~0.7-2 s (`set_error_params`) rather than trust
+# 1.0. Unmeasured: the gate's smoothing, anything about turns. One unit.
+
+FILTER_TAU_REST_S = 0.19
+FILTER_TAU_MOTION_S = 1.0
+FILTER_RATE_REST_DPS = 1.0       # tau is FILTER_TAU_REST_S below this ...
+FILTER_RATE_MOTION_DPS = 15.0    # ... FILTER_TAU_MOTION_S above, log-linear between
+FILTER_RATE_SMOOTH_S = 1.0       # the gate sees a smoothed |gyro| (fitted on 2 s windows)
+FILTER_WANDER_DEG = 0.1          # roll/pitch residual after the filter, RMS
+FILTER_WANDER_TAU_S = 2.0        # its 1/e time, 1-4 s measured
+
+# Where the ACCELEROMETER sits in the TM151, from the centre of the housing's
+# footprint at the housing's mid-height (the fixture CAD's assumed point,
+# config/ahrs_fixture_cad.yaml `sensor_height`), in the TM151's own axes
+# (datasheet Figure 2: +x toward the pin header, +y left in the top view, +z
+# out of the housing's top) [m]. Fixture, 2026-09-23/24:
+#   x, y  ~12 mm off the yaw axis in every fit, the SAME way round in the
+#         sensor frame with the mount turned 180 deg about x -- so it travels
+#         with the part, not the rig; not the fit's signs (synthetic check),
+#         not gyro/accelerometer timing (+-5 ms moves it < 1 mm). Mean of the
+#         session fits (10.4, 10.0 -> 8.8, 9.5) and yaw-chirp fits (6.2, 10.1
+#         -> 8.0, 7.9), each pair averaged across the flip. +-~2 mm. The
+#         datasheet drawing's triad sits ~5 mm the OTHER way: illustrative.
+#   z     the flip pair, roll-rich sessions: 32.6 mm from the roll axis below,
+#         40.8 above. A rattle fixed to the rig adds to one and takes from the
+#         other, so the chip is ~36.7 from the axis, 6.7 further than the 30
+#         mm mount puts mid-height: -6.7 +-~3 mm, i.e. down at the circuit
+#         board -- the only place a chip can be, whose top face is -5.5 mm.
+#         Carried as -5.5, the physical bound.
+TM151_ACCEL_OFFSET_M = np.array([0.0084, 0.0094, -0.0055])
+
+# How the TM151's axes sit in the AHRS site's (= the chassis's) frame on the
+# bike. ASSUMED identity -- x forward, z up -- until the bike's mount is
+# built; the real mount goes through `ahrs_q_mount` on hardware. Only the
+# accelerometer offset above uses it.
+TM151_TO_SITE = np.eye(3)
+assert ORIENT_RMS_DEG["tm151_filter"][:2] == (FILTER_WANDER_DEG, FILTER_WANDER_DEG)
+
+LEVELS = ("none", "tm151_static", "tm151", "tm171", "tm151_filter")
 
 # Which CHANNELS carry their error, so the damage can be attributed. Same idea
 # as sim_odometry's lon_only / lat_only, which is what showed that v_lat was
@@ -270,6 +337,11 @@ LEVELS = ("none", "tm151_static", "tm151", "tm171")
 # TM151's 1.5), a GYRO problem is not, and a MOUNTING problem is fixed for free
 # by calibration.
 CHANNELS = ("both", "orient", "gyro")
+
+
+def level_tau_orient_s(level: str) -> float:
+    """The orientation-error correlation time a level uses when none is given."""
+    return FILTER_WANDER_TAU_S if level == "tm151_filter" else TAU_ORIENT_S
 
 
 def _gm_step(x, dt: float, tau: float, sigma, rng) -> np.ndarray:
@@ -303,6 +375,80 @@ def _quat_mul(a, b):
                      w1*x2 + x1*w2 + y1*z2 - z1*y2,
                      w1*y2 - x1*z2 + y1*w2 + z1*x2,
                      w1*z2 + x1*y2 - y1*x2 + z1*w2])
+
+
+def _rotate(q, v):
+    """v rotated by the wxyz quaternion q."""
+    qv = np.array([0.0, *v])
+    qc = np.array([q[0], -q[1], -q[2], -q[3]])
+    return _quat_mul(_quat_mul(q, qv), qc)[1:]
+
+
+def _axis_angle_quat(rotvec) -> np.ndarray:
+    th = float(np.linalg.norm(rotvec))
+    if th < 1e-12:
+        return np.array([1.0, 0.0, 0.0, 0.0])
+    return np.array([np.cos(th / 2), *(np.sin(th / 2) * np.asarray(rotvec) / th)])
+
+
+def _turn(v, w, dt: float) -> np.ndarray:
+    """A world-fixed vector, in a frame turning at w [rad/s] for dt."""
+    th = float(np.linalg.norm(w)) * dt
+    if th < 1e-12:
+        return v
+    k = -np.asarray(w) / np.linalg.norm(w)
+    return v * np.cos(th) + np.cross(k, v) * np.sin(th) + k * (k @ v) * (1 - np.cos(th))
+
+
+def filter_tau(rate_dps: float, tau_rest: float = FILTER_TAU_REST_S,
+               tau_motion: float = FILTER_TAU_MOTION_S) -> float:
+    """The accelerometer-trust time constant at a (smoothed) rotation rate."""
+    lo, hi = np.log(FILTER_RATE_REST_DPS), np.log(FILTER_RATE_MOTION_DPS)
+    f = np.clip((np.log(max(rate_dps, 1e-6)) - lo) / (hi - lo), 0.0, 1.0)
+    return float(np.exp(np.log(tau_rest) + f * (np.log(tau_motion) - np.log(tau_rest))))
+
+
+# Skip the accelerometer when |acc| is further than this fraction from 1 g.
+# UNMEASURED -- the fixture never saw more than ~50 mg -- and None (no gate)
+# until it is. It exists because the SIM's accelerometer on a standing bike is
+# violent (60% of samples > 0.2 g off, stiff contacts sampled at a point), and
+# ungated that reads as ~8 deg of pitch; see docs/status.md.
+FILTER_ACC_GATE = None
+
+
+def tilt_filter_step(u, gyro, acc, dt: float, tau: float, gate=None) -> np.ndarray:
+    """One step of the complementary filter on the gravity direction `u` (unit,
+    body frame, the same sign convention as `acc`): turn with the gyro [rad/s],
+    pull toward the normalised accelerometer at 1/tau -- unless |acc| is more
+    than `gate` (a fraction) from 1 g."""
+    p = _turn(np.asarray(u, float), gyro, dt)
+    na = float(np.linalg.norm(acc))
+    if gate is None or abs(na / GRAVITY - 1.0) <= gate:
+        p = p + (dt / tau) * (np.asarray(acc) / na - p)
+    return p / np.linalg.norm(p)
+
+
+def run_tilt_filter(t, gyro, acc, u0, tau_rest: float = FILTER_TAU_REST_S,
+                    tau_motion: float = FILTER_TAU_MOTION_S,
+                    smooth_s: float = FILTER_RATE_SMOOTH_S) -> np.ndarray:
+    """The adaptive filter over recorded arrays: what `SimAhrs` runs one step at
+    a time, and what `ahrs_fixture filter-model` checks against a real TM151."""
+    u = np.empty((len(t), 3))
+    u[0] = np.asarray(u0, float) / np.linalg.norm(u0)
+    rate = 0.0
+    for i in range(1, len(t)):
+        dt = float(t[i] - t[i - 1])
+        rate += (dt / (smooth_s + dt)) * (np.degrees(np.linalg.norm(gyro[i])) - rate)
+        u[i] = tilt_filter_step(u[i - 1], 0.5 * (gyro[i] + gyro[i - 1]), acc[i], dt,
+                                filter_tau(rate, tau_rest, tau_motion))
+    return u
+
+
+def accel_at_offset(accel, w, w_prev, dt: float, delta) -> np.ndarray:
+    """Specific force at a point `delta` from where `accel` was measured, on the
+    same rigid body: + alpha x d + w x (w x d), alpha from successive rates."""
+    alpha = (np.asarray(w) - np.asarray(w_prev)) / dt if w_prev is not None else np.zeros(3)
+    return np.asarray(accel) + np.cross(alpha, delta) + np.cross(w, np.cross(w, delta))
 
 
 def _small_angle_quat(rpy) -> np.ndarray:
@@ -344,7 +490,7 @@ class SimAhrs:
     """
 
     def __init__(self, model, params: dict, level: str = "none",
-                 seed: int = 0, tau_orient_s: float = TAU_ORIENT_S,
+                 seed: int = 0, tau_orient_s: float | None = None,
                  tau_bias_s: float = TAU_BIAS_S, channels: str = "both",
                  hz: float = CONTROL_HZ_DEFAULT,
                  orient_rms_deg=None):
@@ -355,6 +501,10 @@ class SimAhrs:
                              f"got {channels!r}")
         self.level = level
         self.channels = channels
+        # None: the level's own. For "tm151_filter" this is the residual
+        # wander's time (~2 s), not the 0.19 s the noise levels use.
+        if tau_orient_s is None:
+            tau_orient_s = level_tau_orient_s(level)
         self.tau_orient_s = float(tau_orient_s)
         self.tau_bias_s = float(tau_bias_s)
         # The orientation RMS triple actually in force. Defaults to the
@@ -366,6 +516,7 @@ class SimAhrs:
                                                   orient_rms_deg))
         self.hz = float(hz)
         self._dt = 1.0 / self.hz
+        self.filter_tau_motion_s = FILTER_TAU_MOTION_S
         self.adr = {}
         for name in ("ahrs_gyro", "ahrs_accel", "ahrs_quat"):
             s = model.sensor(name)
@@ -373,7 +524,7 @@ class SimAhrs:
         self.reset(seed)
 
     def set_error_params(self, *, orient_rms_roll_deg=None,
-                         tau_orient_s=None) -> None:
+                         tau_orient_s=None, filter_tau_motion_s=None) -> None:
         """Re-point the two UNMEASURED error parameters, between episodes.
 
         `orient_rms_roll_deg` names the ROLL/PITCH RMS and scales the whole
@@ -389,6 +540,12 @@ class SimAhrs:
         """
         if tau_orient_s is not None:
             self.tau_orient_s = float(tau_orient_s)
+        if filter_tau_motion_s is not None:
+            # "tm151_filter" only: tau while moving, measured ~1 s on ONE unit
+            # standing, with the rule that raises it unknown -- the knob to
+            # randomise. (For that level `orient_rms_roll_deg` scales only the
+            # residual wander, and `tau_orient_s` is the wander's time.)
+            self.filter_tau_motion_s = float(filter_tau_motion_s)
         if orient_rms_roll_deg is not None and self.level != "none":
             nominal = ORIENT_RMS_DEG[self.level]
             k = float(orient_rms_roll_deg) / nominal[0]
@@ -401,6 +558,9 @@ class SimAhrs:
         self._yaw_drift = 0.0              # rad, accumulates without bound
         self._cache = None
         self._acc = 0.0
+        self._u = None                     # tm151_filter: gravity direction, body
+        self._rate_s = 0.0                 # its smoothed |gyro|, deg/s
+        self._w_prev = None                # for the accelerometer's lever arm
         # A misalignment is a FIXED build error, not noise: drawn once per
         # power-on and constant thereafter. Drawing it per tick would make it
         # a noise source the real part does not have.
@@ -411,6 +571,22 @@ class SimAhrs:
         # YAW_DRIFT_DEG_PER_S). Drawn after the tilt so the tilt keeps its value.
         self._yaw_drift_sign = float(self.rng.choice((-1.0, 1.0))) \
             if self.level != "none" else 0.0
+
+    def restart(self) -> None:
+        """The bike was picked up and stood still until the AHRS settled.
+
+        Clears the filter's state -- its gravity direction, the smoothed rate
+        that sets tau, the lever arm's last rate -- so the next sample starts
+        from the true attitude. NOT `reset`: the same unit is still powered, so
+        its misalignment, drift sign and wandering errors carry on. Teleop's
+        respawn needs this; without it "tm151_filter" keeps the fallen bike's
+        attitude and a ~1 s tau (longer, gated) and the fresh bike falls.
+        """
+        self._u = None
+        self._rate_s = 0.0
+        self._w_prev = None
+        self._cache = None
+        self._acc = 0.0
 
     def _raw(self, data, name):
         adr, dim = self.adr[name]
@@ -425,6 +601,12 @@ class SimAhrs:
             self._cache = {"quat": quat, "gyro": gyro, "accel": accel}
             return self._cache
 
+        if self.level == "tm151_filter":
+            # The accelerometer is not at the site: ~1 cm off it in the part.
+            d = TM151_TO_SITE @ TM151_ACCEL_OFFSET_M
+            accel = accel_at_offset(accel, gyro, self._w_prev, dt, d)
+            self._w_prev = gyro.copy()
+
         rms = np.deg2rad(self.orient_rms_deg)
         self._orient_err = _gm_step(self._orient_err, dt, self.tau_orient_s,
                                     rms, self.rng)
@@ -438,8 +620,9 @@ class SimAhrs:
         h = 0.5 * self._yaw_drift
         q_drift = np.array([np.cos(h), 0.0, 0.0, np.sin(h)])
         q_err = _small_angle_quat(self._orient_err)
-        quat_out = _quat_mul(q_drift, _quat_mul(q_err, quat))
-        quat_out /= np.linalg.norm(quat_out)
+        if self.level != "tm151_filter":   # that one's attitude is made below
+            quat_out = _quat_mul(q_drift, _quat_mul(q_err, quat))
+            quat_out /= np.linalg.norm(quat_out)
 
         # Gyro: white noise + a wandering bias + g-sensitivity. The last one is
         # NOT noise -- it is proportional to the specific force the bike is
@@ -459,6 +642,28 @@ class SimAhrs:
         # first-order term and is all a <0.5 deg error justifies.
         accel_out = (accel + np.cross(tilt, accel)
                      + sigma_a * self.rng.standard_normal(3))
+
+        if self.level == "tm151_filter":
+            # The part's own fusion, on its own corrupted gyro and accelerometer.
+            # MuJoCo's accelerometer reads the specific force (+g UP at rest),
+            # so the filter's state is the up direction in the body frame.
+            up_true = _rotate(np.array([quat[0], -quat[1], -quat[2], -quat[3]]),
+                              np.array([0.0, 0.0, 1.0]))
+            if self._u is None:
+                self._u = up_true.copy()
+            self._rate_s += (dt / (FILTER_RATE_SMOOTH_S + dt)) * (
+                np.degrees(np.linalg.norm(gyro_out)) - self._rate_s)
+            tau = filter_tau(self._rate_s, FILTER_TAU_REST_S, self.filter_tau_motion_s)
+            self._u = tilt_filter_step(self._u, gyro_out, accel_out, dt, tau,
+                                       FILTER_ACC_GATE)
+            # The attitude whose up direction is the filter's: the truth turned,
+            # in the body frame, by the rotation taking up_true onto it.
+            c = np.cross(up_true, self._u)
+            ang = np.arctan2(np.linalg.norm(c), float(up_true @ self._u))
+            rv = c / np.linalg.norm(c) * ang if ang > 1e-12 else np.zeros(3)
+            q_tilted = _quat_mul(quat, _axis_angle_quat(-rv))
+            quat_out = _quat_mul(q_drift, _quat_mul(q_err, q_tilted))
+            quat_out /= np.linalg.norm(quat_out)
 
         if self.channels == "orient":
             gyro_out = gyro          # clean rates, corrupted attitude
