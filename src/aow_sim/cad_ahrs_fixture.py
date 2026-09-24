@@ -1044,36 +1044,51 @@ def build_fs(data: dict, fs_version: str = "3044") -> str:
     return text
 
 
-def check_wrapper(fs: str, data: dict, config: str) -> str:
+def check_wrapper(fs: str, data: dict, configs) -> str:
     """Build every part, then print: the layout, every body, every collision
     at rest and at each pose of each joint, and each part's downward faces
-    in its print orientation. All judging happens in `check`, in Python."""
+    and hanging edges in its print orientation. All judging happens in
+    `check`, in Python.
+
+    Every mount in ONE call: each is built, checked and deleted before the
+    next, so their bodies (which all sit in the same place) never meet. It
+    was one call per mount until 2026-09-23 -- three calls a round, for the
+    same studio text."""
+    if isinstance(configs, str):
+        configs = [configs]
     fx, tm = data["fixture"], data["tm151"]
-    opt = (f'{{ "ahrsOffset" : {fx["ahrs_offset"]:.4g} * millimeter, "config" : "{config}", '
+    opt = (f'{{ "ahrsOffset" : {fx["ahrs_offset"]:.4g} * millimeter, "config" : cfg, '
            f'"sensorHeight" : {tm["sensor_height"]:.4g} * millimeter, '
            f'"drawGhosts" : false, "drawKeepout" : true }}')
     poses = "[" + ", ".join(str(a) for a in POSES) + "]"
+    cfgs = "[" + ", ".join(f'"{c}"' for c in configs) + "]"
     return f"""function(context is Context, queries)
 {{
 {sm.geometry_layer(fs, SPLIT_MARK)}
-    const id = makeId("chk");
-    const r = ahrsFixtureBuild(context, id, {opt});
-    println("H=" ~ toString(r.L.H / millimeter));
-    println("R_s=" ~ toString(r.L.R_s / millimeter));
-    println("g=" ~ toString(r.L.g / millimeter));
+    // a body nobody named is a stray (a cutter that was never used up):
+    // report it rather than stop the whole check on it
     const name = function(q) returns string
     {{
-        return getProperty(context, {{ "entity" : q, "propertyType" : PropertyType.NAME }});
+        const n = getProperty(context, {{ "entity" : q, "propertyType" : PropertyType.NAME }});
+        return n == undefined ? "UNNAMED" : n;
     }};
-    const all = evaluateQuery(context, qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID));
-    for (var b in all)
-        println("BODY|" ~ name(b));
     const clashes = function(pose is string, tools, targets)
     {{
         for (var c in evCollision(context, {{ "tools" : tools, "targets" : targets }}))
             println("COLL|" ~ pose ~ "|" ~ name(c.toolBody) ~ "|" ~ name(c.targetBody)
                     ~ "|" ~ toString(c["type"]));
     }};
+    for (var cfg in {cfgs})
+    {{
+    println("CFG=" ~ cfg);
+    const id = makeId("chk" ~ cfg);
+    const r = ahrsFixtureBuild(context, id, {opt});
+    println("H=" ~ toString(r.L.H / millimeter));
+    println("R_s=" ~ toString(r.L.R_s / millimeter));
+    println("g=" ~ toString(r.L.g / millimeter));
+    const all = evaluateQuery(context, qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID));
+    for (var b in all)
+        println("BODY|" ~ name(b));
     for (var i = 0; i + 1 < size(all); i += 1)
         clashes("rest", all[i], qUnion(subArray(all, i + 1, size(all))));
     // Tag the stages with attributes BEFORE moving anything: the parts'
@@ -1114,12 +1129,15 @@ def check_wrapper(fs: str, data: dict, config: str) -> str:
         const cs = coordSystem(vector(0, 0, 0) * meter, perpendicularVector(upv), upv);
         const bed = evBox3d(context, {{ "topology" : bodies[0], "cSys" : cs, "tight" : true }}).minCorner[2];
         var bedArea = 0 * meter * meter;
-        for (var fc in evaluateQuery(context, qGeometry(qOwnedByBody(bodies[0], EntityType.FACE),
-                                                        GeometryType.PLANE)))
+        // (and cones: the full-wrap cover's end-wall edge is one, whose
+        // normal makes the same angle with the axis all round)
+        for (var fc in evaluateQuery(context, qUnion([
+                qGeometry(qOwnedByBody(bodies[0], EntityType.FACE), GeometryType.PLANE),
+                qGeometry(qOwnedByBody(bodies[0], EntityType.FACE), GeometryType.CONE)])))
         {{
-            const pl = evPlane(context, {{ "face" : fc }});
+            const pl = evFaceTangentPlane(context, {{ "face" : fc, "parameter" : vector(0.5, 0.5) }});
             // strictly past 70 deg: a face AT the limit (the shells' slopes
-            // and V's are cut exactly there) is allowed
+            // are cut exactly there) is allowed
             if (-dot(pl.normal, upv) < cos(19.5 * degree))
                 continue;
             const fb = evBox3d(context, {{ "topology" : fc, "tight" : true }});
@@ -1154,7 +1172,52 @@ def check_wrapper(fs: str, data: dict, config: str) -> str:
                         ~ toString(roundToPrecision(cyl.coordSystem.origin[1] / millimeter, 1)) ~ ","
                         ~ toString(roundToPrecision(cyl.coordSystem.origin[2] / millimeter, 1)));
         }}
+        // hanging edges: straight, within 19.5 deg of level, convex, and
+        // both faces leave it UPWARD -- its first layer is a line printed
+        // onto nothing. The face check cannot see one when both faces are
+        // within the limit: the full-wrap cover's corner was exactly that, a
+        // 70 deg slope meeting a vertical side along a level line (2026-09-23,
+        // found on the printer). Edges of an already-flagged face are left
+        // to that face.
+        const lim = cos(19.5 * degree);
+        for (var ed in evaluateQuery(context, qGeometry(qOwnedByBody(bodies[0], EntityType.EDGE),
+                                                        GeometryType.LINE)))
+        {{
+            const tl = evEdgeTangentLine(context, {{ "edge" : ed, "parameter" : 0.5 }});
+            if (abs(dot(tl.direction, upv)) > sin(19.5 * degree))
+                continue;
+            const eb = evBox3d(context, {{ "topology" : ed, "cSys" : cs, "tight" : true }});
+            if (eb.minCorner[2] - bed < 0.01 * millimeter)
+                continue;
+            if (evEdgeConvexity(context, {{ "edge" : ed }}) != EdgeConvexityType.CONVEX)
+                continue;
+            const fcs = evaluateQuery(context, qAdjacent(ed, AdjacencyType.EDGE, EntityType.FACE));
+            if (size(fcs) != 2)
+                continue;
+            const n0 = evFaceNormalAtEdge(context, {{ "edge" : ed, "face" : fcs[0], "parameter" : 0.5 }});
+            const n1 = evFaceNormalAtEdge(context, {{ "edge" : ed, "face" : fcs[1], "parameter" : 0.5 }});
+            if (-dot(n0, upv) >= lim || -dot(n1, upv) >= lim)
+                continue;
+            // into each face, away from the edge: behind the other's normal
+            var t0 = cross(n0, tl.direction);
+            if (dot(t0, n1) > 0)
+                t0 = -t0;
+            var t1 = cross(n1, tl.direction);
+            if (dot(t1, n0) > 0)
+                t1 = -t1;
+            if (dot(t0, upv) > -0.02 && dot(t1, upv) > -0.02)
+            {{
+                const wb = evBox3d(context, {{ "topology" : ed, "tight" : true }});
+                println("HANG|" ~ pr[0] ~ "|" ~ toString(roundToPrecision(evLength(context, {{ "entities" : ed }}) / millimeter, 2))
+                        ~ "|" ~ toString(roundToPrecision((eb.minCorner[2] - bed) / millimeter, 2)) ~ "|"
+                        ~ toString(roundToPrecision((wb.minCorner[0] + wb.maxCorner[0]) / 2 / millimeter, 1)) ~ ","
+                        ~ toString(roundToPrecision((wb.minCorner[1] + wb.maxCorner[1]) / 2 / millimeter, 1)) ~ ","
+                        ~ toString(roundToPrecision((wb.minCorner[2] + wb.maxCorner[2]) / 2 / millimeter, 1)));
+            }}
+        }}
         println("BED|" ~ pr[0] ~ "|" ~ toString(bedArea / (millimeter * millimeter)));
+    }}
+    opDeleteBodies(context, id + "clear", {{ "entities" : qCreatedBy(id, EntityType.BODY) }});
     }}
     return "ran to completion";
 }}
@@ -1177,18 +1240,37 @@ def _intended(a: str, b: str) -> bool:
     return any(pair == {x, y} for x, y in INTENDED)
 
 
-def check(text: str, data: dict, target: str | None, config: str) -> tuple[bool, dict]:
+def check(text: str, data: dict, target: str | None, configs) -> bool:
+    """ONE billable call for every mount in `configs`."""
     from . import onshape
 
+    if isinstance(configs, str):
+        configs = [configs]
     url = onshape.resolve(target, "check")
-    reply = onshape.eval_featurescript(check_wrapper(text, data, config), url)
+    reply = onshape.eval_featurescript(check_wrapper(text, data, configs), url)
     for line in onshape.notice_lines(reply):
         print(f"  {line}")
     console = reply.get("console") or ""
     if any(n["message"]["level"] == "ERROR" for n in reply.get("notices", [])):
         print(console[-3000:])
         print(onshape.budget_line())
-        return False, {}
+        return False
+    sections = console.split("CFG=")[1:]
+    ok = len(sections) == len(configs)
+    if not ok:
+        print(f"  ran {len(sections)} of {len(configs)} mounts -- FAIL")
+    seen = {}
+    for sec in sections:
+        cfg, _, body = sec.partition("\n")
+        print(f"--- mount {cfg}")
+        ok &= _judge(body, data, seen, cfg)
+    print(onshape.budget_line())
+    return ok
+
+
+def _judge(console: str, data: dict, seen: dict | None = None, cfg: str = "") -> bool:
+    """Print one mount's verdicts. The print report is the same for every
+    mount bar the TM151 mount's name, so a repeat says which it repeats."""
     rows = [l.split("|") for l in console.splitlines()]
     got = dict(l.split("=", 1) for l in console.splitlines() if "=" in l and "|" not in l)
     L = layout(data)
@@ -1198,6 +1280,10 @@ def check(text: str, data: dict, target: str | None, config: str) -> tuple[bool,
         bad = not abs(v - L[k]) < 1e-3
         ok &= not bad
         print(f"  {k:4} wanted {L[k]:8.3f}  got {v:8.3f}  {'FAIL' if bad else 'ok'}")
+    strays = sum(1 for r in rows if r[0] == "BODY" and r[1] == "UNNAMED")
+    ok &= not strays
+    if strays:
+        print(f"  {strays} UNNAMED bodies -- a cutter left behind  FAIL")
     counts = {r[1]: int(r[2]) for r in rows if r[0] == "PART"}
     for n, c in counts.items():
         ok &= c == 1
@@ -1210,7 +1296,15 @@ def check(text: str, data: dict, target: str | None, config: str) -> tuple[bool,
           f"{len(clash)}")
     for r in clash[:40]:
         print(f"    {r[1]:9} {r[2]}  x  {r[3]}  ({r[4]})")
-    print("  print check -- planar faces within 20 deg of facing down, above the bed:")
+    report = tuple(tuple([r[0], canon(r[1])] + r[2:]) for r in rows
+                   if r[0] in ("BED", "OVER", "CROWN", "HANG"))
+    same = next((c for c, rep in (seen or {}).items() if rep == report), None)
+    if seen is not None:
+        seen[cfg] = report
+    if same:
+        print(f"  print check: identical to mount {same}")
+        return ok
+    print("  print check -- planar/conical faces within 20 deg of facing down, above the bed:")
     for r in rows:
         if r[0] == "BED":
             over = sorted((x for x in rows if x[0] == "OVER" and x[1] == r[1]),
@@ -1222,8 +1316,11 @@ def check(text: str, data: dict, target: str | None, config: str) -> tuple[bool,
     print(f"  horizontal holes with a flat crown as printed (want a teardrop): {len(crowns)}")
     for r in crowns:
         print(f"    {r[1]:18} r {r[2]} mm, axis through ({r[3]})")
-    print(onshape.budget_line())
-    return ok, {"rows": rows}
+    hangs = [r for r in rows if r[0] == "HANG"]
+    print(f"  level edges hanging in the air as printed (both faces rise from them): {len(hangs)}")
+    for r in hangs:
+        print(f"    {r[1]:18} {float(r[2]):5.2f} mm long, {float(r[3]):6.2f} up, at ({r[4]})")
+    return ok
 
 
 def main() -> None:
@@ -1234,9 +1331,9 @@ def main() -> None:
     ap.add_argument("-o", "--output", default=OUT_FS)
     ap.add_argument("--fs-version", default="3044")
     ap.add_argument("--check", metavar="TAB|URL", nargs="?", const="", default=None,
-                    help="build it in Onshape and check it; ONE billable call per "
-                         "--config, defaults to the `check` tab")
-    ap.add_argument("--config", choices=CONFIGS, nargs="+", default=["BELOW"],
+                    help="build it in Onshape and check it; ONE billable call for "
+                         "every --config together, defaults to the `check` tab")
+    ap.add_argument("--config", choices=CONFIGS, nargs="+", default=list(CONFIGS),
                     help="which TM151 mount(s) --check builds")
     ap.add_argument("--push", metavar="TAB|URL", nargs="?", const="", default=None,
                     help="replace a Feature Studio's contents (its own tab only)")
@@ -1257,13 +1354,11 @@ def main() -> None:
     print(f"  d = {L['d']:g}: roll axis {L['H']:.2f} mm above the yaw horn face, "
           f"roll horn {L['g']:.2f} from the yaw axis, U legs at {L['R_s']:.2f}")
     if args.dry_run:
-        print(check_wrapper(text, data, args.config[0]))
+        print(check_wrapper(text, data, args.config))
         return
     if args.check is not None:
-        for c in args.config:
-            print(f"--- check, config {c}")
-            if not check(text, data, args.check or None, c)[0]:
-                raise SystemExit("check FAILED -- not pushing")
+        if not check(text, data, args.check or None, args.config):
+            raise SystemExit("check FAILED -- not pushing")
     if args.push is not None:
         from . import onshape
         if args.push in ("", "feature_studio", "horn_features", "swing_features"):
@@ -1272,6 +1367,11 @@ def main() -> None:
         url = onshape.resolve(args.push, args.push)
         onshape.push_feature_studio(text, url)
         print(f"pushed {len(text)} chars -> {url}")
+        # Nothing else to do: the inserted `AHRS fixture` follows its studio
+        # in the same document -- tested 2026-09-23, a marker pushed without
+        # any re-pin appeared on the Part Studio's bodies, and left with the
+        # revert. Never delete + re-insert it: the user's chamfers and fillets
+        # after it in the tree pick its edges.
         print(onshape.budget_line())
     if args.shot is not None:
         from . import onshape

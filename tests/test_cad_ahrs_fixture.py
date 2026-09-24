@@ -159,3 +159,21 @@ def test_both_studios_generate_and_lint(data):
     mount = sm.build_fs(table)
     sm.lint_fs(mount)
     assert "x330Idler" in mount and "screwAndNut632" in mount
+    # the full-wrap cover's end-wall edge is the two cones, not the old V
+    assert "coneP" in mount and "vCut" not in mount
+
+
+def test_one_check_call_builds_every_mount(data):
+    """All three mounts in ONE eval, each deleted before the next, with the
+    hanging-edge report in it."""
+    w = fx.check_wrapper(fx.build_fs(data), data, list(fx.CONFIGS))
+    sm.lint_fs(w)
+    assert all(f'"{c}"' in w for c in fx.CONFIGS)
+    assert w.count("ahrsFixtureBuild(context, id,") == 1
+    assert "opDeleteBodies(context, id + \"clear\"" in w and "HANG|" in w
+
+
+@pytest.mark.parametrize("src", ["const box = 1;", "function f(case is Query) {}"])
+def test_lint_refuses_a_reserved_word(src):
+    with pytest.raises(SystemExit, match="reserved word"):
+        sm.lint_fs(src)

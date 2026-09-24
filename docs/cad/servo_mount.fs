@@ -420,8 +420,9 @@ export function caseShellGeometry(context is Context, id is Id, cs is CoordSyste
     // round the shaft end too, and only the CAP stays at the far end (the
     // horn needs the rest of the face). Printed cap-down, a wall past the cap
     // has nothing under it, so its edge nearest the cap face slopes at the
-    // overhang limit from the cap's edge toward the shaft end, and the end
-    // wall's edge is a V at the same slope. Where the base is not, the walls
+    // overhang limit from the cap's edge toward the shaft end, and carries on
+    // round the corners and across the end wall at the same slope, meeting
+    // mid-width. Where the base is not, the walls
     // run on down: to just above the cable connectors in their window, and to
     // the back face beyond it. From the hand-drawn case-side-wall /
     // case-end-wall in wing-linkage-shorter, 2026-09-23.
@@ -478,12 +479,52 @@ export function caseShellGeometry(context is Context, id is Id, cs is CoordSyste
         polyPrism(context, id, "slopeCut", cs.origin - W * cs.xAxis, cs.xAxis, yA0,
                   [vector(y0, zFace), vector(yS - e, zAt(yS - e)),
                    vector(yS - e, far), vector(y0, far)], 2 * W);
-        // the end wall's edge: a V, deepest (furthest from the bed) mid-width
-        const zE = zAt(yS);
-        polyPrism(context, id, "vCut", cs.origin + (yS - e) * yA0, yA0, -cs.xAxis,
-                  [vector(-W, zE + sgn * e * tanS), vector(0 * millimeter, zE - sgn * outer * tanS),
-                   vector(W, zE + sgn * e * tanS), vector(W, far), vector(-W, far)],
-                  yNi - yS + e);
+        // the end wall's edge: a cone about each INNER corner of the U, at
+        // the same slope. Every layer then grows out of the one below it:
+        // the shortest way round the corner from the side wall is a straight
+        // line from that corner, so the edge rises at the slope along it.
+        // Not a V from the OUTER corner, as first drawn: that started a whole
+        // wall thickness too high, so the corner's first layer was a level
+        // strip hanging off the side wall -- seen on the printer 2026-09-23.
+        // Each cone is kept to its own half, and past the side wall's inner
+        // face the side wall's own slope already rules: trimmed by
+        // SUBTRACTION, cone as the target, so it keeps its identity for the
+        // cutter query (an intersection left a stray, unnamed body behind,
+        // 2026-09-23 -- a billed call).
+        const zc = zAt(yNi);
+        const dy = yNi - yS + e;
+        const R  = sqrt(inner * inner + dy * dy) + e;
+        const zR = zc - sgn * (R * tanS + e);
+        const z0 = min(zR, far) - e;
+        const z1 = max(zR, far) + e;
+        for (var s in [1, -1])
+        {
+            const tag   = s > 0 ? "coneP" : "coneN";
+            const pivot = cs.origin + s * inner * cs.xAxis + yNi * yA0;
+            const rad   = -s * cs.xAxis;
+            revolveProfile(context, id, tag, plane(pivot, cross(rad, cs.zAxis), rad),
+                           line(pivot, cs.zAxis),
+                           [vector(0 * millimeter, zc), vector(R, zc - sgn * R * tanS),
+                            vector(R, far), vector(0 * millimeter, far)]);
+            // [a, b] across (s x), [c, d] along y: the other half, past the
+            // pivot, and beyond the end wall's inner face
+            const trims = [[-R - e, 0 * millimeter, yNi - R - e, yNi + R + e],
+                           [inner, inner + R + e, yNi - R - e, yNi + R + e],
+                           [0 * millimeter, inner, yNi, yNi + R + e]];
+            var tq = [];
+            for (var k = 0; k < 3; k += 1)
+            {
+                const tr = trims[k];
+                boxSolid(context, id, tag ~ "Trim" ~ k,
+                         coordSystem(cs.origin + s * (tr[0] + tr[1]) / 2 * cs.xAxis, cs.xAxis, cs.zAxis),
+                         (tr[1] - tr[0]) / 2, tr[2], tr[3], z0, z1);
+                tq = append(tq, qCreatedBy(id + (tag ~ "Trim" ~ k ~ "Ext"), EntityType.BODY));
+            }
+            opBoolean(context, id + (tag ~ "Keep"), {
+                    "tools"         : qUnion(tq),
+                    "targets"       : qCreatedBy(id + (tag ~ "Rev"), EntityType.BODY),
+                    "operationType" : BooleanOperationType.SUBTRACTION });
+        }
         // the cable connectors' window, both sides, back face up
         boxSolid(context, id, "window", cs, W, t.caseWindowNear, y0,
                  backZ - fc - capT - e, backZ + t.caseWindowDepth);
@@ -492,7 +533,8 @@ export function caseShellGeometry(context is Context, id is Id, cs is CoordSyste
                  backZ - e, hornZ - skirt);
         wrapCut = [qCreatedBy(id + "capCutExt", EntityType.BODY),
                    qCreatedBy(id + "slopeCutExt", EntityType.BODY),
-                   qCreatedBy(id + "vCutExt", EntityType.BODY),
+                   qCreatedBy(id + "conePRev", EntityType.BODY),
+                   qCreatedBy(id + "coneNRev", EntityType.BODY),
                    qCreatedBy(id + "windowExt", EntityType.BODY),
                    qCreatedBy(id + "baseZoneExt", EntityType.BODY)];
     }

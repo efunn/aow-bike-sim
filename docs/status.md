@@ -385,8 +385,11 @@ the axis so it lands the same either way.
 
 The COVERS are full-wrap now (a new option on the `X330 case shell` feature,
 off by default there, cover half only): walls round the whole servo, the cap
-only over the far-end wrap, walls past the cap cut back at exactly 70 deg (a
-V across the shaft end) so they print cap-down; down to the back face where
+only over the far-end wrap, walls past the cap cut back at exactly 70 deg so
+they print cap-down -- carried round the shaft-end corners and across the end
+wall as a cone about each inner corner of the U (was a V from the outer
+corner, which left each corner's first layer a level 2.3 mm strip hanging off
+the side wall: seen on the first print, 2026-09-23); down to the back face where
 the base is not, and only to just above the cable connectors in their window
 -- the user's hand-drawn walls in wing-linkage-shorter, read back through the
 API. The BASES keep the far-end wrap: a wrapped base cannot be printed. The yaw
@@ -405,14 +408,20 @@ DERIVED: legs 23.62 from the shaft (the cover's corner + 1 -- nudged out from
 20.29 by the wrap), roll horn 32.94 from the yaw axis (TM151 centred), roll
 axis 56.10 above the yaw horn face at d = 30 -- the swept roll stage clears
 the yaw arm by 8 mm, the as-printed d mount binding. TM151 mount plate
-widened to +-18.35 so the pin reliefs keep a 1.2 rim. `--check` builds each
-mount in Onshape: one body per part and NO interference at rest or at
+widened to +-18.35 so the pin reliefs keep a 1.2 rim. `--check` builds all three
+mounts in Onshape in ONE call (one each until 2026-09-23): one body per part and NO interference at rest or at
 +-15/30/45 deg on either joint, with the envelopes carrying the real pin
 holes and idler recess so every pin, shell, horn well and plug is tested,
 not excused; a print check of every face steeper than 70 deg; and a check
 for horizontal holes left with a flat crown (shown to catch both teardropped
-bores with the teardrops switched off). What it flags is bridges only: the
-nut-slot layers, the J4 groove's flat and one blind hole end. TM151 hole pattern 4x Phi 2.10
+bores with the teardrops switched off); and for HANGING EDGES -- a level,
+convex edge whose two faces both rise from it, which no face check sees
+(shown to catch the four V corners, then 0 with the cones). What it flags is
+bridges only: the nut-slot layers, the J4 groove's flat and one blind hole
+end. The `ahrs-fixture` Part Studio also holds the user's own chamfers and
+fillets after the generated feature; a push alone updates it in place
+(tested 2026-09-23 with a marker attribute, both directions), so it is never
+deleted and re-inserted. All seven read back OK after the corner change. TM151 hole pattern 4x Phi 2.10
 (M2) on 31 x 30, dimensioned; the sensing point's height is a GUESS (7.1).
 
 **PUSH IS BACK, and this time it is in flash (2026-09-16).** The Combo output
