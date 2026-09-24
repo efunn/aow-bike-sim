@@ -47,10 +47,15 @@ CHIRP = {"kind": "chirp", "axis": "roll", "amp_deg": 8.0, "f0": 0.2, "f1": 6.4,
          "a_max": 3000.0, "rate_max": 300.0}
 
 
-def _rig(seed=0, chirp=None):
+def _rig(seed=0, chirp=None, flip=False, lever=None, shake=None):
     """`chirp`: None, or {"gain", "delay"} -- a 40 s roll chirp replaces the
     sway, the injected error is off, and during it the AHRS reports the roll
-    joint scaled by `gain` and `delay` s later than everything else."""
+    joint scaled by `gain` and `delay` s later than everything else.
+    `flip`: the sensor turned 180 deg about its own x on the mount -- upside
+    down, as the d mount turned over leaves it. `lever`: the sensing point
+    instead of R_LEVER. `shake`: extra acceleration at the sensor [m/s^2,
+    earth frame], a function of (t, alpha_world) -- what a plate rattling in
+    its play adds and the rigid-body model does not have."""
     rng = np.random.default_rng(seed)
     body = ("chirp", 40) if chirp else ("sway", 40)
     plan = [("ref", 5), ("ident_yaw", 6), ("settle", 2), ("ident_roll", 6),
@@ -88,6 +93,10 @@ def _rig(seed=0, chirp=None):
     R0 = (fx.axis_angle([0, 0, 1], [np.radians(40)])[0]
           @ fx.axis_angle([1, 0, 0], [np.radians(3)])[0]
           @ fx.axis_angle([0, 1, 0], [np.radians(-2)])[0])
+    if flip:                         # sensor s = F s': the axes and R0 in the new frame
+        F = fx.axis_angle([1.0, 0, 0], [np.pi])[0]
+        u_y, u_r, R0 = F @ u_y, F @ u_r, R0 @ F
+    r_lever = R_LEVER if lever is None else np.asarray(lever, float)
 
     # Servo frames: quantised encoders, host-timed.
     t_e = np.arange(0, T, 1 / RATE) + 0.0013
@@ -127,8 +136,11 @@ def _rig(seed=0, chirp=None):
 
     # Accelerometer: the sensing point R_LEVER from the axes' intersection,
     # reading gravity minus its own acceleration (the TM151's sign), in g.
-    p_w = np.einsum("nij,j->ni", R_t, R_LEVER)
+    p_w = np.einsum("nij,j->ni", R_t, r_lever)
     a_w = np.gradient(np.gradient(p_w, tau, axis=0), tau, axis=0)
+    if shake is not None:
+        alpha_w = np.gradient(np.einsum("nij,nj->ni", R_t, omega), tau, axis=0)
+        a_w = a_w + shake(tau, alpha_w)
     a_s = np.einsum("nji,nj->ni", R_t, a_w)
     acc_g = fx.gravity_sensor(R_t) - a_s / fx.G_VENDOR \
         + rng.normal(0, 0.0015, a_s.shape)
@@ -358,3 +370,178 @@ def test_a_late_sensor_shows_phase_lag_growing_with_frequency():
         assert b["phase_deg"] == pytest.approx(want, rel=0.25, abs=1.0), b
         assert b["gain"] == pytest.approx(1.0, abs=0.03), b
     assert bands[-1]["phase_deg"] < bands[0]["phase_deg"] - 20
+
+
+# -- the encoder-free reference ----------------------------------------------
+# It is the headline number because the encoders are behind a horn and a
+# printed bracket (0.13-0.54 deg lost in the first mounted step holds, ~2 deg
+# under a hand wiggle). These pin its SIGN and scale: the rig's gyro and
+# accelerometer are the truth's, and during the chirp the fused output alone
+# is late by a known delay.
+
+@pytest.fixture(scope="module")
+def delayed():
+    servo, ahrs, segs, u_y, u_r = _rig(chirp={"gain": 1.0, "delay": 0.020})
+    return fx.analyse(servo, ahrs, segs)["selfref"]
+
+
+def test_the_encoder_free_reference_finds_a_late_output_as_a_positive_lag(delayed):
+    row = next(r for r in delayed["segments"] if r["label"] == "chirp")
+    assert row["lag_ms"] == pytest.approx(20.0, abs=2.0)
+    assert row["after_lag_rms_deg"] < 0.25 * row["roll_rms_deg"]
+    # The rig's gyro has no bias, but its noise (0.25 deg/s, twice the real
+    # one's) leaves ~0.005 deg/s in the bias pooled from 11 s of holds: ~0.5
+    # deg over the 40 s chirp, which the pinning then spreads out.
+    assert row["end_mismatch_deg"] < 1.0
+
+
+def test_the_encoder_free_reference_reads_zero_when_nothing_is_late():
+    servo, ahrs, segs, *_ = _rig(chirp={"gain": 1.0, "delay": 0.0})
+    row = next(r for r in fx.analyse(servo, ahrs, segs)["selfref"]["segments"]
+               if r["label"] == "chirp")
+    assert row["roll_rms_deg"] < 0.15          # the reference's floor on this rig
+    assert abs(row["lag_ms"]) < 1.0
+
+
+def test_a_repeat_of_the_same_input_cancels_what_repeats(delayed):
+    """Same delay, different noise: the 20 ms lag is deterministic and must
+    vanish from the run-to-run difference, though it dominates each run."""
+    servo, ahrs, segs, *_ = _rig(seed=1, chirp={"gain": 1.0, "delay": 0.020})
+    other = fx.analyse(servo, ahrs, segs)["selfref"]
+    rows = {r["label"]: r for r in fx.repeat_difference(delayed["series"], other["series"])}
+    lag_rms = next(r for r in delayed["segments"] if r["label"] == "chirp")["roll_rms_deg"]
+    assert rows["chirp"]["fused_rms_deg"] < 0.1 * lag_rms
+    assert abs(rows["chirp"]["shift_ms"]) <= 1.0
+
+
+# -- the TM151 as a complementary filter -------------------------------------
+
+def test_the_complementary_filter_turns_and_pulls_the_right_way():
+    """Sign conventions, one each: the gyro alone must follow the rig's truth
+    through the whole run, and the accelerometer alone must pull a wrong start
+    back onto gravity in a still hold. (With both, the rig's 150 mm lever arm
+    is SUPPOSED to show in the chirp -- that is the effect being modelled.)"""
+    servo, ahrs, segs, *_ = _rig(chirp={"gain": 1.0, "delay": 0.0})
+    t, keep, _ = fx.ahrs_clock(ahrs["t_host"], ahrs["t_us"])
+    t, g, acc = t[keep], ahrs["gyro"][keep], ahrs["acc_g"][keep]
+    down = fx.gravity_sensor(fx.quats_to_mats(ahrs["quat"][keep]))
+    ang = lambda v, k: np.degrees(np.arccos(np.clip((v[k] * down[k]).sum(1), -1, 1)))  # noqa: E731
+
+    v = fx.comp_filter(t, g, acc, down[0], 1e9)
+    assert np.percentile(ang(v, slice(None)), 99) < 0.3
+
+    ref = fx._in(t, (segs[0]["t0"], segs[0]["t1"]))
+    off = fx.axis_angle([1.0, 0, 0], [np.radians(5.0)])[0] @ down[ref][0]
+    v = fx.comp_filter(t[ref], g[ref], acc[ref], off, 0.19)
+    e = np.degrees(np.arccos(np.clip((v * down[ref]).sum(1), -1, 1)))
+    assert e[0] > 4.9 and e[-100:].max() < 0.1
+
+
+def test_the_rest_model_recovers_the_filter_that_made_the_noise():
+    """Still sensor, white accelerometer and gyro noise, 'fused' output made
+    by a 0.19 s complementary filter: the fit must name 0.19 and track it."""
+    rng = np.random.default_rng(3)
+    t = np.arange(0, 120, 1 / RATE)
+    down = np.array([0.02, -0.01, -1.0]); down /= np.linalg.norm(down)
+    acc = down + rng.normal(0, 0.002, (len(t), 3))
+    gyro = rng.normal(0, np.radians(0.13), (len(t), 3))
+    v = fx.comp_filter(t, gyro, acc, down, 0.19)
+    # a rotation taking earth -z onto v, as the fused quaternion would carry
+    z = -v
+    x = np.cross([0, 1.0, 0], z); x /= np.linalg.norm(x, axis=1)[:, None]
+    y = np.cross(z, x)
+    R = np.stack([x, y, z], 2).transpose(0, 2, 1)      # rows: earth axes in sensor frame
+    assert np.allclose(fx.gravity_sensor(R), v)
+    rm = fx.rest_noise_model(t, gyro, acc, R, (0.0, 120.0))
+    assert rm["tau_s"] == 0.19
+    assert min(rm["r"]) > 0.95
+
+
+def test_the_window_fit_names_the_tau_that_made_each_stretch():
+    """Two stretches of a still sensor, the 'fused' output made at 0.19 s
+    then at 1.0 s: each window must come back near its own."""
+    rng = np.random.default_rng(4)
+    t = np.arange(0, 24, 1 / RATE)
+    down = np.array([0.0, 0.0, -1.0])
+    acc = down + rng.normal(0, 0.002, (len(t), 3))
+    gyro = rng.normal(0, np.radians(0.13), (len(t), 3))
+    half = len(t) // 2
+    v1 = fx.comp_filter(t[:half], gyro[:half], acc[:half], down, 0.19)
+    v2 = fx.comp_filter(t[half:], gyro[half:], acc[half:], v1[-1], 1.0)
+    rows = fx.tau_windows(t, gyro, acc, np.r_[v1, v2], 0.0)
+    first = [r["tau_s"] for r in rows if r["t0"] + fx.TAU_WINDOW_S <= t[half]]
+    second = [r["tau_s"] for r in rows if r["t0"] >= t[half]]
+    assert 0.15 < np.median(first) < 0.25
+    assert 0.7 < np.median(second) < 1.4
+
+
+@pytest.mark.parametrize("rate", [5.0, 20.0, 40.0])
+def test_a_sweep_cruises_at_its_rate_inside_the_travel_and_ends_at_rest(rate):
+    """The cruise is the measurement -- rotation with no angular acceleration
+    -- so it must exist and be at the rate asked; the rest is the travel."""
+    t, p = fx.sweep_profile(35.0, rate, 300.0, 2)
+    v = np.gradient(p, t)
+    a = np.gradient(v, t)
+    assert np.abs(p).max() < 35.1 < fx.SOFT_DEG
+    assert abs(p[-1]) < 0.05 and abs(v[-1]) < 0.05 * rate
+    cruise = np.abs(np.abs(v) - rate) < 1e-6
+    inner = cruise & np.roll(cruise, 2) & np.roll(cruise, -2)   # off the stencil's edges
+    assert cruise.mean() > 0.7 and np.abs(a[inner]).max() < 1.0
+    assert np.abs(a).max() < 300.0 * 1.05
+
+
+# -- the lever-arm fit, upside down and on a rattling plate ------------------
+# 2026-09-24: with the d mount turned over the fit said 58 mm from the roll
+# axis where it had said 32-35. These pin what can and cannot do that.
+
+LEVER_BELOW = [0.010, 0.008, -0.035]
+
+
+def _lever(**kw):
+    servo, ahrs, segs, *_ = _rig(lever=LEVER_BELOW, **kw)
+    return fx.analyse(servo, ahrs, segs)["lever"]
+
+
+def test_the_lever_arm_comes_back_with_the_sensor_upside_down():
+    """No gravity-sign trap: the same sensing point, sensor turned over."""
+    up, down = _lever(), _lever(flip=True)
+    for lv in (up, down):
+        assert np.linalg.norm(lv["r_m"] - LEVER_BELOW) < 0.003
+        assert lv["from_roll_axis_mm"] == pytest.approx(35.9, abs=1.0)
+
+
+def _plate_rattle(t, alpha_w):
+    """Extra acceleration along a RIG-FIXED earth axis, driven by the plate's
+    angular acceleration -- a mount rocking in its play as the roll swings."""
+    drive = 0.035 * np.linalg.norm(alpha_w, axis=1) * np.sign(alpha_w[:, 0])
+    return drive[:, None] * np.array([0.0, 1.0, 0.0])
+
+
+def test_random_rattle_costs_residual_not_the_lever_arm():
+    rng = np.random.default_rng(9)
+    lv = _lever(shake=lambda t, a: rng.normal(0, 0.10, (len(t), 3)))
+    assert lv["from_roll_axis_mm"] == pytest.approx(35.9, abs=1.5)
+    assert min(lv["resid_mg"]) > 8.0
+
+
+def test_a_rig_fixed_rattle_biases_the_fit_and_turning_over_reverses_it():
+    """The diagnostic: a phantom arm that does not turn over with the sensor
+    moves the fitted distance one way upright and the OTHER way flipped, so
+    the mean of the two is the sensing point and half the gap is the rattle."""
+    up = _lever(shake=_plate_rattle)["from_roll_axis_mm"]
+    down = _lever(flip=True, shake=_plate_rattle)["from_roll_axis_mm"]
+    assert up - 35.9 > 10 and 35.9 - down > 10
+    assert (up + down) / 2 == pytest.approx(35.9, abs=3.0)
+
+
+@pytest.mark.parametrize("cmd", ["session", "step", "chirp", "sine", "jog", "tune"])
+def test_every_command_still_defaults_to_the_roll_axis(cmd):
+    """2026-09-24: `sweep`'s set_defaults(axis="yaw") rewrote the --axis
+    default every command shares, and a whole session's roll steps and chirps
+    ran on yaw. The sweep has its own option now; this keeps it that way."""
+    ap = fx.build_parser()
+    assert ap.parse_args([cmd]).axis == "roll"
+    a = ap.parse_args(["sweep"])
+    assert a.axis == "roll" and a.sweep_axis == "yaw"
+    assert all(s.label.startswith("sweep_yaw") for s in fx.plan_sweep(a).segments
+               if s.label.startswith("sweep"))

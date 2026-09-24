@@ -385,6 +385,54 @@ def step(axis: str, to_deg: float, rate_dps: float, hold_s: float,
                 move_s=move_s, rate_dps=rate_dps)
 
 
+def sweep_profile(amp_deg: float, rate_dps: float, a_max: float, cycles: int,
+                  dt: float = 0.001):
+    """Position [deg] for constant-rate sweeps between about +-amp: start at
+    rest at 0, accelerate, cruise, reverse, ..., end at rest at 0. Every change
+    of speed is a half-cosine with peak acceleration a_max, so in the CRUISE the
+    joint turns at `rate_dps` with zero angular acceleration: rotation with
+    (almost) no acceleration at the sensor, which is the point."""
+    Ta = np.pi * rate_dps / (2 * a_max)          # 0 -> rate
+    Tr = np.pi * rate_dps / a_max                # +rate -> -rate
+    e = rate_dps * Tr / np.pi                    # a reversal's overshoot
+    da = rate_dps * Ta / 2                       # distance while accelerating
+    P = amp_deg - e                              # where reversals start
+    if P <= da:
+        raise ValueError(f"sweep at {rate_dps:g} deg/s needs more than +-{amp_deg:g} deg "
+                         f"at {a_max:g} deg/s^2")
+    pieces = []                                  # (kind, seconds)
+    pieces += [("up", Ta), ("cruise", (P - da) / rate_dps), ("rev", Tr)]
+    for c in range(cycles):
+        pieces += [("cruise", 2 * P / rate_dps), ("rev", Tr)]
+        pieces += [("cruise", 2 * P / rate_dps) if c < cycles - 1 else
+                   ("cruise", (P - da) / rate_dps), ("rev", Tr) if c < cycles - 1 else
+                   ("down", Ta)]
+    v, sign = [], 1.0
+    for kind, T in pieces:
+        tau = np.arange(0.0, T, dt)
+        if kind == "up":
+            v.append(sign * rate_dps * (1 - np.cos(np.pi * tau / T)) / 2)
+        elif kind == "down":
+            v.append(sign * rate_dps * (1 + np.cos(np.pi * tau / T)) / 2)
+        elif kind == "cruise":
+            v.append(np.full(len(tau), sign * rate_dps))
+        else:
+            v.append(sign * rate_dps * np.cos(np.pi * tau / T))
+            sign = -sign
+    v = np.concatenate(v)
+    t = np.arange(len(v) + 1) * dt
+    return t, np.concatenate([[0.0], np.cumsum(v) * dt])
+
+
+def sweep(axis: str, amp_deg: float, rate_dps: float, a_max: float, cycles: int):
+    t_p, p = sweep_profile(amp_deg, rate_dps, a_max, cycles)
+
+    def cmd(t, s):
+        return _on(axis, float(np.interp(t, t_p, p)))
+    return _seg(f"sweep_{axis}_{rate_dps:g}", float(t_p[-1]), cmd, kind="sweep",
+                axis=axis, rate_dps=rate_dps, amp_deg=amp_deg, a_max=a_max)
+
+
 def chirp_amp(f, amp_deg, a_max, rate_max):
     """Amplitude [deg] at frequency f: the asked amplitude, cut so neither the
     peak acceleration nor the peak rate exceeds its cap."""
@@ -546,7 +594,8 @@ class Plan:
 
 
 def _framed(a, body: list, brief: str) -> Plan:
-    return Plan(prologue(a) + body + [hold(5.0, "ref_end")], brief=brief)
+    end = getattr(a, "end_hold", 5.0)
+    return Plan(prologue(a) + body + [hold(end, "ref_end")], brief=brief)
 
 
 def plan_jog(a) -> Plan:
@@ -560,6 +609,41 @@ def plan_rest(a) -> Plan:
     return Plan([home(), hold(a.rest_seconds, "ref")],
                 brief="servos holding centre: the static figure WITH servo "
                       "dither and the fixture's own vibration")
+
+
+def _led(on: bool):
+    def enter(bus):
+        for dxl in IDS:
+            bus.write_raw(dxl, "LED", int(on))
+    return enter
+
+
+def plan_wiggle(a) -> Plan:
+    """Hold centre with torque on while someone works the joints by hand.
+
+    The LEDs light for exactly the hand-on window. The encoders are on the
+    output shafts, so what they see is the gear train giving way against the
+    position loop; what the AHRS sees beyond that is play between the horn
+    and the sensor -- the two halves of the lost motion, separately.
+    """
+    hands = _seg("wiggle", a.wiggle_seconds, lambda t, s: goal(0.0, 0.0), kind="hold")
+    hands.enter = _led(True)
+    after = hold(3.0, "ref_end")
+    after.enter = _led(False)
+    return Plan([home(), hold(3.0, "ref"), hands, after],
+                brief=f"hold centre; LEDs on for {a.wiggle_seconds:g} s: wiggle the "
+                      f"joints by hand while they are lit")
+
+
+def plan_sweep(a) -> Plan:
+    """Constant-rate sweeps, one per rate, a still hold between. Built to ask
+    whether ROTATION alone raises the TM151's tau: in the cruise the sensor
+    turns with ~no acceleration (yaw at 40 deg/s, 12 mm off the axis: ~0.6 mg)."""
+    segs = []
+    for r in a.sweep_rates:
+        segs += [sweep(a.sweep_axis, a.sweep_amp, r, a.sweep_accel, a.sweep_cycles), hold(5.0)]
+    return _framed(a, segs, f"{a.sweep_axis} constant-rate sweeps +-{a.sweep_amp:g} deg at "
+                            f"{a.sweep_rates} deg/s, reversals at {a.sweep_accel:g} deg/s^2")
 
 
 def plan_sine(a) -> Plan:
@@ -647,7 +731,7 @@ def plan_tune(a) -> Plan:
                       f"P {a.tune_kp} x I {a.tune_ki} x D {a.tune_kd}")
 
 
-PLANS = {"jog": plan_jog, "rest": plan_rest, "sine": plan_sine, "step": plan_step,
+PLANS = {"wiggle": plan_wiggle, "sweep": plan_sweep, "jog": plan_jog, "rest": plan_rest, "sine": plan_sine, "step": plan_step,
          "chirp": plan_chirp, "replay": plan_replay, "sway": plan_sway,
          "session": plan_session, "tune": plan_tune}
 
@@ -1116,6 +1200,302 @@ def step_response(info, tr, err):
             "settle_s": settle}
 
 
+# --------------------------------------------------------------------------
+# The encoder-free reference: the TM151's own gyro, pinned by its accelerometer
+# --------------------------------------------------------------------------
+#
+# The encoders sit on the servo OUTPUT SHAFTS. Between a shaft and the sensor
+# are the horn, its screws and a printed bracket, and on the first mounted
+# captures (2026-09-23) that chain lost 0.13-0.54 deg in the step holds and
+# up to ~2 deg under a hand wiggle -- as large as the error being measured.
+# So the headline number does not use them. In a still hold the accelerometer
+# reads gravity and nothing else, which is the plate's true tilt; between two
+# holds the raw gyro, integrated, carries it. Pinning the integration to the
+# accelerometer at BOTH ends removes its drift. What is left measures the
+# fusion filter, not the mechanism. It cannot see an error the gyro and the
+# fusion share -- the step holds check the gyro's scale against the
+# accelerometer for exactly that reason.
+
+STILL = ("ref", "settle", "hold", "rest", "ref_end", "still")
+SELFREF_PRE_S = 1.0             # hold before a segment the start is read from
+SELFREF_POST_S = (0.5, 1.5)     # window in the hold after it
+
+
+def _is_still(label: str) -> bool:
+    return label.startswith(STILL)
+
+
+def _turn(v, w, dt):
+    """A world-fixed vector in a frame turning at w [rad/s] for dt."""
+    th = np.linalg.norm(w) * dt
+    if th < 1e-12:
+        return v
+    k = -w / np.linalg.norm(w)
+    return v * np.cos(th) + np.cross(k, v) * np.sin(th) + k * (k @ v) * (1 - np.cos(th))
+
+
+def _integrate_down(t, w, v0):
+    v = np.empty((len(t), 3))
+    v[0] = v0
+    for i in range(1, len(t)):
+        v[i] = _turn(v[i - 1], 0.5 * (w[i] + w[i - 1]), t[i] - t[i - 1])
+    return v
+
+
+def _about(axis, a, b):
+    """Signed angle [deg] turning a onto b about `axis` (projected)."""
+    pa = a - (a @ axis)[..., None] * axis if a.ndim > 1 else a - (a @ axis) * axis
+    pb = b - (b @ axis)[..., None] * axis
+    return np.degrees(np.arctan2((np.cross(pa, pb) @ axis), (pb * pa).sum(-1)))
+
+
+def self_reference(t, gyro, acc, R_a, segments, u_r=None) -> dict:
+    """The fused tilt against the gyro+accelerometer reference, per motion
+    segment that has a still hold either side. `t` on the device clock (any
+    linear map of it), gyro in rad/s, acc in the vendor's g, R_a the fused
+    attitude. u_r: the roll axis in the sensor frame, for the error ABOUT it
+    and the gyro's roll rate; without it only the total tilt is reported."""
+    # Bias from EVERY still hold pooled: 1 s of hold leaves ~0.009 deg/s of
+    # noise in the mean, which a 60 s segment integrates to 0.5 deg.
+    kb = np.zeros(len(t), bool)
+    for s in segments:
+        if _is_still(s["label"]):
+            kb |= _in(t, (s["t0"], s["t1"]), trim=0.5)
+    if kb.sum() < 200 or acc is None:
+        return {}
+    bias = gyro[kb].mean(0)
+    down_f = gravity_sensor(R_a)
+    out = {"bias_from_s": float(kb.sum() * np.median(np.diff(t))),
+           "bias_dps": np.degrees(bias),
+           "segments": [], "steps": [], "series": {}}
+
+    def span(s, i):
+        pre = (s["t0"] - SELFREF_PRE_S, s["t0"])
+        post = (s["t1"] + SELFREF_POST_S[0], s["t1"] + SELFREF_POST_S[1])
+        return pre, post
+
+    def run(pre, end, post):
+        k = (t >= pre[0]) & (t <= post[1])
+        kp, kq = _in(t, pre), _in(t, post)
+        if kp.sum() < 50 or kq.sum() < 50:
+            return None
+        tt = t[k]
+        a0 = acc[kp].mean(0); a0 /= np.linalg.norm(a0)
+        a1 = acc[kq].mean(0); a1 /= np.linalg.norm(a1)
+        v = _integrate_down(tt, gyro[k] - bias, a0)
+        ve = v[tt >= post[0]].mean(0); ve /= np.linalg.norm(ve)
+        e = np.cross(ve, a1)
+        ang = float(np.arcsin(min(np.linalg.norm(e), 1.0)))
+        raw = v.copy()
+        if ang > 0:                  # pin the end, the correction growing linearly
+            ax = e / np.linalg.norm(e)
+            f = np.clip((tt - pre[1]) / (post[0] - pre[1]), 0, 1)
+            for i in np.flatnonzero(f > 0):
+                v[i] = _turn(v[i], -ax * f[i] * ang, 1.0)
+        return k, tt, v, raw, a0, a1, float(np.degrees(ang))
+
+    for i, s in enumerate(segments):
+        before = segments[i - 1]["label"] if i else ""
+        after = segments[i + 1]["label"] if i + 1 < len(segments) else ""
+        if s["label"].startswith("step_") and u_r is not None:
+            # the step segment ends in its own long hold: accelerometer vs gyro
+            k_end = (s["t1"] - 5.0, s["t1"])
+            r = run((s["t0"] - SELFREF_PRE_S, s["t0"]), None, k_end)
+            if r is None:
+                continue
+            k, tt, v, raw, a0, a1, _ = r
+            ke = tt >= k_end[0]
+            rg = raw[ke].mean(0)
+            out["steps"].append({"label": s["label"],
+                                 "accel_deg": float(_about(u_r, a0, a1[None])[0]),
+                                 "gyro_deg": float(_about(u_r, a0, rg[None])[0])})
+            continue
+        if _is_still(s["label"]) or s["label"] == "home" or not _is_still(before) \
+                or not _is_still(after):
+            continue
+        pre, post = span(s, i)
+        r = run(pre, None, post)
+        if r is None:
+            continue
+        k, tt, v, _, a0, a1, mis = r
+        f = down_f[k]
+        m = (tt >= s["t0"]) & (tt <= s["t1"])
+        # tilt error: the rotation taking the reference's down onto the fused
+        # one, less what it was in the hold before (a fixed offset between the
+        # filter and the raw accelerometer is not a dynamic error)
+        ev = np.cross(v, f)
+        pre_m = tt <= pre[1]
+        ev = ev - ev[pre_m].mean(0)
+        row = {"label": s["label"], "seconds": s["t1"] - s["t0"],
+               "tilt_rms_deg": float(np.degrees(np.sqrt((ev[m] ** 2).sum(1).mean()))),
+               "end_mismatch_deg": mis}
+        if u_r is not None:
+            er = np.degrees(ev @ u_r)
+            rate = np.degrees((gyro[k] - bias) @ u_r)
+            X = np.c_[rate[m], np.ones(m.sum())]
+            c, *_ = np.linalg.lstsq(X, er[m], rcond=None)
+            res = er[m] - X @ c
+            dt = float(np.median(np.diff(tt)))
+            row.update({"roll_rms_deg": float(_rms(er[m])),
+                        "roll_p99_deg": float(np.percentile(np.abs(er[m]), 99)),
+                        "roll_rate_rms_dps": float(_rms(rate[m])),
+                        # a pure delay makes error = lag * rate in this sign
+                        # (the synthetic rig's 20 ms comes back +20)
+                        "lag_ms": float(1e3 * c[0]),
+                        "after_lag_rms_deg": float(_rms(res)),
+                        "tau_s": acf_tau(er[m], dt)})
+            out["series"][s["label"]] = {
+                "t": tt[m] - s["t0"],
+                "ref_roll_deg": _about(u_r, a0, v[m]),
+                "fused_roll_deg": _about(u_r, f[pre_m].mean(0) / np.linalg.norm(
+                    f[pre_m].mean(0)), f[m])}
+        out["segments"].append(row)
+    st = [x for x in out["steps"] if abs(x["accel_deg"]) > 1]
+    if st:
+        a = np.array([x["accel_deg"] for x in st]); g_ = np.array([x["gyro_deg"] for x in st])
+        out["gyro_scale_roll"] = float((a * g_).sum() / (a * a).sum())
+    return out
+
+
+def repeat_difference(sa: dict, sb: dict) -> list:
+    """Two runs of the same seeded input, per segment: what does NOT repeat.
+    Errors the mechanism or the filter make deterministically cancel; the
+    reference's own difference is how far the PLATE itself moved differently."""
+    rows = []
+    for lab in sa:
+        if lab not in sb:
+            continue
+        a, b = sa[lab], sb[lab]
+        g = np.arange(0.0, min(a["t"][-1], b["t"][-1]), 0.0005)
+        ra = np.interp(g, a["t"], a["ref_roll_deg"])
+        rb = np.interp(g, b["t"], b["ref_roll_deg"])
+        n = 250
+        lags = np.arange(-200, 201)
+        cc = [ra[n:-n] @ np.roll(rb, L)[n:-n] for L in lags]
+        sh = lags[int(np.argmax(cc))] * 0.0005
+        fa = np.interp(g, a["t"], a["fused_roll_deg"])
+        fb = np.interp(g, b["t"] + sh, b["fused_roll_deg"])
+        rb = np.interp(g, b["t"] + sh, b["ref_roll_deg"])
+        sl = slice(400, -400)
+        rows.append({"label": lab, "shift_ms": 1e3 * sh,
+                     "fused_rms_deg": float(_rms((fa - fb)[sl]) / np.sqrt(2)),
+                     "ref_rms_deg": float(_rms((ra - rb)[sl]) / np.sqrt(2))})
+    return rows
+
+
+# --------------------------------------------------------------------------
+# The TM151 as a complementary filter
+# --------------------------------------------------------------------------
+#
+# Measured 2026-09-23. AT REST the fused tilt is the accelerometer's tilt
+# low-passed at tau ~0.19 s plus the integrated gyro high-passed at the same
+# tau: r 0.92 / 0.93 in roll / pitch over 10 min torque-off, no magnetometer
+# needed. IN MOTION the same filter fits best at tau 0.5-1 s -- the sensor
+# trusts its accelerometer less while moving -- and at tau 0.7, with the
+# FITTED lever arm and no free gain, it predicts the fused error's lever-arm
+# part at k 0.9-1.06: most of the dynamic error on the d = 30 mount is the
+# plate's own acceleration read as tilt. The rule that switches tau is unknown.
+
+TAU_GRID_S = (0.1, 0.15, 0.19, 0.25, 0.35, 0.5, 0.7, 1.0, 2.0)
+
+
+def comp_filter(t, gyro, acc, v0, tau, bias=0.0):
+    """Down-vector (the vendor accelerometer's sign) through a first-order
+    complementary filter: propagate with the gyro [rad/s], pull toward the
+    normalised accelerometer at 1/tau."""
+    an = acc / np.linalg.norm(acc, axis=1)[:, None]
+    w = gyro - bias
+    v = np.empty((len(t), 3))
+    v[0] = v0
+    for i in range(1, len(t)):
+        dt = t[i] - t[i - 1]
+        p = _turn(v[i - 1], 0.5 * (w[i] + w[i - 1]), dt)
+        p = p + (dt / tau) * (an[i] - p)
+        v[i] = p / np.linalg.norm(p)
+    return v
+
+
+TAU_WINDOW_S = 2.0
+TAU_WINDOW_GRID = np.array([0.1, 0.19, 0.3, 0.5, 0.7, 1.0, 2.0, 5.0])
+
+
+def tau_windows(t, gyro, acc, fused, bias, win=TAU_WINDOW_S, taus=TAU_WINDOW_GRID):
+    """tau fitted per window, each started from the fused state, beside what
+    the sensor itself could see there: mean rotation rate and mean deviation of
+    |acc| from 1 g. Measured 2026-09-23: a CONTINUUM -- 0.19 s below ~2 mg and
+    ~1 deg/s, ~1 s past ~10 mg or ~15 deg/s. On this rig rotation and
+    acceleration come together, so which one drives it is open."""
+    an = np.linalg.norm(acc, axis=1)
+    an = an / np.median(an)             # the sensor's own 1 g: its bias is a few mg
+    rows = []
+    for t0 in np.arange(t[0] + 1.0, t[-1] - win, win):
+        k = (t >= t0) & (t < t0 + win)
+        if k.sum() < 0.75 * win * 200:
+            continue
+        i0 = np.flatnonzero(k)[0]
+        cost = np.array([np.degrees(np.sqrt((np.cross(
+            comp_filter(t[k], gyro[k], acc[k], fused[i0], tau, bias), fused[k]) ** 2
+        ).sum(1).mean())) for tau in taus])
+        j = int(np.argmin(cost))
+        tau = float(taus[j])
+        if 0 < j < len(taus) - 1:            # parabola in log tau through the best three
+            x, y = np.log(taus[j - 1:j + 2]), cost[j - 1:j + 2]
+            p = np.polyfit(x, y, 2)
+            if p[0] > 0:
+                tau = float(np.exp(np.clip(-p[1] / (2 * p[0]), x[0], x[2])))
+        rows.append({"t0": float(t0), "tau_s": tau, "contrast": float(cost.max() / max(cost.min(), 1e-9)),
+                     "rate_dps": float(np.degrees(np.linalg.norm(gyro[k] - bias, axis=1)).mean()),
+                     "acc_dev_mg": float(1e3 * np.abs(an[k] - 1.0).mean())})
+    return rows
+
+
+def _lowpass1(x, dt, tau):
+    a = dt / (tau + dt)
+    y = np.empty_like(x)
+    y[0] = x[0]
+    for i in range(1, len(x)):
+        y[i] = y[i - 1] + a * (x[i] - y[i - 1])
+    return y
+
+
+def _tilt_dev(v, m):
+    """Small tilt deviations of down-vectors v from their mean m [rad], on two
+    axes perpendicular to m: minus the body rotation that produced them."""
+    e1 = np.cross(m, [1.0, 0, 0] if abs(m[0]) < 0.9 else [0, 1.0, 0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(m, e1)
+    c = np.cross(m, v)
+    return np.c_[c @ e1, c @ e2], (e1, e2)
+
+
+def rest_noise_model(t, gyro, acc, R_a, span, taus=TAU_GRID_S) -> dict:
+    """The resting fused tilt against accelerometer-through-a-low-pass plus
+    integrated-gyro-through-the-matching-high-pass, per tilt axis."""
+    k = _in(t, span, trim=1.0)
+    if k.sum() < 2000:
+        return {}
+    t, g, a, f = t[k], gyro[k], acc[k], gravity_sensor(R_a[k])
+    dt = float(np.median(np.diff(t)))
+    m = f.mean(0) / np.linalg.norm(f.mean(0))
+    F, (e1, e2) = _tilt_dev(f, m)
+    A, _ = _tilt_dev(a / np.linalg.norm(a, axis=1)[:, None], m)
+    th = -np.cumsum((g - g.mean(0)) * dt, axis=0)       # the down-vector turns the other way
+    Gi = np.c_[th @ e1, th @ e2]
+    rows = []
+    for tau in taus:
+        lp = np.c_[[_lowpass1(A[:, j], dt, tau) for j in (0, 1)]].T
+        hp = Gi - np.c_[[_lowpass1(Gi[:, j], dt, tau) for j in (0, 1)]].T
+        s = slice(int(5 * tau / dt) + 1, None)           # the filters' start-up
+        rows.append((tau, [float(np.corrcoef(F[s, j], lp[s, j] + hp[s, j])[0, 1])
+                           for j in (0, 1)],
+                     [float(np.corrcoef(F[s, j], lp[s, j])[0, 1]) for j in (0, 1)]))
+    best = max(rows, key=lambda r: sum(r[1]))
+    return {"seconds": float(t[-1] - t[0]), "fused_std_deg": np.degrees(F.std(0)),
+            "accel_std_deg": np.degrees(A.std(0)), "tau_s": best[0],
+            "r": best[1], "r_accel_only": best[2],
+            "grid": [(r[0], r[1]) for r in rows]}
+
+
 def analyse(servo: dict, ahrs: dict, segments: list) -> dict:
     """The whole analysis on plain arrays, so a synthetic rig can test it.
 
@@ -1260,6 +1640,14 @@ def analyse(servo: dict, ahrs: dict, segments: list) -> dict:
         if info.get("kind") == "step":
             row["step"] = step_response(info, tr, err_lag[mseg])
         out["segments"].append(row)
+    if acc is not None:
+        out["selfref"] = self_reference(t_s, g, acc, R_a, segments, u_r)
+        still = [s for s in segments if s["label"] in ("rest", "ref")]
+        if still:
+            longest = max(still, key=lambda s: s["t1"] - s["t0"])
+            rm = rest_noise_model(t_s, g, acc, R_a, (longest["t0"], longest["t1"]))
+            if rm:
+                out["rest_model"] = {**rm, "segment": longest["label"]}
     out["series"] = {"t": t_s, "err_lag_deg": err_lag, "err_rx_deg": err_rx,
                      "yaw_deg": dpsi_d, "roll_deg": dphi_d, "a_perp": a_perp}
     return out
@@ -1343,6 +1731,39 @@ def report(res: dict) -> list:
             L.append(f"{'':24}  final {f3(st['final_deg'])} deg, peak departure "
                      f"{st['peak_dev_deg']:.3f}, settled (< {SETTLE_DEG} deg) after "
                      f"{st['settle_s']:.2f} s")
+    L += selfref_report(res.get("selfref") or {})
+    rm = res.get("rest_model")
+    if rm:
+        L += ["", f"AT REST ({rm['segment']}, {rm['seconds']:.0f} s): fused tilt std "
+              f"{f3(rm['fused_std_deg'], 4)} deg, raw accelerometer tilt "
+              f"{f3(rm['accel_std_deg'], 3)}; best complementary filter tau "
+              f"{rm['tau_s']:.2f} s tracks it at r {rm['r'][0]:.3f} / {rm['r'][1]:.3f} "
+              f"(accelerometer alone {rm['r_accel_only'][0]:.3f} / {rm['r_accel_only'][1]:.3f})"]
+    return L
+
+
+def selfref_report(sr: dict) -> list:
+    if not sr.get("segments"):
+        return []
+    L = ["", "ENCODER-FREE: fused tilt against the TM151's own gyro, pinned by its "
+         "accelerometer in the holds either side (the mechanism is not in this)",
+         f"gyro bias from {sr['bias_from_s']:.0f} s of holds {np.round(sr['bias_dps'], 4)} deg/s"]
+    if "gyro_scale_roll" in sr:
+        L.append(f"gyro scale about the roll axis, against the accelerometer over "
+                 f"{len(sr['steps'])} step holds: {sr['gyro_scale_roll']:.4f}")
+    L.append(f"{'segment':24}{'roll rms':>9}{'p99':>7}{'rate':>6}{'lag ms':>8}"
+             f"{'rest':>7}{'tau s':>7}{'tilt rms':>9}{'pinned':>8}")
+    for r in sr["segments"]:
+        if "roll_rms_deg" in r:
+            L.append(f"{r['label'][:23]:24}{r['roll_rms_deg']:9.3f}{r['roll_p99_deg']:7.3f}"
+                     f"{r['roll_rate_rms_dps']:6.0f}{r['lag_ms']:8.1f}"
+                     f"{r['after_lag_rms_deg']:7.3f}{r['tau_s']:7.2f}"
+                     f"{r['tilt_rms_deg']:9.3f}{r['end_mismatch_deg']:8.2f}")
+        else:
+            L.append(f"{r['label'][:23]:24}{'':46}{r['tilt_rms_deg']:9.3f}"
+                     f"{r['end_mismatch_deg']:8.2f}")
+    L.append("  rest = RMS left once the lag is fitted out; pinned = the end "
+             "correction spread over the segment [deg]")
     return L
 
 
@@ -1465,6 +1886,8 @@ def cmd_analyse(a) -> int:
     print("\n".join(lines))
     (d / "report.txt").write_text("\n".join(lines) + "\n")
     summary = {k: v for k, v in res.items() if k != "series"}
+    if "selfref" in summary:
+        summary["selfref"] = {k: v for k, v in summary["selfref"].items() if k != "series"}
     (d / "analysis.json").write_text(json.dumps(summary, indent=1, default=lambda o: (
         o.tolist() if isinstance(o, np.ndarray) else float(o))) + "\n")
     if a.plot:
@@ -1473,11 +1896,120 @@ def cmd_analyse(a) -> int:
     return 0
 
 
+def cmd_filter_model(a) -> int:
+    """Fit the complementary filter to a capture IN MOTION, then ask it what
+    the lever arm contributes and what a different one would. ~5 s a pass."""
+    from aow_sim.hw.bench_log import Capture
+
+    d = Path(a.dir)
+    res = analyse_dir(d)
+    sr, u_r = res.get("selfref") or {}, (res.get("ident") or {}).get("u_roll")
+    if not sr.get("series") or u_r is None or "lever" not in res:
+        raise SystemExit("needs ident segments and moving segments with holds either side")
+    cap = Capture.load(d)
+    with np.load(d / "ahrs.npz") as z:
+        ah = {k: z[k] for k in z.files}
+    t, keep, _ = ahrs_clock(ah["t_host"], ah["t_us"])
+    t, g, acc = t[keep], ah["gyro"][keep], ah["acc_g"][keep]
+    fused = gravity_sensor(quats_to_mats(ah["quat"][keep]))
+    bias = np.radians(sr["bias_dps"])
+    th = cap.arrays["t_host"]
+    spans = {s["label"]: (th[s["start"]], th[s["stop"] - 1]) for s in cap.segments
+             if s["stop"] > s["start"]}
+    moving = [lab for lab in sr["series"] if not lab.startswith("ident")]
+
+    def seg(x, lab):
+        return float(_rms(x[_in(t, spans[lab])]))
+
+    print(f"model minus fused, roll [deg RMS]: moving = {len(moving)} segments pooled")
+    fits = {}
+    for tau in a.taus:
+        v = comp_filter(t, g, acc, fused[0], tau, bias)
+        dd = np.degrees(np.cross(fused, v) @ u_r)
+        dd -= np.median(dd)
+        fits[tau] = (float(np.sqrt(np.mean([seg(dd, lab) ** 2 for lab in moving]))), v)
+        rest = seg(dd, "rest") if "rest" in spans else float("nan")
+        print(f"  tau {tau:5.2f} s   moving {fits[tau][0]:.3f}   rest {rest:.4f}")
+    tau = min(fits, key=lambda k: fits[k][0])
+    v = fits[tau][1]
+    # The SIM's model ("tm151_filter" in sim_ahrs): the same filter with tau
+    # gated on the smoothed rotation rate. What it has to match is here.
+    from aow_sim.sim_ahrs import run_tilt_filter
+    va = run_tilt_filter(t, g - bias, acc, fused[0])
+    dd = np.degrees(np.cross(fused, va) @ u_r)
+    dd -= np.median(dd)
+    moving_a = float(np.sqrt(np.mean([seg(dd, lab) ** 2 for lab in moving])))
+    rest_a = seg(dd, "rest") if "rest" in spans else float("nan")
+    print(f"  sim_ahrs 'tm151_filter' (rate-gated)   moving {moving_a:.3f}   rest {rest_a:.4f}")
+    r_fit = res["lever"]["r_m"]
+    r_perp = r_fit - (r_fit @ u_r) * u_r
+    w5 = _ma(g - bias, 5)
+    al = np.gradient(_ma(g - bias, 9), t, axis=0)
+
+    def with_lever(dr):
+        extra = np.cross(al, dr) + np.cross(w5, np.cross(w5, dr))
+        return comp_filter(t, g, acc - extra / G_VENDOR, fused[0], tau, bias)
+
+    v0 = with_lever(-r_perp)                     # the sensing point moved onto the axis
+    pred = np.degrees(np.cross(v0, v) @ u_r)
+    L = res["lever"]["from_roll_axis_mm"]
+    print(f"\nat tau {tau:g} s: the fitted {L:.0f} mm lever arm's predicted part of the "
+          f"fused error, and how much of it is there (k = 1: all)")
+    for lab in moving:
+        s = sr["series"][lab]
+        tt = s["t"] + spans[lab][0]
+        e = s["fused_roll_deg"] - s["ref_roll_deg"]
+        p = np.interp(tt, t, pred)
+        X = np.c_[p, np.ones(len(p))]
+        c, *_ = np.linalg.lstsq(X, e, rcond=None)
+        print(f"  {lab[:23]:24} predicted {_rms(p - p.mean()):.3f}   k {c[0]:+.2f}   corr "
+              f"{np.corrcoef(p, e)[0, 1]:+.2f}   error {_rms(e - e.mean()):.3f} -> left "
+              f"{_rms(e - X @ c):.3f}")
+    rows = [r for r in tau_windows(t, g, acc, fused, bias) if r["contrast"] > 1.5]
+    print(f"\ntau per {TAU_WINDOW_S:g} s window ({len(rows)} that tell the taus apart), "
+          f"against what the sensor could see")
+    for name, key, edges in (("mean ||acc| - its median| [mg]", "acc_dev_mg", (0, 2, 5, 10, 20, 50, 1e3)),
+                             ("mean rotation rate [deg/s]", "rate_dps", (0, 1, 5, 15, 30, 60, 1e3))):
+        print(f"  {name}")
+        x = np.array([r[key] for r in rows])
+        y = np.array([r["tau_s"] for r in rows])
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            m = (x >= lo) & (x < hi)
+            if m.sum():
+                q = np.percentile(y[m], [25, 50, 75])
+                print(f"    {lo:5g} - {hi:<5g} n {m.sum():3d}   tau {q[1]:.2f} s  (p25-p75 "
+                      f"{q[0]:.2f}-{q[2]:.2f})")
+    u = r_perp / np.linalg.norm(r_perp)
+    print(f"\nthe same filter's lever-arm error at other distances from the roll axis "
+          f"(same side as now; roll deg RMS)")
+    for mm in a.lever_mm:
+        vv = with_lever(u * mm * 1e-3 - r_perp)
+        pp = np.degrees(np.cross(v0, vv) @ u_r)
+        print(f"  {mm:5.0f} mm   " + "  ".join(f"{lab[:12]} {seg(pp - np.median(pp), lab):.3f}"
+                                          for lab in moving))
+    return 0
+
+
+def cmd_repeat(a) -> int:
+    """Two captures of the same plan and seeds: the part of the fused error
+    that does not repeat, beside how differently the plate itself moved."""
+    sa, sb = (analyse_dir(d).get("selfref", {}).get("series", {}) for d in (a.a, a.b))
+    rows = repeat_difference(sa, sb)
+    if not rows:
+        raise SystemExit("no segment both captures can reference")
+    print(f"{'segment':24}{'fused':>8}{'plate':>8}{'shift ms':>10}   "
+          f"(run-to-run roll RMS / sqrt 2, deg)")
+    for r in rows:
+        print(f"{r['label'][:23]:24}{r['fused_rms_deg']:8.3f}{r['ref_rms_deg']:8.3f}"
+              f"{r['shift_ms']:10.1f}")
+    return 0
+
+
 # --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     dxl, ahrs = onboard_ports()
     bus = argparse.ArgumentParser(add_help=False)
     g = bus.add_argument_group("ports")
@@ -1501,6 +2033,9 @@ def main() -> int:
     g.add_argument("--kd", type=int, default=0, help="Position D Gain")
     g.add_argument("--ident-deg", type=float, default=15.0,
                    help="amplitude of the prologue's yaw and roll sines")
+    g.add_argument("--end-hold", type=float, default=5.0,
+                   help="closing reference hold [s]; long enough to see an "
+                        "offset recover (AHRS) or stay put (the rig moved)")
     g.add_argument("--raw-hz", type=float, default=0.0,
                    help="also poll raw_gyro_acc_mag(41) at this rate (0 = off)")
     g.add_argument("--min-qos", type=int, default=4,
@@ -1554,6 +2089,19 @@ def main() -> int:
     p = sub.add_parser("rest", parents=[cap], help="hold centre, no motion")
     p.add_argument("--seconds", dest="rest_seconds", type=float, default=300.0)
     p.add_argument("--limp", action="store_true", help="torque off throughout")
+    p = sub.add_parser("wiggle", parents=[cap],
+                       help="hold centre, LEDs on: work the backlash by hand")
+    p.add_argument("--seconds", dest="wiggle_seconds", type=float, default=20.0)
+    p = sub.add_parser("sweep", parents=[cap],
+                       help="constant-rate sweeps: rotation without acceleration")
+    # Its OWN axis option. `set_defaults(axis=...)` here would rewrite the
+    # default of the --axis action every command shares: 2026-09-24 it turned
+    # a whole `session`'s roll steps and chirps into yaw ones.
+    p.add_argument("--sweep-axis", choices=("roll", "yaw"), default="yaw")
+    p.add_argument("--sweep-rates", type=float, nargs="+", default=[5.0, 10.0, 20.0, 40.0])
+    p.add_argument("--sweep-amp", type=float, default=35.0)
+    p.add_argument("--sweep-accel", type=float, default=300.0, help="reversals [deg/s^2]")
+    p.add_argument("--sweep-cycles", type=int, default=2)
     sub.add_parser("step", parents=[cap], help="fast steps and long holds")
     sub.add_parser("chirp", parents=[cap], help="log sweeps, per-octave error")
     sub.add_parser("sine", parents=[cap], help="amplitude x frequency grid")
@@ -1574,13 +2122,30 @@ def main() -> int:
     p = sub.add_parser("analyse", help="re-run the analysis on a capture directory")
     p.add_argument("dir")
     p.add_argument("--plot", action="store_true")
+    p = sub.add_parser("filter-model",
+                       help="fit a complementary filter in motion; price the lever arm")
+    p.add_argument("dir")
+    p.add_argument("--taus", type=float, nargs="+", default=[0.19, 0.35, 0.5, 0.7, 1.0, 2.0])
+    p.add_argument("--lever-mm", type=float, nargs="+", default=[0, 30, 80, 150])
+    p = sub.add_parser("repeat", help="two captures of the same seeds: what does not repeat")
+    p.add_argument("a")
+    p.add_argument("b")
     p = sub.add_parser("export-replay", help="sim flights -> the npz `replay` reads")
     p.add_argument("--src", default=str(FALL_CAUSE_MOTION))
     p.add_argument("--out", default=str(REPLAY_FILE))
+    return ap
+
+
+def main() -> int:
+    ap = build_parser()
     a = ap.parse_args()
 
     if a.cmd == "analyse":
         return cmd_analyse(a)
+    if a.cmd == "repeat":
+        return cmd_repeat(a)
+    if a.cmd == "filter-model":
+        return cmd_filter_model(a)
     if a.cmd == "export-replay":
         return cmd_export_replay(a)
     if not a.port or not a.ahrs_port:
