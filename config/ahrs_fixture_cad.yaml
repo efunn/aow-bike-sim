@@ -1,0 +1,148 @@
+# The yaw-roll AHRS fixture's CAD numbers: the TM151's envelope and hole
+# pattern, and where the fixture puts it. Read by aow_sim.cad_ahrs_fixture
+# only -- never by the simulator. Metres, like every yaml here.
+#
+# THE TM151 FRAME used throughout, the datasheet's own sensor axes (Figure 2,
+# docs/ahrs/TransducerM_TM151_TM171_Datasheet_EN_V116-R.pdf p7):
+#   +x  along the 40 mm length, toward the pin-header edge (away from USB-C)
+#   +y  across the 34 mm width, to the left in the drawing's top view
+#   +z  out through the aluminium housing's top face
+# Origin: the ASSUMED sensing point -- the housing's centre in plan, and
+# `sensor_height` above the board's bottom face. See the note on that key.
+#
+# "dimensioned" = a number printed on the drawing. "scaled" = measured off the
+# drawing at 600 dpi (28.6 px/mm, 2026-09-23); the drawing's own dimensions
+# came back within 0.05 mm that way (40 -> 40.00, 31 -> 31.04, 26 -> 26.07,
+# 30 -> 29.96), so call a scaled number +-0.15 mm. Caliper the real part
+# before trusting any of them to less.
+
+tm151:
+  # The baseboard (PCB), 1.6 thick: 12.60 overall less the housing's 11.
+  board_length: {value: 0.040, source: dimensioned}
+  board_width: {value: 0.034, source: dimensioned}
+  board_thickness: {value: 0.0016, source: dimensioned (12.60 - 11)}
+  # The housing, on the +z side of the board.
+  housing_length: {value: 0.026, source: dimensioned}
+  housing_width: {value: 0.030, source: dimensioned}
+  housing_height: {value: 0.011, source: dimensioned}
+  # NOT centred on the board: 6.30 from the header edge, 7.63 from the USB
+  # edge, so its centre sits 0.66 toward +x.
+  housing_offset_x: {value: 0.00066, source: scaled}
+  # MOUNTING: four Phi 2.10 through the board, 31 along x by 30 across y --
+  # M2. Also off-centre along x, 4.02 from the header edge and 4.93 from the
+  # USB edge, i.e. 0.45 toward +x of the board's centre. (The housing's own
+  # four counterbored holes hold the housing to the board; they are not for
+  # mounting.)
+  hole_dia: {value: 0.0021, source: dimensioned}
+  hole_span_x: {value: 0.031, source: dimensioned}
+  hole_span_y: {value: 0.030, source: dimensioned}
+  hole_offset_x: {value: 0.00045, source: scaled}
+  # USB-C receptacle, housing side, flush with the -x edge. It is off to the
+  # -y side (right in the top view), which the cable has to live with.
+  usb_width: {value: 0.0091, source: scaled}
+  usb_length: {value: 0.0076, source: scaled}
+  usb_height: {value: 0.0034, source: scaled (side view)}
+  usb_offset_y: {value: -0.0062, source: scaled}
+  # A keep-out for the PLUG, not the part: a typical USB-C overmold is ~12.4
+  # x 6.5 and 20-30 long before the cable bends. Nothing on the fixture may
+  # sit in it. Not measured on the actual cable.
+  usb_plug_keepout: {value: [0.032, 0.013, 0.007], source: GUESS (typical overmold)}
+  # WHERE THE ACCELEROMETER IS, above the board's bottom face. The datasheet
+  # does not say. 7.1 is the housing's mid-height (1.6 + 11/2), a placeholder
+  # only: `ahrs_fixture.py analyse` fits the real lever arm from the data, so
+  # the fixture does not NEED this number -- it only sets where "0 mm" puts
+  # the housing, and a centimetre of error there is still a near-zero arm.
+  sensor_height: {value: 0.0071, source: GUESS (housing mid-height)}
+
+fixture:
+  # THE PARTS, and where they are printed from ("Z-" = the -Z side faces up
+  # on the printer). Every mount pin must point UP as printed, and nothing
+  # may overhang more than 70 deg from vertical unless it is a bridge.
+  #   yaw base      Z+  case shell (back half) on a plate, tab out to +X
+  #   yaw cover     Z-  case shell (horn half)
+  #   yaw idler     Z+  plug, arm to -X, leg up the servo's shaft end
+  #   yaw arm       Z-  horn pins; screws down into the idler leg; nut for
+  #                     the roll base's screw along X
+  #   roll base     X+  case shell (back half), leg down to the yaw arm
+  #   roll cover    X-  case shell (horn half)
+  #   roll idler    X+  plug, arm up, leg along +X over the servo
+  #   roll horn     X-  horn pins; screws into the idler leg; nut for the
+  #                     TM151 mount's screw, ON the roll axis
+  #   TM151 mount   Z+  one per offset; turned half a turn for above/below
+  #
+  # The yaw servo's far end points +X, so the U from its horn to its idler
+  # goes round the SHAFT end (9.5 mm, not 24.5), on the side the roll servo
+  # is. The roll servo's far end points down. Both centred at 180 deg.
+  #
+  # Distance from the roll axis to the sensing point for the +-d mounts.
+  # 30 to start: fast prints, prove the interfaces; the experiment wants ~70.
+  ahrs_offset: {value: 0.030, source: design}
+  # The swept roll stage must stay this far above the yaw arm's top face.
+  # The roll axis height is DERIVED from it -- never set.
+  stage_clearance: {value: 0.008, source: design}
+  # TM151 mount: the plate under the board, and how far the wall runs past
+  # the roll axis (it carries the screw, which is on the axis).
+  arm_plate: {value: 0.003, source: design}
+  mount_wall_top: {value: 0.006, source: design}
+  # Gap from the TM151 mount's wall to the board's header edge.
+  tm151_gap: {value: 0.001, source: design}
+  # Roll horn mount, horn face to its front face. Holds the nut for the
+  # on-axis screw, whose tip must stop short of the horn: 8 leaves 3.
+  horn_mount_thickness: {value: 0.008, source: design}
+  # Every screw joint: the countersunk part is this thick at the screw, the
+  # as-built crank's 4.6 -- where a 3/8" flat head reaches a nut 2 mm past
+  # the joint and ends 0.5 beyond it.
+  joint_plate: {value: 0.0046, source: design (as-built)}
+  # The U legs and idler arms: the as-built idler's Phi 11. Legs sit this far
+  # outside the case's swept corner (hypot(9.5, 10) = 13.8 from the shaft).
+  leg_width: {value: 0.011, source: design (as-built)}
+  sweep_clearance: {value: 0.001, source: design}
+  idler_arm_thickness: {value: 0.004, source: design}
+  # Yaw arm: top face above the yaw horn face, width, and how far its end
+  # boss (the X-screw's nut) reaches below the horn face.
+  yaw_arm_top: {value: 0.004, source: design}
+  yaw_arm_width: {value: 0.020, source: design}
+  yaw_boss_bottom: {value: 0.006, source: design}
+  # Yaw base: the gap under the yaw idler, the plate, its width, and the
+  # clamp tab's length. The tab runs out to +X, past the yaw servo's far end
+  # -- the plate turned half a turn about the yaw axis from where it first
+  # was (2026-09-23): the far side clamps as well, and nothing swings there.
+  base_gap: {value: 0.0015, source: design}
+  base_plate: {value: 0.004, source: design}
+  base_width: {value: 0.040, source: design}
+  tab_beyond: {value: 0.025, source: design}
+  # Four 10-32 clearance holes on the tab, in case the base gets screwed to
+  # another fixture rather than clamped. Free fit for a #10: 0.201" = 5.1.
+  # 1.5" x 1", centred on the tab beyond the shell, clear of every sweep
+  # (by the idler, a head on the plate would sit in the yaw idler's path).
+  bolt_hole_dia: {value: 0.0051, source: design (10-32 free fit)}
+  bolt_span_x: {value: 0.0381, source: design (1.5 in)}
+  bolt_span_y: {value: 0.0254, source: design (1 in)}
+  # Cable clips on the roll base, one each side: a stem out from the side
+  # and a lip back along it, a channel between lip and side, open at the
+  # top. Printed straight up from the base's bed (X+). The channel suits a
+  # Dynamixel 3-pin cable -- not measured on the actual cable.
+  cable_clip_channel: {value: 0.003, source: GUESS (3-pin cable)}
+  cable_clip_wall: {value: 0.0015, source: design}
+  cable_clip_height: {value: 0.006, source: design}
+  cable_clip_length: {value: 0.004, source: design}
+  # The 45 deg locating ridge on every screw joint, and its groove's
+  # clearance (normal to the flanks).
+  ridge_height: {value: 0.0012, source: design}
+  # ...with a FLAT top at least the screw hole wide, so the hole does not
+  # come out through a knife edge. Hole Phi 3.6 + 0.5 a side.
+  ridge_flat: {value: 0.0046, source: design}
+  ridge_clearance: {value: 0.00015, source: design}
+  # TM151 locating pins, in the board's Phi 2.10 holes. Shorter than the
+  # 1.6 board so they never stand proud of it.
+  tm151_pin_clearance: {value: 0.0002, source: design (diametral)}
+  tm151_pin_length: {value: 0.0014, source: design}
+  # Plate material outside each pin's root-relief groove (Phi 4.3, the case
+  # pins' own), so the groove is not cut through the plate's edge: three
+  # 0.4 mm perimeters. Sets the plate's width, not the board.
+  mount_rim: {value: 0.0012, source: design}
+  # Sacrificial bridging over each nut slot, as printed: one layer bridging
+  # the slot except a hole-wide strip, then one bridging that strip except
+  # the hole's square. The printer's layer height.
+  bridge_layer: {value: 0.0002, source: design (layer height)}
+  travel_deg: {value: 45.0, source: design (cable limit, both joints)}

@@ -40,7 +40,7 @@ Ranked by what unblocks the most, not by interest.
 | 2 | **Contact calibration — P0, P0b, P1, once per floor** | Needs no printing: a weight, a caliper, slow-mo, a tilting board. The contact is the least-measured thing in the sim and the one no policy has been randomised over — and the SPREAD across surfaces is what sets the randomization range | `floors-and-the-contact-model.md` |
 | 3 | **Finish the drivetrain station** | Built and characterised 2026-09-12/13: belt ratio 3.0 confirmed, a 7.5° detent in the differential, and a velocity-loop resonance at ~22 Hz at firmware P 400 that P 200 does not have. Roller slop measured by hand 2026-09-13: ±1.5 mm at the roller's 22 mm diameter, 15.6° p-p, from the same gear chain as the detent (20 detents per roller turn). `k_roller` 2.4 confirmed by counting roller turns. Open: choose the firmware Velocity P **and I** gains — a P/I grid cut time stuck at the diff detents from 49 % (factory) to 12 % at P 400 / I 3840, but P 400 rings near 22 Hz and I 3840 rings harder (peak 1.09–1.20), and the sim must model whichever ships — then a torque-scale check (D5, a known added inertia -- no lever arm needed) and fitting the five drivetrain `GUESS`es from the captures. **The sim cannot pick the gain (2026-09-14):** on the drive model fitted to these captures, policies trained at each gain tie — 3 seeds each, median 0.749 at P 100 against 0.750 at P 400, each on its own plant — but P 400 buzzes the rear wheel ~3× harder at 8–32 Hz. Decide on the physical bike, with a policy trained at the gain that ships | `drivetrain-measurements.yaml`, `drivetrain-model.md` |
 | 4 | **Umbilical bring-up on the laptop** | Verification steps 1–2 need no pack at all | `untethered-setup.md` §"Bench power" |
-| 5 | **CAD the AHRS fixture's bracket and mount, then run `session` at each height** | The software is done and proven on bare servos (2026-09-23); the one missing piece is plastic. It measures the TM151's DYNAMIC roll error -- the thing the standing falls hinge on, carried in the sim as the datasheet's "<1.5 deg" -- and prices AHRS mounting positions. Bracket requirements: roll axis INTERSECTING the yaw axis (the lever-arm fit assumes it); AHRS x along the roll axis; mount at 0, ~70 above AND ~70 below (the sign test: below the roll centre the accelerometer under-reads the lean, above it over-reads), and ~200 mm; +-45 deg per joint for the cables. Then `tune` loaded, then `session` per height | "AHRS fixture" below |
+| 5 | **Print the AHRS fixture, then run `session` at each mount** | The software is proven on bare servos, and every printed part is generated and checked (2026-09-23, `ahrs-fixture` Part Studio): nine parts, clash-free over both joints' +-45 deg with real pin holes in the envelopes, overhangs only where they are bridges, nut-slot bridging in. d = 30 first (fast prints, prove the interfaces), then ~70 for the sign test. It measures the TM151's DYNAMIC roll error -- the thing the standing falls hinge on, carried in the sim as the datasheet's "<1.5 deg". After assembly: `tune` loaded, then `session` per mount (0, below, above -- the d mount turned over) | "AHRS fixture" below |
 
 All five are bench work. **The sim-side item is being taken now:**
 
@@ -118,7 +118,7 @@ unchanged by the clip; the delay is not yet teleop-tested.
 | **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy: the yaw-roll fixture (`analysis/ahrs_fixture.py`, 2x XL330 ids 151/152) runs end to end on the Pi, **no mounted capture yet** -- next: CAD the bracket and mount ("What to do next" #5) | `sensor-workstream.md` |
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
 | **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency`. **Onboard software readied for a Pi bench session 2026-09-15** — ground station, firmware-gain writes, fourth servo, fall cut/re-arm; none of it has touched hardware | Firmware P-gain choice, torque calibration, then the chassis | `pi-bench-bringup.md`, `first-physical-test.md`, `drivetrain-measurements.yaml` |
-| **CAD** | Layout, drivetrain, steering and righting stations pinned. Electronics packing deferred on purpose | Nothing — it is being worked on | `cad-onshape-workflow.md` |
+| **CAD** | Layout, drivetrain, steering and righting stations pinned. Electronics packing deferred on purpose. The X330 idler side and the 6-32 crank/idler joint are generated features now (2026-09-23), beside the horn pin and case shell | AHRS fixture brackets, "What to do next" #5 | `cad-onshape-workflow.md` |
 | **Self-righting mechanism** | Four-bar built and operating. Its servo is modelled in current-based position mode, bus-regulated, plugging (2026-09-21); centring at hand-off recovers marginally | `righting_current` untuned; D gain and braking near zero current unmeasured | `wing-linkage-design-and-optimization.md`, `righting_servo.py` |
 
 ---
@@ -156,7 +156,7 @@ parked or reference — read that before the body.
 per session, bench versus onboard, and why each earns its bytes.
 `docs/cad/` holds generated CAD output (`.fs`, `.png`, the layout YAML) — never
 hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
-`cad_swing_linkage`.
+`cad_swing_linkage` / `cad_ahrs_fixture`.
 
 ---
 
@@ -369,7 +369,51 @@ replayed roll rate; `tune` put P 1500 / D 1000 marginally ahead (0.149 vs
 runs 0.3% fast** (200.00 Hz by its stamps, 200.61 by the Pi's): the 200.6 /
 201.4 Hz below is the sensor, not the reader. Raw(41) is not needed; it
 matches Combo at rest and can be polled without touching flash. **No dynamic
-number yet** -- next is the CAD, "What to do next" #5.
+number yet** -- next is printing the brackets, "What to do next" #5.
+
+*The fixture CAD (2026-09-23).* `python -m aow_sim.cad_ahrs_fixture` writes
+the `AHRS fixture` feature (studio `ahrs-fixture-gen`), inserted into the
+`ahrs-fixture` Part Studio: nine printed parts round the servo and TM151
+envelopes, each named with the side that prints UP (every mount pin points
+up as printed). Yaw servo far end +X, so its horn-to-idler U goes round the
+SHAFT end, on the roll servo's side; roll servo far end down, horn toward the
+TM151, which sits on the roll axis beyond the horn, centred over the yaw axis
+(the only shape where the 0 mount puts the sensing point on both axes). Both
+servos stay centred at 180: the idler U's cannot turn over, so +-d is the d
+mount turned half a turn about the roll axis -- one printed part, a screw ON
+the axis so it lands the same either way.
+
+The COVERS are full-wrap now (a new option on the `X330 case shell` feature,
+off by default there, cover half only): walls round the whole servo, the cap
+only over the far-end wrap, walls past the cap cut back at exactly 70 deg (a
+V across the shaft end) so they print cap-down; down to the back face where
+the base is not, and only to just above the cable connectors in their window
+-- the user's hand-drawn walls in wing-linkage-shorter, read back through the
+API. The BASES keep the far-end wrap: a wrapped base cannot be printed. The yaw
+base's plate runs out to +X past the yaw servo's far end (clamp there; four
+10-32 clearance holes, 1.5 x 1 in, on the tab), and the roll base carries a
+cable clip on each side, printed straight up from its bed. Lessons from the user's printing, now DEFAULTS in
+`servo_mounts.yaml`: base and cover each grip half the case (grip 2 -> 11.5),
+horn and case pins half length (2.6 -> 1.3, 3.0 -> 1.5; full-length ones
+snapped). Joints: the as-built 6-32 flat head + small-pattern nut, a 45 deg
+ridge with a hole-wide flat and tapered ends, nut slots clean through the nut
+part, and two 0.2 mm sacrificial bridging layers over each slot whose roof is
+a ceiling as printed. Bores lying horizontal as printed (the yaw arm's, the
+TM151 mount's) are teardropped; the check now finds any that are not.
+
+DERIVED: legs 23.62 from the shaft (the cover's corner + 1 -- nudged out from
+20.29 by the wrap), roll horn 32.94 from the yaw axis (TM151 centred), roll
+axis 56.10 above the yaw horn face at d = 30 -- the swept roll stage clears
+the yaw arm by 8 mm, the as-printed d mount binding. TM151 mount plate
+widened to +-18.35 so the pin reliefs keep a 1.2 rim. `--check` builds each
+mount in Onshape: one body per part and NO interference at rest or at
++-15/30/45 deg on either joint, with the envelopes carrying the real pin
+holes and idler recess so every pin, shell, horn well and plug is tested,
+not excused; a print check of every face steeper than 70 deg; and a check
+for horizontal holes left with a flat crown (shown to catch both teardropped
+bores with the teardrops switched off). What it flags is bridges only: the
+nut-slot layers, the J4 groove's flat and one blind hole end. TM151 hole pattern 4x Phi 2.10
+(M2) on 31 x 30, dimensioned; the sensing point's height is a GUESS (7.1).
 
 **PUSH IS BACK, and this time it is in flash (2026-09-16).** The Combo output
 profile was ticked from a Windows machine; the earlier attempt through the

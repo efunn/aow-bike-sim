@@ -255,6 +255,77 @@ def create_feature_studio(name: str, cfg: str = DOC_CFG) -> tuple[str, str]:
                  f"/w/{d['workspace']}/e/{eid}")
 
 
+
+def create_part_studio(name: str, cfg: str = DOC_CFG) -> tuple[str, str]:
+    """Make a new, empty Part Studio tab; return (element id, browser URL).
+    One call. The twin of `create_feature_studio`."""
+    import yaml
+    d = yaml.safe_load(Path(cfg).read_text())
+    raw, _ = _call("POST", f"/partstudios/d/{d['document']}/w/{d['workspace']}",
+                   {"name": name}, what=f"create Part Studio tab {name!r}",
+                   doc=d["document"])
+    got = json.loads(raw)
+    eid = got.get("id") or got.get("elementId")
+    if not eid:
+        raise OnshapeError(f"no element id in the reply: {sorted(got)}")
+    return eid, (f"https://cad.onshape.com/documents/{d['document']}"
+                 f"/w/{d['workspace']}/e/{eid}")
+
+
+
+def insert_custom_feature(part_studio_url: str, studio_url: str, feature_type: str,
+                          name: str, params: dict) -> dict:
+    """Insert a custom feature from a Feature Studio into a Part Studio.
+    Two calls: one to read the studio's microversion, one to insert.
+
+    `params` maps parameter id -> a length/angle EXPRESSION string ("30 mm",
+    "45 deg"), a bool, or ("enum", EnumTypeName, "VALUE") for a dialog enum
+    the studio itself defines. Query parameters are not supported -- a
+    feature that needs a pick gets inserted by hand.
+
+    THE ENCODING IS THE WHOLE TRICK. The documented `btType` JSON form is
+    rejected with a bare "Error processing json"; what works is the
+    `type` / `typeName` / `message` form that GET .../features returns, with
+    `serializationVersion` beside it. Found 2026-09-23, after the first
+    recipe (2026-08-24, recorded only as "envelope form" in the call log)
+    had been lost.
+
+    The insert reply may say ERROR even when it worked: the namespace wants
+    the studio ELEMENT's microversion, and the document microversion read
+    here is what is available in one call. Onshape re-pins it to the right
+    one on regeneration -- the fixture layout came back INFO on the next read
+    -- so read the feature state back rather than trusting the reply.
+    """
+    did, _, wid, sid = parse_url(studio_url)
+    raw, _ = _call("GET", f"/featurestudios/d/{did}/w/{wid}/e/{sid}",
+                   what="read studio microversion for a feature insert",
+                   doc=did, elem=sid)
+    mv = json.loads(raw)["sourceMicroversion"]
+    plist = []
+    ns = f"e{sid}::m{mv}"
+    for pid, v in params.items():
+        if isinstance(v, tuple) and v[0] == "enum":
+            plist.append({"type": 145, "typeName": "BTMParameterEnum",
+                          "message": {"parameterId": pid, "enumName": v[1],
+                                      "value": v[2], "namespace": ns}})
+        elif isinstance(v, bool):
+            plist.append({"type": 144, "typeName": "BTMParameterBoolean",
+                          "message": {"parameterId": pid, "value": v}})
+        else:
+            plist.append({"type": 147, "typeName": "BTMParameterQuantity",
+                          "message": {"parameterId": pid, "expression": v,
+                                      "isInteger": False, "units": "", "value": 0.0}})
+    body = {"feature": {"type": 134, "typeName": "BTMFeature", "message": {
+                "featureType": feature_type, "name": name,
+                "namespace": ns, "parameters": plist}},
+            "serializationVersion": "1.2.21", "sourceMicroversion": "",
+            "rejectMicroversionSkew": False}
+    pdid, _, pwid, peid = parse_url(part_studio_url)
+    raw, _ = _call("POST", f"/partstudios/d/{pdid}/w/{pwid}/e/{peid}/features", body,
+                   what=f"insert custom feature {feature_type!r}", doc=pdid, elem=peid)
+    return json.loads(raw)
+
+
 def shaded_view(url: str, out: Path, width: int = 1600, height: int = 1200,
                 view: str = "isometric", edges: bool = True,
                 bg: str | None = "white") -> tuple[Path, int]:
