@@ -21,6 +21,11 @@
 >   the battery order from getting started. **Start there, not at §"Power".**
 >   Verification steps 1-2 need no pack; step 5 (the LVC failsafe) is the one
 >   test a bench brick cannot stand in for.
+> - **The power path is being built up stage by stage (2026-09-24)** from parts
+>   on hand: XT30 → AC toggle → both caps at the split → servos + 5 V
+>   regulator → Pi GPIO 5 V. No fuse, diode or TVS yet. §"Build-up notes"
+>   under §"Power" holds the reasoning and the options, and corrects several
+>   firmer claims elsewhere (switch rating, XC330 voltage, the two caps).
 
 Transition from the umbilical (12 V/5 A brick, U2D2 to a laptop) to a
 self-contained bike. Decisions below; ordering can proceed in parallel with
@@ -93,11 +98,16 @@ discharge window. From the datasheets in `docs/robotis/`:
 | XC430-W150 ×2 (drive) | 6.5–14.8 V | 12.0 V | 1.4 N·m, 1.3 A | 1.6 N·m, 1.4 A |
 | XC330-T181 (steer) | 6.5–12.0 V | **11.1 V** | 0.76 N·m, 0.80 A | 0.80 N·m, 0.88 A |
 
-**Watch the XC330's 12.0 V ceiling.** A freshly charged 3S sits at 12.6 V,
-which is over it. Options: charge to ~12.3 V for testing, accept the brief
-over-voltage window near full charge, or put a small drop ahead of the steer
-servo. Decide at build time — it is not a reason to change chemistry, since
-the pack spends almost all of its life below 12 V.
+**The XC330's 12.0 V figure is not a practical ceiling (corrected
+2026-09-24).** A freshly charged 3S sits at 12.6 V, above the datasheet's
+6.5–12.0 V — but the 11.1 V "recommended" is the 3S nominal, i.e. the part is
+specced for a 3S pack. And the firmware does not act at 12.0 V: from the
+ROBOTIS control table in `docs/robotis/`, **Max Voltage Limit(32)** defaults to
+140 (14.0 V), and **Shutdown(63)** defaults to 52 = 0x34 (overload, electrical
+shock, overheating) — the input-voltage bit (0x01) is *not* set, so even past
+14.0 V it only raises an alert. Every test so far ran on a 12 V brick. No drop
+ahead of the steer servo is needed. (This paragraph used to call 12.0 V a
+ceiling to design around.)
 
 No separate rails, no dual-voltage wiring. This is the main reason the power
 system is simple.
@@ -114,9 +124,11 @@ system is simple.
 A 1300 mAh 3S gives **35–60 min** of active driving. C-rating is irrelevant at
 these currents — pick the pack on physical size and mass, not discharge spec.
 
-**Bulk capacitance is not optional.** Motor current transients on a shared
-pack will brown out the Pi. 470 µF low-ESR at the buck input and 1000 µF on
-the servo rail. This is the one electrical detail that actually bites.
+**Bulk capacitance: fit it, but know what it does.** 470 µF + 1000 µF across
+the rail. The original claim here — that servo transients on the pack will
+brown out the Pi — is weaker than it read: a LiPo sags only ~0.1–0.2 V at 4 A
+(*estimate*). Without a series diode the two caps are one bank wherever they
+sit. See §"Build-up notes" for the reasoning and the diode option.
 
 ### Charging
 
@@ -156,6 +168,128 @@ it is what lets the board→U2D2 link be an unmodified 3-pin cable.
 **Wiring diagram: [`untethered-wiring.svg`](untethered-wiring.svg)** — every
 component, both power domains, and the Pi's pin assignments on one page. It
 predates the 5 V servo branch below and does not show it.
+
+### Build-up notes — the power path as it is actually being wired (2026-09-24)
+
+> **Options and reasoning, not decisions.** The build is going up one stage at a
+> time with a test at each. This section keeps the *why* behind each choice so a
+> later question can be answered from here, and it supersedes the firmer
+> wording elsewhere in this document where the two disagree (flagged inline).
+> Numbers marked *estimate* are arithmetic, not measurements.
+
+**The path as planned, with parts on hand:**
+
+```
+XT30 ─ switch ─┬─ [470 µF] [1000 µF] ─ EH header (VDD+GND) ─ servo chain
+   (pack, or    │
+    brick lead) └─ 5 V 2 A regulator ─ Pi 5 V (GPIO pins 2/4, or a cut micro-USB lead)
+```
+
+Not in it, and why that is acceptable for a bench build: no fuse, no diode, no
+TVS/polyfuse, an AC-rated switch. Each is an option below, with what it would
+buy.
+
+**The switch sits behind the XT30, ahead of everything.** Two consequences:
+
+- Plugging the pack in is spark-free — the caps are downstream of the switch,
+  so the switch contacts take the inrush, not the connector.
+- It cuts the **Pi too**, not only the servos. Failsafe 4 (§"Failsafes") was
+  written as "servo power independent of the Pi"; this layout gives a simpler
+  all-off switch instead. The software failsafes still stop the servos with the
+  Pi alive.
+
+**The switch does not need to be DC-rated at this voltage.** The on-hand switch
+is a standard 125 V / 10 A AC toggle — the same class the ROBOTIS U2D2 Power
+Hub Board uses, and that board has run every test so far at 12 V. The DC
+arcing/welding worry is real at tens of volts or high current; at 12 V and a
+few amps the arc barely sustains. Drones have no switch at all — the connector
+*is* the switch (sometimes an anti-spark XT90-S or a MOSFET "smart switch").
+DC-rated toggles do exist (automotive/marine rockers are commonly marked
+"12V DC 20A", and many AC switch datasheets carry a DC rating too — from
+memory, not looked up), if one is ever wanted.
+
+**The two caps: without a diode they are one capacitor.** At DC, two caps on the
+same rail are in parallel. Placing them apart only matters if something with
+impedance sits between them:
+
+- On a small perfboard with a few cm of wire, they are effectively a single
+  ~1470 µF bank. **Put both across the rail right after the switch, at the
+  split**, short leads, polarity checked (a reversed electrolytic on a LiPo can
+  vent). This is the as-built plan.
+- *Option — a Schottky diode* (1N5822 — possibly already on hand from the
+  Digi-Key order, see §"Open items" — or SS34 / 1N5819 class, ≥1 A) between the split and
+  the regulator's 470 µF. That is what makes the caps genuinely separate: when
+  the servos pull the bus down, the diode stops them draining the 470 µF, so it
+  feeds only the regulator. Cost ~0.4 V, harmless against the regulator's
+  ≥6.5 V minimum and a 9.9–12.6 V pack. *Estimate* of the hold-up it would buy,
+  470 µF falling 10.7 → 6.5 V: ~5 ms for a Pi 3 at ~3 W, ~10 ms for a Zero 2 W
+  at ~1.5 W. Covers a servo current spike, not a brick fold-back (hundreds of
+  ms). Worth adding only if Pi resets show up under servo load.
+- **What the bulk cap really does on a pack is not brownout protection.** A
+  3S LiPo's internal resistance is tens of mΩ, so a 4 A draw sags it ~0.1–0.2 V
+  (*estimate*, not measured on these packs) — nowhere near 6.5 V. Its useful
+  jobs are local decoupling, and soaking up current the drive wheels push *back*
+  into the bus when braking. The pack absorbs that regen; a brick cannot sink
+  current, so on the brick the bus rises briefly. Not a servo hazard — see the
+  XC330 voltage note in §"One bus at 3S".
+
+**Pi power input: GPIO 5 V pins vs. a cut micro-USB lead.**
+
+- The micro-USB input has some protection the GPIO pins bypass — roughly a TVS
+  clamp and reverse-polarity protection, plus a polyfuse on some models (from
+  memory, not checked against the schematic of either board). It does not
+  regulate anything.
+- The GPIO pins **fit better** — the micro-USB plug exits the side of the board.
+  That, not port count, is the reason to use them. (The Zero 2 W's power
+  micro-USB is a separate port from its OTG port, so using GPIO frees nothing on
+  the Zero; the Pi 3 has USB-A ports anyway.)
+- *Option — rebuild the protection*: a ~2.5 A polyfuse in series and a 5 V TVS
+  (SMBJ5.0A class) across the rail, after the regulator. Under a dollar; makes
+  the GPIO feed equivalent to micro-USB.
+- **What it would actually guard against**, and why skipping it is ordinary —
+  microdrones skip it too:
+  - *A buck failing input-to-output short*, putting pack voltage on 5 V. Rare;
+    a fixed-output module cannot be mis-set. The cheap mitigation is to **meter
+    the regulator output with no Pi attached**, on the brick and on a pack,
+    before the first connection.
+  - *Reversed polarity*: the XT30 is keyed, so the realistic route is the
+    home-made barrel→XT30 bench lead. Meter it once, label both ends (§"Bench
+    power").
+- **2 A is enough for the Pi 3.** The official 2.5 A figure budgets for USB
+  devices powered off the Pi; every test so far ran on a 5 V 2 A wall brick
+  without a brownout. The Zero 2 W has far more margin. (2.5 A regulators do
+  exist — the Pololu D24V22F5 in *Parts to order* — but none is needed.)
+
+**The fuse is optional here.** The failure it covers is a short in the wiring —
+a solder bridge, a pinched wire, crash damage — which is the one that actually
+happens to hobby builds; a LiPo will push hundreds of amps into it. Drones
+mostly skip it and rely on thick wire and short plugged-in time. For a bench
+bike the switch is the manual cutoff. **Do not leave a pack plugged in
+unattended** without one. If added: right behind the XT30, before the split,
+7.5 A (see *Notes on the choices above*).
+
+**Where the U2D2 plugs in (minor).** What matters is not which end of the chain
+takes power, but **whether the U2D2 plugs in at the same point as the power**.
+The U2D2's ground reaches the Pi over USB, and the Pi's ground returns to the
+board through the regulator — a second ground path from wherever the U2D2 sits:
+
+- *U2D2 beside the power header* (the Power Hub Board arrangement): the second
+  path starts and ends on the same node, sees no voltage, carries no servo
+  current.
+- *U2D2 at the far end of the chain*: the second path bridges far end → board,
+  in parallel with the chain's own ground wire, and takes a share of the servo
+  return current.
+
+*Estimate* of the size: chain ground tens of mΩ vs. a few hundred mΩ through
+the USB path, so at most ~a tenth of the return current — ~0.1 A and tens of mV
+of ground offset at a stall. 5 V TTL has volts of margin. **Use whichever end is
+mechanically easier.** If bus errors ever correlate with servo load, this is a
+cheap thing to try moving.
+
+**Test order that matches the slow build-up:** meter the bench lead's polarity →
+switch + caps on the brick, meter the rail → regulator with no load, meter
+5 V → Pi alone on the regulator → servos on the rail → the pack in place of the
+brick.
 
 ### OPTIONAL, NOT BUILT — a 5 V servo domain
 
@@ -358,11 +492,11 @@ CAD pricing, DDP, so no brokerage surprise at the door.
 | what | mfr PN | qty | purpose | link |
 |---|---|---|---|---|
 | 5 V regulator | Traco **TSR 2-2450** | 2 | 3S bus → 5 V for the Pi, into GPIO pins 2/4. 1 in use, 1 spare: its failure bricks the bike | [detail](https://www.digikey.ca/en/products/detail/traco-power/TSR-2-2450/9383726) |
-| Buck input cap | Panasonic **EEU-FR1E471** | 2 | 470 µF at the regulator input. **Not** for regulator stability — the Traco needs no external caps — but to ride out pack sag from motor transients. Holds the Pi ~16 ms above the 6.5 V dropout | [detail](https://www.digikey.ca/en/products/detail/panasonic-industry/EEU-FR1E471/2433553) |
-| Servo rail cap | Panasonic **EEU-FR1E102** | 2 | 1000 µF across the servo rail, damping the transient at its source rather than riding it out downstream. The pair is deliberate, not redundant: different nodes, different jobs | [search](https://www.digikey.ca/en/products/result?keywords=EEU-FR1E102) |
+| Buck input cap | Panasonic **EEU-FR1E471** | 2 | 470 µF at the regulator input. **Not** for regulator stability — the Traco needs no external caps — but to ride out pack sag from motor transients. Holds the Pi ~16 ms above the 6.5 V dropout — **only with a series diode isolating it**; without one it is simply in parallel with the 1000 µF (§"Build-up notes" re-estimates ~5 ms for a Pi 3) | [detail](https://www.digikey.ca/en/products/detail/panasonic-industry/EEU-FR1E471/2433553) |
+| Servo rail cap | Panasonic **EEU-FR1E102** | 2 | 1000 µF across the servo rail, damping the transient at its source rather than riding it out downstream. "Different nodes, different jobs" holds only if something with impedance (a diode) separates them; on one perfboard they are one bank — see §"Build-up notes" | [search](https://www.digikey.ca/en/products/result?keywords=EEU-FR1E102) |
 | Board header | JST **B3B-EH-A** | 4 | The splitter board's two VDD/GND/DATA taps — one to the servo chain, one to the U2D2. 2 in use; spares because one always dies in a desolder | [search](https://www.digikey.ca/en/products/result?keywords=B3B-EH-A) |
 | Perfboard | 2.54 mm through-hole, ≥50×50 mm | 1 | Cut to ~25×25 mm; the Power Hub replacement | [search](https://www.digikey.ca/en/products/result?keywords=perfboard%20prototype%20board) |
-| Main switch | SPST, DC-rated ≥10 A @ 12 VDC | 1 | Failsafe 4 — kills servo power independent of the Pi | [search](https://www.digikey.ca/en/products/result?keywords=toggle%20switch%20SPST%2012VDC) |
+| Main switch | SPST, DC-rated ≥10 A @ 12 VDC | 1 | Failsafe 4 — kills servo power independent of the Pi. A standard 125 V/10 A AC toggle is what is actually used — see §"Build-up notes" | [search](https://www.digikey.ca/en/products/result?keywords=toggle%20switch%20SPST%2012VDC) |
 | Fuse holder + fuses | inline blade holder, **7.5 A** blade | 1 + 5 | Protects the 20 AWG trunk against a short or a jammed drivetrain | [search](https://www.digikey.ca/en/products/result?keywords=inline%20blade%20fuse%20holder) |
 | Trunk wire | 20 AWG silicone, red/black | ~2 m | Pack → switch → fuse → splitter board | [search](https://www.digikey.ca/en/products/result?keywords=20%20AWG%20silicone%20hook%20up%20wire) |
 | Pigtail wire | 22 AWG silicone, 3 colours | ~2 m | Servo drops and the U2D2 TTL pigtail — see the gauge note below | [search](https://www.digikey.ca/en/products/result?keywords=22%20AWG%20silicone%20hook%20up%20wire) |
@@ -499,16 +633,19 @@ on hardware, start here.**
 three-servo stall transient. 7.5 A still protects 20 AWG, whose chassis rating
 is ~11 A.
 
-**The switch must be DC-rated.** Many panel rockers are specified for AC only;
-on a 12 V inductive DC load their contacts arc and can weld closed — which
-defeats the entire point of a failsafe that cuts servo power independent of the
-Pi. Filter on a DC current rating, not just amps.
+**~~The switch must be DC-rated.~~ Overstated — corrected 2026-09-24.** DC
+arcing and contact welding matter at tens of volts or high current; at 12 V and
+a few amps an ordinary 125 V/10 A AC toggle is fine, and it is the class the
+ROBOTIS Power Hub Board ships with. See §"Build-up notes".
 
 **Feeding 5 V into GPIO pins 2/4 bypasses the Pi's input protection.** That is
-the normal way to power a Zero from a buck and it is what frees the micro-USB
-OTG port for the U2D2 — but it means the regulator's output is the only thing
-between the pack and the SoC. It is a reason to fit the 470 µF and to bench the
-rail before the Pi is ever connected to it.
+the normal way to power a Zero from a buck, and the real reason to do it is
+fit: the micro-USB plug exits the side of the board. (This used to say it
+"frees the micro-USB OTG port" — it does not: the Zero 2 W's power micro-USB is
+a separate port.) The regulator's output is then the only thing between the
+pack and the SoC, so meter the rail before the Pi is ever connected to it. The
+optional polyfuse + TVS that would restore the protection is in §"Build-up
+notes".
 
 **TM151 wiring.** From the TM151/TM171 datasheet V1.1.6 §3, pin numbers as
 printed on the baseboard:
@@ -623,8 +760,9 @@ AHRS on the GPIO UART) need no battery at all, so Digi-Key and PiShop can be
 ordered now and bring-up can begin while the packs and charger are still
 undecided.
 
-It also happens to be electrically kind: 12.0 V is dead-on the XC330's ceiling,
-so the over-voltage question does not arise on the bench at all.
+It also happens to be electrically kind: 12.0 V is dead-on the XC330's
+datasheet figure (which turns out not to be a firmware limit — §"One bus at
+3S").
 
 Three things to respect:
 
@@ -1156,7 +1294,10 @@ required before the first untethered balance attempt:
 2. **LVC** from address 144 → park and torque off below ~10.2 V (3.4 V/cell).
 3. **Fall detect.** |roll| > 60° (matching `fall_roll_deg`) → torque off, so it
    does not thrash on its side.
-4. **Physical switch** cutting servo power independently of the Pi.
+4. **Physical switch** cutting servo power independently of the Pi. As wired
+   (§"Build-up notes") the switch sits ahead of the split and cuts the Pi as
+   well — a simpler all-off switch; failsafes 1–3 still stop the servos with
+   the Pi alive.
 
 ## Onboard code layout
 
@@ -1402,7 +1543,11 @@ a fresh anchor.
   charger to 4.10 V/cell, which tops out at 12.3 V for ~5% of capacity and no
   hardware at all; or fit one of the 1N5822s in the steer servo's VDD line for
   a ~0.4 V drop. The diodes are in the Digi-Key order as insurance and are
-  expected to stay in the parts bin.
+  expected to stay in the parts bin. **Update 2026-09-24:** the firmware's
+  Max Voltage Limit defaults to 14.0 V and Shutdown does not include the
+  input-voltage bit (§"One bus at 3S"), so there is nothing to mitigate. If
+  1N5822s are on hand, their better use is the regulator-isolating diode in
+  §"Build-up notes".
 - **As-built payload mass and position** — the numbers above are estimates;
   weigh and measure at assembly, then re-run `python -m aow_sim.export_deploy`.
 - **Servo IDs** — `hw/dynamixel.py` assumes drive_a=1, drive_b=2, steer=3. Set
