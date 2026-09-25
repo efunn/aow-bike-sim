@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" font-family="Helvetica, Arial, sans-serif" font-size="12">
+  <rect width="900" height="420" fill="#ffffff"/>
+  <style>
+    .part { fill: #e8e8e8; stroke: #333; stroke-width: 1.5; }
+    .dark { fill: #555; stroke: #222; stroke-width: 1.5; }
+    .load { fill: #c9a86a; stroke: #333; stroke-width: 1.5; }
+    .wheel { fill: #9fc5b8; stroke: #333; stroke-width: 1.5; }
+    .floor { stroke: #333; stroke-width: 2; }
+    .dim { stroke: #777; stroke-width: 1; stroke-dasharray: 4 3; fill: none; }
+    .arrow { stroke: #b03030; stroke-width: 2; fill: none; marker-end: url(#ah); }
+    .lbl { fill: #222; }
+    .note { fill: #666; font-size: 11px; }
+    .title { fill: #111; font-size: 14px; font-weight: bold; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b03030"/>
+    </marker>
+  </defs>
+
+  <!-- ================= SIDE VIEW ================= -->
+  <text class="title" x="20" y="28">Side view (static mode: yaw locked, hinge free)</text>
+
+  <!-- floor -->
+  <line class="floor" x1="15" y1="330" x2="470" y2="330"/>
+  <text class="note" x="250" y="348">the floor under test</text>
+
+  <!-- base plate + feet -->
+  <rect class="part" x="30" y="312" width="190" height="12"/>
+  <rect class="dark" x="36" y="324" width="14" height="6"/>
+  <rect class="dark" x="200" y="324" width="14" height="6"/>
+  <text class="lbl" x="30" y="348">base: weighted board</text>
+
+  <!-- post with yaw bearing -->
+  <rect class="part" x="100" y="266" width="18" height="46"/>
+  <rect class="dark" x="96" y="296" width="26" height="6"/>
+  <text class="note" x="126" y="304">yaw bearing + lock pin</text>
+  <!-- XL330 encoder under/at the post -->
+  <rect class="load" x="92" y="312" width="0" height="0"/>
+
+  <!-- hinge -->
+  <circle cx="109" cy="275" r="6" fill="#fff" stroke="#333" stroke-width="2"/>
+  <text class="lbl" x="120" y="252">pitch hinge (lower is better)</text>
+  <line class="dim" x1="125" y1="256" x2="112" y2="268"/>
+
+  <!-- counterweight stub -->
+  <rect class="part" x="50" y="271" width="55" height="8"/>
+  <rect class="load" x="54" y="262" width="22" height="26"/>
+  <text class="note" x="20" y="200">optional</text>
+  <text class="note" x="20" y="213">counterweight</text>
+  <!-- drop stop screw under stub -->
+  <line x1="84" y1="312" x2="84" y2="290" stroke="#222" stroke-width="3"/>
+  <text class="note" x="20" y="372">drop stop: screw under the stub</text>
+  <line class="dim" x1="84" y1="360" x2="84" y2="314"/>
+
+  <!-- arm -->
+  <rect class="part" x="112" y="271" width="265" height="8"/>
+  <text class="lbl" x="190" y="266">arm, L = 0.40-0.50 m (light, stiff)</text>
+
+  <!-- module mount + module outline -->
+  <rect class="part" x="360" y="240" width="34" height="46"/>
+  <text class="note" x="150" y="225">rear module on its mount plate</text>
+  <text class="note" x="150" y="238">(bolts to the servo side plates)</text>
+
+  <!-- wheel -->
+  <circle class="wheel" cx="400" cy="297" r="33"/>
+  <circle cx="400" cy="297" r="3" fill="#333"/>
+
+  <!-- load tray above axle -->
+  <rect class="part" x="378" y="200" width="44" height="6"/>
+  <line x1="400" y1="206" x2="400" y2="240" stroke="#333" stroke-width="2"/>
+  <rect class="load" x="384" y="176" width="32" height="24"/>
+  <text class="lbl" x="426" y="192">load tray,</text>
+  <text class="lbl" x="426" y="206">over the axle</text>
+
+  <!-- dial indicator on its own floor stand -->
+  <rect class="dark" x="438" y="318" width="26" height="12"/>
+  <line x1="451" y1="318" x2="451" y2="236" stroke="#333" stroke-width="2"/>
+  <line x1="451" y1="236" x2="412" y2="236" stroke="#333" stroke-width="2"/>
+  <circle cx="412" cy="236" r="7" fill="#fff" stroke="#333" stroke-width="1.5"/>
+  <text class="note" x="430" y="150">dial indicator on its own</text>
+  <text class="note" x="430" y="163">floor stand, pad over the axle</text>
+
+  <!-- test direction in side view: into page -->
+  <circle cx="400" cy="330" r="5" fill="none" stroke="#b03030" stroke-width="2"/>
+  <circle cx="400" cy="330" r="1.5" fill="#b03030"/>
+  <text class="note" x="300" y="390">traction force under test points INTO the page:</text>
+  <text class="note" x="300" y="404">tangential to the arm, so it cannot tip the arm</text>
+
+  <!-- ================= TOP VIEW ================= -->
+  <text class="title" x="520" y="28">Top view: module yaw on the arm</text>
+
+  <!-- post -->
+  <circle cx="560" cy="220" r="14" class="part"/>
+  <circle cx="560" cy="220" r="4" fill="#333"/>
+  <text class="note" x="518" y="252">post: yaw axis,</text>
+  <text class="note" x="518" y="265">torque-off XL330</text>
+
+  <!-- arm -->
+  <rect class="part" x="574" y="216" width="240" height="8"/>
+
+  <!-- module at yaw 0: axle along arm, wheel plane tangential -->
+  <rect class="wheel" x="822" y="186" width="20" height="68"/>
+  <line x1="800" y1="220" x2="864" y2="220" stroke="#333" stroke-width="1.5" stroke-dasharray="3 2"/>
+  <text class="note" x="850" y="176">axle</text>
+  <path class="arrow" d="M832,258 L832,300"/>
+  <text class="lbl" x="742" y="318">yaw 0: rolling direction</text>
+  <text class="lbl" x="742" y="332">tangential (common mode)</text>
+
+  <!-- ghost module at yaw 90 -->
+  <rect x="798" y="120" width="68" height="20" fill="none" stroke="#999" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <path class="arrow" d="M832,116 L832,80" style="stroke:#999"/>
+  <text class="note" x="610" y="92">yaw 90 (dashed): roller direction</text>
+  <text class="note" x="610" y="105">tangential (diff mode); 45 mixes both</text>
+
+  <!-- boom path -->
+  <path d="M783,376 A272,272 0 0,0 783,64" fill="none" stroke="#bbb" stroke-width="1" stroke-dasharray="2 4"/>
+  <text class="note" x="600" y="395">boom mode: yaw unlocked, wheel drives this circle</text>
+</svg>

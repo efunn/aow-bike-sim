@@ -164,6 +164,12 @@ Method notes:
 
 ### P0b — Incline slide angle → the friction coefficient
 
+> **Open question (2026-09-24):** a floor does not tilt, so this test cannot
+> run on real floors as written. A PROPOSED alternative, untested, is
+> friction from the drive's own traction limit: see "F3" in the draft
+> [pre-assembly-bench-checklist.md](../plans/pre-assembly-bench-checklist.md).
+> This procedure stands until something replaces it on hardware.
+
 **The cheapest test in this document**: a board that tilts and a phone
 protractor. It calibrates `sim.friction_sliding`, and it is independent of P0
 and P1 — normal and tangential are orthogonal, so do them in either order.

@@ -132,6 +132,7 @@ parked or reference — read that before the body.
 |---|---|
 | `first-physical-test.md` | **the build order.** Which parts unlock which unknowns, in what sequence. Plus the three servo bench stations and the 09-01 bench results |
 | `untethered-setup.md` | the physical bike: power, wiring, onboard software, Pi setup, verification. The umbilical path is §"Bench power" |
+| `pre-assembly-bench-checklist.md` | DRAFT: floor-rig ideas and proposed pre-assembly experiments, nothing built or run. The rig's current state is in MuJoCo (`aow_sim.floor_rig`, `--rig` in teleop) |
 | `pi-bench-bringup.md` | **the Pi bench session**: what the four servos + TM151 + Pi 3B+ can prove without a chassis, the seven code gaps that block it, and what to measure |
 | `sensor-workstream.md` | the odometry/AHRS arc and the full policy standings — why sensor-trained policies win 1.00 to 0.20 |
 | `eval-score-rewrite.md` | how policies are SCORED, why the early numbers hid a failure, and the command-distribution audit |

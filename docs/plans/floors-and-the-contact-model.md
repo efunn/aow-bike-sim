@@ -248,6 +248,12 @@ whole lateral channel — is no longer forced to be the same material as the rea
 
 ## 5. The per-floor protocol
 
+> **Open question (2026-09-24):** the incline test below needs a board that
+> tilts, which a real floor is not. The draft
+> [pre-assembly-bench-checklist.md](pre-assembly-bench-checklist.md) proposes
+> per-floor alternatives (F1-F3, friction from the drive's traction limit).
+> They are untested; this section stands until one holds up on hardware.
+
 Per surface, three tests, all from `contact-protocol.md`. None needs printing;
 all need a weight, a caliper, a phone that shoots slow-mo, and a board that
 tilts.
