@@ -1819,7 +1819,13 @@ def build_spec(
     swing_cfg: str | Path | None = None,
     swing_linkage: bool = False,
     swing_linkage_cfg: str | Path | None = None,
+    rig: dict | None = None,
 ) -> mujoco.MjSpec:
+    """`rig`: a RESOLVED floor-rig config (see `floor_rig.resolve`). The whole
+    bike is built exactly as usual, freejoint included, and the rig's
+    yaw/tilt/roll/pitch chain is appended after everything else with its last
+    body welded to the chassis -- so every existing qpos, ctrl and sensor
+    index is unchanged."""
     p = params or load_params()
     spec = mujoco.MjSpec()
     spec.modelname = f"aow_bike_{variant}"
@@ -2067,6 +2073,11 @@ def build_spec(
     # two torque actuators, and nothing may land after them or a saved
     # policy's action indices would shift. A no-op without the overlay.
     drivetrain_model.edit_spec(spec, p)
+    # The floor rig goes after even that: its joints, actuators and sensors
+    # all land at the END, so the bike's own indices never move.
+    if rig is not None:
+        from . import floor_rig
+        floor_rig.add_chain(spec, p, rig)
 
     return spec
 
@@ -2146,11 +2157,12 @@ def build_model(
     flywheel: bool = False, flywheel_cfg: str | Path | None = None,
     swing: bool = False, swing_cfg: str | Path | None = None,
     swing_linkage: bool = False, swing_linkage_cfg: str | Path | None = None,
+    rig: dict | None = None,
 ) -> mujoco.MjModel:
     model = build_spec(params, variant, training_wheels, hockey, payload,
                       righting, wings, linkage, linkage_cfg,
                       flywheel, flywheel_cfg, swing, swing_cfg,
-                      swing_linkage, swing_linkage_cfg).compile()
+                      swing_linkage, swing_linkage_cfg, rig).compile()
     # Exactly one floor is solid and visible to start with. They are all
     # COMPILED collidable (see the note at the floor block: compiling one
     # inert prunes it permanently), so this is the reversible switch-off

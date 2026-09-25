@@ -354,6 +354,26 @@ def main() -> None:
                          "bike's response at the control rate, plus every key "
                          "press with its timestamp — review it with "
                          "`python analysis/teleop_review.py <path>`")
+    ap.add_argument("--rig", nargs="?", const="default", default=None,
+                    metavar="CONFIG",
+                    help="hold the bike in the FLOOR RIG (aow_sim.floor_rig): "
+                         "the full bike, freejoint and all, welded to a "
+                         "yaw -> tilt -> slide -> roll -> pitch chain. "
+                         "Placeholder physics -- massless rig, frictionless "
+                         "joints. CONFIG defaults to config/floor_rig.yaml, "
+                         "where each joint can be locked. The rig's pitch/roll "
+                         "motors stay at zero: the controller owns the whole "
+                         "ctrl vector. Measured 2026-09-25: the startup policy "
+                         "holds on the default rig and FALLS with the slide "
+                         "locked.")
+    ap.add_argument("--rig-mode", default=None, metavar="NAME",
+                    help="a named preset from the rig config's `modes:` "
+                         "(implies --rig)")
+    ap.add_argument("--rig-lock", default="", metavar="AXES",
+                    help="comma list of rig axes to lock (yaw, tilt, slide, "
+                         "roll, pitch); applied after --rig-mode. Implies --rig")
+    ap.add_argument("--rig-free", default="", metavar="AXES",
+                    help="comma list of rig axes to free; applied last")
     ap.add_argument("--hockey", action="store_true",
                     help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
     ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171",
@@ -569,6 +589,15 @@ def main() -> None:
                 "from --drivetrain" if args.drivetrain or args.drivetrain_without
                 else f"from {startup}'s training record" if record
                 else "from config/drivetrain_model.yaml (--servo-gains)")
+    rig_cfg = None
+    if args.rig or args.rig_mode or args.rig_lock or args.rig_free:
+        from .floor_rig import apply_mode, describe_rig, load_rig_cfg, resolve
+        axes = lambda s: [a.strip() for a in s.split(",") if a.strip()]
+        rig_cfg = apply_mode(
+            load_rig_cfg(None if args.rig in (None, "default") else args.rig),
+            args.rig_mode, lock=axes(args.rig_lock), free=axes(args.rig_free))
+        rig_cfg = resolve(rig_cfg, params)
+        print(describe_rig(rig_cfg))
     build_kw = dict(variant="full", hockey=args.hockey,
                     righting=(args.wings or args.linkage or args.swing
                               or args.swing_linkage),
@@ -579,9 +608,11 @@ def main() -> None:
                                        else None),
                     linkage=args.linkage,
                     linkage_cfg=args.linkage_config)
-    model = build_model(params, **build_kw)
+    model = build_model(params, rig=rig_cfg, **build_kw)
     design = None
-    if "drivetrain_model" in params:
+    # On the floor rig too: the LQR identifies the plant by driving it, and
+    # that must be the FREE bike, not the bike held by the rig.
+    if "drivetrain_model" in params or rig_cfg is not None:
         # The analytic LQR identifies the plant by driving the native drive
         # actuators, which the detailed drivetrain turns into command holders.
         # So design on the ideal plant -- same mechanisms, same floors -- and
@@ -618,7 +649,8 @@ def main() -> None:
                 odometry_encoder=args.odometry_encoder, ahrs=args.ahrs,
                 ahrs_tau=args.ahrs_tau, design=design,
                 drivetrain_base=drivetrain_base, servo_gains=servo_gains,
-                drivetrain_source=drivetrain_source, start_lqr=args.lqr)
+                drivetrain_source=drivetrain_source, start_lqr=args.lqr,
+                rig=rig_cfg)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -2327,7 +2359,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
             ahrs="none", ahrs_tau=None, design=None, drivetrain_base=None,
             servo_gains=None, drivetrain_source="", frame_stats=None,
-            start_lqr=False):
+            start_lqr=False, rig=None):
     from .interactive import FrameStats, teleop_loop
 
     from . import policy_menu
@@ -2467,6 +2499,14 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         viewer's own reset produces the pose we want. There is nothing left to
         race: the first frame after backspace is already correct.
         """
+        if rig is not None:
+            # On the floor rig the dial's heading is the ARM's yaw: the whole
+            # rig swings round its yaw axis and the chassis goes where the rig
+            # then holds it. Turning the chassis alone would leave the weld
+            # hundreds of mm out and the solver resetting itself every step.
+            from .floor_rig import qpos_for
+            m.qpos0[:] = qpos_for(m, heading, base=qpos0_base)
+            return
         m.qpos0[:7] = qpos0_base[:7]
         q = np.array([np.cos(heading / 2), 0.0, 0.0, np.sin(heading / 2)])
         n = floor_normal_of(m, floor_idx)
@@ -3060,18 +3100,23 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         slope those differ by the tilt angle, and that difference is the
         disturbance the policy has to reject.
         """
-        q = np.array([np.cos(heading / 2), 0.0, 0.0, np.sin(heading / 2)])
-        n = floor_normal_of(m, floor_idx)
-        if float(np.linalg.norm(n[:2])) > 1e-9:
-            ang = float(np.arccos(float(np.clip(n[2], -1.0, 1.0))))
-            axis = np.array([-n[1], n[0], 0.0])
-            axis /= np.linalg.norm(axis)
-            q_tilt = np.array([np.cos(ang / 2), *(np.sin(ang / 2) * axis)])
-            out = np.zeros(4)
-            mujoco.mju_mulQuat(out, q_tilt, q)   # yaw first, then lie down
-            q = out
-            d.qpos[2] += float(d.qpos[2]) * (1.0 / max(np.cos(ang), 1e-6) - 1.0)
-        d.qpos[3:7] = q
+        if rig is not None:
+            # The rig and the chassis move TOGETHER: heading = arm yaw.
+            from .floor_rig import place
+            place(m, d, heading)
+        else:
+            q = np.array([np.cos(heading / 2), 0.0, 0.0, np.sin(heading / 2)])
+            n = floor_normal_of(m, floor_idx)
+            if float(np.linalg.norm(n[:2])) > 1e-9:
+                ang = float(np.arccos(float(np.clip(n[2], -1.0, 1.0))))
+                axis = np.array([-n[1], n[0], 0.0])
+                axis /= np.linalg.norm(axis)
+                q_tilt = np.array([np.cos(ang / 2), *(np.sin(ang / 2) * axis)])
+                out = np.zeros(4)
+                mujoco.mju_mulQuat(out, q_tilt, q)   # yaw first, then lie down
+                q = out
+                d.qpos[2] += float(d.qpos[2]) * (1.0 / max(np.cos(ang), 1e-6) - 1.0)
+            d.qpos[3:7] = q
         # The wing latch is PYTHON state and survives mj_resetData: the reset
         # stows the joint and zeros d.ctrl, but `wing["cmd"]`/`["target"]` are a
         # dict in this closure and still hold wherever the operator left the
@@ -3170,8 +3215,13 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 elif k == ord("5"):
                     spawn["heading"] = 0.0
                 elif k in _KEYS_SLOWER + _KEYS_FASTER:  # - / = preview a tilt
-                    spawn["floor"] = show_floor(m, spawn["floor"]
-                                                + (-1 if k in _KEYS_SLOWER else 1))
+                    if rig is not None:
+                        # The rig stands on the level floor; a tilted one
+                        # would put the contacts off the roll axis.
+                        print("  floor tilt is off on the floor rig")
+                    else:
+                        spawn["floor"] = show_floor(
+                            m, spawn["floor"] + (-1 if k in _KEYS_SLOWER else 1))
                 elif k == 259:                          # BACKSPACE commits
                     # Deferred to `step`: the viewer runs its OWN reset on
                     # backspace and there is no way to tell whether that lands
@@ -3220,8 +3270,10 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 spawn["open"] = True
                 paused[0] = True
                 spawn["floor"] = collidable_floor_index(m)
-                print("PAUSED - spawn dial: arrows / 6 7 8 heading, "
-                      "- = preview floor tilt, BACKSPACE respawn, ENTER resume")
+                print("PAUSED - spawn dial: arrows / 6 7 8 heading"
+                      + (" (= the rig arm's yaw)" if rig is not None
+                         else ", - = preview floor tilt")
+                      + ", BACKSPACE respawn, ENTER resume")
                 continue
             # -- the policy menu owns the keyboard while it is open ---------
             # Deliberately swallowing everything, not just the keys it uses:
@@ -3481,6 +3533,9 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             with odo.estimated(d, m.opt.timestep):
                 c.step(m, d)
         wing_step(m, d)         # after c.step: it rewrites the whole ctrl vector
+        if rig is not None:     # likewise: the rig motors' setpoints
+            from .floor_rig import motor_step
+            motor_step(m, d, rig)
         if rec is not None:
             _rec_sample(rec, m, d, c, state, gen_name[0], params)
 

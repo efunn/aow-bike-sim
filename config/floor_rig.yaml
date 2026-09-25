@@ -1,0 +1,94 @@
+# The floor rig, as a MuJoCo model: the FULL bike (whatever build_model builds
+# today) hung from a yaw -> tilt -> roll -> pitch chain instead of a freejoint.
+#
+#   python -m aow_sim.floor_rig --png runs/floor_rig_smoke.png   # render a look
+#   mjpython -m aow_sim.floor_rig --view                         # interactive
+#
+# Plan: docs/plans/pre-assembly-bench-checklist.md, "Rig 1 -- the floor arm".
+#
+# PLACEHOLDER PHYSICS, deliberately: every rig part is massless (1 mg, the
+# smallest MuJoCo accepts on a moving body) and every joint is perfect -- no
+# friction, no damping, no play. Fill these in once the rig is built and
+# commissioned (C4 hinge repeatability, C7 yaw drag).
+#
+# Frame: the bike's world frame. Rear contact at the origin, +x forward, z up,
+# floor at z = 0. Front contact at (wheelbase, 0, 0).
+
+# Each joint: `free`, or `locked` (the joint is simply not created, so it is
+# perfectly rigid). Tilt locked + rear wheel alone = fixed-height support, the
+# pitch motor then sets the rear load ("fake weight"). Tilt free = the arm
+# carries no vertical force and both contacts carry the weight.
+# Slide: fore/aft along the arm. Locked, the bike cannot roll forward or back
+# and a forward command only scrubs the wheels -- which also takes away
+# balancing by steering, since that needs the wheels to roll.
+joints:
+  yaw: free
+  tilt: free
+  slide: free
+  roll: free
+  pitch: free
+
+# Slide end stops, [back, forward] in m from the start; null = unlimited.
+# +-0.06 is the physical slide. A hold-station policy drifts ~0.3 m in 8 s on
+# an unlimited rig (measured 2026-09-25), so expect it to meet these.
+slide_range_m: [-0.06, 0.06]
+
+# Roll stops: two skids on the roll member that REALLY touch the floor, so a
+# fall ends on a skid instead of the bike rolling on through the floor.
+# `deg` is the roll angle at which they land (training episodes end at 60).
+roll_stop:
+  deg: 45
+  limit_margin_deg: 10      # roll joint limit this far past the landing angle
+  halfspan_m: 0.10          # skid centres, either side of the roll axis
+  radius_m: 0.01
+
+# Rig motor torques [N m], held every step AFTER the bike's controller (which
+# owns the rest of ctrl). Clipped to the motors' +-stall. Scaffolding: a mode
+# sets these; nothing drives them from the keyboard yet.
+motors:
+  roll: 0.0
+  pitch: 0.0
+
+# Named presets for `--rig-mode NAME`. Each may override `joints`, `motors`
+# or any top-level key; `--rig-lock` / `--rig-free` apply on top.
+modes:
+  free: {}
+  no_slide:                 # the bike cannot roll fore/aft (policies fall)
+    joints: {slide: locked}
+  fake_weight:              # rear wheel on a fixed-height support: the pitch
+    joints: {tilt: locked}  #   motor sets the rear load
+    motors: {pitch: 0.2}
+  pinned_yaw:               # heading held by the rig
+    joints: {yaw: locked}
+
+# Hinge ranges, [min, max] in degrees; null = unlimited. The head's tilt
+# travel in particular must be limited: unlimited, a driven bike levers the arm
+# over the head. Yaw: the physical 180 deg workspace would be [-90, 90].
+yaw_range_deg: null
+tilt_range_deg: [-15, 15]
+pitch_range_deg: [-30, 30]
+
+yaw_distance_m: 0.50        # yaw axis, ahead of the rear contact
+tilt_height_m: 0.10         # tilt axis (the head), above the floor at the yaw axis
+roll_height_m: 0.0          # roll axis above the floor, on the line through both
+                            #   contacts -- 0 is the ideal the eggbeater approximates
+# The actuated pitch axis, at a FAKE CoG. `com` = the bike's own CoG at the
+# reference pose, recomputed on every build so a bike change moves it too.
+# Or [ahead_m, up_m] to place it by hand.
+fake_cog: com
+
+# Each rig joint gets this fraction of the BIKE'S OWN inertia about that axis
+# as armature (no mass, no weight). Below ~1 % every constraint that closes
+# through the rig -- the weld, a stop, a locked joint -- goes soft and yields
+# (see floor_rig.RIG_ARMATURE). The cost is 1 % extra inertia per axis.
+armature_frac: 0.01
+
+# Torque motors on the instrumented axes: placeholder XC330s, +-stall_torque
+# (servos.xc330_t181) with no servo model behind them yet.
+actuators:
+  roll: true
+  pitch: true
+
+# Visual only -- no mass, no contact.
+front_support_ahead_m: 0.09 # roll bearing, this far ahead of the front contact
+yoke_half_width_m: 0.07     # roll yoke / pitch stubs, either side of the bike
