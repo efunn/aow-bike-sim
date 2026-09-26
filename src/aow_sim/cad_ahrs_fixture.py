@@ -272,38 +272,10 @@ def _servo_mount_layer(data: dict, fs_version: str) -> str:
                      if not l.startswith(("FeatureScript ", "import(")))
 
 
-FS = r'''FeatureScript %VERSION%;
-import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
-
-/* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_ahrs_fixture --push fixture_features
- *
- * Numbers from config/ahrs_fixture_cad.yaml, config/servo_mounts.yaml and
- * bike_params_cad.yaml. Millimetres.
- *
- * WORLD FRAME: origin on the yaw horn's outer face, on the yaw axis; +Z up
- * the yaw axis; +X along the roll axis, from the roll servo toward the TM151.
- */
-
-%TM151%
-
-%X330%
-
-%FIXTURE%
-
-%HORN_OPT%
-
-%CASE_OPT%
-
-%IDLER_OPT%
-
-%SCREW_OPT%
-
-// ---- the servo-mount geometry, copied from the horn-mount-gen studio ----
-%SERVO_MOUNT%
-// ---- end of the copy ----
-
-/** A box between two corners given in `cs`. One body, created by `id`. */
+# The fixture-agnostic FeatureScript: primitives, part lookup, naming, the
+# screw joint with its ridge, and the X330 envelope. Shared with
+# cad_x330_fixture, whose FIXTURE map must carry the joint/ridge/bridge keys.
+FS_HELPERS = r'''/** A box between two corners given in `cs`. One body, created by `id`. */
 export function boxIn(context is Context, id is Id, cs is CoordSystem,
                       lo is Vector, hi is Vector) returns Query
 {
@@ -572,6 +544,41 @@ export function x330Envelope(context is Context, id is Id, cs is CoordSystem) re
     return { "caseQ" : caseBody, "horn" : horn };
 }
 
+'''
+
+
+FS = r'''FeatureScript %VERSION%;
+import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
+
+/* GENERATED, do not hand-edit: the next push overwrites the whole studio.
+ *   python -m aow_sim.cad_ahrs_fixture --push fixture_features
+ *
+ * Numbers from config/ahrs_fixture_cad.yaml, config/servo_mounts.yaml and
+ * bike_params_cad.yaml. Millimetres.
+ *
+ * WORLD FRAME: origin on the yaw horn's outer face, on the yaw axis; +Z up
+ * the yaw axis; +X along the roll axis, from the roll servo toward the TM151.
+ */
+
+%TM151%
+
+%X330%
+
+%FIXTURE%
+
+%HORN_OPT%
+
+%CASE_OPT%
+
+%IDLER_OPT%
+
+%SCREW_OPT%
+
+// ---- the servo-mount geometry, copied from the horn-mount-gen studio ----
+%SERVO_MOUNT%
+// ---- end of the copy ----
+
+%HELPERS%
 /**
  * The TM151 about its SENSOR FRAME (the datasheet's axes; origin the assumed
  * sensing point, `s` above the board's bottom face): board with its four
@@ -1030,6 +1037,7 @@ def build_fs(data: dict, fs_version: str = "3044") -> str:
         "%IDLER_OPT%": _fs_map("IDLER_OPT", pick(sm.IDLER_DIALOG)),
         "%SCREW_OPT%": _fs_map("SCREW_OPT", data["screw"]),
         "%SERVO_MOUNT%": _servo_mount_layer(data, fs_version),
+        "%HELPERS%": FS_HELPERS.rstrip("\n") + "\n",
         # the TM151 pins reuse the horn/case pin profiles; the FeatureScript
         # binds pinR, pinL, tipCh, relD, relW and relCh before reading them
         "%PIN_POLY%": sm._fs_poly(sm.pin_profile()),
@@ -1062,6 +1070,7 @@ def check_wrapper(fs: str, data: dict, configs) -> str:
            f'"drawGhosts" : false, "drawKeepout" : true }}')
     poses = "[" + ", ".join(str(a) for a in POSES) + "]"
     cfgs = "[" + ", ".join(f'"{c}"' for c in configs) + "]"
+    PRINT_CHECK = PRINT_CHECK_FS
     return f"""function(context is Context, queries)
 {{
 {sm.geometry_layer(fs, SPLIT_MARK)}
@@ -1117,32 +1126,42 @@ def check_wrapper(fs: str, data: dict, configs) -> str:
                 "transform" : rotationAround(r.rollAxis, -a * degree) }});
         k += 1;
     }}
-    // print check: planar faces facing within 20 deg of straight down and
+{PRINT_CHECK}    opDeleteBodies(context, id + "clear", {{ "entities" : qCreatedBy(id, EntityType.BODY) }});
+    }}
+    return "ran to completion";
+}}
+"""
+
+
+# The print check, run over `r.prints` ([name, query, up vector] per part):
+# downward faces above the bed, flat-crowned horizontal holes, and level
+# edges hanging in the air. Shared with cad_x330_fixture.
+PRINT_CHECK_FS = r'''    // print check: planar faces facing within 20 deg of straight down and
     // above the bed overhang past 70 deg -- bridges, or faults
     for (var pr in r.prints)
-    {{
+    {
         const bodies = evaluateQuery(context, pr[1]);
         println("PART|" ~ pr[0] ~ "|" ~ toString(size(bodies)));
         if (size(bodies) != 1)
             continue;
         const upv = pr[2];
         const cs = coordSystem(vector(0, 0, 0) * meter, perpendicularVector(upv), upv);
-        const bed = evBox3d(context, {{ "topology" : bodies[0], "cSys" : cs, "tight" : true }}).minCorner[2];
+        const bed = evBox3d(context, { "topology" : bodies[0], "cSys" : cs, "tight" : true }).minCorner[2];
         var bedArea = 0 * meter * meter;
         // (and cones: the full-wrap cover's end-wall edge is one, whose
         // normal makes the same angle with the axis all round)
         for (var fc in evaluateQuery(context, qUnion([
                 qGeometry(qOwnedByBody(bodies[0], EntityType.FACE), GeometryType.PLANE),
                 qGeometry(qOwnedByBody(bodies[0], EntityType.FACE), GeometryType.CONE)])))
-        {{
-            const pl = evFaceTangentPlane(context, {{ "face" : fc, "parameter" : vector(0.5, 0.5) }});
+        {
+            const pl = evFaceTangentPlane(context, { "face" : fc, "parameter" : vector(0.5, 0.5) });
             // strictly past 70 deg: a face AT the limit (the shells' slopes
             // are cut exactly there) is allowed
             if (-dot(pl.normal, upv) < cos(19.5 * degree))
                 continue;
-            const fb = evBox3d(context, {{ "topology" : fc, "tight" : true }});
-            const h = evBox3d(context, {{ "topology" : fc, "cSys" : cs, "tight" : true }}).minCorner[2] - bed;
-            const ar = evArea(context, {{ "entities" : fc }});
+            const fb = evBox3d(context, { "topology" : fc, "tight" : true });
+            const h = evBox3d(context, { "topology" : fc, "cSys" : cs, "tight" : true }).minCorner[2] - bed;
+            const ar = evArea(context, { "entities" : fc });
             if (h < 0.01 * millimeter)
                 bedArea += ar;
             else
@@ -1151,17 +1170,17 @@ def check_wrapper(fs: str, data: dict, configs) -> str:
                         ~ toString(roundToPrecision((fb.minCorner[0] + fb.maxCorner[0]) / 2 / millimeter, 1)) ~ ","
                         ~ toString(roundToPrecision((fb.minCorner[1] + fb.maxCorner[1]) / 2 / millimeter, 1)) ~ ","
                         ~ toString(roundToPrecision((fb.minCorner[2] + fb.maxCorner[2]) / 2 / millimeter, 1)));
-        }}
+        }
         // horizontal bores whose surface still reaches its crown: a flat
         // roof as printed, wanting a teardrop. Teardropped ones stop at 45.
         for (var fc in evaluateQuery(context, qGeometry(qOwnedByBody(bodies[0], EntityType.FACE),
                                                         GeometryType.CYLINDER)))
-        {{
-            const cyl = evSurfaceDefinition(context, {{ "face" : fc }});
+        {
+            const cyl = evSurfaceDefinition(context, { "face" : fc });
             if (cyl.radius < 1 * millimeter || abs(dot(cyl.coordSystem.zAxis, upv)) > 0.1)
                 continue;
             const axisH = dot(cyl.coordSystem.origin, upv);
-            const top = evBox3d(context, {{ "topology" : fc, "cSys" : cs, "tight" : true }}).maxCorner[2];
+            const top = evBox3d(context, { "topology" : fc, "cSys" : cs, "tight" : true }).maxCorner[2];
             // concave (a hole) if the part is not on the far side: test the
             // point just above the crown -- empty for a hole
             const crown = cyl.coordSystem.origin + (cyl.radius + 0.05 * millimeter) * upv;
@@ -1171,7 +1190,7 @@ def check_wrapper(fs: str, data: dict, configs) -> str:
                         ~ toString(roundToPrecision(cyl.coordSystem.origin[0] / millimeter, 1)) ~ ","
                         ~ toString(roundToPrecision(cyl.coordSystem.origin[1] / millimeter, 1)) ~ ","
                         ~ toString(roundToPrecision(cyl.coordSystem.origin[2] / millimeter, 1)));
-        }}
+        }
         // hanging edges: straight, within 19.5 deg of level, convex, and
         // both faces leave it UPWARD -- its first layer is a line printed
         // onto nothing. The face check cannot see one when both faces are
@@ -1182,20 +1201,20 @@ def check_wrapper(fs: str, data: dict, configs) -> str:
         const lim = cos(19.5 * degree);
         for (var ed in evaluateQuery(context, qGeometry(qOwnedByBody(bodies[0], EntityType.EDGE),
                                                         GeometryType.LINE)))
-        {{
-            const tl = evEdgeTangentLine(context, {{ "edge" : ed, "parameter" : 0.5 }});
+        {
+            const tl = evEdgeTangentLine(context, { "edge" : ed, "parameter" : 0.5 });
             if (abs(dot(tl.direction, upv)) > sin(19.5 * degree))
                 continue;
-            const eb = evBox3d(context, {{ "topology" : ed, "cSys" : cs, "tight" : true }});
+            const eb = evBox3d(context, { "topology" : ed, "cSys" : cs, "tight" : true });
             if (eb.minCorner[2] - bed < 0.01 * millimeter)
                 continue;
-            if (evEdgeConvexity(context, {{ "edge" : ed }}) != EdgeConvexityType.CONVEX)
+            if (evEdgeConvexity(context, { "edge" : ed }) != EdgeConvexityType.CONVEX)
                 continue;
             const fcs = evaluateQuery(context, qAdjacent(ed, AdjacencyType.EDGE, EntityType.FACE));
             if (size(fcs) != 2)
                 continue;
-            const n0 = evFaceNormalAtEdge(context, {{ "edge" : ed, "face" : fcs[0], "parameter" : 0.5 }});
-            const n1 = evFaceNormalAtEdge(context, {{ "edge" : ed, "face" : fcs[1], "parameter" : 0.5 }});
+            const n0 = evFaceNormalAtEdge(context, { "edge" : ed, "face" : fcs[0], "parameter" : 0.5 });
+            const n1 = evFaceNormalAtEdge(context, { "edge" : ed, "face" : fcs[1], "parameter" : 0.5 });
             if (-dot(n0, upv) >= lim || -dot(n1, upv) >= lim)
                 continue;
             // into each face, away from the edge: behind the other's normal
@@ -1206,22 +1225,18 @@ def check_wrapper(fs: str, data: dict, configs) -> str:
             if (dot(t1, n0) > 0)
                 t1 = -t1;
             if (dot(t0, upv) > -0.02 && dot(t1, upv) > -0.02)
-            {{
-                const wb = evBox3d(context, {{ "topology" : ed, "tight" : true }});
-                println("HANG|" ~ pr[0] ~ "|" ~ toString(roundToPrecision(evLength(context, {{ "entities" : ed }}) / millimeter, 2))
+            {
+                const wb = evBox3d(context, { "topology" : ed, "tight" : true });
+                println("HANG|" ~ pr[0] ~ "|" ~ toString(roundToPrecision(evLength(context, { "entities" : ed }) / millimeter, 2))
                         ~ "|" ~ toString(roundToPrecision((eb.minCorner[2] - bed) / millimeter, 2)) ~ "|"
                         ~ toString(roundToPrecision((wb.minCorner[0] + wb.maxCorner[0]) / 2 / millimeter, 1)) ~ ","
                         ~ toString(roundToPrecision((wb.minCorner[1] + wb.maxCorner[1]) / 2 / millimeter, 1)) ~ ","
                         ~ toString(roundToPrecision((wb.minCorner[2] + wb.maxCorner[2]) / 2 / millimeter, 1)));
-            }}
-        }}
+            }
+        }
         println("BED|" ~ pr[0] ~ "|" ~ toString(bedArea / (millimeter * millimeter)));
-    }}
-    opDeleteBodies(context, id + "clear", {{ "entities" : qCreatedBy(id, EntityType.BODY) }});
-    }}
-    return "ran to completion";
-}}
-"""
+    }
+'''
 
 
 HARDWARE = ("yaw X330 case", "yaw X330 horn", "roll X330 case", "roll X330 horn",
