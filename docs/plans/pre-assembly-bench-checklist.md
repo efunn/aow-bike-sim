@@ -615,6 +615,50 @@ Worked through against the tests above:
     - Checked in Onshape, both in one call: no interference short of each
       stop, 1 deg past it only the stop parts touch, the lever balances,
       print check clean bar expected bridges.
+  - **First load runs, 2026-09-25** (`analysis/servo_lift.py`, id 103 on
+    the Pi, IDLER printed; captures in `traces/servo_lift/`):
+    - Lever alone (`..._noload`): every try moved from 25 mA and held up to
+      20 mA, both directions, 2 of 2 -- the bare servo's result exactly, so
+      the idler, yoke and lever add nothing at 5 mA resolution. Measured.
+    - Torque OFF, by hand (user): 34 g at 15-25 mm back-drives it, i.e.
+      5-8 mN m of static friction at the output, "not perfectly repeatable,
+      feels like gear phase". Far under the 0.13 N m the sqrt law makes of
+      `servo_friction_ma: 22`, so that key is too high as a friction.
+    - 117 g at 44 mm: NO DATA. The first attempt's pre-lift check (3 deg,
+      against the 3.3 deg P 700 droops under that load) aborted, and the
+      abort path turned torque off with the load level: it fell 45 deg onto
+      the stop and the four horn pins sheared, "as usual". The next run's
+      capture is of a horn turning under a lever it no longer carried.
+      Every exit now lowers the load before torque off, there is no
+      torque-off phase, and a start with torque already on is refused.
+  - **Redesign after the shear (user, 2026-09-25)**: the horn attach is its
+    own small part, the HUB -- well, pins, and a hex pocket for the 6-32
+    nut on the horn side, a 30 deg flanked groove across its outer face;
+    the lever carries the matching blade and a counterbored countersink
+    for a 6-32 x 3/8 flat head (tip 0.5 short of the horn face, whole nut
+    engaged). The blade went on the lever, not the hub as asked: the hub
+    prints well-up, which puts a blade on the bed in mid-air. The lever
+    now sits 6.0-12.0 mm off the horn face (was ~1-7).
+    - Horn attach, fixture-only overrides: no root relief (the pins broke
+      where its chamfer ended), well Phi 16.0 (was 16.1), lead-in 0.3 (was
+      0.6), pins 1.5 long pending the coupon. The shared helper now skips a
+      zero-depth relief instead of folding it into a pin notch.
+    - `X330 pin coupon` (Part Studio `x330-pin-coupon`): 4-pin sets on the
+      horn's bolt circle, columns 1.0/1.3/1.6/2.0/2.6 long, edge notches
+      count row and column. One part. First version rows Phi 1.35-1.50:
+      every pin sliced to a single dot + perimeter (user, 2026-09-26), so
+      the rows now run Phi 1.5 to 3.0 in 0.25 steps, to see where that
+      changes; only the 1.5 row still fits the horn.
+    - Coupon read (user, 2026-09-26): Phi 1.5 slices to a dot + perimeter,
+      Phi 1.75 to the next step (~1.6 printed, 2 of 4 perimeters). So two
+      hubs, pins set by DIAMETER: 1.5 (assembled) and a 1.75 spare parked
+      behind the servo in the same Part Studio. Lead-in 0.4 (2 layers).
+      To reprint: a hub, the yoke (longer: the lever sits further out) and
+      the lever; plate, base and cover are unchanged.
+    - Pins 1.6 long (8 layers at 0.2, user) and the blade groove 1.6 deep,
+      so the hub's every height off the bed is a whole layer. Printing
+      2026-09-26: one of each hub. Still open: which pin seats, and id 103's
+      Operating Mode / P gain (left at 5 / 700 by the power-off; were 4 / 900).
   - **Bench test for it, bare XC330, mode 5 (as proposed):**
     1. Breakaway current. Hold a position; set Goal Current I; step the
        goal ~45 deg away (far enough that P x error is well past I, so the
