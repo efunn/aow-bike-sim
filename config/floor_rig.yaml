@@ -6,10 +6,11 @@
 #
 # Plan: docs/plans/pre-assembly-bench-checklist.md, "Rig 1 -- the floor arm".
 #
-# PLACEHOLDER PHYSICS, deliberately: every rig part is massless (1 mg, the
+# PLACEHOLDER PHYSICS by default: every rig part is massless (1 mg, the
 # smallest MuJoCo accepts on a moving body) and every joint is perfect -- no
-# friction, no damping, no play. Fill these in once the rig is built and
-# commissioned (C4 hinge repeatability, C7 yaw drag).
+# friction, no damping, no play. `link_mass_g`, `friction` and `damping` below
+# are the knobs; every value there is a GUESS until the rig is built and
+# weighed, and its joints commissioned (C4 hinge repeatability, C7 yaw drag).
 #
 # Frame: the bike's world frame. Rear contact at the origin, +x forward, z up,
 # floor at z = 0. Front contact at (wheelbase, 0, 0).
@@ -29,9 +30,13 @@ joints:
   pitch: free
 
 # Slide end stops, [back, forward] in m from the start; null = unlimited.
-# +-0.06 is the physical slide. A hold-station policy drifts ~0.3 m in 8 s on
-# an unlimited rig (measured 2026-09-25), so expect it to meet these.
-slide_range_m: [-0.06, 0.06]
+# 200 mm of travel (was +-0.06). The roll bearing starts 210 mm behind the yaw
+# axis, so at the forward stop it is 110 mm from it -- just clear of the 89 mm
+# base disc; more forward travel wants a larger yaw_distance_m. A hold-station
+# policy drifts forward 100-600 mm in 8 s here (2026-09-25), so expect it to
+# meet the forward stop -- where driving into it wheelies the bike to its
+# pitch limit (see the plan's front-hop notes).
+slide_range_m: [-0.10, 0.10]
 
 # Roll stops: two skids on the roll member that REALLY touch the floor, so a
 # fall ends on a skid instead of the bike rolling on through the floor.
@@ -49,6 +54,72 @@ motors:
   roll: 0.0
   pitch: 0.0
 
+# Link masses [g], lumped at each link's centre (floor_rig.add_chain says
+# where). 0 = massless. Everything past the tilt axis is carried by the BIKE
+# through the pitch pivot, so this is load on the bike, not only inertia. Yaw
+# has no entry: a mass on the vertical axis changes nothing.
+link_mass_g:
+  tilt: 0         # the arm and its rail
+  slide: 0        # carriage, drop post, roll servo case
+  roll: 0         # roll frame, skids, pitch servo case
+  pitch: 0        # the stubs
+
+# Joint Coulomb friction (MuJoCo frictionloss): N m on the hinges, N on the
+# slide. 0 = frictionless.
+friction:
+  yaw: 0
+  tilt: 0
+  slide: 0
+  roll: 0
+  pitch: 0
+
+# Joint viscous damping: N m s/rad on the hinges, N s/m on the slide.
+damping:
+  yaw: 0
+  tilt: 0
+  slide: 0
+  roll: 0
+  pitch: 0
+
+# XC330s in CURRENT-BASED POSITION MODE (righting_servo.py) holding an axis at
+# its reference -- roll upright, pitch level. Goal Current in counts (~1 mA
+# each), `max` = the Current Limit (910), `fixed` = the Current Limit AND
+# Position P Gain at its register top (16383). null = no servo (the axis is
+# free, or driven by `motors:`). Goal Current only CAPS the torque; below the
+# cap the stiffness is the P gain's -- at the righting gains `max` leans 1.2 deg
+# under a 1 N side push and gives way at 3 N, `fixed` holds 0.35 deg (measured
+# 2026-09-25). The torque grows as sqrt(current): 100 counts ~0.27 N m at
+# stall, 300 ~0.47, max the full 0.8 stall torque (computed from the XC330-T181
+# datasheet stall numbers as righting_servo does -- not measured on this
+# axis). Direct drive; gearbox friction is `servo_friction_ma` below, its
+# reflected rotor inertia is NOT modelled.
+servos:
+  roll: null
+  pitch: null
+# The servo gearbox's Coulomb friction, as the Goal Current [mA] at which a
+# bare XC330 just moves its own output in mode 5, converted to torque by the
+# same sqrt law righting_servo uses (22 mA -> 0.13 N m). Added to any axis
+# while a servo is attached there; a null servo is off the shaft and adds
+# nothing. 0 = frictionless gearbox.
+# MEASURED 2026-09-25, analysis/servo_breakaway.py, ids 103 + 104 identical:
+# no try moved at <= 20 mA, every try moved at >= 25 mA (both directions, 3
+# horn angles, 2 reps); running, both stop between 22 and 20 mA. THE TORQUE
+# IS NOT: up to 15 mA Present PWM is 1-3 LSB, so that current never reaches
+# the motor (a deadband, not friction), and the sqrt law is extrapolated
+# below its ~100 mA evidence. At speed, 12 V x 40 mA over 9 rad/s bounds the
+# running friction under 0.05 N m. Treat 0.13 N m as an upper end.
+servo_friction_ma: 22
+# Position P/D Gain registers; omitted = the bike's own righting gains
+# (control.onboard.gains.righting).
+servo_gains: {}
+
+# The general policy's heading command on the rig (teleop). `hold`: where the
+# dial put it -- the policy fights to swing the arm back to it. `follow`:
+# re-aimed at the bike's own heading every step, so the policy never tries to
+# hold heading. Measured 2026-09-25, curriculum2b, 12 s hold, 2 runs each:
+# hold FELL (3.1, 4.8 s), follow held. `--rig-heading` overrides.
+heading: hold
+
 # Named presets for `--rig-mode NAME`. Each may override `joints`, `motors`
 # or any top-level key; `--rig-lock` / `--rig-free` apply on top.
 modes:
@@ -60,6 +131,13 @@ modes:
     motors: {pitch: 0.2}
   pinned_yaw:               # heading held by the rig
     joints: {yaw: locked}
+  stiff_roll:               # roll held upright by an XC330 at 300 counts,
+    servos: {roll: 300}     #   the righting gains: compliant
+  fixed_roll:               # Current Limit and top P gain: rigid to 0.8 N m
+    servos: {roll: fixed}
+  guessed_mass:             # a first GUESS at a built rig: 135 g, a little
+    link_mass_g: {tilt: 30, slide: 45, roll: 55, pitch: 5}    # friction too
+    friction: {yaw: 0.002, tilt: 0.002, slide: 0.3, roll: 0.02, pitch: 0.02}
 
 # Hinge ranges, [min, max] in degrees; null = unlimited. The head's tilt
 # travel in particular must be limited: unlimited, a driven bike levers the arm

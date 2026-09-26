@@ -124,3 +124,93 @@ def test_slide_stop_holds_against_a_push():
         mujoco.mj_step(m, d)
     hi = load_rig_cfg()["slide_range_m"][1]
     assert d.joint("rig_slide").qpos[0] < hi + 0.005
+
+
+def test_skids_stay_on_the_roll_member_when_the_bike_wheelies():
+    """Driving forward into the slide stop wheelies the bike to its pitch
+    limit. The skids must stay on the roll member they are drawn on; on the
+    chassis they swung ~93 mm off their outriggers (2026-09-25)."""
+    from aow_sim.floor_rig import place
+    m = build_rig_model()
+    d = mujoco.MjData(m)
+    place(m, d, 0.0)
+    mujoco.mj_forward(m, d)
+    rb = m.body("rig_roll").id
+    gs = [m.geom(f"rig_roll_stop_{t}").id for t in ("left", "right")]
+    local = lambda g: d.xmat[rb].reshape(3, 3).T @ (d.geom_xpos[g] - d.xpos[rb])
+    before = [local(g) for g in gs]
+    d.ctrl[[m.actuator("drive_a").id, m.actuator("drive_b").id]] = 5.0
+    for _ in range(int(1.0 / m.opt.timestep)):
+        mujoco.mj_step(m, d)
+    assert abs(np.degrees(d.joint("rig_pitch").qpos[0])) > 10.0   # it did wheelie
+    for g, b in zip(gs, before):
+        assert np.linalg.norm(local(g) - b) < 1e-6
+
+
+def test_link_masses_friction_and_damping_reach_the_model():
+    cfg = copy.deepcopy(load_rig_cfg())
+    cfg["link_mass_g"] = {"tilt": 0, "slide": 45, "roll": 55, "pitch": 0}
+    cfg["friction"] = {**cfg["friction"], "roll": 0.02, "slide": 0.3}
+    cfg["damping"] = {**cfg["damping"], "pitch": 0.01}
+    m = build_rig_model(cfg=cfg)
+    assert m.body("rig_slide").mass[0] == pytest.approx(0.045)
+    assert m.body("rig_roll").mass[0] == pytest.approx(0.055)
+    assert m.body("rig_tilt").mass[0] == pytest.approx(1e-6)
+    dof = lambda j: m.joint(f"rig_{j}").dofadr[0]
+    assert m.dof_frictionloss[dof("roll")] == pytest.approx(0.02)
+    assert m.dof_frictionloss[dof("slide")] == pytest.approx(0.3)
+    assert m.dof_damping[dof("pitch")] == pytest.approx(0.01)
+    assert m.dof_frictionloss[dof("yaw")] == 0.0
+
+
+def _servo_push(counts, seconds=1.0, push=1.0):
+    """Roll servo holding upright; a sideways push on the chassis for the
+    whole run. Returns the final roll [deg] and the servo."""
+    from aow_sim.floor_rig import attach_servos, place
+    p = load_params()
+    cfg = copy.deepcopy(load_rig_cfg())
+    cfg["servos"] = {"roll": counts, "pitch": None}
+    cfg["servo_friction_ma"] = 0        # the servo law alone; friction is tested below
+    from aow_sim.floor_rig import resolve
+    cfg = resolve(cfg, p)
+    m = build_model(p, rig=cfg)
+    srv = attach_servos(m, p, cfg)["roll"]
+    d = mujoco.MjData(m)
+    place(m, d, 0.0)
+    d.xfrc_applied[m.body("chassis").id, 1] = push
+    for _ in range(int(seconds / m.opt.timestep)):
+        srv.pre_step(d)
+        mujoco.mj_step(m, d)
+    return np.degrees(d.joint("rig_roll").qpos[0]), srv
+
+
+def test_roll_servo_fixed_is_rigid_and_current_only_caps():
+    """`fixed` (Current Limit + top P gain) holds a 3 N side push near
+    upright. 300 counts at the righting gains gives way: Goal Current only
+    caps the torque, the stiffness below it is the P gain's."""
+    soft, _ = _servo_push(300, push=3.0)
+    rigid, srv = _servo_push("fixed", push=3.0)
+    assert srv.goal_current == 910
+    assert abs(rigid) < 1.0
+    assert abs(soft) > 10.0
+    small, _ = _servo_push(300, push=1.0)      # under its cap it holds
+    assert abs(small) < 3.0
+
+
+def test_servo_friction_rides_with_the_servo_only():
+    """`servo_friction_ma` becomes Coulomb friction on an axis only while a
+    servo is attached there -- 100 mA is 0.27 N m by the bus-current law --
+    and stacks on the joint's own friction."""
+    cfg = copy.deepcopy(load_rig_cfg())
+    cfg["servo_friction_ma"] = 100
+    cfg["servos"] = {"roll": 10, "pitch": None}
+    cfg["friction"] = {**cfg["friction"], "roll": 0.01}
+    m = build_rig_model(cfg=cfg)
+    dof = lambda j: m.joint(f"rig_{j}").dofadr[0]
+    srv = load_params()["servos"]["xc330_t181"]
+    tau = srv["stall_torque"] * (0.1 / srv["stall_current"]) ** 0.5
+    assert m.dof_frictionloss[dof("roll")] == pytest.approx(0.01 + tau, rel=1e-6)
+    assert m.dof_frictionloss[dof("pitch")] == 0.0
+    cfg["servos"] = {"roll": None, "pitch": None}      # servo off the shaft
+    m = build_rig_model(cfg=cfg)
+    assert m.dof_frictionloss[m.joint("rig_roll").dofadr[0]] == pytest.approx(0.01)

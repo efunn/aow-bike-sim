@@ -122,7 +122,13 @@ class CurrentBasedPositionServo:
         return cls(model, params, torque_nm, braking)
 
     def __init__(self, model, params: dict, torque_nm: float | None = None,
-                 braking: str = "plug"):
+                 braking: str = "plug", joint: str = "swing_crank_joint",
+                 actuator: str | None = "swing", gains: dict | None = None,
+                 goal_current: int | None = None):
+        """Defaults are the swing crank's. Any other hinge works: `actuator`
+        None takes the goal from `self.goal` [rad] instead of a ctrl slot,
+        `gains` overrides the Position P/D Gain registers, and `goal_current`
+        [counts] overrides `torque_nm`. The floor rig's servos use all four."""
         if braking not in ("regen", "plug"):
             raise ValueError(f"braking: 'regen' or 'plug', got {braking!r}")
         self.braking = braking
@@ -131,20 +137,23 @@ class CurrentBasedPositionServo:
         self.w0 = float(srv["no_load_rpm"]) * 2 * math.pi / 60
         self.i_stall = float(srv["stall_current"])
         self.kt = self.ts / self.i_stall
-        g = params["control"]["onboard"]["gains"]["righting"]
+        g = {**params["control"]["onboard"]["gains"]["righting"], **(gains or {})}
         self.kp_a = float(g["Position P Gain"]) * K5            # A/rad
         self.kd_a = float(g["Position D Gain"]) * KD_PER_UNIT   # A.s/rad
-        self.aid = model.actuator("swing").id
-        jid = model.joint("swing_crank_joint").id
+        self.aid = None if actuator is None else model.actuator(actuator).id
+        self.goal = 0.0
+        jid = model.joint(joint).id
         self.qadr = int(model.jnt_qposadr[jid])
         self.dadr = int(model.jnt_dofadr[jid])
-        # The native actuator becomes a command holder: ctrl keeps its meaning,
-        # the force is ours. Its ctrlrange still clamps the goal.
-        model.actuator_gainprm[self.aid, 0] = 0.0
-        model.actuator_biasprm[self.aid, :3] = 0.0
+        if self.aid is not None:
+            # The native actuator becomes a command holder: ctrl keeps its
+            # meaning, the force is ours. Its ctrlrange still clamps the goal.
+            model.actuator_gainprm[self.aid, 0] = 0.0
+            model.actuator_biasprm[self.aid, :3] = 0.0
         # Stall torque -> bus current: tau = ts sqrt(I / I_stall) at 12 V.
         self.set_goal_current(
-            round(self.i_stall * (torque_nm / self.ts) ** 2 / AMPS_PER_COUNT)
+            goal_current if goal_current is not None
+            else round(self.i_stall * (torque_nm / self.ts) ** 2 / AMPS_PER_COUNT)
             if torque_nm is not None
             else params["control"]["onboard"]["righting_current"])
         self.supply = 1.0
@@ -172,7 +181,7 @@ class CurrentBasedPositionServo:
     def reset(self, data) -> None:
         """Clear the command pipeline at the CURRENT goal, so a reset does not
         replay a stale setpoint."""
-        self._cmd = [float(data.ctrl[self.aid])] * self.nc
+        self._cmd = [self._goal_now(data)] * self.nc
         self._k = 0
         self.torque = self.current = self.phase_current = self.duty = 0.0
         data.qfrc_applied[self.dadr] = 0.0
@@ -184,7 +193,7 @@ class CurrentBasedPositionServo:
             self.reset(data)
         self._t_last = float(data.time)
         k, k1 = self._k, (self._k + 1) % self.nc
-        self._cmd[k] = float(data.ctrl[self.aid])
+        self._cmd[k] = self._goal_now(data)
         goal = self._cmd[k1]
         self._k = k1
         q = float(data.qpos[self.qadr])
@@ -202,6 +211,9 @@ class CurrentBasedPositionServo:
         # bus current would be positive there (the pack is supplying power).
         self.current = math.copysign(abs(u * self.phase_current), u)
         data.qfrc_applied[self.dadr] = tau
+
+    def _goal_now(self, data) -> float:
+        return self.goal if self.aid is None else float(data.ctrl[self.aid])
 
     def duty_for(self, i_bus: float, w: float) -> float:
         """The duty that makes the reported current -- bus magnitude, signed by

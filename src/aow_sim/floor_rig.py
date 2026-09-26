@@ -16,9 +16,11 @@ The rig's own joints, motors and sensors come after everything else.
 
 Every rig body sits at the world origin and the joints carry their own
 positions, so at qpos 0 the weld's relative pose is the identity. Rig bodies
-are massless in intent: 1 mg with a tiny inertia, because MuJoCo refuses a
+are massless by default: 1 mg with a tiny inertia, because MuJoCo refuses a
 moving body with none, plus a small ARMATURE on each rig joint so a motor has
-something to push against (see RIG_ARMATURE). Joints are frictionless. The
+something to push against (see RIG_ARMATURE). Joints are frictionless by
+default. `link_mass_g`, `friction`, `damping` and `servos` in the config turn
+each of those into a (guessed) real part; see `attach_servos`. The
 weld is a near-hard equality constraint: 0.2 mm worst case through a fall.
 Visual geoms have no mass and no contact.
 
@@ -57,6 +59,8 @@ TOKEN_INERTIA = 1e-10         # kg m^2
 #   1 % of the bike's   weld <= 1.4 mm, slide stops hold, across all modes.
 # The cost is 1 % extra inertia on each rig axis.
 RIG_ARMATURE = 1e-5           # kg m^2 -- fallback when `resolve` has not run
+P_GAIN_MAX = 16383            # Position P Gain(84) register range, XC330 e-manual
+LUMP_GYRATION_M = 0.03        # radius of gyration of a link's mass lump, about its centre
 RIG_RGBA = {"fixed": [0.55, 0.55, 0.55, 0.5], "yaw": [0.25, 0.45, 0.85, 0.55],
             "roll": [0.6, 0.35, 0.8, 0.5], "pitch": [0.95, 0.55, 0.15, 0.7]}
 JOINTS = ("yaw", "tilt", "slide", "roll", "pitch")
@@ -136,6 +140,8 @@ def resolve(cfg: dict, params: dict) -> dict:
         "roll": I[0, 0] + mass * (c[1] ** 2 + (c[2] - rh) ** 2),
         "pitch": I[1, 1] + mass * ((c[0] - cx) ** 2 + (c[2] - cz) ** 2),
     }.items()}
+    if cfg.get("heading", "hold") not in ("hold", "follow"):
+        raise ValueError(f"floor_rig heading: 'hold' or 'follow', got {cfg['heading']!r}")
     for j in JOINTS:
         if cfg["joints"].get(j) not in ("free", "locked"):
             raise ValueError(f"floor_rig joints.{j}: 'free' or 'locked', "
@@ -153,7 +159,8 @@ def _cap(body, a, b, r, rgba):
 
 
 def _link(parent, name, joint, axis, pos, kind=mujoco.mjtJoint.mjJNT_HINGE,
-          armature=RIG_ARMATURE, limit=None, tc=2e-4, degree=True):
+          armature=RIG_ARMATURE, limit=None, tc=2e-4, degree=True,
+          frictionloss=0.0, damping=0.0):
     body = parent.add_body(name=f"rig_{name}", pos=[0, 0, 0])
     body.explicitinertial = True
     body.mass = TOKEN_MASS
@@ -161,7 +168,8 @@ def _link(parent, name, joint, axis, pos, kind=mujoco.mjtJoint.mjJNT_HINGE,
     if joint == "free":
         # Armature is kg m^2 on a hinge and kg on a slide.
         j = body.add_joint(name=f"rig_{name}", type=kind,
-                           axis=axis, pos=pos, armature=armature)
+                           axis=axis, pos=pos, armature=armature,
+                           frictionloss=frictionloss, damping=damping)
         if limit is not None:
             # `limit` is SI (rad / m). A hinge range is read in the spec's
             # angle unit, which is DEGREES unless compiler.degree is off --
@@ -200,8 +208,18 @@ def add_chain(spec: mujoco.MjSpec, params: dict, cfg: dict) -> None:
     xr = sx - 0.03                               # the roll member's front frame
     arm = cfg.get("armature") or {}
     tc = max(2 * spec.option.timestep, 2e-4)     # stiffest stable time constant
+    fric, damp = dict(cfg.get("friction") or {}), cfg.get("damping") or {}
+    # A servo on an axis brings its gearbox: Coulomb friction on top of the
+    # joint's own. Only while `servos:` has it attached -- null means the servo
+    # is off the shaft (the keyed adapter) and the axis is free.
+    tau_sf = servo_friction_nm(params, cfg)
+    for j, v in (cfg.get("servos") or {}).items():
+        if v is not None:
+            fric[j] = float(fric.get(j) or 0.0) + tau_sf
     L = lambda name, **kw: dict(armature=arm.get(name, RIG_ARMATURE), tc=tc,
-                                degree=bool(spec.compiler.degree), **kw)
+                                degree=bool(spec.compiler.degree),
+                                frictionloss=float(fric.get(name) or 0.0),
+                                damping=float(damp.get(name) or 0.0), **kw)
     travel = cfg.get("slide_range_m")
     stop = cfg.get("roll_stop")
     # The roll joint is limited a little past the skids' landing angle. The
@@ -266,25 +284,23 @@ def add_chain(spec: mujoco.MjSpec, params: dict, cfg: dict) -> None:
     # meet the floor at `roll_stop.deg`. REAL contact (floor only), so a fall
     # ends on the skid instead of the bike rolling on through the floor.
     #
-    # THE COLLIDER RIDES ON THE CHASSIS, not on the roll member it is drawn on.
-    # MuJoCo's contact softness scales with the inertia behind the contact, and
-    # behind a 1 mg rig link there is almost none: a skid there touched the
-    # floor and the bike rolled straight through to 180 deg (measured
-    # 2026-09-25). On the chassis it has the bike behind it. The only
-    # difference is that the skid now pitches with the bike -- a few degrees.
+    # The collider rides on the ROLL MEMBER, like the outrigger it ends. It once
+    # rode on the chassis, because before the rig had armature a skid behind a
+    # 1 mg link let the bike roll straight through the floor. With armature it
+    # holds, and on the chassis it pitched with the bike: driving forward into
+    # the slide stop wheelies the bike to its pitch limit, and both skids swung
+    # ~93 mm off their outriggers (measured 2026-09-25).
     if stop:
         r_s, span = stop["radius_m"], stop["halfspan_m"]
         hz = roll_stop_height(span, stop["deg"], r_s, rh)
-        chassis = spec.body("chassis")
-        c0 = np.asarray(chassis.pos, float)          # chassis frame at qpos0
         for s, tag in ((-1, "right"), (1, "left")):
             _cap(roll, [xr, s * hw, cz], [xr, s * span, hz], 0.003, RIG_RGBA["roll"])
-            chassis.add_geom(name=f"rig_roll_stop_{tag}",
-                             type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[r_s, 0, 0],
-                             pos=np.array([xr, s * span, hz]) - c0, density=0,
-                             contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
-                             condim=3, friction=_contact_friction(params["sim"]),
-                             rgba=[0.35, 0.2, 0.5, 0.9])
+            roll.add_geom(name=f"rig_roll_stop_{tag}",
+                          type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[r_s, 0, 0],
+                          pos=[xr, s * span, hz], density=0,
+                          contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
+                          condim=3, friction=_contact_friction(params["sim"]),
+                          rgba=[0.35, 0.2, 0.5, 0.9])
 
     # PITCH: stubs on the fake CoG axis. Welded to the chassis below.
     pitch = _link(roll, "pitch", J["pitch"], [0, 1, 0], [cx, 0, cz],
@@ -295,6 +311,22 @@ def add_chain(spec: mujoco.MjSpec, params: dict, cfg: dict) -> None:
                 quat=[np.sqrt(0.5), np.sqrt(0.5), 0, 0])
     _visual(pitch, RIG_RGBA["pitch"], type=mujoco.mjtGeom.mjGEOM_SPHERE,
             size=[0.006, 0, 0], pos=[cx, 0, cz])
+
+    # LINK MASSES, lumped at each link's natural centre. The weight of every
+    # link past the tilt axis ends up on the bike (through the pitch pivot),
+    # so these are real load, not just inertia. 0 = the token mass.
+    lumps = {"tilt": [(yx + sx) / 2, 0, th],        # the arm and its rail
+             "slide": [sx, 0, (th + rh) / 2],       # carriage, drop post, roll servo case
+             "roll": [(xr + cx) / 2, 0, cz],        # frame, skids, pitch servo case
+             "pitch": [cx, 0, cz]}                  # the stubs
+    bodies = {"tilt": tilt, "slide": slide, "roll": roll, "pitch": pitch}
+    for j, grams in (cfg.get("link_mass_g") or {}).items():
+        if j not in lumps:
+            raise ValueError(f"floor_rig link_mass_g.{j}: one of {sorted(lumps)}")
+        if grams:
+            b, kg = bodies[j], float(grams) / 1000
+            b.mass, b.ipos = kg, lumps[j]
+            b.inertia = [kg * LUMP_GYRATION_M ** 2] * 3
 
     # Placeholder XC330s on the instrumented axes: torque motors, no servo model.
     tau = params["servos"]["xc330_t181"]["stall_torque"]
@@ -359,13 +391,66 @@ def place(model, data, yaw: float = 0.0) -> None:
 
 def motor_step(model, data, cfg: dict) -> None:
     """Hold the rig motors at `cfg['motors']` torques [N m]. Call AFTER the
-    bike's controller, which writes the whole ctrl vector every step."""
+    bike's controller, which writes the whole ctrl vector every step. An axis
+    with a servo (`attach_servos`) gets zero here: the servo owns it."""
+    servo_axes = {j for j, v in (cfg.get("servos") or {}).items() if v is not None}
     for j, tau in (cfg.get("motors") or {}).items():
+        if j in servo_axes:
+            tau = 0.0
         name = f"rig_{j}_motor"
         if any(model.actuator(i).name == name for i in range(model.nu)):
             aid = model.actuator(name).id
             lo, hi = model.actuator_ctrlrange[aid]
             data.ctrl[aid] = float(np.clip(tau, lo, hi))
+
+
+def servo_friction_nm(params: dict, cfg: dict) -> float:
+    """`servo_friction_ma` as an output torque, by the same bus-current law
+    righting_servo uses at stall: ts * sqrt(I / I_stall)."""
+    ma = cfg.get("servo_friction_ma") or 0.0
+    srv = params["servos"]["xc330_t181"]
+    return float(srv["stall_torque"]) * min(1.0, (ma / 1000 / float(srv["stall_current"])) ** 0.5)
+
+
+def attach_servos(model, params: dict, cfg: dict) -> dict:
+    """{axis: CurrentBasedPositionServo} for every axis in `cfg['servos']`
+    with a Goal Current set: an XC330 in current-based position mode holding
+    the axis at its reference (roll upright, pitch level). "max" is the
+    Current Limit (910) at the configured gains; "fixed" is the Current Limit
+    AND Position P Gain at its register maximum (16383) -- as stiff as the
+    servo gets, i.e. "fixed" up to 0.8 N m. Goal Current only CAPS the torque:
+    below the cap the stiffness is the P gain's, so at the bike's righting
+    gains (P 700) 'max' still leans 1.2 deg under a 1 N side push and gives
+    way at 3 N, where 'fixed' holds 0.35 deg (measured 2026-09-25).
+    Call each one's `pre_step(data)` immediately before every mj_step.
+
+    Direct drive on the axis. The gearbox's friction is `servo_friction_ma`,
+    added to the joint in `add_chain` (a GUESS); its reflected rotor inertia
+    is not modelled."""
+    from .righting_servo import CURRENT_LIMIT, CurrentBasedPositionServo
+    out = {}
+    for j, counts in (cfg.get("servos") or {}).items():
+        if counts is None:
+            continue
+        if cfg["joints"].get(j) != "free":
+            raise ValueError(f"floor_rig servos.{j}: the {j} joint is locked")
+        gains = dict(cfg.get("servo_gains") or {})
+        if counts == "fixed":
+            gains["Position P Gain"] = P_GAIN_MAX
+        counts = CURRENT_LIMIT if counts in ("max", "fixed") else int(counts)
+        out[j] = CurrentBasedPositionServo(
+            model, params, joint=f"rig_{j}", actuator=None,
+            gains=gains, goal_current=counts)
+    return out
+
+
+def describe_servos(servos: dict, model=None) -> str:
+    from .righting_servo import K5
+    fr = lambda s: ("" if model is None else
+                    f", axis friction {model.dof_frictionloss[s.dadr]:.2f} N.m")
+    return "  ".join(f"rig {j} servo: Goal Current {s.goal_current} counts "
+                     f"({s.cap_nm:.2f} N.m at stall), P {s.kp_a / K5:.0f}, goal 0{fr(s)}"
+                     for j, s in servos.items())
 
 
 def describe_rig(cfg: dict) -> str:
@@ -381,7 +466,15 @@ def describe_rig(cfg: dict) -> str:
             + (f"; roll stops at {cfg['roll_stop']['deg']} deg" if cfg.get("roll_stop") else "")
             + (f"; motors {cfg['motors']} N m" if any((cfg.get("motors") or {}).values()) else "")
             + (f"  [mode {cfg['mode']}]" if cfg.get("mode") else "")
-            + "  [massless rig, frictionless joints]")
+            + ("  [link masses " + ", ".join(f"{k} {v:g} g" for k, v in
+                   cfg["link_mass_g"].items() if v) + "]"
+               if any((cfg.get("link_mass_g") or {}).values()) else "  [massless rig]")
+            + ("  [friction " + ", ".join(f"{k} {v:g}" for k, v in
+                   cfg["friction"].items() if v) + "]"
+               if any((cfg.get("friction") or {}).values()) else "  [frictionless joints]")
+            + "".join(f"  [{j} servo {v}]" for j, v in (cfg.get("servos") or {}).items()
+                      if v is not None)
+            + ("  [heading follows the bike]" if cfg.get("heading") == "follow" else ""))
 
 
 def build_rig_model(params: dict | None = None, cfg: dict | str | Path | None = None,

@@ -359,8 +359,10 @@ def main() -> None:
                     help="hold the bike in the FLOOR RIG (aow_sim.floor_rig): "
                          "the full bike, freejoint and all, welded to a "
                          "yaw -> tilt -> slide -> roll -> pitch chain. "
-                         "Placeholder physics -- massless rig, frictionless "
-                         "joints. CONFIG defaults to config/floor_rig.yaml, "
+                         "Placeholder physics by default -- massless rig, "
+                         "frictionless joints; the config's link_mass_g / "
+                         "friction / damping (or --rig-mode guessed_mass) add "
+                         "guessed ones. CONFIG defaults to config/floor_rig.yaml, "
                          "where each joint can be locked. The rig's pitch/roll "
                          "motors stay at zero: the controller owns the whole "
                          "ctrl vector. Measured 2026-09-25: the startup policy "
@@ -374,6 +376,21 @@ def main() -> None:
                          "roll, pitch); applied after --rig-mode. Implies --rig")
     ap.add_argument("--rig-free", default="", metavar="AXES",
                     help="comma list of rig axes to free; applied last")
+    ap.add_argument("--rig-heading", choices=("hold", "follow"), default=None,
+                    help="on the floor rig: `hold` (default) keeps the policy's "
+                         "heading command where the dial put it, so it fights to "
+                         "swing the arm back; `follow` re-aims it at the bike's "
+                         "own heading every step, so heading error is always "
+                         "zero and the policy never tries to hold heading (the "
+                         "arrow keys' turn is overridden). General policies only. "
+                         "Implies --rig")
+    ap.add_argument("--rig-servo", default="", metavar="AXIS=COUNTS",
+                    help="hold a rig axis at its reference (roll upright, pitch "
+                         "level) with an XC330 in current-based position mode: "
+                         "comma list like roll=300 or roll=fixed,pitch=200. "
+                         "COUNTS is the Goal Current; max is the Current Limit; "
+                         "fixed is the Current Limit plus the top P gain -- "
+                         "rigid up to 0.8 N m. Implies --rig")
     ap.add_argument("--hockey", action="store_true",
                     help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
     ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171",
@@ -590,12 +607,20 @@ def main() -> None:
                 else f"from {startup}'s training record" if record
                 else "from config/drivetrain_model.yaml (--servo-gains)")
     rig_cfg = None
-    if args.rig or args.rig_mode or args.rig_lock or args.rig_free:
+    if (args.rig or args.rig_mode or args.rig_lock or args.rig_free or args.rig_servo
+            or args.rig_heading):
         from .floor_rig import apply_mode, describe_rig, load_rig_cfg, resolve
         axes = lambda s: [a.strip() for a in s.split(",") if a.strip()]
         rig_cfg = apply_mode(
             load_rig_cfg(None if args.rig in (None, "default") else args.rig),
             args.rig_mode, lock=axes(args.rig_lock), free=axes(args.rig_free))
+        for item in axes(args.rig_servo):
+            axis, _, counts = item.partition("=")
+            counts = counts.strip() or "fixed"
+            rig_cfg.setdefault("servos", {})[axis.strip()] = (
+                counts if counts in ("max", "fixed") else int(counts))
+        if args.rig_heading:
+            rig_cfg["heading"] = args.rig_heading
         rig_cfg = resolve(rig_cfg, params)
         print(describe_rig(rig_cfg))
     build_kw = dict(variant="full", hockey=args.hockey,
@@ -2742,6 +2767,14 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             d.xfrc_applied[wing["body"], 1] = (
                 wing["push_dir"] * wing["push_force"] if wing["push_n"] else 0.0)
 
+    # The floor rig's axis servos (--rig-servo / `servos:`), same model.
+    rig_servos = {}
+    if rig is not None:
+        from .floor_rig import attach_servos, describe_servos
+        rig_servos = attach_servos(model, params, rig)
+        if rig_servos:
+            print(describe_servos(rig_servos, model))
+
     def pre_step(d):
         """Everything that must run immediately before each mj_step. Through
         the list, not a bound method: a menu swap replaces the DrivetrainSim
@@ -2750,6 +2783,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             drive_sim[0].pre_step(d)
         if crank_servo is not None:
             crank_servo.pre_step(d)
+        for srv in rig_servos.values():
+            srv.pre_step(d)
 
     def on_key(keycode):
         pending.append(keycode)
@@ -3019,6 +3054,10 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             # Clamp to the envelope the loaded policy declares (yaml
             # v_lat_frac), now that it is definitely loaded.
             crab_max[0] = float(getattr(c._gen, "v_lat_frac", 0.4)) * v_max
+            if rig is not None and rig.get("heading") == "follow":
+                # --rig-heading follow: the heading command is wherever the
+                # bike (= the rig arm) points now, so heading error stays zero.
+                state["psi"] = state["psi_sent"] = c._psi
             # One velocity VECTOR: magnitude plus course off the commanded
             # heading. Both components zero resolves to (0, 0) -- an ordinary
             # point of command space, not a singularity, which is exactly why
@@ -3626,7 +3665,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 paused=paused,
                 on_start=lambda v: view.__setitem__(0, v),
                 pre_step=(None if drive_sim[0] is None and crank_servo is None
-                          else pre_step),
+                          and not rig_servos else pre_step),
                 stats=None if frame_stats is None else FrameStats(frame_stats))
     # teleop_loop returns when the operator closes the viewer, so this is the
     # natural flush point. Ctrl-C bypasses it -- accepted, since a session
