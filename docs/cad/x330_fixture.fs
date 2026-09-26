@@ -22,9 +22,22 @@ export const X330 = {
 };
 
 export const FIXTURE = {
-    "horn_pin_length" : 2.6 * millimeter,
+    "horn_pin_length" : 1.6 * millimeter,
+    "horn_pin_diameters" : [1.5 * millimeter, 1.75 * millimeter],
+    "horn_pin_root_relief" : 0 * millimeter,
+    "horn_bore_clearance" : 0 * millimeter,
+    "horn_bore_mouth_chamfer" : 0.4 * millimeter,
+    "hub_web" : 1.2 * millimeter,
+    "nut_pocket_depth" : 3 * millimeter,
+    "nut_thickness" : 2.38 * millimeter,
+    "blade_depth" : 1.6 * millimeter,
+    "blade_width" : 6 * millimeter,
+    "blade_flank_deg" : 30 * degree,
+    "blade_gap" : 0.3 * millimeter,
+    "screw_length" : 9.525 * millimeter,
+    "screw_tip_clearance" : 0.5 * millimeter,
+    "counterbore_clearance" : 0.4 * millimeter,
     "cover_cap_thickness" : 2.5 * millimeter,
-    "lever_gap" : 1.5 * millimeter,
     "arm_thickness" : 6 * millimeter,
     "arm_height" : 12 * millimeter,
     "arm_length" : 50 * millimeter,
@@ -80,7 +93,11 @@ export const FIXTURE = {
     "ridge_height" : 1.2 * millimeter,
     "ridge_flat" : 4.6 * millimeter,
     "ridge_clearance" : 0.15 * millimeter,
-    "bridge_layer" : 0.2 * millimeter
+    "bridge_layer" : 0.2 * millimeter,
+    "coupon_diameters" : [1.5 * millimeter, 1.75 * millimeter, 2 * millimeter, 2.25 * millimeter, 2.5 * millimeter, 2.75 * millimeter, 3 * millimeter],
+    "coupon_lengths" : [1 * millimeter, 1.3 * millimeter, 1.6 * millimeter, 2 * millimeter, 2.6 * millimeter],
+    "coupon_pitch" : 17 * millimeter,
+    "coupon_board" : 2 * millimeter
 };
 
 export const HORN_OPT = {
@@ -352,8 +369,13 @@ export function servoMountGeometry(context is Context, id is Id,
             vector(pinR, -pinL + tipCh),
             vector(pinR - tipCh, -pinL),
             vector(0 * millimeter, -pinL)]);
-    revolveProfile(context, id, "relief", pinPlane, pinAxis,
-        [vector(pinR, 0 * millimeter),
+    // A relief of zero depth is NO relief, not a degenerate one: with the
+    // inner chamfer still set, the polygon folds into a triangle that would
+    // notch the pin itself.
+    const relief = relD > 0 * meter && relW > 0 * meter;
+    if (relief)
+        revolveProfile(context, id, "relief", pinPlane, pinAxis,
+            [vector(pinR, 0 * millimeter),
             vector(pinR + relW, 0 * millimeter),
             vector(pinR + relW, relD),
             vector(pinR + relCh, relD),
@@ -389,10 +411,11 @@ export function servoMountGeometry(context is Context, id is Id,
             "entities"      : qCreatedBy(id + "pinRev", EntityType.BODY),
             "transforms"    : xf,
             "instanceNames" : names });
-    opPattern(context, id + "reliefRing", {
-            "entities"      : qCreatedBy(id + "reliefRev", EntityType.BODY),
-            "transforms"    : xf,
-            "instanceNames" : names });
+    if (relief)
+        opPattern(context, id + "reliefRing", {
+                "entities"      : qCreatedBy(id + "reliefRev", EntityType.BODY),
+                "transforms"    : xf,
+                "instanceNames" : names });
 
     return {
         "pins" : qUnion([qCreatedBy(id + "pinRev", EntityType.BODY),
@@ -1232,7 +1255,11 @@ export function x330FixtureBuild(context is Context, id is Id, opt is map) retur
     const backZ   = -(x.hornThickness + x.caseDepth);
     const hornZ   = -x.hornThickness;
     const farEnd  = x.caseHeight - x.shaftFromEnd;
-    const horn    = mergeMaps(HORN_OPT, { "pinLength" : f.horn_pin_length });
+    // the horn attach, with this fixture's overrides (config: THE HORN ATTACH)
+    const horn    = mergeMaps(HORN_OPT, { "pinLength" : f.horn_pin_length,
+                                          "rootRelief" : f.horn_pin_root_relief,
+                                          "boreClearance" : f.horn_bore_clearance,
+                                          "boreMouthChamfer" : f.horn_bore_mouth_chamfer });
     const jpT     = f.joint_plate;
 
     // ---- the servo: horn +X, far end DOWN (local y = cross(X, -Y) = -Z)
@@ -1266,27 +1293,95 @@ export function x330FixtureBuild(context is Context, id is Id, opt is map) retur
         const W  = (a + cy * sS) / cS + f.stop_contact;
         const yExt = W * cS - cy * sS;          // V face ends on the circle through (W, cy)
         const Rs = max(sqrt(cy * cy + cx * cx), sqrt(cy * cy + W * W)) + f.sweep_clearance + lw / 2;
-        // The cover's cap ends just under the horn face; the lever sits
-        // lever_gap past it.
+        // The cover's cap ends just under the horn face.
         const capOuter = hornZ + CASE_OPT.caseFaceClearance + f.cover_cap_thickness;
-        const armX0 = capOuter + f.lever_gap;
+        // ---- the horn HUB and the lever on it (config: THE HORN HUB). Along
+        // X from the horn face: nut pocket, web, the blade groove, blade_gap,
+        // the lever.
+        const hubTop  = f.nut_pocket_depth + f.hub_web + f.blade_depth;
+        const armX0   = hubTop + f.blade_gap;
         const leverTop = armX0 + f.arm_thickness;
         const xJ = leverTop - jpT;
+        const tB  = tan(f.blade_flank_deg);
+        const bw  = f.blade_width / 2;
+        const gF  = hubTop - f.blade_depth;            // the groove's floor
+        const holeR = SCREW_OPT.holeDia / 2;
+        const headR = SCREW_OPT.headDia / 2;
+        const headTop = f.screw_tip_clearance + f.screw_length;
+        const cskBot  = headTop - (headR - holeR) / tan(SCREW_OPT.cskAngle / 2);
+        // the blade runs across the hub, inside its round
+        const bl = sqrt(collarR * collarR - bw * bw) - 0.2 * mm;
+
+        // One hub per horn_pin_diameters entry: the first is assembled, each
+        // other one is built in place, then parked behind the servo as a
+        // spare to print. Built spares-first, so partAt finds one hub at a time.
+        const nutR = SCREW_OPT.nutSlotWidth / sqrt(3);
+        var hex = [];
+        for (var k = 0; k < 6; k += 1)
+            hex = append(hex, vector(nutR * cos(k * 60 * degree), nutR * sin(k * 60 * degree)));
+        const hubPt = vector(f.nut_pocket_depth + f.hub_web / 2, 0 * mm, collarR - 1.5 * mm);
+        var spares = [];
+        for (var i = size(f.horn_pin_diameters) - 1; i >= 0; i -= 1)
+        {
+            const hT = "hub" ~ i;
+            step(hT);
+            cylW(context, P + (hT ~ "Disc"), vector(-wellT, 0 * mm, 0 * mm), vector(hubTop, 0 * mm, 0 * mm), collarR);
+            servoMountBuild(context, P + (hT ~ "Horn"), cs, mergeMaps(horn, {
+                    "pinClearance" : SERVO_MOUNT_TABLE["XC330"].hornHoleDia - f.horn_pin_diameters[i] }),
+                    partAt(context, P, hubPt));
+            // groove along Y in the outer face, profile in (z, x)
+            polyPrism(context, P, hT ~ "Groove", vector(0 * mm, -collarR - 1 * mm, 0 * mm), Y, Z,
+                      [vector(-bw, hubTop + 1 * mm), vector(-bw, hubTop),
+                       vector(-(bw - f.blade_depth * tB), gF), vector(bw - f.blade_depth * tB, gF),
+                       vector(bw, hubTop), vector(bw, hubTop + 1 * mm)], 2 * collarR + 2 * mm);
+            // hex pocket for the nut in the horn-side floor, profile in (y, z)
+            polyPrism(context, P, hT ~ "Nut", vector(-1 * mm, 0 * mm, 0 * mm), X, Y, hex,
+                      f.nut_pocket_depth + 1 * mm);
+            const hubHole = cylW(context, P + (hT ~ "Hole"), vector(-1 * mm, 0 * mm, 0 * mm),
+                                 vector(hubTop + 1 * mm, 0 * mm, 0 * mm), holeR);
+            opBoolean(context, P + (hT ~ "Cut"), { "tools" : qUnion([
+                    qCreatedBy(P + (hT ~ "GrooveExt"), EntityType.BODY),
+                    qCreatedBy(P + (hT ~ "NutExt"), EntityType.BODY), hubHole]),
+                    "targets" : partAt(context, P, hubPt),
+                    "operationType" : BooleanOperationType.SUBTRACTION });
+            if (i > 0)
+            {
+                const park = vector(-60 * mm - i * 25 * mm, 0 * mm, 0 * mm);
+                opTransform(context, P + (hT ~ "Park"), { "bodies" : partAt(context, P, hubPt),
+                        "transform" : transform(park) });
+                spares = append(spares, [i, hubPt + park]);
+            }
+        }
 
         step("lever");
-        // ---- lever: disc over the horn, arms both ways, leg up to the yoke
-        const disc = cylW(context, P + "disc", vector(-wellT, 0 * mm, 0 * mm),
+        // ---- lever: disc over the hub, arms both ways, the blade under it,
+        // leg up to the yoke
+        const disc = cylW(context, P + "disc", vector(armX0, 0 * mm, 0 * mm),
                           vector(leverTop, 0 * mm, 0 * mm), collarR);
         const la = leverArms(context, P + "lv", armX0, leverTop);
         const leg = boxW(context, P + "leg", vector(xJ, -lw / 2, 0 * mm),
                          vector(leverTop, lw / 2, Rs + lw / 2));
-        unite(context, P + "leverU", [disc, la.arms, leg]);
+        // the blade: the groove's own flanks, its tip blade_gap off the floor,
+        // a neck of the groove's mouth width up into the lever
+        const tipX = gF + f.blade_gap;
+        polyPrism(context, P, "blade", vector(0 * mm, -bl, 0 * mm), Y, Z,
+                  [vector(-bw, armX0 + 0.5 * mm), vector(-bw, hubTop),
+                   vector(-(bw - (hubTop - tipX) * tB), tipX), vector(bw - (hubTop - tipX) * tB, tipX),
+                   vector(bw, hubTop), vector(bw, armX0 + 0.5 * mm)], 2 * bl);
+        unite(context, P + "leverU", [disc, la.arms, leg, qCreatedBy(P + "bladeExt", EntityType.BODY)]);
         // in the arm's wall above the mass slot, below the ticks
         leverPt = vector((armX0 + leverTop) / 2, -30 * mm, (f.mass_slot_width + f.arm_height) / 4);
-        step("hornPins");
-        servoMountBuild(context, P + "horn", cs, horn, partAt(context, P, leverPt));
+        // counterbore + countersink from the outer face, then the hole
+        revolveProfile(context, P, "csk", plane(O, cross(Y, X), Y), line(O, X),
+                       [vector(0 * mm, cskBot), vector(holeR, cskBot), vector(headR, headTop),
+                        vector(headR + f.counterbore_clearance / 2, headTop),
+                        vector(headR + f.counterbore_clearance / 2, leverTop + 1 * mm),
+                        vector(0 * mm, leverTop + 1 * mm)]);
+        const lvHole = cylW(context, P + "lvHole", vector(tipX - 1 * mm, 0 * mm, 0 * mm),
+                            vector(leverTop + 1 * mm, 0 * mm, 0 * mm), holeR);
         step("armCut");
-        opBoolean(context, P + "armCut", { "tools" : la.holes,
+        opBoolean(context, P + "armCut", { "tools" : qUnion([la.holes, lvHole,
+                qCreatedBy(P + "cskRev", EntityType.BODY)]),
                 "targets" : partAt(context, P, leverPt),
                 "operationType" : BooleanOperationType.SUBTRACTION });
 
@@ -1426,11 +1521,18 @@ export function x330FixtureBuild(context is Context, id is Id, opt is map) retur
         screwJoint(context, P + "j2", vector(leverTop, 0 * mm, Rs), -X, Z, 0 * mm,
                    partAt(context, P, leverPt), partAt(context, P, yokePt), true, Y, lw / 2, -X, X);
 
+        const pinName = function(i) returns string
+        {
+            return " (pins " ~ toString(roundToPrecision(f.horn_pin_diameters[i] / mm, 2)) ~ ")";
+        };
         parts = [["plate", pl.pt, "Z+", Z, "static"], ["base", basePt, "X+", X, "static"],
-                 ["cover", coverPt, "X-", -X, "static"], ["lever", leverPt, "X-", -X, "lever"],
+                 ["cover", coverPt, "X-", -X, "static"], ["hub" ~ pinName(0), hubPt, "X-", -X, "lever"],
+                 ["lever", leverPt, "X-", -X, "lever"],
                  ["yoke", yokePt, "X+", X, "lever"]];
+        for (var sp in spares)
+            parts = append(parts, ["spare hub" ~ pinName(sp[0]), sp[1], "X-", -X, "static"]);
         L = { "plateTop" : zTop, "plateBottom" : pl.zBot, "stopHeight" : (cy + a * sS) / cS,
-              "ledgeHalfWidth" : W,
+              "ledgeHalfWidth" : W, "hubTop" : hubTop,
               "leverEnd" : la.leverEnd, "R_s" : Rs, "leverTop" : leverTop,
               "coverTopX0" : xa, "coverTopX1" : xb };
     }
@@ -1448,7 +1550,9 @@ export function x330FixtureBuild(context is Context, id is Id, opt is map) retur
         // ---- adapter: horn pins, a key slot across its outer face
         cylW(context, P + "adDisc", vector(-wellT, 0 * mm, 0 * mm), vector(a0, 0 * mm, 0 * mm), collarR);
         const adPt = vector(1.5 * mm, 0 * mm, 6 * mm);
-        servoMountBuild(context, P + "adHorn", cs, horn, partAt(context, P, adPt));
+        servoMountBuild(context, P + "adHorn", cs, mergeMaps(horn, {
+                "pinClearance" : SERVO_MOUNT_TABLE["XC330"].hornHoleDia - f.horn_pin_diameters[0] }),
+                partAt(context, P, adPt));
         const adSlot = boxW(context, P + "adSlot", vector(a0 - f.slot_depth, -collarR - 1 * mm, -sw),
                             vector(a0 + 1 * mm, collarR + 1 * mm, sw));
         opBoolean(context, P + "adSlotCut", { "tools" : adSlot, "targets" : partAt(context, P, adPt),
@@ -1559,6 +1663,67 @@ export function x330FixtureBuild(context is Context, id is Id, opt is map) retur
              "lever" : partAt(context, P, leverPt), "L" : L };
 }
 
+/**
+ * The pin coupon: a set of four pins on the horn's bolt circle per
+ * (diameter, length), standing +Z on a flat board, one part. Row r is
+ * coupon_diameters[r] (notches on the -X edge: r + 1), column c is
+ * coupon_lengths[c] (notches on the -Y edge: c + 1). Plain cylinders, no
+ * chamfers: the fixture's pins have none either.
+ */
+export function x330PinCouponBuild(context is Context, id is Id) returns Query
+{
+    const f  = FIXTURE;
+    const t  = SERVO_MOUNT_TABLE["XC330"];
+    const mm = millimeter;
+    const p  = f.coupon_pitch;
+    const nR = size(f.coupon_diameters);
+    const nC = size(f.coupon_lengths);
+    const board = boxW(context, id + "board", vector(0 * mm, 0 * mm, -f.coupon_board),
+                       vector(nC * p, nR * p, 0 * mm));
+    var bodies = [board];
+    for (var r = 0; r < nR; r += 1)
+        for (var c = 0; c < nC; c += 1)
+            for (var k = 0; k < t.hornHoleCount; k += 1)
+            {
+                const a = (45 + k * 360 / t.hornHoleCount) * degree;
+                const x = (c + 0.5) * p + t.hornBoltCircle / 2 * cos(a);
+                const y = (r + 0.5) * p + t.hornBoltCircle / 2 * sin(a);
+                bodies = append(bodies, cylW(context, id + ("pin" ~ r ~ "_" ~ c ~ "_" ~ k),
+                        vector(x, y, -f.coupon_board / 2), vector(x, y, f.coupon_lengths[c]),
+                        f.coupon_diameters[r] / 2));
+            }
+    unite(context, id + "all", bodies);
+    var notches = [];
+    for (var r = 0; r < nR; r += 1)
+        for (var k = 0; k <= r; k += 1)
+        {
+            const y = (r + 0.5) * p + (k - r / 2) * 1.6 * mm;
+            notches = append(notches, boxW(context, id + ("nr" ~ r ~ "_" ~ k),
+                    vector(-1 * mm, y - 0.4 * mm, -f.coupon_board - 1 * mm), vector(1 * mm, y + 0.4 * mm, 1 * mm)));
+        }
+    for (var c = 0; c < nC; c += 1)
+        for (var k = 0; k <= c; k += 1)
+        {
+            const x = (c + 0.5) * p + (k - c / 2) * 1.6 * mm;
+            notches = append(notches, boxW(context, id + ("nc" ~ c ~ "_" ~ k),
+                    vector(x - 0.4 * mm, -1 * mm, -f.coupon_board - 1 * mm), vector(x + 0.4 * mm, 1 * mm, 1 * mm)));
+        }
+    const q = qContainsPoint(qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID),
+                             vector(nC * p / 2, nR * p / 2, -f.coupon_board / 2));
+    opBoolean(context, id + "notch", { "tools" : qUnion(notches), "targets" : q,
+            "operationType" : BooleanOperationType.SUBTRACTION });
+    var rows = "";
+    for (var r = 0; r < nR; r += 1)
+        rows = rows ~ (r == 0 ? "" : ", ") ~ toString(roundToPrecision(f.coupon_diameters[r] / mm, 3));
+    var cols = "";
+    for (var c = 0; c < nC; c += 1)
+        cols = cols ~ (c == 0 ? "" : ", ") ~ toString(roundToPrecision(f.coupon_lengths[c] / mm, 2));
+    dress(context, q, "pin coupon [print Z+]", color(0.93, 0.56, 0.20),
+          "Rows (-X edge notches 1..): pin dia " ~ rows ~ " mm. Columns (-Y edge notches 1..): length "
+          ~ cols ~ " mm. Print Z+ up.");
+    return q;
+}
+
 // ==== UI LAYER BELOW -- dropped by --check ====
 
 export enum X330FixtureVersion
@@ -1591,4 +1756,15 @@ export const x330Fixture = defineFeature(function(context is Context, id is Id,
         reportFeatureInfo(context, id, "Shaft axis " ~ toString(roundToPrecision(-r.L.plateBottom / millimeter, 2))
                 ~ " mm above the plate's bottom face; lever reach +-"
                 ~ toString(roundToPrecision(r.L.leverEnd / millimeter, 1)) ~ " mm");
+    });
+
+annotation { "Feature Type Name" : "X330 pin coupon",
+             "Feature Type Description" : "Horn pin sets by diameter and length on one board, for the slicer" }
+export const x330PinCoupon = defineFeature(function(context is Context, id is Id,
+                                                    definition is map)
+    precondition
+    {
+    }
+    {
+        x330PinCouponBuild(context, id + "build");
     });

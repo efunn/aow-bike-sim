@@ -43,19 +43,58 @@
 #   bearing's inner race. Cradle walls stop the case turning and let it float.
 
 fixture:
-  # HORN PINS AT THE ORIGINAL 2.6 (servo_mounts.yaml halved them to 1.3 on
-  # 2026-09-23 after full-length pins snapped in use). This lever drives a
-  # load THROUGH the pins, so they get their full length back; the case pins
-  # stay at the shortened 1.5.
-  horn_pin_length: {value: 0.0026, source: design (the pre-2026-09-23 default)}
-  # --- the lever, close to the horn. The cover's horn-side cap is thinned
-  # to end 0.5 below the horn face (the shared 4 stands 1 mm proud of it),
-  # and the arms start lever_gap past that: 1.5, erring on the side of
-  # caution for whatever the mechanism sags under load (user, 2026-09-25).
-  # The arms swept +-45 deg cover nearly the whole cap face, so this gap,
-  # not the stop angle, is what keeps them off it.
+  # --- THE HORN ATTACH, overridden here from servo_mounts.yaml (user,
+  # 2026-09-25, after the 2.6 mm pins sheared -- "as usual" -- when a load
+  # was dropped onto the stop). Fixture-only until the pin coupon has been
+  # printed; then worth promoting to the shared defaults.
+  # Pin length: shorter. A pin's shear area does not depend on its length,
+  # but the bending moment at its root does, and the collar does the holding.
+  # 1.6 = 8 layers at 0.2 (user, 2026-09-26).
+  horn_pin_length: {value: 0.0016, source: design (user, 8 layers)}
+  # Pin DIAMETER, set directly (not as a clearance in the Phi 1.6 hole): the
+  # coupon (2026-09-26) sliced Phi 1.5 to a dot and a perimeter, and Phi 1.75
+  # to the next step up, ~1.6 printed with 2 of 4 perimeters (user). One hub
+  # per entry: the first is the assembled one, the rest are spares parked
+  # behind the servo in the same Part Studio, to print alongside.
+  horn_pin_diameters: {value: [0.0015, 0.00175], source: design (user, from the coupon)}
+  # NO ROOT RELIEF: the pins sheared exactly where the relief's chamfer
+  # ended, so the groove was not buying anything. Zero depth skips it.
+  horn_pin_root_relief: {value: 0.0, source: design (user)}
+  # The well round the horn 0.1 smaller on the diameter (Phi 16.1 -> 16.0),
+  # and a smaller lead-in chamfer at its mouth (0.6 -> 0.4: two layers).
+  horn_bore_clearance: {value: 0.0, source: design (user)}
+  horn_bore_mouth_chamfer: {value: 0.0004, source: design (user, 2 layers)}
+  # --- THE HORN HUB (IDLER): a separate small part carrying the horn attach,
+  # so a sheared set of pins costs a hub rather than the lever. Horn side:
+  # the well, the pins, and a hex pocket for a small-pattern 6-32 nut (the
+  # servo_mounts fastener's nut-slot numbers). Outer face: a BLADE GROOVE
+  # along Y with flanks at blade_flank_deg. The lever carries the matching
+  # blade and a counterbored countersink for a 6-32 x 3/8 flat head that
+  # clamps it onto the flanks -- the flanks locate and drive; blade_gap keeps
+  # the faces and the blade's tip off so that they can.
+  # (Asked for the other way round: blade on the hub, groove in the lever.
+  # The hub prints well-UP, pins standing out of its floor, which puts its
+  # outer face on the bed, where a blade would start in mid-air; a groove
+  # there is a ~4 mm bridge. The lever prints horn side up, blade up.)
+  hub_web: {value: 0.0012, source: design}        # nut pocket floor to groove floor
+  nut_pocket_depth: {value: 0.003, source: design (servo_mounts nut_slot_thickness)}
+  nut_thickness: {value: 0.00238, source: datasheet (6-32 small pattern, 3/32")}
+  # 1.6, not 1.5: with the 3.0 pocket and 1.2 web it puts the hub's face
+  # at 5.8, so as printed (face on the bed) the pocket end, the pins' root
+  # and tips and the well's rim are all whole 0.2 layers: 2.8, 5.8, 7.4, 8.4.
+  blade_depth: {value: 0.0016, source: design}
+  blade_width: {value: 0.006, source: design}     # at the hub's face
+  blade_flank_deg: {value: 30.0, source: design}  # from the shaft axis = the print overhang
+  blade_gap: {value: 0.0003, source: design}      # face and tip, so the flanks bear
+  screw_length: {value: 0.009525, source: datasheet (6-32 x 3/8 flat head)}
+  # The screw's tip stops this short of the horn face; its head then sits in
+  # a counterbore, as deep as that takes, below the lever's outer face.
+  screw_tip_clearance: {value: 0.0005, source: design}
+  counterbore_clearance: {value: 0.0004, source: design}  # diametral, round the head
+  # --- the lever sits on the hub, blade_gap past the hub's face. The cover's
+  # horn-side cap is still thinned to end 0.5 below the horn face (the shared
+  # 4 stands 1 mm proud of it); the hub now keeps the arms ~6 mm off it.
   cover_cap_thickness: {value: 0.0025, source: design}
-  lever_gap: {value: 0.0015, source: design}
   arm_thickness: {value: 0.006, source: design}
   # Arm height (Z, the bending direction): 12 leaves 3.4 of wall each side
   # of the mass slot. 0.3 N m on 6 x 12 less the slot is ~6 MPa.
@@ -161,3 +200,15 @@ fixture:
   ridge_flat: {value: 0.0046, source: design}
   ridge_clearance: {value: 0.00015, source: design}
   bridge_layer: {value: 0.0002, source: design (layer height)}
+  # --- THE PIN COUPON (feature `X330 pin coupon`, its own Part Studio): sets
+  # of four pins on the horn's own bolt circle standing on a flat board, to
+  # print as one part and see how a pin prints. One ROW per diameter, one
+  # COLUMN per length; rows are marked by notches on the -X edge (row k:
+  # k + 1 notches), columns on the -Y edge. The rows run from the fixture's
+  # own Phi 1.5 up to 3.0: at 1.4-1.5 every pin sliced to a single dot and a
+  # perimeter (user, 2026-09-26), so the question is where that changes --
+  # only the Phi 1.5 row still presses into the Phi 1.6 horn holes.
+  coupon_diameters: {value: [0.0015, 0.00175, 0.002, 0.00225, 0.0025, 0.00275, 0.003], source: design}
+  coupon_lengths: {value: [0.001, 0.0013, 0.0016, 0.002, 0.0026], source: design}
+  coupon_pitch: {value: 0.017, source: design}
+  coupon_board: {value: 0.002, source: design}

@@ -75,6 +75,8 @@ tabs:
   # The same feature set to the SCREWDRIVER version (servo in a cradle, lever
   # on its own two 608s). Created 2026-09-25 via create_part_studio.
   x330_fixture_screwdriver: 152b960e06cf79e869b3efca
+  # The horn-pin coupon (feature `X330 pin coupon`, same studio), 2026-09-25.
+  x330_pin_coupon: 6876f762a7562570920ce359
   # The real drawing -- actual parts, imported wheel geometry. cad_layout never
   # writes here; it is a --shot target only, for seeing the parts in context.
   bike: eb278418be25018fb7253dd3
@@ -110,6 +112,7 @@ features:
   ahrs_fixture: {id: Fln3klct5K8jQ2e_0, node: MvB9luGDi9JjuG/KU}
   x330_fixture: {id: FbLk4rq4wQTARd7_0, node: MRnGHjRYfg8ZMS/5Q}   # inserted 2026-09-25
   x330_fixture_screwdriver: {id: FTgqIdkcGWX9jEk_0, node: M1bMYfcWSpUQi8v5R}   # version SCREWDRIVER
+  x330_pin_coupon: {id: FXlxCqeurJos3Ys_0, node: MSCmztfPEeUckvmj5}   # inserted 2026-09-25
 
 # ---------------------------------------------------------------------------
 # OTHER DOCUMENTS TOUCHED, none of them driven by this repo's generators.

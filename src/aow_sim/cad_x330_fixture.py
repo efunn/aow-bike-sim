@@ -50,6 +50,7 @@ print check.
     python -m aow_sim.cad_x330_fixture --push x330_fixture_features
     python -m aow_sim.cad_x330_fixture --shot          # IDLER tab -> docs/cad/x330_fixture_idler.png
     python -m aow_sim.cad_x330_fixture --shot x330_fixture_screwdriver --version SCREWDRIVER
+    python -m aow_sim.cad_x330_fixture --shot --version COUPON   # the pin coupon's tab
 
 Numbers: config/x330_fixture_cad.yaml, plus the X330 envelope and mount
 interface cad_servo_mount reads.
@@ -72,13 +73,13 @@ OUT_FS = "docs/cad/x330_fixture.fs"
 OUT_PNG = "docs/cad/x330_fixture_{}.png"
 SPLIT_MARK = af.SPLIT_MARK
 VERSIONS = ("IDLER", "SCREWDRIVER")
-PARTS = {"IDLER": ("plate", "base", "cover", "lever", "yoke"),
+PARTS = {"IDLER": ("plate", "base", "cover", "hub", "lever", "yoke"),
          "SCREWDRIVER": ("plate", "block", "adapter", "key", "lever")}
 HARDWARE = ("X330 case", "X330 horn", "608 bearing", "spring")
 # The lever only swings between its stops, so the clash sweep visits each
 # stop from both sides: just short of it must be clear, 1 deg past it the
 # lever must hit that post and nothing else.
-DEG_KEYS = ("stop_deg", "post_stop_deg")
+DEG_KEYS = ("stop_deg", "post_stop_deg", "blade_flank_deg")
 # What the lever must hit, and only that, 1 deg past its stop.
 STOP_PAIR = {"IDLER": {"yoke", "cover"}, "SCREWDRIVER": {"lever", "plate"}}
 
@@ -117,13 +118,13 @@ def layout(data: dict, version: str = "IDLER") -> dict:
         corner = math.hypot(cy, cx)
         sS, cS = math.sin(s), math.cos(s)
         W = (f["stop_flat"] + cy * sS) / cS + f["stop_contact"]
-        out.update(plateTop=-shell_y1 - f["base_gap"],
+        hub = hub_stack(data)
+        out.update(plateTop=-shell_y1 - f["base_gap"], hubTop=hub["hubTop"],
                    R_s=max(corner, math.hypot(W, cy)) + f["sweep_clearance"] + f["leg_width"] / 2,
                    # the V stop's centre flat: faces at stop_deg through z = cy
                    stopHeight=(cy + f["stop_flat"] * sS) / cS,
                    ledgeHalfWidth=W,
-                   leverTop=-sv["hornThickness"] + t["caseFaceClearance"] + f["cover_cap_thickness"]
-                   + f["lever_gap"] + f["arm_thickness"])
+                   leverTop=hub["leverTop"])
     else:
         r_out = f["stop_radius"] + f["stop_post"] / 2
         s = math.radians(f["post_stop_deg"])
@@ -132,6 +133,29 @@ def layout(data: dict, version: str = "IDLER") -> dict:
                    blockX1=bx0 + 2 * f["bearing_width"] + f["bearing_gap"],
                    postTop=-(r_out * math.sin(s) + f["arm_height"] / 2 * math.cos(s)))
     out["plateBottom"] = out["plateTop"] - f["joint_plate"] - f["head_recess"]
+    return out
+
+
+def hub_stack(data: dict) -> dict:
+    """The IDLER's horn hub and the lever on it, along the shaft (X, mm from
+    the horn's outer face). Raises if the 6-32 x 3/8 cannot reach its nut, or
+    would reach the horn."""
+    f, sc = data["fixture"], data["screw"]
+    hub_top = f["nut_pocket_depth"] + f["hub_web"] + f["blade_depth"]
+    lever0 = hub_top + f["blade_gap"]
+    lever_top = lever0 + f["arm_thickness"]
+    tip = f["screw_tip_clearance"]
+    head = tip + f["screw_length"]
+    csk = (sc["headDia"] - sc["holeDia"]) / 2 / math.tan(math.radians(sc["cskAngle"] / 2))
+    nut0 = f["nut_pocket_depth"] - f["nut_thickness"]     # the nut, pulled to the pocket's end
+    out = {"hubTop": hub_top, "lever0": lever0, "leverTop": lever_top, "screwTip": tip,
+           "headTop": head, "headRecess": lever_top - head, "cskBottom": head - csk,
+           "nutEngaged": f["nut_pocket_depth"] - max(tip, nut0)}
+    if not 0 < tip <= nut0:
+        raise ValueError(f"the screw tip at {tip:.2f} mm does not pass the whole nut "
+                         f"({nut0:.2f}..{f['nut_pocket_depth']:.2f}) short of the horn")
+    if out["headRecess"] < 0 or out["cskBottom"] < lever0 + 0.5:
+        raise ValueError(f"the 6-32 head does not fit in the lever: {out}")
     return out
 
 
@@ -288,7 +312,11 @@ export function x330FixtureBuild(context is Context, id is Id, opt is map) retur
     const backZ   = -(x.hornThickness + x.caseDepth);
     const hornZ   = -x.hornThickness;
     const farEnd  = x.caseHeight - x.shaftFromEnd;
-    const horn    = mergeMaps(HORN_OPT, { "pinLength" : f.horn_pin_length });
+    // the horn attach, with this fixture's overrides (config: THE HORN ATTACH)
+    const horn    = mergeMaps(HORN_OPT, { "pinLength" : f.horn_pin_length,
+                                          "rootRelief" : f.horn_pin_root_relief,
+                                          "boreClearance" : f.horn_bore_clearance,
+                                          "boreMouthChamfer" : f.horn_bore_mouth_chamfer });
     const jpT     = f.joint_plate;
 
     // ---- the servo: horn +X, far end DOWN (local y = cross(X, -Y) = -Z)
@@ -322,27 +350,95 @@ export function x330FixtureBuild(context is Context, id is Id, opt is map) retur
         const W  = (a + cy * sS) / cS + f.stop_contact;
         const yExt = W * cS - cy * sS;          // V face ends on the circle through (W, cy)
         const Rs = max(sqrt(cy * cy + cx * cx), sqrt(cy * cy + W * W)) + f.sweep_clearance + lw / 2;
-        // The cover's cap ends just under the horn face; the lever sits
-        // lever_gap past it.
+        // The cover's cap ends just under the horn face.
         const capOuter = hornZ + CASE_OPT.caseFaceClearance + f.cover_cap_thickness;
-        const armX0 = capOuter + f.lever_gap;
+        // ---- the horn HUB and the lever on it (config: THE HORN HUB). Along
+        // X from the horn face: nut pocket, web, the blade groove, blade_gap,
+        // the lever.
+        const hubTop  = f.nut_pocket_depth + f.hub_web + f.blade_depth;
+        const armX0   = hubTop + f.blade_gap;
         const leverTop = armX0 + f.arm_thickness;
         const xJ = leverTop - jpT;
+        const tB  = tan(f.blade_flank_deg);
+        const bw  = f.blade_width / 2;
+        const gF  = hubTop - f.blade_depth;            // the groove's floor
+        const holeR = SCREW_OPT.holeDia / 2;
+        const headR = SCREW_OPT.headDia / 2;
+        const headTop = f.screw_tip_clearance + f.screw_length;
+        const cskBot  = headTop - (headR - holeR) / tan(SCREW_OPT.cskAngle / 2);
+        // the blade runs across the hub, inside its round
+        const bl = sqrt(collarR * collarR - bw * bw) - 0.2 * mm;
+
+        // One hub per horn_pin_diameters entry: the first is assembled, each
+        // other one is built in place, then parked behind the servo as a
+        // spare to print. Built spares-first, so partAt finds one hub at a time.
+        const nutR = SCREW_OPT.nutSlotWidth / sqrt(3);
+        var hex = [];
+        for (var k = 0; k < 6; k += 1)
+            hex = append(hex, vector(nutR * cos(k * 60 * degree), nutR * sin(k * 60 * degree)));
+        const hubPt = vector(f.nut_pocket_depth + f.hub_web / 2, 0 * mm, collarR - 1.5 * mm);
+        var spares = [];
+        for (var i = size(f.horn_pin_diameters) - 1; i >= 0; i -= 1)
+        {
+            const hT = "hub" ~ i;
+            step(hT);
+            cylW(context, P + (hT ~ "Disc"), vector(-wellT, 0 * mm, 0 * mm), vector(hubTop, 0 * mm, 0 * mm), collarR);
+            servoMountBuild(context, P + (hT ~ "Horn"), cs, mergeMaps(horn, {
+                    "pinClearance" : SERVO_MOUNT_TABLE["XC330"].hornHoleDia - f.horn_pin_diameters[i] }),
+                    partAt(context, P, hubPt));
+            // groove along Y in the outer face, profile in (z, x)
+            polyPrism(context, P, hT ~ "Groove", vector(0 * mm, -collarR - 1 * mm, 0 * mm), Y, Z,
+                      [vector(-bw, hubTop + 1 * mm), vector(-bw, hubTop),
+                       vector(-(bw - f.blade_depth * tB), gF), vector(bw - f.blade_depth * tB, gF),
+                       vector(bw, hubTop), vector(bw, hubTop + 1 * mm)], 2 * collarR + 2 * mm);
+            // hex pocket for the nut in the horn-side floor, profile in (y, z)
+            polyPrism(context, P, hT ~ "Nut", vector(-1 * mm, 0 * mm, 0 * mm), X, Y, hex,
+                      f.nut_pocket_depth + 1 * mm);
+            const hubHole = cylW(context, P + (hT ~ "Hole"), vector(-1 * mm, 0 * mm, 0 * mm),
+                                 vector(hubTop + 1 * mm, 0 * mm, 0 * mm), holeR);
+            opBoolean(context, P + (hT ~ "Cut"), { "tools" : qUnion([
+                    qCreatedBy(P + (hT ~ "GrooveExt"), EntityType.BODY),
+                    qCreatedBy(P + (hT ~ "NutExt"), EntityType.BODY), hubHole]),
+                    "targets" : partAt(context, P, hubPt),
+                    "operationType" : BooleanOperationType.SUBTRACTION });
+            if (i > 0)
+            {
+                const park = vector(-60 * mm - i * 25 * mm, 0 * mm, 0 * mm);
+                opTransform(context, P + (hT ~ "Park"), { "bodies" : partAt(context, P, hubPt),
+                        "transform" : transform(park) });
+                spares = append(spares, [i, hubPt + park]);
+            }
+        }
 
         step("lever");
-        // ---- lever: disc over the horn, arms both ways, leg up to the yoke
-        const disc = cylW(context, P + "disc", vector(-wellT, 0 * mm, 0 * mm),
+        // ---- lever: disc over the hub, arms both ways, the blade under it,
+        // leg up to the yoke
+        const disc = cylW(context, P + "disc", vector(armX0, 0 * mm, 0 * mm),
                           vector(leverTop, 0 * mm, 0 * mm), collarR);
         const la = leverArms(context, P + "lv", armX0, leverTop);
         const leg = boxW(context, P + "leg", vector(xJ, -lw / 2, 0 * mm),
                          vector(leverTop, lw / 2, Rs + lw / 2));
-        unite(context, P + "leverU", [disc, la.arms, leg]);
+        // the blade: the groove's own flanks, its tip blade_gap off the floor,
+        // a neck of the groove's mouth width up into the lever
+        const tipX = gF + f.blade_gap;
+        polyPrism(context, P, "blade", vector(0 * mm, -bl, 0 * mm), Y, Z,
+                  [vector(-bw, armX0 + 0.5 * mm), vector(-bw, hubTop),
+                   vector(-(bw - (hubTop - tipX) * tB), tipX), vector(bw - (hubTop - tipX) * tB, tipX),
+                   vector(bw, hubTop), vector(bw, armX0 + 0.5 * mm)], 2 * bl);
+        unite(context, P + "leverU", [disc, la.arms, leg, qCreatedBy(P + "bladeExt", EntityType.BODY)]);
         // in the arm's wall above the mass slot, below the ticks
         leverPt = vector((armX0 + leverTop) / 2, -30 * mm, (f.mass_slot_width + f.arm_height) / 4);
-        step("hornPins");
-        servoMountBuild(context, P + "horn", cs, horn, partAt(context, P, leverPt));
+        // counterbore + countersink from the outer face, then the hole
+        revolveProfile(context, P, "csk", plane(O, cross(Y, X), Y), line(O, X),
+                       [vector(0 * mm, cskBot), vector(holeR, cskBot), vector(headR, headTop),
+                        vector(headR + f.counterbore_clearance / 2, headTop),
+                        vector(headR + f.counterbore_clearance / 2, leverTop + 1 * mm),
+                        vector(0 * mm, leverTop + 1 * mm)]);
+        const lvHole = cylW(context, P + "lvHole", vector(tipX - 1 * mm, 0 * mm, 0 * mm),
+                            vector(leverTop + 1 * mm, 0 * mm, 0 * mm), holeR);
         step("armCut");
-        opBoolean(context, P + "armCut", { "tools" : la.holes,
+        opBoolean(context, P + "armCut", { "tools" : qUnion([la.holes, lvHole,
+                qCreatedBy(P + "cskRev", EntityType.BODY)]),
                 "targets" : partAt(context, P, leverPt),
                 "operationType" : BooleanOperationType.SUBTRACTION });
 
@@ -482,11 +578,18 @@ export function x330FixtureBuild(context is Context, id is Id, opt is map) retur
         screwJoint(context, P + "j2", vector(leverTop, 0 * mm, Rs), -X, Z, 0 * mm,
                    partAt(context, P, leverPt), partAt(context, P, yokePt), true, Y, lw / 2, -X, X);
 
+        const pinName = function(i) returns string
+        {
+            return " (pins " ~ toString(roundToPrecision(f.horn_pin_diameters[i] / mm, 2)) ~ ")";
+        };
         parts = [["plate", pl.pt, "Z+", Z, "static"], ["base", basePt, "X+", X, "static"],
-                 ["cover", coverPt, "X-", -X, "static"], ["lever", leverPt, "X-", -X, "lever"],
+                 ["cover", coverPt, "X-", -X, "static"], ["hub" ~ pinName(0), hubPt, "X-", -X, "lever"],
+                 ["lever", leverPt, "X-", -X, "lever"],
                  ["yoke", yokePt, "X+", X, "lever"]];
+        for (var sp in spares)
+            parts = append(parts, ["spare hub" ~ pinName(sp[0]), sp[1], "X-", -X, "static"]);
         L = { "plateTop" : zTop, "plateBottom" : pl.zBot, "stopHeight" : (cy + a * sS) / cS,
-              "ledgeHalfWidth" : W,
+              "ledgeHalfWidth" : W, "hubTop" : hubTop,
               "leverEnd" : la.leverEnd, "R_s" : Rs, "leverTop" : leverTop,
               "coverTopX0" : xa, "coverTopX1" : xb };
     }
@@ -504,7 +607,9 @@ export function x330FixtureBuild(context is Context, id is Id, opt is map) retur
         // ---- adapter: horn pins, a key slot across its outer face
         cylW(context, P + "adDisc", vector(-wellT, 0 * mm, 0 * mm), vector(a0, 0 * mm, 0 * mm), collarR);
         const adPt = vector(1.5 * mm, 0 * mm, 6 * mm);
-        servoMountBuild(context, P + "adHorn", cs, horn, partAt(context, P, adPt));
+        servoMountBuild(context, P + "adHorn", cs, mergeMaps(horn, {
+                "pinClearance" : SERVO_MOUNT_TABLE["XC330"].hornHoleDia - f.horn_pin_diameters[0] }),
+                partAt(context, P, adPt));
         const adSlot = boxW(context, P + "adSlot", vector(a0 - f.slot_depth, -collarR - 1 * mm, -sw),
                             vector(a0 + 1 * mm, collarR + 1 * mm, sw));
         opBoolean(context, P + "adSlotCut", { "tools" : adSlot, "targets" : partAt(context, P, adPt),
@@ -615,6 +720,67 @@ export function x330FixtureBuild(context is Context, id is Id, opt is map) retur
              "lever" : partAt(context, P, leverPt), "L" : L };
 }
 
+/**
+ * The pin coupon: a set of four pins on the horn's bolt circle per
+ * (diameter, length), standing +Z on a flat board, one part. Row r is
+ * coupon_diameters[r] (notches on the -X edge: r + 1), column c is
+ * coupon_lengths[c] (notches on the -Y edge: c + 1). Plain cylinders, no
+ * chamfers: the fixture's pins have none either.
+ */
+export function x330PinCouponBuild(context is Context, id is Id) returns Query
+{
+    const f  = FIXTURE;
+    const t  = SERVO_MOUNT_TABLE["XC330"];
+    const mm = millimeter;
+    const p  = f.coupon_pitch;
+    const nR = size(f.coupon_diameters);
+    const nC = size(f.coupon_lengths);
+    const board = boxW(context, id + "board", vector(0 * mm, 0 * mm, -f.coupon_board),
+                       vector(nC * p, nR * p, 0 * mm));
+    var bodies = [board];
+    for (var r = 0; r < nR; r += 1)
+        for (var c = 0; c < nC; c += 1)
+            for (var k = 0; k < t.hornHoleCount; k += 1)
+            {
+                const a = (45 + k * 360 / t.hornHoleCount) * degree;
+                const x = (c + 0.5) * p + t.hornBoltCircle / 2 * cos(a);
+                const y = (r + 0.5) * p + t.hornBoltCircle / 2 * sin(a);
+                bodies = append(bodies, cylW(context, id + ("pin" ~ r ~ "_" ~ c ~ "_" ~ k),
+                        vector(x, y, -f.coupon_board / 2), vector(x, y, f.coupon_lengths[c]),
+                        f.coupon_diameters[r] / 2));
+            }
+    unite(context, id + "all", bodies);
+    var notches = [];
+    for (var r = 0; r < nR; r += 1)
+        for (var k = 0; k <= r; k += 1)
+        {
+            const y = (r + 0.5) * p + (k - r / 2) * 1.6 * mm;
+            notches = append(notches, boxW(context, id + ("nr" ~ r ~ "_" ~ k),
+                    vector(-1 * mm, y - 0.4 * mm, -f.coupon_board - 1 * mm), vector(1 * mm, y + 0.4 * mm, 1 * mm)));
+        }
+    for (var c = 0; c < nC; c += 1)
+        for (var k = 0; k <= c; k += 1)
+        {
+            const x = (c + 0.5) * p + (k - c / 2) * 1.6 * mm;
+            notches = append(notches, boxW(context, id + ("nc" ~ c ~ "_" ~ k),
+                    vector(x - 0.4 * mm, -1 * mm, -f.coupon_board - 1 * mm), vector(x + 0.4 * mm, 1 * mm, 1 * mm)));
+        }
+    const q = qContainsPoint(qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID),
+                             vector(nC * p / 2, nR * p / 2, -f.coupon_board / 2));
+    opBoolean(context, id + "notch", { "tools" : qUnion(notches), "targets" : q,
+            "operationType" : BooleanOperationType.SUBTRACTION });
+    var rows = "";
+    for (var r = 0; r < nR; r += 1)
+        rows = rows ~ (r == 0 ? "" : ", ") ~ toString(roundToPrecision(f.coupon_diameters[r] / mm, 3));
+    var cols = "";
+    for (var c = 0; c < nC; c += 1)
+        cols = cols ~ (c == 0 ? "" : ", ") ~ toString(roundToPrecision(f.coupon_lengths[c] / mm, 2));
+    dress(context, q, "pin coupon [print Z+]", color(0.93, 0.56, 0.20),
+          "Rows (-X edge notches 1..): pin dia " ~ rows ~ " mm. Columns (-Y edge notches 1..): length "
+          ~ cols ~ " mm. Print Z+ up.");
+    return q;
+}
+
 %SPLIT%
 
 export enum X330FixtureVersion
@@ -647,6 +813,17 @@ export const x330Fixture = defineFeature(function(context is Context, id is Id,
         reportFeatureInfo(context, id, "Shaft axis " ~ toString(roundToPrecision(-r.L.plateBottom / millimeter, 2))
                 ~ " mm above the plate's bottom face; lever reach +-"
                 ~ toString(roundToPrecision(r.L.leverEnd / millimeter, 1)) ~ " mm");
+    });
+
+annotation { "Feature Type Name" : "X330 pin coupon",
+             "Feature Type Description" : "Horn pin sets by diameter and length on one board, for the slicer" }
+export const x330PinCoupon = defineFeature(function(context is Context, id is Id,
+                                                    definition is map)
+    precondition
+    {
+    }
+    {
+        x330PinCouponBuild(context, id + "build");
     });
 '''
 
@@ -731,6 +908,17 @@ def check_wrapper(fs: str, data: dict, versions=VERSIONS) -> str:
     }}
 {PRINT_CHECK}    opDeleteBodies(context, id + "clear", {{ "entities" : qCreatedBy(id, EntityType.BODY) }});
     }}
+    // the pin coupon: one named body, its size and volume
+    const cid = makeId("chkCoupon");
+    x330PinCouponBuild(context, cid);
+    const cb = evaluateQuery(context, qBodyType(qCreatedBy(cid, EntityType.BODY), BodyType.SOLID));
+    for (var b in cb)
+    {{
+        const bb = evBox3d(context, {{ "topology" : b, "tight" : true }});
+        println("CPN|" ~ name(b) ~ "|" ~ toString(evVolume(context, {{ "entities" : b }})
+                / (millimeter * millimeter * millimeter)) ~ "|"
+                ~ toString((bb.maxCorner - bb.minCorner) / millimeter));
+    }}
     return "ran to completion";
 }}
 """
@@ -754,15 +942,43 @@ def check(text: str, data: dict, target: str | None, versions=VERSIONS) -> bool:
         print(console[-3000:])
         print(onshape.budget_line())
         return False
+    ok = judge_coupon(console, data)
     sections = console.split("VER=")[1:]
-    ok = len(sections) == len(versions)
-    if not ok:
+    ok &= len(sections) == len(versions)
+    if len(sections) != len(versions):
         print(f"  ran {len(sections)} of {len(versions)} versions -- FAIL")
     for sec in sections:
         ver, _, body = sec.partition("\n")
         print(f"--- {ver}")
         ok &= judge(body, data, ver.strip())
     print(onshape.budget_line())
+    return ok
+
+
+def coupon_volume(data: dict) -> float:
+    """What the coupon should measure [mm^3]: board less its notches, plus
+    every pin above the board."""
+    f, t = data["fixture"], data["table"]["XC330"]
+    p, tb = f["coupon_pitch"], f["coupon_board"]
+    dia, ln = f["coupon_diameters"], f["coupon_lengths"]
+    n = int(t["hornHoleCount"])
+    notches = sum(r + 1 for r in range(len(dia))) + sum(c + 1 for c in range(len(ln)))
+    pins = sum(n * math.pi * (d / 2) ** 2 * L for d in dia for L in ln)
+    return len(ln) * p * len(dia) * p * tb - notches * 1.0 * 0.8 * tb + pins
+
+
+def judge_coupon(console: str, data: dict) -> bool:
+    rows = [l.split("|") for l in console.splitlines() if l.startswith("CPN|")]
+    want = coupon_volume(data)
+    print("--- COUPON")
+    ok = len(rows) == 1 and rows[0][1].startswith("pin coupon")
+    for r in rows:
+        v = float(r[2])
+        good = abs(v - want) / want < 1e-3
+        ok &= good
+        print(f"  {r[1]}: {v:.1f} mm^3 (want {want:.1f}) {'ok' if good else 'FAIL'}, box {r[3]} mm")
+    if len(rows) != 1:
+        print(f"  {len(rows)} coupon bodies, want 1  FAIL")
     return ok
 
 
@@ -786,7 +1002,8 @@ def judge(console: str, data: dict, version: str) -> bool:
     for n, c in counts.items():
         ok &= c == 1
         print(f"  part {n:10} {c} body  {'ok' if c == 1 else 'FAIL'}")
-    ok &= len(counts) == len(PARTS[version])
+    spares = len(data["fixture"]["horn_pin_diameters"]) - 1 if version == "IDLER" else 0
+    ok &= len(counts) == len(PARTS[version]) + spares
     stop = data["fixture"]["stop_deg" if version == "IDLER" else "post_stop_deg"]
     colls = [r for r in rows if r[0] == "COLL" and "ABUT" not in r[4]]
     past = {f"lever {stop + 1:g}", f"lever {-(stop + 1):g}"}
@@ -839,7 +1056,7 @@ def main() -> None:
                     help="replace a Feature Studio's contents (its own tab only)")
     ap.add_argument("--shot", metavar="TAB|URL", nargs="?", const="", default=None,
                     help="render a Part Studio (default `x330_fixture`); ONE billable call")
-    ap.add_argument("--version", choices=VERSIONS, default="IDLER",
+    ap.add_argument("--version", choices=VERSIONS + ("COUPON",), default="IDLER",
                     help="which version --shot's Part Studio shows (names the png)")
     ap.add_argument("--view", default="isometric")
     ap.add_argument("--dry-run", action="store_true",
@@ -874,7 +1091,8 @@ def main() -> None:
         print(onshape.budget_line())
     if args.shot is not None:
         from . import onshape
-        url = onshape.resolve(args.shot or None, "x330_fixture")
+        url = onshape.resolve(args.shot or None,
+                              "x330_pin_coupon" if args.version == "COUPON" else "x330_fixture")
         tag = args.version.lower() + ("" if args.view == "isometric" else "_" + args.view)
         out, _ = onshape.shaded_view(url, Path(OUT_PNG.format(tag)), view=args.view)
         print(f"rendered -> {out}")

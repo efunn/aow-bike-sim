@@ -23,14 +23,96 @@ def data():
     return fx.load()
 
 
-def test_the_horn_pins_are_the_full_length_and_the_case_pins_are_not(data):
-    """The lever drives its load through the horn pins, so they are the
-    original 2.6 -- the shared default is 1.3. Case pins keep the shared 1.5."""
+def test_the_horn_attach_carries_the_fixtures_overrides(data):
+    """After the 2.6 mm pins sheared (2026-09-25): shorter pins, NO root
+    relief, a Phi 16.0 well (was 16.1) with a 0.4 lead-in (was 0.6) -- all
+    fixture-only, the shared defaults untouched. Case pins keep 1.5."""
+    f, t = data["fixture"], data["table"]["XC330"]
     text = fx.build_fs(data)
-    assert data["fixture"]["horn_pin_length"] == pytest.approx(2.6)
-    assert '"pinLength" : f.horn_pin_length' in text
-    assert "export enum X330FixtureVersion" in text
-    assert data["table"]["XC330"]["casePinLength"] * 1000 == pytest.approx(1.5)
+    assert f["horn_pin_length"] < t["pinLength"] * 1000 + 0.5
+    assert f["horn_pin_root_relief"] == 0.0
+    assert t["hornDiameter"] * 1000 + f["horn_bore_clearance"] == pytest.approx(16.0)
+    assert f["horn_bore_mouth_chamfer"] == pytest.approx(0.4)
+    for k in ("pinLength", "rootRelief", "boreClearance", "boreMouthChamfer"):
+        assert f'"{k}" : f.' in text
+    # pins by DIAMETER, one hub each: 1.5 assembled, a 1.75 spare
+    assert f["horn_pin_diameters"] == pytest.approx([1.5, 1.75])
+    assert '"pinClearance" : SERVO_MOUNT_TABLE["XC330"].hornHoleDia - f.horn_pin_diameters[i]' in text
+    assert t["rootRelief"] > 0 and t["boreClearance"] > 0      # the shared ones unchanged
+    assert t["casePinLength"] * 1000 == pytest.approx(1.5)
+
+
+def test_a_zero_depth_relief_is_skipped_not_degenerate(data):
+    """With the relief at 0 and its chamfer still set, the relief polygon
+    folds into a triangle that notches the pin: the shared helper skips it."""
+    text = fx.build_fs(data)
+    assert "const relief = relD > 0 * meter && relW > 0 * meter;" in text
+    assert "if (relief)\n        revolveProfile(context, id, \"relief\"" in text
+
+
+def test_the_screw_clamps_the_lever_through_the_whole_nut_short_of_the_horn(data):
+    """6-32 x 3/8 flat head from the lever's face into the nut in the hub's
+    horn-side pocket: past the whole nut, short of the horn face, the head
+    in a counterbore and its countersink clear of the blade."""
+    f, h = data["fixture"], fx.hub_stack(data)
+    assert h["nutEngaged"] == pytest.approx(f["nut_thickness"])
+    assert 0 < h["screwTip"] < f["nut_pocket_depth"] - f["nut_thickness"]
+    assert h["headRecess"] >= 0
+    assert h["cskBottom"] > h["lever0"] + 0.5
+    assert fx.layout(data)["leverTop"] == pytest.approx(h["leverTop"])
+
+
+def test_the_hub_and_its_pins_print_on_whole_layers(data):
+    """The hub prints face-down: every height off the bed -- pocket end,
+    pin root, pin tip, the well's rim -- a whole 0.2 layer, and the pins 8."""
+    f, sv, t = data["fixture"], data["x330"], data["table"]["XC330"]
+    top = fx.hub_stack(data)["hubTop"]
+    well = sv["hornThickness"] - t["caseOffset"] * 1000
+    for h in (top - f["nut_pocket_depth"], f["blade_depth"], top, top + f["horn_pin_length"],
+              top + well, f["arm_thickness"]):
+        assert round(h / 0.2, 6) == round(h / 0.2), h
+    assert f["horn_pin_length"] == pytest.approx(1.6)
+
+
+def test_the_blade_bears_on_its_flanks_and_prints(data):
+    """The faces and the tip stand blade_gap off, so the flanks carry; the
+    flanks' angle from the shaft axis is their print overhang (hub well-up,
+    lever horn-side up), and the groove's floor is the only bridge."""
+    f = data["fixture"]
+    assert f["blade_gap"] > 0
+    assert f["blade_flank_deg"] <= 45
+    floor = f["blade_width"] - 2 * f["blade_depth"] * math.tan(math.radians(f["blade_flank_deg"]))
+    assert 3.0 < floor < 5.0                                 # a short bridge, wider than the hole
+    assert floor > data["screw"]["holeDia"]
+    assert f["hub_web"] >= 1.0
+
+
+def test_idler_lever_clears_the_thinned_cover_cap(data):
+    """The cap's face sits under the horn face; the hub keeps the arms well
+    clear of it -- more than the 1.5 the lever used to stand off, for sag."""
+    f, sv, L = data["fixture"], data["x330"], fx.layout(data, "IDLER")
+    cap_face = -sv["hornThickness"] + f["cover_cap_thickness"]
+    assert cap_face <= 0.0                                   # not proud of the horn face
+    assert L["leverTop"] - f["arm_thickness"] - cap_face > 1.5
+    assert L["leverTop"] - f["joint_plate"] > 0              # the leg's screw clears the cap
+
+
+def test_the_pin_coupon_grid(data):
+    """Rows by diameter from the fixture's Phi 1.5 up to 3.0, columns by
+    length, each a four-pin set on the horn's bolt circle; the sets and the
+    edge notches do not collide."""
+    f, t = data["fixture"], data["table"]["XC330"]
+    dia, ln, p = f["coupon_diameters"], f["coupon_lengths"], f["coupon_pitch"]
+    assert dia == sorted(dia) and ln == sorted(ln)
+    assert dia[0] == pytest.approx(1.5) and dia[-1] == pytest.approx(3.0)
+    assert min(ln) >= 1.0 and max(ln) < 3.0            # the horn hole's DP 3.0 (max)
+    bc = t["hornBoltCircle"] * 1000
+    span = bc / 2 * math.cos(math.radians(45)) + max(dia) / 2
+    assert p / 2 - span > 1.0                          # clear of the notches (1 mm deep)
+    assert bc / 2 * math.sqrt(2) - max(dia) > 4.0      # neighbours in a set stay apart
+    assert (max(len(ln), len(dia)) + 1) * 1.6 < p      # the widest notch run fits its band
+    assert fx.coupon_volume(data) > len(ln) * len(dia) * p * p * f["coupon_board"]
+    assert "export const x330PinCoupon = defineFeature" in fx.build_fs(data)
 
 
 def test_screwdriver_post_stops_the_lever_at_its_stop_angle(data):
@@ -113,16 +195,6 @@ def test_idler_arms_clear_the_plate_at_the_stop(data):
     r = half / math.cos(s) + f["arm_height"] / 2 * math.tan(s)      # arm radius over the plate edge
     lowest = -(r * math.sin(s) + f["arm_height"] / 2 * math.cos(s))
     assert lowest - L["plateTop"] > 5.0
-
-
-def test_idler_lever_clears_the_thinned_cover_cap(data):
-    """The cap's face sits under the horn face and the arms lever_gap past
-    it: 1.5 mm, for the mechanism's sag under load."""
-    f, sv, L = data["fixture"], data["x330"], fx.layout(data, "IDLER")
-    cap_face = -sv["hornThickness"] + f["cover_cap_thickness"]
-    assert cap_face <= 0.0                                   # not proud of the horn face
-    assert L["leverTop"] - f["arm_thickness"] - cap_face == pytest.approx(1.5)
-    assert L["leverTop"] - f["joint_plate"] > 0              # the leg's screw clears the cap
 
 
 def test_the_mass_slots_and_ticks_fit_the_arm(data):
