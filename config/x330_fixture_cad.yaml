@@ -1,0 +1,163 @@
+# The X330 load-test fixture's CAD numbers: one bare X330, shaft HORIZONTAL,
+# a lever on its horn to hang known masses from. Read by
+# aow_sim.cad_x330_fixture only -- never by the simulator. Metres.
+#
+# What it is for (docs/plans/pre-assembly-bench-checklist.md, "Bench test
+# for it"): back-drive slip torque with torque OFF, and lift-the-mass
+# Goal Current with torque ON, to split the ~22 mA breakaway that
+# analysis/servo_breakaway.py measured into deadband and gearbox friction.
+# Masses: a 10-32 screw and washers slid along a slot in either arm, out
+# to 44 mm from the shaft; 0.3 N m there is ~700 g.
+#
+# WORLD FRAME: origin on the horn's outer face, on the shaft axis; +X out of
+# the horn along the shaft; +Z up; the servo's far end points DOWN (-Z), as
+# the AHRS fixture's roll servo does. The lever rests level along Y, an arm
+# each way, so a mass can hang on either side and its own weight balances.
+#
+# TWO VERSIONS, one feature, picked in its dialog. Neither is friction-free;
+# each has what the real roll mechanism would.
+#
+#   IDLER (the easy build; less like the rig's roll)
+#   part    print   what it is
+#   plate   Z+      small clamp plate under both shells, tab to -X with four
+#                   10-32 holes; both 6-32 heads counterbored under flush
+#   base    X+      back-half case shell, leg down to the plate, one 6-32
+#   cover   X-      horn-half case shell, full wrap, cap thinned to 0.5
+#                   under the horn face, top widened by ledges for the stop; leg
+#                   down to the plate, one 6-32 -- takes the masses'
+#                   off-axis torque too
+#   lever   X-      horn disc and pins, 50 mm arms both ways with a mass
+#                   slot and 5 mm ticks each, leg up to the yoke
+#   yoke    X+      idler plug in the back recess, over the top to the lever,
+#                   and the STOP: a V underside (centre flat) that lands
+#                   flat on the cover's widened top at +-45 deg
+#
+#   SCREWDRIVER (the rig's roll mechanism: the servo only drives)
+#   plate   Z+      clamp plate + open-top cradle the servo drops into, a
+#                   spring channel behind it, stop posts, tab to -X
+#   adapter X-      horn pins on one face, a key slot across the other
+#   key     Z+      loose flat key, adapter slot to lever-hub slot
+#   lever   X+      hub with a key slot, arms both ways, shaft through
+#   block   X+      two 608 bearings the lever shaft runs in, one 6-32 down
+#   The spring pushes the servo +X: horn -> adapter -> hub -> the first
+#   bearing's inner race. Cradle walls stop the case turning and let it float.
+
+fixture:
+  # HORN PINS AT THE ORIGINAL 2.6 (servo_mounts.yaml halved them to 1.3 on
+  # 2026-09-23 after full-length pins snapped in use). This lever drives a
+  # load THROUGH the pins, so they get their full length back; the case pins
+  # stay at the shortened 1.5.
+  horn_pin_length: {value: 0.0026, source: design (the pre-2026-09-23 default)}
+  # --- the lever, close to the horn. The cover's horn-side cap is thinned
+  # to end 0.5 below the horn face (the shared 4 stands 1 mm proud of it),
+  # and the arms start lever_gap past that: 1.5, erring on the side of
+  # caution for whatever the mechanism sags under load (user, 2026-09-25).
+  # The arms swept +-45 deg cover nearly the whole cap face, so this gap,
+  # not the stop angle, is what keeps them off it.
+  cover_cap_thickness: {value: 0.0025, source: design}
+  lever_gap: {value: 0.0015, source: design}
+  arm_thickness: {value: 0.006, source: design}
+  # Arm height (Z, the bending direction): 12 leaves 3.4 of wall each side
+  # of the mass slot. 0.3 N m on 6 x 12 less the slot is ~6 MPa.
+  arm_height: {value: 0.012, source: design}
+  # Each arm reaches this far from the shaft axis -- 100 mm tip to tip.
+  arm_length: {value: 0.050, source: design}
+  # MASS SLOT along each arm, through it along the shaft: a 10-32 screw
+  # slides in it, carrying washers as the mass. Centreline from r0 to r1.
+  mass_slot_width: {value: 0.0051, source: design (10-32 free fit)}
+  mass_slot_r0: {value: 0.014, source: design}
+  mass_slot_r1: {value: 0.044, source: design}
+  # TICKS across each arm's top face every 5 mm from the shaft axis, to line
+  # masses up by eye on either side: full width every 10 mm, half width
+  # (from the front face) between. Grooves.
+  tick_pitch: {value: 0.005, source: design}
+  tick_r0: {value: 0.010, source: design}
+  tick_width: {value: 0.0006, source: design}
+  tick_depth: {value: 0.0005, source: design}
+  # --- the IDLER version's yoke: the AHRS fixture's (ahrs_fixture_cad.yaml).
+  # Its legs sit this far outside the full-wrap cover's shaft-end corner.
+  leg_width: {value: 0.011, source: design (as-built)}
+  sweep_clearance: {value: 0.001, source: design}
+  idler_arm_thickness: {value: 0.004, source: design}
+  # --- the SCREWDRIVER version
+  # Adapter: horn face to its keyed face; hub on the lever, then a boss that
+  # bears on the first bearing's INNER race only.
+  adapter_top: {value: 0.006, source: design}
+  hub_thickness: {value: 0.006, source: design}
+  boss_dia: {value: 0.011, source: design (608 inner race ~12)}
+  boss_length: {value: 0.001, source: design}
+  # The key and its slots. A loose flat key between two slots is an Oldham
+  # coupling in one direction: it forgives a little misalignment, and every
+  # part prints with its slot on the bed.
+  slot_width: {value: 0.0022, source: design}
+  slot_depth: {value: 0.003, source: design}
+  key_thickness: {value: 0.002, source: design}
+  key_span: {value: 0.016, source: design}
+  key_length: {value: 0.0056, source: design}     # 2 x slot_depth less 0.4 of float
+  # Bearings: two 608 (8 x 22 x 7), the commonest there is. Printed shaft
+  # and bore: both clearances are print properties -- GUESS until a test
+  # print; expect to tune them.
+  bearing_bore: {value: 0.008, source: datasheet (608)}
+  bearing_od: {value: 0.022, source: datasheet (608)}
+  bearing_width: {value: 0.007, source: datasheet (608)}
+  bearing_gap: {value: 0.002, source: design}
+  bore_clearance: {value: 0.00015, source: GUESS (press fit, printed)}
+  shaft_clearance: {value: 0.0001, source: GUESS (printed shaft in the race)}
+  block_wall: {value: 0.003, source: design}
+  # Cradle: side walls round the case with float, a back wall with the
+  # spring channel (open at the top, closed at the outer end).
+  cradle_clearance: {value: 0.0003, source: design}
+  cradle_wall: {value: 0.003, source: design}
+  cradle_height: {value: 0.020, source: design}   # above the plate
+  spring_od: {value: 0.006, source: GUESS (any small compression spring)}
+  spring_gap: {value: 0.002, source: design}      # back wall to case back face
+  spring_height: {value: 0.0125, source: design}  # spring axis above the plate
+  # --- the stop. 45 deg either side of level: the full rig's roll stop
+  # (config/floor_rig.yaml roll_stop.deg, where its skids land).
+  stop_deg: {value: 45.0, source: design (= floor_rig roll_stop.deg)}
+  # IDLER: the YOKE is the stop, landing FLAT on the cover's top. At 45 deg a
+  # face swinging about the shaft can only land flat on the part of that top
+  # beyond cy * tan(stop) from the centre (11.85 mm) without passing through
+  # the cover first -- the bare 12.35-wide cover leaves 0.5 mm. So the cover
+  # grows LEDGES that widen its top to give stop_contact of flat landing.
+  # The yoke's underside is a V with a centre flat (stop_flat either side);
+  # each face ends on the circle through the ledge's corner, and the yoke's U
+  # goes round that corner too.
+  stop_flat: {value: 0.001, source: design}       # half-width of the centre flat
+  stop_contact: {value: 0.005, source: design}    # flat landing width, each way
+  ledge_thickness: {value: 0.003, source: design}
+  # The keel runs this far from the yoke's bed (as printed): over the
+  # cover's own flat top, short of the lever joint's nut slot. The ledges
+  # span the same stretch and grow out of the cover's side wall where its
+  # flat top ends, their bed-facing end at the shells' overhang limit
+  # (servo_mounts case_wrap_overhang_deg), like the rest of the wraparound.
+  yoke_stop_length: {value: 0.0175, source: design}
+  # SCREWDRIVER: a post under each arm (no cover to stop on). Its plate is
+  # only 24.5 below the shaft, so an arm meets it by ~22 deg: 10 here.
+  post_stop_deg: {value: 10.0, source: design}
+  stop_radius: {value: 0.040, source: design}     # post centre from the shaft axis
+  stop_post: {value: 0.006, source: design}       # square section
+  # --- the plate and the base's leg
+  # IDLER: the leg below the shell's bottom. The lever hangs off the table's
+  # edge, so only the plate has to clear it: at 45 deg the arm passes over
+  # the plate (|y| <= 17) no lower than ~22 below the shaft, the plate's
+  # top is 33.6 down.
+  base_gap: {value: 0.005, source: design}
+  # IDLER: the cover has a leg down to the plate too, with its own 6-32, so
+  # the hanging masses' off-axis torque goes to the plate through both
+  # shells. This much clear of the base's front face.
+  cover_leg_gap: {value: 0.0002, source: design}
+  # The plate is joint_plate + this thick, and every countersunk head sits
+  # this far up in a counterbore -- under flush, so the plate sits flat.
+  head_recess: {value: 0.001, source: design}
+  plate_rim: {value: 0.003, source: design}       # plate past the parts it carries
+  tab_beyond: {value: 0.050, source: design}      # clamp tab behind the servo, -X
+  bolt_hole_dia: {value: 0.0051, source: design (10-32 free fit)}
+  bolt_span_x: {value: 0.0381, source: design (1.5 in)}
+  bolt_span_y: {value: 0.0254, source: design (1 in)}
+  # --- the screw joint, identical to the AHRS fixture's (config/ahrs_fixture_cad.yaml)
+  joint_plate: {value: 0.0046, source: design (as-built)}
+  ridge_height: {value: 0.0012, source: design}
+  ridge_flat: {value: 0.0046, source: design}
+  ridge_clearance: {value: 0.00015, source: design}
+  bridge_layer: {value: 0.0002, source: design (layer height)}
