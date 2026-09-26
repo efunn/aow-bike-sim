@@ -481,7 +481,7 @@ Worked through against the tests above:
     (`free`, `no_slide`, `fake_weight`, `pinned_yaw`), selected with
     `--rig-mode`. `--rig-lock` / `--rig-free` override single axes, and
     `motors:` holds rig-motor torques, applied after the controller.
-  - **Slide stops at ±60 mm**, and they hold.
+  - **Slide stops at ±100 mm** (200 mm travel; ±60 at first), and they hold.
   - **Roll member redrawn:** it rises from the bearing to CoG height and
     runs back beside the bike, so it no longer clips the floor.
   - **Roll stops:** two skids that REALLY touch the floor, landing at 45°,
@@ -492,7 +492,10 @@ Worked through against the tests above:
       than the contacts, and yield. The slide ran 286 mm past its stop; the
       weld let go by 100°. Each rig joint now carries 1 % of the bike's own
       inertia about its axis as armature (`armature_frac`).
-    - Skid colliders sit on the chassis body for the same reason.
+    - Skid colliders sat on the chassis body for the same reason. With the
+      armature in place they hold on the roll member, and they moved back
+      there: on the chassis they pitched with the bike and swung ~93 mm
+      off their outriggers whenever it wheelied at the slide stop.
     - MjSpec reads hinge ranges in DEGREES: radians made ±55° into ±1° and
       silently locked the rig.
   - **Policy hold, 8 s, one run each** (`general_rl_cmd_curriculum2b`):
@@ -513,7 +516,142 @@ Worked through against the tests above:
   - The two-tilt-axes hypothesis is not supported: locking pitch barely
     changes it, and locking tilt makes it worse.
   - The slide stop is a large share: the policy drifts into it.
+  - Mechanism, for the FORWARD stop (measured 2026-09-25, no controller,
+    both drives at a fixed speed): the stop reacts at the slide, i.e. at
+    the fake-CoG pitch axis, while the rear wheel's traction acts at the
+    floor ~124 mm below it. That couple lifts the front wheel, and with
+    the pitch axis at the CoG nothing brings it back: the bike wheelies
+    to its 30° pitch limit, even arriving at 0.37 m/s. Driving into the
+    BACK stop the couple pushes the front wheel down, so it does not
+    pitch (< 0.2°). Rough balance: the front wheel's ~4 N at ~0.1 m
+    about the axis against up to ~5 N of rear traction at 0.124 m.
+    Whether a real rig does the same depends on pitch friction and
+    where its stop reacts; not tested.
   - About 8 points remain unexplained.
+- **Realism knobs and a roll servo (2026-09-25).** `link_mass_g`,
+  `friction`, `damping` and `servos` in `config/floor_rig.yaml`, all 0/null by
+  default; `--rig-mode guessed_mass` is a first GUESS (135 g, light
+  friction), and `--rig-servo roll=fixed` (or `--rig-mode fixed_roll`) holds
+  roll with an XC330 in current-based position mode, as `righting_servo.py`
+  models it. Goal Current only CAPS the torque: at the righting gains (P 700)
+  even the Current Limit gives way to a 3 N side push, so `fixed` also sets P
+  to its register top (16383) and holds 0.35 deg.
+  - Even `roll=10` holds in sim, and that is the model working: 10 counts
+    caps at 0.085 N m, and gravity's tipping torque is ~1.24 sin(roll) N m,
+    so it can hold to ~4 deg. Alone it held from 3 deg and fell from 5; with
+    the policy it sat saturated ~63 % of the time. Whether a REAL XC330 does
+    this at 10 mA is open: the sqrt(current) law is measured only above
+    ~100 mA, it has infinite gain at zero error, and gearbox friction is not
+    modelled at all.
+  - User, rough experience: a real XC330 only starts to command movement at
+    ~100-200 mA. Read as gearbox friction at the output, that is 0.27-0.38
+    N m by the bus-current law righting_servo uses, or 0.09-0.18 N m if the
+    reading was phase current -- unresolved. Against gravity's 1.24
+    sin(roll) N m, that friction alone would hold the bike to ~4-18 deg, so
+    a servo left coupled makes roll NOT free: the removable (keyed
+    screwdriver) servo matters. Back-driving friction is not measured.
+  - User (2026-09-25): the XC330 reads and limits BUS current only, and at
+    a 10-50 mA limit the horn turns by hand as freely as at 0 mA. Modelled
+    for now as `servo_friction_ma: 100` (0.27 N m of Coulomb friction on an
+    axis while a servo is on it), a GUESS.
+  - **Breakaway sweep RUN 2026-09-25** (`analysis/servo_breakaway.py`,
+    capture `traces/servo_breakaway/260925-144920_servo_breakaway`; bare
+    ids 103 + 104, 12 V, P/D 700/1400, 45 deg goal steps). The two units
+    agree to the milliamp:
+
+    | Goal Current | tries that moved | Present PWM when stalled |
+    |---|---|---|
+    | 2-20 mA | none (6 tries per level, servo and direction) | 1-3 LSB up to 15 mA; 0.033 at 20 |
+    | 25-150 mA | all | -- |
+    | kinetic, stepping down | 10.4 rad/s at 60 mA, 1 rad/s at 22, 0 at 20 | |
+
+    - Breakaway ~20-25 mA, not 100-200. The user's 100-200 mA (and a
+      breakpoint near 50 mA) was the XL330-M288 -- a ~1920 mA current range
+      against the XC330's ~910, and a 288:1 gearbox against 181:1, so
+      more friction -- not this servo. Static and running thresholds are
+      the same current here.
+    - Up to 15 mA, Present Current reads the goal but the duty is
+      essentially zero: that current never drives the motor. So much of the
+      20 mA is a DEADBAND, and a deadband belongs in `righting_servo` (for
+      the bike's righting servo too), which is not yet modelled.
+    - The torque it stands for is soft: 0.13 N m by the sqrt law (outside
+      its evidence), and running at 9 rad/s the power bound says friction is
+      under 0.05 N m. `servo_friction_ma` is now 22, flagged as an upper end.
+    - Not yet done: step 2 (back-drive slip torque with masses), which
+      measures the friction directly.
+  - **The load-test fixture is drawn** (2026-09-25), two versions of one
+    feature (`aow_sim.cad_x330_fixture`): Part Studios `x330-fixture`
+    (IDLER, the one to build) and `x330-fixture-screwdriver`, renders
+    `docs/cad/x330_fixture_{idler,screwdriver}.png`. Both: one X330, shaft
+    horizontal (the AHRS fixture's roll-servo pose), 50 mm arms each way
+    with a 10-32 MASS SLOT (a screw and washers slide along it, out to
+    44 mm) and 5 mm ticks on top (full width per cm), a 10 deg stop either
+    side, horn pins back at 2.6 mm, case pins 1.5, every 6-32 head
+    counterbored 1 mm under flush so the plate clamps flat.
+    - IDLER: the AHRS fixture's roll stage (horn mount + idler yoke over
+      the top) with the arms. Base AND cover each have a leg and a 6-32
+      down to the plate, so the masses' off-axis torque goes through both
+      shells (the locating ridge on each leg, the groove in the plate). The
+      cover's cap is thinned to 0.5 mm under the horn face and the lever
+      sits 1.5 mm past it, for sag under load. The yoke carries the stop, at 45 deg --
+      the full rig's roll stop (floor_rig.yaml roll_stop.deg): a V
+      underside with a 2 mm centre flat whose faces land FLAT on the
+      cover's top. A face swinging about the shaft can only land flat
+      beyond cy * tan(stop) from the centre (11.85 mm at 45 deg, against the
+      bare cover's 12.35 half-width), so the cover grows ledges out to
+      18.3 mm for 5 mm of flat contact, and the yoke's U goes round the
+      ledge corner (R_s 28.3). The keel runs 17.5 mm from the yoke's bed,
+      over the cover's own flat top and clear of the lever joint's nut
+      slot; the ledges span the same stretch and grow out of the cover's
+      side wall as a cone about their inner corner at the shells' 70 deg
+      overhang limit -- the shell's own corner treatment -- not from the
+      bed. (Uncone'd corners printed, but messily: user, 2026-09-25.) The plate is just the footprint and tab; the
+      lever hangs off the table's edge and clears the plate at 45 deg.
+    - SCREWDRIVER, like the rig's roll: the servo floats in an open-top
+      cradle with a spring behind it and only DRIVES, through an adapter
+      and a loose key, a lever whose printed shaft runs in two 608s; posts
+      on the plate are its stops, at 10 deg (its plate is too close under
+      the arms for 45). Shaft and bore fits are GUESSES until a test print.
+    - Checked in Onshape, both in one call: no interference short of each
+      stop, 1 deg past it only the stop parts touch, the lever balances,
+      print check clean bar expected bridges.
+  - **Bench test for it, bare XC330, mode 5 (as proposed):**
+    1. Breakaway current. Hold a position; set Goal Current I; step the
+       goal ~45 deg away (far enough that P x error is well past I, so the
+       loop sits at the cap); log Present Position/Current. Raise I in
+       ~10 mA steps until it moves. Both directions, three horn angles
+       (gear mesh varies), three repeats. Then, while moving, lower I until
+       it stalls: static vs kinetic.
+    2. Back-drive slip torque, which needs no current law: torque off (and
+       again at 10-50 mA), a lever on the horn, known masses; the torque at
+       which it slips is the output-side friction directly.
+    3. Present Current at rest, torque on, no error: the reading's offset.
+    - If 2 comes out well under 0.27 N m while 1 says ~100 mA, the
+      threshold is NOT gearbox friction but current the motor never sees
+      (electronics draw, sense offset, or a loop deadband). The model
+      should then be a current DEADBAND in `righting_servo`, not friction
+      on the joint -- and the free-turning horn at 10-50 mA points that
+      way.
+  - User, teleop with `--rig-servo roll=10 --general personality8`: backs
+    onto the rear stop and stays there without wandering under
+    `--rig-heading follow`; under `hold` it backs onto the stop and then
+    falls into the yaw feedback loop.
+  - With roll fixed, curriculum2b drives to the forward stop, pitch bangs to
+    -30 deg there, and the arm yaws continuously (~65 deg/s). One run.
+- **Heading on the rig (2026-09-25).** 12 s station hold, slide ±100 mm,
+  two roll kicks each (±0.05 rad/s); "follow" re-aims the heading command at
+  the bike's own heading every tick:
+
+  | policy | free bike | rig, heading held | rig, heading follows |
+  |---|---|---|---|
+  | curriculum2b | held, drift 95-234 mm | FELL 3.1 / 4.8 s, yaw ~120 deg | held, drift ~450 mm, yaw ~60 deg |
+  | personality0 | held, drift ~1.2 m | FELL 1.4-1.7 s at the BACK stop | FELL 1.5 s |
+  | personality8 | held, drift ~1.4 m | FELL 0.9 s at the back stop | FELL 1.0 s |
+
+  - The good standers never fall free but creep backward over a metre in
+    12 s, so on a 200 mm slide they hit the back stop within a second.
+  - For curriculum2b, holding an absolute heading on the rig is what makes
+    it fall; following the heading holds. Two runs per cell.
 - **Pinned (user): a low-friction, somewhat sacrificial skate running in a
   racetrack round the whole bike.** Not designed; no idea yet how it works.
 - **Still open:** the slide sensor (the slide gives ±60 mm, which is enough
