@@ -771,8 +771,13 @@ export function servoMountGeometry(context is Context, id is Id,
 
     revolveProfile(context, id, "pin", pinPlane, pinAxis,
         {_fs_poly(pin_profile())});
-    revolveProfile(context, id, "relief", pinPlane, pinAxis,
-        {_fs_poly(relief_profile())});
+    // A relief of zero depth is NO relief, not a degenerate one: with the
+    // inner chamfer still set, the polygon folds into a triangle that would
+    // notch the pin itself.
+    const relief = relD > 0 * meter && relW > 0 * meter;
+    if (relief)
+        revolveProfile(context, id, "relief", pinPlane, pinAxis,
+            {_fs_poly(relief_profile())});
     revolveProfile(context, id, "bore", axialPlane, shaftAxis,
         {_fs_poly(bore_profile())});
     if (opt.collar)
@@ -794,10 +799,11 @@ export function servoMountGeometry(context is Context, id is Id,
             "entities"      : qCreatedBy(id + "pinRev", EntityType.BODY),
             "transforms"    : xf,
             "instanceNames" : names }});
-    opPattern(context, id + "reliefRing", {{
-            "entities"      : qCreatedBy(id + "reliefRev", EntityType.BODY),
-            "transforms"    : xf,
-            "instanceNames" : names }});
+    if (relief)
+        opPattern(context, id + "reliefRing", {{
+                "entities"      : qCreatedBy(id + "reliefRev", EntityType.BODY),
+                "transforms"    : xf,
+                "instanceNames" : names }});
 
     return {{
         "pins" : qUnion([qCreatedBy(id + "pinRev", EntityType.BODY),
