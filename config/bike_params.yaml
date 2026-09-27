@@ -227,6 +227,15 @@ servos:
     pos_left: [0.045, 0.030, 0.075]     # chassis-frame positions of the two drive servos
     pos_right: [0.045, -0.030, 0.075]
   xc330_t181:   # steering (values at 12 V per datasheet)
+    # KEPT AT THE DATASHEET, but the bench says it may be as low as ~0.5.
+    # X330 fixture, id 103, mode 3 at the steer's own gains (2026-09-26,
+    # docs/plans/pre-assembly-bench-checklist.md): every estimate of the stall
+    # torque per unit duty came out 0.53-0.69 N m -- friction-cancelling
+    # lift/lower pairs gave 0.69 (34 g) and 0.53 (117 g), a joint fit 0.54 --
+    # while the torque-speed SHAPE (stall / kv ~ 12 rad/s under load), the
+    # no-load speed and the firmware's P scaling (2.849e-3, config 2.877e-3)
+    # all check out. The lever rig cannot separate friction from torque any
+    # better; measure it in place once the steering is on a bike test rig.
     stall_torque: {value: 0.80, source: datasheet}
     # Torque constant kt = stall_torque / stall_current is what actually sets
     # the current a given LOAD draws, and kt does not depend on pack voltage --
