@@ -324,9 +324,11 @@ def cmd_modes(bus, args) -> None:
 
     print("\nHOW TO READ IT. A LINEAR controller gives a ratio that depends on")
     print("FREQUENCY ONLY -- equal at 1 deg and 5 deg. A ratio that IMPROVES as")
-    print("the amplitude shrinks is a nonlinear map whose gain rises toward zero")
-    print("error, which is what regulating BUS current (I_bus = duty*I_phase, so")
-    print("duty ~ sqrt(I_cmd) at stall) predicts. A ratio far above 1 is a limit")
+    print("the amplitude shrinks is either a gain that rises toward zero error")
+    print("(the bus-current sqrt law -- refuted at stall by the X330 fixture,")
+    print("docs/plans/righting-servo-model.md) or the motor's speed ceiling")
+    print("biting at the larger amplitude: 5 deg at 20 Hz asks ~7 rad/s against")
+    print("an 11.8 no-load. Not separated here. A ratio far above 1 is a limit")
     print("cycle, not tracking -- check the current draw before believing it.")
 
 
