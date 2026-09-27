@@ -41,6 +41,12 @@ Ranked by what unblocks the most, not by interest.
 | 3 | **Finish the drivetrain station** | Built and characterised 2026-09-12/13: belt ratio 3.0 confirmed, a 7.5° detent in the differential, and a velocity-loop resonance at ~22 Hz at firmware P 400 that P 200 does not have. Roller slop measured by hand 2026-09-13: ±1.5 mm at the roller's 22 mm diameter, 15.6° p-p, from the same gear chain as the detent (20 detents per roller turn). `k_roller` 2.4 confirmed by counting roller turns. Open: choose the firmware Velocity P **and I** gains — a P/I grid cut time stuck at the diff detents from 49 % (factory) to 12 % at P 400 / I 3840, but P 400 rings near 22 Hz and I 3840 rings harder (peak 1.09–1.20), and the sim must model whichever ships — then a torque-scale check (D5, a known added inertia -- no lever arm needed) and fitting the five drivetrain `GUESS`es from the captures. **The sim cannot pick the gain (2026-09-14):** on the drive model fitted to these captures, policies trained at each gain tie — 3 seeds each, median 0.749 at P 100 against 0.750 at P 400, each on its own plant — but P 400 buzzes the rear wheel ~3× harder at 8–32 Hz. Decide on the physical bike, with a policy trained at the gain that ships | `drivetrain-measurements.yaml`, `drivetrain-model.md` |
 | 4 | **Umbilical bring-up on the laptop** | Verification steps 1–2 need no pack at all | `untethered-setup.md` §"Bench power" |
 
+> ### → NEXT (2026-09-27): design and build the front steer -- servo, fork, axle
+>
+> The hardware step after the self-righting study (parked below). The
+> steer's XC330 is modelled from the bench (friction, ~0.52 N m usable
+> breaking away against a load); the CAD station is pinned.
+
 All four are bench work. **The sim-side item is being taken now:**
 
 > ### → NEXT, in progress: fix the eval score's directional gate
@@ -86,6 +92,18 @@ Consequences, all in sim:
   mechanism wants more mechanical advantage. Headless:
   `analysis/righting_current_sweep.py` gives 630 at 12 V and 11.1 V, 650 at
   the 9.9 V cutoff, of the 910 limit.
+- **Self-righting linkage: explored, PARKED, to be decided later**
+  (2026-09-27; `righting-linkage-margin.md`). The previous study's load model
+  was backwards and is fixed in place (`swing_linkage.resting_pose`: peak
+  motor torque 0.541 N m vs the sim's 0.539). Options on the table, sim at
+  9.9 V, Goal Current counts to right the bike: `_smaller` as built 643;
+  couplers staggered into two planes 537 (free end) or 575 (self-locking
+  end); the user's diamond, one crank pin and one wing rod, 547 (the lean);
+  a rising wing that ends out on the far side 471 (its own class, unstudied).
+  The short levers roughly double pin loads, and every design's worst lift
+  load is the instant the servo starts (a Goal Current ramp cuts it). Nothing
+  is chosen, and no config pointer moved. `analysis/swing_stepthrough.py`
+  steps any of them side by side.
 - The steering is weaker against a load: `(stall - f0)/(1 + c)` usable, ~0.52
   N m breaking away at the datasheet 0.80 (bench stall 0.62-0.69, kept at 0.80).
 - The floor rig's roll servo at the righting gains is softer: 7 deg under a
@@ -129,7 +147,7 @@ unchanged by the clip; the delay is not yet teleop-tested.
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
 | **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency`. **Onboard software readied for a Pi bench session 2026-09-15** — ground station, firmware-gain writes, fourth servo, fall cut/re-arm; none of it has touched hardware | Firmware P-gain choice, torque calibration, then the chassis | `pi-bench-bringup.md`, `first-physical-test.md`, `drivetrain-measurements.yaml` |
 | **CAD** | Layout, drivetrain, steering and righting stations pinned. Electronics packing deferred on purpose. The X330 idler side and the 6-32 crank/idler joint are generated features now (2026-09-23), beside the horn pin and case shell | AHRS fixture brackets, "What to do next" #5 | `cad-onshape-workflow.md` |
-| **Self-righting mechanism** | Four-bar built and operating. Its servo is modelled from the lever bench (2026-09-26): linear current law above a 16.5 mA edge, load-proportional gearbox friction | 300 counts cannot right it in sim (625 does, teleop 2026-09-26; wants more mechanical advantage); law above ~200 mA unmeasured; braking at speed mismatched | `wing-linkage-design-and-optimization.md`, `righting_servo.py` |
+| **Self-righting mechanism** | Four-bar built and operating. Its servo is modelled from the lever bench (2026-09-26): linear current law above a 16.5 mA edge, load-proportional gearbox friction | PARKED 2026-09-27, decision later: linkage options explored (537-575 counts vs 643 at 9.9 V in sim; the diamond, 547, is the lean). 300 counts cannot right the built one (625 does, teleop). Law above ~200 mA unmeasured; braking at speed mismatched | `righting-linkage-margin.md`, `wing-linkage-design-and-optimization.md`, `righting_servo.py` |
 
 ---
 
@@ -156,6 +174,7 @@ parked or reference — read that before the body.
 | `drivetrain-model.md` | **the detailed drivetrain**: servo, detent and slop fitted to the Station A captures, the replay check against them, what the existing policies do on it, and why firmware gains and policy are one decision |
 | `cad-onshape-workflow.md` | the Onshape round trip and its API quota, plus everything drawn so far |
 | `wing-linkage-design-and-optimization.md` | the righting mechanism as it now stands |
+| `righting-linkage-margin.md` | **the linkage re-search**: the stroke's load curve, the best-possible front, and why the previous round's torque numbers cannot be designed against |
 | `self-righting.md` | where recovery stops being possible; the fall cases. Reference |
 | `params-digest-split.md` | the two digests and what each answers |
 | `asymmetric-actor-critic.md` | a parked option, kept to cover the bases |
