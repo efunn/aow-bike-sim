@@ -659,6 +659,205 @@ Worked through against the tests above:
       so the hub's every height off the bed is a whole layer. Printing
       2026-09-26: one of each hub. Still open: which pin seats, and id 103's
       Operating Mode / P gain (left at 5 / 700 by the power-off; were 4 / 900).
+  - **Loaded runs, 2026-09-26** (`servo_lift.py`, id 103, hub pins 1.5,
+    P/D 700/1400, 12 V, lifting direction only, 2 reps per level, 2 mA
+    steps; `servo_lift.py fit <dirs>` reproduces the table). Measured:
+
+    | load | falls below | lifts above | midpoint | half-gap |
+    |---|---|---|---|---|
+    | 34 g at 44 mm, 14.7 mN m | 17 mA | 49 mA | 33 | 16 |
+    | 117 g at ~25 mm, 28.7 mN m | 27 mA | 79 mA | 53 | 26 |
+    | 117 g at 44 mm, 50.5 mN m | 43 mA | 129 mA | 86 | 43 |
+
+    - Plus 34 g at 25 mm, 8.3 mN m (0-80 mA by 2, 4 reps): held 4/4 at
+      every current to 34 mA, lifted 4/4 from 36. Never fell -- though with
+      torque OFF the same load back-drives the lever onto its stop.
+    - Model-free (`servo_lift.py fit`, 4 loads, residuals <= 1 mA):
+      LIFT at 16 mA + 2.23 mA per mN m of load; the load WINS below
+      6 mA + 0.73 mA per mN m (3 loads). The lift line starts where the
+      drive does: Present PWM at stall is ~0 up to 16 mA and turns on at
+      18, the same for every load -- a firmware deadband of ~17 mA (the
+      user's reading, and the right one; an earlier straight-line fit's
+      "11 mA deadband" was only an intercept).
+    - Splitting the slopes into a torque constant and friction needs
+      forward and back-driving friction to be equal, which these static
+      tests cannot check: IF so, kt 0.68 N m/A and friction 0.51 x load +
+      3.3 mN m. The sqrt law is out either way (50.5 mN m took ~110 mA
+      past the deadband, it says ~4).
+    - With no load the lever moved at 25 mA and held at 20, above the lift
+      line's 16: ~2-4 mN m of friction that is not proportional to load.
+    - Below the deadband, torque ON: 8.3 mN m never fell, 14.7 fell at 0,
+      12 and 14 mA and held at 8-10 -- every try started from level.
+    - RELEASE test (`servo_lift.py --release`, 34 g at 25 mm, 8.3 mN m;
+      held at -10..+10 deg, let go, 2 reps each): torque OFF and torque ON
+      at 0 mA behave the SAME: slid at -5 (1/2 off, 2/2 at 0 mA), both at
+      ~24 deg/s to the 20 deg catch, held elsewhere. The braking guess
+      above was wrong. Stick-slip: static friction mostly above 8.3 mN m,
+      sliding friction below it (30-39 deg/s once going).
+    - Then 1 deg steps, -10..+10 and -28..+20 (0 mA, 2 reps): slips looked
+      banded by angle, but did not repeat between reps -- because the
+      shuffled order hid the variable that decides it, HOW THE LEVER
+      ARRIVED at the hold: lowered into it (moving with the load) 0 of 72
+      slipped; lifted into it 27 of 82, over all three release runs. The
+      angle maps are confounded by that.
+    - Controlled (`--approach lift|lower`: each hold reached from 5 deg
+      away after its own 0.8 s hold, -26..+20 by 2, 2 reps): lowered into
+      0 of 48 -- so lowered-into never slipped in 120 --, but lifted into
+      only 2 of 48 (at -6, -4). Lifting ALONE does not make it slip; in the
+      shuffled runs even small lifts (<= 6 deg) slipped 8 of 20. Something
+      else in the history -- what came before the approach (a release, a
+      catch), how long it sat -- matters and is not yet pinned down.
+    - 1 mm further out, 34 g at ~26 mm (8.7 mN m; the user saw it hold if
+      lowered and fall if raised), same controlled sweeps: LIFTED into the
+      hold slipped 22 of 48, LOWERED into it 4 of 48. Lifted-into went 4%
+      -> 46% for 8.3 -> 8.7 mN m: after a lift, static back-drive friction
+      sits at ~8.5 mN m; after a lowering it holds more. With the approach
+      fixed, the angle pattern repeats rep to rep (slips both reps at -16,
+      -14, -8, -6, +2, +4; holds both at -24..-20, 0, +8..+20 bar +12).
+      Mechanism not established.
+    - The curve, same controlled sweeps (0 mA, -26..+20 by 2, 2 reps,
+      each hold reached by a 5.0 deg move at ~100-114 deg/s):
+
+      | 34 g at | load | lifted into, slid | lowered into, slid |
+      |---|---|---|---|
+      | 25 mm | 8.3 mN m | 2/48 | 0/48 |
+      | 26 mm | 8.7 mN m | 22/48 | 4/48 |
+      | 28 mm | 9.3 mN m | 26/48 | 5/48 |
+      | 31 mm | 10.3 mN m | 32/48 | 10/48 |
+
+      - Holds at +16..+20 never slipped at any load or approach; the band
+        narrows as load rises (+8..+20 at 9.3, +16..+20 at 10.3), and +12
+        slipped 4/4 inside it at 26-28 mm. The move BEFORE the final 5 deg
+        (the shuffle's, -37..+49 deg) matters a little (28 mm: 13/20 after
+        a lift, 7/19 after a lowering) but does not make the band.
+      - At 31 mm the user could not make it hold by hand; the servo's
+        lowered-into holds still held 38 of 48.
+      - PWM sweep (`--pwm-sweep`, pushed into the stop, 1 mA steps): drive
+        0-3 LSB to 15 mA, 4 (up) / 17 (down) at 16, 21-22 at 17 (2.4%),
+        then +5-6 per mA to 22 and +3.5 per mA to 40 (104 LSB, 11.8%).
+        The drive's edge is between 16 and 17 mA, ~1 mA of hysteresis.
+        Present Current read EXACTLY the goal at every stalled step, drive
+        or none -- not the current in the windings below the edge.
+        Inferred: a ~16 mA sensing offset the loop regulates to, with the
+        report capped at the goal. An external supply meter would settle it.
+      - Weight to the RIGHT arm, ~32 mm (10.7 mN m, load pulling -), same
+        sweeps over -26..+26: lifted into slid 52/54, lowered into 39/54 --
+        against 32/48 and 10/48 on the left at ~31 mm. Far more than a 3%
+        heavier load explains: back-driving the gearbox this way holds
+        less (one pair of runs, radii placed by eye). The grippy holds sit
+        at the SAME lever angles either way (+16..+20 left, +18..+26 right),
+        so the band follows the lever/output angle, not the load's side.
+        Gearbox vs fixture stays open: the yoke's stop fixes the hub's
+        orientation, so it cannot be re-indexed (user).
+      - PWM sweep into the - stop: 3 LSB through 16 mA, 20-21 at 17 -- the
+        same edge as the + side. The ~16.5 mA edge is symmetric.
+      - What the sensor reading means below the edge (offset vs current
+        going elsewhere) does not change the model: no torque below ~16.5
+        mA either way; only a power budget would see it (<= ~0.2 W/servo).
+  - **The steering's own mode, 2026-09-26** (`servo_lift.py --mode
+    position`: mode 3, P/I/D 900/0/0 as `gains.steer`, Goal PWM as the cap,
+    885 = 100 %; 34 g at 44 mm, 14.7 mN m, lifting only, 4 LSB steps):
+    - Lifted 2/2 from 44 LSB (5.0 % duty), held 2/2 at 4-40, fell only at
+      0. Present PWM sat exactly at the cap: Goal PWM caps mode 3's PID.
+    - The same load in mode 5 lifted at 49 mA, where mode 5's Present PWM
+      read ~125 LSB (14 %). So mode 5's PWM register is NOT the effective
+      duty -- the "3-5x weaker than the steer model" worry, drawn from it,
+      is withdrawn. At 5 % the steer model (tau = duty x 0.80 N m) gives
+      40 mN m against 14.7 of load plus unknown friction: needs a second
+      load to test.
+  - **Free spin, bare id 104, mode 16** (Goal PWM up then down each way):
+    speed is linear in duty from 11 % up -- w = 11.97 x duty - 0.08 rad/s
+    -- and 11.9 rad/s at 100 %, i.e. the 11.83 no-load `steer_kv` is
+    derived from holds at 12 V. The -0.08 intercept is running friction of
+    ~0.7 % duty (~5.4 mN m at the datasheet 0.80 N m stall). Symmetric both
+    ways. Not a floor at 1-3 %: 2.3 and 3.4 % sit near the line; only 1.1 %
+    is odd -- from rest it did not start (0.02 rad/s), coming down it kept
+    running (0.31): static above running friction, the lever's stick-slip.
+  - **Mode 3 vs mode 5 at the same drive** (34 g at 44 mm, stalled): mode
+    5 held at 43 LSB (Goal Current 22 mA, reading 22) and still held at 122
+    LSB (48 mA); mode 3 LIFTED at 44 LSB with the reading at 16 mA. So a
+    duty does not do the same work in both modes -- inferred: the bridge
+    switches differently (current recirculating between pulses or pushed
+    back to the supply). PWM numbers do not carry across modes; the steer
+    is characterised in mode 3, the righting servo in mode 5. In modes
+    without a current loop the reading sits at ~12-14 mA with almost no
+    drive: more support for a ~14-16 mA sensing offset.
+  - **Mode 3, second load** (117 g at 44 mm): lifted from ~134 LSB, the load
+    won below 30. With 34 g: lift 4.3 + 2.57 LSB per mN m, fall -9.5 + 0.78
+    per mN m. No deadband to speak of (lift intercept ~0.5 % duty).
+    - IF forward and back-drive friction are equal: 0.597 mN m per LSB, i.e.
+      0.53 N m stall at 100 %, against the steer model's 0.80 (1.5x
+      stronger); friction 0.53 x load + 4.1 mN m, the same gearbox the mode-5
+      fit saw (0.51 x load + 3.3). Independent check on the floor: the free
+      spin's running friction, 0.7 % duty = 6.2 LSB, against the fit's 6.9.
+    - Firmware P scaling, measured at settled holds: 2269 LSB of PWM per rad
+      of error at P900 = 2.849e-3 per P per rad, against the config's
+      2.877e-3 -- confirmed to 1 %. So kp = 2.56 x stall torque: 2.05 at
+      0.80 N m (the sim's 2.0), 1.36 at 0.53.
+  - **Mode-3 step response, 117 g at 44 mm** (P900/I0/D0, from level, 2
+    reps): 5 and 10 deg steps stop 0.6-1.6 deg SHORT both ways (no I term;
+    the P term falls below friction), 20 deg lands within 0.3; peaks 60 /
+    150 / 340 deg/s. Stopping short does not separate kp from friction.
+    - 34 g steps: stop 0.1-0.6 deg short; peaks 90 / 180 / 380 deg/s.
+    - Fitting torque per duty and rotor inertia to the steps FAILED (R^2
+      <= 0.14, negative inertia): the swing is over in ~50 ms = 5 frames at
+      100 Hz, and Present Velocity LAGS position by 2-3 frames (read 88
+      deg/s while position moved 343 deg/s; kept reading 124 after it had
+      stopped). Never difference Present Velocity for acceleration; a
+      dynamic fit needs a faster rate or a slower motion.
+  - **Speed at a fixed drive, under load** -- from the mode-3 lift sweeps
+    already taken: tries above the lift threshold ran with Present PWM
+    pinned at the cap; speed mid-travel from position:
+
+    | | lifting speed vs duty | zero-speed duty |
+    |---|---|---|
+    | no load (free spin, id 104) | 11.97 d - 0.08 rad/s | 0.7 % |
+    | 34 g at 44 mm, 14.7 mN m | 12.31 d - 0.42 | 3.4 % |
+    | 117 g at 44 mm, 50.5 mN m | 12.18 d - 1.45 | 11.9 % |
+
+    - Parallel lines: tau = d x stall - kv x w with stall/kv ~12 rad/s holds
+      under load; the steer model's SHAPE is right.
+    - Keeping it moving costs 0.0024 duty per mN m of load = (1 + running
+      friction fraction) / stall. Stall 0.42 N m with no load-dependent
+      running friction, 0.65 if it is the static fit's 0.53; the model's
+      0.80 needs running friction of 0.9 x load, more than static. So the
+      stall torque at 12 V is very likely 0.42-0.65 N m, ~0.5 -- assuming
+      only running <= static friction. WITHDRAWN by the next bullet: that
+      assumption failed (running friction came out at 0.59 x load).
+    - LOWERING too (34 g, mode 3, goal toward the load, caps 100-400 LSB,
+      61 tries): 11.83 d + 0.104 rad/s, zero-speed duty -0.88 %. With the
+      lift line's +3.40 %: torque per duty = 2 x 14.7 / (0.0340 + 0.0088)
+      = 0.69 N m stall at 100 %, friction cancelling; running friction 8.6
+      mN m. Both intercepts are extrapolated from >= 11 % duty and a 0.004
+      shift moves it ~10 %: ~0.69 +- 0.1 against the model's 0.80. The 117
+      g pair (3.4x the torque) is the check. Nothing applied yet.
+    - 117 g pair: lift 12.18 d - 1.449, LOWER 10.81 d + 0.779 (50 tries,
+      0 catches) -> 0.53 N m, running friction 12.4 mN m. Does NOT confirm
+      the 34 g pair's 0.69. The lowering slope drops with load (11.83 ->
+      10.81) while lifting slopes stay at ~12.2 = no-load: with a heavy load
+      helping, lowering is a different friction regime (gearbox partly
+      driven from the load), so the cancel-friction pairing is biased
+      there. A joint fit of all four lines (friction f0 + c x load both
+      ways): 0.54 N m, f0 4.4, c 0.16.
+    - CONCLUSION: stall torque at 12 V is 0.53-0.69 N m by every estimate
+      here, against the model's 0.80 -- the steer model is ~15-35 % strong,
+      but no single value is pinned. Shape (stall/kv ~12 rad/s), no-load
+      speed and the firmware P scaling ARE confirmed. Recommended, not
+      applied: keep 0.80 nominal, randomise steer strength over ~0.5-0.8 in
+      training (the unmeasured-constant rule), and mark stall_torque with
+      this range. DECIDED (user, 2026-09-26): keep the datasheet 0.80,
+      noted in bike_params.yaml as possibly ~0.5; measure in place on a
+      bike test rig.
+  - **Next, written up as plans:** the righting servo's model from these
+    lines -- `docs/plans/righting-servo-model.md` (it cuts the modelled
+    lift at 300 counts ~3.7x, and needs 130-910 mA measured first) -- and
+    BAM identification of XL330/XC330 current-based position control on
+    this rig -- `docs/plans/bam-current-position.md`.
+    - Holding level at the 300 mA cap drew 47 / 72 / 102 mA for the three
+      loads (P 700 droop, inside the friction band).
+    - Two runs stopped on a Bus Watchdog trip: one ~167 ms host stall each,
+      ~215 s in; fixed by turning the cyclic GC off in bench_log.record
+      (inferred cause; three 416 s runs since, longest gap 12.9 ms).
   - **Bench test for it, bare XC330, mode 5 (as proposed):**
     1. Breakaway current. Hold a position; set Goal Current I; step the
        goal ~45 deg away (far enough that P x error is well past I, so the
