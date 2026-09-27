@@ -94,8 +94,6 @@ import yaml
 CONFIG = Path(__file__).resolve().parents[1] / "config" / "swing_linkage.yaml"
 
 GRAVITY = 9.81
-BIKE_MASS_KG = 1.159      # same figure the mirrored study uses, so the two
-COM_Z_MM = 123.5          # torque numbers are comparable
 BALL_R_MM = 33.5          # road hockey ball radius. REFERENCE ONLY -- this
                           # mechanism does not strike the ball (fixed panels do
                           # that); see BRACE_ARM_MM.
@@ -1399,8 +1397,14 @@ def _pair_ok(a: str, b: str) -> bool:
 
 
 def _same_plane(lk, a: str, b: str) -> bool:
-    """Can these two members reach each other at all? Names carry a side suffix."""
-    pa, pb = lk.planes.get(a[:-1]), lk.planes.get(b[:-1])
+    """Can these two members reach each other at all? Names carry a side suffix.
+
+    A plane may be given per MEMBER (`couplerR: 1, couplerL: 3`) as well as per
+    type; the member's own entry wins. Per type, both couplers share a plane,
+    and their passing at the end of the stroke is what binds the margin search
+    (swing_synthesis.py)."""
+    pa = lk.planes.get(a, lk.planes.get(a[:-1]))
+    pb = lk.planes.get(b, lk.planes.get(b[:-1]))
     return pa == "all" or pb == "all" or pa == pb
 
 
@@ -1702,34 +1706,230 @@ def ratio_curve(lk: SwingLinkage, travel: float, step: float = 1.0):
 # statics
 
 
-def torque_curve(lk: SwingLinkage, travel: float, mass: float = BIKE_MASS_KG,
-                 com_z: float = COM_Z_MM, step: float = 1.0):
-    """Servo torque through the stroke, bike lying on the deploying wing.
+FLOOR_FRICTION_EFF = 0.4
+"""Effective sliding friction at the panel's floor contact once the wheels are
+down, FITTED to the sim (2026-09-26: rms 27 mN m against the sim's hinge load
+over that part of the stroke; 0.0 reads up to 88 mN m low, 0.9 up to 136
+high). The sim's own floor is `sim.friction_sliding` 0.9, a GUESS; it realises
+less than that here because the rear omni's rollers let the wheel side slide
+freely. Matters only after touchdown -- on the panel alone the load needs no
+horizontal force at all."""
 
-    Same load case as the mirrored study, and the same virtual-work step: the
-    bike is on its side ON the wing, the wing stays flat on the ground, and
-    driving it out rotates the BIKE up around the pivot.
+_MASS: dict | None = None
 
-        roll  phi   = 90 - wing_deg
-        tau_wing    = m g * |lever|          weight moment about the pivot
-        tau_servo   = tau_wing * d(wing)/d(crank)
 
+def mass_props() -> dict:
+    """Mass and CoM of the bike, split at the DEPLOYING wing, in sketch mm.
+
+    From the MuJoCo model at its rest pose, not from constants: the
+    `BIKE_MASS_KG` / `COM_Z_MM` this file used to carry were copied from the
+    mirrored study. `rest` is the CoM of everything EXCEPT the right wing,
+    in the chassis frame (the sketch frame: y lateral, z from the axle). The
+    link masses differ by grams between geometries, so this is built once
+    against the live config and treated as a property of the bike.
+    """
+    global _MASS
+    if _MASS is None:
+        import mujoco
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from aow_sim.build_model import build_model, load_params
+        m = build_model(load_params(), righting=True, swing_linkage=True)
+        d = mujoco.MjData(m)
+        mujoco.mj_forward(m, d)
+        ch, w = 1, m.body("swing_wing_right").id
+        M, mw = float(m.body_subtreemass[ch]), float(m.body_subtreemass[w])
+        com = (M * d.subtree_com[ch] - mw * d.subtree_com[w]) / (M - mw)
+        local = d.xmat[ch].reshape(3, 3).T @ (com - d.xpos[ch])
+        _MASS = {"total": M, "wing": mw,
+                 "rest": np.array([local[1], local[2]]) * 1000.0}
+    return _MASS
+
+
+def resting_pose(lk: SwingLinkage, travel: float,
+                 friction: float = FLOOR_FRICTION_EFF) -> dict | None:
+    """How the bike rests at crank `travel`, and the torque that asks of the
+    deploying wing's hinge. None if it does not close or rests on nothing.
+
+    Quasi-static and planar. The support points are the deploying panel's two
+    ends and the wheels' contact (a point at the axle's foot, (0, -R)); the
+    bike rests on the edge of their hull that has its CoM above it:
+
+      PANEL   foot and top on the floor, wheels in the air. Everything but
+              the wing hangs off the hinge, so the load is EXACTLY that
+              weight times its horizontal lever about the hinge -- a function
+              of roll alone, whatever the panel's shape.
+      WHEELS  one panel end and the wheels. Moments about the panel end give
+              the wheels' share; the rest pushes up through the panel, and
+              the sliding panel end drags `friction` of its normal force,
+              reacted at the wheels, with the hinge's height as its lever.
+
+    THIS REPLACES A MODEL THAT WAS SHAPED BACKWARDS. It took roll = 90 -
+    wing (the mirrored study's relation, which `handoff_roll` already says
+    does not hold here) and rotated the CoM by the wing angle, so the bike on
+    its side was scored as upright: 0.06 N m of hinge load at crank 0 where
+    the sim has 0.87, and 0.81 at crank 90 where it has 0.45. Checked against
+    the sim for `swing_linkage_smaller.yaml` (righting_ideal_profile.py
+    prints both, 2026-09-26): hinge load median 4.5 mN m off per wing degree;
+    roll within 0.1 deg on the panel. The worst, 0.22 N m OVER at wing 45
+    deg, and the p95 of 108 mN m are the touchdown, which the point wheel
+    reaches ~2 deg of wing early and the sim passes through gradually on its
+    tyre and roller -- a conservative error.
+    Peak motor torque through the as-built stroke: 0.541 here, 0.539 in sim.
+
+    The chassis outline is not a support: the fallen bike's first instant
+    also rests on the bumper, which lifts off at once.
+    """
+    pz = lk.pose(-1, travel)
+    if pz is None:
+        return None
+    return rest_on_panel(pz["foot"], pz["top"], pz["pivot"], lk.wheel_radius,
+                         friction)
+
+
+def rest_on_panel(foot, top, hinge, wheel_radius: float,
+                  friction: float = FLOOR_FRICTION_EFF) -> dict | None:
+    """`resting_pose` from the deploying panel's ends and hinge directly, in
+    sketch mm -- no linkage needed, which is what lets a load table be built
+    for a panel and hinge that no config describes yet (swing_synthesis.py)."""
+    mp = mass_props()
+    M, mw = mp["total"], mp["wing"]
+    foot, top, hinge = (np.asarray(v, float) for v in (foot, top, hinge))
+    rest = mp["rest"]
+    com = ((M - mw) * rest + mw * 0.5 * (foot + top)) / M
+    pts = {"foot": foot, "top": top, "wheel": np.array([0.0, -wheel_radius])}
+    for a, b in (("foot", "top"), ("foot", "wheel"), ("top", "wheel")):
+        v = pts[b] - pts[a]
+        for roll in (-np.degrees(np.arctan2(v[1], v[0])),
+                     180.0 - np.degrees(np.arctan2(v[1], v[0]))):
+            roll = (roll + 180.0) % 360.0 - 180.0
+            W = {k: _rot(p, roll) for k, p in pts.items()}
+            floor = W[a][1]
+            others = [k for k in pts if k not in (a, b)]
+            if any(W[k][1] < floor - 1e-6 for k in others):
+                continue                          # not a hull edge this way up
+            C = _rot(com, roll)
+            if C[1] <= floor:
+                continue                          # upside down
+            x1, x2 = W[a][0], W[b][0]
+            if not min(x1, x2) <= C[0] <= max(x1, x2):
+                continue                          # would tip off this edge
+            g = GRAVITY / 1000.0                  # N per kg, lever in mm -> N m
+            H = _rot(hinge, roll)
+            S = _rot(rest, roll)
+            tau = (M - mw) * g * (S[0] - H[0])
+            if b == "wheel":
+                n_wheel = M * GRAVITY * (C[0] - x1) / (x2 - x1)
+                n_panel = M * GRAVITY - n_wheel
+                tau -= n_wheel * (x2 - H[0]) / 1000.0
+            # SIGNED: + resists deploying (the servo must push), - means the
+            # bike is falling forward and drives the wing itself. It was abs(),
+            # which would score that as load; on every geometry checked it
+            # never changes sign, but a panel far enough out lifts the CoM
+            # above its upright height mid-stroke (60 mm out: 132 mm vs 122)
+            # and that is exactly where it would.
+            load = -tau
+            if b == "wheel":
+                load += friction * n_panel * (H[1] - floor) / 1000.0
+            return {"roll": abs(roll), "on": (a, b), "load": float(load),
+                    "regime": "wheels" if b == "wheel" else "panel",
+                    "to_floor": (roll, floor), "com_h": float(C[1] - floor)}
+    return None
+
+
+def pin_forces(lk: SwingLinkage, travel: float,
+               friction: float = FLOOR_FRICTION_EFF) -> dict | None:
+    """Pin forces [N] at crank `travel`, QUASI-STATIC, from each wing's free
+    body in the resting pose:
+
+        {"R": {"coupler", "hinge"}, "L": {"coupler", "hinge"}, "shaft"}
+
+    R is the deploying wing. The floor pushes on its panel (the whole weight
+    while the wheels are up, under the CoM; the panel end's share once they
+    are down, plus friction either way, the worse sign kept). L, rising, only
+    carries its own weight. Each coupler is a two-force member and carries
+    whatever balances its wing's torque about the hinge; the hinge pin takes
+    the rest. A coupler's force is also its crank pin's, and the servo shaft
+    reacts the two couplers' vector sum. Checked: at crank 0 the R coupler
+    force equals the hinge load over the coupler's lever about the hinge, on
+    every tracked design.
+
+    Dynamic peaks are larger -- a stepped stroke swings the wing -- and a fall
+    onto a wing larger again; the sim's equality forces measure both
+    (righting-linkage-margin.md).
+    """
+    st = resting_pose(lk, travel, friction)
+    if st is None:
+        return None
+    mp = mass_props()
+    M, mw = mp["total"], mp["wing"]
+    roll, floor = st["to_floor"]
+
+    def g(p):
+        return _rot(np.asarray(p, float), roll) - np.array([0.0, floor])
+
+    def cross(a, b):
+        return float(a[0] * b[1] - a[1] * b[0])
+    out, on_crank = {}, np.zeros(2)
+    for side, tag in ((-1, "R"), (1, "L")):
+        pz = lk.pose(side, travel)
+        if pz is None:
+            return None
+        P, J, C = g(pz["pivot"]), g(pz["joint"]), g(pz["crank_tip"])
+        foot, top = g(pz["foot"]), g(pz["top"])
+        u = (J - C) / np.linalg.norm(J - C)
+        Ww, Wc = np.array([0.0, -mw * GRAVITY]), 0.5 * (foot + top)
+        floors = [np.zeros(2)]
+        Q = P
+        if side == -1:
+            com = g(((M - mw) * mp["rest"] + mw * 0.5 * (pz["foot"] + pz["top"])) / M)
+            if st["regime"] == "panel":
+                n, v = M * GRAVITY, top - foot
+                s_ = (com[0] - foot[0]) / v[0] if abs(v[0]) > 1e-9 else 0.5
+                Q, fric = foot + s_ * v, 0.0
+            else:
+                Q = foot if st["on"][0] == "foot" else top
+                wheel = g([0.0, -lk.wheel_radius])
+                n = M * GRAVITY - M * GRAVITY * (com[0] - Q[0]) / (wheel[0] - Q[0])
+                fric = friction * n
+            floors = [np.array([sg * fric, n]) for sg in ((0.0,) if fric == 0.0 else (1.0, -1.0))]
+        best = None
+        for Fp in floors:
+            ext = cross((Q - P) / 1000.0, Fp) + cross((Wc - P) / 1000.0, Ww)
+            Fc = -ext / cross((J - P) / 1000.0, u)
+            Fh = -(Fp + Ww + Fc * u)
+            if best is None or abs(Fc) > abs(best[0]):
+                best = (Fc, Fh)
+        Fc, Fh = best
+        out[tag] = {"coupler": abs(Fc), "hinge": float(np.linalg.norm(Fh))}
+        on_crank += Fc * u
+    out["shaft"] = float(np.linalg.norm(on_crank))
+    return out
+
+
+def torque_curve(lk: SwingLinkage, travel: float, step: float = 1.0):
+    """(travel, wing_deg, hinge load, servo OUTPUT torque) through the stroke.
+
+    Servo output torque = hinge load * |d(wing)/d(crank)|: the crank's side
+    of the servo's gearbox. The MOTOR needs more -- the running friction line
+    `(1 + c) tau + f0` (gearbox_friction.py), and breaking away from rest
+    under load needs the static one; righting_ideal_profile.py applies both.
     Reported for the RIGHT wing deploying; symmetry gives the other side.
     """
-    ts, wds, grad = ratio_curve(lk, travel, step)
-    if not len(ts):
-        return ts, wds, np.zeros(0), np.zeros(0)
-    piv = lk.pivot(-1)
-    com0 = np.array([0.0, com_z - lk.wheel_radius])   # sketch frame
-    tau_w, tau_s = [], []
-    for wd, g in zip(wds, grad):
-        phi = 90.0 - abs(wd)
-        com = piv + _rot(com0 - piv, -(90.0 - phi))
-        lever = abs(float(com[0] - piv[0])) / 1000.0
-        tw = mass * GRAVITY * lever
-        tau_w.append(tw)
-        tau_s.append(tw * abs(float(g)))
-    return ts, wds, np.asarray(tau_w), np.asarray(tau_s)
+    ts, wds, tau_w, tau_s = [], [], [], []
+    t = 0.0
+    while t <= travel + 1e-9:
+        pz = lk.pose(-1, t)
+        st = resting_pose(lk, t)
+        if pz is None or st is None:
+            break
+        g = ratio_at(lk, -1, t, pz) or 0.0
+        ts.append(t)
+        wds.append(pz["wing_deg"])
+        tau_w.append(st["load"])
+        tau_s.append(st["load"] * abs(g))
+        t += step
+    return np.asarray(ts), np.asarray(wds), np.asarray(tau_w), np.asarray(tau_s)
+
 
 
 def ratio_at(lk: SwingLinkage, side: int, travel: float, pose=None):
@@ -1761,74 +1961,45 @@ def ratio_at(lk: SwingLinkage, side: int, travel: float, pose=None):
     return float(lk.crank * np.sin(th2 - th3) / den)
 
 
-def torque_at(lk: SwingLinkage, travel: float, mass: float = BIKE_MASS_KG,
-              com_z: float = COM_Z_MM) -> float:
-    """Servo torque at ONE crank travel [N.m], no grid.
-
-    Same load case as `torque_curve`: the bike lying on the deploying wing,
-    the wing flat on the ground, the stroke rotating the BIKE up about the
-    pivot. tau_servo = m g |lever| * |d(wing)/d(crank)|.
-    """
+def torque_at(lk: SwingLinkage, travel: float) -> float:
+    """Servo OUTPUT torque at ONE crank travel [N.m], no grid: the hinge load
+    from `resting_pose` times |d(wing)/d(crank)|, floored at 0 (a bike
+    falling forward needs nothing from the servo). 1e3 if the four-bar does
+    not close, 0 where the bike rests on nothing (it is over)."""
     pz = lk.pose(-1, travel)
     if pz is None:
         return 1e3
-    # `ratio_at(lk, -1, travel)` would solve the same pose a second time, and
-    # the golden section calls this ~35 times -- it was 55% of every objective
-    # evaluation's poses on its own. Pass the pose we already have.
+    st = resting_pose(lk, travel)
     g = ratio_at(lk, -1, travel, pz)
-    if g is None:
+    if st is None or g is None:
         return 0.0
-    phi = 90.0 - abs(pz["wing_deg"])
-    piv = lk.pivot(-1)
-    com0 = np.array([0.0, com_z - lk.wheel_radius])
-    com = piv + _rot(com0 - piv, -(90.0 - phi))
-    lever = abs(float(com[0] - piv[0])) / 1000.0
-    return float(mass * GRAVITY * lever * abs(g))
+    return float(max(st["load"], 0.0) * abs(g))
 
 
 def peak_torque(lk: SwingLinkage, travel: float | None = None) -> float:
-    """Largest servo torque anywhere in the commanded stroke [N.m].
+    """Largest servo output torque anywhere in the commanded stroke [N.m].
 
-    THE ONE THING THE THREE ANGLES CANNOT GIVE YOU, and not by a small margin.
-
-    tau_servo = tau_wing * |d(wing)/d(crank)| is a PRODUCT of two factors that
-    peak at opposite ends. The weight moment is largest at travel 0, where the
-    bike lies on its side and the CoM hangs furthest from the pivot, and falls
-    to nothing as the bike comes upright. The velocity ratio is EXACTLY ZERO at
-    the deployed toggle -- that is the definition of the toggle and the
-    self-locking property the design wants -- and small at rest. So the maximum
-    is strictly interior, and measured on the five tracked geometries it sits
-    at 54-81% of the stroke and is 4 to 6 times the value at travel 0:
-
-        geometry     peak      at      travel 0   at the end
-        hand-drawn   0.510   64.5%       0.125       0.254
-        _opt         0.405   60.9%       0.080       0.020
-        _compact     0.548   80.7%       0.088       0.491
-        _vertical    0.550   69.0%       0.081       0.006
-        _margin      0.420   54.3%       0.128       0.006
-
-    Evaluating torque at any of rest, fold or deploy would therefore report
-    roughly a fifth of the real load, and at the deployed toggle would report
-    zero. There is no closed form for the maximum -- setting the derivative to
-    zero is transcendental in the four-bar angles -- so this is the one place a
-    search is unavoidable.
-
-    GOLDEN SECTION, not a walk, and that is safe rather than hopeful:
-    |tau|(travel) has exactly ONE turning point on every geometry here, checked
-    at 0.25 deg. ~40 poses to 1e-4 deg against ~110-140 for the old 1 deg walk,
-    and it no longer needs a uniform grid because `ratio_at` is closed form.
+    A 2 deg scan, then golden section in the best bracket. NOT golden section
+    alone, which the previous version used on the claim that |tau|(travel) has
+    exactly one turning point. It has two: the hinge load is largest with the
+    bike on its side and steps back up when the wheels touch down (~29 deg of
+    roll), so the true peak can be either. That claim was checked against the
+    backwards load model and held only there.
 
     `travel` is accepted and IGNORED, so old call sites keep working; the
-    stroke is `critical_angles(lk).command` and always was meant to be.
+    stroke is `critical_angles(lk).command`.
     """
     hi = critical_angles(lk).command
     if hi <= 0.0:
         return 1e3
+    grid = np.linspace(0.0, hi, max(int(np.ceil(hi / 2.0)), 2) + 1)
+    vals = [torque_at(lk, t) for t in grid]
+    k = int(np.argmax(vals))
+    a, b = grid[max(k - 1, 0)], grid[min(k + 1, len(grid) - 1)]
     inv = (np.sqrt(5.0) - 1.0) / 2.0
-    a, b = 0.0, hi
     c, d = b - inv * (b - a), a + inv * (b - a)
     fc, fd = torque_at(lk, c), torque_at(lk, d)
-    for _ in range(40):
+    for _ in range(30):
         if fc > fd:
             b, d, fd = d, c, fc
             c = b - inv * (b - a)
@@ -1837,9 +2008,9 @@ def peak_torque(lk: SwingLinkage, travel: float | None = None) -> float:
             a, c, fc = c, d, fd
             d = a + inv * (b - a)
             fd = torque_at(lk, d)
-        if b - a < 1e-4:
+        if b - a < 1e-3:
             break
-    return float(max(fc, fd, torque_at(lk, 0.0), torque_at(lk, hi)))
+    return float(max(fc, fd, vals[k]))
 
 
 # --------------------------------------------------------------------------
@@ -2259,9 +2430,8 @@ def cmd_righting_video(cfg, out: Path, fps: int = 25, seconds: float = 7.0) -> N
     """The bike pushing itself up, in the GROUND frame.
 
     The pose that matters is not the mechanism in the body frame -- it is the
-    bike rotating up around a wing that stays flat on the floor. Drawn by
-    rotating the whole assembly about the deploying pivot so the wing lies on
-    z = 0, which is the same construction the mirrored study uses.
+    bike resting on the floor as `resting_pose` finds it: on the panel alone,
+    then on one panel end and the wheels (the square) once they touch down.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -2293,41 +2463,34 @@ def cmd_righting_video(cfg, out: Path, fps: int = 25, seconds: float = 7.0) -> N
             bar.update(1)
             fig, ax = plt.subplots(figsize=(7.4, 6.0))
             lk.reset()
-            pz = lk.pose(-1, float(t))
-            if pz is not None:
-                foot = np.array([pz["foot"][0], lk.z_floor(pz["foot"][1])])
-                top = np.array([pz["top"][0], lk.z_floor(pz["top"][1])])
-                v = top - foot
-                # Rotate so the panel lies flat. TWO rotations do that -- panel
-                # along +x or along -x -- and only one of them leaves the bike
-                # ABOVE the floor. Picking blind put the CoM 90 mm UNDER it and
-                # rendered the whole animation upside down and off-screen, which
-                # is what "it is all underwater" looked like.
-                phi = -np.degrees(np.arctan2(v[1], v[0]))
-                if _rot(np.array([0.0, COM_Z_MM]) - foot, phi)[1] < 0.0:
-                    phi += 180.0
+            st = resting_pose(lk, float(t))
+            if st is not None:
+                # The pose `resting_pose` scores the load at, so the picture
+                # and the torque numbers cannot disagree. It replaced "rotate
+                # so the panel lies flat", which ignored the wheels touching
+                # down and labelled roll as 90 - wing.
+                roll, floor = st["to_floor"]
 
-                def G(p):
-                    p = np.asarray(p, float)
-                    return _rot(p - foot, phi)
+                def G(p):                          # sketch mm -> ground frame
+                    q = _rot(np.asarray(p, float), roll)
+                    return np.array([q[0], q[1] - floor])
 
                 for side, tag in ((-1, "right"), (1, "left")):
                     q = lk.pose(side, float(t))
                     if q is None:
                         continue
-                    a = G([q["foot"][0], lk.z_floor(q["foot"][1])])
-                    b = G([q["top"][0], lk.z_floor(q["top"][1])])
+                    a, b = G(q["foot"]), G(q["top"])
                     ax.plot([a[0], b[0]], [a[1], b[1]], color=_C[tag], lw=5,
                             solid_capstyle="round", zorder=4)
-                hw, hh = lk.half_span, lk.bike_height
+                hw, hh, R = lk.half_span, lk.bike_height, lk.wheel_radius
                 box = np.array([[-hw, 0], [hw, 0], [hw, hh], [-hw, hh], [-hw, 0]],
-                               float)
+                               float) - [0.0, R]
                 body = np.array([G(p) for p in box])
                 ax.plot(body[:, 0], body[:, 1], color="0.4", lw=1.6, zorder=2)
-                com = G([0.0, COM_Z_MM])
-                ax.plot(*com, "o", ms=7, color="0.15", zorder=6)
-                roll = 90.0 - abs(pz["wing_deg"])
-                ax.set_title(f"crank {t:+6.1f}°     roll {roll:5.1f}°")
+                ax.plot(*G([0.0, -R]), "s", ms=6, color="0.3", zorder=5)
+                ax.plot(*G(mass_props()["rest"]), "o", ms=7, color="0.15", zorder=6)
+                ax.set_title(f"crank {t:+6.1f}°   roll {st['roll']:5.1f}°   on "
+                             f"{st['regime']}   hinge load {st['load']:.2f} N m")
             ax.axhline(0.0, color="0.2", lw=1.5, zorder=1)
             ax.set_xlim(-230, 230)
             ax.set_ylim(-20, 260)
