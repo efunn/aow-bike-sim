@@ -1,0 +1,436 @@
+<meta charset="utf-8">
+<title>Swing Linkage Stepthrough</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#eef1f4; --panel:#f8f9fb; --ink:#1b2330; --muted:#5b6778; --rule:#d3d9e1; --grid:#e3e8ee;
+  --right:#d0432c; --left:#2e6bd0; --crank:#7646c0; --floor:#1b2330; --keep:#c9a227; --com:#1b2330;
+  --good:#2f8a4f; --warn:#b5651d; --accent:#7646c0;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#11151b; --panel:#171c24; --ink:#e2e7ee; --muted:#9aa6b6; --rule:#2a323d; --grid:#1f2630;
+    --right:#f06a50; --left:#6a9cf0; --crank:#a987e6; --floor:#e2e7ee; --keep:#d9b53d; --com:#e2e7ee;
+    --good:#58b877; --warn:#e0955a; --accent:#a987e6; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11151b; --panel:#171c24; --ink:#e2e7ee; --muted:#9aa6b6; --rule:#2a323d; --grid:#1f2630;
+  --right:#f06a50; --left:#6a9cf0; --crank:#a987e6; --floor:#e2e7ee; --keep:#d9b53d; --com:#e2e7ee;
+  --good:#58b877; --warn:#e0955a; --accent:#a987e6; color-scheme:dark;
+}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);padding-inline:16px;padding-block:20px 40px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+h1{font-size:22px;font-weight:600;margin:0;text-wrap:balance}
+.lede{margin:4px 0 0;color:var(--muted);max-width:75ch}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:10px 14px;position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+.controls button{font:500 13px var(--sans);background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer;min-width:72px}
+.controls button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.controls input[type=range]{flex:1 1 220px;accent-color:var(--accent)}
+.readout{font:13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;min-width:12ch}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+.seg label{padding:5px 10px;font-size:12px;cursor:pointer;color:var(--muted)}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg input:checked+span{color:var(--ink);font-weight:600}
+.seg label:has(input:checked){background:var(--bg)}
+.seg label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:-2px}
+.panes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:18px}
+.pane{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.pane select{font:500 14px var(--sans);color:var(--ink);background:var(--bg);border:1px solid var(--rule);border-radius:6px;padding:6px 8px;width:100%}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.stat{display:flex;flex-direction:column;gap:2px}
+.stat .k{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.stat .v{font:500 16px var(--mono);font-variant-numeric:tabular-nums}
+.views{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.view{display:flex;flex-direction:column;gap:4px;min-width:0}
+.view .cap{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
+.mech{aspect-ratio:1/1}
+.badges{display:flex;flex-wrap:wrap;gap:6px;min-height:24px}
+.badge{font-size:12px;border-radius:999px;padding:2px 10px;border:1px solid var(--rule);color:var(--muted)}
+.badge.hot{border-color:var(--warn);color:var(--warn)}
+.badge.ok{border-color:var(--good);color:var(--good)}
+.planes{display:flex;flex-direction:column;gap:3px}
+.plane{display:grid;grid-template-columns:62px 1fr;align-items:center;gap:8px;font-size:12px}
+.plane .n{font:12px var(--mono);color:var(--muted)}
+.plane .chips{display:flex;gap:4px;flex-wrap:wrap}
+.chip{border-radius:4px;padding:1px 7px;font-size:12px;color:#fff}
+.lengths{font:12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.chartcard{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.chartcard-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 18px}
+.chartcard h2{font-size:15px;font-weight:600;margin:0}
+.charts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.charts{grid-template-columns:1fr}}
+.chart{display:flex;flex-direction:column;gap:4px;min-width:0}
+.chart h3{font-size:13px;font-weight:600;margin:0}
+.chart p{margin:0;color:var(--muted);font-size:12px;min-height:3em}
+.chart canvas{aspect-ratio:4/3}
+.notes{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:10px 16px}
+.notes summary{cursor:pointer;font-weight:600;font-size:14px}
+.notes summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.notes ul{margin:10px 0 4px;padding-left:18px;display:flex;flex-direction:column;gap:8px;max-width:85ch}
+.notes b{font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted)}
+.sw{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+.legend.big{font-size:14px;color:var(--ink);flex-direction:column;gap:4px}
+.legend.big .sw{width:30px;height:4px}
+.chartcard-head{flex-direction:column;align-items:flex-start}
+.panehead{display:flex;align-items:center;gap:10px}
+.panehead .sw{flex:none;width:30px;height:4px;margin:0}
+.heat{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.heat .bar{display:inline-block;width:140px;height:10px;border-radius:3px;border:1px solid var(--rule)}
+.heat .ticks{font:12px var(--mono);font-variant-numeric:tabular-nums}
+@media (max-width:520px){.views{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+<div class="wrap">
+  <header>
+    <h1>Swing linkage stepthrough</h1>
+    <p class="lede">Comparing two self-righting linkage designs (selected from config files that MuJoCo reads).<br>
+    Each panel, left side: the mechanism with the bike standing up, front view. Each panel, right side: the bike resting on the floor at that point in the stroke. Poses are quasi-static (no dynamics).</p>
+  </header>
+
+  <div class="controls" role="group" aria-label="Stroke">
+    <button id="play" type="button">Play</button>
+    <input id="frac" type="range" min="0" max="1000" value="0" aria-label="Fraction of the stroke">
+    <span class="readout" id="readout">0% of stroke</span>
+    <span class="heat" aria-label="Pin force colour scale"><span class="k">Pin force, slow stroke</span><span class="bar" id="heatbar"></span><span class="ticks" id="heatticks"></span></span>
+  </div>
+
+  <div class="panes" id="panes"></div>
+
+  <section class="chartcard" aria-label="Both panes through the stroke">
+    <div class="chartcard-head">
+      <h2>Both designs through the stroke</h2>
+      <div class="legend big" id="legend"></div>
+    </div>
+    <div class="charts">
+      <div class="chart">
+        <h3>Wing degrees per servo degree</h3>
+        <p>Low is more leverage. The bike is heaviest at the start, so good designs start low. Ending at 0 locks the wing.</p>
+        <canvas id="chart-r" aria-label="Ratio against stroke"></canvas>
+      </div>
+      <div class="chart">
+        <h3>Servo torque needed [N m]</h3>
+        <p>The jump is the wheels touching the floor. The triangle is getting moving from rest.</p>
+        <canvas id="chart-m" aria-label="Motor torque against stroke"></canvas>
+      </div>
+      <div class="chart">
+        <h3>Most-loaded pin [N]</h3>
+        <p>Slow stroke. Always the pushing wing's crank/coupler pin, or the servo shaft beside it.</p>
+        <canvas id="chart-pin" aria-label="Largest pin force against stroke"></canvas>
+      </div>
+      <div class="chart">
+        <h3>Bike roll [deg]</h3>
+        <p>How far the bike still leans. 0 is upright.</p>
+        <canvas id="chart-roll" aria-label="Roll against stroke"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <details class="notes">
+    <summary>More info</summary>
+    <ul id="notes"></ul>
+  </details>
+</div>
+
+<script id="data" type="application/json">/*DATA*/</script>
+<script>
+(() => {
+const raw = document.getElementById("data").textContent;
+if (raw.trim() === "/*" + "DATA*/") {      // split so the generator's substitution skips it
+  document.querySelector(".wrap").innerHTML = `<header><h1>This is the template</h1>
+    <p class="lede">It has no data in it. Run <code>python analysis/swing_stepthrough.py --sim</code>
+    and open <code>analysis/plots/swing_stepthrough.html</code>, which this file becomes.</p></header>`;
+  return;
+}
+const D = JSON.parse(raw);
+const designs = D.designs, geo = D.geo;
+const C = {};
+function readColors() {
+  const s = getComputedStyle(document.documentElement);
+  for (const k of ["ink","muted","rule","grid","right","left","crank","keep","bg","good","warn","accent","panel"])
+    C[k] = s.getPropertyValue("--" + k).trim();
+}
+readColors();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { readColors(); panes.forEach((_, i) => fillStatic(i)); drawAll(); });
+new MutationObserver(() => { readColors(); panes.forEach((_, i) => fillStatic(i)); drawAll(); })
+  .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+let frac = 0, playing = false, last = null;
+const pick = [0, Math.min(1, designs.length - 1)];
+const PANE_STYLE = [{ dash: [], key: "ink" }, { dash: [6, 4], key: "accent" }];
+
+// ---------- the pin-force colour scale, shared by both panes
+const STOPS = [[0, [247, 232, 168]], [0.35, [244, 163, 64]], [0.7, [209, 64, 58]], [1, [106, 27, 94]]];
+function heat(x) {
+  x = Math.max(0, Math.min(1, x));
+  for (let i = 1; i < STOPS.length; i++) if (x <= STOPS[i][0]) {
+    const [a, ca] = STOPS[i-1], [b, cb] = STOPS[i], t = (x - a) / (b - a);
+    return `rgb(${ca.map((v, j) => Math.round(v + t * (cb[j] - v))).join(",")})`;
+  }
+  return `rgb(${STOPS[STOPS.length-1][1].join(",")})`;
+}
+let heatMax = 1;
+function updateHeatScale() {
+  heatMax = Math.max(1, ...pick.flatMap((di) => designs[di].frames.flatMap((f) => Object.values(f.pin))));
+  heatMax = Math.ceil(heatMax / 10) * 10;
+  document.getElementById("heatbar").style.background =
+    `linear-gradient(90deg,${STOPS.map(([x]) => heat(x) + " " + (x * 100) + "%").join(",")})`;
+  document.getElementById("heatticks").textContent = `0 – ${heatMax} N`;
+}
+
+// ---------- geometry helpers
+const rot = (p, deg) => { const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  return [c * p[0] - s * p[1], s * p[0] + c * p[1]]; };
+const frameOf = (d) => d.frames[Math.round(frac * (d.frames.length - 1))];
+function segDist(a, b, c, d) {
+  const cross = (o, p, q) => (p[0]-o[0])*(q[1]-o[1]) - (p[1]-o[1])*(q[0]-o[0]);
+  const d1 = cross(c, d, a), d2 = cross(c, d, b), d3 = cross(a, b, c), d4 = cross(a, b, d);
+  if (((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0))) return 0;
+  const pt = (p, a, b) => { const vx=b[0]-a[0], vy=b[1]-a[1], L=vx*vx+vy*vy||1;
+    let t=((p[0]-a[0])*vx+(p[1]-a[1])*vy)/L; t=Math.max(0,Math.min(1,t));
+    return Math.hypot(p[0]-a[0]-t*vx, p[1]-a[1]-t*vy); };
+  return Math.min(pt(a,c,d), pt(b,c,d), pt(c,a,b), pt(d,a,b));
+}
+
+function setup(canvas) {
+  const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const g = canvas.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, r.width, r.height);
+  return [g, r.width, r.height];
+}
+function mapper(W, H, box, pad = 8) {
+  const [x0, x1, y0, y1] = box, s = Math.min((W - 2*pad) / (x1 - x0), (H - 2*pad) / (y1 - y0));
+  const ox = pad + ((W - 2*pad) - s * (x1 - x0)) / 2, oy = pad + ((H - 2*pad) - s * (y1 - y0)) / 2;
+  return { s, f: (p) => [ox + (p[0] - x0) * s, oy + (y1 - p[1]) * s] };
+}
+function line(g, m, pts, color, width, alpha = 1, dash = []) {
+  g.save(); g.globalAlpha = alpha; g.strokeStyle = color; g.lineWidth = width; g.lineCap = "round";
+  g.lineJoin = "round"; g.setLineDash(dash); g.beginPath();
+  pts.forEach((p, i) => { const q = m.f(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
+  g.stroke(); g.restore();
+}
+function dot(g, m, p, r, fill, stroke) {
+  const q = m.f(p); g.beginPath(); g.arc(q[0], q[1], r, 0, 2*Math.PI);
+  g.fillStyle = fill; g.fill(); if (stroke) { g.strokeStyle = stroke; g.lineWidth = 1.2; g.stroke(); }
+}
+function poly(g, m, pts, fill, alpha) {
+  g.save(); g.globalAlpha = alpha; g.fillStyle = fill; g.beginPath();
+  pts.forEach((p, i) => { const q = m.f(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
+  g.closePath(); g.fill(); g.restore();
+}
+
+// Everything in the SKETCH frame (y lateral, z from the axle, mm); `T` maps it.
+function drawMechanism(g, m, d, fr, T, opts) {
+  const R = geo.R, K = geo.keepout;
+  const tp = (p) => T(p);
+  // keep-out (servos, battery), and the wheel seen end-on
+  const box = [[-K.half, K.z_lo], [K.half, K.z_lo], [K.half, 170], [-K.half, 170]].map(tp);
+  poly(g, m, box, C.keep, 0.06);
+  line(g, m, [...box, box[0]], C.keep, 1, 0.7, [4, 3]);
+  poly(g, m, [[-7, -R], [7, -R], [7, R], [-7, R]].map(tp), C.muted, 0.35);
+  const sh = d.shaft;
+  {  // the XC330 case, behind the horn
+    const cs = geo.case, far = cs.l - cs.near, hw = cs.w / 2;
+    const r = { "up": [sh[0]-hw, sh[0]+hw, sh[1]-cs.near, sh[1]+far],
+                "down": [sh[0]-hw, sh[0]+hw, sh[1]-far, sh[1]+cs.near],
+              }[d.fit.case || "down"];
+    const bad = !d.fit.case, cc = bad ? C.warn : C.crank;
+    const box = [[r[0], r[2]], [r[1], r[2]], [r[1], r[3]], [r[0], r[3]]].map(tp);
+    poly(g, m, box, cc, bad ? 0.2 : 0.10);
+    line(g, m, [...box, box[0]], cc, 1.2, 0.8, [3, 2]);
+    const hn = []; for (let k = 0; k <= 32; k++) { const a = k / 32 * 2 * Math.PI; hn.push(tp([sh[0] + 8*Math.cos(a), sh[1] + 8*Math.sin(a)])); }
+    line(g, m, hn, C.crank, 1, 0.6);
+  }
+  for (const [tag, col] of [["L", C.left], ["R", C.right]]) {
+    line(g, m, [fr["pivot"+tag], fr["joint"+tag]].map(tp), col, 2.2, 0.55);
+    line(g, m, [fr["foot"+tag], fr["top"+tag]].map(tp), col, 7, 0.8);
+  }
+  line(g, m, [sh, fr.crank_tipR].map(tp), C.crank, 4);
+  line(g, m, [sh, fr.crank_tipL].map(tp), C.crank, 4);
+  const sameCouplerPlane = d.planes.couplerR === d.planes.couplerL;
+  line(g, m, [fr.crank_tipR, fr.jointR].map(tp), C.right, 3);
+  line(g, m, [fr.crank_tipL, fr.jointL].map(tp), C.left, 3, 1, sameCouplerPlane ? [] : [5, 3]);
+  // Pins, filled by force on the shared scale; the biggest drawn last.
+  const pins = [["crank_tipR", fr.crank_tipR], ["crank_tipL", fr.crank_tipL], ["jointR", fr.jointR],
+                ["jointL", fr.jointL], ["pivotR", fr.pivotR], ["pivotL", fr.pivotL], ["shaft", sh]]
+    .sort((a, b) => fr.pin[a[0]] - fr.pin[b[0]]);
+  for (const [k, p] of pins) dot(g, m, tp(p), 5.5, heat(fr.pin[k] / heatMax), C.ink);
+  if (opts.com) { const q = tp(fr.com); dot(g, m, q, 5, C.bg, C.ink); dot(g, m, q, 2, C.ink); }
+  if (opts.cross) {
+    const gap = segDist(fr.crank_tipR, fr.jointR, fr.crank_tipL, fr.jointL);
+    // Ring only where they would really hit: the same plane. In separate
+    // planes crossing in this view is the point of the stagger.
+    if (gap < 8 && d.planes.couplerR === d.planes.couplerL) {
+      const mid = [(fr.crank_tipR[0]+fr.jointR[0]+fr.crank_tipL[0]+fr.jointL[0])/4,
+                   (fr.crank_tipR[1]+fr.jointR[1]+fr.crank_tipL[1]+fr.jointL[1])/4];
+      const q = m.f(tp(mid)); g.save(); g.strokeStyle = C.warn; g.lineWidth = 2; g.setLineDash([3,3]);
+      g.beginPath(); g.arc(q[0], q[1], 16, 0, 2*Math.PI); g.stroke(); g.restore();
+    }
+    return gap;
+  }
+}
+
+function drawPane(i) {
+  const d = designs[pick[i]], fr = frameOf(d), el = panes[i];
+  // mechanism, bike frame
+  let [g, W, H] = setup(el.mech);
+  // The SAME box as the floor view, shifted by the wheel radius, so both
+  // pictures share one scale and one floor line.
+  const R = geo.R, BOX = [-135, 135, -12, 215];
+  let m = mapper(W, H, [BOX[0], BOX[1], BOX[2] - R, BOX[3] - R]);
+  for (let y = -140; y <= 140; y += 20) line(g, m, [[y, BOX[2] - R], [y, BOX[3] - R]], C.grid, 1);
+  for (let z = 0; z <= BOX[3]; z += 20) line(g, m, [[BOX[0], z - R], [BOX[1], z - R]], C.grid, 1);
+  poly(g, m, [[BOX[0], -R], [BOX[1], -R], [BOX[1], BOX[2] - R], [BOX[0], BOX[2] - R]], C.muted, 0.18);
+  line(g, m, [[BOX[0], -R], [BOX[1], -R]], C.ink, 1.5);
+  const gap = drawMechanism(g, m, d, fr, (p) => p, { cross: true, com: false });
+  // on the floor
+  [g, W, H] = setup(el.ground);
+  m = mapper(W, H, BOX);
+  const G = (p) => { const q = rot(p, fr.roll); return [q[0], q[1] - fr.floor]; };
+  for (let x = -140; x <= 140; x += 20) line(g, m, [[x, BOX[2]], [x, BOX[3]]], C.grid, 1);
+  for (let z = 0; z <= BOX[3]; z += 20) line(g, m, [[BOX[0], z], [BOX[1], z]], C.grid, 1);
+  poly(g, m, [[BOX[0], 0], [BOX[1], 0], [BOX[1], BOX[2]], [BOX[0], BOX[2]]], C.muted, 0.18);
+  line(g, m, [[BOX[0], 0], [BOX[1], 0]], C.ink, 1.5);
+  const n = Math.round(frac * (d.frames.length - 1));
+  const trail = d.frames.slice(0, n + 1).map((f) => { const q = rot(f.com, f.roll); return [q[0], q[1] - f.floor]; });
+  if (trail.length > 1) line(g, m, trail, C.muted, 1.5, 0.8, [2, 3]);
+  drawMechanism(g, m, d, fr, G, { cross: false, com: true });
+  // text + badges
+  el.roll.textContent = `${Math.abs(fr.roll).toFixed(0)}° roll · ${fr.regime === "panel" ? "on the panel, wheels up" : "on panel end + wheels"}`;
+  el.crank.textContent = `crank ${fr.t.toFixed(0)}° of ${d.T.toFixed(0)}° · wing ${fr.wing.toFixed(0)}°`;
+  const b = [];
+  if (gap < 8) b.push(d.planes.couplerR === d.planes.couplerL
+    ? `<span class="badge hot">couplers ${gap.toFixed(1)} mm apart, same plane</span>`
+    : `<span class="badge ok">couplers cross here (fine: separate planes)</span>`);
+  b.push(`<span class="badge">ratio ${fr.r.toFixed(2)}</span>`);
+  b.push(`<span class="badge">motor ${fr.motor.toFixed(3)} N m</span>`);
+  el.badges.innerHTML = b.join("");
+  return fr;
+}
+
+// ---------- charts
+function drawChart(canvas, field, ymax, refs, tick, fmt, val = (f) => f[field]) {
+  const [g, W, H] = setup(canvas);
+  const L = 40, Rr = 18, Tt = 10, B = 28, pw = W - L - Rr, ph = H - Tt - B;
+  const X = (f) => L + f * pw, Y = (v) => Tt + ph * (1 - v / ymax);
+  g.font = "11px " + getComputedStyle(document.body).getPropertyValue("--mono");
+  g.fillStyle = C.muted; g.strokeStyle = C.grid; g.lineWidth = 1;
+  for (let v = 0; v <= ymax + 1e-9; v += tick) {
+    g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(W - Rr, Y(v)); g.stroke();
+    g.textAlign = "right"; g.fillText(fmt(v), L - 6, Y(v) + 4);
+  }
+  g.textAlign = "center";
+  for (let f = 0; f <= 1.0001; f += 0.25) g.fillText(`${Math.round(f*100)}%`, X(f), H - 8);
+  for (const [v, label] of refs) {
+    g.save(); g.strokeStyle = C.warn; g.setLineDash([4, 4]); g.beginPath();
+    g.moveTo(L, Y(v)); g.lineTo(W - Rr, Y(v)); g.stroke(); g.restore();
+    g.fillStyle = C.warn; g.textAlign = "left"; g.fillText(label, L + 6, Y(v) - 5);
+  }
+  pick.forEach((di, i) => {
+    const d = designs[di], st = PANE_STYLE[i], col = C[st.key];
+    g.save(); g.strokeStyle = col; g.lineWidth = 2; g.setLineDash(st.dash); g.beginPath();
+    d.frames.forEach((f, k) => { const x = X(k / (d.frames.length - 1)), y = Y(val(f));
+      k ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke(); g.restore();
+    if (field === "motor") { g.fillStyle = col; const y = Y(d.brk);
+      g.beginPath(); g.moveTo(X(0) - 5, y - 6); g.lineTo(X(0) + 5, y - 6); g.lineTo(X(0), y + 2); g.fill(); }
+    const f = frameOf(d); g.fillStyle = col; g.beginPath(); g.arc(X(frac), Y(val(f)), 4, 0, 2*Math.PI); g.fill();
+  });
+  g.strokeStyle = C.ink; g.globalAlpha = 0.5; g.beginPath(); g.moveTo(X(frac), Tt); g.lineTo(X(frac), Tt + ph); g.stroke();
+  g.globalAlpha = 1;
+}
+function legends() {
+  const html = pick.map((di, i) => { const st = PANE_STYLE[i];
+    const sw = st.dash.length
+      ? `background:repeating-linear-gradient(90deg,${C[st.key]} 0 6px,transparent 6px 10px)`
+      : `background:${C[st.key]}`;
+    return `<span><span class="sw" style="${sw}"></span>${designs[di].name}</span>`; }).join("");
+  document.getElementById("legend").innerHTML = html;
+}
+
+// ---------- panes
+const panesEl = document.getElementById("panes");
+const panes = [0, 1].map((i) => {
+  const div = document.createElement("section"); div.className = "pane";
+  div.innerHTML = `
+    <div class="panehead"><span class="sw" id="sw-${i}"></span><select id="design-${i}" aria-label="Design, ${i ? "right" : "left"} pane">${designs.map((d, k) => `<option value="${k}">${d.name}</option>`).join("")}</select></div>
+    <div class="stats"></div>
+    <div class="views">
+      <div class="view"><span class="cap">Mechanism, bike frame</span><canvas class="mech"></canvas><span class="cap crank"></span></div>
+      <div class="view"><span class="cap">Bike on the floor</span><canvas class="mech ground"></canvas><span class="cap roll"></span></div>
+    </div>
+    <div class="badges"></div>
+    <div class="planes"></div>
+    <div class="lengths"></div>`;
+  panesEl.appendChild(div);
+  const q = (s) => div.querySelector(s);
+  const el = { div, sel: q("select"), stats: q(".stats"), mech: q("canvas.mech:not(.ground)"), ground: q("canvas.ground"),
+               crank: q(".cap.crank"), roll: q(".cap.roll"), badges: q(".badges"), planes: q(".planes"), lengths: q(".lengths"),
+               sw: q(".panehead .sw") };
+  el.sel.value = String(pick[i]);
+  el.sel.addEventListener("change", () => { pick[i] = +el.sel.value; fillStatic(i); drawAll(); });
+  return el;
+});
+function fillStatic(i) {
+  const d = designs[pick[i]], el = panes[i];
+  const lock = d.frames[d.frames.length - 1].r < 0.05;
+  el.stats.innerHTML = [
+    ["Sim, 9.9 V", d.sim == null ? "not run" : `${d.sim} counts`],
+    ["Planar, moving", `${d.counts.toFixed(0)} counts`],
+    ["Travel, end", `${d.T.toFixed(0)}°, ${lock ? "locks" : "free"}`],
+    ["Pins, slow: coupler / hinge", `${d.pins.coupler.toFixed(0)} / ${d.pins.hinge.toFixed(0)} N`],
+    ["Coupler pin, sim, at the start", d.pins.lift_sim == null ? "not run" : `${d.pins.lift_sim.toFixed(0)} N`],
+    ["XC330 case", d.fit.case ? `points ${d.fit.case}` : "doesn't fit"],
+  ].map(([k, v]) => `<div class="stat"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
+  const members = { crank: "crank arm", couplerR: "coupler R", couplerL: "coupler L", rockerR: "wing R", rockerL: "wing L" };
+  const col = { crank: C.crank, couplerR: C.right, couplerL: C.left, rockerR: C.right, rockerL: C.left };
+  const byPlane = {};
+  for (const [k, p] of Object.entries(d.planes)) if (members[k]) (byPlane[p] = byPlane[p] || []).push(k);
+  el.planes.innerHTML = `<span class="cap" style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">Fore/aft planes (panels span all)</span>` +
+    Object.keys(byPlane).sort((a, b) => a - b).map((p) => `<div class="plane"><span class="n">plane ${p}</span><span class="chips">${
+      byPlane[p].map((k) => `<span class="chip" style="background:${col[k]}">${members[k]}</span>`).join("")}</span></div>`).join("");
+  const ps = PANE_STYLE[i], pc = C[ps.key];
+  el.sw.style.background = ps.dash.length
+    ? `repeating-linear-gradient(90deg,${pc} 0 6px,transparent 6px 10px)` : pc;
+  const Ls = d.lengths;
+  el.lengths.textContent = `crank ${Ls.crank_length} · coupler ${Ls.coupler_length} · rocker ${Ls.rocker_length} · arms ${Ls.angle_between_cranks}° apart · servo ${Ls.servo_offset} above axle · hinges ±${Ls.wing_pivot_x} mm   [${d.file}]`;
+}
+
+function drawAll() {
+  updateHeatScale();
+  panes.forEach((_, i) => drawPane(i));
+  const top = Math.max(0.7, ...pick.map((di) => Math.max(designs[di].brk, ...designs[di].frames.map((f) => f.motor))) ) ;
+  drawChart(document.getElementById("chart-r"), "r", 1.0, [], 0.2, (v) => v.toFixed(1));
+  drawChart(document.getElementById("chart-m"), "motor", Math.ceil(top * 10) / 10,
+            [[geo.stall99, "most the servo gives at 9.9 V"]], 0.1, (v) => v.toFixed(1));
+  drawChart(document.getElementById("chart-pin"), "pinmax", heatMax, [], heatMax > 60 ? 20 : 10,
+            (v) => v.toFixed(0), (f) => Math.max(...Object.values(f.pin)));
+  drawChart(document.getElementById("chart-roll"), "roll", 90, [], 15, (v) => `${v}°`,
+            (f) => Math.abs(f.roll));
+  legends();
+  const parts = pick.map((di) => { const f = frameOf(designs[di]); return `${f.t.toFixed(0)}°`; });
+  document.getElementById("readout").textContent = `${Math.round(frac * 100)}% of stroke · crank ${parts.join(" / ")}`;
+}
+
+// ---------- controls
+const slider = document.getElementById("frac"), playBtn = document.getElementById("play");
+slider.addEventListener("input", () => { frac = slider.value / 1000; drawAll(); });
+function tick(ts) {
+  if (!playing) return;
+  if (last != null) { frac += (ts - last) / 4000; if (frac > 1) frac = 0; slider.value = Math.round(frac * 1000); drawAll(); }
+  last = ts; requestAnimationFrame(tick);
+}
+playBtn.addEventListener("click", () => { playing = !playing; playBtn.textContent = playing ? "Pause" : "Play";
+  last = null; if (playing) requestAnimationFrame(tick); });
+document.getElementById("notes").innerHTML = D.notes.map((n) => `<li>${n}</li>`).join("");
+panes.forEach((_, i) => fillStatic(i));
+new ResizeObserver(() => drawAll()).observe(document.body);
+drawAll();
+})();
+</script>

@@ -1,0 +1,67 @@
+# From: python analysis/swing_synthesis.py --stagger-couplers --end-toggle --tag _staggered_toggle
+# 604 counts at 9.9 V on the planar scorer (reference 669), margin 1.35x, travel 144 deg.
+# Sim check: python analysis/righting_current_sweep.py --config config/swing_linkage_stagger_lock.yaml --supply 9.9
+bike:
+  wheel_radius: 51.2
+  bike_width: 80.0
+  bike_height: 216.2
+  ground_clearance: 50.0
+mechanism:
+  wing_angle_mode: fixed
+  wing_pivot_z: -10.0
+  wing_norm_offset: 10.130740543739403
+  wing_z_max: 64.71482496847803
+  panel_span_mode: length
+  panel_length_mm: 100.0
+  wing_pivot_x: 5.000000252524124
+  crank_length: 35.86965991775788
+  coupler_length: 64.14898663706381
+  rocker_length: 57.4515691195868
+  angle_between_cranks: 0.3468181633210463
+  servo_offset: 49.80830765505287
+  wing_z_min: -20.0
+  wing_angle_from_rocker: 22.9145919476222
+limits:
+  torque_nm: 0.55
+  transmission_deg: 30.0
+  far_inboard_deg: -15.0
+  handoff_window_deg: 6.0
+  ground_clear_deg: 35.9
+  max_half_width_mm: null
+  rest_off_vertical_deg: null
+clearance:
+  coupler_width_mm: 8.0
+  link_gap_mm: 4.0
+  wing_width_mm: 5.0
+  planes:
+    crank: 0
+    rocker: 2
+    panel: all
+    couplerR: 1
+    couplerL: 3
+  panel_keepout:
+  - name: chassis_core
+    half_width: 35.0
+    z_lo: 50.0
+    z_hi: null
+bounds:
+  wing_pivot_x:
+  - 5.0
+  - 40.0
+  crank_length:
+  - 10.0
+  - 60.0
+  coupler_length:
+  - 10.0
+  - 140.0
+  rocker_length:
+  - 10.0
+  - 90.0
+  angle_between_cranks:
+  - 0.0
+  - 170.0
+  servo_offset:
+  - 10.0
+  - 50.0
+stroke:
+  crank_travel_deg: 144.18

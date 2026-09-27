@@ -24,6 +24,7 @@ partway, 625 righted it.
 
     python analysis/righting_current_sweep.py
     python analysis/righting_current_sweep.py --supply 11.1 --counts 500 900 20
+    python analysis/righting_current_sweep.py --config <candidate>.yaml --supply 9.9
 """
 
 from __future__ import annotations
@@ -44,9 +45,10 @@ from aow_sim.control.righting import roll_pitch  # noqa: E402
 from aow_sim.righting_servo import CURRENT_LIMIT, CurrentBasedPositionServo  # noqa: E402
 
 
-def fallen(params, side: float, settle_s: float):
-    """Model, data and servo with the bike settled on its side, crank at centre."""
-    m = build_model(params, righting=True, swing_linkage=True)
+def fallen(params, side: float, settle_s: float, cfg=None):
+    """Model, data and servo with the bike settled on its side, crank at centre.
+    `cfg`: a swing-linkage config path; None is `SWING_LINKAGE_CFG`."""
+    m = build_model(params, righting=True, swing_linkage=True, swing_linkage_cfg=cfg)
     d = mujoco.MjData(m)
     d.qpos[:] = settle_upright(m).qpos
     a = np.deg2rad(100.0 * side) / 2
@@ -105,6 +107,9 @@ def main() -> int:
     ap.add_argument("--seconds", type=float, default=4.0)
     ap.add_argument("--settle-s", type=float, default=2.0)
     ap.add_argument("--level-deg", type=float, default=5.0)
+    ap.add_argument("--config", type=Path, default=None,
+                    help="swing-linkage config (default: build_model's "
+                         "SWING_LINKAGE_CFG, the live `_smaller`)")
     ap.add_argument("--slew-dps", type=float, default=None,
                     help="ramp the crank goal at this rate instead of stepping it: "
                          "slow enough and the lift is quasi-static, so the "
@@ -114,15 +119,16 @@ def main() -> int:
     args = ap.parse_args()
 
     params = load_params()
-    dep = np.deg2rad(float(yaml.safe_load(SWING_LINKAGE_CFG.read_text())
+    cfg_path = args.config or SWING_LINKAGE_CFG
+    dep = np.deg2rad(float(yaml.safe_load(cfg_path.read_text())
                            ["stroke"]["crank_travel_deg"]))
     counts = list(range(args.counts[0], args.counts[1] + 1, args.counts[2]))
     s = args.supply / 12.0
-    print(f"swing linkage, {args.supply:g} V, crank goal +-{np.degrees(dep):.0f} deg, "
+    print(f"{cfg_path.name}, {args.supply:g} V, crank goal +-{np.degrees(dep):.0f} deg, "
           f"{args.seconds:g} s per trial, wheels passive; righted = reached within "
           f"{args.level_deg:g} deg of upright\n")
     for side in (+1.0, -1.0):
-        start = fallen(params, side, args.settle_s)
+        start = fallen(params, side, args.settle_s, args.config)
         r0 = roll_pitch(start[1].qpos[3:7])[0]
         # The goal that pushes the bike up: whichever sign reduces the roll
         # more at the Current Limit. The other one pushes into the floor.
