@@ -34,11 +34,11 @@ XC330-T181 in `docs/plans/pre-assembly-bench-checklist.md`, not on an XL330.
 | finding | where it bites BAM |
 |---|---|
 | Drive edge at 16.5 mA, both directions, ~1 mA hysteresis; below it Present PWM ~0 while Present Current reads the goal exactly | the bus model has no deadband; below ~17 mA it predicts torque the servo does not make |
-| Lift current = 16.1 + 2.23 mA per mN m, 8-50 mN m at stall; linear, not sqrt | the bus law says ~4 mA past the edge for 50 mN m; it took ~110. Up to ~130 mA the XC330 does NOT follow it |
+| Lift current = 20.3 + 1.82 mA per mN m, 8-59 mN m at stall; linear, not sqrt; one 102 mN m point lifts at ~189 mA, 17 under the line | the bus law says ~5 mA past the edge for 59 mN m; it took ~110. Up to ~190 mA the XC330 does NOT follow it |
 | Present Current reads ~12-14 mA with almost no drive in modes 3 and 16 | a sensing offset of ~14-16 mA is one reading of the edge (untested: a supply meter settles it) |
 | Mode 5's Present PWM is not the duty the motor gets (mode 3 lifts a load at 5 % that mode 5 holds at 14 % "PWM"); Goal PWM does not cap mode 5 (`servo-measurements.yaml`, `xc330_current_position`) | BAM's recorder logs Present PWM as `load`/duty -- in mode 5 that column is not what it claims |
 | Present Velocity lags position 2-3 frames (read 88 deg/s while position moved 343) | fit on differenced position, or model the lag; do not treat the register as the state |
-| Gearbox friction ~0.5 x load (+ ~7 mN m back-driving), static/sliding stick-slip, history- and angle-dependent holding | BAM's `load_friction_base` (m3) is exactly this term: XL330 m3 fitted 0.154 |
+| Gearbox friction ~0.5 x load (+ ~5 mN m), static/sliding stick-slip, history- and angle-dependent holding | BAM's `load_friction_base` (m3) is exactly this term: XL330 m3 fitted 0.154 |
 | Firmware P scaling mode 3: 2.849e-3 duty/(P rad), matches the issue's XL330 2.855e-3 | same firmware constant across the two models |
 | Stall torque per duty (mode 3): 0.53-0.69 N m against the datasheet 0.80 | BAM identifies kt and R directly; a cross-check |
 
@@ -65,7 +65,7 @@ Differences from BAM's pendulum, to solve before recording:
      unchanged.
 2. **Masses.** Ask for / match BAM's XL330 pendulum mass and length (their
    params JSONs do not record them; the logs do: `mass`, `arm-mass`,
-   `length`). The fixture's masses today: 34, 38, 117 g, at up to 44 mm.
+   `length`). The fixture's masses today: 34, 38, 99, 137 g, at up to 44 mm -- and the printed hub's pins sheared at ~0.1-0.2 N m cyclic, so heavy BAM trajectories need a different coupling.
 3. **`lift_and_drop` turns torque OFF with the arm up** -- BAM's
    back-drive/Stribeck identification. On this rig that drops the load onto
    the stop, which is what sheared the pins (2026-09-25). As a free

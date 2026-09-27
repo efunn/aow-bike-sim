@@ -7,63 +7,113 @@ STATUS: plan, nothing implemented (2026-09-26). The measurements are in
 
 ## What the bench says (XC330-T181, id 103, mode 5, 12 V, P700/D1400)
 
-Measured on the X330 fixture's lever, 34 g and 117 g at 25-44 mm (8.3-50.5
-mN m), lifting from rest, Goal Current 0-250 mA in 2 mA steps:
+Measured on the X330 fixture's lever, lifting from rest, Goal Current in 2
+mA steps. THE HEAVY WEIGHT IS 137 g (marked on it, re-weighed with its
+screw and nuts); it was typed as 117 through every run, and the numbers
+here were redone with 137 on 2026-09-26 (`servo_lift.CORRECTIONS` applies
+it on load; the traces' own meta still say 117).
 
-| | measured | fit |
+| load | torque at level | lift above | load wins below |
+|---|---|---|---|
+| 34 g at 25 mm | 8.3 mN m | 35 mA | never |
+| 34 g at 44 mm | 14.7 | 49 | 17 |
+| 137 g at 25 mm | 33.6 | 79 | 27 |
+| 137 g at 44 mm | 59.1 | 129 | 43 |
+| 236 g at 44 mm (step 0, one rep) | 101.9 | 189 (180-198) | not reached (holds at 78) |
+
+| | fit | loads |
 |---|---|---|
-| drive edge | Present PWM ~0 through 16 mA, 2.4 % at 17, both directions, ~1 mA hysteresis | I0 = 16.5 mA |
-| lifts the load above | 16.1 mA + 2.23 mA per mN m | 4 loads, <= 1 mA residual |
-| the load wins below | 6.3 mA + 0.73 mA per mN m | 3 loads |
-| holds a released load (0 mA) | ~8.5 mN m after a lift, more after a lowering; varies with angle | release sweeps |
+| drive edge (`--pwm-sweep`) | I0 = 16.5 mA, both directions, ~1 mA hysteresis | -- |
+| lift, <= 130 mA | 20.3 mA + 1.822 mA per mN m, residuals <= 2.5 mA | 4 |
+| lift, all five | 24.3 mA + 1.653 mA per mN m, residuals -3.6..+7 mA | 5 |
+| fall | 8.0 mA + 0.587 mA per mN m | 3 |
+| holds a released load (0 mA) | ~8.5 mN m after a lift, more after a lowering; varies with angle | release sweeps (34 g only, unaffected) |
 | no load | held at 20 mA, moved at 25 | breakaway + lever-alone runs |
 
-One consistent reading, with the motor's torque `k (I - I0)` above the edge:
+The 236 g point sits 17 mA under the four-load line (206 predicted, 180-198
+measured): above ~130 mA the servo makes somewhat MORE torque per mA than
+the low-current line. One load, one rep -- a direction, not a shape.
 
-- `k = 0.677 N m/A` (0.68 mN m per mA), `I0 = 16.5 mA`
-- driving friction `0.51 x |load|` -- the lift line's intercept sits at the
-  edge, so no constant term forward
-- back-drive friction `0.51 x |load| + ~7 mN m` -- the fall line's 6.3 mA
-  intercept; the constant matches the hand back-drive (5-8 mN m)
+One consistent reading (fit over the four low loads), with the motor's
+torque `k (I - I0)` above the edge:
+
+- `k = 0.830 N m/A` (0.83 mN m per mA), `I0 = 16.5 mA`
+- friction `0.51 x |load| + 5.1 mN m`, the same both ways under this
+  split (the hand back-drive said 5-8 mN m for the constant)
+- with the 236 g point included: `k = 0.893`, `0.48 x load + 7.3`
 
 Only as good as its assumptions: `k` and the 0.51 are split by assuming
 forward and back-drive friction scale alike, one servo, static and slow.
+The model-free lines above do not need that assumption.
 
 **THE SQRT LAW IS OUT IN THIS RANGE.** `righting_servo` maps Goal Current to
-stall torque as `tau = ts sqrt(I / I_stall)`, which says 50.5 mN m needs
-~4 mA past the edge. It took ~110.
+stall torque as `tau = ts sqrt(I / I_stall)` (0.47 N m at 300), which says
+the 59.1 mN m load needs ~5 mA past the edge before friction. It took ~110.
 
 ## THE CONSEQUENCE, before anything else
 
-At the bike's `righting_current: 300` the sqrt law gives ~0.47 N m of
-stall torque. The measured line gives `0.677 x (300 - 16.5) = 0.19 N m`,
-and lifting a load L costs `1.51 L`, so ~0.13 N m of liftable load. That
-is a ~3.7x cut in what the model thinks the righting servo can lift at 300
-counts, and it reaches every self-righting margin: "300 counts lifts the
-bike only under plug" (righting_servo's docstring), `self_righting.py lift`,
-the linkage configs' `limits.torque_nm: 0.55` -> counts conversion (0.55 N m
-at the output while driving needs `16.5 + 0.55 x 1.51 / 0.677` ~ 1240 mA by
-the line, ~830 without the driving friction -- either way near or past the
-910 Current Limit).
+What the bike needs, INFERRED from the sim (not measured): at 300 counts
+the sqrt law's ~0.47 N m lifts the bike at 12 V and not at 11.1 V
+(bike_params' comment on `righting_current`), so ~0.45 N m at the servo.
 
-BUT the line is measured only to ~130 mA. Above it nothing is measured on
-the XC330. The XL330 stall sweep (BAM issue #14) found current vs duty
-following the bus law (`I ~ d^2`) above ~100 mA, and duty is what sets
-phase current and torque -- so the sqrt behaviour may take over higher up.
-Extrapolating the line to 300-910 mA is exactly as unjustified as
-extrapolating the sqrt law down was.
+| | at 300 mA | current for 0.45 N m of load |
+|---|---|---|
+| sqrt law (the model now) | 0.47 N m stall | ~275 mA |
+| lift line, four loads | 0.154 N m liftable | ~840 mA |
+| lift line, five loads | 0.167 N m liftable | ~770 mA |
+
+So at 300 counts the measured lines lift about a third of what the model
+does, and the bike would need ~770-840 mA -- under the 910 Current Limit,
+but reached by extrapolating from 189 mA, 4x past the data. It reaches
+every self-righting margin: "300 counts lifts the bike only under plug"
+(righting_servo's docstring), `self_righting.py lift`, the linkage
+configs' `limits.torque_nm: 0.55` -> counts conversion.
+
+The 236 g point bends the right way for the bike (less current than the
+line). What happens at 300-900 mA is unmeasured. The one argument for
+torque per mA FALLING up there is weak: the XL330 stall sweep (BAM issue
+#14, current control, 20-450 mA) fitted Present Current against Present
+PWM as `I ~ d^2`, and IF Present PWM were the applied duty, torque (from
+phase current, ~d at stall) would go as sqrt(I). But that sweep measured
+no torque, and on the XC330 Present PWM under the current controller is
+NOT the applied duty (mode 5 holds at 14 % what mode 3 lifts at 5 %). The
+lever measures torque against current directly, and says linear or better
+to ~190 mA.
 
 ## Steps
 
-0. **Measure 130-910 mA first.** The lift sweep with heavier loads on the
-   same fixture: 117 + 38 + 34 g all at 44 mm is ~81 mN m (lift ~200 mA by the
-   line); to reach 300 mA needs ~125 mN m -> ~290 g at 44 mm; 910 mA would
-   need ~0.4 N m -> ~0.9 kg (check the hub pins: 0.4 N m at the 6 mm bolt
-   circle is ~17 N per pin across four Phi 1.5 pins -- ~9 MPa in PLA shear,
-   printable, but the lever arms and the idler take it too). `servo_lift.py
-   --mass-g M --radius-mm 44` as run; `--currents` up to 900; `fit` over all
-   loads. Decide: one line, a line then sqrt, or something else. Everything
-   below assumes the answer is a line or piecewise; adjust step 1 if not.
+0. **Measure 130-910 mA.** The lift sweep with heavier loads on the same
+   fixture: `servo_lift.py --mass-g M --radius-mm 44 --home-ma 450`, then
+   `fit` over all loads. Decide: one line, a bending curve, or something
+   else. Everything below assumes a line or piecewise; adjust step 1 if not.
+
+   **First run, 2026-09-26** (`traces/servo_lift/260926-203643_servo_lift_236g44R`):
+   236 g at 44 mm RIGHT (137 g front + 99 g back on one screw), 101.9 mN m at
+   level, lifting from ~-4 deg (home at 450 mA drooped 4-6 deg below level
+   with ~177 mA flowing). One rep, random order, 70-330 mA. **The hub's pins
+   sheared ~122 s in**, after ~30 lifts peaking at 200-320 mA; the user
+   powered off at 136 s. Only tries before 122 s are counted (`until_s` in
+   `CORRECTIONS`): lifts at 198 mA and every try above, holds 78-180 mA,
+   creeps 0.7 deg (under the 1 deg "moved" bar) at 72 and 74.
+
+   **The pins, measured by failure**: the fitting hub (the "1.5 mm" pins,
+   one dot and one perimeter at 0.45 mm extrusion; the "1.75 mm" hub did
+   not fit) sheared one layer above the base, under cyclic 0.1-0.2 N m
+   (static load 0.10, motor peaks higher) after an hour or more of earlier
+   runs at <= 60 mN m. The hub also walks off the horn axially over time,
+   which loads the pins further. ~4-8 N per pin at the 6 mm bolt circle,
+   far under the 0.4 N m estimated here before. Bolting the hub to the horn
+   is ruled out for the bench for now (user); the final build's screwed
+   arrangement is undecided.
+
+   So the rest of step 0 waits on a MECHANISM question, not a test one:
+   how the horn couples to what it drives. The bike's righting linkage
+   needs the same answer at a higher torque (~0.45 N m, INFERRED from the
+   sim, plus peaks), so whatever carries that in the final build can carry
+   the fixture's lever too, and step 0 runs unchanged on it. Until then
+   steps 1-7 can proceed on the four-load line with the extrapolation
+   flagged; the 236 g point says the line is, if anything, conservative up
+   to ~190 mA.
 
 1. **`src/aow_sim/righting_servo.py`**: add a measured law beside the bus
    law, selected by a constructor arg (`current_law="measured"|"bus_sqrt"`,
@@ -81,20 +131,21 @@ extrapolating the sqrt law down was.
 
 2. **Gearbox friction on the servo's joint**, in `pre_step` next to the
    torque (MuJoCo's `frictionloss` cannot scale with load):
-   - driving: output torque `tau_m / (1 + 0.51)` in the direction of motion
-     (equivalently friction `0.51 |tau_out|`);
-   - back-driven (load moving the motor): friction `0.51 |tau_load| + 7 mN m`;
+   - driving: friction `0.51 |tau_out| + 5 mN m` against the motion, so
+     output torque `(tau_m - 5 mN m) / (1 + 0.51)`;
+   - back-driven (load moving the motor): friction `0.51 |tau_load| + 5 mN m`;
    - at rest: stick while `|net| < ` the back-drive static value (~9 mN m at
      low load, the release sweeps), slide below it (sliding ran 30-40 deg/s
      once going: sliding friction well under static);
    - direction/angle/history effects documented, NOT modelled (agreed).
-   A first cut can be `frictionloss = 7 mN m` plus the driving efficiency
+   A first cut can be `frictionloss = 5 mN m` plus the driving efficiency
    factor, and the load-proportional back-drive term later.
 
 3. **Constants into `config/bike_params.yaml`**, `servos.xc330_t181`, each
    with `source: measured` and a pointer to the plan doc:
-   `current_deadband` 0.0165 A, `current_torque_gain` 0.677 N m/A,
-   `gearbox_friction_fraction` 0.51, `backdrive_friction` 0.007 N m.
+   `current_deadband` 0.0165 A, `current_torque_gain` 0.830 N m/A,
+   `gearbox_friction_fraction` 0.51, `gearbox_friction` 0.005 N m (the four-
+   load split; re-fit once step 0 has more than one point above 130 mA).
    THIS MOVES `plant_digest`. Work CLAUDE.md's "Before changing a physical
    parameter" list: re-export the deploy bundle (`python -m
    aow_sim.export_deploy`), list the policies it makes provisional (anything
@@ -107,7 +158,7 @@ extrapolating the sqrt law down was.
    test becomes "the attached servo's friction is the righting servo's").
 
 5. **Tests** (`tests/test_righting_servo.py`, marker `righting`):
-   - a simulated lever -- the fixture's geometry, 34 g / 117 g at 44 mm --
+   - a simulated lever -- the fixture's geometry, 34 g / 137 g at 44 mm --
      lifts above and falls below the measured lines within ~5 mA (encode
      the bench table in the test; `traces/` is not in git);
    - no torque below the 16.5 mA edge at stall;
@@ -129,6 +180,6 @@ extrapolating the sqrt law down was.
 ## Not in scope
 
 - The steering (mode 3/4): kept at the datasheet 0.80 N m, noted in
-  `bike_params.yaml` as possibly ~0.5 (bench 0.53-0.69); to be measured in
+  `bike_params.yaml` as possibly ~0.6 (bench 0.62-0.69); to be measured in
   place on a bike test rig.
 - BAM-style identification of the same servo: `docs/plans/bam-current-position.md`.
