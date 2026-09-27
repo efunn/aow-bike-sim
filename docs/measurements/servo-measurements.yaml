@@ -268,6 +268,35 @@ xc330_current_position:
     - Which current the loop REGULATES (bus or phase), and a clean a/b, both
       need a HELD output; a bare shaft cannot give either.
 
+xc330_lever_lift:
+  # Current-based position (5), id 103, the X330 fixture's lever, 12 V, P 700 /
+  # D 1400, lifting from rest at level, Goal Current in 2 mA steps, 1.2 s tries,
+  # "moved" = 1 deg. 2026-09-25/26. The measurements righting_servo.py and
+  # gearbox_friction.py are built on; docs/plans/righting-servo-model.md.
+  #
+  # REPRODUCE (on the Pi): python analysis/servo_lift.py --mass-g M --radius-mm R
+  # then `servo_lift.py fit <dirs>` -- which applies servo_lift.CORRECTIONS
+  # (the heavy weight is 137 g; the captures' meta says 117). Sim against these
+  # numbers: python analysis/servo_lift_sim.py.
+  date: 2026-09-26
+  rig: x330_fixture_lever
+  ids: [103]
+  loads:        # torque at level [mN m], lift above / load wins below [mA]
+    - {mass_g: 34, radius_mm: 25, torque_mnm: 8.3, lift_ma: 35, fall_ma: null}
+    - {mass_g: 34, radius_mm: 44, torque_mnm: 14.7, lift_ma: 49, fall_ma: 17}
+    - {mass_g: 137, radius_mm: 25, torque_mnm: 33.6, lift_ma: 79, fall_ma: 27}
+    - {mass_g: 137, radius_mm: 44, torque_mnm: 59.1, lift_ma: 129, fall_ma: 43}
+    - {mass_g: 236, radius_mm: 44, torque_mnm: 101.9, lift_ma: 189, fall_ma: null,
+       note: "one rep, 180-198; the hub's printed pins sheared ~122 s in"}
+  drive_edge_ma: 16.5     # --pwm-sweep, both directions, ~1 mA hysteresis
+  lift_line: {intercept_ma: 20.3, ma_per_mnm: 1.822}   # the four low loads
+  fall_line: {intercept_ma: 8.0, ma_per_mnm: 0.587}
+  # IF forward and back-drive friction are equal (not checkable statically):
+  torque_gain_nm_per_a: 0.83
+  friction_static: {fraction: 0.51, constant_mnm: 5.1}
+  # From mode 3's speed-at-fixed-duty lines on the same lever (joint fit):
+  friction_running: {fraction: 0.15, constant_mnm: 5.7}
+
 xc330_command_delay:
   # Frame that computes a goal -> the servo's own Position Trajectory(140), by
   # the XC430's method (drivetrain-measurements.yaml, `latency`): a multi-sine

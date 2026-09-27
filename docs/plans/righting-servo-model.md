@@ -1,7 +1,48 @@
 # Righting servo model: from the bench's measured lines
 
-STATUS: plan, nothing implemented (2026-09-26). The measurements are in
-`docs/plans/pre-assembly-bench-checklist.md` ("Loaded runs", "RELEASE test",
+STATUS (2026-09-26): steps 1-7 IMPLEMENTED (step 6's teleop: self-righting
+checked, the floor rig pending); step 0 blocked on the horn coupling. Covers the righting
+servo's current law and the gearbox friction of BOTH XC330s (steer too).
+
+What implementing it found, beyond the plan below:
+
+- The friction limit is the FIXED POINT `(f0 + c tau)/(1 -+ c)` by branch
+  (friction opposing or helping the motor), not `f0 + c L` from last step's
+  force: the lagged form let a suddenly applied load slip before it
+  converged. Same thresholds, no lag (gearbox_friction.py).
+- MuJoCo's default friction softness lets a sub-limit load creep 0.08-0.32
+  rad/s on the lever: stiffened (solref 2 x timestep, solimp 0.99/0.999) where
+  a servo holds a gravity load. NOT on the steer: there it made the LQR's
+  0.8 m/s U-turn a knife edge, while the default held for any constant
+  friction 0-10 mN m.
+- `balance.run` got the hook too: the LQR's fast-reverse turn (4.7 deg
+  against a 6 deg tolerance with NO friction) missed on the constant
+  approximation and passes with the real friction.
+- Teleop's starting cap now converts `limits.torque_nm` as OUTPUT torque
+  while moving: 0.55 N m -> 785 counts (679 as motor torque). Breaking away
+  at the stroke's peak would need ~0.84 N m of motor torque, over the 0.74
+  the Current Limit gives. 300 counts gives ~0.20 N m at the crank moving.
+- The floor rig's roll servo at P 700 is P-gain-limited, not cap-limited:
+  7 deg under a 0.3 N push at any Goal Current (the sqrt law's rising gain
+  near zero error had hidden that).
+- `servo_kp/kv` (the native actuator) re-derived with the measured k:
+  1.48 / 0.0473.
+- TELEOP (user, 2026-09-26, `--swing-linkage`, 12 V): 525 mA lifts the bike
+  a little, 605 gets it partway, 625 lifts it fully to level -- inside the
+  910 limit, and under the 785 that `limits.torque_nm` converts to (that
+  figure is a design budget, not the stroke's true need). The user's read:
+  the mechanism wants more mechanical advantage.
+  Reproduced headless by `analysis/righting_current_sweep.py` (fallen, crank
+  goal stepped as teleop's 9/4, wheels passive): first upright at 630 counts
+  at 12 V and 11.1 V, 650 at 9.9 V, both sides; ~0.51 N m of motor torque at
+  the threshold against the 0.74 the Current Limit gives.
+- Braking at speed does not match: see righting_servo.py's docstring.
+- Calibration (`analysis/servo_lift_sim.py`): lift within 1-5 mA of the bench
+  on the four fitted loads (208 vs 189 on the 236 g one), fall within 3-4.
+- Plant digest 8d8b25a809ea2f1a -> 9f162dc4727110e2; bundle re-exported
+  (worst fit R^2 0.960); red set unchanged (3 accepted).
+The measurements are in `docs/plans/pre-assembly-bench-checklist.md`
+("Loaded runs", "RELEASE test",
 "PWM sweep"), the captures in `traces/servo_lift/`, the script
 `analysis/servo_lift.py` (`fit` reproduces the lines below).
 
@@ -115,9 +156,10 @@ to ~190 mA.
    flagged; the 236 g point says the line is, if anything, conservative up
    to ~190 mA.
 
-1. **`src/aow_sim/righting_servo.py`**: add a measured law beside the bus
-   law, selected by a constructor arg (`current_law="measured"|"bus_sqrt"`,
-   keep `bus_sqrt` for comparison, as `braking` keeps "regen"):
+1. **`src/aow_sim/righting_servo.py`: the measured current law REPLACES
+   the sqrt law** (decided 2026-09-26: no `bus_sqrt` switch kept -- the
+   bench refutes it from 8 to 102 mN m; the derivation stays in the
+   docstring as the rejected alternative, with why, and in git):
    - motor torque from the clipped current demand:
      `tau_m = k sign(i) max(0, |i| - I0)`, then limited by the motor line
      `ts (s u - w/w0)` at `u = +-1` (the no-load ceiling stays measured:
@@ -126,27 +168,59 @@ to ~190 mA.
      frames -- with the same edge and gain;
    - `current` (what Present Current reports) = the demand clipped, as the
      bench saw: Present Current reads exactly the goal at stall.
-   Rewrite the module docstring's bus-current paragraph with the bench
-   numbers; keep the sqrt derivation as the rejected alternative, with why.
 
-2. **Gearbox friction on the servo's joint**, in `pre_step` next to the
-   torque (MuJoCo's `frictionloss` cannot scale with load):
-   - driving: friction `0.51 |tau_out| + 5 mN m` against the motion, so
-     output torque `(tau_m - 5 mN m) / (1 + 0.51)`;
-   - back-driven (load moving the motor): friction `0.51 |tau_load| + 5 mN m`;
-   - at rest: stick while `|net| < ` the back-drive static value (~9 mN m at
-     low load, the release sweeps), slide below it (sliding ran 30-40 deg/s
-     once going: sliding friction well under static);
-   - direction/angle/history effects documented, NOT modelled (agreed).
-   A first cut can be `frictionloss = 5 mN m` plus the driving efficiency
-   factor, and the load-proportional back-drive term later.
+2. **Gearbox friction, ONE model for both XC330s** -- the righting servo's
+   crank and the steer. Same servo, same gearbox, and the bench agrees
+   across modes: static 0.51 x load + 5.1 mN m (mode 5, four loads) vs
+   0.53 x load + 7.0 (mode 3, two loads); running 0.15 x load + 5.7 (mode
+   3, the joint fit of the four speed lines).
+
+   Mechanism -- MuJoCo's own dry friction, re-limited every substep, so
+   stick/slip stays in the solver and Python only does arithmetic:
+
+       L = |actuator torque + this dof's friction constraint force|   (last step)
+       dof_frictionloss[dof] = f0 + c L     static (f0, c) if |w| < w_eps, else running
+
+   `L` is the torque the gearbox transmits to the load, which is what the
+   fits are in: driving, friction opposes the motor and `L = tau_m - F`;
+   back-driven it helps and `L = tau_m + F` -- one formula for both, no
+   direction switch. The friction row's index is `data.ne` + the number of
+   lower dofs with non-zero frictionloss (checked: 0 mismatches in 3000
+   steps of the main model; assert it in a test, since it relies on
+   MuJoCo's constraint ordering). One step of lag (0.4 ms).
+
+   COST, measured 2026-09-26 on the main model (M4, 20 dof, median of 6
+   interleaved blocks of 5000 steps): `mj_step` 18.1 us with no steer
+   friction, 18.2-18.3 with a constant one (one more constraint row), 18.5
+   with the per-substep update -- ~+0.4 us, ~2 %, per servo. The general
+   env already loops substeps in Python (`general_env.py:888`), so no new
+   loop. The righting servo's update rides in its existing `pre_step`.
+
+   Where the steer's update runs: a `pre_step` like the righting servo's,
+   called before every `mj_step` in `general_env`, `run_drive` (teleop)
+   and `record`. The other loops (`balance`, `ball_env`, `flick_env`,
+   `pivot_env`, `righting`, `linearize`, `sim_odometry`) call `mj_step`
+   without hooks; for them the MODEL's default `frictionloss` is the
+   no-load static value (5 mN m) -- a constant-friction approximation, not
+   zero. Wire them later only if one of them turns out to care.
+
+   What it does to the steer: with friction modelled, `stall_torque` is
+   the MOTOR's torque (friction separate), and the usable torque against a
+   load drops to `(stall - f0) / (1 + c)`: ~0.52 N m breaking away at the
+   datasheet 0.80, ~0.43 at the bench's 0.66. That is a real plant change
+   for the steering, on top of the stall-torque question.
+
+   Direction/angle/history effects documented, NOT modelled (agreed).
 
 3. **Constants into `config/bike_params.yaml`**, `servos.xc330_t181`, each
    with `source: measured` and a pointer to the plan doc:
-   `current_deadband` 0.0165 A, `current_torque_gain` 0.830 N m/A,
-   `gearbox_friction_fraction` 0.51, `gearbox_friction` 0.005 N m (the four-
-   load split; re-fit once step 0 has more than one point above 130 mA).
-   THIS MOVES `plant_digest`. Work CLAUDE.md's "Before changing a physical
+   `current_deadband` 0.0165 A, `current_torque_gain` 0.830 N m/A, and a
+   `gearbox_friction` block read by BOTH servos: static `{fraction: 0.51,
+   constant: 0.005}`, running `{fraction: 0.15, constant: 0.006}`,
+   `stick_speed` (w_eps, rad/s -- pick from the release sweeps' creep).
+   Re-fit once step 0 has more than one point above 130 mA.
+   Make `measured` the default here. THIS MOVES `plant_digest` (accepted:
+   the plant has moved since the last training anyway). Work CLAUDE.md's "Before changing a physical
    parameter" list: re-export the deploy bundle (`python -m
    aow_sim.export_deploy`), list the policies it makes provisional (anything
    trained with the swing linkage in the plant), note it in `docs/status.md`.
@@ -157,21 +231,44 @@ to ~190 mA.
    `servo_friction_nm`) and `tests/test_floor_rig.py` (the servo-friction
    test becomes "the attached servo's friction is the righting servo's").
 
-5. **Tests** (`tests/test_righting_servo.py`, marker `righting`):
-   - a simulated lever -- the fixture's geometry, 34 g / 137 g at 44 mm --
-     lifts above and falls below the measured lines within ~5 mA (encode
-     the bench table in the test; `traces/` is not in git);
-   - no torque below the 16.5 mA edge at stall;
-   - the no-load ceiling unchanged (11.8 rad/s at Goal Current max).
-   Then the `righting`, `contact`, `geometry`, `deploy` markers and the
-   full suite (it moves a digest); read the red-set verdict.
+5. **Tests of the IMPLEMENTATION, not the calibration** (`tests/test_righting_servo.py`,
+   marker `righting`). Each reads the constants from `bike_params` and
+   derives its expectation from them, so a re-fit that changes the numbers
+   leaves them green; only breaking the code turns them red:
+   - a lever in MuJoCo (the fixture's geometry, any load) lifts at the
+     current the params' own line predicts, `I0 + ((1 + c) L + f0) / k`,
+     within a step -- i.e. `pre_step`'s torque and friction reach the joint
+     as specified;
+   - zero torque below `I0` at stall; the no-load speed still `w0` at Goal
+     Current max;
+   - the friction row index assumption (`data.ne` + lower frictionloss
+     dofs) holds, for the main model and the floor rig;
+   - the steer: at a fixed motor torque `tau` it is back-driven by a load
+     above `(tau + f0)/(1 - c)` and drives one below `(tau - f0)/(1 + c)`,
+     holding in between, with c and f0 read from params.
+   Today's righting tests: the law-independent ones (plug braking, Present
+   Current's sign, the gains conversion, the no-load ceiling) move to the
+   measured law; the ones that test the sqrt law itself go with it.
+   Then the `righting`, `contact`, `geometry`, `deploy` markers and the full
+   suite (it moves a digest); read the red-set verdict.
 
-6. **Re-derive, do not carry forward**: `analysis/self_righting.py lift`
-   ("300 counts lifts the bike"), the teleop starting cap
-   (`limits.torque_nm` -> counts), `analysis/servo_modes.py`'s mode
-   comparison, and the floor rig's `stiff_roll` / `fixed_roll` presets
-   (their counts were chosen under the sqrt law). If 300 counts no longer
-   lifts the bike, that is a design finding, not a test to loosen.
+   The CALIBRATION check -- does the sim reproduce the bench table -- is
+   analysis, not a test: a new `analysis/servo_lift_sim.py` that runs the
+   fixture's sweeps in sim and prints sim vs bench per load. Rerun it after
+   any re-fit. Separate from `servo_lift.py` because that one runs on the
+   Pi, where nothing may import mujoco.
+
+6. **Re-derive, do not carry forward**, then drive it:
+   - `analysis/self_righting.py lift` ("300 counts lifts the bike"), the
+     teleop starting cap (`limits.torque_nm` -> counts),
+     `analysis/servo_modes.py`'s mode comparison, and the floor rig's
+     `stiff_roll` / `fixed_roll` presets (their counts were chosen under
+     the sqrt law). If 300 counts no longer lifts the bike, that is a
+     design finding, not a test to loosen.
+   - TELEOP, by the user, once the measured law is the default: the main
+     bike (`mjpython -m aow_sim.run_drive --teleop`) and the floor rig
+     (`... --teleop --rig`) -- self-righting at the new counts, holding,
+     nothing unphysical. The check that "nothing crazy happened".
 
 7. **Docs**: `docs/status.md` (what moved, what is provisional), the bench
    plan's pointer here, `docs/measurements/servo-measurements.yaml` gets the
@@ -179,7 +276,8 @@ to ~190 mA.
 
 ## Not in scope
 
-- The steering (mode 3/4): kept at the datasheet 0.80 N m, noted in
-  `bike_params.yaml` as possibly ~0.6 (bench 0.62-0.69); to be measured in
-  place on a bike test rig.
+- The steering's STALL TORQUE (mode 3/4): kept at the datasheet 0.80 N m,
+  noted in `bike_params.yaml` as possibly ~0.6 (bench 0.62-0.69); to be
+  measured in place on a bike test rig. Its gearbox friction IS in scope
+  (step 2).
 - BAM-style identification of the same servo: `docs/plans/bam-current-position.md`.

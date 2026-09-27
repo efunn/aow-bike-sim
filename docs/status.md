@@ -65,25 +65,36 @@ four-bar is BUILT and operating** -- this file had carried "design done, build
 last" for eight days. Open on it: read `righting_sign` (stow is settled at 180)
 off the bike (below), and Station C / R6 for `righting_current` in counts.
 
-**The crank's servo is now modelled as the firmware runs it (2026-09-21).**
-`righting_servo.CurrentBasedPositionServo`, on by default under teleop
-`--swing-linkage` (`--righting-ideal` for the old PD + clip). The loop
-regulates BUS current: the position PID is converted to amps, Goal Current caps
-it, and the motor line is the duty ceiling. So stall torque follows
-sqrt(Goal Current), and **300 counts is ~0.47 N.m at 12 V, not 0.27**. It
-brakes by PLUGGING (reverse duty), which is measured: 242/243 bench frames
-braking against the motion had reversed PWM. The 4 ms command delay is measured
-(frame-quantised; see below). The
-old clip let the crank reach 17.5 rad/s against an 11.8 no-load. `[` / `]`
-step Goal Current by 20 counts, as the ground station does. Fall set, policy
-on throughout, crank to centre at the hand-off gate, 416 counts (0.55 N.m at
-stall): **2/2 at 12 V, 1/2 at 11.1 V, 2/2 at 9.9 V**, and latching the
-endpoint recovers the fall to the left only. That is one pose per side and not
-monotonic in voltage, so it is marginal, not settled. Under the unmeasured
-alternative braking reading ("regen") it is 1/2 everywhere, which is why the
-braking data matters. Bench results are under `xc330_current_position` in
-servo-measurements.yaml: Goal PWM is NOT a duty ceiling in mode 5, and the D
-term's per-tick reading holds to order of magnitude.
+**Both XC330s are now modelled from the X330 fixture's measurements
+(2026-09-26; `docs/plans/righting-servo-model.md`).** The righting crank's
+servo (`righting_servo.CurrentBasedPositionServo`, on by default under
+teleop `--swing-linkage`) makes torque `k (|I| - I0)`: k 0.83 N m/A above a
+16.5 mA drive edge, measured on a lever at 8-102 mN m. The old bus-current
+sqrt law is REFUTED: it said 300 counts gives ~0.47 N m, and it gives ~0.24.
+Both the crank and the steer now carry the measured gearbox friction,
+load-proportional (static 0.51 x load + 5.1 mN m, running 0.15 x load + 5.7;
+`gearbox_friction.py`), re-limited every substep in `general_env`, teleop,
+`record` and `balance.run` (~+8 % per `mj_step` with the steer's hook).
+Consequences, all in sim:
+
+- **300 counts cannot right the bike.** The swing linkage's stroke needs
+  0.55 N m at the crank; moving, that is ~785 counts of the 910 limit, and
+  breaking away at the peak would need ~0.84 N m of motor torque, above the
+  limit. Teleop now starts at the counts that deliver `limits.torque_nm` at
+  the crank while moving (785), not as motor torque. **Teleop, 12 V:** 525
+  counts lifts it a little, 605 partway, **625 rights it fully** -- the
+  mechanism wants more mechanical advantage. Headless:
+  `analysis/righting_current_sweep.py` gives 630 at 12 V and 11.1 V, 650 at
+  the 9.9 V cutoff, of the 910 limit.
+- The steering is weaker against a load: `(stall - f0)/(1 + c)` usable, ~0.52
+  N m breaking away at the datasheet 0.80 (bench stall 0.62-0.69, kept at 0.80).
+- The floor rig's roll servo at the righting gains is softer: 7 deg under a
+  0.3 N side push at any cap (the P gain's stiffness); `stiff_roll` gives way
+  at 0.6 N.
+- Known mismatch, documented: braking at speed -- the one bench frame that
+  showed plugging implies ~3x more braking than the linear law gives.
+- The fall-set numbers that were here (2/2 at 12 V at 416 counts) were under
+  the sqrt law and are void until re-run in teleop.
 
 **The steer servo is modelled as the firmware runs it (2026-09-21).**
 `actuators.steer_clip: duty` builds the mode-4 law, clip(kp e) - kv w,
@@ -118,7 +129,7 @@ unchanged by the clip; the delay is not yet teleop-tested.
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
 | **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency`. **Onboard software readied for a Pi bench session 2026-09-15** — ground station, firmware-gain writes, fourth servo, fall cut/re-arm; none of it has touched hardware | Firmware P-gain choice, torque calibration, then the chassis | `pi-bench-bringup.md`, `first-physical-test.md`, `drivetrain-measurements.yaml` |
 | **CAD** | Layout, drivetrain, steering and righting stations pinned. Electronics packing deferred on purpose. The X330 idler side and the 6-32 crank/idler joint are generated features now (2026-09-23), beside the horn pin and case shell | AHRS fixture brackets, "What to do next" #5 | `cad-onshape-workflow.md` |
-| **Self-righting mechanism** | Four-bar built and operating. Its servo is modelled in current-based position mode, bus-regulated, plugging (2026-09-21); centring at hand-off recovers marginally | `righting_current` untuned; D gain and braking near zero current unmeasured | `wing-linkage-design-and-optimization.md`, `righting_servo.py` |
+| **Self-righting mechanism** | Four-bar built and operating. Its servo is modelled from the lever bench (2026-09-26): linear current law above a 16.5 mA edge, load-proportional gearbox friction | 300 counts cannot right it in sim (625 does, teleop 2026-09-26; wants more mechanical advantage); law above ~200 mA unmeasured; braking at speed mismatched | `wing-linkage-design-and-optimization.md`, `righting_servo.py` |
 
 ---
 
@@ -1313,8 +1324,15 @@ would otherwise pass as a perfect no-op.
 (`plant_digest`, `design_digest`, and the legacy whole-file `params_digest`
 c70acbea4b2ba655):**
 
-    plant_digest   8d8b25a809ea2f1a    was this trained against the machine I am running?
+    plant_digest   9f162dc4727110e2    was this trained against the machine I am running?
     design_digest  a973a9ca3d503b6d    were these gains designed against the weights I am running?
+
+**`plant_digest` MOVED again on 2026-09-26** (was `8d8b25a809ea2f1a`): the
+XC330's measured current law and gearbox friction, and `servo_kp/kv` 1.62 /
+0.0519 -> 1.48 / 0.0473 (the same derivation with the measured k). Bundle
+re-exported, worst LQR fit R^2 0.960. No `moves/` export matched even the
+previous digest (28 at `e1ec36bf`, 6 at two others, 34 unstamped), so nothing
+newly provisional; ACCEPTED.
 
 **`plant_digest` MOVED on 2026-09-16** (was `e1ec36bfa670217e`), and everything
 in `moves/` is now an artifact of a different machine — `load_move` says so on
