@@ -192,6 +192,35 @@ def test_finish_runs_on_interrupt_and_a_failing_finish_costs_nothing():
     assert "port gone" in cap.meta["finish_error"]
 
 
+@pytest.mark.parametrize("stop", ["end", "interrupt", "error"])
+def test_gc_is_off_through_the_loop_and_finish_and_restored_after(stop):
+    """A ~167 ms stall late in two Pi captures tripped a 100 ms Bus Watchdog
+    (2026-09-26); record() keeps the cyclic GC off from the first frame until
+    `finish` has run, however the schedule ends, then puts it back."""
+    import gc
+    seen = []
+
+    def cmd(t, s):
+        seen.append(gc.isenabled())
+        if stop == "interrupt" and t > 0.005:
+            raise KeyboardInterrupt
+        if stop == "error" and t > 0.005:
+            raise RuntimeError("bus gone")
+        return {101: 0.0, 102: 0.0}
+
+    for was_on in (True, False):
+        (gc.enable if was_on else gc.disable)()
+        try:
+            bus = FakeBus()
+            record(bus, _imap(bus), [Segment("a", 0.02, cmd)], rate_hz=1000.0, log=None,
+                   finish=lambda b: seen.append(gc.isenabled()))
+            assert seen and not any(seen)
+            assert gc.isenabled() is was_on
+        finally:
+            gc.enable()
+        seen.clear()
+
+
 # --- RunRecorder: the onboard record, fed one tick at a time ---------------
 
 from aow_sim.hw.bench_log import RunRecorder   # noqa: E402

@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as _dt
+import gc
 import json
 import subprocess
 import time
@@ -100,6 +101,19 @@ def record(bus, imap, segments, rate_hz: float, log=print,
     ``imap`` is the installed :class:`IndirectMap`, which names and decodes the
     read block.
 
+    THE CYCLIC GARBAGE COLLECTOR IS OFF from the first frame until ``finish``
+    has run, and restored after. With it on, two `servo_lift` captures on the
+    Pi 3 (2026-09-26) each stalled ONCE for ~167 ms, 215 s and ~239 s in,
+    tripping a 100 ms Bus Watchdog; the servo then refuses goal writes (err 7)
+    until it is disarmed. With it off, a 416 s capture's longest frame gap was
+    12.9 ms. That GC is the cause is inferred from those three runs, not
+    measured directly. NO collection first: a full one is itself the pause
+    to avoid -- 74 ms over 3 M objects on the Mac, and by then the caller
+    has usually armed the watchdog (it also broke a clock-driven test here).
+    The frames are acyclic tuples and floats, freed by reference counting,
+    so nothing the loop makes needs the cyclic collector. (`run_bike` keeps
+    GC on, measured: its `RunRecorder` streams rows to disk instead.)
+
     ``finish(bus)`` runs the moment the schedule ends -- normally, on Ctrl-C or
     on an error -- and BEFORE the frames are converted to arrays. That
     conversion is a pause in bus traffic that grows with the capture, and a
@@ -122,6 +136,8 @@ def record(bus, imap, segments, rate_hz: float, log=print,
     clock = time.perf_counter
     t0 = clock()
     next_t = 0.0
+    gc_was_on = gc.isenabled()
+    gc.disable()
     try:
         for k, s in enumerate(segments):
             if log:
@@ -181,13 +197,19 @@ def record(bus, imap, segments, rate_hz: float, log=print,
             log(f"stopped by {stopped_by} -- keeping the frames captured so far")
 
     finish_error = None
-    if finish is not None:
-        try:
-            finish(bus)
-        except Exception as e:               # noqa: BLE001 -- recorded, not raised
-            finish_error = f"{type(e).__name__}: {e}"
-            if log:
-                log(f"finish hook failed: {finish_error}")
+    try:
+        if finish is not None:
+            try:
+                finish(bus)
+            except Exception as e:           # noqa: BLE001 -- recorded, not raised
+                finish_error = f"{type(e).__name__}: {e}"
+                if log:
+                    log(f"finish hook failed: {finish_error}")
+    finally:
+        # after finish, not before: a collection here could itself be the
+        # pause that trips a watchdog `finish` has yet to disarm
+        if gc_was_on:
+            gc.enable()
 
     n = min(len(t_host), len(read_s), len(write_s), len(ok), len(seg), len(cmd),
             *(len(c) for c in cols.values()))
