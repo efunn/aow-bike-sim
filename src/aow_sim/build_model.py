@@ -24,7 +24,7 @@ import mujoco
 import numpy as np
 import yaml
 
-from . import drivetrain_model, geometry
+from . import drivetrain_model, gearbox_friction, geometry
 # Re-exported: params loading is MuJoCo-free so the Pi can use it (params.py).
 from .params import DEFAULT_PARAMS, _normalize, load_params  # noqa: F401
 
@@ -1293,8 +1293,14 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
                          f"or 'flat_deploy', got {mode!r}")
 
     crank = chassis.add_body(name="swing_crank", pos=[px, servo[0], servo[1]])
-    crank.add_joint(name="swing_crank_joint", type=mujoco.mjtJoint.mjJNT_HINGE,
-                    axis=[1, 0, 0])
+    # The servo's gearbox friction at its no-load static value, for loops that
+    # step without the servo model; CurrentBasedPositionServo makes it
+    # load-proportional (gearbox_friction.py).
+    crank_j = crank.add_joint(
+        name="swing_crank_joint", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[1, 0, 0],
+        frictionloss=float(p["servos"]["xc330_t181"]["friction_static_nm"]))
+    crank_j.solref_friction = gearbox_friction.solref(spec.option.timestep)
+    crank_j.solimp_friction = gearbox_friction.SOLIMP
     tips = {}
     for side, tag in ((-1, "right"), (1, "left")):
         tip = crank_len * sl.arm_dir(side, 0.0)
@@ -1944,6 +1950,13 @@ def build_spec(
         axis=steer_axis,
         pos=-bike["fork_offset"] * offset_dir,  # axis line passes behind the axle
         damping=[steer_kv if steer_clip == "duty" else 0.0, 0, 0],
+        # The XC330's gearbox friction at its no-load static value, referred
+        # through the steering gear. gearbox_friction.attach_steer makes it
+        # load-proportional in loops that call its pre_step; the rest keep this.
+        # MuJoCo's default friction softness here, deliberately: see
+        # gearbox_friction.SOLIMP.
+        frictionloss=float(p["servos"]["xc330_t181"]["friction_static_nm"])
+        * float(bike["steering"]["gear_ratio"]),
     )
     fork_top = -bike["fork_offset"] * offset_dir + 0.10 * steer_axis
     steer.add_geom(

@@ -2712,11 +2712,13 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         from .righting_servo import CurrentBasedPositionServo
         crank_servo = CurrentBasedPositionServo.attach(
             model, params,
-            torque_nm=float(model.actuator_forcerange[wing["aid"], 1]))
+            torque_nm=float(model.actuator_forcerange[wing["aid"], 1]),
+            at_output=True)
         if crank_servo is not None:
             print(f"righting servo: current-based position (mode 5), "
                   f"Goal Current {crank_servo.goal_current} "
-                  f"counts ({crank_servo.cap_nm:.2f} N.m), 12 V   "
+                  f"counts ({crank_servo.cap_nm:.2f} N.m motor at stall, "
+                  f"{crank_servo.output_nm:.2f} at the crank moving), 12 V   "
                   f"[ / ] +-{_CURRENT_STEP} counts"
                   f"   (the bike's righting_current is "
                   f"{params['control']['onboard']['righting_current']})")
@@ -2775,6 +2777,15 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         if rig_servos:
             print(describe_servos(rig_servos, model))
 
+    # The XC330s' measured gearbox friction, load-proportional: the steer
+    # always, the swing crank only when no servo model owns it (that one
+    # carries its own). See gearbox_friction.py.
+    from . import gearbox_friction
+    gearbox = [g for g in (gearbox_friction.attach_steer(model, params),
+                           None if crank_servo is not None else
+                           gearbox_friction.attach(model, params, "swing_crank_joint"))
+               if g is not None]
+
     def pre_step(d):
         """Everything that must run immediately before each mj_step. Through
         the list, not a bound method: a menu swap replaces the DrivetrainSim
@@ -2785,6 +2796,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             crank_servo.pre_step(d)
         for srv in rig_servos.values():
             srv.pre_step(d)
+        for g in gearbox:
+            g.pre_step(d)
 
     def on_key(keycode):
         pending.append(keycode)
@@ -3665,7 +3678,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 paused=paused,
                 on_start=lambda v: view.__setitem__(0, v),
                 pre_step=(None if drive_sim[0] is None and crank_servo is None
-                          and not rig_servos else pre_step),
+                          and not rig_servos and not gearbox else pre_step),
                 stats=None if frame_stats is None else FrameStats(frame_stats))
     # teleop_loop returns when the operator closes the viewer, so this is the
     # natural flush point. Ctrl-C bypasses it -- accepted, since a session

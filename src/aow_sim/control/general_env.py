@@ -32,7 +32,7 @@ import mujoco
 import numpy as np
 from gymnasium import spaces
 
-from .. import drivetrain_model
+from .. import drivetrain_model, gearbox_friction
 from ..build_model import build_model, load_params, reset_actuator_state
 from .balance import extract_state, mix
 from .drive import DriveController
@@ -137,6 +137,9 @@ class GeneralEnv(gym.Env):
         # when the params carry the overlay. None otherwise, and every line
         # below that reads it is then a no-op -- the default env is unchanged.
         self._drive = drivetrain_model.DrivetrainSim.attach(self.model, self.p)
+        # The XC330s' measured gearbox friction (steer, and the swing crank
+        # when present), load-proportional: re-limited before every substep.
+        self._gearbox = gearbox_friction.attach_native(self.model, self.p)
         self._eq = settle_upright(self.model).qpos.copy()
         self.data = mujoco.MjData(self.model)
         # Crawl-balance fallback gain from the ball-free model, as ball_env.
@@ -821,6 +824,8 @@ class GeneralEnv(gym.Env):
             self._v_cmd_w = np.array([c * v[0] - s * v[1],
                                       s * v[0] + c * v[1]])
             self._next_resample = 10 ** 9      # hold for the whole episode
+        for g in self._gearbox:
+            g.reset(self.data)
         if self._drive is not None:
             # LAST, after every other draw, so the detent phase takes the one
             # extra number off the stream and nothing drawn above moves.
@@ -885,6 +890,8 @@ class GeneralEnv(gym.Env):
         for _k in range(self.substeps):
             if self._drive is not None:
                 self._drive.pre_step(self.data)
+            for g in self._gearbox:
+                g.pre_step(self.data)
             mujoco.mj_step(self.model, self.data)
             # TICK THE ESTIMATOR INSIDE THE SUBSTEP LOOP, not after it. It runs
             # at its own rate (100 Hz, the Pi's) while the policy is queried at

@@ -209,10 +209,13 @@ def add_chain(spec: mujoco.MjSpec, params: dict, cfg: dict) -> None:
     arm = cfg.get("armature") or {}
     tc = max(2 * spec.option.timestep, 2e-4)     # stiffest stable time constant
     fric, damp = dict(cfg.get("friction") or {}), cfg.get("damping") or {}
-    # A servo on an axis brings its gearbox: Coulomb friction on top of the
-    # joint's own. Only while `servos:` has it attached -- null means the servo
-    # is off the shaft (the keyed adapter) and the axis is free.
-    tau_sf = servo_friction_nm(params, cfg)
+    # A servo on an axis brings its gearbox: friction on top of the joint's
+    # own. Only while `servos:` has it attached -- null means the servo is off
+    # the shaft (the keyed adapter) and the axis is free. Built in at the
+    # no-load static value; the attached servo's pre_step makes it
+    # load-proportional (gearbox_friction.py).
+    from .gearbox_friction import constants
+    tau_sf = constants(params)["static_nm"]
     for j, v in (cfg.get("servos") or {}).items():
         if v is not None:
             fric[j] = float(fric.get(j) or 0.0) + tau_sf
@@ -404,29 +407,22 @@ def motor_step(model, data, cfg: dict) -> None:
             data.ctrl[aid] = float(np.clip(tau, lo, hi))
 
 
-def servo_friction_nm(params: dict, cfg: dict) -> float:
-    """`servo_friction_ma` as an output torque, by the same bus-current law
-    righting_servo uses at stall: ts * sqrt(I / I_stall)."""
-    ma = cfg.get("servo_friction_ma") or 0.0
-    srv = params["servos"]["xc330_t181"]
-    return float(srv["stall_torque"]) * min(1.0, (ma / 1000 / float(srv["stall_current"])) ** 0.5)
-
-
 def attach_servos(model, params: dict, cfg: dict) -> dict:
     """{axis: CurrentBasedPositionServo} for every axis in `cfg['servos']`
     with a Goal Current set: an XC330 in current-based position mode holding
     the axis at its reference (roll upright, pitch level). "max" is the
     Current Limit (910) at the configured gains; "fixed" is the Current Limit
     AND Position P Gain at its register maximum (16383) -- as stiff as the
-    servo gets, i.e. "fixed" up to 0.8 N m. Goal Current only CAPS the torque:
-    below the cap the stiffness is the P gain's, so at the bike's righting
-    gains (P 700) 'max' still leans 1.2 deg under a 1 N side push and gives
-    way at 3 N, where 'fixed' holds 0.35 deg (measured 2026-09-25).
+    servo gets, i.e. "fixed" up to the Current Limit's ~0.74 N m of motor
+    torque. Goal Current only CAPS the torque: below the cap the stiffness is
+    the P gain's, so at the bike's righting gains (P 700) 'max' still leans
+    under a 1 N side push where 'fixed' barely moves (sim; see
+    test_floor_rig).
     Call each one's `pre_step(data)` immediately before every mj_step.
 
-    Direct drive on the axis. The gearbox's friction is `servo_friction_ma`,
-    added to the joint in `add_chain` (a GUESS); its reflected rotor inertia
-    is not modelled."""
+    Direct drive on the axis. The gearbox's friction is the servo's own,
+    measured and load-proportional (gearbox_friction.py), on top of the
+    axis's `friction:`; its reflected rotor inertia is not modelled."""
     from .righting_servo import CURRENT_LIMIT, CurrentBasedPositionServo
     out = {}
     for j, counts in (cfg.get("servos") or {}).items():
@@ -440,7 +436,8 @@ def attach_servos(model, params: dict, cfg: dict) -> dict:
         counts = CURRENT_LIMIT if counts in ("max", "fixed") else int(counts)
         out[j] = CurrentBasedPositionServo(
             model, params, joint=f"rig_{j}", actuator=None,
-            gains=gains, goal_current=counts)
+            gains=gains, goal_current=counts,
+            friction_base=float((cfg.get("friction") or {}).get(j) or 0.0))
     return out
 
 

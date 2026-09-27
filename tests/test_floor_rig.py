@@ -170,7 +170,6 @@ def _servo_push(counts, seconds=1.0, push=1.0):
     p = load_params()
     cfg = copy.deepcopy(load_rig_cfg())
     cfg["servos"] = {"roll": counts, "pitch": None}
-    cfg["servo_friction_ma"] = 0        # the servo law alone; friction is tested below
     from aow_sim.floor_rig import resolve
     cfg = resolve(cfg, p)
     m = build_model(p, rig=cfg)
@@ -186,30 +185,32 @@ def _servo_push(counts, seconds=1.0, push=1.0):
 
 def test_roll_servo_fixed_is_rigid_and_current_only_caps():
     """`fixed` (Current Limit + top P gain) holds a 3 N side push near
-    upright. 300 counts at the righting gains gives way: Goal Current only
-    caps the torque, the stiffness below it is the P gain's."""
+    upright; 300 counts at the righting gains gives way. Goal Current only
+    CAPS the torque: under a 1 N push that neither cap reaches, 600 and 910
+    counts lean the same -- the P gain's stiffness, not the cap."""
     soft, _ = _servo_push(300, push=3.0)
     rigid, srv = _servo_push("fixed", push=3.0)
     assert srv.goal_current == 910
     assert abs(rigid) < 1.0
     assert abs(soft) > 10.0
-    small, _ = _servo_push(300, push=1.0)      # under its cap it holds
-    assert abs(small) < 3.0
+    mid, _ = _servo_push(600, push=1.0)
+    top, _ = _servo_push(910, push=1.0)
+    assert abs(mid - top) < 0.5
+    assert abs(top) < abs(soft)
 
 
 def test_servo_friction_rides_with_the_servo_only():
-    """`servo_friction_ma` becomes Coulomb friction on an axis only while a
-    servo is attached there -- 100 mA is 0.27 N m by the bus-current law --
-    and stacks on the joint's own friction."""
+    """The servo's gearbox friction (its no-load static value, before any
+    pre_step makes it load-proportional) sits on an axis only while a servo
+    is attached there, and stacks on the joint's own friction."""
+    from aow_sim.gearbox_friction import constants
     cfg = copy.deepcopy(load_rig_cfg())
-    cfg["servo_friction_ma"] = 100
     cfg["servos"] = {"roll": 10, "pitch": None}
     cfg["friction"] = {**cfg["friction"], "roll": 0.01}
     m = build_rig_model(cfg=cfg)
     dof = lambda j: m.joint(f"rig_{j}").dofadr[0]
-    srv = load_params()["servos"]["xc330_t181"]
-    tau = srv["stall_torque"] * (0.1 / srv["stall_current"]) ** 0.5
-    assert m.dof_frictionloss[dof("roll")] == pytest.approx(0.01 + tau, rel=1e-6)
+    f0 = constants(load_params())["static_nm"]
+    assert m.dof_frictionloss[dof("roll")] == pytest.approx(0.01 + f0, rel=1e-6)
     assert m.dof_frictionloss[dof("pitch")] == 0.0
     cfg["servos"] = {"roll": None, "pitch": None}      # servo off the shaft
     m = build_rig_model(cfg=cfg)

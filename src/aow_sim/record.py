@@ -44,6 +44,7 @@ except ImportError as e:            # fail at import, not 15 s into a render
         "    pip install -e '.[viz]'   (or: pip install imageio imageio-ffmpeg)"
     ) from e
 
+from . import gearbox_friction
 from .build_model import (FLOOR_GRID_M, build_model, load_params,
                           tune_lighting)
 from .control import DriveController
@@ -406,6 +407,7 @@ def _record_righting(params, general: str | None, wings: bool, fps: int,
                         linkage_cfg=linkage_cfg)
     design = design_all(params, build_model(params))
     data = mujoco.MjData(model)
+    gearbox = gearbox_friction.attach_native(model, params)
     # `inverted` starts the run UPSIDE DOWN instead of on its side, so the
     # recording covers the part no still frame shows: the bike rolling off the
     # roof ridge onto its side before the mechanism has anything to push on.
@@ -448,6 +450,8 @@ def _record_righting(params, general: str | None, wings: bool, fps: int,
             data.ctrl[seq.aid] = seq.cmd
         else:
             seq.step(model, data)
+        for g in gearbox:
+            g.pre_step(data)
         mujoco.mj_step(model, data)
         # During the hold the sequencer is not stepping, so its phase is still
         # its constructed one -- don't let that register as a transition.
@@ -501,6 +505,7 @@ def _record_demo(params, general: str | None, wings: bool, fps: int,
     model = build_model(params, variant="full", righting=True, wings=wings)
     design = design_all(params, build_model(params))
     data = mujoco.MjData(model)
+    gearbox = gearbox_friction.attach_native(model, params)
     data.qpos[:] = settle_upright(model).qpos
     # Roll nudge off the unstable equilibrium, then yaw off the grid axis.
     qr = np.array([np.cos(np.deg2rad(0.5) / 2), np.sin(np.deg2rad(0.5) / 2), 0, 0])
@@ -582,6 +587,8 @@ def _record_demo(params, general: str | None, wings: bool, fps: int,
             # overlapping the two is what "back on its wheels" should look
             # like. The retract is unloaded, so it does not fight this.
 
+        for g in gearbox:
+            g.pre_step(data)
         mujoco.mj_step(model, data)
         if new != phase:
             phase = new
@@ -638,6 +645,7 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
 
     model = build_model(params, variant="full", hockey=hockey)
     data = _fresh(model, settle_upright(model).qpos)
+    gearbox = gearbox_friction.attach_native(model, params)
     c = DriveController(params, model)
     c.reset(model, data)
 
@@ -761,6 +769,8 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
                 c.step(model, data)
         else:
             c.step(model, data)
+        for g in gearbox:
+            g.pre_step(data)
         mujoco.mj_step(model, data)
         if len(states) * every <= int(data.time / model.opt.timestep):
             states.append((data.qpos.copy(), data.qvel.copy(),

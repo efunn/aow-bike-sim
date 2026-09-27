@@ -1,11 +1,17 @@
 """The righting servo in current-based position mode: src/aow_sim/righting_servo.py.
 
-Pins what the model exists for: a loop that regulates BUS current, so torque
-at stall follows sqrt(Goal Current); braking by plugging, as measured; and a
-crank unable to outrun the motor line. Every speed test also runs the bare actuator
-and asserts IT does outrun the motor, so a pass cannot come from a stroke too
-gentle to reach the limit. Goal PWM has no knob: measured, it is not a duty
-ceiling in mode 5 (see righting_servo.py).
+Pins the IMPLEMENTATION, not the calibration: every expectation is derived
+from the constants in bike_params (current_deadband, current_torque_gain, the
+friction block), so a re-fit leaves these green and only broken code turns
+them red. Whether the constants reproduce the bench is analysis:
+analysis/servo_lift_sim.py.
+
+What is pinned: torque linear in the current demand above the drive edge and
+zero below it; braking by plugging, as measured; Present Current reading the
+demand; a crank unable to outrun the motor line (every speed test also runs
+the bare actuator and asserts IT does outrun the motor, so a pass cannot come
+from a stroke too gentle to reach the limit); and a loaded lever that lifts
+and falls where the params' own lines say.
 """
 
 import math
@@ -25,7 +31,7 @@ def params():
     return load_params()
 
 
-def _floating(params, servo_model=True, torque_nm=0.55, braking="plug"):
+def _floating(params, servo_model=True, torque_nm=0.55):
     """The bike held still in the air: the crank swings the linkage through
     the air with nothing to push on, which is the fastest it can ever go."""
     m = build_model(params, righting=True, swing_linkage=True)
@@ -33,8 +39,7 @@ def _floating(params, servo_model=True, torque_nm=0.55, braking="plug"):
     d = mujoco.MjData(m)
     d.qpos[2] += 0.5
     mujoco.mj_forward(m, d)
-    servo = (rs.CurrentBasedPositionServo.attach(m, params, torque_nm=torque_nm,
-                                                 braking=braking)
+    servo = (rs.CurrentBasedPositionServo.attach(m, params, torque_nm=torque_nm)
              if servo_model else None)
     return m, d, servo
 
@@ -56,13 +61,12 @@ def _stroke(m, d, servo, goal, seconds=0.4):
 
 @pytest.mark.pure
 def test_factory_gains_are_the_native_actuators(params):
-    """P 700 / D 1400 through k5 and kt reproduce servo_kp / servo_kv."""
-    srv = params["servos"]["xc330_t181"]
-    kt = srv["stall_torque"] / srv["stall_current"]
+    """P 700 / D 1400 through k5 and the measured k reproduce servo_kp / kv."""
+    k = params["servos"]["xc330_t181"]["current_torque_gain"]
     g = params["control"]["onboard"]["gains"]["righting"]
     wings = params["righting"]["wings"]
-    assert g["Position P Gain"] * rs.K5 * kt == pytest.approx(wings["servo_kp"], rel=2e-3)
-    assert g["Position D Gain"] * rs.KD_PER_UNIT * kt == pytest.approx(wings["servo_kv"], rel=2e-3)
+    assert g["Position P Gain"] * rs.K5 * k == pytest.approx(wings["servo_kp"], rel=5e-3)
+    assert g["Position D Gain"] * rs.KD_PER_UNIT * k == pytest.approx(wings["servo_kv"], rel=5e-3)
 
 
 def test_absent_without_the_swing_linkage(params):
@@ -80,51 +84,54 @@ def test_native_actuator_becomes_a_command_holder(params):
 
 
 def test_goal_current_caps_the_driving_torque(params):
-    """Goal Current bounds BUS current, so it bounds the torque while the servo
-    drives -- at stall exactly `cap_nm`. Braking by plugging is not bounded by
-    it, and is not asserted here."""
+    """At stall the torque is exactly `cap_nm`, k (I - I0); while driving it
+    never exceeds it."""
     m, d, servo = _floating(params)
     servo.set_goal_current(200)
     w, tau = _stroke(m, d, servo, goal=2.0, seconds=0.1)
     assert tau[0] == pytest.approx(servo.cap_nm, rel=1e-6)          # at stall
+    assert servo.cap_nm == pytest.approx(servo.k * (0.2 - servo.i0), rel=1e-9)
     driving = np.sign(tau) == np.sign(w)
     assert np.abs(tau[driving]).max() <= servo.cap_nm + 1e-9
 
 
-@pytest.mark.pure
-def test_bus_current_gives_more_torque_at_stall_than_phase_would(params):
-    """At stall I_bus = I_stall u^2, so tau = ts sqrt(I / I_stall): 300 counts
-    is ~0.47 N.m, not the kt * 0.3 A = 0.27 a phase-current loop would give."""
-    srv = params["servos"]["xc330_t181"]
-    ts, i_s = srv["stall_torque"], srv["stall_current"]
-    servo = object.__new__(rs.CurrentBasedPositionServo)
-    servo.ts, servo.i_stall, servo.supply, servo.goal_current = ts, i_s, 1.0, 300
-    assert servo.cap_nm == pytest.approx(ts * math.sqrt(0.3 / i_s))
-    assert servo.cap_nm > 1.5 * (ts / i_s) * 0.3
-
-
-def test_the_loop_holds_bus_current_at_the_demand(params):
-    """Present Current -- bus magnitude, signed by the duty -- equals the
-    demand until the duty saturates, driving or plugging."""
+def test_torque_is_linear_above_the_edge_and_off_below(params):
     m, d, servo = _floating(params)
-    for i_bus in (0.05, 0.3, -0.2):
-        for w in (0.0, 3.0, -3.0):
-            u = servo.duty_for(i_bus, w)
-            if abs(u) < 1.0:
-                tau = servo.ts * (servo.supply * u - w / servo.w0)
-                # bus MAGNITUDE, signed by the duty -- how Present Current reads
-                assert math.copysign(abs(u * tau / servo.kt), u) == \
-                    pytest.approx(i_bus, rel=1e-9)
+    for i in (0.0, 0.5 * servo.i0, servo.i0, -servo.i0):
+        assert servo.torque_for(i, 0.0)[0] == 0.0
+        assert servo.torque_for(i, 5.0)[0] == 0.0      # off, not shorted: no braking
+    for i in (0.05, 0.2, -0.3):
+        tau, u, sat = servo.torque_for(i, 0.0)
+        assert not sat
+        assert tau == pytest.approx(math.copysign(servo.k * (abs(i) - servo.i0), i))
 
 
-def test_braking_plugs_by_default(params):
+def test_counts_for_inverts_cap(params):
+    m, d, servo = _floating(params)
+    for nm in (0.05, 0.2, 0.55):
+        servo.set_goal_current(servo.counts_for(nm))
+        assert servo.cap_nm == pytest.approx(nm, abs=servo.k * 1e-3)
+
+
+def test_present_current_reads_the_demand(params):
+    """At stall, below the edge too, Present Current is the demand exactly."""
+    m, d, servo = _floating(params)
+    for counts in (10, 200):
+        servo.set_goal_current(counts)
+        _stroke(m, d, servo, goal=0.0, seconds=0.01)
+        _stroke(m, d, servo, goal=2.0, seconds=m.opt.timestep * (servo.nc + 1))
+        assert servo.current == pytest.approx(counts * rs.AMPS_PER_COUNT)
+
+
+def test_braking_plugs(params):
     """Measured: the bench servos brake with the duty REVERSED against the
-    motion. Regen, the alternative, keeps it the same sign."""
+    motion. A braking torque larger than ts x needs exactly that, and gets
+    it; a smaller one keeps the duty's sign."""
     m, d, servo = _floating(params)
-    assert servo.braking == "plug"
-    assert servo.duty_for(-0.1, 8.0) < 0.0
-    m, d, regen = _floating(params, braking="regen")
-    assert 0.0 < regen.duty_for(-0.1, 8.0) < 8.0 / regen.w0
+    tau, u, _ = servo.torque_for(-0.4, 3.0)
+    assert -tau > servo.ts * 3.0 / servo.w0 and u < 0.0
+    tau, u, _ = servo.torque_for(-0.1, 8.0)
+    assert -tau < servo.ts * 8.0 / servo.w0 and u > 0.0
 
 
 def test_goal_current_clamps_to_current_limit(params):

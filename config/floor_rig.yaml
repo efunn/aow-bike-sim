@@ -88,27 +88,15 @@ damping:
 # free, or driven by `motors:`). Goal Current only CAPS the torque; below the
 # cap the stiffness is the P gain's -- at the righting gains `max` leans 1.2 deg
 # under a 1 N side push and gives way at 3 N, `fixed` holds 0.35 deg (measured
-# 2026-09-25). The torque grows as sqrt(current): 100 counts ~0.27 N m at
-# stall, 300 ~0.47, max the full 0.8 stall torque (computed from the XC330-T181
-# datasheet stall numbers as righting_servo does -- not measured on this
-# axis). Direct drive; gearbox friction is `servo_friction_ma` below, its
-# reflected rotor inertia is NOT modelled.
+# 2026-09-25, in sim under the old law). The torque is linear in current
+# above a ~16.5 mA drive edge, as the X330 fixture measured it: 100 counts
+# ~0.07 N m of motor torque at stall, 300 ~0.24, max (910) ~0.74 -- see
+# righting_servo.py. Direct drive; the servo's gearbox friction is its own,
+# measured, load-proportional and added while a servo is attached
+# (gearbox_friction.py); its reflected rotor inertia is NOT modelled.
 servos:
   roll: null
   pitch: null
-# The servo gearbox's Coulomb friction, as the Goal Current [mA] at which a
-# bare XC330 just moves its own output in mode 5, converted to torque by the
-# same sqrt law righting_servo uses (22 mA -> 0.13 N m). Added to any axis
-# while a servo is attached there; a null servo is off the shaft and adds
-# nothing. 0 = frictionless gearbox.
-# MEASURED 2026-09-25, analysis/servo_breakaway.py, ids 103 + 104 identical:
-# no try moved at <= 20 mA, every try moved at >= 25 mA (both directions, 3
-# horn angles, 2 reps); running, both stop between 22 and 20 mA. THE TORQUE
-# IS NOT: up to 15 mA Present PWM is 1-3 LSB, so that current never reaches
-# the motor (a deadband, not friction), and the sqrt law is extrapolated
-# below its ~100 mA evidence. At speed, 12 V x 40 mA over 9 rad/s bounds the
-# running friction under 0.05 N m. Treat 0.13 N m as an upper end.
-servo_friction_ma: 22
 # Position P/D Gain registers; omitted = the bike's own righting gains
 # (control.onboard.gains.righting).
 servo_gains: {}
@@ -132,8 +120,10 @@ modes:
   pinned_yaw:               # heading held by the rig
     joints: {yaw: locked}
   stiff_roll:               # roll held upright by an XC330 at 300 counts,
-    servos: {roll: 300}     #   the righting gains: compliant
-  fixed_roll:               # Current Limit and top P gain: rigid to 0.8 N m
+    servos: {roll: 300}     #   the righting gains: compliant (sim, measured
+                            #   law: 7 deg under a 0.3 N side push, gives way
+                            #   at 0.6 N)
+  fixed_roll:               # Current Limit and top P gain: rigid to ~0.74 N m
     servos: {roll: fixed}
   guessed_mass:             # a first GUESS at a built rig: 135 g, a little
     link_mass_g: {tilt: 30, slide: 45, roll: 55, pitch: 5}    # friction too

@@ -84,8 +84,14 @@ def test_the_split_did_not_move_the_plant_digest():
                           so it cannot outrun its motor, 23.2 -> 11.8 rad/s at
                           45 deg lead) and steer_command_delay_s 4 ms (measured
                           frame -> servo reference, frame-quantised)
+        9f162dc4727110e2  2026-09-26  the XC330 as the X330 fixture measured it:
+                          current_deadband / current_torque_gain (the
+                          righting servo's current law) and the gearbox
+                          friction block (both XC330s, load-proportional);
+                          righting.{arm,wings}.servo_kp/kv 1.62/0.0519 ->
+                          1.48/0.0473 (the same derivation with the measured k)
     """
-    assert plant_digest(load_params()) == "8d8b25a809ea2f1a"
+    assert plant_digest(load_params()) == "9f162dc4727110e2"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

@@ -377,10 +377,25 @@ def make_controller(name: str, params: dict, model):
 
 
 def run(model, data, controller, duration: float, on_step=None) -> None:
-    """Advance the sim `duration` seconds with the controller in the loop."""
-    for _ in range(int(round(duration / model.opt.timestep))):
-        controller.step(model, data)
-        import mujoco       # sim-only helper; not needed on the bike
-        mujoco.mj_step(model, data)
-        if on_step is not None:
-            on_step(data)
+    """Advance the sim `duration` seconds with the controller in the loop.
+
+    With the XC330s' load-proportional gearbox friction (gearbox_friction.py)
+    when the controller carries its params -- every analytic controller does.
+    Without it the steer keeps the model's constant no-load value, and the
+    LQR's fast-reverse turn is marginal enough to miss its heading tolerance
+    on that approximation alone (2026-09-26)."""
+    import mujoco       # sim-only helper; not needed on the bike
+    from .. import gearbox_friction
+    params = getattr(controller, "params", None)
+    hooks = [] if params is None else gearbox_friction.attach_native(model, params)
+    try:
+        for _ in range(int(round(duration / model.opt.timestep))):
+            controller.step(model, data)
+            for h in hooks:
+                h.pre_step(data)
+            mujoco.mj_step(model, data)
+            if on_step is not None:
+                on_step(data)
+    finally:
+        for h in hooks:
+            h.release()

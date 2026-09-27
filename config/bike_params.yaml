@@ -245,6 +245,26 @@ servos:
     # which uses it to price the righting stroke against the pack.
     stall_current: {value: 0.88, source: datasheet}
     no_load_rpm: {value: 113.0, source: datasheet}
+    # CURRENT-BASED POSITION MODE (5), the righting servo's: motor torque
+    # k (|I| - I0) above a firmware drive edge, as the X330 fixture measured it
+    # (docs/plans/righting-servo-model.md). I0 from the PWM-edge sweep; k from
+    # the lift and fall lines over four loads, 8-59 mN m, 35-129 mA, IF
+    # friction is equal both ways. One 102 mN m point lifted 17 mA below the
+    # line, so k is if anything low above ~130 mA; nothing is measured past
+    # ~200 mA. (The datasheet's kt, stall_torque / stall_current, is 0.91.)
+    current_deadband: {value: 0.0165, source: measured}      # A
+    current_torque_gain: {value: 0.83, source: measured}     # N m / A
+    # GEARBOX FRICTION, both XC330s (righting crank and steer), as
+    # `fraction x load + constant`, load = the torque the gearbox passes on.
+    # Static from mode 5's four loads (mode 3 gave 0.53 and 7.0 mN m); running
+    # from mode 3's four speed lines. gearbox_friction.py applies it.
+    friction_static_fraction: {value: 0.51, source: measured}
+    friction_static_nm: {value: 0.0051, source: measured}
+    friction_running_fraction: {value: 0.15, source: measured}
+    friction_running_nm: {value: 0.0057, source: measured}
+    # Below this output speed the static pair applies. A modelling threshold,
+    # not a measurement: loaded slides ran 30-40 deg/s once going.
+    friction_stick_speed: {value: 0.05, source: design}      # rad/s
     mass: {value: 0.023, source: datasheet}
     box_size: [0.026, 0.020, 0.034]
     pos: [0.16, 0.0, 0.11]
@@ -600,8 +620,8 @@ control:
       # the end of the stroke -- stored energy in the one place it is least
       # wanted.
       #
-      # These map onto the simulator as righting.arm.servo_kp/kv (1.62 /
-      # 0.0519 at the servo shaft); the derivation is written out there, and
+      # These map onto the simulator as righting.arm.servo_kp/kv (1.48 /
+      # 0.0473 at the servo shaft); the derivation is written out there, and
       # the two must move together or the bike and the simulator are running
       # different servos.
       righting:
@@ -905,14 +925,17 @@ righting:
     # DERIVED from the XC330-T181's own firmware gains in CURRENT-BASED
     # POSITION MODE (5), which is the mode the righting servo runs in:
     #
-    #   kp = Position P Gain * k5 * kt = 700 * 2.546e-3 A/(Kp.rad) * 0.909 N.m/A
-    #   kv = (Position D Gain / 16) * (256 * k5) * dt_loop * kt
-    #      = (1400/16) * 0.6519 * 1e-3 * 0.909
+    #   kp = Position P Gain * k5 * k = 700 * 2.546e-3 A/(Kp.rad) * 0.83 N.m/A
+    #   kv = (Position D Gain / 16) * (256 * k5) * dt_loop * k
+    #      = (1400/16) * 0.6519 * 1e-3 * 0.83
     #
     # k5 = (4096/2pi) / (256 * 1000) is the position PID's output read as
     # milliamps, measured at 2.525e-3 on an X330 and derived at 2.546e-3; the
-    # 256 divisor is measured, against a manual that says 128. kt is
-    # stall_torque/stall_current. 700/1400 are the factory defaults for mode 5,
+    # 256 divisor is measured, against a manual that says 128. k is the
+    # MEASURED torque per amp above the drive edge, servos.xc330_t181.
+    # current_torque_gain (was the datasheet kt 0.909 until 2026-09-26: 1.62 /
+    # 0.0519). The native actuator has no drive edge; righting_servo.py does.
+    # 700/1400 are the factory defaults for mode 5,
     # pinned in control.onboard.gains so the bike asserts them at startup.
     #
     # WHY MODE 5 HAS A D GAIN AT ALL and mode 3/4 ship with zero: commanding
@@ -926,8 +949,8 @@ righting:
     # the manual's /16 is known. To settle it: step the goal in mode 5, log
     # Present Position and Present Current at ~500 Hz, and fit
     # I = a*e + b*edot; `a` should come back at 2.525e-3 as a check on the fit.
-    servo_kp: 1.62      # was 30.0 -- a tuning knob, and 18.5x the real servo
-    servo_kv: 0.0519    # was 1.0
+    servo_kp: 1.48      # 1.62 with the datasheet kt; 30.0 as a tuning knob
+    servo_kv: 0.0473    # 0.0519 with the datasheet kt; 1.0 before that
   wings:
     # The ALTERNATIVE to `arm`: a mirrored pair of wings, one per side, driven
     # by ONE servo through a gear train (meshed gears at the two pivots with a
@@ -1052,8 +1075,8 @@ righting:
     mirror: {value: -1.0, source: design}          # theta_left = mirror * theta_right
     # Same servo, same mode, same derivation as the arm's -- see the long note
     # there. At the servo shaft; the builder squares gear_ratio.
-    servo_kp: 1.62      # was 30.0
-    servo_kv: 0.0519    # was 1.0
+    servo_kp: 1.48      # the arm's derivation, k = 0.83
+    servo_kv: 0.0473
 
 hockey:
   # Ball-shot move extras (build_model(..., hockey=True)); see
