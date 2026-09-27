@@ -11,7 +11,7 @@ deadband versus gearbox friction.
 
     P=/dev/ttyUSB0                              # on the Pi; or AOW_DXL_PORT
     python analysis/servo_lift.py --port $P --dry-run
-    python analysis/servo_lift.py --port $P --mass-g 117 --radius-mm 44 --note "..."
+    python analysis/servo_lift.py --port $P --mass-g 137 --radius-mm 44 --note "..."
     python analysis/servo_lift.py summary traces/servo_lift/<capture dir>
     python analysis/servo_lift.py fit traces/servo_lift/<dir> <dir> ...  # loaded runs
 
@@ -286,6 +286,32 @@ def build_plan(args, level: dict, ctx: dict, dirs=(+1, -1)) -> list:
 # --------------------------------------------------------------------------
 # analysis
 # --------------------------------------------------------------------------
+
+# WHAT A CAPTURE'S OWN meta.json GOT WRONG, found after the fact. Applied on
+# load by `fit` and `summary` (and printed), so the traces stay as recorded.
+#   mass_g   -- the heavy weight is 137 g (marked on it, re-weighed 2026-09-26,
+#               screw and nuts included); it was typed as 117 for every run.
+#   until_s  -- the lever was not on the shaft after this: the hub's pins
+#               sheared ~122 s into the 236 g run (homes settle -1 deg, not -4,
+#               from 123.5 s; a 100 mA try reaches the goal at 129 s).
+CORRECTIONS = {
+    **{name: {"mass_g": 137.0} for name in (
+        "260925-231112_servo_lift_117g44L", "260926-144419_servo_lift_117g44L_hub15",
+        "260926-145550_servo_lift_117g44L_lift", "260926-150415_servo_lift_117g44L_lift2",
+        "260926-151744_servo_lift_117g25L", "260926-181733_servo_lift_pos_117g44L",
+        "260926-181855_servo_lift_steps_117g44L", "260926-190801_servo_lift_pos_117g44L_lower")},
+    "260926-203643_servo_lift_236g44R": {"until_s": 122.0},
+}
+
+
+def load_capture(d) -> Capture:
+    cap = Capture.load(d)
+    fix = CORRECTIONS.get(Path(d).name)
+    if fix:
+        print(f"  {Path(d).name}: correcting {fix} (see CORRECTIONS)")
+        cap.meta.update(fix)
+    return cap
+
 
 def _rows(cap: Capture, k: int) -> slice:
     s = cap.segments[k]
@@ -752,6 +778,8 @@ def thresholds(cap: Capture) -> dict:
         info = s["info"]
         if info.get("kind") != "try":
             continue
+        if s.get("t_host", 0.0) > cap.meta.get("until_s", math.inf):
+            continue
         sl = _rows(cap, k)
         pos = cap.position_rad(int(cap.meta["ids"][0]))[sl][cap.ok[sl]]
         if len(pos) < 5:
@@ -779,7 +807,7 @@ def fit(dirs: list) -> None:
     lift, fall = [], []
     unit = None
     for d in dirs:
-        cap = Capture.load(d)
+        cap = load_capture(d)
         u = cap.meta.get("cap_unit", "mA")
         if unit is None:
             unit = u
@@ -819,7 +847,7 @@ def main() -> int:
         return 0
     if len(sys.argv) > 2 and sys.argv[1] == "summary":
         for d in sys.argv[2:]:
-            summarize(Capture.load(d))
+            summarize(load_capture(d))
         return 0
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -840,7 +868,7 @@ def main() -> int:
     ap.add_argument("--currents", type=float, nargs="+", default=None,
                     help="cap levels per try, in the mode's unit (mA, or PWM LSB with "
                          "885 = 100 %%). Default per mode: current 0-200 by 2 mA "
-                         "(117 g at 44 mm fell to 43 and lifted at ~125); position "
+                         "(137 g at 44 mm fell to 43 and lifted at ~129); position "
                          "0-400 by 4 LSB")
     ap.add_argument("--freespin", action="store_true",
                     help="mode pwm, a BARE servo: step Goal PWM up then down each way "
