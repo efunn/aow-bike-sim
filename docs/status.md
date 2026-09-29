@@ -46,6 +46,14 @@ Ranked by what unblocks the most, not by interest.
 > The hardware step after the self-righting study (parked below). The
 > steer's XC330 is modelled from the bench (friction, ~0.52 N m usable
 > breaking away against a load); the CAD station is pinned.
+>
+> **Designed 2026-09-28, not yet printed:** `aow_sim.cad_steering`, one
+> feature in its own Onshape tabs -- fork on ledges, printed-bushing headset,
+> XC330 cases with pins in both rows, cross-socket horn hub, mock wheel.
+> `servo_clearance` 40 -> 45 for it. `--check` clean (no interference steered
+> through 270 deg). Next: print, then tune the `GUESS` fits. Outstanding:
+> `front_wheel.radius` 0.050 vs the measured 51.25 mm. See
+> `steering-design.md`.
 
 All four are bench work. **The sim-side item is being taken now:**
 
