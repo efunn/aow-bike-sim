@@ -65,6 +65,18 @@ Ranked by what unblocks the most, not by interest.
 > `--check` clean at nominal and at full travel. Held until the steer print
 > settles the shared fits; the fixture interface and the hex axle may still
 > move. See `drive-design.md`.
+>
+> **Righting module designed 2026-09-29, not yet printed:**
+> `aow_sim.cad_righting`, the diamond swing linkage (1.25x, from its linkage
+> config) printed in ASA:
+> - a crankshaft on two printed bearings, the steering's horn hub and lugs,
+>   the steering's XC330 cases;
+> - one rod size for all four metal rods;
+> - thrust bosses plus a configurable centre washer;
+> - a bridge with the chassis joints (chassis TBD).
+>
+> `--check` clean over the whole stroke. Held with the drive until the steer
+> print settles the shared fits. See `righting-design.md`.
 
 All four are bench work. **The sim-side item is being taken now:**
 
@@ -166,7 +178,7 @@ unchanged by the clip; the delay is not yet teleop-tested.
 | **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
 | **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency`. **Onboard software readied for a Pi bench session 2026-09-15** — ground station, firmware-gain writes, fourth servo, fall cut/re-arm; none of it has touched hardware | Firmware P-gain choice, torque calibration, then the chassis | `pi-bench-bringup.md`, `first-physical-test.md`, `drivetrain-measurements.yaml` |
 | **CAD** | Layout, drivetrain, steering and righting stations pinned. Electronics packing deferred on purpose. The X330 idler side and the 6-32 crank/idler joint are generated features now (2026-09-23), beside the horn pin and case shell | AHRS fixture brackets, "What to do next" #5 | `cad-onshape-workflow.md` |
-| **Self-righting mechanism** | Four-bar built and operating. Its servo is modelled from the lever bench (2026-09-26): linear current law above a 16.5 mA edge, load-proportional gearbox friction | PARKED 2026-09-27, decision later: linkage options explored (537-575 counts vs 643 at 9.9 V in sim; the diamond, 547, is the lean). 300 counts cannot right the built one (625 does, teleop). Law above ~200 mA unmeasured; braking at speed mismatched | `righting-linkage-margin.md`, `wing-linkage-design-and-optimization.md`, `righting_servo.py` |
+| **Self-righting mechanism** | Four-bar built and operating. Its servo is modelled from the lever bench (2026-09-26): linear current law above a 16.5 mA edge, load-proportional gearbox friction | PARKED 2026-09-27, decision later: linkage options explored (537-575 counts vs 643 at 9.9 V in sim; the diamond, 547, is the lean). The diamond is in CAD as a printed module (2026-09-29, `aow-bike-righting`, `righting-design.md`): crankshaft on two printed bearings, steering's horn hub, one rod size; nothing printed. The machined concept before it is superseded. 300 counts cannot right the built one (625 does, teleop). Law above ~200 mA unmeasured; braking at speed mismatched | `righting-linkage-margin.md`, `righting-design.md`, `wing-linkage-design-and-optimization.md`, `righting_servo.py` |
 
 ---
 
@@ -193,6 +205,8 @@ parked or reference — read that before the body.
 | `drivetrain-model.md` | **the detailed drivetrain**: servo, detent and slop fitted to the Station A captures, the replay check against them, what the existing policies do on it, and why firmware gains and policy are one decision |
 | `cad-onshape-workflow.md` | the Onshape round trip and its API quota, plus everything drawn so far |
 | `wing-linkage-design-and-optimization.md` | the righting mechanism as it now stands |
+| `righting-design.md` | the righting module in CAD: printed diamond linkage, cases, chassis joints |
+| `wing-linkage-metal.md` | SUPERSEDED: the machined concept of the same |
 | `righting-linkage-margin.md` | **the linkage re-search**: the stroke's load curve, the best-possible front, and why the previous round's torque numbers cannot be designed against |
 | `self-righting.md` | where recovery stops being possible; the fall cases. Reference |
 | `params-digest-split.md` | the two digests and what each answers |
