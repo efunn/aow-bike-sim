@@ -1,0 +1,232 @@
+# The front steer module's CAD numbers: mock front wheel, fork, headset, the
+# steer XC330's cases and horn hub. Read by aow_sim.cad_steering only --
+# never by the simulator. Metres. Spec: docs/plans/steering-design.md.
+#
+# MODULE FRAME: Z UP THE STEERING AXIS, Y FORWARD, X RIGHT; origin on the
+# front axle's centre. The steer servo sits up the axis, its horn facing DOWN,
+# its body running back (-Y) toward the chassis. In the bike the whole module
+# is tilted back by bike.rake_deg; with bike.fork_offset 0 the axis passes
+# through the axle, which is why the axle is the origin.
+#
+#   part            print   what it is
+#   fork R / fork L X-/X+   leg plate each side, axle boss inward to the hub;
+#                           two 6-32 each (countersunk outside, head recessed)
+#                           into nuts in the headset lower's block
+#   headset lower   Z+      block between the fork tops, the shaft up through
+#                           the bushing, a double-D spigot on top; the central
+#                           nut in a side slot in the shaft, trapped once the
+#                           shaft is in the bushing
+#   headset upper   Z+      double-D socket on the spigot, the central 6-32
+#                           countersunk from the top, lugs up into the hub
+#   lower case      Z+      the plain bushing (no ball bearing -- the toy has
+#                           none, and a printed sleeve can be reamed), a cup
+#                           round the turning parts, walls round the servo's
+#                           horn half, a 6-32 nut to the mount plate at -Y
+#   upper case      Z-      the X330 back-half shell, capped over the WHOLE
+#                           back face; a pad at -Y with the second 6-32
+#   horn hub        Z- / Z+ on the horn: M2 x 6 self-tappers (Z-), or the
+#                           horn pins (Z+) for a test; the CROSS socket
+#   mount plate     Y+      PLACEHOLDER for the fixture/chassis (TBD): both
+#                           cases' 6-32s countersink into it, ridges locate
+#
+# THE AXIAL STACK is pinned from both ends and the bushing takes the rest:
+# from the top, the horn face sits (tire radius + bike steering.servo_clearance)
+# up the axis and hub/lugs/headset upper hang from it; from the bottom, the
+# block sits tire_gap above the tire. The sleeve length is what is left, and
+# `layout` refuses anything under min_sleeve.
+
+wheel:
+  # Max outer diameter, measured by the user 2026-09-28 ("not perfectly
+  # concentric but 102.5 appears to be the max"). bike_params' front_wheel.
+  # radius is still 0.050 (design): see docs/plans/steering-design.md.
+  tire_od: {value: 0.1025, source: measured (user, max over the turn)}
+  tire_width: {value: 0.024, source: measured (user)}
+  tire_flat_width: {value: 0.010, source: measured (user)}   # tread flat at the OD
+  tire_min_dia: {value: 0.071, source: measured (user)}      # tire's inner edge
+  # The tire's section, as an ENVELOPE: full width from the inner edge out to
+  # where a 45 deg shoulder takes it down to the flat. Not a profile of the
+  # real tire -- a clearance shape the fork must stay out of.
+  # The web between hub and tire is unmeasured: drawn at the hub's width, so a
+  # fork clear of it is clear of anything narrower.
+  web_width: {value: 0.013, source: GUESS (= hub_width; unmeasured)}
+  hub_width: {value: 0.013, source: measured (user)}
+  # Side A / side B: the hub is not symmetric. A is put on +X, the axle
+  # head's side (hub_side_a).
+  hub_dia_a: {value: 0.0125, source: measured (user)}
+  hub_insert_dia_a: {value: 0.009, source: measured (user)}
+  hub_dia_b: {value: 0.0115, source: measured (user)}
+  hub_insert_dia_b: {value: 0.0065, source: measured (user)}
+
+axle:
+  # The toy's own steel rod. Knurled for 11 mm under the head, and the knurl
+  # grips the +X fork leg; the -X leg is a press fit (user, 2026-09-28).
+  dia: {value: 0.004, source: measured (user, nominal)}
+  length: {value: 0.046, source: measured (user, overall incl. head)}
+  head_height: {value: 0.001, source: measured (user)}
+  head_dia: {value: 0.007, source: measured (user)}
+  knurl_length: {value: 0.011, source: measured (user, from the head)}
+  # Hole sizes: print properties. GUESS until a test print; expect to ream.
+  # ONE hole size in both legs, so the two fork halves are the same part
+  # (user, 2026-09-28: print two, no labels). The press fit's size: the
+  # knurl then bites harder than it would in a nominal hole.
+  hole_dia: {value: 0.0039, source: GUESS (printed press fit)}
+
+print:
+  # Two perimeters (user, 2026-09-28: "~0.8, but for the slicer 0.9 or 1").
+  # layout() refuses any wall between two features thinner than this.
+  min_wall: {value: 0.001, source: design (user)}
+
+fork:
+  # Leg inner faces this far outside the tire's widest point.
+  tire_side_clearance: {value: 0.0015, source: design}
+  tire_gap: {value: 0.004, source: design}      # tire top to the block's underside
+  hub_gap: {value: 0.0002, source: design}      # each boss to its hub face
+  # Both bosses the SAME, under the smaller insert (B, 6.5): they bear on the
+  # inserts' faces, so the rubbing radius is the least it can be (user).
+  boss_dia: {value: 0.006, source: design (user)}
+  # ...and flared out from that face back to the leg, a cone at this angle
+  # from the axle: the same contact at the hub, more material behind it
+  # (user). Prints narrowing upward, the fork being inner-face up.
+  boss_chamfer_deg: {value: 45.0, source: design}
+  leg_width: {value: 0.015, source: design (user; 10 -> 15, stiffer)}     # along Y, down at the axle
+  block_depth: {value: 0.018, source: design}   # along Y, headset lower block
+  block_height: {value: 0.012, source: design}
+  # The block is WIDER than the gap between the legs: above the tire each
+  # fork half steps out to this, and the step is a LEDGE the block's
+  # underside sits on -- the vertical load goes into it in bearing, and it
+  # locates the block in Z. CHEEKS off the fork plate close round the
+  # block's +-Y faces and locate Y (user, 2026-09-28: three sides, Z- and
+  # +-Y), so the joint carries NO ridge -- a second Y locator would fight
+  # them. One 6-32 a side clamps X. Wider also moves the nut slots out off
+  # the thrust boss.
+  block_half_width: {value: 0.0175, source: design}
+  cheek_thickness: {value: 0.003, source: design}
+  cheek_clearance: {value: 0.0001, source: GUESS (per side, print property)}
+
+headset:
+  # Printed shaft in a printed sleeve. Both clearances are print properties:
+  # GUESS, and the user expects to ream/turn to fit.
+  shaft_dia: {value: 0.014, source: design}
+  bore_clearance: {value: 0.0002, source: GUESS (diametral; ream to fit)}
+  # Thrust: the weight on the front wheel goes up the fork into a boss on the
+  # block's top, round the shaft, which bears on the lower case's flat
+  # underside -- a small annulus, so the rubbing radius stays small. On the
+  # block, not the case: under the case it held the whole cup 1 mm off the bed.
+  thrust_boss_dia: {value: 0.018, source: design}   # = block_depth: no wider, or it overhangs the block
+  thrust_boss_height: {value: 0.001, source: design}
+  min_sleeve: {value: 0.008, source: design}    # layout refuses a shorter bushing
+  # Headset upper sits on the shaft's END (the step), this far above the
+  # sleeve's top face: running end play. Its skirt overlaps the sleeve top
+  # and is the lift-off retainer.
+  end_play: {value: 0.0002, source: GUESS (axial; print property)}
+  # The locating spigot: the shaft's top, stepped in, two flats. Carries the
+  # steer torque from upper to lower. Narrower flats (user): 6 across, which
+  # leaves 1.2 (min_wall) each side of the screw hole.
+  spigot_dia: {value: 0.011, source: design}
+  spigot_flats: {value: 0.006, source: design (user)}  # across the flats
+  spigot_height: {value: 0.003, source: design}
+  spigot_clearance: {value: 0.00015, source: GUESS (per side, print property)}
+  socket_extra_depth: {value: 0.0003, source: design}  # so the upper bears on the step
+  # UPPER-ONLY tuning (user, 2026-09-28): raises the upper's socket ceiling
+  # by this much and nothing else -- the step, the lower and the rest of the
+  # stack stay put. Past socket_extra_depth the ceiling lands on the spigot
+  # top and preloads it: the clamp then goes nut -> web -> spigot, with no
+  # web bending. A reprint of the upper alone, for friction/tension.
+  upper_socket_trim: {value: 0.0, source: design (tune after a print)}
+  upper_radius: {value: 0.009, source: design}
+  # The central screw: a 6-32 x 3/8 flat head from BELOW, up a long bore in
+  # the headset lower (head seated in the shaft), into a hex nut dropped into
+  # the headset upper from the top (user, 2026-09-28). Reaching it means
+  # unscrewing the fork sides -- about the labour of taking the servo off,
+  # which a screw from the top would need instead.
+  central_screw_length: {value: 0.009525, source: datasheet (6-32 x 3/8 flat head)}
+  head_bore_clearance: {value: 0.0004, source: design}   # diametral, the long bore
+  nut_pocket_depth: {value: 0.003, source: design}
+  nut_thickness: {value: 0.00238, source: datasheet (6-32 small pattern, 3/32")}
+  tip_past_nut: {value: 0.0005, source: design}
+  # Solid web between the socket's bridged ceiling (two bridge_layer steps
+  # round the hole) and the nut pocket's floor.
+  web: {value: 0.0008, source: design}
+
+coupling:
+  # Headset upper -> horn hub. Lugs on the upper, the CROSS socket in the hub
+  # (the negative: it prints either way up with nothing to hang). The upper
+  # carries four lugs (CROSS) or two opposite (FLAT, a key in one arm of the
+  # cross) -- picked in the dialog. At 45 deg to the horn's four M2 holes,
+  # whose counterbores the socket arms pass between.
+  # Lugs run from min_wall outside the nut pocket out to the upper's rim; the
+  # socket arms from socket_r0 out through the hub's rim (user, 2026-09-28):
+  # the negative can be the bigger one. Not a full cross: a centre island
+  # stays, or the PINS hub (printed socket-down) hangs its middle.
+  lug_width: {value: 0.0024, source: design}
+  lug_clearance: {value: 0.00015, source: design}  # per side
+  socket_r0: {value: 0.0028, source: design}
+  hub_gap: {value: 0.0005, source: design}         # upper's top face to the hub
+  lug_tip_gap: {value: 0.0005, source: design}     # lug tip to the socket floor
+  socket_depth: {value: 0.0033, source: design}
+
+hub:
+  radius: {value: 0.009, source: design}
+  thickness: {value: 0.0052, source: design}
+  # PHS M2 x 6 self-tapping into the horn's Phi 1.6 holes (DP 3.0 max).
+  screw_hole_dia: {value: 0.0021, source: design (M2 close fit; the screws centre the hub)}
+  screw_head_dia: {value: 0.0034, source: measured (user)}
+  screw_head_height: {value: 0.0015, source: measured (user)}
+  screw_head_clearance: {value: 0.0003, source: design}   # diametral
+  screw_length: {value: 0.006, source: datasheet (M2 x 6)}
+  # Under the head: the screw then engages 6 - this in the horn, which must
+  # stay under the hole's DP 3.0.
+  screw_flange: {value: 0.0034, source: design}
+
+cases:
+  # The servo's attach plane at -Y: the upper case needs a pad there, since its
+  # far wall is too thin for a nut; the lower case's cup is extended back to
+  # the same plane. Both joints are the AHRS fixture's (screw + 45 deg ridge),
+  # the RIDGE ON THE CASE and the groove in the plate (user: the other way
+  # round left a thin feature).
+  pad_depth: {value: 0.0065, source: design}
+  pad_half_width: {value: 0.007, source: design}
+  pad_height: {value: 0.012, source: design}
+  cup_wall: {value: 0.002, source: design}
+  cavity_clearance: {value: 0.0005, source: design}  # radial, round the turning parts
+  ridge_half: {value: 0.006, source: design}
+  # The case's OTHER hole row (the one 7.5 toward the shaft end from the axis
+  # line): pins there too. Always on the back face (upper case); on the horn
+  # face (lower case) only if they clear the turning cavity by min_pin_seat.
+  lower_near_pins: {value: 1.0, source: design (user; might fit)}
+  min_pin_seat: {value: 0.0003, source: design}
+  # The upper case wraps the whole servo. In the cable connectors' window
+  # (servo_mounts case_window_*, grown by this along Y) its thick grip wall
+  # is cut away right down to the lower case's walls; the edge left spanning
+  # the window is in the thin nest shell only, as a gable at
+  # bridge_taper_deg from level -- an 11.5 mm flat bridge printed poorly
+  # (user), and 20 deg is the print check's own limit.
+  cable_window_margin: {value: 0.0005, source: design}
+  bridge_taper_deg: {value: 20.0, source: design (user; the print check's limit)}
+  # The connectors plug in along Z, into the servo's back face: the cap is
+  # cut away over them, from each side edge in to this centre strip, over
+  # the window's Y span, so there is room to plug and unplug -- the cap left
+  # is an "H". 12 wide between the connectors (user, measured).
+  cable_strip_width: {value: 0.012, source: measured (user)}
+
+plate:
+  # The mount plate prints -Y side UP (its front face, with the ridges'
+  # grooves, on the bed), so a TAB can rise off its bottom edge, back (-Y),
+  # in the plane that is LEVEL when the module sits at bike.rake_deg: tab
+  # flat on a bench, the steering axis is raked like the bike's (user,
+  # 2026-09-28). Clamp area, and four 10-32 on the X330 fixture's 1.5 x 1 in
+  # pattern.
+  tab_length: {value: 0.045, source: design}
+  tab_width: {value: 0.050, source: design}
+  tab_thickness: {value: 0.005, source: design}
+  tab_hole_dia: {value: 0.0051, source: design (10-32 free fit)}
+  tab_span_x: {value: 0.0381, source: design (1.5 in)}
+  tab_span_along: {value: 0.0254, source: design (1 in)}
+
+joint:
+  # --- the screw joint, identical to the AHRS fixture's (ahrs_fixture_cad.yaml)
+  joint_plate: {value: 0.0046, source: design (as-built)}
+  ridge_height: {value: 0.0012, source: design}
+  ridge_flat: {value: 0.0046, source: design}
+  ridge_clearance: {value: 0.00015, source: design}
+  bridge_layer: {value: 0.0002, source: design (layer height)}
