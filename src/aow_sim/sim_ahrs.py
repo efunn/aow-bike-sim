@@ -368,6 +368,15 @@ def rpy_from_quat(q) -> tuple[float, float, float]:
             float(np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))))
 
 
+def _cross(a, b) -> np.ndarray:
+    """a x b for 3-vectors, as np.cross computes it (same products, same
+    order, so bit-identical). np.cross's axis handling costs ~15 us a call,
+    and sample() makes up to five per tick, in every AHRS-trained env step."""
+    a0, a1, a2 = a
+    b0, b1, b2 = b
+    return np.array([a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0])
+
+
 def _quat_mul(a, b):
     w1, x1, y1, z1 = a
     w2, x2, y2, z2 = b
@@ -397,7 +406,7 @@ def _turn(v, w, dt: float) -> np.ndarray:
     if th < 1e-12:
         return v
     k = -np.asarray(w) / np.linalg.norm(w)
-    return v * np.cos(th) + np.cross(k, v) * np.sin(th) + k * (k @ v) * (1 - np.cos(th))
+    return v * np.cos(th) + _cross(k, v) * np.sin(th) + k * (k @ v) * (1 - np.cos(th))
 
 
 def filter_tau(rate_dps: float, tau_rest: float = FILTER_TAU_REST_S,
@@ -448,7 +457,7 @@ def accel_at_offset(accel, w, w_prev, dt: float, delta) -> np.ndarray:
     """Specific force at a point `delta` from where `accel` was measured, on the
     same rigid body: + alpha x d + w x (w x d), alpha from successive rates."""
     alpha = (np.asarray(w) - np.asarray(w_prev)) / dt if w_prev is not None else np.zeros(3)
-    return np.asarray(accel) + np.cross(alpha, delta) + np.cross(w, np.cross(w, delta))
+    return np.asarray(accel) + _cross(alpha, delta) + _cross(w, _cross(w, delta))
 
 
 def _small_angle_quat(rpy) -> np.ndarray:
@@ -640,7 +649,7 @@ class SimAhrs:
         tilt = self._accel_tilt
         # Small-angle rotation of the measured vector; cross product is the
         # first-order term and is all a <0.5 deg error justifies.
-        accel_out = (accel + np.cross(tilt, accel)
+        accel_out = (accel + _cross(tilt, accel)
                      + sigma_a * self.rng.standard_normal(3))
 
         if self.level == "tm151_filter":
@@ -658,7 +667,7 @@ class SimAhrs:
                                        FILTER_ACC_GATE)
             # The attitude whose up direction is the filter's: the truth turned,
             # in the body frame, by the rotation taking up_true onto it.
-            c = np.cross(up_true, self._u)
+            c = _cross(up_true, self._u)
             ang = np.arctan2(np.linalg.norm(c), float(up_true @ self._u))
             rv = c / np.linalg.norm(c) * ang if ang > 1e-12 else np.zeros(3)
             q_tilted = _quat_mul(quat, _axis_angle_quat(-rv))

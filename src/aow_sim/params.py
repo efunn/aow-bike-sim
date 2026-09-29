@@ -89,9 +89,17 @@ def derive_righting(p: dict) -> dict:
     return p
 
 
+# libyaml's parser when the install has it: bike_params.yaml parses in 1.7 ms
+# against 23.5 ms, and the suite calls this dozens of times. Same safe
+# constructor, same resolver -- every config/ and moves/ yaml loaded to an
+# equal dict and hash either way (checked 2026-09-29). A build without libyaml
+# (the Pi, possibly) falls back to the pure-Python one.
+_Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
 def load_params(path: str | Path | None = None) -> dict:
     with open(path or DEFAULT_PARAMS) as f:
-        return derive_righting(_normalize(yaml.safe_load(f)))
+        return derive_righting(_normalize(yaml.load(f, Loader=_Loader)))
 
 
 def params_digest(params: dict) -> str:

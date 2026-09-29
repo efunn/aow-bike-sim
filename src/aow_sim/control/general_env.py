@@ -35,12 +35,11 @@ from gymnasium import spaces
 from .. import drivetrain_model, gearbox_friction
 from ..build_model import build_model, load_params, reset_actuator_state
 from .balance import extract_state, mix
-from .drive import DriveController
 from .general_spec import (ACT_DIM, ActionBounds, act_dim_for, build_obs,
                            command_to_body, obs_dim_for, obs_layout,
                            rotate_to_body, scale_action, vel_filter_alpha,
                            vel_filter_step, wrap_pi)
-from .linearize import settle_upright
+from .linearize import design_crawl_fallback, settle_upright
 from .steer import advance_target
 from .randomize import DomainRandomizer
 from ..sim_ahrs import rpy_from_quat
@@ -146,8 +145,11 @@ class GeneralEnv(gym.Env):
         # Designed on the IDEAL drivetrain: the detailed one replaces the
         # native drive actuation with a Python loop that linearize cannot see.
         _ideal = drivetrain_model.base_params(self.p)
-        self._K0 = DriveController(
-            _ideal, build_model(_ideal, variant="full"))._K0
+        # The crawl fallback alone: exactly what DriveController(...)._K0 is, without
+        # the balance LQR and full gain schedule it would design and discard
+        # (~1.5 s per env; bit-identical K0 and rollouts, checked 2026-09-29).
+        self._K0 = design_crawl_fallback(
+            _ideal, build_model(_ideal, variant="full"))
 
         self.full = env["action_space"] == "full"
         self.bounds = ActionBounds(**env["action_bounds"])

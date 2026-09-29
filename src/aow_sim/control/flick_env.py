@@ -19,9 +19,8 @@ from gymnasium import spaces
 
 from ..build_model import build_model, load_params, reset_actuator_state
 from .balance import extract_state, mix
-from .drive import DriveController
 from .flick_spec import ACT_DIM, OBS_DIM, ActionBounds, build_obs, scale_action
-from .linearize import settle_upright
+from .linearize import design_crawl_fallback, settle_upright
 from .randomize import DomainRandomizer
 
 
@@ -43,7 +42,10 @@ class FlickEnv(gym.Env):
         self.model = build_model(self.p, variant="full")
         self._eq = settle_upright(self.model).qpos.copy()
         self.data = mujoco.MjData(self.model)
-        self._K0 = DriveController(self.p, self.model)._K0
+        # The crawl fallback alone: exactly what DriveController(...)._K0 is, without
+        # the balance LQR and full gain schedule it would design and discard
+        # (~1.5 s per env; bit-identical K0 and rollouts, checked 2026-09-29).
+        self._K0 = design_crawl_fallback(self.p, self.model)
 
         env = self.cfg["env"]
         self.full = env["action_space"] == "full"

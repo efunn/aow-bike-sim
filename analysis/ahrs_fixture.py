@@ -1225,13 +1225,21 @@ def _is_still(label: str) -> bool:
     return label.startswith(STILL)
 
 
+def _cross(a, b):
+    """a x b for 3-vectors, the products np.cross forms, without its ~15 us of
+    axis handling; _turn runs once per sample in three loops."""
+    a0, a1, a2 = a
+    b0, b1, b2 = b
+    return np.array([a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0])
+
+
 def _turn(v, w, dt):
     """A world-fixed vector in a frame turning at w [rad/s] for dt."""
     th = np.linalg.norm(w) * dt
     if th < 1e-12:
         return v
     k = -w / np.linalg.norm(w)
-    return v * np.cos(th) + np.cross(k, v) * np.sin(th) + k * (k @ v) * (1 - np.cos(th))
+    return v * np.cos(th) + _cross(k, v) * np.sin(th) + k * (k @ v) * (1 - np.cos(th))
 
 
 def _integrate_down(t, w, v0):

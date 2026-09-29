@@ -21,8 +21,7 @@ from gymnasium import spaces
 from ..build_model import build_model, load_params, reset_actuator_state
 from .ball_spec import ACT_DIM, OBS_DIM, ActionBounds, build_obs, scale_action
 from .balance import extract_state, mix
-from .drive import DriveController
-from .linearize import settle_upright
+from .linearize import design_crawl_fallback, settle_upright
 from .randomize import DomainRandomizer
 
 _PARKED = np.array([100.0, 100.0])   # world xy where a no-ball trial hides the ball
@@ -47,7 +46,10 @@ class BallEnv(gym.Env):
         self._eq = settle_upright(self.model).qpos.copy()
         self.data = mujoco.MjData(self.model)
         # K0 crawl-balance gain from the clean (ball-free) bike, exactly as replay.
-        self._K0 = DriveController(self.p, build_model(self.p, variant="full"))._K0
+        # The crawl fallback alone: exactly what DriveController(...)._K0 is, without
+        # the balance LQR and full gain schedule it would design and discard
+        # (~1.5 s per env; bit-identical K0 and rollouts, checked 2026-09-29).
+        self._K0 = design_crawl_fallback(self.p, build_model(self.p, variant="full"))
 
         env = self.cfg["env"]
         self.full = env["action_space"] == "full"
