@@ -54,6 +54,17 @@ Ranked by what unblocks the most, not by interest.
 > through 270 deg). Next: print, then tune the `GUESS` fits. Outstanding:
 > `front_wheel.radius` 0.050 vs the measured 51.25 mm. See
 > `steering-design.md`.
+>
+> **Rear drive designed 2026-09-28, not yet printed:** `aow_sim.cad_drive`,
+> the hand-drawn working version split into separate generated parts:
+> - spline pulley, drive pulley;
+> - case side with a +Y fixture tab;
+> - chainstay with a 3 mm tension slide.
+>
+> Each L/R pair is one part, the same solid turned 180 deg about Y.
+> `--check` clean at nominal and at full travel. Held until the steer print
+> settles the shared fits; the fixture interface and the hex axle may still
+> move. See `drive-design.md`.
 
 All four are bench work. **The sim-side item is being taken now:**
 
