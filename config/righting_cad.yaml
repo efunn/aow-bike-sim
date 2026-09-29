@@ -1,0 +1,128 @@
+# The printed swing linkage module (`aow-bike-righting` in Onshape): the
+# diamond four-bar as a supported crankshaft, all ASA, with metal rod stock for
+# the wing rod, the crankpin and the two rocker pins. Read by
+# aow_sim.cad_righting only -- never by the simulator. MILLIMETRES (degrees
+# where the key says so). Spec: docs/plans/righting-design.md.
+#
+# The horn hub and the crank's lugs are the steering module's: config/
+# steering_cad.yaml `hub` and `coupling`, read from there so the two hubs are
+# one part.
+#
+# MODULE FRAME: origin on the wing rod's axis at the mid-plane between the two
+# couplers, +Y FORWARD along the rod, +X right, +Z up. The XC330 sits at the
+# rear (-Y), horn forward. Everything is symmetric about Y = 0 and X = 0 except
+# the servo and its cases, so each L/R pair is one part turned 180 deg about Z.
+#
+#   upper case | lower case (rear bearing) | hub zone | web + rocker arm |
+#   coupler R | coupler L | web + rocker arm | hub zone | front bulkhead
+#
+# with each wing's second knuckle outside the far bearing: wing L's behind the
+# lower case, under the servo; wing R's ahead of the front bulkhead.
+
+linkage:
+  config: {value: config/swing_linkage_shared_rod.yaml, source: design}
+  # 1.25: the 2D sweep leaves 4.5 mm between each crank web and the rocker arm
+  # sharing its plane at printed wall thicknesses. The stroke's current is the
+  # same at any scale (planar scorer, 1.0-1.5).
+  scale: {value: 1.25, source: design}
+
+washer:
+  # The couplers' shared face can carry no boss (both faces are print beds),
+  # so a loose washer sits on the crankpin between them. Every other number
+  # in the stack follows from these four: swap in an off-the-shelf washer by
+  # measuring it. thickness 0 = no washer, the couplers `stack.gap` apart.
+  thickness: {value: 0.4, source: design (two printed layers; nylon/Delrin/PTFE to measure)}
+  od: {value: 11.0, source: design (= the coupler's boss rings)}
+  id: {value: null, source: design (null = rod.dia; a bought washer's measured bore otherwise)}
+  clearance: {value: 0.1, source: GUESS (each side)}
+  kind: {value: print, source: design (print | bought -- bought parts are left out of the print check)}
+
+rod:
+  # ONE diameter for all four rods -- the wing rod, the crankpin, both rocker
+  # pins -- so one reamer sizes every metal hole. Every hole is drawn at this
+  # diameter, line-to-line: ream to press or to run as the part says.
+  dia: {value: 6.0, source: design (user; 6 mm or 1/4 in = 6.35 -- check stock)}
+  boss_wall: {value: 3.5, source: design}       # printed wall round every rod hole
+
+stack:
+  coupler: {value: 6.0, source: design}
+  gap: {value: 0.3, source: GUESS (axial running gap between the couplers, the one unbossed pair)}
+  # Thrust bosses: a ring `boss` high (two 0.2 layers) round the hole on one
+  # face of every other running pair -- whichever face is UP as its part
+  # prints. Those gaps open to boss + clearance.
+  boss: {value: 0.4, source: design (two layers)}
+  clearance: {value: 0.2, source: GUESS (axial running clearance over a boss)}
+  boss_ring: {value: 2.5, source: design}       # ring's radial width outside a rod hole
+  shoulder_ring_inset: {value: 0.3, source: design}   # the crank shoulder's ring, inside its rim
+  web: {value: 6.0, source: design}             # crank web AND the rocker arm beside it
+  hub_zone: {value: 8.0, source: design}        # rocker hub + ear + crank shoulder
+  bulkhead: {value: 10.0, source: design}       # = the crank journal's bearing length
+  knuckle: {value: 12.0, source: design}
+
+crank:
+  journal_dia: {value: 14.0, source: design (= steering headset shaft)}
+  bore_clearance: {value: 0.2, source: GUESS (diametral; ream to fit)}
+  shoulder_dia: {value: 17.0, source: design}   # bears on the bulkhead's inner face
+  journal_proud: {value: 0.5, source: design}   # journal end past the bearing face
+  lug_root_gap: {value: 0.3, source: design}    # lugs start this far outside the hub's island
+
+wing:
+  ear_half_width: {value: 4.5, source: design}
+  # The ears dog-leg: hub -> knee -> boss. The knee sits LOW so the rear
+  # knuckle's ear passes under the servo cases (2D: Z <= 6.5 against the lower
+  # case's 13.2) at the full rise.
+  knee_deg: {value: -10.0, source: design}      # right wing, at rest, from +X toward +Z
+  knee_r: {value: 20.0, source: design}
+  panel_thickness: {value: 6.0, source: design (= the sim's panel)}
+  boss_from_foot: {value: 6.0, source: design}  # along the panel from its foot
+  boss_length: {value: 20.0, source: design}
+  boss_depth: {value: 10.0, source: design}     # off the panel's inner face
+  tab: {value: 6.0, source: design}             # the panel's tab, along Y: = the web plane; nut + 1.0 wall
+  panel_back: {value: 50.0, source: design}     # how far aft of the mid-plane the right panel runs
+
+cases:
+  # As aow-bike-steering's, whose lower/upper XC330 cases these are.
+  cavity_clearance: {value: 0.5, source: design}
+  cup_wall: {value: 2.0, source: design}
+  lower_near_pins: {value: 1.0, source: design}
+  min_pin_seat: {value: 0.3, source: design}
+  cable_window_margin: {value: 0.5, source: design}
+  bridge_taper_deg: {value: 20.0, source: design}
+  cable_strip_width: {value: 12.0, source: measured (user, steering)}
+  # The upper case's two ears up to the bridge, one 6-32 each, flush with the
+  # cap (the case prints cap-down). Servo-local: y along the case from the
+  # shaft, so ear_y0 is how far up the case they start.
+  ear_width: {value: 8.0, source: design}       # outside the case's wall
+  ear_depth: {value: 10.0, source: design}      # from the cap forward
+  ear_y0: {value: 15.0, source: design}         # above the cable window (14.5)
+
+frame:
+  rod_boss_r: {value: 9.0, source: design}
+  journal_boss_r: {value: 10.5, source: design}
+  web_half: {value: 8.0, source: design}
+  top_half: {value: 18.0, source: design}       # the bulkheads' top band
+  bridge_half: {value: 23.0, source: design}    # the upper case's ears reach 22.05
+  top_band: {value: 20.0, source: design}
+  bridge: {value: 8.0, source: design}
+
+chassis:
+  # The attachment to the (TBD) chassis: nut slots + ridges on the bridge's top
+  # face, and a PLACEHOLDER plate with the heads, as the steering and drive
+  # modules' mount plates.
+  joints_y: {value: [0.0, -50.0], source: design}
+  ridge_half: {value: 10.0, source: design}
+  plate_half: {value: 25.0, source: design}
+
+joint:
+  joint_plate: {value: 4.6, source: design (as-built)}
+  ridge_height: {value: 1.2, source: design}
+  ridge_flat: {value: 4.6, source: design}
+  ridge_clearance: {value: 0.15, source: design}
+  bridge_layer: {value: 0.2, source: design (layer height)}
+
+print:
+  min_wall: {value: 1.0, source: design (user)}
+
+materials:
+  asa: {value: 1.07, source: datasheet (g/cm^3, solid)}
+  steel: {value: 7.85, source: datasheet}
