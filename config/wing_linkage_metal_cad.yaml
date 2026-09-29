@@ -1,0 +1,115 @@
+# The machined swing linkage (`wing-linkage-metal` in Onshape): the diamond
+# four-bar -- one crank pin, one wing rod -- built as a supported crankshaft
+# with every pivot in a bushing, so the XC330 only ever delivers torque.
+# Read by aow_sim.cad_wing_linkage_metal only -- never by the simulator.
+# MILLIMETRES. Spec and reasoning: docs/plans/wing-linkage-metal.md.
+#
+# MODULE FRAME: origin on the wing rod's axis at the bay's mid-plane (between
+# the two couplers), +Y FORWARD along the rod and the crank, +X to the bike's
+# RIGHT, +Z up. The rod sits `rod_above_floor` over the floor.
+#
+# THE STACK ALONG Y IS SYMMETRIC about Y = 0, and the rest pose is symmetric
+# about X = 0, so every L/R pair is ONE part, the other side being the same
+# solid turned 180 deg about Z:
+#
+#   rear bulkhead | hub zone | web + rocker R arm | coupler R | coupler L |
+#   web + rocker L arm | hub zone | front bulkhead
+#
+# and outside the bulkheads, each wing's second knuckle on the rod: wing L's
+# behind the rear bulkhead (under the servo), wing R's ahead of the front one.
+
+linkage:
+  # The four-bar is config/swing_linkage_shared_rod.yaml scaled about the rod.
+  # All four lengths scale together, so every angle -- and so the ratio, the
+  # stroke and the servo current -- is unchanged: 586 counts on the planar
+  # scorer at 1.0, 1.15, 1.25, 1.35 and 1.5 (checked 2026-09-29, the panel
+  # re-derived onto the same line each time). What scale buys is room for
+  # walls and 1/scale of the pin forces; what it costs is the servo shaft
+  # height (10.1 above the axle at 1.0, 15.1 at 1.25) and the panel standoff
+  # (19.9 -> 15.5 mm; the coupler needs 8).
+  config: {value: config/swing_linkage_shared_rod.yaml, source: design}
+  scale: {value: 1.25, source: design}
+
+stack:
+  # Along Y, from the mid-plane out. Thicknesses of machined plate/bar stock.
+  coupler: {value: 5.0, source: design}        # each coupler, Al plate
+  washer: {value: 0.5, source: design}         # Delrin thrust washer, every running face
+  web: {value: 5.0, source: design}            # crank web AND the rocker arm beside it
+  hub_zone: {value: 8.0, source: design}       # rocker hub + wing ear, between web and bulkhead
+  bulkhead: {value: 8.0, source: design}       # Al plate
+  knuckle: {value: 12.0, source: design}       # each wing's second knuckle, outside the bulkheads
+
+shafts:
+  rod_dia: {value: 6.0, source: design}             # steel, fixed in both bulkheads
+  rod_past_knuckle: {value: 2.0, source: design}    # each end, for a clip
+  journal_dia: {value: 8.0, source: design}         # crank main journal, turned
+  journal_shoulder_dia: {value: 12.0, source: design}   # bears on the bushing flange
+  crankpin_dia: {value: 5.0, source: design}        # steel dowel, pressed in both webs
+  rocker_pin_dia: {value: 4.0, source: design}      # steel, pressed in the rocker arm
+
+bushings:
+  # Delrin. Pressed into the moving part's eye except the crank journals',
+  # which are pressed into the bulkheads. Drawn line-to-line: running
+  # clearances are a machining call, not a layout one.
+  journal_od: {value: 11.0, source: design}
+  journal_flange_dia: {value: 15.0, source: design}
+  rod_od: {value: 10.0, source: design}             # rocker and knuckle hubs
+  rod_flange_dia: {value: 14.0, source: design}
+  big_end_od: {value: 9.0, source: design}          # coupler on the crankpin
+  small_end_od: {value: 7.0, source: design}        # coupler on the rocker pin
+  flange: {value: 0.5, source: design}              # = stack.washer: the flange IS that washer
+
+walls:
+  web_hub_r: {value: 8.0, source: design}        # web round the journal
+  pin_boss_r: {value: 6.0, source: design}       # web round the crankpin
+  rocker_hub_r: {value: 8.0, source: design}     # hub round the rod bushing
+  rocker_eye_r: {value: 6.5, source: design}     # rocker arm round its pin
+  big_eye_r: {value: 7.0, source: design}        # coupler round the big-end bushing
+  small_eye_r: {value: 6.0, source: design}      # coupler round the small-end bushing
+  ear_half_width: {value: 6.0, source: design}   # hub -> panel pad bar
+
+panel:
+  # The panel's line comes from the linkage config; this is how it is held.
+  thickness: {value: 6.0, source: design (= swing_stepthrough PANEL_HALF x 2, the sim's)}
+  pad_from_foot: {value: 4.0, source: design}    # pad along the panel, from its foot
+  pad_length: {value: 24.0, source: design}
+  pad_thickness: {value: 5.0, source: design}    # standing off the panel's inner face
+
+frame:
+  bulkhead_rod_r: {value: 13.0, source: design}      # round the rod
+  bulkhead_boss_r: {value: 12.0, source: design}     # round the crank bushing
+  bulkhead_half_width: {value: 10.0, source: design} # the web between them and up; < boss_r, never tangent to it
+  top_half_width: {value: 18.0, source: design}      # pads sweep within ~51 of the rod at up to 43 deg
+  top_z: {value: 53.0, source: design}               # bulkhead top = bridge underside
+  top_band: {value: 18.0, source: design}            # depth of the wide top band
+  bridge: {value: 5.0, source: design}               # Al plate; its top face mounts to the bike
+
+oldham:
+  # XC330 horn -> crank, torque only: a horn hub with a slot across Z, a Delrin
+  # disc with a tongue each face at 90 deg, the journal's end slotted across X.
+  # The disc floats in both, so neither radial nor axial load crosses it.
+  gap: {value: 0.5, source: design}
+  slot_width: {value: 3.0, source: design}
+  slot_depth: {value: 2.0, source: design}
+  tongue: {value: 1.5, source: design}           # < slot_depth: axial float
+  disc_dia: {value: 14.0, source: design}
+  disc_thickness: {value: 5.0, source: design}
+  hub_thickness: {value: 3.5, source: design}
+  horn_screw_dia: {value: 2.2, source: datasheet (4 x M2 on the horn, PCD 12)}
+
+servo:
+  # XC330 standing up: shaft 9.5 from the case's lower end, horn forward.
+  # Envelope numbers are bike_params_cad's (box 23 x 20 x 34, horn 16 x 3).
+  cradle_wall: {value: 3.0, source: design}
+  cradle_floor_z: {value: 29.0, source: design}   # walls start here: wing L's knuckle reaches Z 26.7 in the wall's band at +0.56 stroke
+  back_plate: {value: 3.0, source: design}
+  back_plate_floor_z: {value: 12.6, source: design}
+  back_holes: {value: [16.0, 30.0], source: bike_params_cad xc330 case_hole_pattern -- which FACE carries them is not checked}
+  back_hole_dia: {value: 2.2, source: design (M2 clearance)}
+
+materials:
+  # g/cm^3, for the mass line in the report.
+  aluminium: {value: 2.70, source: datasheet}
+  steel: {value: 7.85, source: datasheet}
+  delrin: {value: 1.41, source: datasheet}
+  printed: {value: 1.24, source: datasheet (PLA/PETG, solid)}
