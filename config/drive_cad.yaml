@@ -1,0 +1,209 @@
+# The rear drive module's CAD numbers: mock rear wheel, the spline+pulley and
+# drive pulley pairs, the drive case sides, the chainstays and a mock fixture.
+# Read by aow_sim.cad_drive only -- never by the simulator. Metres (keys ending
+# _deg or _n are not scaled). Spec: docs/plans/drive-design.md.
+#
+# MODULE FRAME: origin on the rear axle's centre, +Y ALONG THE MEAN BELT
+# (forward, toward the servos), +X right, +Z up. In the bike the module is
+# tilted by bike_params_cad drivetrain.drive_servo_angle_deg (45) about X.
+#
+# EVERY PART IS BUILT ON THE LEFT (-X) AND ITS RIGHT TWIN IS THE SAME SOLID
+# ROTATED 180 deg ABOUT Y -- which maps servo A (horn -X, Z -) onto servo B
+# (horn +X, Z +). So the pairs are one part each, by construction.
+#
+# "hand drawing" below means the user's printed, working version in the
+# aow-bike document's `bike` tab, read off through the API on 2026-09-28
+# (traces/drive/probe_bike_surfaces.txt). Those fits printed and ran.
+#
+#   part             print   what it is
+#   spline pulley    X+/X-   15T, spline stub into the wheel's side gear, a
+#                            60 deg thrust cone the chainstay bears on
+#   drive pulley     X+/X-   45T on the XC430 horn: 4 pins, 4 M2 x 6
+#   case side        X+/X-   plate on both servos (one's horn face, the other's
+#                            back), skirt, spacers, 8 M2.5; the chainstay
+#                            channel at -Y, the fixture tab at +Y
+#   chainstay        X+/X-   axle boss (hex pocket for the M5 head / nut), the
+#                            bearing stub, a riser inside the belt loop, the
+#                            tongue into the case side's channel
+#   fixture mock     Y+      PLACEHOLDER between the case sides' tabs
+
+wheel:
+  # The mock casing, as the hand drawing's mock: a core, a rim ring each side
+  # standing off a pocket, the hub stub the spline pulley's shoulder bears on.
+  hub_face_x: {value: 0.015, source: measured (hand drawing mock)}   # hub stub face, each side
+  hub_stub_dia: {value: 0.015, source: measured (hand drawing mock)}
+  core_half_width: {value: 0.0125, source: measured (hand drawing mock)}
+  core_dia: {value: 0.070, source: measured (hand drawing mock)}
+  rim_half_width: {value: 0.0165, source: measured (hand drawing mock; omni_wheel.width 33)}
+  rim_outer_dia: {value: 0.084, source: measured (hand drawing mock)}
+  rim_inner_dia: {value: 0.066, source: design (mock; clears the pulley)}
+  bore_dia: {value: 0.005, source: measured (user; the wheel bears on the M5)}
+  # Rollers are bike_params_cad omni_wheel (r_m, cone diameters, length, gap).
+
+spline:
+  # Configuration 5 of `aow-spline-shape` (user: "the best I found"), already
+  # derived into the hand drawing. Keep these three as the variables to tune
+  # if the fit changes.
+  outer_dia: {value: 0.0118, source: measured (user; config 5)}
+  root_dia: {value: 0.0088, source: measured (user; config 5)}
+  lobe_deg: {value: 35.0, source: measured (user; config 5)}
+  lobes_n: {value: 5, source: measured (hand drawing)}
+  length: {value: 0.004, source: measured (hand drawing)}   # stub into the wheel
+
+axle:
+  # M5 socket head one side, hex nut the other; the hex pocket takes either,
+  # which is what lets the chainstays be one part. 50.5 is head face to nut
+  # face (user); the M5 preloads the cone stack through the chainstays.
+  clamp_span: {value: 0.0505, source: measured (user)}
+  dia: {value: 0.005, source: datasheet (M5)}
+  hex_af: {value: 0.008, source: measured (hand drawing pocket)}
+  nut_length: {value: 0.004, source: datasheet (M5 nut)}
+  head_length: {value: 0.005, source: datasheet (M5 socket head)}
+
+pulley:
+  # Both pulleys, the tooth band and flanges as the hand drawing's HTD generator.
+  pld: {value: 0.0005715, source: datasheet (HTD 5M pitch line differential)}
+  tooth_width: {value: 0.010, source: measured (hand drawing; 9 mm belt)}
+  flange_lip: {value: 0.0005, source: measured (hand drawing)}   # flat annulus over the tips
+  flange_cone_len: {value: 0.001, source: measured (hand drawing)}
+  flange_cone_deg: {value: 55.0, source: measured (hand drawing; prints unsupported)}
+  flange_cyl: {value: 0.0005, source: measured (hand drawing)}
+  # The spline pulley's axle bore (a clearance on the M5 -- the wheel is the
+  # bearing), the 60 deg thrust cone and the counterbore the chainstay's stub
+  # enters.
+  bore_dia: {value: 0.0052, source: measured (hand drawing)}
+  counterbore_dia: {value: 0.015, source: measured (hand drawing)}
+  counterbore_floor_inset: {value: 0.00045, source: measured (hand drawing)}   # from the tooth band's inner end
+  cone_deg: {value: 60.0, source: measured (hand drawing)}
+  hub_dia: {value: 0.015, source: measured (hand drawing; = the wheel's hub stub)}
+  hub_chamfer_deg: {value: 45.0, source: measured (hand drawing)}
+
+# Groove shape per tooth count, off the hand drawing's HTD generator: a root
+# arc, two flank arcs (centres crossed over the groove's centreline), tip
+# fillets. flank_center is how far inside the tip circle the flank centres sit.
+teeth_15:
+  depth: {value: 0.00199, source: measured (hand drawing)}
+  flank_r: {value: 0.00188, source: measured (hand drawing)}
+  flank_center: {value: 0.000185, source: measured (hand drawing)}
+  flank_offset: {value: 0.00014, source: measured (hand drawing)}
+  tip_fillet: {value: 0.00043, source: measured (hand drawing)}
+teeth_45:
+  depth: {value: 0.002, source: measured (hand drawing)}
+  flank_r: {value: 0.0017, source: measured (hand drawing)}
+  flank_center: {value: 0.000338, source: measured (hand drawing)}
+  flank_offset: {value: 0.00002, source: measured (hand drawing)}
+  tip_fillet: {value: 0.00043, source: measured (hand drawing)}
+
+drive_pulley:
+  pad_dia: {value: 0.0205, source: measured (hand drawing; = horn)}
+  pad_chamfer: {value: 0.0006, source: measured (hand drawing)}
+  flange_gap: {value: 0.0006, source: measured (user; "kind of tight", keep)}   # flange to the case side
+  boss_clearance_dia: {value: 0.0082, source: measured (hand drawing)}
+  pin_dia: {value: 0.0014, source: measured (hand drawing)}
+  pin_length: {value: 0.002, source: measured (hand drawing)}
+  pin_circle: {value: 0.016, source: datasheet (XC430 horn PCD)}
+  screw_hole_dia: {value: 0.0021, source: measured (hand drawing; M2)}
+  screw_cb_dia: {value: 0.004, source: measured (hand drawing)}
+  screw_seat: {value: 0.002, source: measured (hand drawing)}   # seat to the horn face
+  screw_length: {value: 0.006, source: measured (user; M2 x 6 into brass inserts)}
+
+case:
+  plate_thickness: {value: 0.0036, source: measured (hand drawing)}
+  skirt_depth: {value: 0.005, source: measured (hand drawing)}
+  skirt_wall: {value: 0.00121, source: measured (hand drawing)}
+  skirt_clearance: {value: 0.00004, source: measured (hand drawing; printed fit)}
+  relief_dia: {value: 0.0221, source: measured (hand drawing)}   # through-hole for the horn
+  relief_chamfer: {value: 0.0006, source: measured (hand drawing)}
+  # Spacers into the XC430's own case-screw counterbores: they locate.
+  spacer_dia: {value: 0.0043, source: measured (hand drawing; printed fit)}
+  spacer_height: {value: 0.0028, source: measured (hand drawing)}
+  screw_hole_dia: {value: 0.0027, source: measured (hand drawing; M2.5)}
+  screw_cb_dia: {value: 0.005, source: measured (hand drawing)}
+  screw_cb_depth: {value: 0.0024, source: measured (hand drawing)}
+  # The wires leave the back face, kink 90 deg against the plate and run out
+  # through this gap in the skirt, on the side of the servo whose back it is.
+  wire_gap_width: {value: 0.0106, source: measured (hand drawing; 6 wires fit)}
+  wire_gap_from_shaft: {value: 0.0142, source: measured (hand drawing)}   # gap centre, behind the shaft
+  tire_clearance: {value: 0.003, source: design}   # rear block to the wheel's envelope
+
+chainstay:
+  pulley_gap: {value: 0.001, source: measured (hand drawing)}
+  thickness: {value: 0.005, source: measured (hand drawing)}
+  arm_width: {value: 0.019, source: measured (hand drawing)}
+  boss_dia: {value: 0.019, source: measured (hand drawing)}
+  bed_chamfer: {value: 0.0006, source: measured (hand drawing)}   # hex mouth, elephant's foot
+  stub_dia: {value: 0.014, source: measured (hand drawing)}
+  relief_cone_deg: {value: 35.0, source: measured (hand drawing)}
+  relief_len: {value: 0.0024, source: measured (hand drawing)}
+  bearing_cone_deg: {value: 60.0, source: measured (hand drawing; = pulley cone_deg)}
+  bearing_len: {value: 0.001, source: measured (hand drawing)}
+  # The stub's 60 deg nose drawn this far INTO the pulley's seat (cone
+  # apexes at 17.78 and 17.92 in the hand drawing). It is the PRELOAD: the
+  # chainstay's X is set by its tongue clamped in the case side, so the M5
+  # seats the cones by flexing the arm (user: 1/4-1/2 turn of adjustment).
+  cone_preload: {value: 0.00014, source: measured (hand drawing)}
+  bore_dia: {value: 0.0052, source: measured (hand drawing; tight-ish in practice)}
+  riser_length: {value: 0.020, source: design}   # along Y, inside the belt loop
+  flange_clearance: {value: 0.002, source: design}   # riser to the 45T flange
+  belt_clearance: {value: 0.001, source: design}     # riser to the belt's tooth side
+
+tension:
+  # The chainstay's tongue slides along Y in a channel at the case side's -Y
+  # edge, open behind, CLOSED in front: at nominal (the exact belt length,
+  # which is what drove well) the tongue's front end is on the channel's end;
+  # more tension = move it back and shim that gap (user). One 6-32 x 3/8 flat
+  # head, head outboard (reachable with the other side on), driven through a
+  # bore from the chainstay's outer face; the nut slides in a slot along Y,
+  # in from the case side's back edge.
+  #
+  # WHAT CLAMPS (user): the riser's big flat on the case side's outer face.
+  # The tongue is a plain rectangular key -- it locates in Z and against
+  # rotation (a V would cam out) -- and stops tongue_top_gap short of the
+  # channel's floor, so it never takes the clamp. Narrow, because only the
+  # shank passes it: the countersink sits in the riser, csk_web short of the
+  # clamp face.
+  tongue_width: {value: 0.007, source: design}
+  # EVERY HEIGHT a ceiling sits at, measured from the bed (the case side's
+  # outer face), is on the layer grid (joint.bridge_layer): layout() snaps the
+  # nut slot and the tip slot to it and refuses a tongue_depth off it (user).
+  tongue_depth: {value: 0.0024, source: design (user; on the 0.2 grid)}   # the channel, into the case side
+  tongue_top_gap: {value: 0.0003, source: design}
+  tongue_clearance: {value: 0.00015, source: GUESS (per side, print property)}
+  travel: {value: 0.003, source: design (user; "whatever travel is available")}
+  screw_length: {value: 0.009525, source: datasheet (6-32 x 3/8 flat head)}
+  csk_web: {value: 0.0008, source: design}         # chainstay under the seat's cone
+  head_bore_clearance: {value: 0.0006, source: design}   # diametral
+  nut_thickness: {value: 0.00238, source: datasheet (6-32 small pattern)}
+  tip_past_nut: {value: 0.0003, source: design}   # a minimum: the nut bears on the web
+  min_web: {value: 0.0014, source: design (user; "can be tightened down")}   # channel floor to nut slot
+  tip_slot: {value: 0.0006, source: design (user)}  # past the nut slot, so the tip cannot bottom out
+  nut_roof: {value: 0.001, source: design}          # over the tip slot
+
+fixture:
+  # 2 x 6-32 a side into a mock block between the case sides' tabs, the
+  # locator a ridge along Y (the shared screw joint). The heads sit out of the
+  # drive pulley's disc, so a driver reaches them with the pulley on.
+  tab_length: {value: 0.024, source: design}
+  screw_y0: {value: 0.006, source: design}   # from the tab's rear edge
+  screw_y1: {value: 0.018, source: design}
+  screw_z: {value: 0.023, source: design}    # +Z on the left side, -Z on the right
+  head_clearance: {value: 0.0005, source: design}   # head edge to the pulley's flange
+  gap: {value: 0.0005, source: design}       # block off the skirt's front wall
+
+print:
+  min_wall: {value: 0.001, source: design (user; two perimeters)}
+
+joint:
+  # The shared 6-32 joint (cad_ahrs_fixture's screwJoint), as the steering's.
+  joint_plate: {value: 0.0046, source: design (as-built)}
+  ridge_height: {value: 0.0012, source: design}
+  ridge_flat: {value: 0.0046, source: design}
+  ridge_clearance: {value: 0.00015, source: design}
+  bridge_layer: {value: 0.0002, source: design (layer height)}
+
+servo:
+  # The XC430 envelope's case-screw counterbores, which the spacers enter.
+  # NOT MEASURED on the part: sized just over the spacers, which did fit.
+  recess_dia: {value: 0.0045, source: GUESS (envelope only; > spacer_dia)}
+  recess_depth: {value: 0.003, source: GUESS (envelope only; > spacer_height)}
+  horn_pin_hole_dia: {value: 0.0016, source: GUESS (envelope only)}
