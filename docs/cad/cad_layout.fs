@@ -99,10 +99,10 @@ export const AOW_LAYOUT = {
     },
     "fork" : {
         "group" : "steering",
-        "pos" : vector(0.0, 188.35, 42.27) * millimeter,
+        "pos" : vector(0.0, 187.71, 44.68) * millimeter,
         "shape" : "capsule",
         "radius" : 5.0 * millimeter,
-        "length" : 90.0 * millimeter,
+        "length" : 95.0 * millimeter,
         "axis" : vector(0.0, -0.258819, 0.965926),
         "rgba" : [0.24, 0.68, 0.58, 0.85],
         "mass_g" : 25.0
@@ -271,7 +271,7 @@ export const AOW_LAYOUT = {
     },
     "servo_steer" : {
         "group" : "servos",
-        "pos" : vector(0.0, 165.71, 97.8) * millimeter,
+        "pos" : vector(0.0, 164.41, 102.63) * millimeter,
         "shape" : "box",
         "size" : vector(20.0, 23.0, 34.0) * millimeter,
         "rotAxis" : vector(-1.0, 0.0, 0.0),
@@ -281,19 +281,19 @@ export const AOW_LAYOUT = {
     },
     "servo_steer_case_holes_horn" : {
         "group" : "servos",
-        "pos" : vector(0.0, 168.69, 86.69) * millimeter,
+        "pos" : vector(0.0, 167.39, 91.52) * millimeter,
         "shape" : "holes",
-        "points" : [vector(8.0, 183.17, 90.57) * millimeter, vector(8.0, 154.2, 82.81) * millimeter, vector(-8.0, 183.17, 90.57) * millimeter, vector(-8.0, 154.2, 82.81) * millimeter]
+        "points" : [vector(8.0, 181.88, 95.4) * millimeter, vector(8.0, 152.9, 87.64) * millimeter, vector(-8.0, 181.88, 95.4) * millimeter, vector(-8.0, 152.9, 87.64) * millimeter]
     },
     "servo_steer_case_holes_back" : {
         "group" : "servos",
-        "pos" : vector(0.0, 162.73, 108.91) * millimeter,
+        "pos" : vector(0.0, 161.44, 113.74) * millimeter,
         "shape" : "holes",
-        "points" : [vector(8.0, 177.22, 112.79) * millimeter, vector(8.0, 148.24, 105.02) * millimeter, vector(-8.0, 177.22, 112.79) * millimeter, vector(-8.0, 148.24, 105.02) * millimeter]
+        "points" : [vector(8.0, 175.93, 117.62) * millimeter, vector(8.0, 146.95, 109.85) * millimeter, vector(-8.0, 175.93, 117.62) * millimeter, vector(-8.0, 146.95, 109.85) * millimeter]
     },
     "servo_steer_horn" : {
         "group" : "servos",
-        "pos" : vector(0.0, 176.32, 87.18) * millimeter,
+        "pos" : vector(0.0, 175.02, 92.01) * millimeter,
         "shape" : "cylinder",
         "radius" : 8.0 * millimeter,
         "length" : 3.0 * millimeter,
@@ -302,7 +302,7 @@ export const AOW_LAYOUT = {
     },
     "servo_steer_shaft" : {
         "group" : "servos",
-        "pos" : vector(0.0, 176.71, 85.73) * millimeter,
+        "pos" : vector(0.0, 175.41, 90.56) * millimeter,
         "shape" : "point"
     },
     "ahrs_tm151" : {

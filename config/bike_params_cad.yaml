@@ -420,7 +420,11 @@ bike:
     # shaft sits (front_wheel.radius + this) up the axis from the front axle,
     # and the fork spans exactly that. Raise it for tire/mud clearance, lower
     # it to drop the servo mass and shorten the steerer.
-    servo_clearance: {value: 0.040, source: design}
+    # 40 -> 45 (2026-09-28, user: "okay to relax the 40 mm, the steer servo
+    # can sit a bit higher"): the printed-bushing headset wanted a longer
+    # bushing (14.6 mm at 45) and a taller fork block. See
+    # docs/plans/steering-design.md.
+    servo_clearance: {value: 0.045, source: design}
   ahrs:                                       # SYD Dynamics TM151
     pos: [0.05, 0.0, 0.13]
     # 19 g and 40 x 34 x 12.6 mm from the TM151/TM171 datasheet V1.1.6, which
@@ -640,7 +644,7 @@ servos:
     #
     # So: do not tune this. Change `servo_clearance` and re-run
     # `python -m aow_sim.cad_layout`, which prints the value to paste back.
-    pos: [0.165709, 0.0, 0.097798]
+    pos: [0.164415, 0.0, 0.102628]
 
 actuators:
   # Drive velocity servo, both gains AT THE INPUT SHAFTS (i.e. after

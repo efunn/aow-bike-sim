@@ -143,10 +143,10 @@ steering:
       velocity estimator work.
 
   fork:
-    pos_mm: [0.0, 188.35, 42.27]
+    pos_mm: [0.0, 187.71, 44.68]
     shape: capsule
     radius_mm: 5.0
-    length_mm: 90.0
+    length_mm: 95.0
     axis: [0.0, -0.258819, 0.965926]   # unit vector, CAD frame
     color_rgba: [0.24, 0.68, 0.58, 0.85]
     mass_g: 25.0
@@ -350,7 +350,7 @@ servos:
       room there.
 
   servo_steer:
-    pos_mm: [0.0, 165.71, 97.8]
+    pos_mm: [0.0, 164.41, 102.63]
     shape: box
     envelope_mm: [20.0, 23.0, 34.0]
     axis_width: [1.0, 0.0, 0.0]
@@ -371,13 +371,13 @@ servos:
       it needs homing or an index feature.
 
   servo_steer_case_holes_horn:
-    pos_mm: [0.0, 168.69, 86.69]
+    pos_mm: [0.0, 167.39, 91.52]
     shape: holes
     holes_mm:
-      - [8.0, 183.17, 90.57]
-      - [8.0, 154.2, 82.81]
-      - [-8.0, 183.17, 90.57]
-      - [-8.0, 154.2, 82.81]
+      - [8.0, 181.88, 95.4]
+      - [8.0, 152.9, 87.64]
+      - [-8.0, 181.88, 95.4]
+      - [-8.0, 152.9, 87.64]
     source: {pos: derived — case frame, size: measured (ROBOTIS drawing)}
     note: >-
       Case hole pattern, 16.0 x 30.0 mm centred on the horn-side face —
@@ -386,13 +386,13 @@ servos:
       land asymmetrically about it.
 
   servo_steer_case_holes_back:
-    pos_mm: [0.0, 162.73, 108.91]
+    pos_mm: [0.0, 161.44, 113.74]
     shape: holes
     holes_mm:
-      - [8.0, 177.22, 112.79]
-      - [8.0, 148.24, 105.02]
-      - [-8.0, 177.22, 112.79]
-      - [-8.0, 148.24, 105.02]
+      - [8.0, 175.93, 117.62]
+      - [8.0, 146.95, 109.85]
+      - [-8.0, 175.93, 117.62]
+      - [-8.0, 146.95, 109.85]
     source: {pos: derived — case frame, size: measured (ROBOTIS drawing)}
     note: >-
       Case hole pattern, 16.0 x 30.0 mm centred on the back-side face —
@@ -401,7 +401,7 @@ servos:
       land asymmetrically about it.
 
   servo_steer_horn:
-    pos_mm: [0.0, 176.32, 87.18]
+    pos_mm: [0.0, 175.02, 92.01]
     shape: cylinder
     radius_mm: 8.0
     length_mm: 3.0
@@ -419,13 +419,13 @@ servos:
       straight off the fork clearance.
 
   servo_steer_shaft:
-    pos_mm: [0.0, 176.71, 85.73]
+    pos_mm: [0.0, 175.41, 90.56]
     shape: point
     source: {pos: derived — front axle, on the steering axis}
     note: >-
       Output shaft on the horn face, pointing DOWN the steering axis
       toward the front axle. Direct drive at gear_ratio 1.0 forces it
-      coaxial, so it is DERIVED: 50.0 mm of wheel radius plus 40.0 mm of
+      coaxial, so it is DERIVED: 50.0 mm of wheel radius plus 45.0 mm of
       `steering.servo_clearance`, up the axis from the axle. Change the
       clearance to move the whole steer column; the case follows.
 
