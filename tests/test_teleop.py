@@ -18,8 +18,9 @@ from aow_sim.run_drive import (_COAST_DELAY, _LEAD_MAX, _REPEAT_GAP, _STEP_V,
                                _Axis, _KeyState)
 
 # The input model driven through a closed-loop sim.
-# See `pytest --markers` for what each one means.
-pytestmark = pytest.mark.contact
+# See `pytest --markers` for what each one means. lqr_design_once: see
+# conftest.py -- 27 teleop starts, one design.
+pytestmark = [pytest.mark.contact, pytest.mark.usefixtures("lqr_design_once")]
 
 UP, DOWN, LEFT, RIGHT = 265, 264, 263, 262
 

@@ -225,15 +225,24 @@ hand-edit those; regenerate with `aow_sim.cad_layout` / `cad_servo_mount` /
 
 ## Health
 
-**Test suite, measured 2026-09-22** with `pytest -n 10 --dist load`:
+**Test suite, measured 2026-09-29** with `pytest -n 10 --dist loadgroup`:
 
-    3 failed, 563 passed, 16 skipped, 66.8 s
-    red set unchanged (3 accepted failures) -- tests/expected_failures.txt
+    2 failed, 724 passed, 17 skipped, 39 s   (serial: 107 s)
+    red set unchanged (2 accepted failures) -- tests/expected_failures.txt
 
-3 = 2 analytic LQR (both REVERSE turns at -0.5 m/s: command_heading[-0.5-90]
-and reverse_circle) + 1 standing endurance, a policy metric in its own registry
-section. It was 28 on 09-21. Wall time went 42 -> ~60 s with the endurance
-test (18 x 60 s flights in one test). Fixed 2026-09-22 though it greened
+2 = the analytic LQR's two REVERSE turns at -0.5 m/s (command_heading[-0.5-90]
+and reverse_circle), same numbers as before the speed-ups. The standing-endurance test is still registered red but
+is now `prospective`: skipped unless run by name (`pytest -m prospective`); run
+it on each new export. 2026-09-29 it was 10 of 18 falls. Same day, 79 -> 39 s
+parallel and ~5 -> 2 min serial: CAD tests to `cad` and the AHRS-fixture test
+to `analysis` (out of `pure`, now 0.8 s); odometry flights grouped per regime;
+the RL envs design only the crawl fallback they keep, not a whole
+DriveController's gain schedule; and `lqr_design_once` in conftest.py designs
+once per module in the teleop, drive and odometry-in-the-loop tests. A plain 3-vector cross product in `sim_ahrs.py` and the
+fixture analysis (np.cross's overhead, bit-identical) and a vectorised fixture rig
+took the two AHRS test files 31 -> 18 s serial.
+
+Fixed on 2026-09-22 though it greened
 nothing else: the gain schedule's +-1.2 m/s ends were identified with the bike
 IN THE AIR (settle_rolling snapshotted mid-bounce, zero contacts, so the fit
 said no input did anything); `settle_rolling` now refuses an airborne state
@@ -1326,8 +1335,8 @@ Read the verdict line, not the FAILED count. The 23:
 | `test_hw_odometry.py` | 7 | estimator quality, no falls — see `odometry-rewrite.md` |
 | `test_teleop.py` | 1 | analytic LQR, reaches v_max then tips |
 
-A bare `pytest` is SERIAL and takes ~145 s. Run the marker, not the suite —
-`pytest -m pure` is 0.4 s and is the edit loop. `pytest --markers` is the
+A bare `pytest` is SERIAL and takes ~2 min. Run the marker, not the suite —
+`pytest -m pure` is 0.8 s and is the edit loop. `pytest --markers` is the
 reference for which marker covers what.
 
 **LQR: marginally functional, and that is the intended state.** Holds the bike

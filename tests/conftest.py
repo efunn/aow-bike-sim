@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 REGISTRY = Path(__file__).parent / "expected_failures.txt"
 
 
@@ -47,6 +49,76 @@ def _accepted() -> dict[str, str]:
         nodeid, _, reason = line.partition("#")
         out[nodeid.strip()] = reason.strip()
     return out
+
+
+def _same(a, b) -> bool:
+    import numpy as np
+    if isinstance(a, (tuple, list)):
+        return type(a) is type(b) and len(a) == len(b) and all(map(_same, a, b))
+    return bool(np.array_equal(a, b))
+
+
+@pytest.fixture(scope="module")
+def lqr_design_once():
+    """Hand out each distinct LQR design once per module, as a copy.
+
+    A DriveController re-identifies the plant and designs its gain schedule on
+    EVERY construction -- deliberately, so the product can never fly a stale
+    design (control/balance.py says why it is not cached). A test file that
+    starts one per test against the same params and model pays that each time:
+    measured 2026-09-29, 37 of test_teleop's 50 s, 23 of test_drive's 32, 33 of
+    test_odometry_in_the_loop's 46, all of test_hw_replay's 11.
+
+    Keyed on the params digest and the model OBJECT (kept alive, so its id
+    stays unique), plus the call's other arguments. Teardown re-designs every
+    entry from scratch and asserts it is identical to what was handed out, so a
+    model mutated in place under the memo fails loudly instead of flying a
+    stale design. Opt in per file: `pytest.mark.usefixtures("lqr_design_once")`.
+    Files that test the design itself should not.
+    """
+    import copy
+
+    from aow_sim.control import linearize as lz
+    from aow_sim.params import params_digest
+
+    memo = {}
+
+    def once(fn):
+        def wrapped(params, model, *a, **k):
+            key = (fn.__name__, params_digest(params), id(model), a,
+                   tuple(sorted(k.items())))
+            if key not in memo:
+                memo[key] = (fn, copy.deepcopy(params), model, a, k,
+                             fn(params, model, *a, **k))
+            return copy.deepcopy(memo[key][-1])
+        return wrapped
+
+    originals = {n: getattr(lz, n) for n in
+                 ("design_lqr", "design_gain_schedule", "design_crawl_fallback")}
+    with pytest.MonkeyPatch.context() as mp:
+        for name, fn in originals.items():
+            mp.setattr(lz, name, once(fn))
+        yield
+    for key, (fn, params, model, a, k, got) in memo.items():
+        assert _same(fn(params, model, *a, **k), got), (
+            f"{key[0]} memoised in this module no longer matches a fresh "
+            "design: something changed the model in place. Drop "
+            "lqr_design_once from this file.")
+
+
+def pytest_collection_modifyitems(config, items):
+    """`prospective` tests are targets no policy clears yet, so the default run
+    skips them. Naming them runs them: `-m` mentioning `prospective`, or a
+    path argument into their file. A skip rather than a deselect keeps them
+    seen, so their registry entry is not reported STALE."""
+    if "prospective" in (config.option.markexpr or ""):
+        return
+    named = [str(a).split("::")[0] for a in config.option.file_or_dir or []]
+    skip = pytest.mark.skip(reason="prospective: run with `pytest -m prospective`")
+    for item in items:
+        if "prospective" in item.keywords and not any(
+                str(item.path).endswith(n) for n in named if n.endswith(".py")):
+            item.add_marker(skip)
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):

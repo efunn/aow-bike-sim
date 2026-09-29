@@ -18,7 +18,7 @@ import pytest
 from aow_sim import cad_ahrs_fixture as fx
 from aow_sim import cad_servo_mount as sm
 
-pytestmark = pytest.mark.pure
+pytestmark = pytest.mark.cad
 
 
 @pytest.fixture(scope="module")

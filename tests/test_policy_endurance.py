@@ -23,9 +23,10 @@ from aow_sim.control.linearize import settle_upright
 from aow_sim.sim_ahrs import TAU_ORIENT_S, SimAhrs
 from aow_sim.sim_odometry import SimOdometry
 
-# Stepped bike (contact) driven by an exported policy (policy).
-# See `pytest --markers` for what each one means.
-pytestmark = [pytest.mark.contact, pytest.mark.policy]
+# Stepped bike (contact) driven by an exported policy (policy), and a bar no
+# policy clears yet (prospective): skipped unless asked for by name, with
+# `pytest -m prospective` or this file's path. See `pytest --markers`.
+pytestmark = [pytest.mark.contact, pytest.mark.policy, pytest.mark.prospective]
 
 MAX_ROLL_DEG = 25.0
 

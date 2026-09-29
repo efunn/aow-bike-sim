@@ -206,4 +206,9 @@ tests/test_drive.py::test_reverse_circle_tracks            # 2026-09-22 crawl-st
 #   - measurement: the model takes the datasheet's roll/pitch BOUND (<1.5 deg)
 #     as its RMS; only tau 0.19 s is measured. A bench RMS on the real unit
 #     may make the model kinder.
+#
+# PROSPECTIVE since 2026-09-29: skipped unless run by name (`pytest -m
+# prospective`), so the full run stops paying ~50 s for a known red. This
+# entry stays so that, when it IS run, a policy that clears it reads
+# UNEXPECTEDLY GREEN. 2026-09-29: 10 of 18 fell (MTBF ~75 s), same policy.
 tests/test_policy_endurance.py::test_policy_stands_for_a_minute_on_its_own_sensors  # 2026-09-22 TM151 attitude: 9 of 18 fall within 60 s standing

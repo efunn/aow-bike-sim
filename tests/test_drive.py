@@ -12,7 +12,9 @@ from aow_sim.run_drive import circle_ok, flip_scenario, sprint_scenario
 
 # Closed-loop drive: gain schedule, sprints, circles, and the trajopt moves.
 # See `pytest --markers` for what each one means.
-pytestmark = pytest.mark.contact
+# lqr_design_once (conftest.py): 14 controllers, one design; the design's
+# own checks still run on it once.
+pytestmark = [pytest.mark.contact, pytest.mark.usefixtures("lqr_design_once")]
 
 
 # The trajectory flick (moves/flick.yaml, optimize_flick.py) and the scripted

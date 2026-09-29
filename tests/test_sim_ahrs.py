@@ -436,16 +436,16 @@ def _still(model, adr, quat=(1.0, 0.0, 0.0, 0.0), gyro=(0.0, 0.0, 0.0),
     return SimpleNamespace(sensordata=sd)
 
 
-def test_the_filter_level_at_rest_is_its_misalignment_plus_the_wander(model, params):
+@pytest.mark.parametrize("seed", (1, 2, 3))    # one case each, so xdist spreads them
+def test_the_filter_level_at_rest_is_its_misalignment_plus_the_wander(model, params, seed):
     """Still and level: the reading settles on the accelerometer's own (fixed,
     <0.5 deg) misalignment and wanders ~0.1 deg about it -- the measured
     residual -- plus the filter's share of the accelerometer noise."""
-    for seed in (1, 2, 3):
-        a = SimAhrs(model, params, level="tm151_filter", seed=seed)
-        d = _still(model, a.adr)
-        err = np.degrees(np.array([_rpy(q) for q in _run(a, d, 20000)["quat"]]))[2000:]
-        assert np.all(np.abs(err[:, :2].mean(0)) < 0.6)
-        assert np.all((0.07 < err[:, :2].std(0)) & (err[:, :2].std(0) < 0.15))
+    a = SimAhrs(model, params, level="tm151_filter", seed=seed)
+    d = _still(model, a.adr)
+    err = np.degrees(np.array([_rpy(q) for q in _run(a, d, 20000)["quat"]]))[2000:]
+    assert np.all(np.abs(err[:, :2].mean(0)) < 0.6)
+    assert np.all((0.07 < err[:, :2].std(0)) & (err[:, :2].std(0) < 0.15))
 
 
 def test_the_filter_level_reads_a_held_sideways_force_as_lean(model, params):

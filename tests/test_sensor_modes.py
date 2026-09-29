@@ -52,7 +52,6 @@ from aow_sim.build_model import load_params
 from aow_sim.control.flick import load_move
 from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 from aow_sim.control.general_spec import policy_env_overrides
-from aow_sim.train_general_rl import _eval_episodes, eval_cmds
 
 # Model build plus rollouts. See `pytest --markers`.
 pytestmark = pytest.mark.contact
@@ -76,6 +75,10 @@ def _subset(v_max: float):
     """hold, forward, reverse, 90-degree turn -- indices 0, 3, 7, 1 of the
     full grid, so a row here is directly comparable to the same row of
     `analysis/chatter.py` rather than being a differently-scaled command."""
+    # Imported here, not at the top: train_general_rl pulls in torch, SB3 and
+    # cv2 (~0.55 s), and pytest imports every test file on every run --
+    # `-m pure` included -- whether or not it selects anything in it.
+    from aow_sim.train_general_rl import eval_cmds
     g = eval_cmds(v_max)
     return [g[0], g[3], g[7], g[1]]
 
@@ -119,6 +122,7 @@ def _eval(name, params, *, ahrs="none", encoder=None, tau=2.0,
         a = np.asarray(pol.action(obs), float)
         return (a / scales[:len(a)])[:env.action_space.shape[0]]
 
+    from aow_sim.train_general_rl import _eval_episodes
     m, _ = _eval_episodes(env, act, _subset(cfg["env"]["v_max"]))
     return m
 

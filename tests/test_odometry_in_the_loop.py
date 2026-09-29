@@ -39,7 +39,10 @@ from aow_sim.sim_odometry import SimOdometry
 
 # Stepped bike (contact) driven by an exported policy (policy).
 # See `pytest --markers` for what each one means.
-pytestmark = [pytest.mark.contact, pytest.mark.policy]
+# lqr_design_once (conftest.py): 20 flights built the same unused gain
+# schedule, 33 of this file's 46 s.
+pytestmark = [pytest.mark.contact, pytest.mark.policy,
+              pytest.mark.usefixtures("lqr_design_once")]
 
 MAX_ROLL_DEG = 25.0
 N_STEPS = 12000           # 4.8 s at the 4e-4 timestep
@@ -165,6 +168,15 @@ def _fly(params, model, policy, regime, seed=0):
 _CACHE = {}
 
 
+def _by_regime(regimes):
+    """One xdist group per regime, so every test of a regime shares one
+    worker and so one _CACHE: its 5 flights are flown once, not once per
+    worker that draws one of its tests. Under `--dist load` the rear and front
+    slip tests landed apart and each flew all 5 seeds -- ~160 s of CPU for 46
+    s of work. Takes effect with `--dist loadgroup`; plain runs ignore it."""
+    return [pytest.param(r, marks=pytest.mark.xdist_group(f"odo_{r}")) for r in regimes]
+
+
 def _episode(params, model, policy, regime, seed=0):
     key = (regime, seed)
     if key not in _CACHE:
@@ -178,14 +190,14 @@ def _rms_mm(x):
 
 # -- closed loop ------------------------------------------------------------
 
-@pytest.mark.parametrize("regime", list(REGIMES))
+@pytest.mark.parametrize("regime", _by_regime(REGIMES))
 def test_policy_survives_on_its_own_sensors(params, model, policy, regime):
     max_roll, _ = _episode(params, model, policy, regime)
     assert max_roll < MAX_ROLL_DEG, (
         f"{policy[0]} fell in {regime} on its own sensors (max roll {max_roll:.0f} deg)")
 
 
-@pytest.mark.parametrize("regime", MOVING)
+@pytest.mark.parametrize("regime", _by_regime(MOVING))
 def test_policy_tracks_the_command_on_its_own_sensors(params, model, policy, regime):
     """Mean speed (and yaw rate, on the circle) over the last 2.4 s within 20%
     of the command. Measured 2026-09-21: 0.66-0.69 m/s against 0.6 over three
@@ -220,7 +232,7 @@ def _slip_check(policy, regime, measured, baseline, what):
         f"regression. If it is accepted, re-measure and rewrite the baseline.")
 
 
-@pytest.mark.parametrize("regime", list(REGIMES))
+@pytest.mark.parametrize("regime", _by_regime(REGIMES))
 def test_rear_wheel_slip_under_the_shipped_policy(params, model, policy, regime):
     """Hub spin x outer radius against the hub centre's velocity along the
     heading. This IS the longitudinal odometry error: the estimate is hub
@@ -229,7 +241,7 @@ def test_rear_wheel_slip_under_the_shipped_policy(params, model, policy, regime)
                 REAR_SLIP_BASELINE, "rear-wheel")
 
 
-@pytest.mark.parametrize("regime", list(REGIMES))
+@pytest.mark.parametrize("regime", _by_regime(REGIMES))
 def test_front_wheel_lateral_slip_under_the_shipped_policy(params, model, policy,
                                                            regime):
     """The front wheel's velocity along its own axle. The lateral estimate

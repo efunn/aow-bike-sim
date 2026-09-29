@@ -19,7 +19,7 @@ import pytest
 sys.path.insert(0, "analysis")
 import ahrs_fixture as fx  # noqa: E402
 
-pytestmark = pytest.mark.pure
+pytestmark = pytest.mark.analysis
 
 RATE = 200.0
 LAG = 0.012                      # the sensor's delay, s
@@ -116,8 +116,12 @@ def _rig(seed=0, chirp=None, flip=False, lever=None, shake=None):
     e_w = np.stack([np.cos(h) * er - np.sin(h) * ep,
                     np.sin(h) * er + np.cos(h) * ep, np.zeros_like(tau)], 1)
     ang = np.linalg.norm(e_w, axis=1)
-    R_e = np.stack([fx.axis_angle(e / a if a > 0 else [1, 0, 0], [a])[0]
-                    for e, a in zip(e_w, ang)])
+    # Rodrigues per sample, as fx.axis_angle does one at a time (vectorised:
+    # the loop was ~13k calls a rig).
+    safe = np.where(ang > 0, ang, 1.0)[:, None]
+    K = fx._skew(np.where(ang[:, None] > 0, e_w / safe, [1.0, 0.0, 0.0]))
+    R_e = (np.eye(3) + np.sin(ang)[:, None, None] * K
+           + (1 - np.cos(ang))[:, None, None] * (K @ K))
     R_a = R_e @ R_t
     if chirp:
         # What the sensor REPORTS during the chirp; the physics (gyro, accel
@@ -130,8 +134,8 @@ def _rig(seed=0, chirp=None, flip=False, lever=None, shake=None):
     # Gyro: body rate of the truth, from its finite difference.
     dpsi = np.gradient(psi_a, tau)
     dphi = np.gradient(phi_a, tau)
-    omega = np.stack([fx.axis_angle(u_r, -phi_a[k:k + 1])[0] @ u_y * dpsi[k]
-                      + u_r * dphi[k] for k in range(len(tau))])
+    omega = ((fx.axis_angle(u_r, -phi_a) @ u_y) * dpsi[:, None]
+             + u_r * dphi[:, None])
     gyro = omega + rng.normal(0, np.radians(0.25), omega.shape)
 
     # Accelerometer: the sensing point R_LEVER from the axes' intersection,

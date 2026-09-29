@@ -20,7 +20,7 @@ import yaml
 from aow_sim import cad_righting as cr
 from aow_sim import cad_servo_mount as sm
 
-pytestmark = pytest.mark.pure
+pytestmark = pytest.mark.cad
 
 
 @pytest.fixture(scope="module")
