@@ -568,11 +568,29 @@ def main() -> None:
                          "downhill to the bike's left. The spawn dial picks "
                          "the MAGNITUDE; direction comes from steering or "
                          "from respawning on a different heading.")
+    ap.add_argument("--verbose", "-v", action="store_true",
+                    help="teleop: print the full key list and the AHRS / "
+                         "odometry model notes at startup. Off, the banner "
+                         "is the policy, the sensors, the core keys, and "
+                         "anything that needs attention")
+    ap.add_argument("--wheelbase", type=float, default=None, metavar="METRES",
+                    help="override bike.wheelbase in memory (bike_params.yaml "
+                         "untouched). Moves the front end only -- steer body, "
+                         "fork, front wheel -- so the chassis mass and its CoM "
+                         "stay where they are, measured from the rear axle. "
+                         "Moves plant_digest, so a policy loaded here warns "
+                         "that it trained on a different bike, which it did; "
+                         "the analytic LQR is re-designed for the new plant")
     args = ap.parse_args()
     if args.ahrs_gate is not None:
         from . import sim_ahrs
         sim_ahrs.FILTER_ACC_GATE = float(args.ahrs_gate)
     params = load_params(args.params)
+    if args.wheelbase is not None:
+        print(f"WHEELBASE {params['bike']['wheelbase'] * 1000:.0f} -> "
+              f"{args.wheelbase * 1000:.0f} mm (in memory; chassis CoM held)")
+        params = {**params, "bike": {**params["bike"],
+                                     "wheelbase": float(args.wheelbase)}}
     # Compile the spare floors so the spawn dial has something to switch to.
     # In-memory only -- `bike_params.yaml` is untouched, so neither digest
     # moves. The extras are inert until `activate_floor` picks one, and the
@@ -675,6 +693,7 @@ def main() -> None:
                 ahrs_tau=args.ahrs_tau, design=design,
                 drivetrain_base=drivetrain_base, servo_gains=servo_gains,
                 drivetrain_source=drivetrain_source, start_lqr=args.lqr,
+                verbose=args.verbose,
                 rig=rig_cfg)
         return
     if args.view:
@@ -2384,7 +2403,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
             ahrs="none", ahrs_tau=None, design=None, drivetrain_base=None,
             servo_gains=None, drivetrain_source="", frame_stats=None,
-            start_lqr=False, rig=None):
+            start_lqr=False, rig=None, verbose=False):
     from .interactive import FrameStats, teleop_loop
 
     from . import policy_menu
@@ -2411,7 +2430,9 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         # back gain, and a banner that names the wrong one hides exactly that.
         why = ("the level's own, measured on the part"
                if ahrs_tau is None else "from --ahrs-tau")
-        if ahrs == "tm151_filter":
+        if not verbose:
+            pass
+        elif ahrs == "tm151_filter":
             print(f"AHRS MODEL (tm151_filter): the part's own complementary "
                   f"filter on its own gyro and\n  accelerometer (the chip, ~1 cm "
                   f"off the site), tau {FILTER_TAU_REST_S:g} s still -> "
@@ -2445,11 +2466,12 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             "ideal": ("INSTANTANEOUS joint velocity -- no quantisation, no "
                       "lag. Optimistic, and what the policies trained on"),
         }[odometry_encoder]
-        print(f"ODOMETRY IN THE LOOP ({odometry}, encoder={odometry_encoder}): "
-              f"driving on {which},\n  rebuilt from the simulated encoders and "
-              f"AHRS. Physics still uses the truth.\n  Encoders: {enc}.\n"
-              "  Still no gyro bias and no accelerometer noise, so this remains "
-              "kinder than the real bike.")
+        if verbose:
+            print(f"ODOMETRY IN THE LOOP ({odometry}, encoder={odometry_encoder}): "
+                  f"driving on {which},\n  rebuilt from the simulated encoders and "
+                  f"AHRS. Physics still uses the truth.\n  Encoders: {enc}.\n"
+                  "  Still no gyro bias and no accelerometer noise, so this remains "
+                  "kinder than the real bike.")
 
     menu = {"open": False, "cursor": 0, "entries": []}
     data = _fresh(model, eq_qpos)
@@ -2871,7 +2893,10 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         # that put a stale export in control.general_move for three days.
         retarget_drivetrain()
         from .control.flick import check_move_digest
-        check_move_digest(c._gen, plant[0])
+        # Quiet mode keeps the verdict and drops the explanation: the line
+        # disappearing is the signal worth having, the prose is not.
+        check_move_digest(c._gen, plant[0], warn=None if verbose else (
+            lambda m: print("! " + m.split(" — ")[0])))
         zero_command(d)                  # never inherit a stale setpoint
         # Re-engaging hands the wings back to the policy, so the manual
         # override is a temporary grab (right the bike by hand, then re-engage)
@@ -3653,24 +3678,42 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # Number keys + arrows: MuJoCo's viewer binds every letter A-Z (F=force
     # display, etc.), so letters would double up. Number keys 0-9 are free; 4/5
     # toggle (empty) geom groups harmlessly; arrows are free while unpaused.
+    full_keys = (
+        "teleop (number keys — MuJoCo's viewer owns the letters):\n"
+        "  ↑/↓ throttle / brake-reverse (release to coast down)\n"
+        "  ←/→ hold to turn continuously   / re-zero command   "
+        "5 stop   2 overlay\n"
+        "  ; / \' trail shorter/longer (pen-up 2s 4s 10s inf)   "
+        "\\ camera (free/follow/overhead/wheel)\n"
+        "- / = slow motion (halve / double, 1x-64x)\n"
+        "  ENTER spawn dial: arrows / 6 7 8 pick the heading, - = pick "
+        "the floor tilt\n"
+        "        (level/2/5/10 deg), BACKSPACE respawns there, ENTER "
+        "cancels\n"
+        "  " + policy_menu.label_help() + "\n"
+        "  analytic-only keys: 6/7 circle L/R   8/9 flick (trajopt "
+        "rev/fwd)   3 flick (RL)\n"
+        "                      4 flip   . pivot (RL, front wheel "
+        "holds its line)"
+        + mode_help + ball_help + wing_help + hold_help)
+    # The default banner is what changes run to run (policy, sensors) plus the
+    # handful of keys used every session. Opt-in modes (--hockey, --wings)
+    # keep their key lists, since those were asked for; a missing key-state
+    # backend is kept, since it silently changes what holding an arrow does.
+    sensors = " · ".join(x for x in (
+        f"AHRS {ahrs}" if ahrs_model is not None else "",
+        f"odometry {odometry}/{odometry_encoder}" if odo is not None else "")
+        if x) or "truth sensors"
+    driving = (f"moves/{gen_name[0]}" if c.mode == "general"
+               else "the analytic LQR")
+    short_keys = (
+        f"teleop: driving {driving} · {sensors}\n"
+        "  ↑↓←→ drive   5 stop   , policy menu   ENTER spawn dial   "
+        "\\ camera   -/= slowmo\n"
+        "  (--verbose for every key and the sensor-model notes)"
+        + ball_help + wing_help + ("" if routes else hold_help))
     teleop_loop(model, data, step, on_key,
-                "teleop (number keys — MuJoCo's viewer owns the letters):\n"
-                "  ↑/↓ throttle / brake-reverse (release to coast down)\n"
-                "  ←/→ hold to turn continuously   / re-zero command   "
-                "5 stop   2 overlay\n"
-                "  ; / \' trail shorter/longer (pen-up 2s 4s 10s inf)   "
-                "\\ camera (free/follow/overhead/wheel)\n"
-                "- / = slow motion (halve / double, 1x-64x)\n"
-                "  ENTER spawn dial: arrows / 6 7 8 pick the heading, - = pick "
-                "the floor tilt\n"
-                "        (level/2/5/10 deg), BACKSPACE respawns there, ENTER "
-                "cancels\n"
-                "  " + policy_menu.label_help() + "\n"
-                "  analytic-only keys: 6/7 circle L/R   8/9 flick (trajopt "
-                "rev/fwd)   3 flick (RL)\n"
-                "                      4 flip   . pivot (RL, front wheel "
-                "holds its line)"
-                + mode_help + ball_help + wing_help + hold_help,
+                full_keys if verbose else short_keys,
                 "aow_sim.run_drive",
                 draw=draw_frame,
                 show_ui=show_ui,
