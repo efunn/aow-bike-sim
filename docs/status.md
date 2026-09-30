@@ -47,13 +47,77 @@ Ranked by what unblocks the most, not by interest.
 > steer's XC330 is modelled from the bench (friction, ~0.52 N m usable
 > breaking away against a load); the CAD station is pinned.
 >
-> **Designed 2026-09-28, not yet printed:** `aow_sim.cad_steering`, one
-> feature in its own Onshape tabs -- fork on ledges, printed-bushing headset,
-> XC330 cases with pins in both rows, cross-socket horn hub, mock wheel.
-> `servo_clearance` 40 -> 45 for it. `--check` clean (no interference steered
-> through 270 deg). Next: print, then tune the `GUESS` fits. Outstanding:
-> `front_wheel.radius` 0.050 vs the measured 51.25 mm. See
+> **Printed and assembled 2026-09-30** (ASA, PINS hub): `aow_sim.cad_steering`,
+> one feature in its own Onshape tabs. It has:
+> - a fork on ledges;
+> - a printed-bushing headset;
+> - XC330 cases with pins in both rows;
+> - a cross-socket horn hub;
+> - a mock wheel.
+>
+> It is clamped upside down on the Pi bench at the expected 15 deg, straight
+> ahead at the nominal 180 deg on the servo. The bushing fits without reaming (one
+> tight spot at the printed seams). The slight axial end play is kept on
+> purpose, so the central screw needs no threadlock. Both fits are now
+> `print-checked`.
+>
+> The bench XC330 was re-addressed 104 -> **103** on 2026-09-30. The other
+> XC330 is still 103 and must become 104 before the two share a bus.
+>
+> **Headset friction was measured the same day** (`servo_breakaway.py` and
+> the new `analysis/steer_friction.py`, same unit bare on 09-25):
+>
+> | | bare | installed |
+> |---|---|---|
+> | breakaway | 25 mA | 40 mA, about +12 mN m |
+> | kinetic stop | 20 mA | 32-34 mA, about +11 mN m |
+>
+> Running friction is 7-12 mN m over most of the turn. It peaks at 31 mN m
+> at +35 deg steer and 20 mN m at -145 deg, 180 deg apart. That is Coulomb
+> friction, the same at 20 and 60 deg/s, and about 6% of the servo's usable
+> torque. The peaks are the headset: the same servo's bare run of 09-25
+> turns at a flat speed against angle, within ~1-2 mN m. Fork halves +
+> front wheel weigh 86 g (bike_params still has 85 g of `GUESS`). At the
+> bike's thrust load (282 g added, balanced, 368 g on the thrust face), mean
+> friction is 26.6 mN m. Across four loads it is 7.7 + 0.052 x (thrust in
+> g) mN m (rms 0.4). A 0 g repeat at the end read the same 12.4, so the
+> mean has not drifted, against the sim's 5.1 mN m of gearbox friction and no headset
+> term. The angle peaks are the printed seams, fixable in printing, and are
+> NOT to be modelled (user). See
 > `steering-design.md`.
+>
+> **In the sim since 2026-09-30:** `bike.steering.headset_friction_nm` /
+> `_per_n` (a 1.7 mN m, b 4.75 mN m/N), under the gearbox friction on the
+> steer joint. The load term uses a new `headset_force` sensor, the
+> chassis's force on the steer body along the axis. At rest that is 3.1 N,
+> so ~16 mN m of headset, and the bench's ~26 at the motor.
+> - **Where it applies:** loops that call `gearbox_friction` (RL env,
+>   teleop, record, the analytic controllers). The build-time value is
+>   unchanged, so the LQR design is not touched: `design_digest` is the
+>   same.
+> - **Cost:** the friction hook is 0.81 us a step, against 0.77 before; the
+>   sensor itself is unmeasurable (interleaved: 21.30 / 21.26 us with /
+>   without).
+> - **`plant_digest`** -> 8b804e519ba7fe87, bundle re-exported, red set 4,
+>   one newly accepted: LQR `command_heading[-1.2]`, a fast reverse turn,
+>   now falls.
+> - **Policies, on the full 20-command grid:** every policy stays within
+>   one episode of its no-headset score. `general_rl_cmd_curriculum2b`
+>   0.95 -> 1.00 truth and 0.85 -> 0.90 TM151; `general_rl_odo_ahrs`
+>   1.00 -> 0.95; `general_rl_smooth_diff_pi` 0.95 both.
+> - **Provisional:** all policies were trained without the headset, so
+>   they are provisional until retrained with it.
+>   `run_drive --no-headset` is the in-memory A/B.
+> - **The load in flight** (`analysis/headset_load.py`): the LQR holding
+>   still gives a flat 3.10 +- 0.03 N axial and 0.95 N side. The RL policy
+>   holds the same mean but shakes it 0-10 N (p99 14.6 N over the grid) with
+>   its action dither: ~30% near 12 Hz, ~58% above 60 Hz. That is chatter,
+>   not the working load.
+>
+> The Pi's `~/aow-bike-sim` was refreshed from this checkout on 2026-09-30:
+> tracked files and the digest-matched `deploy/bundle.npz`, with the old tree
+> in `~/aow-bike-sim-before-260930.tgz`. Outstanding: `front_wheel.radius` 0.050 against the
+> measured 51.25 mm. See `steering-design.md`.
 >
 > **Rear drive designed 2026-09-28, not yet printed:** `aow_sim.cad_drive`,
 > the hand-drawn working version split into separate generated parts:
@@ -63,7 +127,7 @@ Ranked by what unblocks the most, not by interest.
 >
 > Each L/R pair is one part, the same solid turned 180 deg about Y.
 > `--check` clean at nominal and at full travel. Held until the steer print
-> settles the shared fits; the fixture interface and the hex axle may still
+> settles the shared fits (the first bushing and end-play results are in); the fixture interface and the hex axle may still
 > move. See `drive-design.md`.
 >
 > **Righting module designed 2026-09-29, not yet printed:**

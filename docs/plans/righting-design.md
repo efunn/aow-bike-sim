@@ -173,6 +173,11 @@ Studio **aow-bike-righting** (`onshape.yaml` tabs `righting_features` /
 - **Held until the steer module prints,** as the drive is (user). It shares
   the ideas here: the printed bearings, the 6-32 joints, the bridging, the
   cases and the horn hub. Those judgements come from it first.
+- **Try the seam fix here first** (user, 2026-09-30). The steer's
+  printed bushing binds in two spots 180 deg apart, where the shaft and
+  bore seams meet and where they sit opposite (`steering-design.md`, "The
+  seams"). Force the seams of the journals and their bearings somewhere
+  harmless.
 - **Print tolerances are `GUESS`:** the journal bore (0.2 diametral), the
   running clearance over a boss (0.2), the washer's (0.1 a side),
   line-to-line rod holes to ream.

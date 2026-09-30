@@ -140,12 +140,222 @@ edges. Downward faces left, all intended: the stepped bridging over the
 upper's screw hole, the PINS hub's socket arms (2.7 wide), and the case-pin
 reliefs' 0.09 mm^2 slivers. The cable window prints without a bridge.
 
+## First print (2026-09-30)
+
+Printed in ASA and assembled, **PINS hub** (the printed pins can shear, as
+a fuse). On the Pi bench it is clamped **upside down**, by the mount plate's
+tab, so the wheel's load pulls the right way through the headset. The rake
+reads the expected 15 deg, off the tab.
+
+| fit | result | action |
+|---|---|---|
+| headset in the Φ14 bushing (`bore_clearance` 0.2) | fits nicely, no reaming; one tight spot where the two parts' printed seams meet | keep. On a reprint, a small notch to put the seam in one place |
+| axial, screw fully tight (`end_play` 0.2) | slight play | **keep** (user): the screw bottoms on the step and cannot back off. Zero or negative play would leave the screw holding the stack together, and it would need threadlock |
+| mount plate tab | 15 deg on the bench, as designed | none |
+
+The two are now `print-checked` in `steering_cad.yaml`. Straight ahead is
+set at 180 deg on the servo, the nominal `steer_zero_deg`. Any offset is
+rigging and will change on the final build.
+
+### Bench tests: headset friction
+
+The one XC330 on the Pi bench is now **id 103**; it was 104. The other XC330
+is still 103 and is not on this bus: set it to 104 before the two share one.
+Two tests, both in current-based position mode, restoring the servo's mode
+and gains on exit:
+
+| test | measures | compare with |
+|---|---|---|
+| `servo_breakaway.py --ids 103` | the current at which the steer starts to move, both ways, at 3 start angles | the bare XC330, 2026-09-25: nothing at <= 20 mA, everything at >= 25 |
+| `steer_friction.py` | running friction against steer angle, 10 deg bins, at 20 and 60 deg/s: where the seam's tight spot is and how big | the gearbox model, 0.15 x load + 5.7 mN m; better, the same run on a bare XC330 |
+
+The Pi's `~/aow-bike-sim` was refreshed from this checkout on 2026-09-30
+(it has no git; copy tracked files across, never `--delete`):
+
+```sh
+ssh -t efun@aowbike.local 'cd ~/aow-bike-sim && ~/venv/bin/python analysis/steer_friction.py --port /dev/ttyUSB0 --note "upside down, no load"'
+ssh -t efun@aowbike.local 'cd ~/aow-bike-sim && ~/venv/bin/python analysis/servo_breakaway.py --port /dev/ttyUSB0 --ids 103 --note "steer installed, upside down"'
+rsync -av efun@aowbike.local:'~/aow-bike-sim/traces/{steer_friction,servo_breakaway}' traces/
+python analysis/steer_friction.py summary traces/steer_friction/<dir> --plot
+```
+
+The steering turns 2 full turns each way (the breakaway's kinetic phase
+runs further), so the wheel's sweep has to be clear. `steer_friction`
+caps the current at 150 mA, about 0.11 N m at the printed pins, and stops if
+the output falls 30 deg behind the ramp.
+
+**Results, 2026-09-30** (first print, upside down, no added load, 12.0 V).
+Captures: `traces/steer_friction/260930-130440_steer_friction` and
+`traces/servo_breakaway/260930-131115_servo_breakaway`. The same XC330
+answered as id 104 in the bare run of 2026-09-25, so that run is the
+same-unit baseline. That rests on the id alone; nobody checked the serial.
+Torque is k (I - I0), with k 0.83 N m/A and I0 16.5 mA.
+
+| | bare, 09-25 | installed | headset adds |
+|---|---|---|---|
+| breakaway, every trial moved | 25 mA (7.1 mN m) | **40 mA** (19.5); 30 mA moved 9/12 | ~12 mN m, static |
+| kinetic, stops at | 20 mA (2.9) | **32-34 mA** (13-15) | ~11 mN m |
+| speed at 40 mA | 8.7-9.0 rad/s | 4.1-6.4 rad/s | |
+
+Running friction against steer angle (`steer_friction`, both reps):
+
+| steer angle | at the output, 20 / 60 deg/s |
+|---|---|
+| most of the turn | 7-12 mN m |
+| **+35 deg, broad peak (+5..+65)** | **31 / 29 mN m** |
+| -145 deg, second peak (-165..-145), sharp drop after it | 20 / 20 mN m |
+
+- **It is Coulomb friction.** The map repeats to ~2 mN m at three times
+  the speed, so it is not viscous.
+- **The two peaks are 180 deg apart:** the printed seams, see below.
+- **The peaks are the headset, not the gearbox.** The bare run's kinetic
+  phase (09-25, same unit) turned 200-300 deg at each fixed current. In
+  30 deg bins its speed is flat against angle to ~0.1-0.2 rad/s from 30 to
+  58 mA. The speed slope is ~0.11 rad/s per mA, so that is under ~1-2 mN m
+  of angle-dependent gearbox friction. Installed, at the same currents, the
+  speed dips 0.8-1.0 rad/s through the -30..+90 bins, about 7 mN m. Only at
+  30 deg resolution and at ~9 rad/s; a finer bare map would still need its
+  own run.
+- **The +35 peak's band starts at +5, right beside straight ahead**, so a
+  steer to the + side runs into it within a few degrees. The breakaway
+  started at steer ~0, +120 and -120, so it never started on a peak; its
+  40 mA is the static friction off them.
+- **Not reconciled:** the kinetic phase kept turning down to 34-36 mA
+  (~15 mN m), below the map's 31 mN m peak. A guess, not tested: the
+  motor's reflected inertia carries it through the peak at speed. Treat the
+  map's peak height as an upper figure.
+- **Scale:** the XC330's usable torque against a load is ~0.52 N m, and
+  the worst spot is about 6% of that.
+
+**Loaded, 182 g added (2026-09-30)**, `260930-135344_steer_friction_load182`.
+A rough rig: the weight is wedged against the fork and tyre by a 10-32
+through the spokes. Its CoM sits ~25 mm to the side of the wheel and ~25 mm
+off the axle, so it is off the steer axis. Plot:
+`compare_0_182.png` in that capture.
+
+| | 0 g | 182 g |
+|---|---|---|
+| mean friction at the output | 12.4 mN m | **22.0** (20 and 60 deg/s agree to 0.4) |
+| +35 deg peak | 31 | **29-30, unchanged** |
+| -145 deg peak | 20 | **34** |
+| one-way push, amplitude | 2.9 | **20.1**, a sinusoid crossing zero near -130 / +40 |
+
+- **The push is the weight's gravity** about the 15 deg axis. 20 mN m
+  means a ~43 mm horizontal offset. That is consistent with the rough
+  placement, though not checked against it. The half-difference cancels it
+  out of the friction.
+- **The +35 peak does not grow with load**, so it is not the thrust
+  face; a tight spot in the bore or the spigot is the likely source. The
+  -145 peak and the baseline do grow: about +10 mN m for +182 g
+  (+1.79 N).
+- **Not separated:** the off-axis weight also puts a tilting moment on the
+  headset. That loads the bushing sideways, so some of the +10 may be the
+  bore rather than the thrust face. A centred weight would separate the
+  two.
+
+**Balanced, 282 g added (2026-09-30)**, `260930-144648_steer_friction_load282`:
+137 g + 145 g, ~25 mm fore/aft and ~25 mm lateral, in opposite directions.
+The thrust face carries ~368 g, the bike's ~365. Plot: `compare_loads.png`
+in that capture (all three loads).
+
+| thrust face | added | mean friction (20 deg/s) | median | -145 | +45 | one-way push |
+|---|---|---|---|---|---|---|
+| 86 g | 0 | 12.4 mN m | 10.5 | 19.5 | 27.1 | ±3 |
+| 268 g | 182 off-centre | 22.0 | 21.1 | 34.4 | 30.2 | ±20 |
+| 368 g | 282 balanced | **26.6** | 25.8 | 26.5 | **46.6** | -8..+3 |
+| 158 g | 72 balanced (34 + 38 g, same placement) | 15.3 | | | 27.5 | -4..+2 |
+| 86 g | 0, **repeat after all the load runs** | **12.4** | 11.5 | 20.7 | 23.0 | -3..+1 |
+
+- **The mean is linear in thrust load:** a least-squares line through
+  all four gives **7.7 + 0.052 x (thrust in g) mN m**, residuals within
+  0.6, rms 0.4. That is ~5.3 mN m per N. The three centred runs alone
+  give 7.7 + 0.051. At 60 deg/s it is up to ~1 lower. 72 g is
+  `260930-145459_steer_friction_load72`.
+- **The angle shape did not repeat between rigs.** Balanced, the -145
+  peak fell back and the +45 peak rose to 47 mN m, with the whole
+  0..+150 half raised. The rig was handled between runs (weights
+  wedged in, removed, re-wedged) and the seams are wearing, so the
+  map's shape is not a property to model. The mean is the usable result.
+- The one-way push is small, so the pair is close to balanced.
+- **No drift in the mean after ~20 min of loaded running:** the 0 g repeat
+  reads 12.4 mN m again (12.8 at 60 deg/s, also unchanged). The +35 peak
+  came down, 31 -> 24, which fits the seams smoothing that the user felt.
+  The -145 peak held (19.5 -> 20.7). The fit holds for this print as it is
+  now.
+
+### The seams: why two peaks, 180 deg apart
+
+The shaft and the bushing each have a printed seam: a small ridge along
+the part's length where every layer starts and ends. Before final
+assembly the user could feel and see both. After the friction runs they
+feel smoother but are still there, in the same places. Assembled, the
+bushing's edges cannot be seen, so which peak is which alignment is
+reasoned, not observed.
+
+A round shaft in a round bore binds on the total interference across a
+diameter. The shaft seam turns with the steer and the bore seam stays
+put, so they come onto one diameter twice a turn:
+
+| alignment | interference across the diameter | the shaft |
+|---|---|---|
+| **seam on seam** (touching) | h_shaft + h_bore, all at one point | can shift into its clearance, away from the bump |
+| **seam opposite seam** | h_shaft + h_bore, one bump at each end | trapped between the two; cannot shift away |
+
+Same total, different contact, so two peaks of different height and
+shape: the sharp -145 and the broad +35. It also fits the loaded run,
+though that is inferred. The off-centre weight pushed the shaft
+sideways, which helps where it can escape and hurts where it cannot, and
+only one peak grew. An oval shaft or bore would also give two peaks 180
+deg apart, but roughly equal ones.
+
+**Fix: force the seam in printing** (user), so it lands somewhere
+harmless, for example into a small notch in the bore and on the shaft,
+or a seam placed off the running faces. The user is trying it first on
+the self-righting module's printed bearings, the next print; the steer
+gets it on its reprint. If both peaks drop, the seams are confirmed.
+
+**Not in the sim, on purpose** (user): the seam can be fixed in printing,
+so the peaks are not modelled at all.
+
+**In the sim: the load line only** (2026-09-30). This is
+`bike.steering.headset_friction_nm` / `_per_n`, the headset under the
+gearbox: a + b x |T|.
+- **The load:** T is the headset's reaction along the steer axis, from a
+  `headset_force` sensor on the steer body. At rest it is 3.1 N axial and
+  0.95 N side, the same side/axial ratio as the bench's 15 deg rig (0.28
+  against tan 15 = 0.27), so the side load is in b implicitly.
+- **The constants:** the four-load fit with the gearbox's running line
+  taken out, (tau - 5.7) / 1.15, per newton along the 15 deg axis.
+  `test_gearbox_friction` checks they give back the bench line at all four
+  loads.
+- **What is left out:** static friction, about 1.5x on the unloaded
+  breakaway, is not modelled. Cost, effects and the tests it moved are in
+  status.md.
+
 ## Outstanding
 
 - **`bike.front_wheel.radius` is still 0.050 (`design`) against the measured
   51.25.** Not changed: it is a physical parameter, so it goes through the
   CLAUDE.md checklist (deploy bundle, LQR fit, policies, tests).
-- Print tolerances, all `GUESS`: bushing bore, end play, spigot fit, axle
-  knurl/press holes, fork cheek clearance. Expect to change them after a test print.
+- Print tolerances still `GUESS`: spigot fit, axle knurl/press holes, fork
+  cheek clearance. Nothing reported against them from the first print.
+- The other XC330 is still id 103: set it to 104 before it joins this bus.
+- **Weighed 2026-09-30: both fork halves + front wheel (axle in) = 86 g.**
+  The headset pieces are not included. The axle is too tight to take out
+  for now, so the halves and the wheel have not been weighed apart.
+  bike_params still carries `front_wheel.mass` 0.060 + `fork_mass` 0.025
+  (`GUESS`, 85 g together, a coincidence). Not changed: it is a physical
+  parameter, so it goes through the CLAUDE.md checklist, and the split
+  between the two is not known yet.
+- **Loaded friction: 182 g off-centre and 282 g balanced done (above).** 72 g and a 0 g repeat done too. No drift in the mean (12.4 both times, `260930-150300_steer_friction_load0_repeat`); the +35 peak came down 31 -> 24. The bench weight has to match
+  the load through the thrust face, not the load on the tyre. On the bike
+  that is the ground force minus the weight of everything that turns
+  (m_r: 86 g + the headset pieces, unweighed). Upside down it is m_r plus
+  what is added. So added = F_front - 2 m_r: 450 - 172 ≈ **280 g**, a
+  little less once the headset is counted. F_front ~450 g is the sim's
+  (1.016 kg, 44% front, with guessed masses). Steps: 0 / 150 / 280 / 450 g
+  added (the last ~1.5x, for bumps), one `steer_friction --tag loadNNN`
+  run each. That gives friction against load, and whether the +35 deg
+  peak is the thrust face (grows with load) or the bore.
 - Mount plate is a placeholder; replace with the fixture or chassis interface.
 - The lower case is solid out to the mount plane; shave by hand as wanted.

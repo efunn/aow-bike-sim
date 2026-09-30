@@ -107,7 +107,10 @@ headset:
   # Printed shaft in a printed sleeve. Both clearances are print properties:
   # GUESS, and the user expects to ream/turn to fit.
   shaft_dia: {value: 0.014, source: design}
-  bore_clearance: {value: 0.0002, source: GUESS (diametral; ream to fit)}
+  # Print-checked 2026-09-30 (ASA, user): fits nicely, no reaming. One tight
+  # spot where the two parts' seams meet -- a reprint would force the seam
+  # to one place with a small notch.
+  bore_clearance: {value: 0.0002, source: print-checked (diametral)}
   # Thrust: the weight on the front wheel goes up the fork into a boss on the
   # block's top, round the shaft, which bears on the lower case's flat
   # underside -- a small annulus, so the rubbing radius stays small. On the
@@ -118,7 +121,11 @@ headset:
   # Headset upper sits on the shaft's END (the step), this far above the
   # sleeve's top face: running end play. Its skirt overlaps the sleeve top
   # and is the lift-off retainer.
-  end_play: {value: 0.0002, source: GUESS (axial; print property)}
+  # Print-checked 2026-09-30 (user): slight axial play with the central
+  # screw fully tight, KEPT on purpose -- the screw bottoms on the step and
+  # cannot back off. Zero or negative play would leave the screw holding the
+  # stack against the bushing, and it would then need threadlock.
+  end_play: {value: 0.0002, source: print-checked (axial; kept, user)}
   # The locating spigot: the shaft's top, stepped in, two flats. Carries the
   # steer torque from upper to lower. Narrower flats (user): 6 across, which
   # leaves 1.2 (min_wall) each side of the screw hole.
