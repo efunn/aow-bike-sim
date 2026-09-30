@@ -1958,6 +1958,17 @@ def build_spec(
         frictionloss=float(p["servos"]["xc330_t181"]["friction_static_nm"])
         * float(bike["steering"]["gear_ratio"]),
     )
+    # The headset's reaction, for the headset friction's load term
+    # (gearbox_friction.attach_steer): a FORCE sensor reads what the chassis
+    # applies to the steer body, in this site's frame -- z along the steer
+    # axis (the thrust face), x/y across it (the bushing). The wheel's and
+    # fork's weight and inertia and the bike's pitch are all in it. Native,
+    # from the cfrc_int the AHRS accelerometer already forces: no measurable
+    # cost (interleaved, 2026-09-30). Invisible (group 5, alpha 0).
+    q_axis = np.zeros(4)
+    mujoco.mju_quatZ2Vec(q_axis, steer_axis)
+    steer.add_site(name="headset_site", pos=-bike["fork_offset"] * offset_dir,
+                   quat=q_axis, group=5, rgba=[0, 0, 0, 0])
     fork_top = -bike["fork_offset"] * offset_dir + 0.10 * steer_axis
     steer.add_geom(
         name="fork",
@@ -2030,6 +2041,10 @@ def build_spec(
         s.type = stype
         s.objtype = mujoco.mjtObj.mjOBJ_JOINT
         s.objname = "steer_joint"
+    s = spec.add_sensor(name="headset_force")
+    s.type = mujoco.mjtSensor.mjSENS_FORCE
+    s.objtype = mujoco.mjtObj.mjOBJ_SITE
+    s.objname = "headset_site"
 
     if hockey:
         _add_hockey(spec, chassis, p)

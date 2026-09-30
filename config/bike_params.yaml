@@ -181,6 +181,30 @@ bike:
     mass: {value: 0.060, source: GUESS}
   steering:
     gear_ratio: {value: 1.0, source: design}  # servo rotation per steer rotation; range is continuous 360°+
+    # HEADSET FRICTION, the printed bushing + thrust face, UNDER the XC330's
+    # gearbox friction (which the joint already has): a + b x |T|, T the
+    # axial load through the thrust face [N]. In the sim T is the headset's
+    # reaction along the steer axis (the `headset_force` sensor); airborne it
+    # reverses and the upper's skirt takes it, hence |T|.
+    # gearbox_friction.attach_steer applies it.
+    #
+    # From steering-design.md "First print", 2026-09-30, running friction
+    # at the output over four thrust loads, 86-368 g along a 15 deg axis:
+    # tau = 7.68 + 0.0518 x grams mN m (rms 0.4). The gearbox's running line
+    # passes 0.15 x load + 5.7 on, so the headset alone is
+    # (tau - 5.7) / 1.15 = 1.72 + 0.0450 x grams, and per NEWTON ALONG THE
+    # AXIS (x cos 15 of the weight): 4.75 mN m/N. At the bike's ~3.5 N the
+    # two together give the bench's 26.6.
+    #
+    # THE PRINTED SEAMS' PEAKS (to 47 mN m, two spots 180 deg apart) ARE NOT
+    # IN THIS, on purpose (user): the seam is fixable in printing. Running
+    # friction only; the static was ~1.5x on the one breakaway sweep (no
+    # load), not modelled. Measured on the first print -- a reprint moves it.
+    # The bushing's SIDE load is in b implicitly: on the bench the weight
+    # hung vertically off a 15 deg axis (side/axial = tan 15 = 0.27), and
+    # the bike at rest has nearly the same ratio (0.88 / 3.19 N = 0.28).
+    headset_friction_nm: {value: 0.00172, source: measured}      # N m, a
+    headset_friction_per_n: {value: 0.00475, source: measured}   # N m per N, b
   ahrs:                                       # SYD Dynamics TM151
     pos: [0.05, 0.0, 0.13]
     mass: {value: 0.012, source: GUESS}
@@ -566,13 +590,10 @@ control:
     # a zero that sits at the boundary is the kind of thing that is free to
     # avoid now and expensive to discover later.
     #
-    # NOT YET TRUE OF THE HARDWARE. It is the orientation the fork clamp will
-    # be built to; the bench shaft is bare and sits wherever it was left. Until
-    # the servo is actually clamped, a bench session wants
-    # `--steer-zero capture`, which calls the current pose zero -- otherwise
-    # every steer number inherits the gap between 180 and wherever the shaft
-    # happens to be. Delete this paragraph once the clamp exists and the angle
-    # has been measured rather than chosen.
+    # NOMINAL. The printed steer (2026-09-30) is assembled straight ahead at
+    # 180. Any offset from it is rigging, which the final build will redo,
+    # so no measured offset belongs here. A session that wants it exact uses
+    # `--steer-zero capture`, which calls the current pose zero.
     steer_zero_deg: 180.0
     cut_roll_deg: 60.0
     # The re-arm pair is control/righting.py's hand-off criterion -- RECOVER_DEG

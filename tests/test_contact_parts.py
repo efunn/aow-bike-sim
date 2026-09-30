@@ -90,8 +90,12 @@ def test_the_split_did_not_move_the_plant_digest():
                           friction block (both XC330s, load-proportional);
                           righting.{arm,wings}.servo_kp/kv 1.62/0.0519 ->
                           1.48/0.0473 (the same derivation with the measured k)
+        8b804e519ba7fe87  2026-09-30  bike.steering.headset_friction_nm /
+                          _per_n: the printed steer's bushing + thrust face,
+                          a + b x front-tyre thrust, from the first print's
+                          friction maps (steering-design.md)
     """
-    assert plant_digest(load_params()) == "9f162dc4727110e2"
+    assert plant_digest(load_params()) == "8b804e519ba7fe87"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

@@ -43,6 +43,16 @@ A loop that never calls `pre_step` keeps the model's build-time value --
 `static_nm`, the no-load static friction (build_model sets it) -- a constant
 approximation, not zero.
 
+THE STEER'S HEADSET (2026-09-30). `attach_steer` adds the printed bushing
+and thrust face under the gearbox: a + b x |T| [N m], T the axial load
+through the headset, read each step from the `headset_force` sensor's z
+(the chassis's force on the steer body along the axis, one step old). The
+joint's limit is then headset + gearbox(tau), and
+with the gearbox passing c of its load on, a motor turning it steadily needs
+(1 + c) x headset + f0 -- the bench's line (bike.steering, bike_params). The
+build-time value and `release()` stay the gearbox's static alone, so a loop
+without the hook (the LQR design) is unchanged. Cost: one sensordata read.
+
 What is NOT modelled (documented, agreed): holding depends on the approach
 direction, the angle and the history (the release sweeps); and the static
 fraction is from a static test, the running one from a slow one.
@@ -117,6 +127,13 @@ class GearboxFriction:
         self._below = None
         self._data = None
         self._t = -1.0
+        self._touch = None      # the steer's headset term: see thrust()
+
+    def thrust(self, adr: int, a: float, b: float) -> None:
+        """Add a load-dependent bearing under the gearbox: a + b x |T|, with
+        T = sensordata[adr] [N], read every step."""
+        self._touch = int(adr)
+        self._ha, self._hb = float(a), float(b)
 
     def reset(self, data) -> None:
         """Bind to `data`, count the friction rows below this dof, and start
@@ -128,6 +145,7 @@ class GearboxFriction:
         self._data = data
         self._qvel = data.qvel
         self._qfa = data.qfrc_actuator
+        self._sd = data.sensordata
         self._t = data.time
 
     def release(self) -> None:
@@ -165,7 +183,11 @@ class GearboxFriction:
         else:
             F = (f0 + c * a) / (1.0 + c)
             self.load = a - F
-        self._fl[self.dof] = self.base + F
+        if self._touch is None:
+            self._fl[self.dof] = self.base + F
+        else:
+            T = self._sd[self._touch]
+            self._fl[self.dof] = self._ha + self._hb * (T if T >= 0.0 else -T) + F
 
     def pre_step(self, data) -> None:
         """For a joint driven by a MuJoCo actuator: the motor torque is the
@@ -188,10 +210,20 @@ def attach(model, params: dict, joint: str, ratio: float = 1.0,
 
 
 def attach_steer(model, params: dict) -> GearboxFriction | None:
-    """The steering servo's friction, referred through the steering gear."""
-    return attach(model, params, "steer_joint",
-                  ratio=float(params["bike"]["steering"]["gear_ratio"]),
-                  holds_load=False)
+    """The steering servo's friction, referred through the steering gear,
+    plus the headset's under it when the model has the `headset_force` sensor
+    and bike.steering carries the headset constants (module docstring)."""
+    st = params["bike"]["steering"]
+    g = attach(model, params, "steer_joint", ratio=float(st["gear_ratio"]),
+               holds_load=False)
+    if g is None or "headset_friction_nm" not in st:
+        return g
+    try:
+        adr = int(model.sensor("headset_force").adr[0]) + 2      # z: along the axis
+    except KeyError:
+        return g
+    g.thrust(adr, float(st["headset_friction_nm"]), float(st["headset_friction_per_n"]))
+    return g
 
 
 def attach_native(model, params: dict) -> list[GearboxFriction]:

@@ -161,3 +161,49 @@ def test_bearing_friction_stays_under_the_gearbox(params):
     d.ctrl[0] = 0.1
     _run(m, d, [fr], 0.01)
     assert m.dof_frictionloss[0] > 0.02 + f0
+
+
+def test_the_headset_term_reproduces_the_bench_line(params):
+    """bike.steering's headset constants, under the gearbox's running line,
+    give back the steer bench's fit (steering-design.md, 2026-09-30): a motor
+    turning the headset steadily needs (1 + c) x headset + f0, and at 86-368 g
+    along the 15 deg axis that is 7.68 + 0.0518 x grams mN m, rms 0.4."""
+    st = params["bike"]["steering"]
+    c = gf.constants(params)
+    cos = np.cos(np.radians(params["bike"]["rake_deg"]))
+    for grams in (86, 158, 268, 368):
+        T = grams * 1e-3 * G * cos
+        H = st["headset_friction_nm"] + st["headset_friction_per_n"] * T
+        tau = (1 + c["running_frac"]) * H + c["running_nm"]
+        assert tau * 1000 == pytest.approx(7.68 + 0.0518 * grams, abs=0.5), grams
+
+
+def test_the_steer_reads_the_headset_load(params):
+    """On the full bike the steer's limit is the gearbox's plus a + b|T|, T
+    the headset_force sensor along the axis -- the same step's limit with the
+    headset switched off differs by exactly that -- and at rest T is the
+    front tyre's share of the weight along the axis, less what turns."""
+    m = build_model(params)
+    d = mujoco.MjData(m)
+    st = gf.attach_steer(m, params)
+    assert st._touch is not None
+    st.reset(d)
+    mujoco.mj_forward(m, d)
+    for _ in range(int(0.1 / m.opt.timestep)):
+        st.pre_step(d)
+        mujoco.mj_step(m, d)
+    T = float(d.sensor("headset_force").data[2])
+    W = float(m.body_subtreemass[0]) * G
+    turning = float(m.body_subtreemass[m.body("steer").id]) * G
+    cos = np.cos(np.radians(params["bike"]["rake_deg"]))
+    assert 0.3 * W * cos - turning < abs(T) < 0.6 * W * cos - turning
+    st.update(d, 0.0)
+    with_headset = float(m.dof_frictionloss[st.dof])
+    adr, st._touch = st._touch, None
+    st.update(d, 0.0)
+    without = float(m.dof_frictionloss[st.dof])
+    st._touch = adr
+    s = params["bike"]["steering"]
+    assert with_headset - without == pytest.approx(
+        s["headset_friction_nm"] + s["headset_friction_per_n"] * abs(T))
+    assert without == pytest.approx(st.base + st.s0 / (1 - st.sc))   # at rest, no torque

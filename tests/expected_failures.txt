@@ -128,6 +128,13 @@
 #     0 and 4 ms of steer delay.
 tests/test_drive.py::test_command_heading[-0.5-90.0-5.0]   # 2026-08-25 analytic LQR: falls in the turn (reverse)
 tests/test_drive.py::test_reverse_circle_tracks            # 2026-09-22 crawl-state LQR: falls mid-lap in reverse (err 0.064)
+# 2026-09-30 HEADSET FRICTION (bike.steering.headset_friction_*, the printed
+# steer's bushing: ~16 mN m under the gearbox at rest, against 0 before).
+# The fast reverse turn joins the slow one: -1.2 m/s now falls in the turn
+# (max roll 180). Green with the headset constants removed. The LQR is the
+# reference, and reverse is already where it breaks; the knobs are the ones
+# CLAUDE.md names (q_steer, q_roll_rate), not tried.
+tests/test_drive.py::test_command_heading[-1.2-90.0-6.0]   # 2026-09-30 headset friction: fast reverse turn falls
 
 # ---------------------------------------------------------------------------
 # THE STEER SERVO AS THE FIRMWARE RUNS IT, no cases now. Registered 2026-09-21

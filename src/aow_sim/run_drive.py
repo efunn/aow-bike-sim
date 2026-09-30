@@ -581,6 +581,11 @@ def main() -> None:
                          "Moves plant_digest, so a policy loaded here warns "
                          "that it trained on a different bike, which it did; "
                          "the analytic LQR is re-designed for the new plant")
+    ap.add_argument("--no-headset", action="store_true",
+                    help="drop the steer's headset friction "
+                         "(bike.steering.headset_friction_*) in memory, for an "
+                         "A/B against the plant without it; the gearbox's "
+                         "friction stays. Moves plant_digest")
     args = ap.parse_args()
     if args.ahrs_gate is not None:
         from . import sim_ahrs
@@ -591,6 +596,11 @@ def main() -> None:
               f"{args.wheelbase * 1000:.0f} mm (in memory; chassis CoM held)")
         params = {**params, "bike": {**params["bike"],
                                      "wheelbase": float(args.wheelbase)}}
+    if args.no_headset:
+        print("HEADSET FRICTION off (in memory); the gearbox's stays")
+        steering = {k: v for k, v in params["bike"]["steering"].items()
+                    if not k.startswith("headset_friction")}
+        params = {**params, "bike": {**params["bike"], "steering": steering}}
     # Compile the spare floors so the spawn dial has something to switch to.
     # In-memory only -- `bike_params.yaml` is untouched, so neither digest
     # moves. The extras are inert until `activate_floor` picks one, and the
