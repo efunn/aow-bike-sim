@@ -58,6 +58,14 @@ class MLPPolicy:
         unpacks three. Mirrors VecNormalize +
         the SB3 policy: normalize+clip obs, MLP forward, deterministic mean,
         clip to the action box, then scale to physical units."""
+        return scale_action(np.clip(self.mean(obs), -1.0, 1.0), self.bounds)
+
+    def mean(self, obs) -> np.ndarray:
+        """The network's deterministic mean BEFORE the clip to [-1, 1], in
+        units of each channel's bound. `action` is exactly this, clipped and
+        scaled. Kept separate because SB3's Gaussian is unsquashed, so the
+        mean can sit well past the bound and the clip hides by how much --
+        `analysis/chatter.py` reports it."""
         obs = np.asarray(obs, np.float64)
         if obs.shape[0] != self.obs_dim:
             raise ValueError(
@@ -69,8 +77,7 @@ class MLPPolicy:
         for W, b in self.layers[:-1]:
             x = self.activation(W @ x + b)
         W, b = self.layers[-1]
-        mean = np.clip(W @ x + b, -1.0, 1.0)
-        return scale_action(mean, self.bounds)
+        return W @ x + b
 
 
 def load_policy_npz(path: Path | str) -> MLPPolicy:

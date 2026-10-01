@@ -24,6 +24,11 @@ bound. A policy can have low per-step change while sitting saturated (smooth
 but maxed out), and high per-step change while never reaching a bound, so
 neither number substitutes for the other.
 
+THE PRE-CLIP MEAN (added 2026-10-01) says WHY a channel is pinned: SB3's
+Gaussian is unsquashed, so the network's mean can sit at 2-3x the bound and the
+clip hides it. Past the bound by that much, the deployed action is the sign of
+the mean. `MLPPolicy.mean` is the same forward pass as `action`, unclipped.
+
 SIGN FLIPS AND THE ACHIEVED JOINT RATE were added 2026-09-01, because
 saturation alone reads the same for a channel held at +1 all episode and a
 channel alternating +1/-1 every other step. Every general policy does the
@@ -201,11 +206,12 @@ def rollout_grid(pol, env, cmds, params):
     is unchanged.
     """
     scale = act_scale(pol)
-    acts, rates = [], []
+    acts, rates, mus = [], [], []
 
     def act(obs):
         a = np.asarray(pol.action(obs), float) / scale
         acts.append(a)
+        mus.append(pol.mean(obs))
         rates.append(float(env.data.qvel[env._sd]))
         return a[:env.action_space.shape[0]]
 
@@ -242,6 +248,14 @@ def rollout_grid(pol, env, cmds, params):
     m["ctrl_dt"] = float(env.ctrl_dt)
     m["steer_rate_med_frac"] = float(np.median(r) / no_load)
     m["steer_rate_p95_frac"] = float(np.percentile(r, 95) / no_load)
+    # The network's mean BEFORE the clip, in bound units: how far past the
+    # bound a pinned channel is being pushed. Clipped at exactly 1 it would be
+    # a coin-flip away from leaving the bound; at 2 no small change in the
+    # observation moves it.
+    mu = np.abs(np.array(mus))
+    m["mu_over_1"] = (mu > 1.0).mean(0)
+    m["mu_over_2"] = (mu > 2.0).mean(0)
+    m["mu_p90"] = np.percentile(mu, 90, axis=0)
     # Per-episode slices, so a per-step difference never straddles a reset.
     i, per = 0, {}
     for r in rows:
@@ -439,6 +453,22 @@ def main():
         sat = np.abs(A) > 0.98
         print(f"{k:{w}}" + cells(sat.mean(0), ".1%")
               + f"{sat.any(1).mean():>9.1%}")
+
+    # WHY A CHANNEL IS PINNED. SB3's Gaussian is unsquashed and the action is
+    # clipped, so the network's mean can sit past the bound and the clip hides
+    # it. A mean just past 1 leaves the bound on a small change in the
+    # observation; a mean at 2-3 does not, and the deployed action becomes the
+    # SIGN of the mean -- bang-bang. The saturation table above cannot tell
+    # these apart.
+    print("\nnetwork mean BEFORE the clip, in bound units: "
+          "% of steps |mu| > 1  /  |mu| > 2  /  p90 |mu|")
+    print(f"{'policy':{w}}" + "".join(f"{c:>20}" for c in CHANNELS))
+    for k, (m, *_) in out.items():
+        n = len(m["mu_over_1"])
+        print(f"{k:{w}}" + "".join(
+            f"{m['mu_over_1'][j]:>8.0%}{m['mu_over_2'][j]:>6.0%}"
+            f"{m['mu_p90'][j]:>6.2f}" if j < n else f"{'-':>20}"
+            for j in range(len(CHANNELS))))
 
     # SATURATION AND CHATTER ARE DIFFERENT FAILURES and the tables above cannot
     # separate them: a channel pinned to +1 for a whole episode and a channel

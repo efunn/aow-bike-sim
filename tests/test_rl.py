@@ -49,6 +49,17 @@ def test_numpy_policy_forward_roundtrips():
     expect = scale_action(np.clip(W1 @ np.tanh(W0 @ x + b0) + b1, -1, 1), bounds)
     assert pol.action(obs) == pytest.approx(expect, abs=1e-6)
     assert pol.act_dim == ACT_DIM
+    # `mean` is the same forward pass WITHOUT the clip; `action` is exactly it
+    # clipped and scaled. Weights large enough that a channel leaves [-1, 1].
+    W1 = W1 * 200
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "pol.npz"
+        save_policy_npz(p, [(W0, b0), (W1, b1)], "tanh", mean, var, bounds)
+        pol = load_policy_npz(p)
+    mu = pol.mean(obs)
+    assert mu == pytest.approx(W1 @ np.tanh(W0 @ x + b0) + b1, rel=1e-6)  # npz is float32
+    assert np.any(np.abs(mu) > 1.0), "nothing past the bound -- test is vacuous"
+    assert pol.action(obs) == scale_action(np.clip(mu, -1, 1), pol.bounds)
 
 
 def test_env_reset_step():
