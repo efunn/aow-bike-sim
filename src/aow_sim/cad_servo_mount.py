@@ -517,6 +517,15 @@ def lint_fs(text: str) -> None:
         if w in FS_RESERVED:
             ln = text.count("\n", 0, m.start()) + 1
             raise SystemExit(f"generated FeatureScript line {ln}: {w!r} is a reserved word")
+    # ...nor a map key READ as one: `BK.switch` parsed as the keyword and cost
+    # a billed call on 2026-09-30, past the check above, which only sees names
+    # being declared. Comments stripped first, so prose like "e.g.in" is safe.
+    body = _strip_comments(text)
+    for m in re.finditer(r"(?<=\w)\.(\w+)\b", body):   # lookbehind: chains like a.b.box
+        if m.group(1) in FS_RESERVED:
+            ln = body.count("\n", 0, m.start()) + 1
+            raise SystemExit(f"generated FeatureScript (comments stripped) line {ln}: "
+                             f".{m.group(1)} reads a reserved word as a map key")
     # Every dialog default inside its own bounds. An out-of-range default
     # makes the WHOLE feature fail to compile, which --check cannot see (it
     # drops the UI layer): a grip default of 11.5 against a max of 10 took
