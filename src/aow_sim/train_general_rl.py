@@ -34,6 +34,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 
 from .build_model import load_params
 from .params import params_digest, plant_digest
+from .smooth_ppo import SmoothPPO, parse_smooth
 from .control.balance import extract_state
 from .control.flick import MOVES_DIR, reserve_move_name
 from .control.general_env import GeneralEnv, _load_rl_config
@@ -844,6 +845,10 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
     trained = {"algo": a["algorithm"], "timesteps": int(total),
                "net_arch": list(a["net_arch"]),
                "export_max_diff": float(err), "metrics": metrics}
+    smooth = parse_smooth(a.get("smooth"))
+    if any(smooth.values()):
+        # The loss it trained under; nothing in the weights records it.
+        trained["smooth"] = smooth
     if source:
         trained["exported_from"] = source
     doc = {"name": name, "type": "rl", "kind": "general",
@@ -1100,16 +1105,27 @@ def main():
     venv = _resume_vecnormalize(venv, args.resume, last_ckpt, vn_path)
 
     policy_kwargs = dict(net_arch=list(a["net_arch"]), activation_fn=torch.nn.Tanh)
+    # Smoothness terms on the policy mean (smooth_ppo.py). Stock PPO unless a
+    # weight is set, so every config without `algo.smooth` trains exactly as
+    # before -- not merely equivalently.
+    smooth = parse_smooth(a.get("smooth"))
+    algo_cls, extra = ((SmoothPPO, {"smooth": smooth}) if any(smooth.values())
+                       else (PPO, {}))
+    if any(smooth.values()):
+        print(f"smoothness loss: {smooth}")
     if args.resume and last_ckpt:
-        model = PPO.load(str(last_ckpt[-1]), env=venv)
+        model = algo_cls.load(str(last_ckpt[-1]), env=venv)
+        if extra:
+            model.smooth = smooth        # the config wins over the checkpoint
         print(f"resumed from {last_ckpt[-1].name}")
     else:
-        model = PPO("MlpPolicy", venv, learning_rate=a["learning_rate"],
-                    n_steps=a["n_steps"], batch_size=a["batch_size"],
-                    n_epochs=a["n_epochs"], gamma=a["gamma"],
-                    gae_lambda=a["gae_lambda"], clip_range=a["clip_range"],
-                    ent_coef=a["ent_coef"], policy_kwargs=policy_kwargs,
-                    seed=a["seed"], tensorboard_log=str(RUN_DIR), verbose=1)
+        model = algo_cls("MlpPolicy", venv, learning_rate=a["learning_rate"],
+                         n_steps=a["n_steps"], batch_size=a["batch_size"],
+                         n_epochs=a["n_epochs"], gamma=a["gamma"],
+                         gae_lambda=a["gae_lambda"], clip_range=a["clip_range"],
+                         ent_coef=a["ent_coef"], policy_kwargs=policy_kwargs,
+                         seed=a["seed"], tensorboard_log=str(RUN_DIR), verbose=1,
+                         **extra)
 
     cb = [CheckpointCallback(save_freq=max(1, 100_000 // a["n_envs"]),
                              save_path=str(ckpt), name_prefix="ppo",

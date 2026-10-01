@@ -1,0 +1,15 @@
+# Smoothness loss on the policy mean: a base arm and three loss arms, one seed
+# each, in series. One job per line, run in file order by:
+#
+#   ./scripts/rl.sh queue general config/queue_smooth_loss.txt
+#
+# Runs land in runs/queue_smooth_loss/<export-name>. Why these arms and
+# weights: docs/plans/policy-smoothness-losses.md section 5, and the headers of
+# the four configs. The base runs first, so a queue cut short still leaves the
+# comparison point.
+#
+# config                                  seed  export-name
+config/rl_general_smooth_base.yaml        1     general_rl_smooth_base
+config/rl_general_smooth_bound.yaml       1     general_rl_smooth_bound
+config/rl_general_smooth_temporal.yaml    1     general_rl_smooth_temporal
+config/rl_general_smooth_second.yaml      1     general_rl_smooth_second

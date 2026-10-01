@@ -130,6 +130,7 @@ markers = [
     "policy: replays a trained export from moves/. All of these go provisional whenever the plant moves; analysis/chatter.py is the fuller check.",
     "deploy: pins deploy/bundle.npz against the params digest. This is step 1 of the bike_params checklist in CLAUDE.md.",
     "boundary: the onboard import boundary -- the Pi installs no mujoco, scipy or torch. Run after touching imports under hw/.",
+    "trainer: SmoothPPO (src/aow_sim/smooth_ppo.py), the smoothness terms on the policy mean. Its train() is a COPY of stable-baselines3's, so run this after touching it OR upgrading SB3: with every weight at 0 an update must stay bit-identical to stock PPO.",
     "pure: builds no model and returns in well under a second. The inner loop while editing control logic.",
     "cad: the CAD generators (src/aow_sim/cad_*.py) checked without Onshape -- layouts, stacks, clearances, and that the generated FeatureScript lints. Builds no sim model. Run after touching a cad_* module or its config/*_cad.yaml.",
     "analysis: a study script under analysis/ checked against a synthetic case with a known answer. Run after touching the script it imports.",
