@@ -1,0 +1,140 @@
+# The whole bike in one Part Studio (`aow-bike` in Onshape): the three
+# modules placed, and the parts that tie them together. Read by
+# aow_sim.cad_bike. Millimetres, BIKE FRAME: origin on the rear axle, +Y
+# forward, +X right, +Z up (the floor at -51.2).
+#
+# CAD ONLY. Nothing here reaches the simulator: bike_params.yaml keeps its
+# own wheelbase (200) and payload layout until the CAD is settled (user,
+# 2026-09-30: "Nothing is changing in the simulation, we are just doing CAD
+# right now. The wheelbase can be freely tuned right now in CAD").
+
+placement:
+  # 250 (2026-09-30, second layout), was 300. With knuckle R behind knuckle
+  # L, the narrow bridge and the central upper-case joint, `cad_bike --fit 2`
+  # (traces/bike_cad/fit2_righting.txt) puts the righting's rod >= 157.5
+  # ahead of the rear axle (it tucks under the drive's case sides) and the
+  # front axle >= 85 ahead of the rod (2.5 mm grid, zero margin). Was 190 and
+  # 100 before those changes.
+  wheelbase: {value: 250.0, source: design}
+  # The wing rod's station, forward of the rear axle. Its height comes from
+  # the righting module (rod 41.2 off the floor).
+  righting_y: {value: 160.0, source: design}
+
+chassis:
+  # The deck: the righting's chassis-plate placeholder (its joints already
+  # cut) extended back to a wedge under the drive's fixture block and forward
+  # under the steering's mount plate.
+  deck_half: {value: 25.0, source: design}      # in front of the righting's plate
+  # The wedge between the deck and the drive block's underside: as wide as
+  # the block, between the case sides' tabs.
+  wedge_half: {value: 16.0, source: design}
+  # The steering plate grows above the upper case to take the roll cage's
+  # front foot: one 6-32, head on the plate's front face.
+  steer_ext: {value: 14.0, source: design}
+  steer_ext_half: {value: 10.0, source: design}
+  # Four posts off the drive block's front face up to the electronics
+  # carrier, printed with the chassis (they lean 45 deg as it prints, deck
+  # down). Drive frame: x, and z along the face; one 6-32 each from the
+  # carrier's top into a nut in the post.
+  post_dia: {value: 9.0, source: design}
+  # rows of two (+-x) on the face (|x| <= 16, |z| <= 29.75). ONE row since
+  # the U2D2 and AHRS moved to the carrier's lower edge (2026-09-30): a lower
+  # row would land inside them. 24.0 had put a cradle rail tangent to a boss.
+  post_at: {value: [[11.0, 24.5]], source: design}
+
+battery:
+  # 3S pack, user 2026-09-30: 58 x 30 x 22 mm, 76 g. Stood on its 58 x 22
+  # side, 30 along the drive's +Z, so it sits between the drive pulleys
+  # (+-11 against their inner faces at +-17).
+  size: {value: [22.0, 58.0, 30.0], source: measured}   # drive frame x, y, z
+  mass: {value: 76.0, source: measured}                 # g
+  # The tray, in the DRIVE module's frame: on the case pair's back (+Z),
+  # its tongue screwed onto the drive block's top face.
+  gap: {value: 0.0, source: design}           # floor ON the case sides' top edges (0.5 printed in mid-air)
+  floor: {value: 2.4, source: design}
+  wall: {value: 1.6, source: design}
+  clearance: {value: 0.3, source: design}     # per side, round the pack
+  wall_height: {value: 16.0, source: design}  # up the pack's 30
+  y0: {value: 58.0, source: design}           # pack's rear end, along the belt
+  joint_x: {value: 0.0, source: design}       # tongue screw, on the centreline
+  strap: {value: [20.0, 2.5], source: design} # slots in the walls: length, height
+
+electronics:
+  # LEANING ON THE DRIVE'S FRONT FACE (user, 2026-09-30): a carrier parallel
+  # to the drive block's 45 deg face, boards facing forward-up. DRIVE frame:
+  # x across, y out of the face (the block's front, y 142.9), z along the
+  # face, up-back. Positions on the carrier are `u`, up it from its lower
+  # edge; `edge` places the whole package along the face (z = edge + u).
+  #
+  # Top: the Pi 3B+, its USB edge DOWN the slope. Two cables in the LEFT
+  # stack (user): USB-A plugs 17.5 long x 15 wide, then a 6 mm bundle with a
+  # 6 mm hard stub, then a 6 mm-radius bend. They U-turn round the carrier's
+  # lower edge to the U2D2 and the AHRS, whose USB-C ends both face that edge,
+  # side by side. Above them the posts, then the power board and the switch
+  # ("if they're hanging up high for now that's fine", user).
+  #
+  # Two widths: below `wide_u` as narrow as the Pi, since that part sits
+  # inside the wings' span and a wing swung inboard (the far one, ~14 deg)
+  # comes to |x| ~33-41 there; above it, behind the wings, +-38.
+  edge: {value: -33.0, source: design}       # the lower edge, along the face
+  carrier: {value: [76.0, 103.0, 3.0], source: design}  # x (the wide part), u, thickness
+  narrow_half: {value: 28.0, source: design}
+  wide_u: {value: 52.0, source: design}
+  gap: {value: 19.0, source: design}         # face -> carrier underside: U2D2 14.9 + 4
+  boss: {value: 4.6, source: design}         # under each post screw: the joint plate
+  pi:
+    board: {value: [56.0, 85.0, 1.4], source: datasheet}   # Pi 3B+: x, along the face, thick
+    holes: {value: [49.0, 58.0], source: datasheet}        # M2.5, 3.5 in from the edges
+    hole_inset: {value: 3.5, source: datasheet}
+    standoff: {value: 6.0, source: design}    # bought M2.5 standoffs
+    u_usb: {value: 5.0, source: design}       # the board's USB edge (the ports stand 2 proud of it)
+    usb_block: {value: [53.0, 17.5, 16.0], source: datasheet}  # USB + Ethernet: x, along, height
+  usb:
+    # the two plugs in the left stack, and their cables (user, 2026-09-30)
+    x0: {value: -28.5, source: GUESS}         # the stack's left side, on the board: its plugs in line
+                                              # with the U2D2's connector, so that cable drops straight
+    plug: {value: [15.0, 17.5], source: measured}   # wide, long (both plugs, stacked)
+    stub: {value: [6.0, 6.0], source: measured}     # bundle dia, hard length
+    bend_r: {value: 6.0, source: measured}          # bend radius (centreline), inside the 6 past the stub
+    # the devices' end: a USB-C plug body and the same hard stub behind it
+    c_plug: {value: [12.0, 6.5, 15.0], source: GUESS}   # wide, thick, long
+    c_stub: {value: 6.0, source: GUESS}
+    # the upper plug's cable runs one bundle (+0.5) outside the lower one's
+    # in the turn, and shifts across on its way down to reach the AHRS
+    nest: {value: 6.5, source: design}
+    shift: {value: 8.0, source: design}
+  # Underside: size [x, along u, height off the carrier], low corner (x0, u0).
+  # U2D2 and AHRS side by side, USB-C ends at u0, facing the lower edge.
+  u2d2: {value: {size: [18.0, 48.0, 14.9], x0: -30.0, u0: 1.0}, source: measured}
+  ahrs: {value: {size: [34.0, 40.0, 12.6], x0: -10.0, u0: 1.0}, source: datasheet}   # ~7 right of centre, beside the U2D2
+  pdb: {value: {size: [30.0, 30.0, 14.9], x0: 6.0, u0: 64.0}, source: GUESS}   # user: "kind of fake"; high for now
+  rail: {value: [1.2, 3.0, 0.3], source: design}   # cradle walls: thick, tall, clearance
+  # The power switch, user 2026-09-30: 13 x 19.2-19.6 cutout, panel
+  # 0.75-3 mm, 18.5 behind the panel. In a tab off the carrier's left edge,
+  # facing -x; high for now.
+  switch:
+    cutout: {value: [13.0, 19.4], source: measured}   # out of the face, along it
+    panel: {value: 2.0, source: design}
+    depth: {value: 18.5, source: measured}
+    bezel: {value: [15.0, 21.5, 2.0], source: GUESS}  # out, along, proud
+    tab_x: {value: -38.0, source: design}    # the tab's outer face
+    u: {value: 66.0, source: design}         # cutout centre
+  # The roll cage's rear foot lands on the carrier's top here, over a boss
+  # underneath for the nut. With the devices along the lower edge only the
+  # upper pair of posts fits; the cage foot is the carrier's third support.
+  cage_u: {value: 97.0, source: design}          # past the Pi's upper end (90): the strut rises from it
+
+rollcage:
+  # A spine in the bike's mid-plane, printed on its side: a foot on the
+  # carrier's upper end, a level rail over the electronics and the battery,
+  # then down the slope to a foot behind the steering plate's extension.
+  # Ribs across the level part, printed flat.
+  spine: {value: [10.0, 8.0], source: design}    # x thickness, profile width
+  foot_half: {value: 5.0, source: design}        # the feet's x half-width: the spine's, or its
+                                                 # sides overhang the feet as printed
+  clearance: {value: 8.0, source: design}        # rail underside over the electronics' top
+  rail_y0: {value: -5.0, source: design}         # the rail's rear end, over the battery
+  ribs_y: {value: [0.0, 40.0, 80.0], source: design}
+  rib: {value: [6.0, 4.6], source: design}       # along y, radial (the joint plate at the crown)
+  rib_radius: {value: 60.0, source: design}      # centreline
+  rib_half_angle: {value: 50.0, source: design}  # deg each side of the top
