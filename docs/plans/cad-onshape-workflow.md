@@ -242,6 +242,77 @@ names and out-of-range dialog defaults before anything is sent. Classified
 call by call, the session that built the fixture spent 97 calls, about 45 of
 them on what these now avoid; CLAUDE.md carries the table.
 
+### Modules, the whole bike, and folding hand edits in (2026-09-30)
+
+**The layout.** Each module (`aow-bike-drive`, `-steering`, `-righting`)
+has its own generator, Feature Studio and Part Studio. The whole bike
+(`aow-bike-whole`, `aow_sim.cad_bike`) merges the modules' geometry layers
+and rebuilds them from the same local config and code. It does NOT read the
+module tabs in Onshape. So:
+
+- Work on a module alone, as long as it takes:
+  `cad_<module> --check --push <module>_features`. `-whole` does not move.
+- Pull settled modules into the bike when you choose:
+  `cad_bike --check --push bike_features --shot` (1 check, 1 push, 1
+  render). Nothing pushes `-whole` automatically, on purpose: an all-at-once
+  push per edit costs calls for every module and grows with the machine.
+- **What reaches `-whole` is generated geometry only.** Hand features in a
+  module's Part Studio, and its dialog choices, stay in that tab. `-whole`
+  fixes its own options: steering SCREWS / CROSS, drive shift 0, the
+  righting with its servo envelope.
+
+**Folding hand edits into a generator** -- the finishing pass, per module:
+
+1. **Clear out the exploratory edits** in the module's Part Studio, in the
+   browser (free). Anything after the generated feature that is not wanted
+   in the final goes.
+2. **Model the real finishing by hand** after the generated feature:
+   chamfers, fillets, sketch + extrude cuts or pads. Edit only ONE side of
+   an L/R pair if that is quicker; the generator applies it to both.
+3. **Read it back:** `python -m aow_sim.cad_hand_edits <tab>`, TWO calls
+   whatever the tree's size. It writes
+   `traces/hand_edits/<tab>_hand_edits.txt`. Each hand feature comes back
+   with:
+   - its type and dialog values (width, radius, depth, end type, add or
+     remove);
+   - its sketch geometry, with the dimensions;
+   - the faces it made: which part, and where, in the module frame.
+
+   The tree alone gives the picks only as Onshape ids, which say nothing
+   about where; the eval is what pins each edit to a part and an edge. A
+   feature whose faces a later one cut away shows values but no faces:
+   read its picks from `<tab>_features.json`, or ask.
+4. **Say what each one is for,** where it is not obvious from the table.
+   The readback shows geometry, not intent. For example, the steering's
+   Φ9.5 cut through the mount plate's bench tab is screwdriver access to
+   the lower case's joint. It is moot in `-whole`, where the tab is trimmed.
+5. **Claude encodes them** in the generator:
+   - `opChamfer` / `opFillet` on edges found by POINTS computed in
+     `layout()`, from the same numbers the parts are built from;
+   - sketch features as profiles in `layout()`.
+
+   Never use the picked ids: they belong to that Part Studio's history and
+   break on the next regeneration. Points follow a dimension change.
+   Each edit goes on both twins, and `--check` confirms their volumes still
+   match.
+6. **Check, then push the module** (1 + 1 calls). Then delete the hand
+   features from the tab, which now duplicate the generated ones. Check
+   the render against what you modelled.
+7. **Roll into `-whole`** when the module is settled (step "Pull" above).
+
+Hand edits made directly in `-whole` (the last-step option) pick edges of
+generated geometry. A later `cad_bike --push` that changes a part's shape
+can orphan them, exactly as in a module tab. So that is a true final step;
+anything that should survive another design round goes through the module.
+
+What the readback found in `aow-bike-steering` on 2026-09-30 (exploratory,
+NOT to encode as is, user):
+- 24 hand features: 14 chamfers, 5 fillets, 2 sketches, 3 extrudes;
+- the fork chamfers on fork L only;
+- a Φ23 x 2 mm recess plus a pad on the lower case's underside.
+
+The full table is `traces/hand_edits/steering_hand_edits.txt`.
+
 ## The belts, and what "symmetric" costs
 
 The belts were four clearance PLANES and are now also eight SOLIDS. A plane has

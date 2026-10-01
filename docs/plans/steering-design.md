@@ -334,6 +334,12 @@ gearbox: a + b x |T|.
 
 ## Outstanding
 
+- **The hand features in `aow-bike-steering` are exploratory** (user,
+  2026-09-30): 24 after `AOW steering`, read back into
+  `traces/hand_edits/steering_hand_edits.txt`. They will be cleared and
+  redone, then folded into `cad_steering` by the workflow in
+  `cad-onshape-workflow.md`. The Φ9.5 cut through the mount plate's bench
+  tab is screwdriver access to the lower case's joint.
 - **`bike.front_wheel.radius` is still 0.050 (`design`) against the measured
   51.25.** Not changed: it is a physical parameter, so it goes through the
   CLAUDE.md checklist (deploy bundle, LQR fit, policies, tests).
