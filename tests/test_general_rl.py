@@ -237,6 +237,79 @@ def test_per_channel_w_smooth_reduces_to_the_scalar():
     assert np.all(diff_priced <= scalar + 1e-12)
 
 
+def _copper_run(w_copper, n=40, **rand_over):
+    """Random actions from one seed; per step (obs, reward, info, idle, env),
+    where idle is the w_hub_idle fade at THAT step's state (env is the one
+    live object, so its state is only the final step's).
+    w_copper None = the key absent, as in every config predating it."""
+    from aow_sim.control.balance import extract_state
+    pytest.importorskip("gymnasium")
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    cfg = _load_rl_config()
+    rw = dict(cfg["reward"])
+    if w_copper is not None:
+        rw["w_copper"] = w_copper
+    cfg = {**cfg, "env": {**cfg["env"], "ball_prob": 0.0}, "reward": rw,
+           "randomization": {**cfg["randomization"], "enabled": False,
+                             **rand_over}}
+    env = GeneralEnv(rl_cfg=cfg, seed=0)
+    env.reset(seed=11)
+    env.set_difficulty(1.0)
+    acts = np.random.default_rng(0).uniform(-1, 1, (n, 3))
+    out = []
+    for a in acts:
+        o, r, term, trunc, info = env.step(a)
+        st = extract_state(env.data, env._p0)
+        out.append((o, r, info, env._idle_frac(np.hypot(st.v_lon, st.v_lat)),
+                    env))
+        if term or trunc:
+            break
+    return out
+
+
+def test_w_copper_zero_is_the_absent_key():
+    """0.0 must reproduce a config without the key EXACTLY -- nothing is even
+    accumulated then -- or every existing config silently moves."""
+    absent, zero = _copper_run(None), _copper_run(0.0)
+    assert len(absent) == len(zero)
+    for (o0, r0, i0, _, _), (o1, r1, i1, _, _) in zip(absent, zero):
+        assert np.array_equal(o0, o1)
+        assert r1 == r0
+        assert i0["copper"] == i1["copper"] == 0.0
+
+
+def test_w_copper_prices_the_reward_and_nothing_else():
+    """The term may only move the REWARD: physics and observations are
+    bit-identical, and the reward drops by exactly w * copper * idle_frac,
+    the same fade w_hub_idle uses. copper is a sum of three squared stall
+    fractions on force-limited actuators, so it lies in (0, 3]."""
+    w = 2.0
+    base, priced = _copper_run(None), _copper_run(w)
+    assert len(base) == len(priced)
+    for (o0, r0, _, _, _), (o1, r1, info, idle, _) in zip(base, priced):
+        assert np.array_equal(o0, o1)
+        expect = w * info["copper"] * idle
+        assert r0 - r1 == pytest.approx(expect, rel=1e-12, abs=1e-12)
+        assert 0.0 < info["copper"] <= 3.0 + 1e-9
+
+
+def test_w_copper_normalises_by_the_nominal_stall_torque():
+    """actuator_frac rescales forcerange per episode (battery voltage). The
+    stall scale must stay NOMINAL, or a weak-battery episode would price the
+    same torque as cheaper."""
+    run = _copper_run(1.0, n=1, enabled=True, actuator_frac=0.15)
+    env = run[0][4]
+    ids = env._cu_ids
+    nominal = 1.0 / env._rand._forcerange0[ids, 1]
+    moved = False
+    for seed in range(4):
+        env.reset(seed=seed)
+        moved |= not np.allclose(env.model.actuator_forcerange[ids, 1],
+                                 env._rand._forcerange0[ids, 1])
+        assert np.array_equal(env._cu_inv_stall, nominal)
+    assert moved, "actuator_frac never moved forcerange -- the test is vacuous"
+
+
 def test_per_channel_w_smooth_rejects_a_short_list():
     """A 2-list against 3 channels would quietly leave `diff` unpriced --
     which is exactly the experiment being run, so it must never happen by

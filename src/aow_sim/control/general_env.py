@@ -302,6 +302,35 @@ class GeneralEnv(gym.Env):
         #                (rim travel 2.27 -> 6.76 m).
         self.hub_idle_v_scale = float(
             self.rw.get("hub_idle_v_scale", self.sigma_v))
+        # COPPER LOSS, priced at the physics step. sum_i (tau_i / tau_stall_i)^2
+        # over steer, drive_a and drive_b, averaged over the substeps of one
+        # policy step: I is proportional to tau, so this is each motor's I^2 R
+        # as a fraction of its stall dissipation (1.0 = one motor stalled).
+        # At these speeds copper loss is most of a Dynamixel's draw.
+        #
+        # Why at the PHYSICS rate rather than on the action: w_smooth sees
+        # |a_t - a_{t-1}| at 50 Hz and cannot see what the servo does between
+        # policy steps. Measured at hold (2026-10-01, MuJoCo actuator force x
+        # velocity): the RL policies put 1.7-5.3 W into the actuators, more
+        # than half of it in fluctuation faster than ~10 Hz; the analytic LQR
+        # holds with 0.002 W.
+        #
+        # tau_stall is the NOMINAL forcerange, captured before actuator_frac
+        # rescales it per episode -- a weak-battery episode must not make the
+        # same torque look cheaper. It is the stall torque with or without the
+        # detailed drivetrain (whose drive actuators are not force-limited but
+        # keep the range).
+        #
+        # Faded by `_idle_frac`, the same fade and the same `hub_idle_v_scale`
+        # knob as w_hub_idle: full charge while genuinely still, free once the
+        # bike moves, so driving and disturbance recovery are not taxed.
+        # 0.0 by default, and then nothing is accumulated at all, so every
+        # config predating it is bit-identical.
+        self.w_copper = float(self.rw.get("w_copper", 0.0))
+        self._cu_ids = np.array([self.model.actuator(a).id
+                                 for a in ("steer", "drive_a", "drive_b")])
+        self._cu_inv_stall = 1.0 / self._rand._forcerange0[self._cu_ids, 1]
+        self._cu_sum = 0.0
         self.obs_pitch = bool(env.get("obs_pitch", False))
         # Cap on the wing command. 90 deg keeps the deployed foot 11 mm clear
         # of the floor with the bike upright, while the full 105 deg stroke
@@ -889,12 +918,16 @@ class GeneralEnv(gym.Env):
             self.data.xfrc_applied[self._chassis, 1] = (
                 self._np_random.uniform(-1, 1) * self.rand["disturb_force_N"])
 
+        self._cu_sum = 0.0
         for _k in range(self.substeps):
             if self._drive is not None:
                 self._drive.pre_step(self.data)
             for g in self._gearbox:
                 g.pre_step(self.data)
             mujoco.mj_step(self.model, self.data)
+            if self.w_copper:
+                u = self.data.actuator_force[self._cu_ids] * self._cu_inv_stall
+                self._cu_sum += float(u @ u)
             # TICK THE ESTIMATOR INSIDE THE SUBSTEP LOOP, not after it. It runs
             # at its own rate (100 Hz, the Pi's) while the policy is queried at
             # control_rate_hz (50), so there are two estimator ticks per policy
@@ -956,6 +989,7 @@ class GeneralEnv(gym.Env):
         # policy would look better than a crabbing one purely by measuring less.
         v_err2_full = (v_cl - s.v_lon) ** 2 + (v_ct - s.v_lat) ** 2
         da = action - self._prev_a
+        copper = self._cu_sum / self.substeps    # 0.0 whenever w_copper is
         r_vel = np.exp(-v_err2 / self.sigma_v ** 2)
         r_head = np.exp(-(psi_err / self.sigma_psi) ** 2)
         reward = (rw["w_vel"] * r_vel
@@ -979,6 +1013,10 @@ class GeneralEnv(gym.Env):
                   - (self.w_hub_idle * action[1] ** 2
                      * self._idle_frac(np.hypot(s.v_lon, s.v_lat))
                      if self.full and self.w_hub_idle else 0.0)
+                  # Copper loss, faded like the hub term -- see __init__.
+                  - (self.w_copper * copper
+                     * self._idle_frac(np.hypot(s.v_lon, s.v_lat))
+                     if self.w_copper else 0.0)
                   # Wing deployment, normalised by the allowed range so the
                   # term is in [0, 1], and RAMPED with the curriculum: cheap
                   # at difficulty 0 so the wings work as training wheels while
@@ -1049,6 +1087,9 @@ class GeneralEnv(gym.Env):
                          if (self.wings or self.swing) else 0.0),
             "head_err_deg": float(np.degrees(abs(psi_err))),
             "difficulty": float(self._diff),
+            # Mean sum (tau/tau_stall)^2 over this step's substeps; 0.0 unless
+            # w_copper is set, because it is only accumulated then.
+            "copper": float(copper),
             "fell": bool(fell),
             # No task "success" for an always-on controller: surviving the
             # episode while tracking well is the whole objective.
