@@ -1,10 +1,11 @@
 # Smoothness as a loss on the policy (CAPS family)
 
-> **Status: IMPLEMENTED 2026-10-01, NOT YET RUN.** `src/aow_sim/smooth_ppo.py`
-> (`SmoothPPO`, terms `bound` / `temporal` / `second`; the spatial term of §4
-> is NOT built). Four runs queued in `config/queue_smooth_loss.txt`: a base arm
-> and the three arms of §5, one seed each. `reward.w_copper` (copper loss at
-> the physics rate, `general_env.py`) exists too and is parked at 0.
+> **Status: RUN 2026-10-01, one seed per arm — results in §5.1.** Bound +
+> temporal (`general_rl_smooth_temporal`) is the candidate: ~19x less steer
+> chatter than the base arm, the best eval score, and it turns.
+> `src/aow_sim/smooth_ppo.py` (`SmoothPPO`, terms `bound` / `temporal` /
+> `second`; the spatial term of §4 is NOT built). `reward.w_copper` (copper
+> loss at the physics rate, `general_env.py`) exists and is parked at 0.
 
 Collected 2026-10-01 while asking why every `general_rl*` policy chatters in
 steer and rear drive. The question was which levers exist beyond the reward
@@ -276,8 +277,58 @@ belong in `analysis/` before the first arm.
 LipsNet / LipsNet++ change the network, so they change the npz export and
 `MLPPolicy` on the Pi. They are a bigger step than any of the above.
 
+### 5.1 Results, 2026-10-01 **[measured]**, ONE SEED EACH
+
+`analysis/chatter.py` over the four exports and the pointer, 20-command grid,
+each on its own drivetrain; standing endurance is the `prospective` test's
+bar (18 seeds x 60 s, pass <= 4 falls), flown on each policy's own drivetrain.
+
+| | score | dsteer^2 | flips/s steer/hub/diff | pinned | tread jitter mm/s | hold drift m | endurance falls | wall, 20M |
+|---|---|---|---|---|---|---|---|---|
+| cmd_curriculum2b (pointer, ideal plant) | 0.572 | 1.212 | 25.7 / 13.1 / 16.7 | 62% | 93 | 1.28 | 10/18 | 2.21 h |
+| base | 0.764 | 0.592 | 24.3 / 9.7 / 14.2 | 21% | 49 | 0.82 | 0/18 | 2.49 h |
+| bound | 0.704 | 0.237 | 23.4 / 9.7 / 13.6 | 7% | 55 | 0.30 | 0/18 | 2.70 h |
+| **temporal** | **0.820** | **0.031** | 11.2 / 3.9 / 7.0 | 3% | **28** | 0.17 | 0/18 | 2.89 h |
+| second | 0.741 | 0.036 | **9.8 / 4.0 / 6.7** | 3% | 29 | **0.11** | 0/18 | ~2.98 h |
+
+- **The temporal term is the lever.** Read against bound (one term apart):
+  dsteer^2 0.237 -> 0.031, flips halved on every channel, jitter halved in
+  every band above 8 Hz. Second difference does the same within ~15%.
+- **Bound alone moved the saturation, not the chatter**: steer |mu| > 1 14% ->
+  1% of steps, flips unchanged. It also REFUSED the moving 180s (reverses out
+  with the heading 160-180 deg off, `per_command.py`); temporal carries the
+  same bound term and turns, so this is the term interacting with the seed or
+  with the missing temporal term — not separable on one seed.
+- **Second's weak spots** (per_command, 15 s episodes): rev 0.5 +90 driven
+  FORWARD with the heading 179 deg off; crab heading 55-68 deg against
+  temporal's 19-32; slower to a big heading (1.68 vs 0.98 s). chatter.py's 5 s
+  eval does NOT reproduce the rev +90 failure but has a crab fall instead:
+  single episodes, fragile either way.
+- **Standing endurance is the drivetrain retrain, not the loss**: base passes
+  too. First exports to clear the bar.
+- **Base stalled 4-9M** (curriculum stuck at 0.21, steer std 0.51 -> 0.21);
+  bound/temporal/second and the Aug curriculum2b run did not. Its checkpoints
+  show steer |mu| > 1 on ~20% of steps through the stall (> 2 on <= 5%), so
+  not the extreme bang-bang regime. Seed vs mechanism: needs a second seed.
+- **The three loss arms steer 24-28 deg at rest** (`steer_rest`), base 6 —
+  they hold still with the wheel turned. Not understood.
+- **Crab was never trained** (`v_lat_frac: 0.0`, inherited from
+  curriculum2b); every crab number is a response to an unseen command.
+  `--crab-max` in teleop lets it be commanded anyway.
+
+Training cost per 16384-step update, box (Threadripper 2950X, CPU torch at
+its default 16 threads, which measured best: 1/2/4/8/16/32 threads -> base
+iteration 7.22/7.03/6.93/6.68/6.79/8.70 s): base 7.13 s, bound +0.53,
+temporal +1.10, second +1.63 — constant across training, so it is the
+update, not the env. Each term adds policy forward+backward passes per
+minibatch (bound 1, temporal 2 more, second 3 more). Untried saving: reuse
+the minibatch's own mean from `evaluate_actions` for the bound term.
+
 ## 6. Open
 
+- A second seed of temporal (is the headline one run's luck?) and of base
+  (the 4-9M stall: seed or mechanism?).
+- The 24-28 deg steer at rest of every loss arm.
 - Whether `w_copper` alone removes the zig-zag. If it does, this stays parked.
 - The servos' own current and load as observations, if the copper term
   matters: XC330 Present Current reads as signed BUS current (XL330 bench fit,

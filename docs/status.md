@@ -237,7 +237,7 @@ unchanged by the clip; the delay is not yet teleop-tested.
 | workstream | state | blocker | owner doc |
 |---|---|---|---|
 | **Simulation & model** | Working. 17 parameters still `GUESS`. A detailed drivetrain (fitted XC430 loop, diff detent, roller slop) exists as an opt-in overlay, in the eval env, teleop and training (per config). Trained at P 100 and P 400, 3 seeds each (2026-09-14): a tie on score. Teleop builds a policy's own drivetrain from its record | Physical parts to measure; the built bike, to confirm the drivetrain model | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
-| **Control — RL** | Working, and primary. Trains against the onboard sensors. Smoothness loss on the policy mean (`smooth_ppo.py`) implemented 2026-10-01; four runs queued, not started (`config/queue_smooth_loss.txt`). `reward.w_copper` (copper loss, idle-faded) exists, parked at 0 | Crab still one-sided; `turn_asym` stuck ~0.2 | `general-rl-improvements.md` |
+| **Control — RL** | Working, and primary. Trains against the onboard sensors. Smoothness loss on the policy mean (`smooth_ppo.py`) RUN 2026-10-01, one seed per arm: bound + temporal (`general_rl_smooth_temporal`) cuts steer chatter ~19x against the same config without it, scores best (0.820 vs pointer 0.572) and is the candidate pointer -- not repointed yet. All four drivetrain-trained exports pass the standing-endurance bar (0/18 falls); the pointer does not (10/18). Results: `policy-smoothness-losses.md` §5.1. `reward.w_copper` (copper loss, idle-faded) exists, parked at 0 | Crab still one-sided; `turn_asym` stuck ~0.2 | `general-rl-improvements.md` |
 | **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy: measured at one mount (2026-09-23): ~0.2-0.3 deg RMS on replayed standing flights against the sim's 1.5, most of it the sensor's own acceleration read as tilt through a complementary filter (tau 0.19 s at rest rising continuously to ~1 s in motion); the sim's error model is not re-fitted yet. Next: the other mounts ("What to do next" #5) | `sensor-workstream.md` |
 | **Control — analytic (LQR)** | Reference baseline only. Holds standing on truth; under teleop's default `tm151` attitude error it oscillates and falls standing still (holds on `tm151_filter`) | Nothing now; degrades when contact moves, and when the attitude error grows | `old/stationary-balance-controller.md` |
 | **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency`. **Onboard software readied for a Pi bench session 2026-09-15** — ground station, firmware-gain writes, fourth servo, fall cut/re-arm; none of it has touched hardware | Firmware P-gain choice, torque calibration, then the chassis | `pi-bench-bringup.md`, `first-physical-test.md`, `drivetrain-measurements.yaml` |
@@ -276,7 +276,7 @@ parked or reference — read that before the body.
 | `self-righting.md` | where recovery stops being possible; the fall cases. Reference |
 | `params-digest-split.md` | the two digests and what each answers |
 | `asymmetric-actor-critic.md` | a parked option, kept to cover the bases |
-| `policy-smoothness-losses.md` | CAPS / Grad-CAPS-style loss terms against the chatter: what the chatter is (2026-10-01), the literature, the implementation and its weights, and the queued arms |
+| `policy-smoothness-losses.md` | CAPS / Grad-CAPS-style loss terms against the chatter: what the chatter is (2026-10-01), the literature, the implementation and its weights, the four arms and their results (§5.1) |
 | `ball-shot-move.md` | the ball shot. Works, parked |
 | `plans/old/` | six retired docs — built, superseded, or never started |
 
@@ -441,7 +441,7 @@ model (alone: falls at 3.2 s; gyro-only, estimate-only and truth stay up), and
 the power-on misalignment does not predict it (p 0.23). The test (`tests/test_policy_endurance.py`, a
 POLICY METRIC in its own registry section: it moves with the policy, not the
 code) is 18 fixed seeds x 60 s, pass if <= 4 fall, derived from a 600 s MTBF
-target; today 9 of 18 (11 before the 09-22 yaw-drift fix moved the AHRS rng stream). Paths: longer standing episodes in training (evals are 5 s, episodes
+target; today 9 of 18 (11 before the 09-22 yaw-drift fix moved the AHRS rng stream). **2026-10-01: the four smoothness-loss exports, trained on the detailed drivetrain, all pass it, 0 of 18** -- the test now flies a policy's recorded drivetrain (it flew every policy on the ideal one before), and the pointer reproduces 10 of 18 through the same code. Still red until `control.general_move` moves; take its registry entry out in the same commit. Paths: longer standing episodes in training (evals are 5 s, episodes
 <= 15 s), and a bench RMS for the TM151 -- the model uses the datasheet's
 "<1.5 deg" bound as its RMS.
 
