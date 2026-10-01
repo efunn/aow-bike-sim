@@ -280,7 +280,16 @@ def layout(data: dict) -> dict:
     Y["bh_out"] = Y["bh_in"] + st["bulkhead"]
     Y["kn_in"] = Y["bh_out"] + gb
     Y["kn_out"] = Y["kn_in"] + st["knuckle"]
+    # knuckle R BEHIND knuckle L (user, 2026-09-30): both wings' second
+    # supports at the rear, so the module ends at the front bulkhead and the
+    # rod stops there. knuckle R bears on knuckle L's back face (they turn
+    # opposite ways), over a ring on its own front face.
+    rear_kr = wg["knuckle_r"] == "rear"
+    Y["kr_in"] = Y["kn_out"] + gb
+    Y["kr_out"] = Y["kr_in"] + st["knuckle"]
     Y["rod"] = Y["kn_out"] + 1.0
+    Y["rod_back"] = (Y["kr_out"] if rear_kr else Y["kn_out"]) + 1.0
+    Y["rod_front"] = Y["bh_out"] if rear_kr else Y["rod"]
     Y["jn_end"] = Y["bh_out"] + ck["journal_proud"]
     Y["hub_front"] = Y["jn_end"] + cp["hub_gap"]           # the hub's socket face
     Y["horn_face"] = Y["hub_front"] + hb["thickness"]
@@ -323,7 +332,7 @@ def layout(data: dict) -> dict:
                       "up": None if up is None else [float(v) for v in up],
                       "add": list(add), "cut": list(cut),
                       "anchor": None if anchor is None else [float(v) for v in anchor],
-                      "note": note, "twin": twin, "custom": custom, "mock": mock, "kind": kind,
+                      "note": note, "twin": twin, "mirror": None, "custom": custom, "mock": mock, "kind": kind,
                       "color": list(color or (TURN_C if group != "fixed" else FIXED_C))})
 
     def xyz(p2, y):
@@ -397,9 +406,33 @@ def layout(data: dict) -> dict:
                 q["note"] = "Print the web face down. Crankpin hole: ream to press. No lugs: it only supports."
             parts.append(q)
 
+    if rear_kr:
+        kr = (-Y["kr_out"], -Y["kr_in"])
+        span = wg["panel_back"] + Y["kn_out"] + wg["tab"]      # wing L's length, kept
+        p0 = -(Y["kr_out"] + wg["tab"])
+        for q in parts:
+            if q["slug"] == "knuckleR":
+                q.update(up=[0.0, 1.0, 0.0],
+                         add=[slot(O, knee, hub_r, ehw, *kr), slot(knee, ear_end, ehw, ehw, *kr),
+                              prism(boss, *kr), cyl(O, kr[1], kr[1] + bz, ring_r)],
+                         cut=[cyl(O, kr[0] - 1, kr[1] + 1, rr)],
+                         anchor=xyz(knee / 2, (kr[0] + kr[1]) / 2),
+                         note="The right wing's second support, BEHIND knuckle L (it bears on knuckle "
+                              "L's back face over its ring). The mirror of knuckle L, not the same "
+                              "part. Rod: ream to run. Print the ringed face up.")
+            elif q["slug"] == "wingR":
+                q["add"] = [prism(panel_q, p0, p0 + span),
+                            prism(boss, -Y["web_out"], -Y["tab_out"]),
+                            prism(boss, p0, -Y["kr_out"])]
+                q["anchor"] = xyz(on_panel(50.0, 0.0), p0 + span / 2)
+            elif q["slug"] in ("knuckleL", "wingL"):
+                q["mirror"], q["twin"] = q["twin"], None    # same volume, not the same solid
+
     # ---- the frame
-    Zb = C[1] + xc["caseHeight"] - xc["shaftFromEnd"] + t["caseSideClearance"] + t["caseTopWall"] \
-        + t["caseNestClearance"] + t["caseBottomWall"]            # the upper case's top
+    central = cs["uc_joint"] == "central"
+    Zb0 = C[1] + xc["caseHeight"] - xc["shaftFromEnd"] + t["caseSideClearance"] + t["caseTopWall"] \
+        + t["caseNestClearance"] + t["caseBottomWall"]            # the case shells' top
+    Zb = Zb0 + (cs["top_extra"] if central else 0.0)              # the bridge's underside
     need(Zb >= C[1] + lk.crank + hub_r + 1.0, "the bridge would foul the crank")
 
     def bulkhead(y0, y1, extra=()):
@@ -460,12 +493,24 @@ def layout(data: dict) -> dict:
     # case still prints cap-down (a pad behind the cap made the cap overhang)
     ear0, ear1 = botOuter - 1.0, botOuter + cs["ear_width"]
     ear_z1 = upTopZ + cs["ear_depth"]
-    need(cs["ear_y0"] > winFar, "the upper case's ears reach down to the cable window")
-    need(ear_z1 < wallTop, "the upper case's ears run forward onto the lower case")
-    uc_add = [lbox([-botOuter, -upN, upTopZ], [botOuter, yWrap + 1.0, upBot]),
-              lbox([ear0, cs["ear_y0"], upTopZ], [ear1, Zb - C[1], ear_z1]),
-              lbox([-ear1, cs["ear_y0"], upTopZ], [-ear0, Zb - C[1], ear_z1])]
     ear_x = (ear0 + ear1) / 2
+    uc_add = [lbox([-botOuter, -upN, upTopZ], [botOuter, yWrap + 1.0, upBot])]
+    if central:
+        # the top grows by top_extra over the case's whole top, flush with
+        # the cap (it still prints cap-down); one screw on the centreline
+        # behind the lower case, whose top it must not sit over
+        lc_back = min(q["lo"][1] for q in [lbox([-topOuter, -wallN, wallTop], [topOuter, wallF, -Y["bh_out"] - yH])])
+        uc_add.append(box([-botOuter, yH + upTopZ, Zb0 - 0.5], [botOuter, lc_back + 6.8, Zb]))
+        # head jp above the bridge's underside, nut 2 mm under it, 3 thick
+        nut_wall = Zb - 2.0 - sc["nutSlotThickness"] - (C[1] + xc["caseHeight"] - xc["shaftFromEnd"]) \
+            - t["caseSideClearance"]
+        need(nut_wall >= wall - 1e-6, f"the upper case's nut slot leaves {nut_wall:.2f} mm over the servo")
+        y_uc = lc_back - 0.5 - sc["nutSlotWidth"] / 2
+    else:
+        need(cs["ear_y0"] > winFar, "the upper case's ears reach down to the cable window")
+        need(ear_z1 < wallTop, "the upper case's ears run forward onto the lower case")
+        uc_add += [lbox([ear0, cs["ear_y0"], upTopZ], [ear1, Zb - C[1], ear_z1]),
+                   lbox([-ear1, cs["ear_y0"], upTopZ], [-ear0, Zb - C[1], ear_z1])]
     uc_cut = [lbox([-nestBore, -nestN, wallTop], [nestBore, yWrap + 1.1, upBot + 1.0]),
               lbox([-inner, -near_l, zBack], [inner, yWrap + 1.1, wallTop + 1.0]),
               prism_x([[yH + zBack, C[1] + winFar], [yH + wallTop, C[1] + winFar],
@@ -473,9 +518,13 @@ def layout(data: dict) -> dict:
                        [yH + zBack, C[1] + winNear]], -botOuter - 1.0, botOuter + 1.0),
               lbox([slotIn, winNear, upTopZ - 1.0], [botOuter + 1.0, winFar, zBack + 0.1]),
               lbox([-botOuter - 1.0, winNear, upTopZ - 1.0], [-slotIn, winFar, zBack + 0.1])]
-    uc_anchor = W(-(ear_x + 3.0), cs["ear_y0"] + 3.0, (upTopZ + ear_z1) / 2)
-    part("uppercase", "upper case", "fixed", [0, 1, 0], [], anchor=uc_anchor, custom=True,
-         note="The XC330's back half, two ears up to the bridge. Connectors plug in through the cap.")
+    if central:
+        uc_anchor = [-(botOuter - 1.0), yH + upTopZ + 1.0, (Zb0 + Zb) / 2]
+        uc_note = "The XC330's back half, one 6-32 up into the bridge. Connectors plug in through the cap."
+    else:
+        uc_anchor = W(-(ear_x + 3.0), cs["ear_y0"] + 3.0, (upTopZ + ear_z1) / 2)
+        uc_note = "The XC330's back half, two ears up to the bridge. Connectors plug in through the cap."
+    part("uppercase", "upper case", "fixed", [0, 1, 0], [], anchor=uc_anchor, custom=True, note=uc_note)
     uc_shell_pt = W(-(botOuter - 0.5), (wallF + yWrap) / 2, upTopZ + 0.5)
 
     # ---- the horn hub (steering's) and the XC330's near hole row
@@ -505,21 +554,27 @@ def layout(data: dict) -> dict:
          anchor=[pin[0], wsh / 2 + ws["clearance"] + 1.0 if wsh > 0 else 0.0, pin[1]],
          kind="steel", color=STEEL_C,
          note="Rod stock: pressed in both webs, the couplers run on it.")
-    part("rod", "wing rod", "fixed", None, [cyl(O, -Y["rod"], Y["rod"], rr)],
+    part("rod", "wing rod", "fixed", None, [cyl(O, -Y["rod_back"], Y["rod_front"], rr)],
          anchor=[0.0, 0.0, 0.0], kind="steel", color=STEEL_C,
          note="Rod stock: pressed in both bearings, the hubs run on it.")
 
     # ---- bridge and the chassis placeholder
-    y_back = yH + upTopZ
     bt = fr["bridge"]
-    need(fr["bridge_half"] >= ear1 + 0.5, "the bridge is narrower than the upper case's ears")
+    if central:
+        # the bridge ends just past the screw's head and the groove round it
+        y_back = y_uc - max(sc["headDia"] / 2, jn["ridge_flat"] / 2 + jn["ridge_height"]) - 1.5
+    else:
+        y_back = yH + upTopZ
+        need(fr["bridge_half"] >= ear1 + 0.5, "the bridge is narrower than the upper case's ears")
     part("bridge", "bridge", "fixed", [0, 0, 1],
          [box([-fr["bridge_half"], y_back, Zb], [fr["bridge_half"], Y["bh_out"], Zb + bt])],
          anchor=[fr["bridge_half"] - 3.0, 12.0, Zb + 2.0],
          note="Ties the front bulkhead, lower and upper cases. Top face: the chassis joints.")
     ph = ch["plate_half"]
+    # ends 3 mm past the rear chassis joint's groove (ridge_half + 1 along Y)
+    y_plate = max(y_back, min(ch["joints_y"]) - ch["ridge_half"] - 1.0 - 3.0)
     part("chassis", "chassis plate (placeholder)", "fixed", [0, 0, 1],
-         [box([-ph, y_back, Zb + bt], [ph, Y["bh_out"], Zb + bt + jp])],
+         [box([-ph, y_plate, Zb + bt], [ph, Y["bh_out"], Zb + bt + jp])],
          anchor=[ph - 2.0, 12.0, Zb + bt + 1.0], mock=True, color=MOCK_C,
          note="PLACEHOLDER for the chassis: where the bridge's two 6-32 and ridges land.")
     fz = -(data["wheel_r"] + pz)
@@ -551,9 +606,14 @@ def layout(data: dict) -> dict:
           slot_len=(bh[1] - bh[0]) / 2 + 1.0)
     # the ears' nut slots run along Y: vertical as the case prints, and clear
     # of the case's own top wall (along X they would cut straight through it)
-    for sx, tag in ((1, "jU0"), (-1, "jU1")):
-        joint(tag, [sx * ear_x, yH + (upTopZ + ear_z1) / 2, Zb + jp], down, Y3, bt - jp, "bridge",
-              "uppercase", True, Y3, cs["ear_depth"] / 2 - 2.0, Z3, Y3)
+    if central:
+        # the slot runs along X out through both of the case's side walls
+        joint("jU", [0, y_uc, Zb + jp], down, X3, bt - jp, "bridge", "uppercase", True, X3,
+              botOuter - 3.0, Z3, Y3)
+    else:
+        for sx, tag in ((1, "jU0"), (-1, "jU1")):
+            joint(tag, [sx * ear_x, yH + (upTopZ + ear_z1) / 2, Zb + jp], down, Y3, bt - jp, "bridge",
+                  "uppercase", True, Y3, cs["ear_depth"] / 2 - 2.0, Z3, Y3)
     for i, yj in enumerate(ch["joints_y"]):
         joint(f"jC{i}", [0, yj, Zb + bt + jp], down, X3, 0.0, "chassis", "bridge", True, Y3,
               ch["ridge_half"], Z3, Z3)
@@ -575,6 +635,13 @@ def layout(data: dict) -> dict:
         joint(tag[:-1] + "L", turned_vec(head), [0, -dirn, 0], turned_vec(wv), pocket,
               part_slug[:-1] + "L", "wingL", False, turned_vec(wv), 0.0,
               turned_vec(up), turned_vec(niv), ridge=False)
+    if rear_kr:
+        # knuckle R behind: head in it 4.6 from its back face, the screw
+        # running back into the wing's tab
+        joints[:] = [j for j in joints if j["tag"] != "jKR"]
+        head = [s3[0], -Y["kr_out"] + jp, s3[2]]
+        joint("jKR", head, [0, -1, 0], wv, abs(head[1] + Y["kr_in"]), "knuckleR", "wingR", False,
+              wv, 0.0, [0, 1, 0], niv, ridge=False)
 
     for p in parts:
         p["bbox"] = bbox(p["add"]) if p["add"] else None
@@ -1149,8 +1216,8 @@ def judge(console: str, L: dict, data: dict) -> bool:
             ok = False
             print(f"  part {r[1]} is {r[2]} bodies  FAIL")
     for p in L["parts"]:
-        if p["twin"]:
-            twin = next(q["name"] for q in L["parts"] if q["slug"] == p["twin"])
+        if p["twin"] or p.get("mirror"):
+            twin = next(q["name"] for q in L["parts"] if q["slug"] == (p["twin"] or p["mirror"]))
             a, b = vols.get(twin), vols.get(p["name"])
             same = None not in (a, b) and abs(a - b) <= 1e-6 * max(a, b)
             ok &= same
@@ -1224,8 +1291,11 @@ def report(L: dict, data: dict) -> str:
            f"  crank axis {L['C'][1]:.2f} above the rod; rod {-L['floor_z']:.1f} above the floor; "
            f"bridge underside {L['Zb']:.2f}, top {L['Zb'] + data['s']['frame']['bridge']:.2f} above the rod",
            "  along Y from the mid-plane (magnitudes):"]
-    for k in ("cpl_in", "cpl_out", "web_in", "web_out", "hz_out", "bh_in", "bh_out", "kn_in", "kn_out", "rod"):
+    for k in ("cpl_in", "cpl_out", "web_in", "web_out", "hz_out", "bh_in", "bh_out", "kn_in", "kn_out"):
         out.append(f"    {Y[k]:7.2f}  {k}")
+    if data["s"]["wing"]["knuckle_r"] == "rear":
+        out.append(f"    {Y['kr_in']:7.2f}..{Y['kr_out']:.2f}  knuckle R, BEHIND knuckle L")
+    out.append(f"    rod from {-Y['rod_back']:.2f} to {Y['rod_front']:.2f}")
     out.append(f"  behind the rear bearing: journal end {Y['jn_end']:.2f}, hub {Y['hub_front']:.2f}-"
                f"{Y['horn_face']:.2f}, horn face {Y['horn_face']:.2f}")
     lug0, lug1, tip = L["lug"]

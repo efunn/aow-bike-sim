@@ -168,8 +168,52 @@ Studio **aow-bike-righting** (`onshape.yaml` tabs `righting_features` /
 | downward faces left | the nut-slot roofs (blind-end 3 mm, through-slot up to 6.5, bridging layers where the helper adds them), groove roofs, the case-pin relief slivers the steering cases have too |
 | mass, solid | ASA 297 g (the placeholder panels are 130 of it), steel 35 g |
 
+## Tightened for the whole bike (2026-09-30, user)
+
+In `aow-bike-whole` the module clashed with the drive (`bike-assembly-design.md`).
+Changes, each a config switch so the first design stays one edit away:
+
+- **knuckle R behind knuckle L** (`wing.knuckle_r: rear`). Both wings'
+  second supports are at the rear, under the servo. knuckle R bears on knuckle
+  L's back face over its own ring. The rod stops at the front bulkhead, so
+  the module ends at the front bearing (the journal, 32.0). Wing R keeps its
+  length, shifted back 12.6 to meet its tab. knuckle R and wing R become
+  MIRRORS of their L partners, not the same parts (the check compares their
+  volumes).
+- **The upper case on one central 6-32** (`cases.uc_joint: central`), not
+  the two ears.
+  - Its top grows 2 mm (`cases.top_extra`): the nut slot otherwise cut
+    1 mm into the servo. Exactly 1.0 mm of wall is left.
+  - The screw sits behind the lower case (y -56.0): its slot cannot sit
+    over it.
+- **Bridge +-16, ending at -61.2** (was +-23, -67.7). The bulkheads' top
+  band and the chassis plate placeholder are also +-16. All of them sit
+  inside the drive pulleys' inner faces at |x| 17.
+- **Chassis joints at y 0 and -30, ridges 6** (were 0 and -50, 10). In the
+  bike the placeholder is the deck, and the drive block's wedge stands on it
+  over -55..-38.
+
+`--check`: 24 bodies, 0 interference at rest and over 10 poses, the
+mirrored pairs equal in volume. ASA 269.5 g solid (was 297.3). Tests 11.
+
 ## Outstanding
 
+- **Expected next: shrink the stack (user, 2026-09-30).** The axial stack and
+  the mechanism's height set the bike's wheelbase
+  (`bike-assembly-design.md`, Outstanding). Keep the bulkhead's 10 (the
+  journal's bearing length) and the couplers' 6 (user).
+  - **The web's 6 and the hub zone's 8 come from where the wing joint is**
+    (user's catch, 2026-09-30). The rocker-side tab in the web plane forces
+    web >= tab (the nut); the boss and countersunk head fill the hub zone.
+  - **Move the joint outboard:** to the boss's far side, past the hub zone
+    in Y, beside the bulkhead (+-18) and clear of it, since the wing is at
+    |x| >= 30. Then neither layer carries the joint. They only need the
+    rocker arm's strength and the crank's shoulder, and the rocker's 14 mm
+    sleeve is not needed (the knuckle shares the wing).
+  - **Lowering the mechanism** shortens the bike ~1:1 under the drive's
+    underside, but that is a linkage re-optimisation.
+
+  Kept as is for now (user).
 - **Held until the steer module prints,** as the drive is (user). It shares
   the ideas here: the printed bearings, the 6-32 joints, the bridging, the
   cases and the horn hub. Those judgements come from it first.

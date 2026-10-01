@@ -176,3 +176,24 @@ def test_the_rear_knuckle_passes_under_the_servo_cases(data, L):
         if len(band):
             worst = max(worst, band[:, 1].max())
     assert worst < case_bottom - 3.0
+
+
+def test_knuckle_r_sits_behind_knuckle_l(data, L):
+    """`wing.knuckle_r: rear` (user, 2026-09-30): knuckle R behind knuckle L,
+    a bossed gap between them, the rod stopping at the front bulkhead, and
+    wing R as long as wing L, shifted back so its tab meets the knuckle."""
+    assert data["s"]["wing"]["knuckle_r"] == "rear"
+    Y, st = L["Y"], data["s"]["stack"]
+    kl, kr = part(L, "knuckleL")["bbox"], part(L, "knuckleR")["bbox"]
+    # behind, its ring (in its box) a running clearance off knuckle L's back face
+    assert kr[1][1] == pytest.approx(kl[0][1] - st["clearance"])
+    rod = part(L, "rod")["bbox"]
+    assert rod[1][1] == pytest.approx(Y["bh_out"]) and rod[0][1] < kr[0][1]
+    wl, wr = part(L, "wingL")["bbox"], part(L, "wingR")["bbox"]
+    assert wr[1][1] - wr[0][1] == pytest.approx(wl[1][1] - wl[0][1])
+    assert wr[0][1] == pytest.approx(kr[0][1] - data["s"]["wing"]["tab"])
+    # the module now ends at the front bearing: the bulkhead, and the crank's
+    # journal standing its 0.5 proud of it
+    front = max(p["bbox"][1][1] for p in L["parts"]
+                if p["bbox"] and not p["mock"] and p["slug"] not in ("wingL", "wingR"))
+    assert front == pytest.approx(Y["jn_end"])

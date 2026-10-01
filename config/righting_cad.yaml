@@ -79,6 +79,16 @@ wing:
   boss_depth: {value: 10.0, source: design}     # off the panel's inner face
   tab: {value: 6.0, source: design}             # the panel's tab, along Y: = the web plane; nut + 1.0 wall
   panel_back: {value: 50.0, source: design}     # how far aft of the mid-plane the right panel runs
+  # Where the RIGHT wing's second knuckle goes (user, 2026-09-30):
+  #   front  -- beyond the front bearing, the L knuckle's twin turned 180 deg
+  #             (the first design: every L part is its R turned)
+  #   rear   -- BEHIND knuckle L, under the servo. The module then ends at the
+  #             front bulkhead (the rod stops there), and wing R keeps its
+  #             length, shifted back to meet the knuckle. knuckle R and wing R
+  #             become mirrors of their L partners, not the same parts.
+  # The drive is asymmetric: its left pulley sits low, its right one high, so
+  # under the drive the right side has the room for both knuckles.
+  knuckle_r: {value: rear, source: design (user)}
 
 cases:
   # As aow-bike-steering's, whose lower/upper XC330 cases these are.
@@ -95,13 +105,26 @@ cases:
   ear_width: {value: 8.0, source: design}       # outside the case's wall
   ear_depth: {value: 10.0, source: design}      # from the cap forward
   ear_y0: {value: 15.0, source: design}         # above the cable window (14.5)
+  # How the upper case meets the bridge (user, 2026-09-30):
+  #   ears     -- the two ears above, one 6-32 each at |x| ~17: they and the
+  #               +-23 bridge are what hit drive pulley L (inner face at
+  #               |x| 17) in the whole bike, holding the righting at y >= 190
+  #   central  -- ONE 6-32 down through the case's top on the centreline,
+  #               behind the lower case (its nut slot cannot sit over it).
+  #               The bridge narrows to frame.bridge_half and ends just past
+  #               that screw.
+  uc_joint: {value: central, source: design (user)}
+  # The case's top over the servo is 4.05 thick: a 6-32 nut slot at the
+  # joints' depth (2 mm under the interface, 3 thick) would cut 1 mm into the
+  # servo. So for `central` the top grows by this, and the bridge with it.
+  top_extra: {value: 2.0, source: design}
 
 frame:
   rod_boss_r: {value: 9.0, source: design}
   journal_boss_r: {value: 10.5, source: design}
   web_half: {value: 8.0, source: design}
-  top_half: {value: 18.0, source: design}       # the bulkheads' top band
-  bridge_half: {value: 23.0, source: design}    # the upper case's ears reach 22.05
+  top_half: {value: 16.0, source: design}       # the bulkheads' top band; inside the drive pulleys (was 18)
+  bridge_half: {value: 16.0, source: design}    # inside the drive pulleys' inner faces (|x| 17); was 23 for the ears (22.05)
   top_band: {value: 20.0, source: design}
   bridge: {value: 8.0, source: design}
 
@@ -109,9 +132,13 @@ chassis:
   # The attachment to the (TBD) chassis: nut slots + ridges on the bridge's top
   # face, and a PLACEHOLDER plate with the heads, as the steering and drive
   # modules' mount plates.
-  joints_y: {value: [0.0, -50.0], source: design}
-  ridge_half: {value: 10.0, source: design}
-  plate_half: {value: 25.0, source: design}
+  # -30, was -50 (2026-09-30): in the bike this placeholder IS the deck, and
+  # with the righting tucked under the drive the drive block's wedge stands
+  # on the deck over y -55..-38 here -- a screw there would be buried under
+  # it. The plate stops 3 mm past the rear joint's groove.
+  joints_y: {value: [0.0, -30.0], source: design}
+  ridge_half: {value: 6.0, source: design}      # was 10, with the shorter plate
+  plate_half: {value: 16.0, source: design}     # inside the drive pulleys (was 25): it is the bike's deck there
 
 joint:
   joint_plate: {value: 4.6, source: design (as-built)}
