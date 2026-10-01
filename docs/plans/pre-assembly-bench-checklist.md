@@ -72,7 +72,7 @@ The post turns on a yaw bearing:
 | module mount | plate at the arm end that bolts to the rear drivetrain's servo side plates (Onshape `aow-bike`, tab `aow-bike`); hole sets for yaw 0°, 45° and 90° | the one fixture. **Design it to take the front fork too**, for the front tire tests |
 | load tray | on the mount, directly above the axle | added weight loads the wheel only |
 | drop stop | an adjustable stop under the arm end, or a spacer block | a repeatable drop height h0, set with a ruler or a stack of blocks, not with the dial |
-| dial indicator | **0–10 mm travel, 0.01 mm graduations**, on its **own stand on the floor** 100–150 mm from the wheel, plunger on a flat pad on the mount directly above the axle | reads axle height against the floor near the wheel, independent of the arm. Range: F1 on hard floors should stay under ~2 mm at 44 N (computed 1.95 mm at the shipped contact; the 08-08 hand check said ~1 mm), so 10 mm leaves room for soft floors and preload. A thick rug may need 25 mm, or stop F1 short of 44 N there. Resolution: 0.01 mm is needed for C4's 0.02 mm and for separating 1 mm from 2 mm |
+| dial indicator | **0–10 mm travel, 0.01 mm graduations**, on its **own stand on the floor** 100–150 mm from the wheel, plunger on a flat pad on the mount directly above the axle | reads axle height against the floor near the wheel, independent of the arm. Range: F1 on hard floors should stay around 0.4–0.7 mm at 44 N on the rear (computed 0.44–0.64 mm across roller phases at the shipped contact, whole bike settled, 2026-10-01; the 08-08 hand check said ~1 mm; an earlier posed calculation said 1.95), so 10 mm leaves room for soft floors and preload. A thick rug may need 25 mm, or stop F1 short of 44 N there. Resolution: 0.01 mm is needed for C4's 0.02 mm, and for the roller-phase differences, which are ~0.05 mm at 5.5 N |
 | table clamps | two C-clamps | table mode |
 
 **Modes.**
@@ -1120,7 +1120,11 @@ these tests are adopted.
 **Analysis.**
 - Δd(N) = d(N) − d(N0), minus C3's rigid-surface curve.
 - Fit against the model's static curve (`contact_calibration.static_curve`),
-  as differences from N0. The zero-load point is never needed.
+  as differences from N0. The zero-load point is never needed. That curve is
+  the WHOLE BIKE settled with the load on the axle. It has to be: MuJoCo's sink
+  at a given force depends on the masses compiled around the contact, so fit
+  on the bike's own model, at the same roller phase (`axle_deg`), and refit
+  after the weighing.
 - The up/down loop width is real hysteresis. Record it; don't average it
   away.
 - Label the result by **sink at 5.5 N in mm**, per the naming rule in

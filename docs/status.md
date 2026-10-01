@@ -1614,10 +1614,31 @@ dampratio ~0.30. The plan is to measure, then **switch to the negative
 system ID and is the only thing that decouples the two numbers: in the positive
 form `timeconst` sets damping *and* stiffness while `dampratio` sets stiffness
 only, so a static reading fixes only the product. Under a negative pair the
-`dmin` confound shrinks from 2.3× to 6%. The derivation, the prediction tables
-and the procedure are in `measurements/contact-protocol.md`, which is **correct
-and current** — fixed 2026-08-22, re-checked 09-08. What is missing is data:
-every field in `contact-measurements.yaml` is still 0.0.
+`dmin` confound shrinks from 2.3× to 6%. Both of those figures came from the
+posed curve: settled, the positive form's confound is 3.9×, and the negative
+pair's has not been re-derived. The derivation, the prediction tables and the
+procedure are in `measurements/contact-protocol.md`, fixed 2026-08-22. Its
+prediction table was replaced 2026-10-01. What is missing is data: every
+field in `contact-measurements.yaml` is still 0.0.
+
+**The sim's contact stiffness is not a number in N/m, and it moves with the
+masses (2026-10-01).** At rest, MuJoCo's sink at a given force scales with the
+masses compiled around the contact (`body_invweight0`), in both `solref`
+forms. Doubling the `GUESS` chassis mass took the rear load +42% but its sink
+only +31%. A real tire's sink would follow the load. So:
+- **fit the contact on the bike's own model, AFTER the weighing**, and refit
+  whenever a mass moves;
+- front and rear differ for reasons nobody chose. On the bike, at 11 N with
+  one contact point: rear 0.25 mm, front 0.14. Each roller sits 40 mm off the
+  hub axis, and MuJoCo's per-body estimate sees the hub spinning on its own
+  small inertia, because it ignores the belt couplings. So the rear contact
+  looks like a 134 g body and the front like 215 g.
+
+Shipped contact, settled on the bike (`analysis/contact_calibration.py`): rear
+0.133 mm at its own 5.3 N and 0.57 mm at 44 N (0.44–0.64 across roller phase);
+front 0.059 mm at its own 4.6 N. **The previous `static_curve` was posed, not
+settled, and over-read the sink above the wheel's own load**: 1.95 mm at 44 N.
+Every sink quoted before 2026-10-01 came from it.
 
 ---
 
@@ -1638,15 +1659,23 @@ every field in `contact-measurements.yaml` is still 0.0.
    against the attitude error model it actually trained on, tm151 at its own
    declared tau of 2.0:**
 
-   | sink @ bike weight | `contact_solref` | 09-09, no AHRS | **09-11, tm151** |
+   | rear sink at rest | `contact_solref` | 09-09, no AHRS | **09-11, tm151** |
    |---|---|---|---|
-   | 13.17 mm | `[0.020, 2.00]` | 0.594 / 1.00 | 0.600 / 1.00 |
-   | 3.80 mm | `[0.020, 1.00]` | 0.657 / 1.00 | 0.660 / 1.00 |
-   | 1.08 mm | `[0.005, 2.00]` | 0.673 / 1.00 | 0.679 / 1.00 |
-   | 0.52 mm | `[0.020, 0.30]` | **0.719** / 1.00 | 0.651 / 0.95 |
-   | 0.11 mm | `[0.005, 0.50]` | 0.719 / 1.00 | 0.616 / 0.90 |
-   | **0.39 mm** | **`[0.005, 1.00]` — ships** | 0.663 / 1.00 | **0.686** / 1.00 |
-   | 0.04 mm | `[0.005, 0.30]` | 0.374 / **0.70** | **0.175** / **0.35** |
+   | 1.828 mm | `[0.020, 2.00]` | 0.594 / 1.00 | 0.600 / 1.00 |
+   | 0.758 mm | `[0.020, 1.00]` | 0.657 / 1.00 | 0.660 / 1.00 |
+   | 0.373 mm | `[0.005, 2.00]` | 0.673 / 1.00 | 0.679 / 1.00 |
+   | 0.185 mm | `[0.020, 0.30]` | **0.719** / 1.00 | 0.651 / 0.95 |
+   | **0.133 mm** | **`[0.005, 1.00]` — ships** | 0.663 / 1.00 | **0.686** / 1.00 |
+   | 0.034 mm | `[0.005, 0.50]` | 0.719 / 1.00 | 0.616 / 0.90 |
+   | 0.012 mm | `[0.005, 0.30]` | 0.374 / **0.70** | **0.175** / **0.35** |
+
+   **Sink column relabelled 2026-10-01; the scores did not move.** It is now
+   the rear wheel with the whole bike settled on its own weight
+   (`contact_calibration.rest_sink`). It used to be a posed curve (bike
+   lowered to a height, force read from one `mj_forward`) read at 10 N of rear
+   force, about twice the rear's share, which over-read the sink: 13.17 / 3.80
+   / 1.08 / 0.52 / 0.11 / 0.39 / 0.04 mm. The order is the same, except that
+   the shipped row now correctly sits above `[0.005, 0.50]`.
 
    **Four rows move by under 0.03 — inside the ±0.02 seed-noise floor — and two
    move a lot, so the ordering did NOT survive the correction.** The stiff-end
@@ -1663,11 +1692,11 @@ every field in `contact-measurements.yaml` is still 0.0.
 
    What it says:
 
-   - **Soft contacts are fine.** Survival is 1.00 from 13 mm of sink all the way
-     down to the shipped 0.39 mm, and score varies by 0.09 across a 34× span.
+   - **Soft contacts are fine.** Survival is 1.00 from 1.8 mm of sink all the way
+     down to the shipped 0.13 mm, and score varies by 0.09 across a 14× span.
      Unchanged by the correction.
    - **The cliff is at the STIFF end**, and only there: `[0.005, 0.30]` —
-     0.04 mm of sink — drops survival to **0.35**, not the 0.70 first
+     0.012 mm of sink — drops survival to **0.35**, not the 0.70 first
      published. That is the corner the drop test points at, because a stiff
      contact against unchanged damping is what bounces, and it is a worse
      corner than this section said for two days.

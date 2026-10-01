@@ -8,7 +8,10 @@
 > withdrawn, and **the negative `solref` convention is written down as THE PLAN
 > rather than an option**. Its §P0 table was re-checked against
 > `analysis/contact_calibration.py` on 2026-09-08 and agrees to within the
-> timestep change (3.60 vs 3.78, 0.37 vs 0.389, 1.95 vs 1.982 mm).
+> timestep change (3.60 vs 3.78, 0.37 vs 0.389, 1.95 vs 1.982 mm). **Those
+> model numbers were all from a posed curve that is not a resting state, and
+> were replaced 2026-10-01** by a settled whole-bike curve (§P0 table): 0.57 mm
+> at 44 N on the rear, not 1.95.
 > `docs/status.md`'s ranked risk #8 — "the contact protocol docs are stale" — is
 > itself the stale claim, and is retired in the status rewrite.
 >
@@ -67,16 +70,28 @@ damping, and it also sets stiffness as `1/timeconst^2`. `dampratio` sets
 is the ratio of actual to critical damping *for the resulting stiffness*, so
 lowering it 1.0 → 0.5 leaves damping alone and makes the contact **four times
 stiffer**, which is what makes it underdamped and bouncy. Verified against
-this model: static penetration falls 3.85x for 1.0 → 0.5 and 10.7x for
-1.0 → 0.3, against the 4x and 11.1x the formula predicts.
+this model, rear wheel at rest on the bike's own weight (settled,
+2026-10-01): the sink falls 3.9x for 1.0 → 0.5 and 11.1x for 1.0 → 0.3,
+against the 4x and 11.1x the formula predicts. Under load the ratio shrinks
+(2.2x at 44 N), because `solimp` stiffens the contact with depth.
+
+**Neither form of `solref` is a stiffness in N/m.** At rest, MuJoCo's sink at a
+given force scales with the masses compiled around the contact
+(`body_invweight0`). On a wheel-on-a-slide rig at 44 N
+(`analysis/static_contact_sim.py`, 2026-10-01), the front tire sank 0.447 /
+0.072 / 0.010 mm with a 0.01 / 0.5 / 4 kg carriage, and 0.660 / 0.142 / 0.020
+with a negative solref. On the bike, doubling the `GUESS` chassis mass raised
+the rear load 42% but its sink only 31%. So fit on the bike's own model, and
+**refit after the weighing**.
 
 **Consequence for the bench tests.** A static load-deflection reading
 constrains the **product** `timeconst * dampratio`, not `timeconst` alone, so
 it cannot fix either number by itself. The static and drop tests have to be
-solved **jointly**. Concretely: a 4.5 kg reading of "about 1 mm" implies
-`timeconst ≈ 0.0035` if you assume `dampratio 1.0` — which is what the config
-ships — and `≈ 0.0075–0.010` at 0.5, a factor of two to three coming from an
-assumption rather than a measurement. (An earlier version of this said 0.5 was
+solved **jointly**. Concretely: a 4.5 kg reading of "about 1 mm" on the rear
+implies `timeconst ≈ 0.009` if you assume `dampratio 1.0` — which is what the
+config ships — and `≈ 0.018` at 0.5, a factor of two coming from an
+assumption rather than a measurement (settled, 2026-10-01; the posed curve
+said 0.0035 and 0.0075–0.010). (An earlier version of this said 0.5 was
 shipping. It was tried and reverted; the config has been at 1.0 since.)
 
 **THE NEGATIVE CONVENTION IS THE PLAN, not an option.** Measure the contact,
@@ -137,19 +152,33 @@ point — the contact is not linear.
 
 Model predictions below assume `dampratio = 1.0`, which is what the config
 ships. At 0.5 the same deflection implies a `timeconst` roughly 2x larger.
+Rear wheel, whole bike settled with the load on the rear axle
+(`contact_calibration.static_curve`, 2026-10-01), at the rest pose's roller
+phase (an axle ~2° from straight down):
 
-| load | model prediction at `timeconst` = |
+| rear load | model prediction at `timeconst` = |
 |---|---|
 | | 0.020 → 0.010 → 0.005 → 0.0035 → 0.002 |
-| bike weight, 10.0 N | 3.60 / 1.02 / 0.37 / — / 0.07 mm |
-| 2x bike weight, 20.0 N | 10.73 / 2.81 / 0.81 / — / 0.17 mm |
-| 4.5 kg, 44.1 N | bottoms out / 7.17 / **1.95** / **0.99** / 0.39 mm |
+| at rest, its own ~5.4 N | 0.76 / 0.41 / **0.13** / 0.07 / 0.02 mm |
+| 10 N | 1.04 / 0.54 / 0.24 / 0.12 / 0.04 mm |
+| 20 N | 1.74 / 0.76 / 0.40 / 0.23 / 0.08 mm |
+| 4.5 kg, 44.1 N | 2.49 / 1.18 / **0.57** / **0.41** / 0.17 mm |
+
+The roller phase moves the 0.005 row by about ±0.1 mm at 44 N: 0.44 mm with
+the two big ends of one axle bridging, 0.64 mm on a single roller edge
+(`static_curve(..., axle_deg=...)`).
+
+**This table replaced a posed one** (bike lowered to a height, force read from
+one `mj_forward`), which over-read the sink above the wheel's own load: 1.95
+for 0.005 at 44.1 N, and "10 N bike weight" was really 10 N on the rear,
+about twice its share.
 
 A first pass (2026-08-08, guided by hand, load ~4.5 kg) put the deflection
-"in the mm range, say 1 mm, maybe more". That is already enough to kill
-`0.020` outright — it sinks 3.6 mm under the bike's *own* weight — but not
-enough to separate `0.005` (1.95 mm) from `0.0035` (0.99 mm). **A careful
-reading of this one number closes the question.**
+"in the mm range, say 1 mm, maybe more". The posed table read that as killing
+`0.020`; settled, 0.020 sinks 2.49 mm at 44.1 N, which the hand check makes
+unlikely but does not rule out. It also lands between `0.010` (1.18 mm) and
+`0.005` (0.57 mm). **A careful reading of this one number closes the
+question**, at a known roller phase.
 
 Method notes:
 - Load through the axle, not the tyre crown, so the reading is contact
