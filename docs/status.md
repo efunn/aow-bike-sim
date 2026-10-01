@@ -109,7 +109,7 @@ Ranked by what unblocks the most, not by interest.
 >   they are provisional until retrained with it.
 >   `run_drive --no-headset` is the in-memory A/B.
 > - **The load in flight** (`analysis/headset_load.py`): the LQR holding
->   still gives a flat 3.10 +- 0.03 N axial and 0.95 N side. The RL policy
+>   still on truth gives a flat 3.10 +- 0.03 N axial and 0.95 N side. The RL policy
 >   holds the same mean but shakes it 0-10 N (p99 14.6 N over the grid) with
 >   its action dither: ~30% near 12 Hz, ~58% above 60 Hz. That is chatter,
 >   not the working load.
@@ -237,9 +237,9 @@ unchanged by the clip; the delay is not yet teleop-tested.
 | workstream | state | blocker | owner doc |
 |---|---|---|---|
 | **Simulation & model** | Working. 17 parameters still `GUESS`. A detailed drivetrain (fitted XC430 loop, diff detent, roller slop) exists as an opt-in overlay, in the eval env, teleop and training (per config). Trained at P 100 and P 400, 3 seeds each (2026-09-14): a tie on score. Teleop builds a policy's own drivetrain from its record | Physical parts to measure; the built bike, to confirm the drivetrain model | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
-| **Control — RL** | Working, and primary. Trains against the onboard sensors | Crab still one-sided; `turn_asym` stuck ~0.2 | `general-rl-improvements.md` |
+| **Control — RL** | Working, and primary. Trains against the onboard sensors. Smoothness loss on the policy mean (`smooth_ppo.py`) implemented 2026-10-01; four runs queued, not started (`config/queue_smooth_loss.txt`). `reward.w_copper` (copper loss, idle-faded) exists, parked at 0 | Crab still one-sided; `turn_asym` stuck ~0.2 | `general-rl-improvements.md` |
 | **Sensor modelling** | Largely DONE. Velocity estimate, encoder quantisation, TM151 error — all in training, validated against a real unit over USB | Dynamic attitude accuracy: measured at one mount (2026-09-23): ~0.2-0.3 deg RMS on replayed standing flights against the sim's 1.5, most of it the sensor's own acceleration read as tilt through a complementary filter (tau 0.19 s at rest rising continuously to ~1 s in motion); the sim's error model is not re-fitted yet. Next: the other mounts ("What to do next" #5) | `sensor-workstream.md` |
-| **Control — analytic (LQR)** | Reference baseline only. Marginally healthy | Nothing now; degrades when contact moves | `old/stationary-balance-controller.md` |
+| **Control — analytic (LQR)** | Reference baseline only. Holds standing on truth; under teleop's default `tm151` attitude error it oscillates and falls standing still (holds on `tm151_filter`) | Nothing now; degrades when contact moves, and when the attitude error grows | `old/stationary-balance-controller.md` |
 | **Hardware / untethered** | Servo bench 2026-09-01. Rear drivetrain assembly on the bench 2026-09-12/13, hand-held, recorded with `analysis/drivetrain_bench.py`. Bus at 500 Hz on the Mac only after `adjust-ftdi-latency`. **Onboard software readied for a Pi bench session 2026-09-15** — ground station, firmware-gain writes, fourth servo, fall cut/re-arm; none of it has touched hardware | Firmware P-gain choice, torque calibration, then the chassis | `pi-bench-bringup.md`, `first-physical-test.md`, `drivetrain-measurements.yaml` |
 | **CAD** | Layout, drivetrain, steering and righting stations pinned. **The whole bike assembled 2026-09-30** (`aow_sim.cad_bike`, Part Studio `aow-bike-whole`): the three modules placed, plus a chassis, battery tray, electronics carrier and roll cage. `--check` finds no interference at rest, steered, or at any righting pose. Second layout the same day: the righting tightened and tucked under the drive, the electronics leaning on the drive's front face. CAD-only wheelbase 250 (the sim keeps 200; the righting could not fit at 200). The bike got taller: cage top 235 above the floor (196 before). A first assembly, rough in places (user); expected to change: the righting's stack (shrink), the electronics (can go lower with more cable jigging; the drawn cables are minimal paths), the battery holder (likely off the XC430 cases), and the cage spine/ribs (extremely tentative, may be replaced). The X330 idler side and the 6-32 crank/idler joint are generated features (2026-09-23) | The wheelbase and the righting's axial stack, to tighten (user); AHRS fixture brackets, "What to do next" #5 | `bike-assembly-design.md`, `cad-onshape-workflow.md` |
 | **Self-righting mechanism** | Four-bar built and operating. Its servo is modelled from the lever bench (2026-09-26): linear current law above a 16.5 mA edge, load-proportional gearbox friction | PARKED 2026-09-27, decision later: linkage options explored (537-575 counts vs 643 at 9.9 V in sim; the diamond, 547, is the lean). The diamond is in CAD as a printed module (2026-09-29, `aow-bike-righting`, `righting-design.md`): crankshaft on two printed bearings, steering's horn hub, one rod size; nothing printed. Tightened 2026-09-30 for the whole bike: both knuckles at the rear, a +-16 bridge on one central upper-case screw. The machined concept before it is superseded. 300 counts cannot right the built one (625 does, teleop). Law above ~200 mA unmeasured; braking at speed mismatched | `righting-linkage-margin.md`, `righting-design.md`, `wing-linkage-design-and-optimization.md`, `righting_servo.py` |
@@ -276,6 +276,7 @@ parked or reference — read that before the body.
 | `self-righting.md` | where recovery stops being possible; the fall cases. Reference |
 | `params-digest-split.md` | the two digests and what each answers |
 | `asymmetric-actor-critic.md` | a parked option, kept to cover the bases |
+| `policy-smoothness-losses.md` | CAPS / Grad-CAPS-style loss terms against the chatter: what the chatter is (2026-10-01), the literature, the implementation and its weights, and the queued arms |
 | `ball-shot-move.md` | the ball shot. Works, parked |
 | `plans/old/` | six retired docs — built, superseded, or never started |
 
@@ -330,8 +331,9 @@ Present Position counts through the odometry RateFilter (on the Pi,
 `w_servo_a/b` via `crawl.feed`), and the integral of commanded minus measured
 differential, leaking at `crawl_lag_tau_s` 0.2. Swing-linkage standstill hold:
 steer 9.4 -> 0.1 deg RMS, pinned 100% -> 0%, roll 5.0 -> 0.05 deg RMS. At rest
-on teleop's sensors (TM151 + odometry, 3 seeds x 20 s) it now holds all three,
-where it fell in 1-7 s. Both sprints and three command_heading cases went
+on teleop's sensors (TM151 + odometry, 3 seeds x 20 s) the swing-linkage bike
+held all three, where it fell in 1-7 s. **The plain bike does not** (re-measured
+2026-10-01, below: falls 3 of 3 at 11-19 s). Both sprints and three command_heading cases went
 green; reverse_circle went red again. `DriveController._K0`, the RL envs'
 feedforward crawl fallback, stays the 8-state design (no exported move uses
 it: all 66 are `action_space: full`). `--lqr` starts teleop on it, and a
@@ -355,16 +357,50 @@ mujoco, 1.15 ms median tick. Nothing has run with torque.
 
 **`r_steer` 6 -> 20 (2026-09-22), 9 -> 7.** Clears pivot[180] and
 reverse_circle, turns nothing red, leaves the 40 s standstill hold unchanged
-(0.83 vs 0.85 deg tail roll RMS). Found on the way, and NOT fixed by it: the
-LQR's steer runs as a +-15 deg relay. The standstill design asks ~50 rad of
-steer per rad of roll (40-90 deg for sub-degree motion), so the command sits
-on `steer_limit_deg` 73-97% of a hold for every `q_steer` 5-40 x `r_steer`
-6/20, and ~95% of the last 0.5 s before the sprint[0.8] fall. Not the steer
-servo model (76-79% with the delay or the clip off) and not the contact: all
-six stay red at `contact_solref` dampratio 0.5 / 1 / 2 / 4, and 1.0 is the
-LQR's best (22 / 8 / 17 / 19 red of 35). A constraint-aware controller (MPC)
-is the candidate; the box-constrained solve fits the Pi 3B+ (N=40, 200 ms
-horizon, 20 warm-started iterations: 2.1 ms against the 5 ms tick, numpy only).
+(0.83 vs 0.85 deg tail roll RMS). The +-15 deg steer relay found alongside it
+(command on `steer_limit_deg` 73-97% of a hold) was the PRE-crawl-state design,
+which balanced on steer alone; the crawl states above removed it on truth. An
+MPC was costed as the fix then (N=40, 200 ms horizon: 2.1 ms on a Pi 3B+,
+numpy only) and is not needed for that any more.
+
+**THE RELAY COMES BACK UNDER THE TM151 ERROR MODEL (2026-10-01).** Standstill,
+zero command, teleop's own step loop run headless (default teleop bike: no
+linkage, ideal drives, 200 Hz), 20 s, 3 seeds; scratch harness, not in the repo:
+
+| sensors | fell | roll RMS | steer peak-to-peak | diff RMS |
+|---|---|---|---|---|
+| truth | 0 / 3 | 0.06 deg | 0.4 deg | 0.4 rad/s |
+| odometry only | 0 / 3 | 0.16 | 2.9 | 3.0 |
+| `tm151` only | 2 / 3 | 3.6-9.0 | **30** | 43-58 |
+| **`tm151` + odometry (teleop default)** | **3 / 3** (11-19 s) | 6.6-7.2 | **30** | 28-34 |
+| `tm151_filter` + odometry | 0 / 3 | 0.2 | 2.1 | 1.0 |
+
+So `run_drive --teleop --lqr` oscillates and falls standing still, and
+`--ahrs tm151_filter` holds. Mechanism: the standstill design still carries a
+large steer-per-roll gain, and `tm151` reports 1.5 deg RMS of attitude
+wander -- the datasheet dynamic figure, against ~0.2-0.3 deg measured at one
+mount (Sensor modelling row above). `tm151_filter` (0.1 deg residual) is the
+closer model of the part. The 100 Hz "STANDS 12 of 12" above was not
+re-measured.
+
+**AHRS error costs far more WITHOUT the velocity estimate, for both
+controllers (2026-10-01), mechanism OPEN.** LQR on `tm151_filter` with no
+odometry falls 3 of 3 in 2.4-3.1 s; with odometry it holds. RL
+`cmd_curriculum2b` (trained odometry + `tm151`) on the 20-command grid:
+
+| odometry | AHRS | survival | score |
+|---|---|---|---|
+| on | `tm151` (as trained) | 0.90 | 0.572 |
+| on | none | 1.00 | 0.723 |
+| off | `tm151` | **0.75** | **0.318** |
+| off | none | 1.00 | 0.642 |
+
+Ruled out: the AHRS-only code path (same seed and physics, its readings are
+bit-identical to the odometry path's), the world-frame rotation of velocity
+by the AHRS yaw, and coupling through the estimator's own AHRS input (LQR
+still holds 3 of 3 with the estimator fed true attitude). Left: something in
+the estimate itself -- its lag, or measuring at the front contact rather than
+the body -- makes both controllers less sensitive to a false lean. Untested.
 
 **Re-measured, not moved.** Several registry reasons had drifted from what the
 tests report: `test_reverse_circle_tracks` FALLS ("radius err 0.681" was a bike
@@ -1405,7 +1441,8 @@ A bare `pytest` is SERIAL and takes ~2 min. Run the marker, not the suite —
 reference for which marker covers what.
 
 **LQR: marginally functional, and that is the intended state.** Holds the bike
-at standstill at 1.17° peak roll over 40 s. Recovered by two weights after the
+at standstill at 1.17° peak roll over 40 s ON TRUTH; on teleop's default
+sensors it falls standing still (see "the relay comes back" above). Recovered by two weights after the
 drive plant was armed: `q_roll_rate` 6.0 → 30.0 (the velocity-PI servo puts a
 pole at the origin that the 8-state model does not carry; de-tuning `r_drive`
 over a 100000× range does not substitute) and `q_steer` 0.5 → 5.0 (the steer was
