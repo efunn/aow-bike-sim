@@ -502,6 +502,14 @@ def main() -> None:
                          "(default: each policy's training gains, else the "
                          "overlay's factory 100:1920). Implies the drivetrain "
                          "if nothing else asks for it. e.g. 400:3840")
+    ap.add_argument("--crab-max", type=float, default=None, metavar="M/S",
+                    help="teleop only: the crab command's clamp (1 / 3 keys) in "
+                         "m/s, REPLACING the loaded policy's own envelope "
+                         "(v_lat_frac * v_max from its yaml -- 0 for every "
+                         "policy trained since curriculum2b, which is why the "
+                         "keys do nothing). Above that envelope the command is "
+                         "off-distribution, the same one the eval grid's crab "
+                         "rows ask for; a warning says so per policy.")
     ap.add_argument("--slowmo", type=float, default=1.0, metavar="X",
                     help="run teleop at 1/X speed (2 = half, 10 = a tenth). "
                          "- halves and = doubles it live (shifted _ and + too), "
@@ -613,6 +621,9 @@ def main() -> None:
         raise SystemExit("--drivetrain is teleop-only: the scripted "
                          "scenarios and --view run the analytic controller "
                          "without the per-step drivetrain hook")
+    if args.crab_max is not None and (not args.teleop or args.crab_max < 0):
+        raise SystemExit("--crab-max is teleop-only and takes a speed >= 0 "
+                         "(m/s)")
     drivetrain_base = servo_gains = None
     drivetrain_source = ""
     if args.teleop:
@@ -703,7 +714,7 @@ def main() -> None:
                 ahrs_tau=args.ahrs_tau, design=design,
                 drivetrain_base=drivetrain_base, servo_gains=servo_gains,
                 drivetrain_source=drivetrain_source, start_lqr=args.lqr,
-                verbose=args.verbose,
+                crab_max_override=args.crab_max, verbose=args.verbose,
                 rig=rig_cfg)
         return
     if args.view:
@@ -2413,7 +2424,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
             ahrs="none", ahrs_tau=None, design=None, drivetrain_base=None,
             servo_gains=None, drivetrain_source="", frame_stats=None,
-            start_lqr=False, rig=None, verbose=False):
+            start_lqr=False, rig=None, crab_max_override=None,
+            verbose=False):
     from .interactive import FrameStats, teleop_loop
 
     from . import policy_menu
@@ -2616,7 +2628,9 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # Crab is clamped to the envelope THIS policy trained on (moves/<name>.yaml
     # carries v_lat_frac); asking for more is off-distribution. Resolved lazily
     # in apply() because the policy is not loaded until engage().
-    crab_max = [0.4 * v_max]
+    crab_max = [0.4 * v_max if crab_max_override is None
+                else crab_max_override]
+    crab_warned = [None]   # policy last warned about (--crab-max), per TAB
 
     # -- the righting wings, when --wings built them ------------------------
     # Deliberately MANUAL and one-shot: 9 latches a target of full deploy, 0 a
@@ -3100,8 +3114,18 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
 
         if c.mode == "general":
             # Clamp to the envelope the loaded policy declares (yaml
-            # v_lat_frac), now that it is definitely loaded.
-            crab_max[0] = float(getattr(c._gen, "v_lat_frac", 0.4)) * v_max
+            # v_lat_frac), now that it is definitely loaded -- unless
+            # --crab-max replaced it, in which case only warn, once per
+            # policy the TAB menu lands on.
+            trained = float(getattr(c._gen, "v_lat_frac", 0.4)) * v_max
+            if crab_max_override is None:
+                crab_max[0] = trained
+            elif crab_max_override > trained + 1e-9 \
+                    and crab_warned[0] is not c._gen:
+                crab_warned[0] = c._gen
+                print(f"WARNING --crab-max {crab_max_override:.2f} m/s is past "
+                      f"what this policy trained on (+-{trained:.2f}): crab "
+                      "commands beyond that are off-distribution")
             if rig is not None and rig.get("heading") == "follow":
                 # --rig-heading follow: the heading command is wherever the
                 # bike (= the rig arm) points now, so heading error stays zero.

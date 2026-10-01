@@ -30,6 +30,32 @@ def params():
     return load_params()
 
 
+class _NoKeys:
+    """A keyboard nobody is touching: no backend, nothing ever down."""
+    available = confirmed = False
+    source = None
+    routes: list = []
+
+    def poll(self, now):
+        pass
+
+    def down(self, name):
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _no_live_keyboard(monkeypatch):
+    """The real _KeyState reads the LIVE OS keyboard (Quartz polling, through
+    pyobjc), so typing while the suite runs reached every teleop built by
+    `_capture` -- two of them went NEWLY RED that way on 2026-10-01, and the
+    cause was found and left in place on 2026-08-22 (pyproject.toml). Every
+    teleop here now gets a keyboard nobody is touching; the tests of the
+    true-key-state path install `_FakeKeys` over this, and
+    test_keystate_degrades_safely imported the real class before this patch,
+    so it still checks the real backend (and is still exposed)."""
+    monkeypatch.setattr("aow_sim.run_drive._KeyState", _NoKeys)
+
+
 @pytest.fixture(scope="module")
 def model(params):
     return build_model(params, variant="full")
@@ -503,6 +529,30 @@ def test_general_mode_reports_a_missing_policy(monkeypatch, model, params,
     _idle(g, 3 * model.opt.timestep)
     assert "train_general_rl" in capsys.readouterr().out
     assert g["c"].mode != "general"
+
+
+@pytest.mark.parametrize("override", [None, 0.3])
+def test_crab_max_replaces_the_policy_envelope(monkeypatch, model, params,
+                                               eq_qpos, capsys, override):
+    """The crab key is clamped to the policy's v_lat_frac * v_max -- 0 for
+    every policy since curriculum2b -- unless --crab-max replaces it, which
+    also warns that the command is off-distribution."""
+    _needs_general()
+    from aow_sim.run_drive import _command_ref
+    g = _capture(monkeypatch, model, params, eq_qpos,
+                 crab_max_override=override)
+    c = g["c"]
+    assert c.mode == "general"
+    frac = float(c._gen.v_lat_frac)
+    _idle(g, 0.05)                       # the envelope resolves on a step
+    for _ in range(3):
+        _tap(g, ord("1"))
+    _h, v_cmd = _command_ref(c, g["data"])
+    want = frac * c.profile.v_max if override is None else override
+    assert np.linalg.norm(v_cmd) == pytest.approx(want, abs=1e-6)
+    warned = "past what this policy trained on" in capsys.readouterr().out
+    assert warned == (override is not None
+                      and override > frac * c.profile.v_max)
 
 
 # --- virtual gamepad + trail ------------------------------------------------

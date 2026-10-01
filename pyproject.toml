@@ -115,6 +115,9 @@ addopts = ["--strict-markers"]
 # actually typing while the suite runs -- which is exactly what was happening
 # during the runs that produced 47/48/51 failures and got blamed on threads.
 # Serial is just as exposed; parallel runs are shorter and so hit it less.
+# Since 2026-10-01 every other teleop test gets a stub keyboard (the autouse
+# `_no_live_keyboard` in test_teleop.py): two of them had been just as
+# exposed. test_keystate_degrades_safely still reads the real one.
 #
 # Every marker answers ONE question: what change should send me back here?
 # The text below is that answer, and `pytest --markers` prints it. Markers are
