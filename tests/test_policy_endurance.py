@@ -7,7 +7,12 @@ number to watch once good ones start coming out -- so the failure message
 always carries the estimate, not just the verdict.
 
 Flown the way teleop and the bike fly it: the configured policy on the
-sensors its move yaml says it trained with (velocity estimate + TM151).
+sensors its move yaml says it trained with (velocity estimate + TM151), and
+on the drivetrain it records (`drivetrain_model:`, the detailed XC430 loop
+and detent) when it has one -- stepped per physics step as training and
+teleop step it, the detent phase drawn per seed. Before 2026-10-01 this flew
+every policy on the ideal drivetrain, which no policy trained since the
+drivetrain went in has seen.
 """
 
 import mujoco
@@ -67,15 +72,27 @@ ENDURANCE_MAX_FALLS = 4
 ENDURANCE_S = 60.0
 
 
-def _endurance_flight(seed):
+def _endurance_flight(seed, name=None):
     """Seconds until the bike falls standing still on its own sensors, or
-    None if it lasts ENDURANCE_S. Top-level so a process pool can pickle it."""
+    None if it lasts ENDURANCE_S. Top-level so a process pool can pickle it.
+    `name` defaults to `control.general_move`; passing one flies a candidate
+    export the same way without repointing."""
     import warnings
     warnings.filterwarnings("ignore")
+    from aow_sim import drivetrain_model
     params = load_params()
-    model = build_model(params)
-    name = params["control"].get("general_move", "general_rl")
+    name = name or params["control"].get("general_move", "general_rl")
     spec = yaml.safe_load((MOVES_DIR / f"{name}.yaml").read_text()) or {}
+    design = None
+    if spec.get(drivetrain_model.KEY):
+        # Teleop's arrangement: the analytic design (which DriveController
+        # carries regardless) is identified on the IDEAL plant -- it drives
+        # the native drive actuators, which the overlay turns into command
+        # holders -- and the policy flies on the detailed one.
+        from aow_sim.control.linearize import design_all
+        design = design_all(params, build_model(params))
+        params = {**params, drivetrain_model.KEY: spec[drivetrain_model.KEY]}
+    model = build_model(params)
     dt = model.opt.timestep
     ahrs = None
     if str(spec.get("ahrs_level") or "none") != "none":
@@ -89,10 +106,14 @@ def _endurance_flight(seed):
     data = mujoco.MjData(model)
     data.qpos[:] = settle_upright(model).qpos
     mujoco.mj_forward(model, data)
-    ctl = DriveController(params, model)
+    ctl = DriveController(params, model, design=design)
     ctl.reset(model, data)
     ctl._odometry_active = odo is not None
     ctl._ahrs_active = ahrs is not None
+    drive = drivetrain_model.DrivetrainSim.attach(model, params)
+    ctl._drivetrain_active = drive is not None
+    if drive is not None:
+        drive.reset(data, np.random.default_rng(seed))
     ctl.engage_general(data, name=name)
     ctl.set_command_polar(0.0)
     limit = np.deg2rad(MAX_ROLL_DEG)
@@ -106,6 +127,8 @@ def _endurance_flight(seed):
                 ctl.step(model, data)
         else:
             ctl.step(model, data)
+        if drive is not None:
+            drive.pre_step(data)
         mujoco.mj_step(model, data)
         if k % 25 == 0 and abs(extract_state(data, np.zeros(3)).roll) > limit:
             return float(data.time)
