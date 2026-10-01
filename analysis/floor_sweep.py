@@ -65,11 +65,15 @@ MU_DEFAULT = [0.5, 0.7, 0.9, 1.1, 1.4]
 #
 # `dampratio` appears ONLY in k, as 1/dampratio^2. So dropping it 1.0 -> 0.3
 # does not reduce damping, it makes the contact ~11x STIFFER -- which is why
-# the drop test bounces there. Measured sink at bike weight, via
-# analysis/contact_calibration.static_curve:
+# the drop test bounces there. Rear-wheel sink with the bike at rest on its
+# own weight (~5.4 N on the rear), timeconst 0.005, settled whole bike via
+# analysis/contact_calibration.rest_sink (2026-10-01):
 #
 #     dampratio  0.30    0.50    1.00 (ships)   2.00
-#     sink       0.039   0.108   0.391 mm       1.075
+#     sink       0.012   0.034   0.133 mm       0.373
+#
+# (Until 2026-10-01 this read 0.039 / 0.108 / 0.391 / 1.075: a posed curve
+# read at 10 N of REAR force, about twice the rear's real load. Same order.)
 #
 # A SOFT FLOOR -- a mat, carpet -- is therefore HIGHER dampratio and/or higher
 # timeconst, not lower. Spanning only <= 1.0 tests the stiff half and nothing
@@ -91,19 +95,17 @@ def _cfg():
     return cfg
 
 
-def _sink_mm(timeconst, dampratio, weight_n=10.0):
-    """Sink at bike weight [mm] -- the physically legible label for a solref.
+def _sink_mm(timeconst, dampratio):
+    """Rear-wheel sink with the bike at rest [mm] -- the legible label for a solref.
 
     Reported beside every cell because `dampratio 0.3` reads as "softer" to
     almost everyone and is in fact 10x stiffer. A sink in millimetres cannot be
-    misread the way a dimensionless ratio can.
+    misread the way a dimensionless ratio can. It is the whole bike settled on
+    its own weight (`contact_calibration.rest_sink`), so it already carries the
+    model's masses, which MuJoCo's contact sink depends on.
     """
-    from contact_calibration import static_curve, deflection_at
-    # 12 mm, not 4: a soft contact ([0.020, 2.0]) sinks past 4 mm and
-    # `deflection_at` returns nan off the end of its curve, which then sorts
-    # the softest row to the BOTTOM of a table whose whole point is the order.
-    return deflection_at(static_curve(timeconst, dampratio,
-                                      np.linspace(0.0, 12.0, 120)), weight_n)
+    from contact_calibration import rest_sink
+    return rest_sink(timeconst, dampratio)[0]
 
 
 def _one_point(job):
