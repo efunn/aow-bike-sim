@@ -80,6 +80,27 @@ activate_env() {
   fi
 }
 
+# preflight <board|train>...: activate if we can, then REFUSE before anything
+# is started or stopped if the interpreter we ended up with cannot do the job.
+# Interpreter-agnostic on purpose -- it checks what is on PATH, not where any
+# machine keeps its python. Without it, a bare `ssh host './scripts/rl.sh
+# queue ...'` (no conda on a non-interactive PATH) stopped the running board
+# for a logdir change and only THEN found no tensorboard to start
+# (2026-10-01): a bad environment cost a working board.
+preflight() {
+  activate_env
+  local py; py="$(command -v python || echo 'no python on PATH')"
+  local need
+  for need in "$@"; do
+    case "$need" in
+      board) command -v tensorboard >/dev/null 2>&1 ||
+               die "no 'tensorboard' on PATH (python: $py). Activate the training env first -- nothing was started or stopped." ;;
+      train) python -c "import aow_sim, stable_baselines3" >/dev/null 2>&1 ||
+               die "'$py' cannot import aow_sim + stable_baselines3. Activate the training env first -- nothing was started or stopped." ;;
+    esac
+  done
+}
+
 # The pidfile holds "<mode> <pid>". mode=group means the process is its own
 # process-group leader (setsid), so one signal reaches SB3's SubprocVecEnv
 # workers too; mode=tree means we walk the children ourselves instead.
@@ -186,6 +207,7 @@ board_url() {
 
 cmd_board() {
   local move=$1 port log
+  preflight board          # BEFORE the restart branch below can stop a board
   port="${PORT:-$(port_for "$move")}"
   local want; want="$(board_logdir "$move")"
   local job
@@ -221,7 +243,6 @@ cmd_board() {
     echo "                or use another:      PORT=$((port + 1)) $0 board $move"
     return 0
   fi
-  activate_env
   local dir="$want"
   log="$(start "$move" board tensorboard -- \
     tensorboard --logdir "$dir" --bind_all --port "$port")"
@@ -236,7 +257,7 @@ cmd_board() {
 
 cmd_train() {
   local move=$1; shift
-  activate_env
+  preflight train
   local log
   log="$(start "$move" train train -- python -u -m "aow_sim.train_${move}_rl" "$@")"
   echo "training     -> aow_sim.train_${move}_rl ${*:-(config defaults)}, pid $(pid_of "$move" train)"
@@ -319,7 +340,7 @@ cmd_seeds() {
     esac
   done
 
-  activate_env
+  preflight board train
   # Board FIRST and on the PARENT, before any run dir exists -- tensorboard
   # picks up subdirectories as they appear, so it need not wait for seed 0.
   LOGDIR="$base" cmd_board "$move"
@@ -459,7 +480,7 @@ cmd_queue() {
   (( n > 0 )) || die "$file: no jobs"
   chain+=" echo \"=== queue done : \$(date '+%F %T') ===\""
 
-  activate_env
+  preflight board train
   LOGDIR="$base" cmd_board "$move"
   echo
   local log steps
@@ -482,6 +503,7 @@ cmd_queue() {
 
 cmd_up() {
   local move=$1; shift
+  preflight board train    # both, before cmd_board starts anything
   # Resolve the board's logdir from the argv we are ABOUT TO LAUNCH, not from
   # the last run's train log. board_logdir parses --run-dir out of
   # train-latest.log, which at this instant still describes the PREVIOUS run --
