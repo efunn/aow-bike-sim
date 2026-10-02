@@ -66,11 +66,11 @@ MU_DEFAULT = [0.5, 0.7, 0.9, 1.1, 1.4]
 # `dampratio` appears ONLY in k, as 1/dampratio^2. So dropping it 1.0 -> 0.3
 # does not reduce damping, it makes the contact ~11x STIFFER -- which is why
 # the drop test bounces there. Rear-wheel sink with the bike at rest on its
-# own weight (~5.4 N on the rear), timeconst 0.005, settled whole bike via
+# own weight (~5.8 N on the rear), timeconst 0.005, settled whole bike via
 # analysis/contact_calibration.rest_sink (2026-10-01):
 #
 #     dampratio  0.30    0.50    1.00 (ships)   2.00
-#     sink       0.012   0.034   0.133 mm       0.373
+#     sink       0.014   0.038   0.148 mm       0.380
 #
 # (Until 2026-10-01 this read 0.039 / 0.108 / 0.391 / 1.075: a posed curve
 # read at 10 N of REAR force, about twice the rear's real load. Same order.)

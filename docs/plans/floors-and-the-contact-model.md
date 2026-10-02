@@ -58,19 +58,19 @@ positive pair.**
 ## 2. How the contact got where it is
 
 Reconstructed from git 2026-09-09. Sink is the rear wheel with the bike at
-rest on its own weight (~5.4 N on the rear), the whole bike settled
+rest on its own weight (~5.8 N on the rear), the whole bike settled
 (`analysis/contact_calibration.rest_sink`, 2026-10-01). The "stiffer" factors
 are the formula's `k`. The sink moves less than `k`, because `solimp`
 stiffens the contact with depth.
 
 | when | commit | `contact_solref` | sink | change |
 |---|---|---|---|---|
-| before 08-08 | — | *(unset)* → MuJoCo stock `[0.02, 1]` | 0.758 mm | inherited, invisible |
-| 2026-08-08 | `7fcc160` | `[0.005, 1.0]` | **0.133 mm** | **~16× stiffer** |
-| 2026-08-09 | `0efac06` | `[0.005, 0.5]` | 0.034 mm | a further ~4× stiffer |
-| 2026-08-10 | `511421f` | `[0.005, 1.0]` | **0.133 mm** | reverted, "(working)" |
+| before 08-08 | — | *(unset)* → MuJoCo stock `[0.02, 1]` | 0.767 mm | inherited, invisible |
+| 2026-08-08 | `7fcc160` | `[0.005, 1.0]` | **0.148 mm** | **~16× stiffer** |
+| 2026-08-09 | `0efac06` | `[0.005, 0.5]` | 0.038 mm | a further ~4× stiffer |
+| 2026-08-10 | `511421f` | `[0.005, 1.0]` | **0.148 mm** | reverted, "(working)" |
 | 2026-08-14 | `6f74312` | unchanged | — | `contact_solimp` written down explicitly |
-| now | — | `[0.005, 1.0]` | 0.133 mm | net **~16× stiffer than stock** |
+| now | — | `[0.005, 1.0]` | 0.148 mm | net **~16× stiffer than stock** |
 
 Until 2026-10-01 this column read 3.803 / 0.390 / 0.108 mm. That came from a
 posed curve (bike lowered to a height, force read from one `mj_forward`)
@@ -88,7 +88,7 @@ controller. The 08-09 excursion to `dampratio 0.5` lasted one day.
 `[0.9, 0.95, 0.001, 0.5, 2.0]` into the file explicitly — a physics no-op whose
 point was to stop it being an invisible inherited choice. It is still
 `source: GUESS`, and `dmin` is not negligible: 0.9 → 0.5 changes the rear's
-sink at rest by **3.9×** (0.133 → 0.512 mm, settled, 2026-10-01; the posed
+sink at rest by **3.6×** (0.148 → 0.527 mm, settled, 2026-10-01; the posed
 curve said 2.3×), which confounds both bench tests.
 
 ### Two policies DID train at 0.5, and the names came out inverted
@@ -146,19 +146,19 @@ settled, as in §2. The scores are unchanged. The posed labels were 13.17 /
 
 | sink | `contact_solref` | score / survival |
 |---|---|---|
-| 1.828 mm | `[0.020, 2.00]` | 0.594 / 1.00 |
-| 0.758 mm | `[0.020, 1.00]` | 0.657 / 1.00 |
-| 0.373 mm | `[0.005, 2.00]` | 0.673 / 1.00 |
-| 0.185 mm | `[0.020, 0.30]` | **0.719** / 1.00 |
-| **0.133 mm** | **`[0.005, 1.00]` — ships** | 0.663 / 1.00 |
-| 0.012 mm | `[0.005, 0.30]` | 0.374 / **0.70** |
+| 1.835 mm | `[0.020, 2.00]` | 0.594 / 1.00 |
+| 0.767 mm | `[0.020, 1.00]` | 0.657 / 1.00 |
+| 0.380 mm | `[0.005, 2.00]` | 0.673 / 1.00 |
+| 0.209 mm | `[0.020, 0.30]` | **0.719** / 1.00 |
+| **0.148 mm** | **`[0.005, 1.00]` — ships** | 0.663 / 1.00 |
+| 0.014 mm | `[0.005, 0.30]` | 0.374 / **0.70** |
 
 - **Soft is the safe direction.** Survival is 1.00 from 1.8 mm of sink down to
-  the shipped 0.13 mm; score varies 0.08 across a 14× span of sink.
-- **The cliff is at the STIFF end and only there** — 0.012 mm of sink drops
+  the shipped 0.15 mm; score varies 0.08 across a 12× span of sink.
+- **The cliff is at the STIFF end and only there** — 0.014 mm of sink drops
   survival to 0.70.
 - **Sink alone does not determine the outcome.** `[0.005, 0.50]` and
-  `[0.020, 0.30]` tie at 0.719 with sinks of 0.034 and 0.185 mm, so damping
+  `[0.020, 0.30]` tie at 0.719 with sinks of 0.038 and 0.209 mm, so damping
   matters independently of stiffness. Another argument for the negative form.
 
 **Friction is flat for survival but not inert.** Across mu 0.5–2.0 the

@@ -22,7 +22,7 @@ damping to the critical damping FOR THE RESULTING STIFFNESS. Lowering it from
 1.0 to 0.5 at fixed timeconst leaves damping untouched and makes the contact
 FOUR TIMES STIFFER, which is what makes it underdamped and bouncy. Verified
 against this model, the rear wheel at rest on the bike's own weight (settled,
-2026-10-01): the sink falls 3.9x going 1.0 -> 0.5 and 11.1x going 1.0 -> 0.3,
+2026-10-01): the sink falls 3.9x going 1.0 -> 0.5 and 10.8x going 1.0 -> 0.3,
 against the 4x and 11.1x the formula predicts. Away from rest the ratio
 shrinks (2.2x at 44 N), because `solimp` stiffens the contact with depth.
 
@@ -57,9 +57,9 @@ not, dampratio is the parameter that is wrong -- not timeconst, and not the
 friction coefficients.
 
 METHOD, static. A settling simulation of the whole bike (`static_curve`):
-held upright and in place with only height and pitch free, wheels locked at a
-phase, a downward force on the axle until that wheel carries the load, then
-stepped to rest. Sink = how far the wheel's lowest point is below the floor.
+held upright with height, pitch and fore-aft free, wheels locked at a phase,
+a vertical force on the axle until that wheel carries the load, then stepped
+to rest. Sink = how far the wheel's lowest point is below the floor.
 Comparable to a weight on the axle and a dial on it.
 
 It used to place the bike at prescribed heights and read the force from one
@@ -125,19 +125,30 @@ SETTLE_MIN_S = 0.1        # an overdamped soft contact creeps; don't stop early
 SETTLE_MAX_S = 3.0
 SETTLE_TOL_MM = 5e-4      # sink change over the last SETTLE_WINDOW_S
 SETTLE_WINDOW_S = 0.02
+LOAD_TOL_N = 0.02         # static_curve: how close the wheel's load must come
+LOAD_ROUNDS = 8
 
 
 def _settle(m, d, verts):
-    """Step until the sink stops moving. Only height and pitch are free.
+    """Step until the sink stops moving. Height, pitch and fore-aft are free.
 
-    After every step the chassis' fore-aft, lateral, roll and yaw, and every
-    joint below it (steer, wheel spin, hub, rollers, inputs), are put back
-    where they started, position AND velocity. That holds the bike upright
-    with the hub at its phase. Zeroing velocity alone is not enough: each step
-    still moves the position by ~dt^2 * accel, and on a sloped part of a
-    roller the hub crept 4 deg in 3 s. Editing the state leaves the compiled
-    masses alone, and those matter here: see `static_curve`. Returns the time
-    taken [s].
+    After every step the chassis' lateral, roll and yaw, and every joint
+    below it (steer, wheel spin, hub, rollers, inputs), are put back where
+    they started, position AND velocity. That holds the bike upright with the
+    hub at its phase. Zeroing velocity alone is not enough: each step still
+    moves the position by ~dt^2 * accel, and on a sloped part of a roller the
+    hub crept 4 deg in 3 s.
+
+    Fore-aft must stay FREE. With the wheels locked, a held x lets the floor
+    push sideways on a wheel with nothing to balance it, and that push at
+    floor level pitches the bike and moves load between the wheels. Held, the
+    rear's share at rest ran 5.8 -> 9.2 N across roller phases (5.4 N of
+    sideways push at the two-small-ends phase); free, 5.8 -> 6.4 N
+    (2026-10-01). The per-phase sinks at 44 N moved by <= 0.006 mm, because
+    the push is corrected to the target load anyway.
+
+    Editing the state leaves the compiled masses alone, and those matter
+    here: see `static_curve`. Returns the time taken [s].
     """
     hold = d.qpos.copy()
     assert abs(hold[4]) < 1e-9 and abs(hold[6]) < 1e-9, "start pose must be roll/yaw free"
@@ -147,10 +158,10 @@ def _settle(m, d, verts):
     while d.time - t0 < SETTLE_MAX_S:
         mujoco.mj_step(m, d)
         pitch = 2.0 * np.arctan2(d.qpos[5], d.qpos[3])
-        d.qpos[0:2] = hold[0:2]
+        d.qpos[1] = hold[1]
         d.qpos[3:7] = [np.cos(pitch / 2), 0.0, np.sin(pitch / 2), 0.0]
         d.qpos[7:] = hold[7:]
-        d.qvel[[0, 1, 3, 5]] = 0.0           # free joint: keep vz and pitch rate
+        d.qvel[[1, 3, 5]] = 0.0              # free joint: keep vx, vz, pitch rate
         d.qvel[6:] = 0.0
         hist.append(clearance_mm(d, verts))
         if (d.time - t0 > SETTLE_MIN_S
@@ -172,11 +183,21 @@ def _axle_from_down(m, d):
 def static_curve(timeconst, dampratio, loads_n, wheel="rear", axle_deg=None):
     """(sink mm, normal force N) of one wheel, the whole bike settled at rest.
 
-    The bike starts from `settle_upright` and a downward force goes on the
+    The bike starts from `settle_upright` and a vertical force goes on the
     axle (the hub body, or the front wheel's) until that wheel carries each
-    load; then `_settle`. A load below the wheel's own share gets no push:
-    that row is the bike resting on its own weight. `hub_deg` turns the rear
-    hub (and the belt inputs 1:1, which the tendons need) before settling.
+    load; then `_settle`. A load at or below the wheel's own share (or
+    `None`) gets no push: that row is the bike resting on its own weight.
+    Lifting toward zero was tried (2026-10-01) and does not converge at the
+    small-end phases: the contact jumps between points as the bike pitches.
+    Where it did converge it mattered: zeroed at 1.2 N rather than 9.5 N,
+    the sink added by 26.7 N went 0.267 -> 0.302 mm with two big ends down
+    and 0.239 -> 0.363 mm flat on one roller. The contact is softest near
+    zero depth (`solimp`), so a comparison with a bench reading has to start
+    from the bench's zero.
+
+    `axle_deg` puts the rear's nearest roller axle that far from straight
+    down, turning the hub and the belt inputs 1:1 (the tendons need both)
+    before settling.
 
     It must be the WHOLE bike: in MuJoCo the settled sink at a given force
     depends on the masses compiled around the contact (`body_invweight0`),
@@ -209,11 +230,17 @@ def static_curve(timeconst, dampratio, loads_n, wheel="rear", axle_deg=None):
         _settle(m, d, verts)
         own = _wheel_normal_force(m, d, geoms, floor)
         if load is not None and load > own:
-            d.xfrc_applied[body, 2] = -(load - own)
-            # the push also moves pitch, so the share shifts: correct once
-            _settle(m, d, verts)
-            d.xfrc_applied[body, 2] -= load - _wheel_normal_force(m, d, geoms, floor)
-            _settle(m, d, verts)
+            # the push also moves pitch, and the contact points with it, so
+            # the share shifts: correct until the wheel carries the load.
+            err = load - own
+            for _ in range(LOAD_ROUNDS):
+                d.xfrc_applied[body, 2] -= err
+                _settle(m, d, verts)
+                err = load - _wheel_normal_force(m, d, geoms, floor)
+                if abs(err) < LOAD_TOL_N:
+                    break
+            else:
+                raise RuntimeError(f"{wheel} load {load:.2f} N: still {err:+.3f} N off")
         out.append((-clearance_mm(d, verts), _wheel_normal_force(m, d, geoms, floor)))
     return np.array(out)
 

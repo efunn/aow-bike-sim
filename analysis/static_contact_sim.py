@@ -27,8 +27,8 @@ servos. Adding inertia to the hub joint cut the rear's sink; adding it to the
 rollers or the belt inputs changed nothing. The front tire's effective mass
 is the carriage. The negative form scales the same way. Changing `body_mass` AFTER compiling does not move invweight0, so it
 changes nothing: an earlier "force and mass give identical results" check was
-that artifact. The full bike resting on its own weight (rear 5.46 N, 0.135 mm)
-agrees with the rear here (0.107 mm). Do not read the front table as the
+that artifact. The full bike resting on its own weight (rear 5.78 N, 0.148 mm)
+is near the rear here (0.107 mm at 5.5 N). Do not read the front table as the
 bike's front.
 
 For numbers that belong to the BIKE, use `contact_calibration.static_curve`:

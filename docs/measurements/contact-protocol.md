@@ -71,7 +71,7 @@ is the ratio of actual to critical damping *for the resulting stiffness*, so
 lowering it 1.0 → 0.5 leaves damping alone and makes the contact **four times
 stiffer**, which is what makes it underdamped and bouncy. Verified against
 this model, rear wheel at rest on the bike's own weight (settled,
-2026-10-01): the sink falls 3.9x for 1.0 → 0.5 and 11.1x for 1.0 → 0.3,
+2026-10-01): the sink falls 3.9x for 1.0 → 0.5 and 10.8x for 1.0 → 0.3,
 against the 4x and 11.1x the formula predicts. Under load the ratio shrinks
 (2.2x at 44 N), because `solimp` stiffens the contact with depth.
 
@@ -159,9 +159,9 @@ phase (an axle ~2° from straight down):
 | rear load | model prediction at `timeconst` = |
 |---|---|
 | | 0.020 → 0.010 → 0.005 → 0.0035 → 0.002 |
-| at rest, its own ~5.4 N | 0.76 / 0.41 / **0.13** / 0.07 / 0.02 mm |
-| 10 N | 1.04 / 0.54 / 0.24 / 0.12 / 0.04 mm |
-| 20 N | 1.74 / 0.76 / 0.40 / 0.23 / 0.08 mm |
+| at rest, its own ~5.8 N | 0.77 / 0.41 / **0.15** / 0.07 / 0.02 mm |
+| 10 N | 1.04 / 0.54 / 0.24 / 0.13 / 0.04 mm |
+| 20 N | 1.77 / 0.76 / 0.39 / 0.24 / 0.08 mm |
 | 4.5 kg, 44.1 N | 2.49 / 1.18 / **0.57** / **0.41** / 0.17 mm |
 
 The roller phase moves the 0.005 row by about ±0.1 mm at 44 N: 0.44 mm with

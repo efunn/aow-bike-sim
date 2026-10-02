@@ -1607,38 +1607,30 @@ to identify it. Never quietly promote one. The load-bearing ones:
     contact_solimp: [0.9, 0.95, 0.001, 0.5, 2.0]   # MuJoCo stock, GUESS
     friction_sliding: 0.9   friction_torsional: 0.005
 
-~16× stiffer than MuJoCo's default. It ships **critically damped so it cannot
-bounce**, which is known to be wrong — the real wheel bounced 2–3 times, implying
-dampratio ~0.30. The plan is to measure, then **switch to the negative
-`solref: [-stiffness, -damping]` form**, which is what MuJoCo recommends for
-system ID and is the only thing that decouples the two numbers: in the positive
-form `timeconst` sets damping *and* stiffness while `dampratio` sets stiffness
-only, so a static reading fixes only the product. Under a negative pair the
-`dmin` confound shrinks from 2.3× to 6%. Both of those figures came from the
-posed curve: settled, the positive form's confound is 3.9×, and the negative
-pair's has not been re-derived. The derivation, the prediction tables and the
-procedure are in `measurements/contact-protocol.md`, fixed 2026-08-22. Its
-prediction table was replaced 2026-10-01. What is missing is data: every
-field in `contact-measurements.yaml` is still 0.0.
+- ~16x stiffer than MuJoCo's default. Settled on the bike
+  (`analysis/contact_calibration.py`): rear 0.148 mm at its own 5.8 N, 0.57 mm
+  at 44 N (0.44-0.64 by roller phase); front 0.049 mm at its own 4.2 N. Sinks
+  quoted before 2026-10-01 came from a posed curve and over-read (1.95 mm at
+  44 N).
+- **Critically damped, so it cannot bounce**, which the 08-08 hand drop says
+  is wrong.
+- **Not a stiffness in N/m.** At rest the sink at a given force scales with
+  the masses compiled around the contact (`body_invweight0`), in both `solref`
+  forms: fit on the bike's own model, AFTER the weighing, and refit when a
+  mass moves. It is also why front and rear differ at the same settings (one
+  point at 11 N: rear 0.25 mm, front 0.14): MuJoCo sees the rear rollers on a
+  freely spinning hub, ignoring the belts, so the rear contact acts like a
+  134 g body and the front like 215 g.
+- The plan: measure, then switch to the negative `solref: [-stiffness,
+  -damping]` form. In the positive form a static reading fixes only the product
+  `timeconst x dampratio`. `solimp`'s `dmin` 0.9 -> 0.5 moves the rear's rest
+  sink 3.6x; under a negative pair it has not been re-derived (the old "6%" was
+  posed). Procedure: `measurements/contact-protocol.md`.
 
-**The sim's contact stiffness is not a number in N/m, and it moves with the
-masses (2026-10-01).** At rest, MuJoCo's sink at a given force scales with the
-masses compiled around the contact (`body_invweight0`), in both `solref`
-forms. Doubling the `GUESS` chassis mass took the rear load +42% but its sink
-only +31%. A real tire's sink would follow the load. So:
-- **fit the contact on the bike's own model, AFTER the weighing**, and refit
-  whenever a mass moves;
-- front and rear differ for reasons nobody chose. On the bike, at 11 N with
-  one contact point: rear 0.25 mm, front 0.14. Each roller sits 40 mm off the
-  hub axis, and MuJoCo's per-body estimate sees the hub spinning on its own
-  small inertia, because it ignores the belt couplings. So the rear contact
-  looks like a 134 g body and the front like 215 g.
-
-Shipped contact, settled on the bike (`analysis/contact_calibration.py`): rear
-0.133 mm at its own 5.3 N and 0.57 mm at 44 N (0.44–0.64 across roller phase);
-front 0.059 mm at its own 4.6 N. **The previous `static_curve` was posed, not
-settled, and over-read the sink above the wheel's own load**: 1.95 mm at 44 N.
-Every sink quoted before 2026-10-01 came from it.
+**Outstanding, with the bench fit:** the `contact_solimp` comment in
+`config/bike_params.yaml` still quotes posed numbers ("0.375 -> 0.647 mm,
+2.3x"; settled is 0.148 -> 0.527, 3.6x). Left until the fit can replace the
+whole comment with measured claims.
 
 ---
 
@@ -1661,21 +1653,16 @@ Every sink quoted before 2026-10-01 came from it.
 
    | rear sink at rest | `contact_solref` | 09-09, no AHRS | **09-11, tm151** |
    |---|---|---|---|
-   | 1.828 mm | `[0.020, 2.00]` | 0.594 / 1.00 | 0.600 / 1.00 |
-   | 0.758 mm | `[0.020, 1.00]` | 0.657 / 1.00 | 0.660 / 1.00 |
-   | 0.373 mm | `[0.005, 2.00]` | 0.673 / 1.00 | 0.679 / 1.00 |
-   | 0.185 mm | `[0.020, 0.30]` | **0.719** / 1.00 | 0.651 / 0.95 |
-   | **0.133 mm** | **`[0.005, 1.00]` — ships** | 0.663 / 1.00 | **0.686** / 1.00 |
-   | 0.034 mm | `[0.005, 0.50]` | 0.719 / 1.00 | 0.616 / 0.90 |
-   | 0.012 mm | `[0.005, 0.30]` | 0.374 / **0.70** | **0.175** / **0.35** |
+   | 1.835 mm | `[0.020, 2.00]` | 0.594 / 1.00 | 0.600 / 1.00 |
+   | 0.767 mm | `[0.020, 1.00]` | 0.657 / 1.00 | 0.660 / 1.00 |
+   | 0.380 mm | `[0.005, 2.00]` | 0.673 / 1.00 | 0.679 / 1.00 |
+   | 0.209 mm | `[0.020, 0.30]` | **0.719** / 1.00 | 0.651 / 0.95 |
+   | **0.148 mm** | **`[0.005, 1.00]` — ships** | 0.663 / 1.00 | **0.686** / 1.00 |
+   | 0.038 mm | `[0.005, 0.50]` | 0.719 / 1.00 | 0.616 / 0.90 |
+   | 0.014 mm | `[0.005, 0.30]` | 0.374 / **0.70** | **0.175** / **0.35** |
 
-   **Sink column relabelled 2026-10-01; the scores did not move.** It is now
-   the rear wheel with the whole bike settled on its own weight
-   (`contact_calibration.rest_sink`). It used to be a posed curve (bike
-   lowered to a height, force read from one `mj_forward`) read at 10 N of rear
-   force, about twice the rear's share, which over-read the sink: 13.17 / 3.80
-   / 1.08 / 0.52 / 0.11 / 0.39 / 0.04 mm. The order is the same, except that
-   the shipped row now correctly sits above `[0.005, 0.50]`.
+   **Sink column relabelled 2026-10-01 (settled, `contact_calibration.rest_sink`);
+   the scores did not move.**
 
    **Four rows move by under 0.03 — inside the ±0.02 seed-noise floor — and two
    move a lot, so the ordering did NOT survive the correction.** The stiff-end
@@ -1693,10 +1680,10 @@ Every sink quoted before 2026-10-01 came from it.
    What it says:
 
    - **Soft contacts are fine.** Survival is 1.00 from 1.8 mm of sink all the way
-     down to the shipped 0.13 mm, and score varies by 0.09 across a 14× span.
+     down to the shipped 0.15 mm, and score varies by 0.09 across a 12× span.
      Unchanged by the correction.
    - **The cliff is at the STIFF end**, and only there: `[0.005, 0.30]` —
-     0.012 mm of sink — drops survival to **0.35**, not the 0.70 first
+     0.014 mm of sink — drops survival to **0.35**, not the 0.70 first
      published. That is the corner the drop test points at, because a stiff
      contact against unchanged damping is what bounces, and it is a worse
      corner than this section said for two days.
