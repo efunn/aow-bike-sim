@@ -215,3 +215,45 @@ NOT APPLIED BY THE ASSISTANT, but the reason first given for that was WRONG:
 are. So the backfill IS trivially revertible with `git checkout`, and the only
 thing holding it is that modifying a training artifact is the user's call. The
 command is ready to run.
+
+---
+
+## Digest history, 2026-09-16 to 09-30 (from status.md)
+
+*Moved verbatim from `docs/status.md` on 2026-10-02, when that file was rewritten as a short navigation layer. "Above", "below", "Health" and numbered "What to do next" items refer to status.md as it was then (`git show d0dffeb:docs/status.md`).*
+
+**Digests, re-verified 2026-09-22 — `deploy/bundle.npz` re-exported for the
+10-state LQR (gains 9 x 2 x 10, plus `K0_legacy`) and matches all three
+(`plant_digest`, `design_digest`, and the legacy whole-file `params_digest`
+c70acbea4b2ba655):**
+
+    plant_digest   9f162dc4727110e2    was this trained against the machine I am running?
+    design_digest  a973a9ca3d503b6d    were these gains designed against the weights I am running?
+
+**`plant_digest` MOVED again on 2026-09-26** (was `8d8b25a809ea2f1a`): the
+XC330's measured current law and gearbox friction, and `servo_kp/kv` 1.62 /
+0.0519 -> 1.48 / 0.0473 (the same derivation with the measured k). Bundle
+re-exported, worst LQR fit R^2 0.960. No `moves/` export matched even the
+previous digest (28 at `e1ec36bf`, 6 at two others, 34 unstamped), so nothing
+newly provisional; ACCEPTED.
+
+**`plant_digest` MOVED on 2026-09-16** (was `e1ec36bfa670217e`), and everything
+in `moves/` is now an artifact of a different machine — `load_move` says so on
+load. What moved it: `actuators.steer_kv` 0.05 -> 0.0676, the XC330's own
+back-EMF droop `stall_torque/no_load_speed`, replacing a number that was a
+GUESS in spirit; and `righting.{arm,wings}.servo_kp/kv` from tuning knobs
+(30.0 / 1.0) to the servo's firmware gains referred to its shaft (1.62 /
+0.0519). The bundle was re-exported and the LQR redesigned: worst fit 0.9412 ->
+0.9489, gains moved 21% of scale on the drive input and 27% on the steer input
+at the worst speed (v = -0.50).
+
+**ACCEPTED, not outstanding, for the policies.** They were all trained at the
+old value and are provisional in the digest's sense, but the change makes the
+simulator MORE like the bike, not less — so retraining is the fix and reverting
+is not. `general_rl_cmd_curriculum2b` has not been re-evaluated on the new
+plant; do that with `analysis/per_command.py` before reading anything into a
+hardware run.
+
+`deploy/bundle.npz` matches both. A failing digest check is the mechanism
+working — fix it with `python -m aow_sim.export_deploy`, never by loosening the
+check. See `params-digest-split.md`.

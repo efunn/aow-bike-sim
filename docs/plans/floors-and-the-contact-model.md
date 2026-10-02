@@ -358,4 +358,109 @@ bench tests inform.
 - `analysis/contact_calibration.py` — static and drop curves; read a bench
   number straight off a table instead of bisecting by retraining.
 - `docs/plans/aow-contact-approximations.md` — the surrogate survey.
-- `docs/status.md` — ranked risk #1, and the corrected sweep table.
+- The floor sweep table and its corrections: the last section below (moved
+  from `docs/status.md` 2026-10-02).
+
+---
+
+## From status.md: the floor sweep as risk #1, and the contact split
+
+*Moved verbatim from `docs/status.md` on 2026-10-02, when that file was rewritten as a short navigation layer. "Above", "below", "Health" and numbered "What to do next" items refer to status.md as it was then (`git show d0dffeb:docs/status.md`).*
+
+1. **No trained policy has ever seen contact-stiffness variation.** The
+   randomization axis exists but sits commented out in `config/rl_general.yaml`.
+   **Most likely single cause of a policy that works in sim and not on the
+   floor.** It depends on no measurement, which is the point — so it is the one
+   thing a long run grid should do before the bike exists.
+
+   **Re-measured 2026-09-11, `analysis/floor_sweep.py`, `general_rl_odo_ahrs`,
+   score / survival over the 20-command grid, mu 0.9. The 09-09 column is kept
+   beside it because it was acted on and because the two disagree in ways that
+   change the conclusions — it was taken with NO AHRS in the observation, which
+   `policy_env_overrides` could not supply until 09-11 (see
+   `docs/plans/sensor-workstream.md`). The right-hand column is the policy
+   against the attitude error model it actually trained on, tm151 at its own
+   declared tau of 2.0:**
+
+   | rear sink at rest | `contact_solref` | 09-09, no AHRS | **09-11, tm151** |
+   |---|---|---|---|
+   | 1.835 mm | `[0.020, 2.00]` | 0.594 / 1.00 | 0.600 / 1.00 |
+   | 0.767 mm | `[0.020, 1.00]` | 0.657 / 1.00 | 0.660 / 1.00 |
+   | 0.380 mm | `[0.005, 2.00]` | 0.673 / 1.00 | 0.679 / 1.00 |
+   | 0.209 mm | `[0.020, 0.30]` | **0.719** / 1.00 | 0.651 / 0.95 |
+   | **0.148 mm** | **`[0.005, 1.00]` — ships** | 0.663 / 1.00 | **0.686** / 1.00 |
+   | 0.038 mm | `[0.005, 0.50]` | 0.719 / 1.00 | 0.616 / 0.90 |
+   | 0.014 mm | `[0.005, 0.30]` | 0.374 / **0.70** | **0.175** / **0.35** |
+
+   **Sink column relabelled 2026-10-01 (settled, `contact_calibration.rest_sink`);
+   the scores did not move.**
+
+   **Four rows move by under 0.03 — inside the ±0.02 seed-noise floor — and two
+   move a lot, so the ordering did NOT survive the correction.** The stiff-end
+   cliff is twice as deep as published (0.374 / 0.70 → 0.175 / 0.35), and the
+   two rows that tied for best at 0.719 both fall below the shipped contact and
+   both start dropping episodes. The shipped `[0.005, 1.00]` is now the top row
+   in the table rather than the fifth.
+
+   **Rows are sorted softest first, and `solref` is labelled by SINK because the
+   raw pair reads backwards.** `dampratio` appears only in the stiffness term,
+   as `1/dampratio^2`, so dropping it 1.0 → 0.30 makes the contact ~10× STIFFER,
+   not softer. `timeconst` is the honest softness knob — it sets damping and
+   stiffness together, sink going as `timeconst^2`.
+
+   What it says:
+
+   - **Soft contacts are fine.** Survival is 1.00 from 1.8 mm of sink all the way
+     down to the shipped 0.15 mm, and score varies by 0.09 across a 12× span.
+     Unchanged by the correction.
+   - **The cliff is at the STIFF end**, and only there: `[0.005, 0.30]` —
+     0.014 mm of sink — drops survival to **0.35**, not the 0.70 first
+     published. That is the corner the drop test points at, because a stiff
+     contact against unchanged damping is what bounces, and it is a worse
+     corner than this section said for two days.
+   - **Sink alone does not determine the outcome; damping matters
+     independently.** This survives, but the evidence for it inverted. It used
+     to be that two rows TIED FOR BEST at 0.719 across a 5× sink spread
+     (`[0.005, 0.50]` and `[0.020, 0.30]`); corrected, those two rows sit at
+     0.616 / 0.90 and 0.651 / 0.95 while the shipped contact — between them in
+     sink — leads at 0.686 / 1.00. Non-monotonic in sink either way, which is
+     why the negative `(-stiffness, -damping)` form is the one to measure into.
+
+   Read the table as *how the current policy copes*, not as what is achievable:
+   nothing has ever trained over this axis. A run with `dampratio_range`
+   uncommented is the experiment that would flatten it.
+
+   **Friction is NOT the flat axis for survival — that claim was an artifact of
+   the same missing AHRS.** Re-measured 2026-09-11 across mu 0.5–2.0 at the
+   shipped contact, whole-grid score moves 0.686 → 0.686 → **0.549** and
+   survival drops to **0.90 at mu 2.0**. The 09-09 reading was 0.630 → 0.663 →
+   0.643 at survival 1.00 throughout, which is where "the flat axis" came from.
+   What DOES survive is the effect it was quoted for: the `hold` family's drift
+   still rises monotonically, 0.754 → 1.242 → 1.815 m, i.e. **more grip means
+   more wander, not less**. The
+   policy uses slip as a brake, so a grippier floor converts more of its sawing
+   into travel. The whole-grid score cannot see this: `hold` is 1 command of 20
+   through a geometric mean. Use `--by-family`.
+
+   **A CORRECTION, recorded because it was acted on.** An earlier version of this
+   section read the dampratio axis backwards — it called `dampratio 0.30` a soft
+   contact and concluded "drive on the hardest surface available; a foam mat is
+   the failure mode." **That is inverted.** Soft is the safe direction here and
+   stiff is the cliff. The error came from trusting the parameter's NAME over
+   `contact-protocol.md`'s own CORRECTION, which states the formulas plainly.
+
+**The three ground contacts are separately addressable (2026-09-09).**
+`roller`, `front_tire` and `righting` can each carry their own `solref` and
+friction via an optional `sim.contact_parts` block. `geom_priority` is the
+mechanism — `solref` combines by solmix-weighted average and `friction` by
+elementwise max, so separate values alone would give the mean, never the softer
+part. Landed as a **bit-exact no-op**, verified over a 3000-step driven rollout:
+
+| | max abs Δqpos vs pre-split | bitwise identical |
+|---|---|---|
+| split, identical params | `0.000e+00` | **yes** |
+| split, `front_tire` overridden | `1.164e-01` | no |
+
+`tests/test_contact_parts.py`, 9 tests under the `contact` marker, pins both —
+the no-op *and* that an override bites, because a bug dropping `contact_parts`
+would otherwise pass as a perfect no-op.

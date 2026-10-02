@@ -618,3 +618,26 @@ because it is a decision about what should drive, not because it is expensive.
 Adding a sensor to `build_model` changes the MODEL but not `bike_params.yaml`,
 so NEITHER `plant_digest` NOR `design_digest` would catch it. Policies trained
 before and after such a change would look interchangeable and would not be.
+
+---
+
+## The odometry tests, rewritten 2026-09-21 (from status.md)
+
+*Moved verbatim from `docs/status.md` on 2026-10-02, when that file was rewritten as a short navigation layer. "Above", "below", "Health" and numbered "What to do next" items refer to status.md as it was then (`git show d0dffeb:docs/status.md`).*
+
+**Odometry tests rewritten, -12 +2.** They compared the estimator open-loop
+against sim truth on an analytic-LQR trajectory, so the delay's fall on the
+straight errored eleven of them. Moved to the RL policy, the longitudinal
+error split as 5-7 mm/s gearing arithmetic, 2-3 reference point, and the rest
+(47-109) REAR-WHEEL SLIP: they were measuring the contact model under a
+driver and calling it the estimator. Now:
+
+| file | question | marker |
+|---|---|---|
+| `test_hw_odometry.py` | the estimator's code, on synthetic no-slip inputs, exact to 1e-9 -- 83 tests, 0.14 s. Geometry read from `bike_params`, not the estimator: planting a zeroed rake, a 2% gearing error or a 5% wheelbase error is caught (48 / 24 / 40 red); built from the estimator's own constants, all three passed | `pure` |
+| `test_odometry_in_the_loop.py` | `control.general_move` on the sensors its yaml says it trained with (estimate + TM151): survives all four regimes (max roll <= 9.5 deg), tracks within 15% when moving; slip tripwire at 1.5x a recorded baseline (rear 67-142, front lateral 35-50 mm/s) | `contact`, `policy` |
+| `test_sim_odometry.py` | encoder test now under the policy; counts-vs-ideal lag 39.8 mm/s RMS, tripwire 60 | `contact` (+`policy`) |
+
+The tan-coefficient test is retired (it measured its fixture's conditioning).
+`test_hold_ramps_to_full_speed_with_auto_repeat` moved to the RL policy and
+passes.

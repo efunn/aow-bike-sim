@@ -281,3 +281,57 @@ to ~190 mA.
   measured in place on a bike test rig. Its gearbox friction IS in scope
   (step 2).
 - BAM-style identification of the same servo: `docs/plans/bam-current-position.md`.
+
+---
+
+## Status log, 2026-09-17 to 09-27 (from status.md)
+
+*Moved verbatim from `docs/status.md` on 2026-10-02, when that file was rewritten as a short navigation layer. "Above", "below", "Health" and numbered "What to do next" items refer to status.md as it was then (`git show d0dffeb:docs/status.md`).*
+
+**The self-righting wings came off that list on 2026-09-17: the co-rotating
+four-bar is BUILT and operating** -- this file had carried "design done, build
+last" for eight days. Open on it: read `righting_sign` (stow is settled at 180)
+off the bike (below), and Station C / R6 for `righting_current` in counts.
+
+**Both XC330s are now modelled from the X330 fixture's measurements
+(2026-09-26; `docs/plans/righting-servo-model.md`).** The righting crank's
+servo (`righting_servo.CurrentBasedPositionServo`, on by default under
+teleop `--swing-linkage`) makes torque `k (|I| - I0)`: k 0.83 N m/A above a
+16.5 mA drive edge, measured on a lever at 8-102 mN m. The old bus-current
+sqrt law is REFUTED: it said 300 counts gives ~0.47 N m, and it gives ~0.24.
+Both the crank and the steer now carry the measured gearbox friction,
+load-proportional (static 0.51 x load + 5.1 mN m, running 0.15 x load + 5.7;
+`gearbox_friction.py`), re-limited every substep in `general_env`, teleop,
+`record` and `balance.run` (~+8 % per `mj_step` with the steer's hook).
+Consequences, all in sim:
+
+- **300 counts cannot right the bike.** The swing linkage's stroke needs
+  0.55 N m at the crank; moving, that is ~785 counts of the 910 limit, and
+  breaking away at the peak would need ~0.84 N m of motor torque, above the
+  limit. Teleop now starts at the counts that deliver `limits.torque_nm` at
+  the crank while moving (785), not as motor torque. **Teleop, 12 V:** 525
+  counts lifts it a little, 605 partway, **625 rights it fully** -- the
+  mechanism wants more mechanical advantage. Headless:
+  `analysis/righting_current_sweep.py` gives 630 at 12 V and 11.1 V, 650 at
+  the 9.9 V cutoff, of the 910 limit.
+- **Self-righting linkage: explored, PARKED, to be decided later**
+  (2026-09-27; `righting-linkage-margin.md`). The previous study's load model
+  was backwards and is fixed in place (`swing_linkage.resting_pose`: peak
+  motor torque 0.541 N m vs the sim's 0.539). Options on the table, sim at
+  9.9 V, Goal Current counts to right the bike: `_smaller` as built 643;
+  couplers staggered into two planes 537 (free end) or 575 (self-locking
+  end); the user's diamond, one crank pin and one wing rod, 547 (the lean);
+  a rising wing that ends out on the far side 471 (its own class, unstudied).
+  The short levers roughly double pin loads, and every design's worst lift
+  load is the instant the servo starts (a Goal Current ramp cuts it). Nothing
+  is chosen, and no config pointer moved. `analysis/swing_stepthrough.py`
+  steps any of them side by side.
+- The steering is weaker against a load: `(stall - f0)/(1 + c)` usable, ~0.52
+  N m breaking away at the datasheet 0.80 (bench stall 0.62-0.69, kept at 0.80).
+- The floor rig's roll servo at the righting gains is softer: 7 deg under a
+  0.3 N side push at any cap (the P gain's stiffness); `stiff_roll` gives way
+  at 0.6 N.
+- Known mismatch, documented: braking at speed -- the one bench frame that
+  showed plugging implies ~3x more braking than the linear law gives.
+- The fall-set numbers that were here (2/2 at 12 V at 416 counts) were under
+  the sqrt law and are void until re-run in teleop.

@@ -1014,3 +1014,125 @@ move yaml still constructs, and `rl_general.yaml` still yields obs 15 / act 3 /
 `nu` 3 with no wings in the model. flick/pivot/ball are untouched.
 
 ---
+
+---
+
+## Standing falls on the policy's own sensors, and pointer history (from status.md)
+
+*Moved verbatim from `docs/status.md` on 2026-10-02, when that file was rewritten as a short navigation layer. "Above", "below", "Health" and numbered "What to do next" items refer to status.md as it was then (`git show d0dffeb:docs/status.md`).*
+
+**NEW, registered: the policy falls over standing still on its own sensors.**
+Estimate + TM151 attitude (teleop's default): 64 seeds x 60 s, 32 fell, MTBF
+79 s (95% CI 56-116), highest in the first 10 s; teleop
+`--teleop --swing-linkage` fell at ~35 s. It comes with the orientation-error
+model (alone: falls at 3.2 s; gyro-only, estimate-only and truth stay up), and
+the power-on misalignment does not predict it (p 0.23). The test (`tests/test_policy_endurance.py`, a
+POLICY METRIC in its own registry section: it moves with the policy, not the
+code) is 18 fixed seeds x 60 s, pass if <= 4 fall, derived from a 600 s MTBF
+target; today 9 of 18 (11 before the 09-22 yaw-drift fix moved the AHRS rng stream). **2026-10-01: the four smoothness-loss exports, trained on the detailed drivetrain, all pass it, 0 of 18** -- the test now flies a policy's recorded drivetrain (it flew every policy on the ideal one before), and the pointer reproduces 10 of 18 through the same code. Still red until `control.general_move` moves; take its registry entry out in the same commit. Paths: longer standing episodes in training (evals are 5 s, episodes
+<= 15 s), and a bench RMS for the TM151 -- the model uses the datasheet's
+"<1.5 deg" bound as its RMS.
+
+**What makes it fall** (`analysis/ahrs_fall_cause.py`, 2026-09-22, 64 seeds):
+the ROLL orientation error, and nothing else to speak of -- roll-only error
+36 -> 24/64 falls, everything-but-roll 3/64. ALL 36 falls go LEFT (-roll).
+Not one tick: the bike is savable on clean sensors until 0.3-0.8 s before the
+fall, preceded by a ~1 deg roll-error excursion held ~0.5 s. But no excursion
+does it ALONE: pulses up to 3 deg on a calm clean-sensor bike never fall, and
+replaying each fall's own recorded error onto a calm bike reproduces 0/36 from
+the last 2 s and 5/36 from the last 12 s. The fall needs the sustained sway
+the error keeps up (roll RMS 2.4 vs 1.1 deg clean) -- a trajectory, not a
+pattern -- which is why a bench DYNAMIC RMS is the number that decides it.
+Handedness is the policy's, not the sensor's: injected phantom leans that
+push the bike left fall 3x as often as ones that push it right.
+
+Standing is not still, and the falls are failed CATCHES. The rear wheel makes
+a forward excursion (~220 mm in ~0.85 s, steer swinging 30-45 deg each way)
+5.3 times a minute -- the forward creep on a zero command is their sum -- and
+32 of 36 falls are one that is not caught. Nothing in the rear-wheel motion
+warns before it. Excursions go both ways equally, but only LEFT ones fail
+(32/142 vs 0/98); nearly all follow ~1 s of roll error claiming a left lean,
+and a failed one over-steers ~100 deg. But that average trigger does not
+CAUSE falls: injected at up to 3x, a clean bike never falls (0/60), and on
+top of the normal error it moves which windows fall without raising the rate
+(7.0% control, 7.0-8.3% injected, 470 paired windows). Figures:
+`analysis/plots/ahrs_fall_cause_excursions.png` (group means) and
+`..._excursion_examples.png` (three single events per group).
+
+**It is this policy, not the sensor model.** The same standing flight across
+`moves/personality0..11` (64 seeds x 60 s each): `personality1` -- byte-
+identical to curriculum2b -- is the WORST of twelve (36/64, MTBF 75 s);
+`personality0` and `personality8` never fell (MTBF > 1041 s at 95%), 6, 7
+and 11 fell once each. Fall side is per policy (1 and 5 left, 2 and 10
+right). But every good stander is one seed-sweep-and-personalities.md
+records as ignoring heading commands; `personality1` is the only one that
+turns as told. So repointing `control.general_move` buys standing at the cost
+of driving -- the fix is a policy that does both, not a pointer edit.
+
+The slip numbers rest on `friction_sliding` 0.9 and `contact_solimp`, both
+GUESS, so contact calibration (item 2 above) will move them and the
+baseline.
+
+## What drives the bike
+
+`control.general_move` names **`general_rl_cmd_curriculum2b`** (repointed
+2026-09-14). That is the command-family curriculum line: sensor-trained like
+`odo_ahrs`, plus pitch, and the config the 12-seed sweep ran.
+`seed-sweep-and-personalities.md` §8 has `personality1`, bit-identical to it,
+as the best of the twelve on behaviour, while `_score` ranks it 8th. Teleop's
+`--general` now defaults to the pointer instead of a hardcoded
+`general_rl_cmd_curriculum2`. The pointer was chosen on 09-11 and never landed:
+the digest worry that stopped it was about the legacy whole-file digest, and a
+pointer edit moves neither `plant_digest` nor `design_digest`.
+
+**Six policies trained ON the detailed drivetrain (2026-09-14), not pointed
+at.** `general_rl_drivetrain_p{100,400}_{0,1,2}` are curriculum2's config at
+firmware Velocity P 100 or P 400. Score on the eval grid:
+
+| policy | ideal | drivetrain P 100 | drivetrain P 400 |
+|---|---|---|---|
+| `curriculum2b` (the pointer) | 0.595 | 0.638 | 0.177 |
+| P 100 seeds | 0.36–0.48 | **0.741–0.751** | 0.180–0.503 |
+| P 400 seeds | 0.05–0.14 | 0.42–0.54 | **0.625–0.803** |
+
+Each arm beats the pointer on its own gain, and every policy is specific to the
+plant it trained on, the pointer included. **The pointer stays because the
+drivetrain model is not yet confirmed against the built bike**, not because
+these lose. P 400 buzzes the rear wheel ~3× harder at 8–32 Hz (`chatter.py
+--plant`). Teleop builds a policy's own drivetrain from its record
+(`--general general_rl_drivetrain_p100_1`). Reproduce the table with
+`analysis/drivetrain_eval.py --variants ideal full full_p400`.
+
+The table below predates the curriculum line and is kept for the sensor
+argument it makes. The split that matters is not one good policy against the rest — it is
+**trained-against-the-sensors against not**. On the eval grid at
+`--encoder counts --ahrs tm151`, score / survival:
+
+| policy | trained against | tau 2.0 | tau 0.19 (measured) |
+|---|---|---|---|
+| `smooth_diff_pi` | MuJoCo truth | 0.110 / **0.20** | — |
+| `odo_ahrs` (default until 09-14) | estimate + attitude, tau 2.0 | **0.672** / 1.00 | 0.570 / 0.95 |
+| `odo_ahrs_rand2` | + attitude randomised, narrow | 0.654 / 1.00 | **0.663** / **1.00** |
+
+Every truth-trained policy falls in four episodes out of five.
+
+**Two pointer questions from before the curriculum line** (superseded as
+pointer candidates by it, kept as findings):
+
+1. **`rand2` vs `odo_ahrs`.** `rand2` is better at the tau the bike actually has
+   and is nearly tau-invariant (spread 0.009 against 0.102). `odo_ahrs` keeps a
+   tighter worst-case heading excursion once settled and much lower chatter. The
+   case for keeping the current pointer is weaker than it looked.
+2. **`glide_pitch_hub3` is a separate line entirely** — the calm one. Rim travel
+   over a 15 s hold 7.58 → 3.35 m, airborne 58% → 13%, peak contact force
+   7.23 → 3.66× weight, kick recovery 8/8 through dv 0.35. It has never been
+   merged with the sensor line.
+
+Neither is decided. Both are cheap to try — **repointing `control.general_move`
+moves NEITHER digest.** Full standings and the whole sensor arc:
+`sensor-workstream.md`.
+
+**Caveats that keep biting.** Every row above was measured over 15 s episodes;
+an eval now runs 5 s, so nothing here is comparable to a number measured after
+2026-08-30. And every row is `--encoder counts` — a grid that does not force the
+encoder scores older policies on a different bike, not a better result.
