@@ -966,6 +966,17 @@ _SPAWN_KEY = 257            # GLFW ENTER. policy_menu.KEY_ENTER is the same
 # a trained policy rejects essentially all of it, at 10 deg a left turn falls
 # in five of eight downhill directions (analysis/pen_slope.py --rose).
 FLOOR_TILT_STEPS = [0.0, 2.0, 5.0, 10.0]
+# What main() adds to params["sim"] for the spawn dial. They change which spare
+# floors get COMPILED, not the bike, so a policy's digest check must not see
+# them: hashed in, every policy -- one trained on today's exact plant
+# included -- read as "an artifact of a DIFFERENT machine".
+SPAWN_DIAL_KEYS = ("floor_tilt_steps", "floor_tilt_bearing_deg")
+
+
+def without_spawn_dial(params: dict) -> dict:
+    """`params` minus the spawn dial's floors: the plant a policy is judged on."""
+    sim = {k: v for k, v in params["sim"].items() if k not in SPAWN_DIAL_KEYS}
+    return {**params, "sim": sim}
 
 
 # MEMOISED, and it matters more than it looks. `floor_geoms` walks every geom
@@ -2919,8 +2930,9 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         from .control.flick import check_move_digest
         # Quiet mode keeps the verdict and drops the explanation: the line
         # disappearing is the signal worth having, the prose is not.
-        check_move_digest(c._gen, plant[0], warn=None if verbose else (
-            lambda m: print("! " + m.split(" — ")[0])))
+        check_move_digest(c._gen, without_spawn_dial(plant[0]),
+                          warn=None if verbose else (
+                              lambda m: print("! " + m.split(" — ")[0])))
         zero_command(d)                  # never inherit a stale setpoint
         # Re-engaging hands the wings back to the policy, so the manual
         # override is a temporary grab (right the bike by hand, then re-engage)
