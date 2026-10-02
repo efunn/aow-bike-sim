@@ -66,7 +66,8 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from aow_sim.build_model import build_model, load_params, wing_fit
+from aow_sim.build_model import (MIN_PINION_RADIUS, build_model,
+                                  load_params, wing_fit)
 from aow_sim.control.balance import extract_state
 from aow_sim.control.drive import DriveController
 from aow_sim.control.linearize import design_all, settle_upright
@@ -637,7 +638,7 @@ def _print_gear_fit(params: dict) -> None:
     print(f"\n  gear train at {w['gear_ratio']:g}:1 "
           f"(centre distance = the {w['pivot'][1] * 1000:.0f} mm pivot half-span)")
     print(f"    pinion radius       {f['pinion_radius'] * 1000:5.1f} mm "
-          f"(min printable {w['min_pinion_radius'] * 1000:.0f} mm)"
+          f"(min printable {MIN_PINION_RADIUS * 1000:.0f} mm)"
           + ("  TOO SMALL" if f["pinion_too_small"] else ""))
     print(f"    disc radius         {f['disc_radius'] * 1000:5.1f} mm "
           f"vs {f['pivot_height'] * 1000:.1f} mm of pivot height"

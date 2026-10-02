@@ -98,8 +98,11 @@ def test_the_split_did_not_move_the_plant_digest():
                           plant: config/drivetrain_model.yaml moved, unchanged,
                           into bike_params.yaml's `drivetrain_model:` block --
                           the digest the smoothness-loss exports carry
+        95630b212f03ffc4  2026-10-02  righting.wings.min_pinion_radius out of
+                          bike_params.yaml (a constant of the retired geared
+                          wings, build_model.MIN_PINION_RADIUS); no physics
     """
-    assert plant_digest(load_params()) == "9953690d05e33ab6"
+    assert plant_digest(load_params()) == "95630b212f03ffc4"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

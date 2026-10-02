@@ -1103,13 +1103,11 @@ righting:
     # and both radii follow from the ratio alone. It runs the wrong way from
     # intuition: a BIGGER reduction shrinks the PINION rather than growing the
     # disc without limit, and the pinion is the 3D-printed part with a floor on
-    # how small its teeth can be. `min_pinion_radius` is that floor, and the
-    # disc separately cannot exceed the pivot's height above the floor without
-    # grounding out. `lift --wings --sweep` reports both ceilings.
+    # how small its teeth can be (build_model.MIN_PINION_RADIUS, a constant of
+    # the retired geared-wing concept, not a parameter of any real design), and
+    # the disc separately cannot exceed the pivot's height above the floor
+    # without grounding out. `lift --wings --sweep` reports both ceilings.
     gear_ratio: {value: 4.0, source: design}
-    min_pinion_radius: {value: 0.006, source: GUESS}  # smallest printable pitch
-                                                      #   radius on the XC330
-                                                      #   side -> print a test
     gear_width: {value: 0.006, source: design}        # face width; visual only
     mirror: {value: -1.0, source: design}          # theta_left = mirror * theta_right
     # Position-servo gains, same reasoning as the arm's: stiff on purpose, so

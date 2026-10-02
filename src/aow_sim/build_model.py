@@ -504,6 +504,13 @@ def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True) -> No
         s.objname = "righting_joint"
 
 
+# Smallest printable pitch radius for the geared wings' pinion. A constant of
+# that RETIRED concept (the built righting is the four-bar swing linkage), so
+# it lives here rather than in bike_params.yaml, where it sat as a `GUESS`
+# parameter of no real design until 2026-10-02.
+MIN_PINION_RADIUS = 0.006
+
+
 def wing_fit(p: dict) -> dict:
     """Gear-train geometry for the wing pair, and what it costs to fit.
 
@@ -545,7 +552,7 @@ def wing_fit(p: dict) -> dict:
     ride_h = p["omni_wheel"]["outer_radius"] + w["pivot"][2]
     # Only the pinion still puts a ceiling on the ratio; the floor limit is now
     # a property of the pivot alone, so it is pass/fail rather than a ceiling.
-    by_pinion = r_disc / w["min_pinion_radius"]
+    by_pinion = r_disc / MIN_PINION_RADIUS
     # The crank has to carry the leg CLEAR OF THE DRIVEN DISC: the leg lands on
     # the floor, not on the gear it is bolted to. With a direct mesh the disc
     # is half_span, so this is a constraint on the ENVELOPE --
@@ -558,7 +565,7 @@ def wing_fit(p: dict) -> dict:
             "min_bike_width": 2.0 * (half_span + r_disc),
             "leg_stands_on_gear": crank_reach < r_disc,
             "grounds_out": r_disc > ride_h,
-            "pinion_too_small": r_pinion < w["min_pinion_radius"],
+            "pinion_too_small": r_pinion < MIN_PINION_RADIUS,
             "max_ratio": by_pinion,
             "max_ratio_by": "pinion"}
 
