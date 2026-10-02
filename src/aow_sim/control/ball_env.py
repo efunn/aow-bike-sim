@@ -40,7 +40,11 @@ class BallEnv(gym.Env):
 
     def __init__(self, params=None, rl_cfg=None, seed=None):
         super().__init__()
-        self.p = params or load_params()
+        # The IDEAL drive (drivetrain_model.base_params): this move's policies
+        # trained on it, and this env steps physics without the detailed
+        # drivetrain's per-step hook.
+        from ..drivetrain_model import base_params
+        self.p = base_params(params or load_params())
         self.cfg = rl_cfg or _load_rl_config()
         self.model = build_model(self.p, variant="full", hockey=True)
         self._eq = settle_upright(self.model).qpos.copy()

@@ -12,6 +12,7 @@ gearbox test compares against MuJoCo's own constraint solve rather than
 against the arithmetic in the module.
 """
 import json
+import math
 
 import numpy as np
 import pytest
@@ -137,11 +138,16 @@ def test_the_gearbox_closed_form_matches_mujocos_own_constraint(built):
     if `_aow_assembly`'s mixes change, this fails rather than the mirror
     quietly drawing a wheel that turns at the wrong rate.
     """
+    from aow_sim import drivetrain_model as dm
     p, m = built
     d = mujoco.MjData(m)
+    drive = dm.DrivetrainSim.attach(m, p)    # the drives only move with it
     d.ctrl[:2] = (14.0, -9.0)                # spin the inputs opposite ways
     for _ in range(1500):
+        if drive is not None:
+            drive.pre_step(d)
         mujoco.mj_step(m, d)
+    assert abs(d.qpos[T.PoseAdr(m).q["input_a_spin"]]) > 1.0, "inputs did not turn"
 
     adr = T.PoseAdr(m)
     a = float(d.qpos[adr.q["input_a_spin"]])
@@ -152,9 +158,13 @@ def test_the_gearbox_closed_form_matches_mujocos_own_constraint(built):
 
     assert float(d.qpos[adr.q["hub_spin"]]) == pytest.approx(hub, abs=2e-3)
     assert float(d.qpos[adr.q["ring_spin"]]) == pytest.approx(ring_rel, abs=2e-3)
+    # Each roller sits within its measured free play of the rigid ratio (the
+    # mirror draws the rigid ratio: the play is not telemetered).
+    play = (math.radians(p[dm.KEY]["roller_slop"]["half_play_deg"])
+            if dm.enabled(p, "roller_slop") else 0.0)
     for name in adr.rollers:
         assert float(d.qpos[adr.q[name]]) == pytest.approx(
-            mix["k_roller"] * ring_rel, abs=5e-3), name
+            mix["k_roller"] * ring_rel, abs=play + 5e-3), name
 
 
 def test_apply_pose_puts_every_measured_field_somewhere_visible(built):

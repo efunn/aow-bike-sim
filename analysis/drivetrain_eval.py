@@ -81,7 +81,7 @@ DEFAULT_POLICIES = ("general_rl_odo_ahrs", "general_rl_odo_ahrs_rand2")
 
 
 def params_for(variant: str) -> dict:
-    params = load_params()
+    params = dm.base_params(load_params())
     spec = VARIANTS[variant]
     if spec is None:
         return params
@@ -102,8 +102,10 @@ def build(name, variant, encoder, ahrs, tau):
     if encoder:
         pol.odometry_encoder = encoder
     pol.ahrs_level, pol.ahrs_tau_s, pol.ahrs_channels = ahrs, tau, "both"
-    # The VARIANT decides the plant here, not the policy's own record.
-    pol.drivetrain_model = None
+    # The VARIANT decides the plant here, not the policy's own record: the env
+    # key wins over params (drivetrain_model.from_env_config), so hand it the
+    # variant's resolved overlay, or None for the ideal drive.
+    pol.drivetrain_model = params.get(dm.KEY)
     env = env_for(pol, params, cfg)
     scale = np.asarray(pol.bounds.to_list(), float)[:pol.act_dim]
     n_act = env.action_space.shape[0]

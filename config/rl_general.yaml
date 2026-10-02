@@ -110,8 +110,9 @@ randomization:           # as rl_flick/rl_pivot
   # dampratio_range: [0.3, 0.8]   # absolute draw, not a fraction of nominal
   disturb_force_N: 2.0
   disturb_prob: 0.01
-  # DETAILED DRIVETRAIN (docs/plans/drivetrain-model.md). Selected under env:
-  #   drivetrain_model: true            # or a path; absent = ideal drives
+  # DETAILED DRIVETRAIN (docs/plans/drivetrain-model.md), the DEFAULT plant
+  # since 2026-10-02 (bike_params.yaml's drivetrain_model block). Under env:
+  #   drivetrain_model: true            # = absent; a path; false = ideal drives
   #   drivetrain_without: [roller_slop] # optional
   #   servo_gains: [100, 1920]          # optional, firmware table units
   # and randomised here, both OFF unless set:

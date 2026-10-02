@@ -484,7 +484,7 @@ def main() -> None:
                     help="drive the DETAILED drivetrain: the XC430 firmware "
                          "loop fitted to the bench captures, the differential's "
                          "7.5 deg detent, and per-roller slop "
-                         "(config/drivetrain_model.yaml, or PATH). Without it, "
+                         "(bike_params.yaml's drivetrain_model block, or PATH). Without it, "
                          "teleop compiles the startup policy's own training "
                          "plant, if it has one. Either way the structure is "
                          "fixed for the session and only the firmware gains "
@@ -637,6 +637,10 @@ def main() -> None:
         record = drivetrain_model.policy_record(startup)
         drivetrain_base = drivetrain_model.teleop_base(
             record, args.drivetrain, args.drivetrain_without, servo_gains)
+        # No base (a startup policy exported without a drivetrain record, and
+        # no flag) is the IDEAL drive it trained on -- not bike_params'
+        # default detailed one, which load_params() carries.
+        params = drivetrain_model.base_params(params)
         if drivetrain_base is not None:
             overlay, _notes = drivetrain_model.teleop_overlay(
                 drivetrain_base, record, servo_gains)
@@ -644,7 +648,7 @@ def main() -> None:
             drivetrain_source = (
                 "from --drivetrain" if args.drivetrain or args.drivetrain_without
                 else f"from {startup}'s training record" if record
-                else "from config/drivetrain_model.yaml (--servo-gains)")
+                else "from bike_params.yaml (--servo-gains)")
     rig_cfg = None
     if (args.rig or args.rig_mode or args.rig_lock or args.rig_free or args.rig_servo
             or args.rig_heading):

@@ -1,7 +1,10 @@
-"""The opt-in detailed drivetrain: config/drivetrain_model.yaml + drivetrain_model.py.
+"""The detailed drivetrain: bike_params.yaml's `drivetrain_model:` block +
+drivetrain_model.py. The default plant since 2026-10-02 (an opt-in overlay
+file before).
 
-Two halves, both pinned. The overlay must be INVISIBLE when absent -- every
-existing plant, policy and digest depends on that -- and each part must do the
+Two halves, both pinned. The overlay must be INVISIBLE when stripped
+(`base_params`, the ideal drive the LQR designs on and every record-less
+policy replays on) -- and each part must do the
 one thing it was fitted to do: the servo tracks and holds through its integral,
 and the detent turns a slow diff move into stick-slip, which is the reason it
 exists (without it the replayed creep grid never stalls at all).
@@ -21,7 +24,15 @@ pytestmark = pytest.mark.drivetrain
 
 @pytest.fixture(scope="module")
 def params():
-    return load_params()
+    """The IDEAL drive: each test adds the overlay (or parts of it) itself."""
+    return dm.base_params(load_params())
+
+
+def test_the_detailed_drivetrain_is_the_default_plant(params):
+    full = load_params()
+    assert full[dm.KEY] == dm.load()
+    assert dm.base_params(full) == params
+    assert dm.DrivetrainSim.attach(build_model(full), full) is not None
 
 
 def _testbed(params, without=()):
@@ -57,27 +68,83 @@ def test_servo_structure(params):
     m = build_model(p)
     base = build_model(params)
     assert m.nu == base.nu + 2, "two torque actuators appended"
-    assert m.na == 0, "the native velocity-PI integrators are gone"
     for n in ("drive_a", "drive_b", "steer"):
         assert m.actuator(n).id == base.actuator(n).id, "no existing index moved"
     assert m.actuator("drive_a_motor").id == base.nu
-    assert m.actuator_gainprm[m.actuator("drive_a").id][0] == 0.0
-    s, belt = p[dm.KEY]["servo"], params["drivetrain"]["belt_ratio"]
+    a = m.actuator("drive_a").id
     dof = m.joint("input_a_spin").dofadr[0]
+    # As compiled: the IDEAL drive, untouched.
+    assert m.actuator_gainprm[a][0] == base.actuator_gainprm[a][0] != 0.0
+    assert m.dof_armature[dof] == base.dof_armature[dof]
+    # Attached: a command holder, and the measured rotor.
+    sim = dm.DrivetrainSim.attach(m, p)
+    s, belt = p[dm.KEY]["servo"], params["drivetrain"]["belt_ratio"]
+    assert m.actuator_gainprm[a][0] == 0.0
     assert m.dof_armature[dof] == pytest.approx(s["rotor_inertia"] / belt ** 2)
     # Coulomb friction is applied by DrivetrainSim, not as a joint frictionloss.
     assert m.dof_frictionloss[dof] == pytest.approx(base.dof_frictionloss[dof])
+    hub = m.joint("hub_spin").dofadr[0]
+    assert m.dof_damping[hub] == 0.0 and m.dof_frictionloss[hub] == 0.0, \
+        "the hub's losses are inside the measured coast friction"
+    sim.release()
+    assert m.actuator_gainprm[a][0] == base.actuator_gainprm[a][0]
+    assert m.dof_armature[dof] == base.dof_armature[dof]
+    assert m.dof_frictionloss[hub] == base.dof_frictionloss[hub] > 0.0
 
 
 def test_slop_structure(params):
     p = dm.with_drivetrain(params, without=("servo", "detent"))
     m, base = build_model(p), build_model(params)
     n = params["omni_wheel"]["n_axles"]
-    assert m.neq == base.neq - n, "rigid roller couplings removed"
+    assert m.neq == base.neq, "rigid couplings kept, switched off by attach"
     assert m.ntendon == base.ntendon + n
     half = math.radians(p[dm.KEY]["roller_slop"]["half_play_deg"])
     t = m.tendon("slop_roller_spin_0").id
     assert m.tendon_range[t] == pytest.approx([-half, half])
+    rigid = [i for i in range(m.neq)
+             if m.equality(i).name.startswith("rigid_roller_spin_")]
+    assert len(rigid) == n and all(m.eq_active0[rigid])
+    assert not m.tendon_limited[t] and m.tendon_stiffness[t] == 0.0
+    sim = dm.DrivetrainSim.attach(m, p)
+    assert not any(m.eq_active0[rigid]) and m.tendon_limited[t]
+    assert m.tendon_stiffness[t] == p[dm.KEY]["roller_slop"]["centring_stiffness"]
+    sim.release()
+    assert all(m.eq_active0[rigid]) and not m.tendon_limited[t]
+
+
+def _ctrl_rollout(m, n, sim=None):
+    d = mujoco.MjData(m)
+    if sim is not None:
+        sim.reset(d)
+    for k in range(n):
+        d.ctrl[m.actuator("drive_a").id] = 10.0 * math.sin(k * 1e-3)
+        d.ctrl[m.actuator("drive_b").id] = 8.0
+        if sim is not None:
+            sim.pre_step(d)
+        mujoco.mj_step(m, d)
+    return d.qpos.copy()
+
+
+def test_a_hookless_loop_runs_the_ideal_plant(params):
+    """THE FALLBACK: the default model, stepped without the hook, is
+    bit-identical to the ideal one -- so every loop that never attached it
+    (contact studies, settles, the flick/pivot/ball envs) runs as it did
+    before the detailed drivetrain became the default."""
+    full = load_params()
+    for variant in ("testbed", "full"):
+        a = _ctrl_rollout(build_model(full, variant=variant), 1000)
+        b = _ctrl_rollout(build_model(params, variant=variant), 1000)
+        assert np.array_equal(a, b), variant
+
+
+def test_attach_then_release_restores_the_compiled_model(params):
+    full = load_params()
+    fresh, m = build_model(full), build_model(full)
+    dm.DrivetrainSim.attach(m, full).release()
+    for name in dir(fresh):
+        a = getattr(fresh, name)
+        if isinstance(a, np.ndarray) and a.dtype.kind in "fi":
+            assert np.array_equal(a, getattr(m, name)), name
 
 
 def test_servo_tracks_a_common_command(params):
@@ -141,9 +208,11 @@ def test_roller_play_is_critically_damped(params):
     """By hand a flicked roller returns to centre with no visible overshoot."""
     p = dm.with_drivetrain(params)
     m = build_model(p, variant="testbed")
+    dm.DrivetrainSim.attach(m, p)            # the plant the play lives in
     d = mujoco.MjData(m)
     mujoco.mj_forward(m, d)
     dof = m.joint("roller_spin_0").dofadr[0]
+    assert m.dof_damping[dof] == 0.0, "the slop tendon alone damps the play"
     inertia = d.qM[m.dof_Madr[dof]]
     r = p[dm.KEY]["roller_slop"]
     c = r["damping"] + m.dof_damping[dof]
@@ -179,10 +248,17 @@ def test_env_config_selects_the_plant(params):
     p = dm.from_env_config(params, env)
     assert p[dm.KEY]["servo"]["velocity_p_gain"] == 400
     assert not dm.enabled(p, "roller_slop")
-    assert dm.from_env_config(params, {}) is params
+    assert dm.from_env_config(p, env) == p, "idempotent: trainer, then each env"
+    # Absent means the default plant: params' own overlay, else the file's.
+    full = load_params()
+    assert dm.from_env_config(full, {}) == full
+    assert dm.from_env_config(params, {})[dm.KEY] == dm.load()
     forced = dm.with_drivetrain(params, without=("detent",))
-    assert dm.from_env_config(forced, env) is forced, "params carrying a plant win"
-    again = dm.from_env_config(params, {"drivetrain_model": p[dm.KEY]})
+    assert dm.from_env_config(forced, {}) == forced, "absent keeps params' plant"
+    # Null or false is the IDEAL drive: how a record-less export replays.
+    for ideal in (None, False):
+        assert dm.KEY not in dm.from_env_config(full, {"drivetrain_model": ideal})
+    again = dm.from_env_config(full, {"drivetrain_model": p[dm.KEY]})
     assert again[dm.KEY] == p[dm.KEY], "an exported overlay dict round-trips"
 
 

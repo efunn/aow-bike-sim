@@ -135,6 +135,23 @@ tests/test_drive.py::test_reverse_circle_tracks            # 2026-09-22 crawl-st
 # reference, and reverse is already where it breaks; the knobs are the ones
 # CLAUDE.md names (q_steer, q_roll_rate), not tried.
 tests/test_drive.py::test_command_heading[-1.2-90.0-6.0]   # 2026-09-30 headset friction: fast reverse turn falls
+# 2026-10-02 THE DETAILED DRIVETRAIN IS THE DEFAULT PLANT (bike_params.yaml's
+# drivetrain_model block; balance.run attaches its hook). The LQR is DESIGNED
+# on the ideal velocity-PI drive (linearize.design_plant) and FLOWN on the
+# detailed one, and these seven fall or miss. Bisected by switching parts on
+# an earlier harness: detent alone and slop alone pass; the servo part fails,
+# and within it the measured input-shaft Coulomb friction (0.15 N m at the
+# servo, ~10% of stall) is most of it -- off, 2 of 5 stay red; latency alone
+# fixes nothing. Which cases are red shifts with how each test steps between
+# its run() segments, so the family is the finding, not the list. Accepted
+# by the user ("fine for now"): the LQR is the reference baseline.
+tests/test_balance.py::test_tilt_recovery[lqr]                # 2026-10-02 detailed drivetrain: wobbles (tail roll RMS > 1 deg)
+tests/test_drive.py::test_command_heading[0.0-90.0-6.0]       # 2026-10-02 detailed drivetrain: misses heading
+tests/test_drive.py::test_stop_from_circle                    # 2026-10-02 detailed drivetrain: does not settle after stopping
+tests/test_drive.py::test_straight_sprint[-0.5-0.1]           # 2026-10-02 detailed drivetrain: falls reversing
+tests/test_pivot.py::test_pivot_completes_upright[-90.0]      # 2026-10-02 detailed drivetrain: heading error past bound
+tests/test_pivot.py::test_pivot_completes_upright[180.0]      # 2026-10-02 detailed drivetrain: heading error past bound
+tests/test_pivot.py::test_pivot_completes_upright[90.0]       # 2026-10-02 detailed drivetrain: heading error past bound
 
 # ---------------------------------------------------------------------------
 # THE STEER SERVO AS THE FIRMWARE RUNS IT, no cases now. Registered 2026-09-21

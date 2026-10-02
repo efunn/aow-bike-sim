@@ -27,7 +27,11 @@ UP, DOWN, LEFT, RIGHT = 265, 264, 263, 262
 
 @pytest.fixture(scope="module")
 def params():
-    return load_params()
+    # The plant teleop compiles for its startup policy: that policy's own
+    # drivetrain record, or the ideal drive without one (run_drive main).
+    from aow_sim.drivetrain_model import policy_params
+    p = load_params()
+    return policy_params(p, p["control"].get("general_move", "general_rl"))
 
 
 class _NoKeys:

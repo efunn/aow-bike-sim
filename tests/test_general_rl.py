@@ -1107,7 +1107,10 @@ def test_wings_off_builds_the_wingless_model():
     wing actuator and a 3-channel action."""
     env = _env()
     assert env.obs_dim == OBS_DIM and env.action_space.shape == (3,)
-    assert not env.wings and env.model.nu == 3
+    # 3 commands; the detailed drivetrain appends its two motor actuators.
+    from aow_sim import drivetrain_model as dm
+    assert not env.wings
+    assert env.model.nu == 3 + 2 * dm.enabled(env.p, "servo")
     assert all("wing" not in env.model.joint(i).name
                for i in range(env.model.njnt))
 

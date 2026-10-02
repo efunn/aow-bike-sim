@@ -1,11 +1,13 @@
 """The detailed drivetrain: XC430 firmware loop, differential detent, roller slop.
 
-OPT-IN. `config/drivetrain_model.yaml` is an overlay, loaded only by callers
-that ask (`run_drive --drivetrain`, `analysis/drivetrain_eval.py`). Without it
-`edit_spec` is a no-op, `DrivetrainSim.attach` returns None, and the model is
-the one every policy trained on. With it the params dict carries the overlay
-under `KEY`, which moves `plant_digest` -- correctly, since it is a different
-plant. The reasoning and the fits: docs/plans/drivetrain-model.md.
+THE DEFAULT PLANT since 2026-10-02: the `drivetrain_model:` block of
+config/bike_params.yaml (until then the opt-in overlay
+config/drivetrain_model.yaml). `load_params()` carries it under `KEY`, so it
+is in `plant_digest`. `base_params` strips it: the IDEAL drive, which the LQR
+is designed on and which every policy exported without a `drivetrain_model:`
+record trained on. Without the key `edit_spec` is a no-op and
+`DrivetrainSim.attach` returns None. The reasoning and the fits:
+docs/plans/drivetrain-model.md.
 
 Three parts, each switchable, because each answers a different question and
 has its own evidence:
@@ -59,15 +61,19 @@ import yaml
 from .params import _normalize
 
 KEY = "drivetrain_model"
-DEFAULT_PATH = Path(__file__).resolve().parents[2] / "config" / "drivetrain_model.yaml"
 PARTS = ("servo", "detent", "roller_slop")
 
 
 # -- params ------------------------------------------------------------------
 
 def load(path=None) -> dict:
-    """The overlay file, `{value, source}` wrappers stripped."""
-    with open(path or DEFAULT_PATH) as f:
+    """The overlay, `{value, source}` wrappers stripped: bike_params.yaml's
+    `drivetrain_model:` block, or the file at `path` (a whole file of the same
+    shape, for sweeps)."""
+    if path is None:
+        from .params import load_params
+        return copy.deepcopy(load_params()[KEY])
+    with open(path) as f:
         return _normalize(yaml.safe_load(f))
 
 
@@ -102,26 +108,37 @@ def with_drivetrain(params: dict, path=None, without=(), gains=None,
 def from_env_config(params: dict, env: dict) -> dict:
     """The plant an RL env config (`cfg["env"]`) asks for.
 
-    Keys: `drivetrain_model` -- true (the default overlay file), a path, or a
-    RESOLVED overlay dict as an export records it; `drivetrain_without` -- parts
-    to switch off; `servo_gains` -- [P, I] in table units. Absent or false is
-    the ideal drivetrain.
+    Keys: `drivetrain_model` -- ABSENT or true: the default, `params`' own
+    overlay (bike_params.yaml's); a path: that file; a RESOLVED overlay dict, as
+    an export records it; false or null: the IDEAL drive (`base_params`), which
+    is how a policy exported without a record replays on what it trained on.
+    `drivetrain_without` -- parts to switch off; `servo_gains` -- [P, I] in
+    table units. Both apply to the default or a path, not to a recorded dict.
 
-    PARAMS THAT ALREADY CARRY AN OVERLAY WIN. That is how a caller forces a
-    plant -- analysis/drivetrain_eval.py's variants -- and how the trainer,
-    which resolves the overlay once up front so the digest and the export see
-    it, stops every env from resolving it again.
+    Idempotent, so the trainer can resolve once up front (for the digest and
+    the export) and every env resolve the same config again. A caller forcing
+    a plant (analysis/drivetrain_eval.py) sets the env key, not the params.
     """
-    if KEY in params:
-        return params
-    spec = env.get("drivetrain_model")
-    if not spec:
-        return params
+    spec = env.get(KEY, True)
+    base = base_params(params)
+    if spec is None or spec is False:
+        return base
     if isinstance(spec, dict):
-        return {**params, KEY: copy.deepcopy(spec)}
-    return with_drivetrain(params, None if spec is True else spec,
-                           without=tuple(env.get("drivetrain_without") or ()),
-                           gains=env.get("servo_gains"))
+        return {**base, KEY: copy.deepcopy(spec)}
+    without = tuple(env.get("drivetrain_without") or ())
+    gains = env.get("servo_gains")
+    if spec is True and KEY in params:
+        out = {**base, KEY: copy.deepcopy(params[KEY])}
+        for part in without:
+            if part not in PARTS:
+                raise ValueError(f"unknown drivetrain part {part!r}; one of {PARTS}")
+            out[KEY][part]["enabled"] = False
+        if gains is not None:
+            out[KEY]["servo"]["velocity_p_gain"] = int(gains[0])
+            out[KEY]["servo"]["velocity_i_gain"] = int(gains[1])
+        return out
+    return with_drivetrain(base, None if spec is True else spec,
+                           without=without, gains=gains)
 
 
 def base_params(params: dict) -> dict:
@@ -129,6 +146,18 @@ def base_params(params: dict) -> dict:
     if KEY not in params:
         return params
     return {k: v for k, v in params.items() if k != KEY}
+
+
+def attach_hooks(model, params: dict) -> list:
+    """Every per-step hook the plant needs, in the order to run them: the
+    drivetrain (when `params` carries it) and the XC330s' gearbox friction.
+    Call each one's `pre_step(data)` before every `mj_step` and `reset(data)`
+    on a hand-rolled reset. One call, so a loop cannot take one and forget
+    the other."""
+    from . import gearbox_friction
+    out = [DrivetrainSim.attach(model, params)]
+    out += gearbox_friction.attach_native(model, params)
+    return [h for h in out if h is not None]
 
 
 def enabled(params: dict, part: str) -> bool:
@@ -172,6 +201,12 @@ def policy_record(name: str, moves_dir=None):
             return (yaml.safe_load(f) or {}).get(KEY) or None
     except FileNotFoundError:
         return None
+
+
+def policy_params(params: dict, name: str, moves_dir=None) -> dict:
+    """`params` on the drivetrain `moves/NAME.yaml` trained on: its recorded
+    overlay, or the IDEAL drive for an export without one."""
+    return from_env_config(params, {KEY: policy_record(name, moves_dir)})
 
 
 def teleop_base(record, drivetrain=None, without=(), gains=None):
@@ -240,33 +275,23 @@ def teleop_overlay(base, record, gains=None):
 # -- model structure ---------------------------------------------------------
 
 def edit_spec(spec: mujoco.MjSpec, p: dict) -> None:
-    """Apply the overlay's STRUCTURAL changes. Called last in `build_spec`."""
+    """Add the overlay's STRUCTURE, INERT. Called last in `build_spec`.
+
+    THE COMPILED MODEL IS THE IDEAL PLANT until `DrivetrainSim.attach`
+    switches it (and `release` switches it back). The native velocity-PI drive
+    actuators, the input shafts' `input_armature` and the rigid roller
+    couplings are all kept; what is added -- two motor actuators at ctrl 0, a
+    slop tendon per roller -- exerts no force while they are. So a loop that
+    steps physics without the hook runs the ideal drive exactly as before the
+    overlay was the default (2026-10-02), and only a loop that attaches the
+    hook gets the detailed one. Until then the overlay rewrote the actuators
+    here and a hookless loop got drives that never moved."""
     cfg = p.get(KEY)
     if not cfg:
         return
     dt = p["drivetrain"]
-    belt = float(dt["belt_ratio"])
 
     if enabled(p, "servo"):
-        s = cfg["servo"]
-        vmax = float(s["velocity_limit_rad_s"]) * belt
-        acts = {a.name: a for a in spec.actuators}
-        joints = {j.name: j for j in spec.joints}
-        for tag in ("a", "b"):
-            # Command holder: ctrl still means commanded input-shaft speed and
-            # is still clipped to the Velocity Limit, but produces no force.
-            act = acts[f"drive_{tag}"]
-            act.dyntype = mujoco.mjtDyn.mjDYN_NONE
-            act.gaintype = mujoco.mjtGain.mjGAIN_FIXED
-            act.gainprm[:] = 0.0
-            act.biastype = mujoco.mjtBias.mjBIAS_NONE
-            act.biasprm[:] = 0.0
-            act.ctrllimited = 1
-            act.ctrlrange = [-vmax, vmax]
-            act.forcelimited = 0
-            # The Coulomb friction is NOT a joint frictionloss: see
-            # DrivetrainSim, which applies it as a sticking friction.
-            joints[f"input_{tag}_spin"].armature = float(s["rotor_inertia"]) / belt ** 2
         for tag in ("a", "b"):
             m = spec.add_actuator(name=f"drive_{tag}_motor")
             m.trntype = mujoco.mjtTrn.mjTRN_JOINT
@@ -286,19 +311,32 @@ def edit_spec(spec: mujoco.MjSpec, p: dict) -> None:
                  and e.name1.startswith("roller_spin_") and e.name2 == "ring_spin"]
         for e in rigid:
             joint = e.name1
-            spec.delete(e)
+            # Kept, ACTIVE: attach switches it off (eq_active), so the tendon
+            # below sits at zero length and exerts nothing until then.
+            e.name = f"rigid_{joint}"
             t = spec.add_tendon(name=f"slop_{joint}")
             t.wrap_joint(joint, 1.0)
             t.wrap_joint("ring_spin", -k)
-            t.limited = 1
+            # INERT as compiled -- no limit, spring or damping -- because even
+            # at zero length under the rigid coupling they moved the ideal
+            # plant (5e-6 rad in 10 steps). attach gives them their values.
+            t.limited = 0
             t.range = [-half, half]
             t.springlength = [0.0, 0.0]
-            t.stiffness = [float(r["centring_stiffness"]), 0.0, 0.0]
-            t.damping = [float(r["damping"]), 0.0, 0.0]
+            t.stiffness = [0.0, 0.0, 0.0]
+            t.damping = [0.0, 0.0, 0.0]
             t.solref_limit = [float(r["wall_timeconst_s"]), 1.0]
 
 
 # -- runtime -----------------------------------------------------------------
+
+def _set_const(model) -> None:
+    """Re-derive what the compiler computed from the fields `_switch` edits:
+    the armature feeds `dof_invweight0` / `body_invweight0`, which scale every
+    soft constraint's impedance (the contacts included). Left stale, a
+    switched model is not the model compiled with those values."""
+    mujoco.mj_setConst(model, mujoco.MjData(model))
+
 
 class DrivetrainSim:
     """Per-step state for the parts MuJoCo cannot express: servo and detent.
@@ -309,13 +347,86 @@ class DrivetrainSim:
 
     @classmethod
     def attach(cls, model, params: dict):
-        if not (enabled(params, "servo") or enabled(params, "detent")):
+        """The hook, with `model` switched to the detailed drive (see
+        `edit_spec`); None when `params` enable no part."""
+        if not any(enabled(params, part) for part in PARTS):
             return None
         return cls(model, params)
+
+    def _switch(self, model, params: dict) -> None:
+        """Turn the compiled ideal plant into the detailed one, saving what
+        `release` puts back. On the MODEL: every MjData made from it, or reset
+        on it, follows (`reset` also fixes up a `data` made before)."""
+        cfg, belt = params[KEY], float(params["drivetrain"]["belt_ratio"])
+        self._saved = []
+        if enabled(params, "servo"):
+            s = cfg["servo"]
+            vmax = float(s["velocity_limit_rad_s"]) * belt
+            for tag in ("a", "b"):
+                a = model.actuator(f"drive_{tag}").id
+                dof = model.joint(f"input_{tag}_spin").dofadr[0]
+                self._saved.append(("actuator_gainprm", a, model.actuator_gainprm[a].copy()))
+                self._saved.append(("actuator_biasprm", a, model.actuator_biasprm[a].copy()))
+                self._saved.append(("actuator_ctrlrange", a, model.actuator_ctrlrange[a].copy()))
+                self._saved.append(("dof_armature", dof, model.dof_armature[dof].copy()))
+                # Command holder: ctrl still means commanded input-shaft speed,
+                # clipped to the Velocity Limit, and produces no force (its
+                # integrator still runs, on nothing). The Coulomb friction is
+                # NOT a joint frictionloss: pre_step applies it as a sticking
+                # friction.
+                model.actuator_gainprm[a] = 0.0
+                model.actuator_biasprm[a] = 0.0
+                model.actuator_ctrlrange[a] = [-vmax, vmax]
+                model.dof_armature[dof] = float(s["rotor_inertia"]) / belt ** 2
+        self._rigid = []
+        if enabled(params, "roller_slop"):
+            self._rigid = [i for i in range(model.neq)
+                           if model.equality(i).name.startswith("rigid_roller_spin_")]
+            for i in self._rigid:
+                self._saved.append(("eq_active0", i, model.eq_active0[i].copy()))
+                model.eq_active0[i] = 0
+            r = cfg["roller_slop"]
+            for i in range(model.ntendon):
+                if not model.tendon(i).name.startswith("slop_roller_spin_"):
+                    continue
+                for field in ("tendon_limited", "tendon_stiffness", "tendon_damping"):
+                    self._saved.append((field, i, getattr(model, field)[i].copy()))
+                model.tendon_limited[i] = 1
+                model.tendon_stiffness[i] = float(r["centring_stiffness"])
+                model.tendon_damping[i] = float(r["damping"])
+        # The hub's and rollers' own joint damping and frictionloss
+        # (drivetrain.hub_joint_* / roller_joint_*) are the IDEAL plant's
+        # losses. On this one they are zeroed: the servo's measured friction
+        # and inertia come from coasting the whole wheel in the air
+        # (analysis/drivetrain_fit.py coast), hub bearing and geared rollers
+        # included, so keeping them would count those twice; and a roller's
+        # motion inside its play is damped by the slop tendon alone.
+        joints = []
+        if enabled(params, "servo"):
+            joints.append("hub_spin")
+        if enabled(params, "servo") or enabled(params, "roller_slop"):
+            joints += [model.joint(j).name for j in range(model.njnt)
+                       if model.joint(j).name.startswith("roller_spin_")]
+        for name in joints:
+            dof = model.joint(name).dofadr[0]
+            for field in ("dof_damping", "dof_frictionloss"):
+                self._saved.append((field, dof, getattr(model, field)[dof].copy()))
+                getattr(model, field)[dof] = 0.0
+        _set_const(model)
+
+    def release(self) -> None:
+        """Switch the model back to the ideal plant, for a loop that hands it
+        on to code that does not step this hook (an MjData made or reset
+        after this follows; `data.eq_active` of a live one does not)."""
+        for field, i, value in self._saved:
+            getattr(self.model, field)[i] = value
+        self._saved = []
+        _set_const(self.model)
 
     def __init__(self, model, params: dict):
         cfg = params[KEY]
         self.model = model
+        self._switch(model, params)
         self.h = float(model.opt.timestep)
         self.belt = float(params["drivetrain"]["belt_ratio"])
         self.servo = enabled(params, "servo")
@@ -400,7 +511,11 @@ class DrivetrainSim:
     def reset(self, data, rng=None) -> None:
         """Zero the loop's memory at the CURRENT state: no integral error, no
         pending command, filters settled on the present shaft speed. `rng`
-        re-draws the detent phase; None keeps the configured one."""
+        re-draws the detent phase; None keeps the configured one. Also frees
+        the rollers in a `data` made before `attach` (eq_active is copied from
+        the model when the data is made)."""
+        for i in self._rigid:
+            data.eq_active[i] = 0
         if self.servo:
             self._k_c = 0
             self._k_m = 0

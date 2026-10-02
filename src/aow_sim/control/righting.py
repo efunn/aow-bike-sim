@@ -32,6 +32,7 @@ import numpy as np
 
 import mujoco
 
+from ..drivetrain_model import attach_hooks
 from ..build_model import build_model
 from .balance import quat_to_mat
 from .drive import DriveController
@@ -103,7 +104,10 @@ def settle_fallen(params: dict, roll_deg: float = 100.0, settle: float = 2.0,
     data.qpos[3:7] = [np.cos(a), np.sin(a), 0.0, 0.0]
     data.qpos[2] += 0.02
     mujoco.mj_forward(model, data)
+    hooks = attach_hooks(model, params)       # drives held at zero speed
     for _ in range(int(round(settle / model.opt.timestep))):
+        for h in hooks:
+            h.pre_step(data)
         mujoco.mj_step(model, data)
     return data.qpos.copy()
 
@@ -133,7 +137,10 @@ def settle_inverted(params: dict, roll_deg: float = 180.0, wings: bool = False,
               if model.geom_contype[g] and g != floor)
     data.qpos[2] += drop - gap
     mujoco.mj_forward(model, data)
+    hooks = attach_hooks(model, params)       # drives held at zero speed
     for _ in range(int(round(settle / model.opt.timestep))):
+        for h in hooks:
+            h.pre_step(data)
         mujoco.mj_step(model, data)
     return data.qpos.copy()
 

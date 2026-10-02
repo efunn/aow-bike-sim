@@ -18,6 +18,7 @@ Modeling scheme (see docs/plans/mujoco-modeling-decisions.md):
 from __future__ import annotations
 
 import argparse
+import weakref
 from pathlib import Path
 
 import mujoco
@@ -2177,6 +2178,23 @@ def reset_actuator_state(model: mujoco.MjModel, data: mujoco.MjData,
     data.act[:] = 0.0 if act is None else act
 
 
+# Each compiled model's build arguments (everything but params), so a caller
+# holding only a model can build the same bike on other params -- the LQR
+# designs on the IDEAL-drive twin of whatever model it is handed
+# (control/linearize.design_plant). Weak keys: no model outlives its users.
+_BUILD_ARGS: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def build_args(model: mujoco.MjModel) -> dict:
+    """The keyword arguments `model` was built with (not params). KeyError
+    for a model build_model did not make."""
+    try:
+        return dict(_BUILD_ARGS[model])
+    except KeyError:
+        raise KeyError("this model was not made by build_model, so its build "
+                       "arguments are unknown") from None
+
+
 def build_model(
     params: dict | None = None, variant: str = "full", training_wheels: bool = False,
     hockey: bool = False, payload: bool = True, righting: bool = False,
@@ -2191,6 +2209,12 @@ def build_model(
                       righting, wings, linkage, linkage_cfg,
                       flywheel, flywheel_cfg, swing, swing_cfg,
                       swing_linkage, swing_linkage_cfg, rig).compile()
+    _BUILD_ARGS[model] = dict(
+        variant=variant, training_wheels=training_wheels, hockey=hockey,
+        payload=payload, righting=righting, wings=wings, linkage=linkage,
+        linkage_cfg=linkage_cfg, flywheel=flywheel, flywheel_cfg=flywheel_cfg,
+        swing=swing, swing_cfg=swing_cfg, swing_linkage=swing_linkage,
+        swing_linkage_cfg=swing_linkage_cfg, rig=rig)
     # Exactly one floor is solid and visible to start with. They are all
     # COMPILED collidable (see the note at the floor block: compiling one
     # inert prunes it permanently), so this is the reversible switch-off

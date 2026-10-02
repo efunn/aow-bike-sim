@@ -16,7 +16,13 @@ pytestmark = pytest.mark.geometry
 
 @pytest.fixture(scope="module")
 def params():
-    return load_params()
+    # The IDEAL drive (drivetrain_model.base_params). These tests pin the
+    # ideal build -- 3 actuators, 10 equalities, the rigid roller ratio, the
+    # velocity-PI drive -- which the default detailed drivetrain changes on
+    # purpose (two motor actuators, slop tendons, a firmware loop stepped from
+    # Python). Its structure and behaviour: tests/test_drivetrain_model.py.
+    from aow_sim.drivetrain_model import base_params
+    return base_params(load_params())
 
 
 @pytest.fixture(scope="module")

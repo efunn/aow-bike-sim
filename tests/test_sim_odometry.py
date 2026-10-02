@@ -125,6 +125,11 @@ def test_both_encoders_agree_on_ONE_trajectory(model, params):
     name = params["control"].get("general_move", "general_rl")
     if not (MOVES_DIR / f"{name}.npz").exists():
         pytest.skip(f"control.general_move names {name}, which is not exported")
+    # Flown on the plant the policy trained on (its drivetrain record).
+    from aow_sim import drivetrain_model as dm
+    params = dm.policy_params(params, name)
+    model = build_model(params)
+    drive = dm.DrivetrainSim.attach(model, params)
     data = _settled(model)
     ctl = DriveController(params, model)
     ctl.reset(model, data)
@@ -135,6 +140,8 @@ def test_both_encoders_agree_on_ONE_trajectory(model, params):
     max_roll = 0.0
     for k in range(6000):
         ctl.step(model, data)
+        if drive is not None:
+            drive.pre_step(data)
         mujoco.mj_step(model, data)
         max_roll = max(max_roll, abs(extract_state(data, np.zeros(3)).roll))
         for e, odo in both.items():

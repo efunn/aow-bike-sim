@@ -44,7 +44,7 @@ except ImportError as e:            # fail at import, not 15 s into a render
         "    pip install -e '.[viz]'   (or: pip install imageio imageio-ffmpeg)"
     ) from e
 
-from . import gearbox_friction
+from . import drivetrain_model
 from .build_model import (FLOOR_GRID_M, build_model, load_params,
                           tune_lighting)
 from .control import DriveController
@@ -407,7 +407,7 @@ def _record_righting(params, general: str | None, wings: bool, fps: int,
                         linkage_cfg=linkage_cfg)
     design = design_all(params, build_model(params))
     data = mujoco.MjData(model)
-    gearbox = gearbox_friction.attach_native(model, params)
+    gearbox = drivetrain_model.attach_hooks(model, params)
     # `inverted` starts the run UPSIDE DOWN instead of on its side, so the
     # recording covers the part no still frame shows: the bike rolling off the
     # roof ridge onto its side before the mechanism has anything to push on.
@@ -505,7 +505,7 @@ def _record_demo(params, general: str | None, wings: bool, fps: int,
     model = build_model(params, variant="full", righting=True, wings=wings)
     design = design_all(params, build_model(params))
     data = mujoco.MjData(model)
-    gearbox = gearbox_friction.attach_native(model, params)
+    gearbox = drivetrain_model.attach_hooks(model, params)
     data.qpos[:] = settle_upright(model).qpos
     # Roll nudge off the unstable equilibrium, then yaw off the grid axis.
     qr = np.array([np.cos(np.deg2rad(0.5) / 2), np.sin(np.deg2rad(0.5) / 2), 0, 0])
@@ -645,7 +645,7 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
 
     model = build_model(params, variant="full", hockey=hockey)
     data = _fresh(model, settle_upright(model).qpos)
-    gearbox = gearbox_friction.attach_native(model, params)
+    gearbox = drivetrain_model.attach_hooks(model, params)
     c = DriveController(params, model)
     c.reset(model, data)
 

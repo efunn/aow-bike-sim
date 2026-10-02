@@ -94,8 +94,12 @@ def test_the_split_did_not_move_the_plant_digest():
                           _per_n: the printed steer's bushing + thrust face,
                           a + b x front-tyre thrust, from the first print's
                           friction maps (steering-design.md)
+        9953690d05e33ab6  2026-10-02  the detailed drivetrain is the default
+                          plant: config/drivetrain_model.yaml moved, unchanged,
+                          into bike_params.yaml's `drivetrain_model:` block --
+                          the digest the smoothness-loss exports carry
     """
-    assert plant_digest(load_params()) == "8b804e519ba7fe87"
+    assert plant_digest(load_params()) == "9953690d05e33ab6"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

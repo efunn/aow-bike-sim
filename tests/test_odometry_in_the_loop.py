@@ -30,6 +30,7 @@ import pytest
 import yaml
 
 from aow_sim.build_model import build_model, load_params
+from aow_sim.drivetrain_model import KEY, DrivetrainSim, from_env_config
 from aow_sim.control.balance import extract_state
 from aow_sim.control.drive import DriveController
 from aow_sim.control.flick import MOVES_DIR
@@ -82,22 +83,25 @@ SLIP_MARGIN = 1.5
 
 
 @pytest.fixture(scope="module")
-def params():
-    return load_params()
+def policy():
+    name = load_params()["control"].get("general_move", "general_rl")
+    path = MOVES_DIR / f"{name}.yaml"
+    if not path.exists() or not (MOVES_DIR / f"{name}.npz").exists():
+        pytest.skip(f"control.general_move names {name}, which is not exported")
+    return name, yaml.safe_load(path.read_text()) or {}
+
+
+@pytest.fixture(scope="module")
+def params(policy):
+    # The plant the policy trained on: its own drivetrain record, or the ideal
+    # drive for an export without one (drivetrain_model.from_env_config).
+    return from_env_config(load_params(),
+                           {KEY: policy[1].get(KEY)})
 
 
 @pytest.fixture(scope="module")
 def model(params):
     return build_model(params)
-
-
-@pytest.fixture(scope="module")
-def policy(params):
-    name = params["control"].get("general_move", "general_rl")
-    path = MOVES_DIR / f"{name}.yaml"
-    if not path.exists() or not (MOVES_DIR / f"{name}.npz").exists():
-        pytest.skip(f"control.general_move names {name}, which is not exported")
-    return name, yaml.safe_load(path.read_text()) or {}
 
 
 def _fly(params, model, policy, regime, seed=0):
@@ -130,6 +134,9 @@ def _fly(params, model, policy, regime, seed=0):
     ctl._ahrs_active = ahrs is not None
     ctl.engage_general(data, name=name)
     ctl.set_command_polar(speed)
+    # The detailed drivetrain's hook, when the plant has one. Only that: this
+    # test's slip baselines were recorded without the XC330 gearbox hooks.
+    drive = DrivetrainSim.attach(model, params)
 
     hub = model.joint("hub_spin").dofadr[0]
     r = float(params["omni_wheel"]["outer_radius"])
@@ -151,6 +158,8 @@ def _fly(params, model, policy, regime, seed=0):
             ctl.step(model, data)
         if shove and k and k % 3000 == 0:
             data.qvel[1] += rng.uniform(-shove, shove)
+        if drive is not None:
+            drive.pre_step(data)
         mujoco.mj_step(model, data)
         s = extract_state(data, np.zeros(3))
         max_roll = max(max_roll, abs(s.roll))

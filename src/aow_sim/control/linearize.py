@@ -21,6 +21,7 @@ with weights from the YAML control.lqr block.
 
 from __future__ import annotations
 
+import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -389,9 +390,40 @@ def _undelayed(model: mujoco.MjModel):
         model.actuator_delay[:] = saved
 
 
+_TWINS: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def design_plant(params: dict, model: mujoco.MjModel):
+    """(params, model) to DESIGN on: the IDEAL-drive twin when `params` carry
+    the detailed drivetrain, else the pair unchanged.
+
+    The same move as `_undelayed`, for the same reason. The detailed drive is
+    a firmware loop run from Python (`DrivetrainSim.pre_step`) with a command
+    delay, a measurement delay, a filter, an integral and sticking friction;
+    the identification below steps raw `mj_step` and the reduced model has no
+    state for any of it, so on that model its drive columns would read zero.
+    So the gains are designed on the ideal velocity-PI drive
+    (`drivetrain_model.base_params`) and flown on the detailed one -- what
+    teleop and the RL envs' crawl fallback already did. One twin per model,
+    built with the model's own build arguments and kept while it lives."""
+    from .. import drivetrain_model
+    from ..build_model import build_args, build_model
+    if drivetrain_model.KEY not in params:
+        return params, model
+    base = drivetrain_model.base_params(params)
+    twin = _TWINS.get(model)
+    if twin is None:
+        twin = build_model(base, **build_args(model))
+        _TWINS[model] = twin
+    return base, twin
+
+
 def design_lqr(params: dict, model: mujoco.MjModel, v: float = 0.0,
                n_state: int = N_STATE):
-    """Returns (K over the reduced state, equilibrium qpos, fit R^2 per state)."""
+    """Returns (K over the reduced state, equilibrium qpos, fit R^2 per state).
+    Designed on `design_plant`'s ideal-drive twin when params carry the
+    detailed drivetrain."""
+    params, model = design_plant(params, model)
     Q, R = _weights(params["control"]["lqr"], n_state)
     with _undelayed(model):
         eq = settle_rolling(model, params, v)
@@ -415,6 +447,7 @@ def design_gain_schedule(params: dict, model: mujoco.MjModel):
 
     Runtime gains come from per-element linear interpolation in measured
     forward speed (clamped at the grid ends)."""
+    params, model = design_plant(params, model)
     grid = sorted(params["control"]["drive"]["speed_grid"])
     speeds = sorted({-v for v in grid} | set(grid))
     Q, R = _weights(params["control"]["lqr"])

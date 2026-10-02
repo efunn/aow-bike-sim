@@ -139,8 +139,12 @@ def test_skids_stay_on_the_roll_member_when_the_bike_wheelies():
     gs = [m.geom(f"rig_roll_stop_{t}").id for t in ("left", "right")]
     local = lambda g: d.xmat[rb].reshape(3, 3).T @ (d.geom_xpos[g] - d.xpos[rb])
     before = [local(g) for g in gs]
+    from aow_sim.drivetrain_model import DrivetrainSim
+    drive = DrivetrainSim.attach(m, load_params())   # the drives only move with it
     d.ctrl[[m.actuator("drive_a").id, m.actuator("drive_b").id]] = 5.0
     for _ in range(int(1.0 / m.opt.timestep)):
+        if drive is not None:
+            drive.pre_step(d)
         mujoco.mj_step(m, d)
     assert abs(np.degrees(d.joint("rig_pitch").qpos[0])) > 10.0   # it did wheelie
     for g, b in zip(gs, before):
