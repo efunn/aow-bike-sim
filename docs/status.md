@@ -1612,8 +1612,8 @@ to identify it. Never quietly promote one. The load-bearing ones:
   at 44 N (0.44-0.64 by roller phase); front 0.049 mm at its own 4.2 N. Sinks
   quoted before 2026-10-01 came from a posed curve and over-read (1.95 mm at
   44 N).
-- **Critically damped, so it cannot bounce**, which the 08-08 hand drop says
-  is wrong.
+- **Critically damped, so it cannot bounce.** The real front wheel bounces
+  (below).
 - **Not a stiffness in N/m.** At rest the sink at a given force scales with
   the masses compiled around the contact (`body_invweight0`), in both `solref`
   forms: fit on the bike's own model, AFTER the weighing, and refit when a
@@ -1626,6 +1626,30 @@ to identify it. Never quietly promote one. The load-bearing ones:
   `timeconst x dampratio`. `solimp`'s `dmin` 0.9 -> 0.5 moves the rear's rest
   sink 3.6x; under a negative pair it has not been re-derived (the old "6%" was
   posed). Procedure: `measurements/contact-protocol.md`.
+
+**Bench pre-tests (rough, not fits; `contact-measurements.yaml`).**
+
+- Dial, 2026-10-01: sink added by 26.7 N, against the shipped contact from
+  the same zero (the wheel's own weight):
+
+  | contact | measured | sim |
+  |---|---|---|
+  | one roller, flat | 0.36 mm | 0.36 |
+  | two small ends | 0.36 | ~0.24 |
+  | front | 0.36 | 0.31 |
+  | one roller, big end | 0.61 | 0.47 |
+  | two big ends | 0.48 | 0.30 |
+
+  The flat roller matches; the rest is 1.2-1.6x softer, two contacts are
+  barely stiffer than one (the sim: ~0.65x), and every contact gives ~0.08 mm
+  more over the first 4.4 N.
+- Drop, 2026-10-02: front wheel + fork (86 g) by hand onto a calibrated force
+  sensor (`bench/force_drop.py`): restitution ~0.40 over 1-2.6 mm, contact
+  ~7 ms, peaks 11-16 N. `dampratio` ~0.3 matches the bounce but not the shape:
+  the real contact is longer AND peaks higher, i.e. softer at first touch and
+  stiffer at peak, which is `solimp`'s job.
+- A one-XL330 drop rig to replace hand drops is in design
+  (`docs/plans/drop-release-rig.md`), nothing built.
 
 **Outstanding, with the bench fit:** the `contact_solimp` comment in
 `config/bike_params.yaml` still quotes posed numbers ("0.375 -> 0.647 mm,

@@ -43,6 +43,39 @@ p0_static_deflection:
     under the bike's own weight"; that came from a posed calculation that
     over-read the sink, replaced 2026-10-01.)
 
+p0_pretest_2026_10_01:
+  # ROUGH PRE-TEST, kept for reference; not the p0 data and not a fit.
+  # Two dial indicators read in THOU (0.001 in = 0.0254 mm), rounded to the
+  # nearest thou, one pass each: one on the scale platform, one on the top of
+  # the wheel. Wheel-only sink = wheel_top - scale (about +-1 thou, +-0.025 mm).
+  # Zeroed with each wheel resting under its own weight on the scale and its
+  # rig propped loosely off the side (front: the forks; rear: the motor
+  # assembly), so the preload is the wheel plus an unknown share of the rig,
+  # and was not recorded. Surface: the scale platform.
+  loads_lb: [0.5, 1.0, 3.0, 6.0]           # weights added; 6 lb is the scale's limit
+  loads_n: [2.22, 4.45, 13.34, 26.69]
+  scale_thou: [2, 3, 8, 16]
+  wheel_top_thou:
+    rear_two_big_ends: [4, 10, 20, 35]     # 2 rollers in contact, large diameter
+    rear_big_end_point: [6, 10, 23, 40]    # 1 roller, large diameter
+    rear_flat_one_roller: [4, 8, 18, 30]   # 1 roller, flat
+    rear_two_small_ends: [4, 8, 20, 30]    # 2 rollers, small diameter
+    front: [4, 8, 20, 30]
+  wheel_only_mm:                           # (wheel_top - scale) * 0.0254
+    rear_two_big_ends: [0.051, 0.178, 0.305, 0.483]
+    rear_big_end_point: [0.102, 0.178, 0.381, 0.610]
+    rear_flat_one_roller: [0.051, 0.127, 0.254, 0.356]
+    rear_two_small_ends: [0.051, 0.127, 0.305, 0.356]
+    front: [0.051, 0.127, 0.305, 0.356]
+  notes: >
+    Not measured: the small-end single point. Against the shipped
+    contact_solref [0.005, 1.0], the sim started from the wheel's own weight
+    (2026-10-01) adds at 26.7 N: flat 0.36, front 0.31, big-end point 0.47,
+    two big ends 0.30, two small ends ~0.24 mm (that one from
+    static_contact_sim.py). Flat matches; the others read 1.2-1.6x softer,
+    and every contact ~0.08 mm more than the sim over the first 4.45 N. For
+    the real p0: read the scale before taring it, so the preload is known.
+
 p0b_incline_slide:
   # mu = tan(theta). Block the rotation first -- a wheel free to roll will roll,
   # and you will have measured rolling resistance instead. See the protocol.
@@ -72,6 +105,29 @@ p0b_torsional:
   notes: >
     Deferred. friction_torsional stays a GUESS at 0.005 until something
     actually depends on it.
+
+p1_pretest_2026_10_02:
+  # ROUGH PRE-TEST, kept for reference; not the p1 data and not a fit.
+  # Front wheel + fork halves (86 g, weighed 2026-09-30) dropped BY HAND onto
+  # force sensor 1 (TE FS2050, calibrated +-3%), read by bench/force_drop.py.
+  # Partly supported at rest, so the impact mass is the weighed 86 g, not the
+  # resting force. Restitution from flight time + impulse, no drop height
+  # needed (synthetic check: reads +0.01 to +0.06 high).
+  logs: bench/logs/drops_20261002-0131_summary.csv   # raw .csv (10 MB) kept local; 0119 = an earlier run
+  clean_drops:             # 1-2.6 mm measured; 2 of 7 under 0.7 mm left out (see notes)
+    h_measured_mm: [1.42, 1.01, 2.51, 2.57, 2.19]
+    e_measured:    [0.39, 0.47, 0.39, 0.39, 0.38]
+    peak_n:        [11.6, 11.1, 13.1, 16.3, 12.0]
+    contact_ms:    [7.1, 6.4, 7.5, 7.6, 7.6]
+  notes: >
+    e ~0.40 over 1-2.6 mm. Against the sim's front tire on a slide at the
+    same heights (timeconst 0.005): dampratio 1.0 (ships) does not bounce;
+    0.3 gives e 0.36-0.42 but peaks 20-30% lower and contacts ~40% shorter
+    (4.0-4.4 vs ~7.3 ms), so the real contact is softer at first touch and
+    stiffer at peak than the model: a solimp question, not solref alone.
+    Drops under 0.7 mm (e 0.22 and 0.72) disagree: short flights. 5 of 16 hand
+    drops rocked on the button or were marginal. The drop rig
+    (docs/plans/drop-release-rig.md) is meant to replace hand drops.
 
 p1_drop_rebound:
   # Release (do not throw) from a measured height; film; read the first apex.
