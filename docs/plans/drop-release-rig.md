@@ -25,7 +25,6 @@ for the contact drop test (`contact-protocol.md` §P1). The hand drops on
    hinge post                         |                 \_______/
       |                             [cam]               [sensor]  <- button
       |                            [XL330]                           under the axle
-      |                            [shims]
    ===+=================================================================  base
       |<------------- d -------------->|
       |<---------------------- L ----------------------->|
@@ -52,7 +51,7 @@ impact. The cam is under the block, at d from the hinge, not under the axle.
 | cam | `bench/drop_cam.py`: per 90 deg segment a 20 deg bottom dwell at r 12 mm, a 40 deg ramp, a 30 deg top flat (constant radius) at 13.5 / 14 / 14.5 / 15 mm, then the step; 5 mm thick, D-bore dia 8 / 7 flat | four drops per turn, 0.5 / 1 / 1.5 / 2 mm; the top flat is the servo's run-up to speed before the edge, the bottom dwell is where it brakes and parks. Ramp pressure angles 9.6-17.7 deg |
 | cam hub | boss on the XL330 horn: D-shaft dia 8 / 7 flat, 6 mm long, one M2 into the end through a washer | swap a cam with one screw; the start is set by hand each run, so no indexing |
 | cam centre height | **follower resting height - 13 mm** (r_dwell 12 + gap 1) | the follower rests 1 mm above the dwell (L/d x 1 mm at the axle) |
-| servo mount | on a shim stack (0.25 / 0.5 mm shims) under the XL330 | sets the gap, which shifts all four drops together |
+| servo mount | fixed on the base, no shims (user, 2026-10-02) | the gap is trimmed at the axle instead; it shifts all four drops together |
 | sensor | in a pocket in the base (25.1 x 17.3 mm body), button centred under the axle | the FS20 deflects 0.05 mm at 14.7 N (stiff: >= 294 N/mm) |
 
 The XL330 horn's hole pattern is not drawn anywhere here: take it from
@@ -62,10 +61,17 @@ ROBOTIS's drawing when the hub is modelled.
 
 The cam fixes the RATIOS between drops exactly (each step times L/d at the
 axle); for round numbers at the axle, give `drop_cam.py --drops` the wanted
-heights times d/L. The servo's height sets where they sit: at d = L a servo 0.3 mm high gives 0.8 / 1.3 / 1.8 / 2.3 mm. Anything
-from 0.5 mm low to 1 mm high still gives four real drops and a clear gap.
-`force_drop.py` reports the height each drop actually had (`h_measured_mm`),
-so shim until the first cycle reads about 0.5 / 1 / 1.5 / 2, then leave it.
+heights times d/L. Where they sit is set by the follower's height over the
+cam, and that is trimmed at the AXLE (prop / shim it), not under the servo
+(user, 2026-10-02): at d = L the follower 0.3 mm low gives 0.8 / 1.3 / 1.8 /
+2.3 mm. Anything from just under 0.5 mm high (the 0.5 drop then vanishes)
+to just under 1 mm low (the gap closes) still gives four real drops. The rear wheel's radius changes with the roller part on
+the button (51.0 at the cones' big ends, 49.5 at their small ends, 51.2 at
+the ridge), and every mm of it moves all four drops by a mm: re-trim per
+contact, or regenerate the rear interface for it
+(`wheels.rear_radius_offset`). `force_drop.py` reports the height each drop
+actually had (`h_measured_mm`), so trim until the first cycle reads about
+0.5 / 1 / 1.5 / 2, then leave it.
 
 Check the gap by hand with the wheel resting: a 0.5 mm feeler under the follower,
 with the cam in a dwell, should slide. No gap means the arm is partly held by
@@ -110,6 +116,72 @@ goal. `drop_release.py` measures it instead of trusting this: every drop
 prints the edge speed as the step passes (from position reads during the
 move, at 3 Mbps; a synthetic 500 deg/s trace read back as 483).
 
+## Parts
+
+- one base which holds the PCB with the force sensors and to which the XL330 attaches
+  - force sensor PCB:
+    - found in [key-holder-v5](https://cad.onshape.com/documents/ac102712f8d1c43274e5ca9a/w/98e7a679d8a4a7765bb5abd0/e/9f9e8466f192aa7d04dcac53)
+    - `pcb-body`, `pcb-base`, and the `PCB` part are the actual circuit board, 5x self tap M3 screws to the base
+    - `fs-arrangement` sketch shows the force sensor placements
+    - not pictured: the teensy which is on tall headers; it sits at the back of the PCB and no part of the wheel can intersect it
+    - ignore keyswitch holder/keycap and the weird finger guard at the front; these are not present (it's just the bare sensors)
+- XL330 case halves, attaching with csk 6-32s to the base
+- drop cam which simply fits onto the XL330 horn with printed pins
+- interface pieces for (1) front wheel fork halves and (2) rear chainstay halves
+  - follower for drop cam
+  - 5.75mm tall x 19.75mm wide x ~20mm length slot for a plastic bar to be friction fit into (the lever arm)
+- everything past the lever arm attach I'll rig manually
+
+**Generated 2026-10-02:** `python -m aow_sim.cad_drop_rig`, the custom
+feature `AOW drop rig` in aow-bike's `drop-rig` Part Studio (studio
+`drop-rig features`), numbers in `config/drop_rig_cad.yaml`. Render:
+![drop rig](../cad/drop_rig.png)
+
+| part | print | from |
+|---|---|---|
+| base | Z+ | the PCB on 5 standoffs (M3 self-tap pilots 2.5 GUESS, THROUGH so a tap can run all the way), the shells' two 6-32s from below; board outline, holes and buttons read off key-holder-v5 through the API, not measured on the board |
+| back shell, cover | Y-, Y+ | the X330 fixture's IDLER shells, legs down to the base |
+| cam | Y+ | `drop_cam.py`'s profile on the horn pins (no D-hub, no M2), its back face 1 mm off the cover |
+| front interface | X+ | cad_steering's headset block (ledges, cheeks, two 6-32 nut slots) + bar slot + follower |
+| rear interface | X+ | cad_drive's case-side joint both sides (channel, tension slot, nut slot) + bar slot + follower |
+
+The wheel stands on button 3 (user: 2 or 3, for a compacter base; the
+wheels pass 6.6 mm over button 2). The arm runs along the row toward the
+board's far end, cam centre 80 mm along it, just past the board's edge.
+Base 135 x 72 mm, ~69 g solid PLA. Drawn nominal: wheel resting, arm
+level, the follower 26.7 mm over the button, 1 mm over the cam's dwell, so
+a lift sketched off the cam reads the drop itself. Each interface carries
+its own wheel's radius (front: tire OD 102.5; rear: omni outer_radius +
+`wheels.rear_radius_offset`, the contact under test) and puts the follower
+at that one height, so one base and one cam serve both. `--check` (one call) builds both: no interference.
+
+- **The follower is NOT the ~10 mm centred flat above.** Parked past a
+  step, a centred 10 mm flat rests on the next ramp and the step's
+  corner, up to 1.85 mm over the gap (computed, `cad_drop_rig.park_clearance`):
+  the arm would be held off the sensor. It runs 1 mm downstream of the cam's
+  centre (that corner is the release) and 4.5 mm upstream (a flat follower's
+  contact offset on the 2 mm ramp is 4.3).
+- **The XL330's horn faces -Y** (its body on the +Y side), so the cam,
+  turning clockwise looking at the horn as `drop_cam.py` draws it, runs
+  +X under the follower. The release is the pad's square +X end; the
+  45 deg chamfer that lets the interfaces print X+ is upstream, over the
+  incoming ramp. Parked 12 deg past a step: 0.87 mm clear, worst segment
+  (1.0 at 8-10 deg). With the chamfer downstream instead it was 0.45 at 12.
+- **One bar-slot floor for both wheels:** 73.1 mm from the axle (the rear
+  block sets it; the front's floor is 5.85 thick). Bottom the bar in
+  either interface and the axle lands over the button and the follower
+  over the cam -- the slot floor is the X reference, so push the bar home.
+- **Bigger drops: not with four per turn.** A flat follower's contact
+  offset on a 40 deg ramp is (gap + drop) / 0.70 rad: 7.2 mm at 4 mm, 8.6
+  at 5 mm. A pad that long rests on the cam when parked (-0.14 / -0.72 mm,
+  best park, with the chamfer then downstream; recheck). One 5 mm drop per
+  turn (a 340 deg ramp) cleared 0.84 mm. The
+  cam itself would fit: 22 mm off the tire at r 15, ~19 at r 18.
+- The bar slot's centre is 3.9 mm over the axle, not on it: the housing is
+  flush with the block's top. Printed X+ the slot stands open-topped.
+- The rear interface's nut slots and channel ends are 2-3 mm bridges.
+- Not modelled: the Teensy (position unknown here), the bar, the hinge.
+
 ## Running it
 
 ```sh
@@ -132,10 +204,11 @@ The XL330 is 5 V: its own supply through the U2D2, never the 12 V chain
 
 ## Next
 
-- **Generate the parts that have to fit existing geometry:** the cam as a
-  solid on the XL330 horn hub (`drop_cam.py` already gives the profile), and
-  the two clamp blocks: front, the fork's spigot; rear, the chainstay /
-  new dropouts. Roller phase: locked with the axle nut (user, 2026-10-02).
+- ~~Generate the parts that have to fit existing geometry~~: done
+  2026-10-02, see "Parts". Roller phase: locked with the axle nut (user).
+- Print and check: the M3 pilots, the fork and chainstay joints in their
+  new blocks, the bar's friction fit, the follower's parked gap with a
+  feeler.
 - **Hinge and arm: not decided** (user, 2026-10-02). The two rods and the
   hinge block above are the sketch, not a choice; d and L are unset.
 

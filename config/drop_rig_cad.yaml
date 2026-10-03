@@ -1,0 +1,118 @@
+# The drop release rig's CAD numbers: the base holding the force-sensor PCB
+# and the XL330, the cam, and the two wheel interfaces. Read by
+# aow_sim.cad_drop_rig only -- never by the simulator. Metres (keys ending
+# _deg are not scaled). Spec: docs/plans/drop-release-rig.md, "Parts".
+#
+# RIG FRAME: origin on the top of the drop sensor's button (pcb.drop_button_n),
+# +Z up, +X along the arm toward the hinge,
+# +Y along the wheel's axle (parallel to the hinge). The wheel stands on the
+# button with its axle straight above it; the cam turns about +Y under the
+# follower.
+#
+# The fork joint and the chainstay joint are NOT numbers here: they are
+# cad_steering's and cad_drive's own layouts, read at build time, so a change
+# to the fork or the chainstay moves its interface with it.
+
+pcb:
+  # The force-sensor board, read off key-holder-v5's Part Studio through the
+  # API on 2026-10-02 (traces/drop_rig/probe_keyholder.txt,
+  # keyholder_features.json). Board frame = that studio's: its origin is
+  # button 1's centre, X along the row of sensors. Not measured on the part.
+  x0: {value: -0.08636, source: CAD (key-holder-v5 pcb-base)}
+  x1: {value: 0.01016, source: CAD (key-holder-v5 pcb-base)}
+  y0: {value: -0.03937, source: CAD (key-holder-v5 pcb-base)}
+  y1: {value: 0.02667, source: CAD (key-holder-v5 pcb-base)}
+  corner_radius: {value: 0.00254, source: CAD (key-holder-v5 pcb-base)}
+  thickness: {value: 0.0016, source: CAD (key-holder-v5 pcb-body)}
+  # Five M3 self-tappers into the base (user). Board holes 3.25.
+  holes_x: {value: [-0.08128, -0.08128, 0.00508, 0.00508, -0.0381], source: CAD (key-holder-v5 pcb-base)}
+  holes_y: {value: [0.01778, -0.01651, -0.01651, 0.01778, 0.01397], source: CAD (key-holder-v5 pcb-base)}
+  # The four FS20 buttons, on a 105.5 mm arc (the finger arc,
+  # 4-button-pattern). Button 1 is the drop sensor.
+  buttons_x: {value: [0.0, -0.02513, -0.05107, -0.07620], source: CAD (key-holder-v5 fs20 + 4-button-pattern)}
+  buttons_y: {value: [0.0, -0.00632, -0.00632, 0.0], source: CAD (key-holder-v5 fs20 + 4-button-pattern)}
+  # Which one the wheel stands on, 1-4 from the sketch's origin. 3 (user,
+  # 2026-10-02: 2 or 3, for a compacter base): the board's far end then sits
+  # under the arm, its near end over the base the servo needs anyway. The
+  # wheels pass 7 mm over button 2.
+  drop_button_n: {value: 3, source: design}
+
+fs20:
+  # Board top to the button's top, and the button: datasheet, as drawn in
+  # key-holder-v5 (fs20-layout-top / -side).
+  height: {value: 0.00825, source: datasheet (FS20, incl. button)}
+  button_dia: {value: 0.0122, source: datasheet (FS20)}
+  body_x: {value: 0.01727, source: CAD (key-holder-v5 fs20)}
+  body_y0: {value: -0.0127, source: CAD (key-holder-v5 fs20)}
+  body_y1: {value: 0.0124, source: CAD (key-holder-v5 fs20)}
+  # The legs stand this far below the board's underside.
+  legs_below: {value: 0.00496, source: CAD (key-holder-v5 fs20)}
+
+base:
+  # Board underside to the base's top: the legs, their solder, and air.
+  standoff: {value: 0.007, source: design}
+  standoff_dia: {value: 0.007, source: design}
+  # An M3 self-tapper's pilot in a print: GUESS until a test print.
+  pilot_dia: {value: 0.0025, source: GUESS (print property)}
+  rim: {value: 0.003, source: design}            # plate past the board and the servo shells
+
+servo:
+  # Cam centre along the arm. Clears the tire by ~20 mm and puts the follower
+  # under the interface's bar housing, front and rear alike.
+  x: {value: 0.080, source: design}
+  # The shells' legs reach this far below the shells, onto the base.
+  base_gap: {value: 0.002, source: design}
+  # NO shims under the servo (user, 2026-10-02): everything is drawn at
+  # nominal, wheel resting, arm level. Height is trimmed at the WHEEL end
+  # instead, by propping / shimming the axle.
+  cover_cap_thickness: {value: 0.0025, source: design (as the X330 fixture's cover)}
+  cover_leg_gap: {value: 0.0002, source: design (as the X330 fixture's)}
+
+cam:
+  # bench/drop_cam.py's defaults; the profile comes from its own function.
+  drops: {value: [0.0005, 0.001, 0.0015, 0.002], source: design (plan)}
+  r_dwell: {value: 0.012, source: design (plan)}
+  gap: {value: 0.001, source: design (plan)}
+  dwell_deg: {value: 20.0, source: design (plan)}
+  top_deg: {value: 30.0, source: design (plan)}
+  undercut_deg: {value: 3.0, source: design (plan)}
+  thickness: {value: 0.005, source: design (plan)}
+  # The cam's back face this far past the horn's face. The cover's cap sits
+  # 0.5 under the horn's, so 0.5 here is 1.0 between cam and cover (user).
+  face_gap: {value: 0.0005, source: design (user, 1 mm off the cover)}
+
+wheels:
+  # The rear wheel's radius AT THE CONTACT BEING TESTED, as an offset from
+  # bike_params' omni_wheel.outer_radius (51.2, the rollers' ridge). It
+  # changes with the roller part on the button: the cones run 51.0 at their
+  # big ends down to 49.5 at the small ends (axle_mount_radius 40 + d/2).
+  # The rear interface puts its follower for THIS radius; a contact smaller
+  # by e lowers the axle by e, shrinks the parked gap by e and makes every
+  # drop e bigger (larger: the reverse). Front: the tire's measured OD.
+  rear_radius_offset: {value: 0.0, source: design (contact under test)}
+
+interface:
+  # The lever arm: a plastic bar friction-fit into a slot (user, 2026-10-02).
+  bar_height: {value: 0.00575, source: design (user)}
+  bar_width: {value: 0.01975, source: design (user)}
+  slot_depth: {value: 0.020, source: design (user, ~20)}
+  housing_wall: {value: 0.00225, source: design}
+  slot_floor: {value: 0.002, source: design}
+  # The follower: a flat pad under the housing, in line with the cam, its
+  # face square to the arm's motion. The interfaces print X+ (standing on
+  # the block's -X face), so UPSTREAM of the pad the web's underside rises
+  # at 45 deg to the block; the release corner (downstream, +X) stays square.
+  # NOT centred: parked, the cam's next ramp is upstream of the follower and
+  # the step just downstream, and a centred 10 mm pad rests on them, up to
+  # 1.85 mm over the gap (computed 2026-10-02). Short downstream -- that
+  # corner IS the release -- and long enough upstream to cover a flat
+  # follower's contact offset on the steepest ramp, dr/dtheta = 4.30 mm for
+  # the 2 mm drop. Downstream = +X: the horn faces -Y and the cam turns
+  # clockwise looking at it.
+  follower_downstream: {value: 0.001, source: design}
+  follower_upstream: {value: 0.0045, source: design}
+  # Parked clearance 0.87 mm at 12 (1.0 at 8-10, 0.73 at 14).
+  park_deg: {value: 12.0, source: design (= drop_release.py --park-deg)}
+  follower_margin: {value: 0.00075, source: design}    # past the cam's faces, each side
+  # Where the interface NOT on the rig is drawn: this far along +Y.
+  spare_offset: {value: 0.150, source: design}
