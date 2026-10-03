@@ -598,7 +598,7 @@ control:
     # In `control.onboard` rather than `drivetrain:` on purpose. It is a fact
     # about the servo frame, and the simulator has no servos -- its drive
     # actuators act on the input shafts directly -- so no trained policy can
-    # see it and it moves NEITHER digest. `ServoBus` is the only consumer,
+    # see it and it moves NEITHER digest. `BikeBus` is the only consumer,
     # because it is the only boundary between the two frames.
     servo_sign: [1, -1]
     # The three servos the policy drives: drive_a, drive_b, steer. `--ids`

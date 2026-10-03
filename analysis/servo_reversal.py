@@ -75,7 +75,7 @@ def _unwrap(counts: np.ndarray) -> np.ndarray:
 
     Velocity Control Mode reports Present Position over ONE rotation, so a
     continuously turning shaft rolls 4095 -> 0. Same shortest-path unwrap as
-    `hw.dynamixel._pos_delta`, vectorised over a whole capture.
+    `hw.dynamixel.pos_delta`, vectorised over a whole capture.
     """
     d = np.diff(counts)
     d = ((d + POS_WRAP // 2) % POS_WRAP) - POS_WRAP // 2

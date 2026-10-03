@@ -227,7 +227,7 @@ command, including the truth-trained one, which looks merely mediocre here
 ### The servo's OWN velocity estimate is not free — and the lag budget is ~20 ms
 
 `encoder="reported"` models Present Velocity(128), the register
-`ServoBus(velocity_source="reported")` takes wholesale. Same encoder counts,
+`BikeBus(velocity_source="reported")` takes wholesale. Same encoder counts,
 different filter: the servo smooths like a **~50 ms boxcar** (25.0 ms of group
 delay) against our 25 ms / taper 0.5 (8.3 ms). `hw/dynamixel.py` re-derives
 velocity from position specifically to avoid it, and that choice was argued
@@ -641,3 +641,34 @@ driver and calling it the estimator. Now:
 The tan-coefficient test is retired (it measured its fixture's conditioning).
 `test_hold_ramps_to_full_speed_with_auto_repeat` moved to the RL policy and
 passes.
+
+## RateFilter: the sweep
+
+Moved here from `hw/rate_filter.py`'s docstring (2026-10-03). Simulation only,
+at 100 Hz, against ground truth; noise as RMS error vs the true hub rate, in
+mm/s of bike speed. Re-tune on logged hardware data rather than trusting it.
+
+| window | taper | lag | standstill | drive 0.6 | circle |
+|---|---|---|---|---|---|
+| 10 ms | any | 5.0 ms | 8.33 | 7.49 | 6.66 (1 tap: raw) |
+| **25 ms** | **0.5** | **8.3 ms** | 7.85 | 5.04 | 4.38 (default) |
+| 50 ms | 0.5 | 21.7 ms | 10.74 | 3.84 | 3.34 |
+| servo's Present Velocity | | ~25 ms | | ~9.5 | ~8.5 |
+
+The default is quieter AND ~3x less laggy than the servo's own estimate.
+Longer windows help while driving but hurt at standstill, where the residual
+is real crawl motion being smoothed away.
+
+**The time span sets the smoothing, not the tap count.** Quantisation noise
+on a difference over span T is q/T, and consecutive differences telescope.
+Holding the span at 25 ms: 100 Hz / 2 taps 21.3 mm/s, 200 Hz / 5 taps 22.3,
+500 Hz / 12 taps 23.7, so oversampling buys nothing. At a fixed 100 Hz, more
+taps is a longer span (taper 0.5): 1 tap 5.0 ms lag 18.0 mm/s, 2 taps 8.3 ms
+21.3, 4 taps 17.2 ms 30.2, 8 taps 35.0 ms 36.4. A heavily disturbed
+single-shaft test preferred nearer 10 ms; the three-regime sweep above picked 25.
+
+**No deadband on small differences.** Quantisation error is zero-mean, so
+averaging recovers sub-count resolution; zeroing |dcount| <= 1 destroys that
+and biases low speed (25 ms, taper 0.5, deadband vs none): standstill rms
+4.11 vs 3.97 mm/s; crawl 0.15 rms 10.65 vs 10.38, bias -0.34 vs -0.00;
+drive 0.6 identical.

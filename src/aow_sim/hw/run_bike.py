@@ -62,11 +62,11 @@ from . import telemetry
 from .bench_log import RunRecorder, new_capture_dir
 from .ahrs import (QOS_MIN_SERVICE, QOS_NAMES, QOS_UNKNOWN,
                    AhrsReader, MountCalibration)
-from .dynamixel import CONTROL_HZ_DEFAULT, ServoBus, resolve_gains
+from .bike_bus import CONTROL_HZ_DEFAULT, BikeBus, resolve_gains
 from .odometry import VelocityEstimator, body_to_world
 from .state import HardwareData, load_ahrs_mount, load_bundle
 
-CONTROL_HZ = CONTROL_HZ_DEFAULT   # see hw/dynamixel.py
+CONTROL_HZ = CONTROL_HZ_DEFAULT   # see hw/bike_bus.py
 CMD_STALE_S = 0.15        # -> zero the command. PROVISIONAL, see note below
 CMD_DEAD_S = 1.0          # -> torque off
 PACK_WARN_V = 10.5        # 3.5 V/cell on 3S -> say so, once
@@ -125,7 +125,7 @@ PREFLIGHT_GYRO_MAX = np.deg2rad(2.0)     # at rest
 #     its velocity command with no external cause, i.e. the failsafe firing
 #     correctly on a fault that does not exist. Fix it at the OS level
 #     (`iw dev wlan0 set power_save off`, made persistent) and assert it at
-#     startup the same way ServoBus asserts latency_timer.
+#     startup the same way BikeBus asserts latency_timer.
 #   * Client reconnect after an AP hiccup takes seconds, which is past
 #     CMD_DEAD_S as well — that surfaces as an unexplained torque-off.
 #
@@ -456,7 +456,7 @@ class BikeRunner:
         # righting_id is used; three ids and no config entry means no righting
         # servo at all, which is the common bench case.
         righting = ids[3] if len(ids) > 3 else cfg.get("righting_id")
-        self.bus = ServoBus(self.params, port=port, control_hz=control_hz,
+        self.bus = BikeBus(self.params, port=port, control_hz=control_hz,
                             ids=ids[:3], righting_id=righting, gains=gains,
                             righting_current=cfg.get("righting_current"),
                             servo_sign=cfg.get("servo_sign", (1.0, 1.0)))
@@ -468,7 +468,7 @@ class BikeRunner:
         # needs homing: what is needed is ONE number, the encoder reading with
         # the wheel physically straight, measured once at assembly.
         #
-        # Left unset, ServoBus captures the current pose as zero instead, which
+        # Left unset, BikeBus captures the current pose as zero instead, which
         # is right for a bare bench shaft and WRONG on a chassis -- it would
         # define whatever angle the wheel happened to be at as straight ahead.
         # `steer_zero` overrides the config for one session: a number pins it,
@@ -839,7 +839,7 @@ class BikeRunner:
         drive or a limp steer -- and until 2026-09-18 the policy stayed
         engaged and kept commanding it: drive A tripped overload at 88.6 s of
         a bench run and was driven, dead, for 5 s. The latch only clears on a
-        reboot, which restarting run_bike now does (`ServoBus.open`). The
+        reboot, which restarting run_bike now does (`BikeBus.open`). The
         righting servo is exempt: its fault is announced, not a cut.
         """
         from .dynamixel import describe_hardware_error
@@ -1012,14 +1012,14 @@ class BikeRunner:
                     "already running (pgrep -af run_bike). Not touching the "
                     "bus.") from None
             raise
-        self.bus.open()                      # torque still OFF; see ServoBus.open
+        self.bus.open()                      # torque still OFF; see BikeBus.open
         from .dynamixel import describe_hardware_error
         for i, bits in (self.bus.rebooted or {}).items():
             self._event("error", f"id {i} had a latched hardware error "
                                  f"({describe_hardware_error(bits)}) -- "
                                  "rebooted, clear now")
         # Per role, the unit the effort slot decodes in -- A or fraction of
-        # max torque, by model (hw/dynamixel.HEALTH_BLOCK).
+        # max torque, by model (hw/bike_bus.HEALTH_BLOCK).
         self._effort_unit = {role: self.bus._map.register(i, "effort").unit_name
                              for i, role in self.bus.roles.items()}
         if self.record:
@@ -1031,7 +1031,7 @@ class BikeRunner:
         _try_realtime()
 
         # Before any torque: the bike is stationary here and never again.
-        # True as written now -- `ServoBus.open` no longer energises the servos.
+        # True as written now -- `BikeBus.open` no longer energises the servos.
         # Wait for the sensor before judging it. Without this, preflight ran
         # microseconds after the reader thread was spawned and reported a dead
         # AHRS on a perfectly good port -- and poll mode could never win that

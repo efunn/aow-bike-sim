@@ -82,12 +82,12 @@ def build_bundle(params: dict, payload: bool = True,
     model = build_model(params, variant="full", payload=payload)
     design = design_all(params, model)
     # AND AT THE BIKE'S RATE. `control.rate_hz` (200) is the simulator's; the
-    # bike's loop ticks at hw/dynamixel.CONTROL_HZ_DEFAULT (100), and a
+    # bike's loop ticks at hw/bike_bus.CONTROL_HZ_DEFAULT (100), and a
     # discrete LQR is only the design at its own rate. Measured 2026-09-22
     # with gains designed AT 100 Hz: the standstill hold on teleop's sensors
     # held 12 of 12; `pytest -m lqr` at 100 Hz is 6 red of 36 (circles and
     # two forward turns). The bike's LQR mode flies this schedule.
-    from .hw.dynamixel import CONTROL_HZ_DEFAULT
+    from .hw.bike_bus import CONTROL_HZ_DEFAULT
     p_on = copy.deepcopy(params)
     p_on["control"]["rate_hz"] = float(CONTROL_HZ_DEFAULT)
     onboard = design_all(p_on, model)

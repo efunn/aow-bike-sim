@@ -106,7 +106,7 @@ class CrawlSensor:
       crawl_rate = (w_servo_a - w_servo_b) * belt_ratio            [rad/s]
           each w_servo from Present Position count differences through a
           RateFilter (25 ms, taper 0.5) -- on the Pi that is exactly
-          `s["w_servo_a"]` / `s["w_servo_b"]` from hw/dynamixel, the same
+          `s["w_servo_a"]` / `s["w_servo_b"]` from hw/bike_bus, the same
           numbers odometry uses, handed in with `feed()`. In the simulator
           the sensor makes them itself: shaft angle -> quantised servo counts
           (4096/rev, belt_ratio behind the input shaft) -> differenced per
@@ -125,7 +125,7 @@ class CrawlSensor:
     """
 
     def __init__(self, params: dict, model, dt: float):
-        from ..hw.dynamixel import RateFilter        # numpy only; Pi-safe
+        from ..hw.rate_filter import RateFilter      # numpy only; Pi-safe
         from .steer import XC330_COUNTS_PER_RAD
         self.dt = float(dt)
         self.belt = float(params["drivetrain"]["belt_ratio"])
@@ -151,7 +151,7 @@ class CrawlSensor:
             f.reset()
 
     def feed(self, w_servo_a: float, w_servo_b: float) -> None:
-        """The bike's path: servo-side rad/s as hw/dynamixel reports them."""
+        """The bike's path: servo-side rad/s as hw/bike_bus reports them."""
         self._fed = (float(w_servo_a), float(w_servo_b))
 
     def _servo_rates(self, data) -> tuple[float, float]:

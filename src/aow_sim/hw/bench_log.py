@@ -516,7 +516,7 @@ class Capture:
         """Continuous shaft angle [rad], unwrapped along the shortest path.
 
         Velocity and PWM modes report position over ONE turn, so a spinning
-        shaft rolls 4095 -> 0; see `hw.dynamixel._pos_delta`. For a multi-turn
+        shaft rolls 4095 -> 0; see `hw.dynamixel.pos_delta`. For a multi-turn
         mode the shortest path gives the plain difference, so this is correct
         either way while the shaft turns under half a rev per frame.
         """

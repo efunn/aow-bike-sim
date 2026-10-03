@@ -685,10 +685,10 @@ def test_the_shutdown_torque_off_survives_an_abandoned_transaction():
     """`is_using` left set by an interrupted packet made every later write
     COMM_PORT_BUSY; and torque() stopped at the first failure, leaving the
     rest energised. close() clears the flag and tries every servo."""
-    from aow_sim.hw.dynamixel import ServoBus
+    from aow_sim.hw.bike_bus import BikeBus
     from aow_sim.params import load_params
 
-    b = ServoBus(load_params(), ids=(1, 2, 3), righting_id=4)
+    b = BikeBus(load_params(), ids=(1, 2, 3), righting_id=4)
     tries = []
 
     class Port:
@@ -700,16 +700,17 @@ def test_the_shutdown_torque_off_survives_an_abandoned_transaction():
         def closePort(self):
             tries.append("closed")
 
-    def torque(on, ids=None):
-        (i,) = ids
-        assert not b._port.is_using, "busy flag not cleared first"
+    def write_raw(i, name, raw):
+        assert (name, raw) == ("Torque Enable", 0)
+        assert not b._dxl._port.is_using, "busy flag not cleared first"
         tries.append(i)
         if i == 2 and tries.count(2) == 1:
             raise RuntimeError("one bad reply")
 
-    b._port, b.torque = Port(), torque
+    b._dxl._port, b._dxl.write_raw = Port(), write_raw
     b.close()
     assert tries == [1, 2, 3, 4, 2, "closed"]   # all tried, the failure retried
+    assert not b._dxl.is_open
 
 
 def test_a_hardware_error_is_announced_by_the_bike_once_and_when_it_clears():
@@ -750,22 +751,45 @@ def test_a_faulted_policy_servo_cuts_and_holds_until_it_clears():
     assert r.guard.hold
 
 
-def test_the_alert_bit_is_not_a_failed_instruction():
-    """err=128 is 'this servo has a latched hardware error', on every reply
-    it sends, and the instruction WAS carried out. Treating it as failure
-    ended the 2026-09-18 bench run on a torque-off that had worked."""
-    from aow_sim.hw.dynamixel import _failed
-    assert not _failed(0, 0x80)          # alert only: done
-    assert _failed(0, 0x80 | 0x04)       # alert AND a real error
-    assert _failed(0, 0x07)              # access error, no alert
-    assert _failed(-1000, 0)             # port busy
-    assert not _failed(0, 0)
+def test_a_failed_open_still_tries_every_torque_off():
+    """2026-10-03, the Pi with the steer and righting servos unpowered:
+    discovery failed at id 103, and close() then raised KeyError -- the
+    generic bus had no tables yet -- instead of trying each servo. The
+    declared tables stand in until discovery succeeds."""
+    from aow_sim.hw.bike_bus import BikeBus
+    from aow_sim.params import load_params
+
+    b = BikeBus(load_params(), ids=(101, 102, 103), righting_id=104)
+    tried = []
+
+    class Port:
+        is_using = False
+        def clearPort(self): pass
+        def closePort(self): tried.append("closed")
+
+    class Packet:                            # 103 and 104 never answer
+        def read2ByteTxRx(self, port, i, addr):
+            return (1070, 0, 0) if i in (101, 102) else (0, -3002, 0)
+        def read1ByteTxRx(self, port, i, addr):
+            return (53, 0, 0) if i in (101, 102) else (0, -3002, 0)
+        read4ByteTxRx = write2ByteTxRx = write4ByteTxRx = None    # unused
+        def write1ByteTxRx(self, port, i, addr, value):
+            assert (addr, value) == (64, 0)  # Torque Enable, off
+            tried.append(i)
+            return (0, 0) if i in (101, 102) else (-3002, 0)
+
+    b._dxl._port, b._dxl._packet = Port(), Packet()
+    with pytest.raises(RuntimeError, match="did not answer"):
+        b._dxl.discover()
+    with pytest.raises(RuntimeError, match="torque-off FAILED.*103.*104"):
+        b.close()
+    assert tried == [101, 102, 103, 104, 103, 104, "closed"]
 
 
 def test_a_latched_error_is_rebooted_away_at_startup():
-    from aow_sim.hw.dynamixel import ServoBus
+    from aow_sim.hw.bike_bus import BikeBus
     from aow_sim.params import load_params
-    b = ServoBus(load_params(), ids=(1, 2, 3))
+    b = BikeBus(load_params(), ids=(1, 2, 3))
     latched = {1: 32}
     rebooted = []
 
@@ -775,8 +799,8 @@ def test_a_latched_error_is_rebooted_away_at_startup():
             latched.pop(i, None)
             return 0, 0
 
-    b._packet = Packet()
-    b.read_raw = lambda i, name: latched.get(i, 0)
+    b._dxl._packet, b._dxl._port = Packet(), object()
+    b._dxl.read_raw = lambda i, name: latched.get(i, 0)
     import aow_sim.hw.dynamixel as D
     real_sleep = D.time.sleep
     D.time.sleep = lambda s: None

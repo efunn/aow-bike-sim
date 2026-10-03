@@ -191,7 +191,7 @@ def test_reset_clears_the_filters_not_just_the_estimator(model, params):
 
 def test_reported_is_the_servos_own_estimate_and_lags_three_times_ours(model,
                                                                       params):
-    """`reported` models Present Velocity(128), which ServoBus can take
+    """`reported` models Present Velocity(128), which BikeBus can take
     wholesale via velocity_source="reported". Same counts, different filter:
     the servo smooths like a ~50 ms BOXCAR against our 25 ms / taper 0.5.
 

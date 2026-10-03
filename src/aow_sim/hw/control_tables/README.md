@@ -158,6 +158,35 @@ torque-off check has to write a register that holds (`drivetrain_bench.py idle
 --write` uses Profile Velocity). Not yet checked on the XC330, nor in position
 mode, where Goal Position is the register that matters.
 
+## Firmware: the XC330 needs 53
+
+Measured 2026-09-01: id 104 on XC330 firmware 50 against id 103 on 53, same
+part number. Firmware 50 accepts every Indirect Address write and ECHOES THEM
+BACK CORRECTLY, then leaves the Indirect DATA window permanently zero: an
+address read-back passes, every frame is zeros, and no call returns an error.
+53 is the release that added indirect addressing, and the latest; no 51 or 52
+was published. `dynamixel.MIN_FIRMWARE` refuses anything lower at discovery.
+
+The XC430 numbers its firmware separately: XC430-W150 "firmware 50" is its
+latest build and indirect addressing works on it. Do not add a floor for it
+by matching the number.
+
+The same faulty servo briefly made it look as though the SDK's plain
+`GroupSyncRead` truncated the last servo's data under a success code (`rc=0`,
+lengths 14/14/14/2). Re-measured with all four on good firmware, three trials
+each: plain and fast reads both return complete buffers. FastSyncRead stays
+the default on its own merits (every status in ONE response).
+
+## The alert bit is not a failure
+
+Bit 7 of a status packet's error byte is ALERT: "this servo has a latched
+hardware error". It rides on EVERY reply from that servo, including replies to
+instructions that succeeded. On 2026-09-18 drive A tripped its overload
+protection and the shutdown's torque-off to it, which worked, came back
+`err=128` and raised. Only bits 0-6 report the instruction
+(`dynamixel.instruction_failed`); the fault itself is read from Hardware Error
+Status, which needs a reboot to clear.
+
 ## What is NOT in these files
 
 Upstream's `[unit info]` covers velocity and current only. Everything else the

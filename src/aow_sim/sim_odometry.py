@@ -35,7 +35,9 @@ from contextlib import contextmanager
 import numpy as np
 
 from .control.steer import XC330_COUNTS_PER_RAD
-from .hw.dynamixel import CONTROL_HZ_DEFAULT, RateFilter, _pos_delta
+from .hw.dynamixel import pos_delta
+from .hw.rate_filter import RateFilter
+from .hw.bike_bus import CONTROL_HZ_DEFAULT
 from .hw.odometry import VelocityEstimator, body_to_world
 
 SENSORS = ("ahrs_gyro", "ahrs_accel", "ahrs_quat",
@@ -61,11 +63,11 @@ SENSORS = ("ahrs_gyro", "ahrs_accel", "ahrs_quat",
 # the point of measuring it rather than assuming either way.
 #
 # "reported" is the THIRD option the hardware actually offers: the XC430's own
-# Present Velocity(128) register, which `ServoBus(velocity_source="reported")`
+# Present Velocity(128) register, which `BikeBus(velocity_source="reported")`
 # takes wholesale. Same encoder counts, different filter -- the servo smooths
 # internally like a ~50 ms BOXCAR (uniform, no taper), i.e. ~25 ms of lag on a
 # bike whose fall time constant is 113 ms. That is 3x the lag of our own 25 ms
-# / taper 0.5 default, which is why hw/dynamixel.py re-derives velocity from
+# / taper 0.5 default, which is why hw/bike_bus.py re-derives velocity from
 # position instead of reading the register.
 #
 # Modelling it as a RateFilter at OUR tick rate is an approximation: the servo
@@ -76,7 +78,7 @@ ENCODERS = ("ideal", "counts", "reported")
 # encoder -> (window_ms, taper) for the differencing filter. taper 1.0 is a
 # uniform boxcar; 0.5 ramps to half weight at the window edge. See RateFilter.
 ENCODER_FILTER = {
-    "counts": (25.0, 0.5),      # hw/dynamixel.py's default, swept in sim
+    "counts": (25.0, 0.5),      # hw/bike_bus.py's default, swept in sim
     "reported": (50.0, 1.0),    # the servo's own internal estimate
 }
 
@@ -225,9 +227,9 @@ class SimOdometry:
             if prev is None:                      # first tick: no interval yet
                 out.append(self._filt[k].peek())
                 continue
-            # Unwrapped exactly as hw/dynamixel.read does -- the hubs run in
+            # Unwrapped exactly as hw/bike_bus.read_state does -- the hubs run in
             # Velocity Control Mode and report a single-turn position.
-            d = _pos_delta(counts, prev)
+            d = pos_delta(counts, prev)
             raw = (d / XC330_COUNTS_PER_RAD) / dt
             out.append(self._filt[k].update(raw))
         return out[0], out[1]

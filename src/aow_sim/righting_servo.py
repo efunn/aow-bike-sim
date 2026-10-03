@@ -94,7 +94,7 @@ KD_PER_UNIT = (1 / 16) * (256 * K5) * 1e-3
 #: disagrees, and Station C (R6) in first-physical-test.md settles it.
 AMPS_PER_COUNT = 1.0e-3
 #: Current Limit(38) on this XC330-T181 (bike_params.yaml, righting_current's
-#: note). Goal Current is clamped to it, as ServoBus.set_righting_current does.
+#: note). Goal Current is clamped to it, as BikeBus.set_righting_current does.
 CURRENT_LIMIT = 910
 #: Frame -> the servo's own reference, measured 4.0 ms on both XC330s in mode 5
 #: (servo-measurements.yaml, `xc330_command_delay`) -- frame-quantised, the

@@ -85,7 +85,7 @@ FIELDS = (
 )
 
 # The effort slot's key names ITS UNIT, because address 126 means different
-# things by model (hw/dynamixel.HEALTH_BLOCK): a drive's 0.3 is 30 % of max
+# things by model (hw/bike_bus.HEALTH_BLOCK): a drive's 0.3 is 30 % of max
 # torque and the steer's 0.3 is 300 mA. A single "effort" key would put both
 # in one column and invite comparing them.
 EFFORT_KEY = {"A": "A", "frac_max_torque": "load"}

@@ -36,10 +36,10 @@ Maps in use:
 | map | read | write | total |
 |---|---|---|---|
 | drivetrain bench (`analysis/drivetrain_bench.py`) | Tick, Position, Velocity, PWM, Load, Voltage, Temperature, Error, Bus Watchdog = 19, + the goal read back (4 / 2) | Goal Velocity 4 / Goal PWM 2 | 27 / 23 |
-| onboard today (`ServoBus.READ_BLOCK`) | Tick, Position, Velocity = 10 | goal 4 | 14 |
+| onboard today (`BikeBus.READ_BLOCK`) | Tick, Position, Velocity = 10 | goal 4 | 14 |
 | onboard proposed | + PWM, Error = 13 | goal 4 | 17 |
 
-The proposed onboard map is a proposal: `ServoBus` feeds the `HardwareData`
+The proposed onboard map is a proposal: `BikeBus` feeds the `HardwareData`
 shim, so adding to it is a spec change on both sides, not a one-liner.
 
 ## Per frame, host side

@@ -41,6 +41,8 @@ ONBOARD_MODULES = [
     "aow_sim.control.drive",
     "aow_sim.hw.ahrs",
     "aow_sim.hw.dynamixel",
+    "aow_sim.hw.rate_filter",
+    "aow_sim.hw.bike_bus",
     "aow_sim.hw.bench_log",
     "aow_sim.hw.odometry",
     "aow_sim.hw.state",

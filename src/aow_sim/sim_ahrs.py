@@ -162,7 +162,7 @@ from contextlib import contextmanager
 
 import numpy as np
 
-from .hw.dynamixel import CONTROL_HZ_DEFAULT
+from .hw.bike_bus import CONTROL_HZ_DEFAULT
 
 # --- datasheet, TM151 column -------------------------------------------------
 

@@ -61,7 +61,7 @@ eats escape sequences (ssh through something odd, tmux misconfigured).
               linkage only needs a direction, and because 6/7/8 are the
               heading snaps
     [ / ]     righting goal current, down / up. RAW counts; see
-              ServoBus.set_righting_current for why it is not milliamps
+              BikeBus.set_righting_current for why it is not milliamps
     l         switch controller: the general policy <-> the analytic LQR.
               The status line shows what the bike IS flying, which is not
               always what was asked: it refuses the LQR when its bundle has
