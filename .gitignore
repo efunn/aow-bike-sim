@@ -6,6 +6,7 @@ MUJOCO_LOG.TXT
 ./docs/robotis/*
 runs/
 traces/
+bench/logs/archive/
 # Loose output dropped BESIDE an analysis script is scratch and stays out;
 # figures worth keeping go in analysis/plots/, which docs/ links point at.
 # This works because a gitignore `*` does not cross `/`, so these two patterns
