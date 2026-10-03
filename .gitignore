@@ -3,7 +3,7 @@ __pycache__/
 *.egg-info/
 .DS_Store
 MUJOCO_LOG.TXT
-./docs/robotis/*
+docs/robotis/
 runs/
 traces/
 bench/logs/archive/

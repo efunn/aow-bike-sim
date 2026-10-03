@@ -13,7 +13,9 @@
 # THE SPLIT IS BY WHAT THE NUMBER DESCRIBES, not by convenience:
 #
 #   here                    hole patterns and bore sizes off
-#                           docs/robotis/XC-330.pdf, plus the print-side
+#                           ROBOTIS's XC330-T181 drawing
+#                           (https://emanual.robotis.com/docs/en/dxl/x/xc330-t181/#drawings),
+#                           plus the print-side
 #                           numbers of OUR mount design (clearances, reliefs,
 #                           wall thicknesses, the nest fit)
 #
@@ -110,7 +112,8 @@ servos:
     # not proposals: they are what a part that already fits actually uses.
     #
     # The frame was reconstructed from those parts' own planes and then checked
-    # against docs/robotis/XC-330.pdf: 23.00 / 34.00 / 20.00 against a drawing
+    # against ROBOTIS's XC330-T181 drawing (https://emanual.robotis.com/docs/en/dxl/x/xc330-t181/#drawings):
+    # 23.00 / 34.00 / 20.00 against a drawing
     # that says 23 / 34 / 20, with the shaft axis landing 9.50 from the near
     # end against a drawing that says 9.5. Four independent agreements, so the
     # numbers below are anchored, not merely self-consistent.

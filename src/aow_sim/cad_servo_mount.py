@@ -675,7 +675,7 @@ import(path : "onshape/std/geometry.fs", version : "{fs_version}.0");
  * together trip it. Measured 2026-08-25, one probe each.
  *
  * Numbers come from {CAD_PARAMS}, which cites
- * docs/robotis/XC-330.pdf for every measured one. The four well-profile
+ * ROBOTIS's XC330-T181 drawing (e-manual, #drawings) for every measured one. The four well-profile
  * dimensions are marked GUESS there: the shape is from a description of the
  * existing dynamixel_wrench_with_idler part, not a measurement of it.
  *

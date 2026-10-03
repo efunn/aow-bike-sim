@@ -91,7 +91,8 @@ UART path is what frees the USB port for the U2D2.
 ### One bus at 3S
 
 Both servo types are 3S-native and share a single rail across the whole
-discharge window. From the datasheets in `docs/robotis/`:
+discharge window. From the ROBOTIS e-manual ([XC430-W150](https://emanual.robotis.com/docs/en/dxl/x/xc430-w150/),
+[XC330-T181](https://emanual.robotis.com/docs/en/dxl/x/xc330-t181/)):
 
 | servo | input range | recommended | stall @ 11.1 V | stall @ 12.0 V |
 |---|---|---|---|---|
@@ -102,7 +103,7 @@ discharge window. From the datasheets in `docs/robotis/`:
 2026-09-24).** A freshly charged 3S sits at 12.6 V, above the datasheet's
 6.5–12.0 V — but the 11.1 V "recommended" is the 3S nominal, i.e. the part is
 specced for a 3S pack. And the firmware does not act at 12.0 V: from the
-ROBOTIS control table in `docs/robotis/`, **Max Voltage Limit(32)** defaults to
+[ROBOTIS control table](https://emanual.robotis.com/docs/en/dxl/x/xc330-t181/#control-table), **Max Voltage Limit(32)** defaults to
 140 (14.0 V), and **Shutdown(63)** defaults to 52 = 0x34 (overload, electrical
 shock, overheating) — the input-voltage bit (0x01) is *not* set, so even past
 14.0 V it only raises an alert. Every test so far ran on a 12 V brick. No drop

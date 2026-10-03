@@ -558,8 +558,9 @@ servos:
     shaft_from_horn_face: {value: -0.002, source: measured (drawing)}
     shaft_from_end: {value: 0.01125, source: datasheet}
     # --- OUTPUT HORN, as a rough envelope. Measured off the three-view in
-    # docs/robotis/XC-430.pdf (whose title block actually reads XL-430 — same
-    # case, as the shaft_from_end note above already assumes).
+    # ROBOTIS's XC430-W150 drawing (https://emanual.robotis.com/docs/en/dxl/x/xc430-w150/#drawings;
+    # its title block actually reads XL-430 — same case, as the shaft_from_end
+    # note above already assumes).
     #
     # The drawing's 34 mm datum is the CASE FACE, so `box_size` D is the case
     # ALONE and the horn stands proud of it: overall depth over the horn is 36,
@@ -622,7 +623,8 @@ servos:
     # --- OUTPUT HORN. See the XC430 block for the convention. Thicker and
     # smaller than the XC430's, which is not a typo.
     #
-    # docs/robotis/XC-330.pdf is explicit: the side view dimensions the case at
+    # ROBOTIS's XC330-T181 drawing (https://emanual.robotis.com/docs/en/dxl/x/xc330-t181/#drawings)
+    # is explicit: the side view dimensions the case at
     # 23 and the Phi 16 horn at 3 beside it, and 23 + 3 = 26 is the depth ROBOTIS
     # quotes. The [X330 IDLER] view confirms it from the other end — 3 + 23 + 3
     # = 29 with a horn at both ends. So `box_size` D carries the 23 and this

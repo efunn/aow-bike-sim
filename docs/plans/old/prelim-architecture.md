@@ -15,7 +15,7 @@
 - other than the omni wheel, the overall bike will have different geometry (weight/wheelbase/steering angle) than the Upriser/HC-802
 
 ## Sensors and servos
-- for now, the physical bike will operate on an umbilical using ROBOTIS dynamixel servos (datasheets available in `docs/robotis/*`):
+- for now, the physical bike will operate on an umbilical using ROBOTIS dynamixel servos (datasheets in the [ROBOTIS e-manual](https://emanual.robotis.com/docs/en/dxl/x/)):
   - steering: XC330-T181 servo through a gear (with a possible ratio, or 1:1)
   - AOW driving: differential control by two XC430-W150 servos, through a belt drive (probably 3:1 ratio to give faster top speed, but adjustable)
 - in addition to motor sensors, an AHRS will be equipped for measuring orientation: [TransducerM AHRS 9-Axis IMU for Robotics & Autonomous Vehicles (TM151)](https://www.syd-dynamics.com/transducerm_tm151-tm171/)

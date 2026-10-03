@@ -735,7 +735,7 @@ end and leaves the shaft end open, and `caseWrapLength` is bounded at 16.5 where
 the cap would foul the horn.
 
 **The numbers are measured, not proposed.** The horn interface is off
-`docs/robotis/XC-330.pdf`; the case interface was read back through the API off
+[ROBOTIS's XC330-T181 drawing](https://emanual.robotis.com/docs/en/dxl/x/xc330-t181/#drawings); the case interface was read back through the API off
 the working `top-case` / `bottom-case` in `dynamixel-link`. The reconstructed
 frame then agreed with the drawing on four independent dimensions — 23.00 /
 34.00 / 20.00 against 23 / 34 / 20, shaft axis 9.50 against 9.5.
