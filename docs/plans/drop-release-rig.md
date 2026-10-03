@@ -105,14 +105,14 @@ sqrt(g * 0.45 mm) ~ 66 mm/s: ~280 deg/s at the 13.5 mm top radius, ~45% of
 the XL330-M288's 618 deg/s no-load (estimated). Slower, it is let down over
 the corner and the drop starts soft and short. With the follower at d, it
 falls at about g d / L (most of the mass at the axle), so the need drops by
-sqrt(d / L), ~13% at 0.75 (inferred); `drop_release.py` keeps the d = L
+sqrt(d / L), ~13% at 0.75 (inferred); `force_drop.py --cam` keeps the d = L
 figure, which errs safe.
 
 How many degrees the servo needs to get there depends on its reflected
 inertia, which is not known here: bracketing it, ~2-8 deg to 45% of no-load
 speed and ~4-21 deg to 65%. Hence the 30 deg top flat as the run-up, and the
 park 12 deg past the step, clear of where the servo starts braking for its
-goal. `drop_release.py` measures it instead of trusting this: every drop
+goal. `force_drop.py --cam` measures it instead of trusting this: every drop
 prints the edge speed as the step passes (from position reads during the
 move, at 3 Mbps; a synthetic 500 deg/s trace read back as 483).
 
@@ -186,18 +186,28 @@ at that one height, so one base and one cam serve both. `--check` (one call) bui
 
 ```sh
 python bench/drop_cam.py                                   # the 0.5/1/1.5/2 cam -> bench/drop_cam.{svg,dxf}
-python bench/force_drop.py --wheel front --mass-g <felt> \
-    --heights 0.5,1,1.5,2 --repeats 3 --order cycle        # terminal 1: catches every impact
-python bench/drop_release.py --port <U2D2> --drops 12      # terminal 2: 3 turns of the cam
+python bench/force_drop.py --cam --cam-where              # once per assembly: cam.index and cam.dir
+python bench/force_drop.py --wheel front --mass-g <felt> --cam --repeats 3
 ```
 
-Before the first run, with torque off, turn the cam by hand until the
-TALLEST step (2 mm) has just passed the follower: the arm rests on the sensor and
-the next drop is the 0.5 mm one. `drop_release.py` starts from wherever it
-finds the cam, refuses if torque is already on, and runs in current-based
-position mode (multi-turn): ~300 mA up the ramp, the full Current Limit for
-the drop. On any exit it backs down to the last park if still on the ramp,
-or runs on through the step if on the top flat, then turns torque off.
+One script, one terminal: `force_drop.py` fires each drop itself, so each
+one is labelled by the step that released it. The cam sits on the horn
+pins in one position, so `Present Position mod 4096` is its angle;
+`--cam-where` prints it, torque off, while the cam is turned by hand: the
+reading as the first drop releases the follower is `cam.index`. That, the
+direction, the U2D2's port (default: the one `usbserial` present), the
+servo's ID, the cam's drops and the current live in
+`config/drop_rig_bench.yaml`; each has a flag to override it.
+Current-based position mode with one Goal Current (300 mA) written with
+every move, and every move FORWARD: per step a setpoint on its top flat
+(`--margin-deg` 30 short of the step, the run-up) and one in the dwell
+(`--park-deg` 12 past it). Backward would drive the follower into a step's
+undercut. It starts wherever the cam is, drives forward to the next top
+flat (a drop on the way is not recorded) and zeroes there with the wheel
+lifted. On any exit it goes forward to the next dwell, then torque off.
+Profile Velocity is not used: ROBOTIS applies it in (extended) position
+mode only. Not yet run on the rig (dry-run against a simulated servo and
+sensor, 2026-10-03).
 
 The XL330 is 5 V: its own supply through the U2D2, never the 12 V chain
 (`untethered-setup.md`).

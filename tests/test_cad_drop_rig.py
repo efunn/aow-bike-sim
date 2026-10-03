@@ -44,7 +44,7 @@ def test_the_follower_rests_the_gap_over_the_dwell(data, L):
 
 
 def test_parked_the_cam_is_clear_of_the_follower(data, L):
-    """Parked park_deg past a step (drop_release.py's default), every segment
+    """Parked park_deg past a step (force_drop.py --cam's default), every segment
     stays under the follower's pad and its chamfer: nothing touches the arm
     after a drop.
     And a CENTRED 10 mm pad -- the plan's first sketch -- would not."""

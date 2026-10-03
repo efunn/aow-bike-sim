@@ -1,0 +1,33 @@
+# The drop rig at the bench: how bench/force_drop.py --cam finds and drives
+# the XL330 that turns the cam. Read by force_drop.py only. Every key can be
+# overridden on its command line (--cam-port, --cam-id, ...).
+# CAD numbers (the cam's profile, the park clearance) are drop_rig_cad.yaml's.
+
+servo:
+  # The U2D2. null: the one /dev/cu.usbserial-* (macOS) or /dev/ttyUSB*
+  # present -- the Teensy is cu.usbmodem*, so they do not collide. Pin it
+  # here if another FTDI adapter is plugged in.
+  port: null
+  # Dynamixel ID: the rig's XL330-M288 (user, 2026-10-03).
+  id: 150
+  # Written every run, after Operating Mode (which resets them). The
+  # current-based position mode's own defaults, read off id 150 on 2026-10-03
+  # (fw 53): NOT the e-manual's 400/0/0, which is position mode's. Without the
+  # D term the current-limited loop oscillates (user). Not yet tuned for the cam.
+  gains:
+    Position P Gain: 250
+    Position I Gain: 0
+    Position D Gain: 600
+
+cam:
+  # Per assembly: python bench/force_drop.py --cam --cam-where, turning the
+  # cam by hand the way it drives. index: the ticks (mod 4096) the moment the
+  # FIRST of `heights` drops the follower; dir: the sign shown while turning.
+  # null until calibrated.
+  index: null
+  dir: null
+  # The cam's drops in rotation order, mm (bench/drop_cam.py --drops).
+  heights: [0.5, 1.0, 1.5, 2.0]
+  # Goal Current for every move, mA (capped at the Current Limit). One value
+  # for lift and drop; the edge speed in the summary says whether it is enough.
+  ma: 300
