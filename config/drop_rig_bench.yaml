@@ -23,9 +23,15 @@ cam:
   # Per assembly: python bench/force_drop.py --cam --cam-where, turning the
   # cam by hand the way it drives. index: the ticks (mod 4096) the moment the
   # FIRST of `heights` drops the follower; dir: the sign shown while turning.
-  # null until calibrated.
-  index: null
-  dir: null
+  # Set 2026-10-03 without --cam-where, from the printed geometry: the horn
+  # at 180 deg (2048) is the cam PARKED, park_deg (12) past the 2 mm step, as
+  # cad_drop_rig draws it (user). So the 2 mm step is 2048 + 12 deg back =
+  # 2185, and the 0.5 mm step, one segment forward, 1161. dir -1: the cam
+  # turns clockwise looking at the horn (drop_rig_cad.yaml), and Drive Mode 0
+  # counts counter-clockwise up (e-manual) -- inferred, not yet watched;
+  # --cam-where checks both.
+  index: 1161
+  dir: -1
   # The cam's drops in rotation order, mm (bench/drop_cam.py --drops).
   heights: [0.5, 1.0, 1.5, 2.0]
   # Goal Current for every move, mA (capped at the Current Limit). One value
