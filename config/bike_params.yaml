@@ -97,9 +97,13 @@ sim:
   #   dmax  0.95 -> 0.999 sink at 44 N 1.946 -> 1.709 mm, restitution flat
   #   width 1e-4 -> 1e-2  sink at bike weight 0.278 -> 0.419 mm
   # So the joint (timeconst, dampratio) identification is really a THREE
-  # parameter problem until dmin is pinned or the negative-solref convention
-  # makes it moot (under (-8000, -60) the same dmin sweep moves the light-load
-  # sink by 6% instead of 2.3x).
+  # parameter problem until dmin is pinned. The negative-solref convention
+  # does NOT change that: (-k, -b) is the same contact as (timeconst,
+  # dampratio) = (2/b, b / (2 sqrt k)), identical drops under three solimp
+  # settings including dmin 0.177 (tests/test_drop_rig_sim.py, 2026-10-04).
+  # The "6% instead of 2.3x" once quoted here for the same dmin sweep under
+  # (-8000, -60) compared a different contact -- that pair is (0.033, 0.34) --
+  # not a different form.
   #
   # `width` 1 mm is the same scale as the deflections being measured, which is
   # why the contact is nonlinear across exactly the measurement range: secant

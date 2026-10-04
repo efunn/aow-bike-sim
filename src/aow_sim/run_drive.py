@@ -589,6 +589,16 @@ def main() -> None:
                          "Moves plant_digest, so a policy loaded here warns "
                          "that it trained on a different bike, which it did; "
                          "the analytic LQR is re-designed for the new plant")
+    ap.add_argument("--solref", default=None, metavar="A,B",
+                    help="override sim.contact_solref in memory (bike_params.yaml "
+                         "untouched), floor and every wheel contact: (timeconst, "
+                         "dampratio), or negative (-stiffness, -damping) -- the "
+                         "same contact model either way, per unit of the mass "
+                         "at each contact (analysis/drop_rig_sim.py). Moves "
+                         "plant_digest")
+    ap.add_argument("--solimp", default=None, metavar="D0,D1,W,M,P",
+                    help="override sim.contact_solimp in memory: dmin, dmax, "
+                         "width (m), midpoint, power. Moves plant_digest")
     ap.add_argument("--no-headset", action="store_true",
                     help="drop the steer's headset friction "
                          "(bike.steering.headset_friction_*) in memory, for an "
@@ -604,6 +614,15 @@ def main() -> None:
               f"{args.wheelbase * 1000:.0f} mm (in memory; chassis CoM held)")
         params = {**params, "bike": {**params["bike"],
                                      "wheelbase": float(args.wheelbase)}}
+    for key, flag, n in (("contact_solref", args.solref, 2),
+                         ("contact_solimp", args.solimp, 5)):
+        if flag is None:
+            continue
+        value = [float(x) for x in flag.split(",")]
+        if len(value) != n:
+            raise SystemExit(f"--{key[8:]} takes {n} comma-separated numbers")
+        print(f"CONTACT {key[8:]} {list(params['sim'][key])} -> {value} (in memory)")
+        params = {**params, "sim": {**params["sim"], key: value}}
     if args.no_headset:
         print("HEADSET FRICTION off (in memory); the gearbox's stays")
         steering = {k: v for k, v in params["bike"]["steering"].items()
