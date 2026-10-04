@@ -35,7 +35,7 @@ everything is written down", below.
 
 | # | do | why now | doc |
 |---|---|---|---|
-| 1 | **Contact calibration**: P0b incline slide (the cheapest test in the project), the drop rig for P1, then the `solref` + `solimp` fit | The dial and hand-drop pre-tests say the shape is wrong, not only the numbers. Rig: cam and clamp blocks to generate; hinge and arm undecided (user) | `drop-release-rig.md`, `contact-protocol.md` |
+| 1 | **Contact calibration**: stiffen the force sensor's mount (resolder or glue) and check it with a rigid-block drop; then the drop rig with added mass at the wheel (front, then rear), a joint `solref` + `solimp` fit with the dial (P0) data, and the P0b incline slide | First rig run (10-03, front, 65 drops): the rig's load path reads ~7-30x softer than the dial says the wheel alone is, and the base rings at ~170-180 Hz -- probably the sensor mount, so fits so far describe the rig, not the tire. MuJoCo's contact is per unit mass (same bounce at any mass), so a fit reaches the bike only through each wheel's effective mass | `drop-release-rig.md`, `contact-protocol.md`, `analysis/drop_rig_sim.py` |
 | 2 | **Print the rear drive and the righting module**, then the chassis | Held until the steer print settled the shared fits; the bushing and end-play results are in (09-30) | `drive-design.md`, `righting-design.md`, `bike-assembly-design.md` |
 | 3 | **Finish the drivetrain station**: firmware Velocity P and I, the D5 torque-scale check, fit the five drivetrain `GUESS`es | The sim cannot pick the gain (policies tie at P 100 / P 400; P 400 buzzes ~3x harder). Decide on the bike | `drivetrain-model.md`, `drivetrain-measurements.yaml` |
 | 4 | **Sim: the eval score's directional gate** | `_score` is still `survive_rate x track_geo`; a policy that abandons a direction outranks good ones. Risk #2 | `eval-score-rewrite.md` |
@@ -67,7 +67,7 @@ rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
 | **Hardware / onboard** | Pi 3 bench proven: tick jitter p99 < 1 ms with four servos energised. 2.4 GHz house wifi (decided: a router, no AP). The SBC that ships: open | Chassis, pack | `pi-bench-bringup.md`, `untethered-setup.md` |
 | **CAD** | Steer printed and print-checked; drive, righting, whole bike designed. CAD wheelbase 250 (the sim keeps 200) | Wheelbase and the righting stack to tighten (user) | `bike-assembly-design.md`, `cad-onshape-workflow.md` |
 | **Self-righting** | Four-bar built. Linkage options parked (sim, 9.9 V: 537-575 counts vs 643 as built; the diamond, 547, is the lean) | Decision later | `righting-linkage-margin.md`, `righting-servo-model.md` |
-| **Contact bench** | Force sensor, calibration and drop catcher built (10-02); dial and hand-drop pre-tests recorded; drop rig in design | Rig parts | `drop-release-rig.md`, `contact-measurements.yaml` |
+| **Contact bench** | Drop rig built and run (10-03): the cam fires every drop and records each, release-to-impact timed; analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/drop_rig_sim.py`, with `--fit` | The sensor mount's stiffness; the arm's parts weighed | `drop-release-rig.md`, `contact-measurements.yaml` |
 
 ---
 
