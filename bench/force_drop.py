@@ -36,14 +36,25 @@ angle: Present Position mod 4096. Calibrate once per assembly (torque off):
       cam.index and the printed sign cam.dir: put both in the yaml
 
     python bench/force_drop.py --wheel front --mass-g 86 --cam --repeats 3
+    python bench/force_drop.py --reanalyse bench/logs/drops_<time>.csv --scale a,b,c,d
+      a saved run's summary again from its raw counts, at a new calibration
+    python bench/force_drop.py --cam --dry-run --repeats 1
+      the cam alone, no force sensor and no files: each drop's edge
+      speed, settling and cycle time
 
 Start: wherever the cam is; it drives forward to the next top flat (if that
 passes a step, the drop is not recorded) and zeroes there, wheel lifted.
-Each drop records the step's speed past the follower and warns under
+It fires exactly heights x --repeats drops and writes a row for each: one
+the sensor missed is outcome no_impact (or impact_lost), never re-fired,
+since on the rig that should not happen; its trace is kept too, from
+1 s before the cam parked to the 2 s that expired. still_loaded: a sensor
+read over 0.1 N in the 0.2 s before the cam began its drop, or was hit
+before it: the wheel was not lifted clear (pre_drop_n, every row). Each drop records the step's
+speed past the follower and warns under
 sqrt(g * --corner-mm) / r_top (~280 deg/s): slower, the corner lets the
 follower down instead of dropping it. q, Ctrl-C or an error: forward to the
 next dwell, then torque off. On the Mac, run adjust-ftdi-latency after
-plugging in the U2D2 (it warns if the bus reads slower than 5 ms).
+plugging in the U2D2 (it refuses a bus slower than 5 ms a read).
 """
 from __future__ import annotations
 
@@ -72,6 +83,9 @@ from force_sensor import ADC_MAX, CALIBRATED_N_PER_COUNT, CHANNELS, find_port  #
 G = 9.80665
 ARM_S = 0.2               # arms after this long unloaded; also each drop's zero reference
 PRE_S, POST_S = ARM_S, 1.4
+NO_IMPACT_S = 2.0         # after the cam's drop, no hit by then is a failed drop
+MISS_PRE_S = 1.0          # a failed drop's trace starts this long before the cam parked
+STREAM_SAMPLES = 60000    # ~6 s at 10 kHz: a failed drop's whole window is still there
 HIT_N = 0.1               # contact edge; the mount rings +-0.05 N
 MAX_CONTACT_MS = 15.0     # front: 7-9 ms measured
 MIN_FLIGHT_MS = 3.0
@@ -146,6 +160,100 @@ def analyse(t, f, h0_mm, mass_g, thr=None):
         for key in ("e_flight", "e_impulse", "e_measured", "h_measured_mm", "e_ratio"):
             out[key] = float("nan")
     return out
+
+
+def measure(t, counts, h_mm, mass_g, scale):
+    """One recorded impact, from its raw counts: t (s, 0 = the impact) and
+    counts (n, 4). Zero: the counts before the impact. Returns the summary's
+    analysis columns, the lines worth printing, and the force (n, 4); None
+    for the columns if no impact survives the analysis. Shared by the live
+    run and --reanalyse, so a new calibration re-derives the same columns."""
+    zero = counts[t < -0.002].mean(axis=0)
+    force = (counts - zero) * np.asarray(scale)
+    k = int(force[t >= 0].max(axis=0).argmax())                    # the sensor it hit
+    a = analyse(t, force[:, k], h_mm, mass_g)
+    if a is None:
+        return None, [], force
+    notes = []
+    a2 = analyse(t, force[:, k], h_mm, mass_g, thr=2 * HIT_N)
+    a["e_measured_2x_edge"] = a2["e_measured"]
+    if a["clean"] and not abs(a2["e_measured"] - a["e_measured"]) <= 0.05:
+        a["clean"] = False
+        notes.append(f"  marginal: e_measured {a['e_measured']:.2f} at a {HIT_N:g} N edge, "
+                     f"{a2['e_measured']:.2f} at {2 * HIT_N:g} N (rocking or a slow second contact)")
+    if a["peak_n"] < SMALL_PEAK_N:
+        notes.append(f"  peak only {a['peak_n']:.2f} N: probably a knock, not a drop (r + enter discards)")
+    others = max(force[t >= 0][:, i].max() for i in range(4) if i != k)
+    cols = dict(sensor=k + 1, zero_counts=round(zero[k], 1), scale_n_per_count=float(scale[k]),
+                clipped=bool(counts[:, k].max() >= CLIP_COUNTS), others_peak_n=round(others, 4),
+                **{x: (round(v, 4) if isinstance(v, float) else v) for x, v in a.items()})
+    return cols, notes, force
+
+
+ANALYSIS_COLS = ("sensor", "zero_counts", "scale_n_per_count", "clipped", "others_peak_n",
+                 "peak_n", "contact_ms", "bounces", "rest_n", "flight_ms", "e_flight", "e_ratio",
+                 "mass_from", "mass_g", "impulse_mns", "e_impulse", "h_measured_mm",
+                 "e_measured", "clean", "e_measured_2x_edge")
+
+
+def reanalyse(raw_path, scale, mass_g=None) -> Path:
+    """Re-derive a saved run's summary from its raw counts at `scale` (N per
+    count, per sensor). Labels, outcomes the sensor never saw (no_impact,
+    still_loaded) and the cam's columns are kept as recorded; every impact is
+    measured again. Writes <run>_summary_reanalysed.csv beside it."""
+    raw_path = Path(raw_path)
+    if raw_path.name.endswith("_summary.csv"):
+        raw_path = raw_path.with_name(raw_path.name.replace("_summary.csv", ".csv"))
+    sum_path = raw_path.with_name(raw_path.stem + "_summary.csv")
+    for f in (raw_path, sum_path):
+        if not f.exists():
+            sys.exit(f"--reanalyse needs both {raw_path.name} and {sum_path.name} in one "
+                     f"directory: {f} is missing")
+    with open(raw_path) as fh:
+        head = fh.readline().strip().split(",")
+        if any(f"{ch}_counts" not in head for ch in CHANNELS):
+            sys.exit(f"{raw_path.name} has no per-sensor counts ({', '.join(head)}): an older "
+                     f"one-channel log, which --reanalyse does not read")
+        fh.seek(0)
+        traces: dict = {}
+        for r in csv.DictReader(fh):
+            traces.setdefault(int(r["drop"]), []).append(
+                (float(r["t_s"]), [float(r[f"{ch}_counts"]) for ch in CHANNELS]))
+    with open(sum_path) as fh:
+        rows = list(csv.DictReader(fh))
+    out = []
+    print(f"re-analysing {raw_path.name} at --scale {','.join(f'{x:g}' for x in scale)}")
+    for row in rows:
+        d, outcome = int(row["drop"]), row.get("outcome") or "ok"     # hand-mode files predate it
+        new = dict(row)                       # the recorded order; analysis values replaced
+        if outcome in ("ok", "impact_lost") and d in traces:
+            for x in ANALYSIS_COLS:
+                new[x] = ""
+            t, counts = (np.array(x) for x in zip(*traces[d]))
+            m = mass_g or (float(row["mass_g"]) if row.get("mass_from") == "given" else None)
+            cols, notes, _ = measure(t, counts.astype(float), float(row["height_mm"]), m, scale)
+            new["outcome"] = "ok" if cols else "impact_lost"
+            new.update(cols or {})
+            def num(x):
+                try:
+                    return float(x)
+                except (TypeError, ValueError):
+                    return float("nan")
+            print(f"  drop {d}: {new['outcome']}, peak {num(row.get('peak_n')):.3f} -> "
+                  f"{num(new.get('peak_n')):.3f} N, e_measured {num(row.get('e_measured')):.3f} -> "
+                  f"{num(new.get('e_measured')):.3f}, mass {num(row.get('mass_g')):.1f} -> "
+                  f"{num(new.get('mass_g')):.1f} g")
+        else:
+            print(f"  drop {d}: {outcome}, kept as recorded")
+        out.append(new)
+    dest = raw_path.with_name(raw_path.stem + "_summary_reanalysed.csv")
+    cols = list(dict.fromkeys(c for r in out for c in r))
+    with open(dest, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        w.writerows(out)
+    print(f"wrote {dest}")
+    return dest
 
 
 TICKS = 4096              # per turn
@@ -225,9 +333,9 @@ class Cam:
         for _ in range(20):
             pos = self.pos()
         self.read_ms = (time.perf_counter() - t0) / 20 * 1e3
-        if self.read_ms > 5.0:
-            print(f"!! the bus reads at {self.read_ms:.0f} ms: run adjust-ftdi-latency (macOS, "
-                  f"after every U2D2 plug-in), or the edge speed cannot be measured")
+        if self.read_ms > 5.0:     # 16 ms: ~6 deg a read, one or none near the step
+            raise RuntimeError(f"the bus reads at {self.read_ms:.0f} ms, too slow to measure the "
+                               f"edge speed: run adjust-ftdi-latency (macOS, after every U2D2 plug-in)")
         phase = (direction * (pos - index)) % TICKS
         self.base = pos - direction * phase           # step 0, at or behind the cam
         self.k = None
@@ -274,14 +382,16 @@ class Cam:
         self.go(self.step(self.k) - self.dir * self.margin, timeout_s=5.0)
         return (self.k - 1) * seg > phase
 
-    def fire(self, hold_s) -> tuple[int, list]:
+    def fire(self, hold_s, on_drop=None) -> tuple[int, list]:
         """Lift to step k's top flat, hold, drop into its dwell. Returns k and
-        the drop's position trace."""
+        the drop's position trace; `on_drop()` runs as the drop move starts."""
         k = self.k
         top = self.step(k) - self.dir * self.margin
         self.go(top, timeout_s=5.0)
         time.sleep(hold_s)
         self.top_err_deg = self.err_deg(top)
+        if on_drop is not None:
+            on_drop()
         trace = []
         self.go(self.step(k) + self.dir * self.park, trace=trace)
         self.k = k + 1
@@ -324,6 +434,39 @@ def edge_speed(trace, at_tick) -> tuple[float, int]:
     return abs(np.polyfit(t, p, 1)[0]) * 360.0 / TICKS, len(pts)
 
 
+def cam_report(args, rig, k, trace, h) -> dict:
+    """One drop's cam columns, and a line saying whether the release was fast."""
+    step_tick = rig.step(k)
+    v, n_fit = edge_speed(trace, step_tick)
+    need = math.degrees(math.sqrt(G * args.corner_mm * 1e-3) / ((args.r_rest_mm + h) * 1e-3))
+    cols = dict(cam_step=k, cam_ma=rig.ma, edge_deg_s=round(v, 1), edge_fit_n=n_fit,
+                top_err_deg=round(rig.top_err_deg, 2),
+                park_err_deg=round(rig.err_deg(step_tick + rig.dir * rig.park), 2))
+    if v != v:
+        print(f"  edge speed not measured ({n_fit} reads within "
+              f"{EDGE_WINDOW_DEG:g} deg of the step)")
+    elif v < need:
+        print(f"  !! edge {v:.0f} deg/s, under ~{need:.0f}: a slow release "
+              f"(more cam.ma, or more --margin-deg run-up)")
+    else:
+        print(f"  edge {v:.0f} deg/s ({n_fit} reads fitted); settled "
+              f"{cols['top_err_deg']:+.1f} deg at the top, {cols['park_err_deg']:+.1f} parked")
+    return cols
+
+
+def dry_run(args, rig, heights, steps) -> None:
+    """The cam alone: every drop of the run, back to back, no sensor, no files."""
+    print(f"dry run: {len(steps)} drops, no force sensor.  Ctrl-C to stop\n")
+    for i in range(len(steps)):
+        t0 = time.perf_counter()
+        h = heights[rig.k % len(heights)]
+        print(f"drop {i + 1}/{len(steps)}: {h:g} mm, cam step {rig.k % len(heights) + 1}")
+        k, trace = rig.fire(args.hold_s)
+        cam_report(args, rig, k, trace, h)
+        time.sleep(args.settle_s)
+        print(f"  cycle {time.perf_counter() - t0:.2f} s")
+
+
 def cam_where(port, dxl_id) -> None:
     """Torque off; print the shaft angle as it is turned by hand."""
     bus = open_cam_bus(port, dxl_id)
@@ -359,8 +502,8 @@ def keys(cmds: list) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--wheel", help="label, e.g. rear / front (required except --cam-where)")
-    ap.add_argument("--phase", default="", help="rear roller phase label, e.g. flat")
+    ap.add_argument("--wheel", help="label, e.g. front / rear-flat-roller (required except "
+                                    "--cam-where and --dry-run)")
     ap.add_argument("--heights", default=None,
                     help="mm, a label for grouping drops (default 1,2,3); with --cam, "
                          "the cam's drops in rotation order (default: the yaml's cam.heights)")
@@ -371,11 +514,19 @@ def main() -> None:
                     help="impact mass; use it when anything supports the wheel at rest "
                          "(front wheel + fork halves weigh 86 g)")
     ap.add_argument("--port", default=None, help="the force sensor's")
+    ap.add_argument("--reanalyse", metavar="CSV", default=None,
+                    help="re-derive a saved run's summary from its raw counts (drops_<time>.csv), "
+                         "at --scale; writes <run>_summary_reanalysed.csv")
+    ap.add_argument("--scale", default=None,
+                    help="N per count for the four sensors, comma-separated (default: "
+                         "force_sensor.CALIBRATED_N_PER_COUNT); with --reanalyse")
     cam = ap.add_argument_group("the drop rig's cam (see the docstring)")
     cam.add_argument("--cam", action="store_true",
                      help=f"drive the cam; the settings below default to config/{BENCH_CFG.name}")
     cam.add_argument("--cam-port", default=None,
                      help="the U2D2 (default: servo.port, else AOW_DXL_PORT, else the one usbserial)")
+    cam.add_argument("--dry-run", action="store_true",
+                     help="the cam alone: fire the run's drops with no force sensor, record nothing")
     cam.add_argument("--cam-where", action="store_true",
                      help="torque off, print the angle while it is turned by hand: calibration")
     cam.add_argument("--cam-id", type=int, default=None)
@@ -396,10 +547,19 @@ def main() -> None:
     cam.add_argument("--corner-mm", type=float, default=0.45,
                      help="cam + follower corner radii, summed (print rounding)")
     args = ap.parse_args()
+    if args.reanalyse:
+        scale = ([float(x) for x in args.scale.split(",")] if args.scale
+                 else list(CALIBRATED_N_PER_COUNT))
+        if len(scale) != 4:
+            sys.exit("--scale takes four values, one per sensor")
+        reanalyse(args.reanalyse, scale, args.mass_g)
+        return
     cc = cam_config(args) if (args.cam or args.cam_where) else None
     if args.cam_where:
         return cam_where(cc["port"], cc["id"])
-    if not args.wheel:
+    if args.dry_run and not args.cam:
+        sys.exit("--dry-run drives the cam: add --cam")
+    if not args.wheel and not args.dry_run:
         sys.exit("--wheel is required")
     if cc:
         if cc["index"] is None or cc["dir"] is None:
@@ -421,8 +581,10 @@ def main() -> None:
     else:
         steps = [(h, r) for h in heights for r in range(1, args.repeats + 1)]
     stem = Path(__file__).resolve().parent / "logs" / f"drops_{datetime.now():%Y%m%d-%H%M}"
-    stream = Stream(args.port or find_port())
-    time.sleep(1.0)
+    stream = None
+    if not args.dry_run:
+        stream = Stream(args.port or find_port(), maxlen=STREAM_SAMPLES)
+        time.sleep(1.0)
     rig = None
     if args.cam:
         rig = Cam(open_cam_bus(cc["port"], cc["id"]), cc["id"], cc["dir"], cc["index"],
@@ -437,7 +599,10 @@ def main() -> None:
               f"({heights[rig.k % len(heights)]:g} mm next)")
         time.sleep(1.0)
     try:
-        run(args, stream, rig, heights, steps, scale, stem)
+        if args.dry_run:
+            dry_run(args, rig, heights, steps)
+        else:
+            run(args, stream, rig, heights, steps, scale, stem)
     finally:
         if rig is not None:
             rig.stop()
@@ -446,7 +611,10 @@ def main() -> None:
 
 
 def run(args, stream, rig, heights, steps, scale, stem) -> None:
-    """The capture loop. With `rig`, it fires each drop and labels it by step."""
+    """The capture loop. With `rig`, it fires exactly len(steps) drops, labels
+    each by its step, and records every one: a drop the sensor did not see
+    is a row with outcome no_impact, impact_lost or still_loaded, never a
+    re-fire."""
     with stream.lock:
         t_last = stream.buf[-1][0]
         zero = np.mean([c for t, c in stream.buf if t > t_last - 0.5], axis=0)
@@ -460,26 +628,57 @@ def run(args, stream, rig, heights, steps, scale, stem) -> None:
     quiet_since = t_last
     armed, prompted = True, False
     firing = None                 # the cam's drop in flight
+    fired, stopping = 0, False    # the cam's drops started; q pressed
+
+    def failed(f, outcome, cam_cols, t_zero="cam_parked"):
+        summary.append(dict(drop=f["n"], wheel=args.wheel, height_mm=f["h"], outcome=outcome,
+                            t_zero=t_zero, **cam_cols))
+
+    def now():
+        with stream.lock:                     # the sensor's clock
+            return stream.buf[-1][0]
 
     def fire(f):
         try:
-            f["k"], f["trace"] = rig.fire(args.hold_s)
+            f["k"], f["trace"] = rig.fire(args.hold_s, on_drop=lambda: f.update(t_drop=now()))
+            f["t_parked"] = now()
         except BaseException as e:
             f["error"] = e
         f["done"] = time.time()
 
+    def loaded_n(f):
+        """The most any sensor read over the ARM_S before the cam began its
+        drop, N past the zero: over HIT_N, the wheel was not lifted clear."""
+        with stream.lock:
+            c = [c for t, c in stream.buf if f["t_drop"] - ARM_S <= t <= f["t_drop"]]
+        return float(((np.asarray(c, dtype=float) - zero) * scale).max()) if c else float("nan")
+
+    def keep(drop, t, counts):
+        """The raw record: counts only, so any calibration can be applied
+        later (--reanalyse). t_s from the summary's t_zero for that drop."""
+        for j in range(len(t)):
+            raw.append(dict(drop=drop, t_s=round(t[j], 6),
+                            **{f"{ch}_counts": int(counts[j, i]) for i, ch in enumerate(CHANNELS)}))
+
     try:
-        while len(summary) < len(steps):
+        while (len(summary) < len(steps)) if rig is None else (fired < len(steps) or firing):
             while cmds:
                 c = cmds.pop(0)
-                if c == "q":
+                if c == "q" and rig is not None:
+                    stopping = True
+                    if firing is None:
+                        break
+                    print("  stopping after this drop")
+                elif c == "q":
                     steps = steps[:len(summary)]
                 elif c == "r" and summary:
                     d = summary.pop()["drop"]
                     raw = [x for x in raw if x["drop"] != d]
                     prompted = False
                     print("  discarded the last drop")
-            if len(summary) >= len(steps):
+            if rig is None and len(summary) >= len(steps):
+                break
+            if rig is not None and firing is None and (stopping or fired >= len(steps)):
                 break
             if rig is None:
                 h, r = steps[len(summary)]
@@ -490,16 +689,38 @@ def run(args, stream, rig, heights, steps, scale, stem) -> None:
                 if firing is None:
                     k = rig.k
                     h = heights[k % len(heights)]
-                    r = sum(1 for x in summary if x["height_mm"] == h) + 1
-                    print(f"{args.wheel:>6} {h:4g} mm  drop {r}/{args.repeats}  -- cam step {k % len(heights) + 1}")
-                    firing = dict(h=h, done=None, error=None)
+                    fired += 1
+                    r = sum(1 for j in range(k - fired + 1, k + 1) if heights[j % len(heights)] == h)
+                    print(f"{args.wheel:>6} {h:4g} mm  drop {r}/{args.repeats}  "
+                          f"({fired}/{len(steps)}) -- cam step {k % len(heights) + 1}")
+                    firing = dict(h=h, n=fired, done=None, error=None)
                     firing["thread"] = threading.Thread(target=fire, args=(firing,), daemon=True)
                     firing["thread"].start()
                 h = firing["h"]
                 if firing["error"] is not None:
                     raise firing["error"]
-                if firing["done"] is not None and time.time() - firing["done"] > 2.0:
-                    print("  no impact seen after the drop: not recorded")
+                # timed on the sensor's clock, so the whole window is in the buffer;
+                # the host clock only backs it up if the stream stalls
+                if firing["done"] is not None and (
+                        seen >= firing["t_parked"] + NO_IMPACT_S
+                        or time.time() - firing["done"] > NO_IMPACT_S + 1.0):
+                    pre = loaded_n(firing)
+                    outcome = "still_loaded" if pre > HIT_N else "no_impact"
+                    if outcome == "still_loaded":
+                        print(f"  !! the sensor read {pre:.2f} N as the cam began the drop: "
+                              f"recorded as still_loaded, with its trace")
+                    else:
+                        print(f"  !! no impact within {NO_IMPACT_S:g} s of the drop: recorded as "
+                              f"no_impact, with its trace")
+                    t0 = firing["t_parked"]
+                    with stream.lock:
+                        data = [(t, c) for t, c in stream.buf
+                                if t0 - MISS_PRE_S <= t <= t0 + NO_IMPACT_S]
+                    if data:            # t_s from the moment the cam parked
+                        counts = np.array([x[1] for x in data], dtype=float)
+                        keep(firing["n"], np.array([x[0] for x in data]) - t0, counts)
+                    failed(firing, outcome, dict(cam_report(args, rig, firing["k"], firing["trace"], h),
+                                                 pre_drop_n=round(pre, 4)))
                     firing = None
                     continue
             time.sleep(0.02)
@@ -532,59 +753,50 @@ def run(args, stream, rig, heights, steps, scale, stem) -> None:
                 time.sleep(0.02)
             seen = data[-1][0]
             armed, quiet_since = False, None
-            cam_cols = {}
+            cam_cols, f_drop = {}, firing
             if firing is not None:
                 firing["thread"].join(timeout=5.0)
                 if firing["error"] is not None:
                     raise firing["error"]
-                step_tick = rig.step(firing["k"])
-                v, n_fit = edge_speed(firing["trace"], step_tick)
-                need = math.degrees(math.sqrt(G * args.corner_mm * 1e-3)
-                                    / ((args.r_rest_mm + h) * 1e-3))
-                cam_cols = dict(cam_step=firing["k"], cam_ma=rig.ma, edge_deg_s=round(v, 1),
-                                edge_fit_n=n_fit, top_err_deg=round(rig.top_err_deg, 2),
-                                park_err_deg=round(rig.err_deg(step_tick + rig.dir * rig.park), 2))
-                if v != v:
-                    print(f"  edge speed not measured ({n_fit} reads within "
-                          f"{EDGE_WINDOW_DEG:g} deg of the step)")
-                elif v < need:
-                    print(f"  !! edge {v:.0f} deg/s, under ~{need:.0f}: a slow release "
-                          f"(more cam.ma, or more --margin-deg run-up)")
-                else:
-                    print(f"  edge {v:.0f} deg/s ({n_fit} reads fitted); settled "
-                          f"{cam_cols['top_err_deg']:+.1f} deg at the top, "
-                          f"{cam_cols['park_err_deg']:+.1f} parked")
+                pre = loaded_n(firing)
+                cam_cols = dict(cam_report(args, rig, firing["k"], firing["trace"], h),
+                                pre_drop_n=round(pre, 4))
                 firing = None
+                if pre > HIT_N or hit < f_drop["t_drop"]:
+                    # loaded before the cam dropped: not this drop's impact
+                    print(f"  !! loaded before the cam began the drop ({pre:.2f} N over the "
+                          f"{ARM_S:g} s before it): recorded as still_loaded, with its trace")
+                    # from before the drop, so the load that caused it is in the trace
+                    with stream.lock:
+                        data = [(t, c) for t, c in stream.buf
+                                if min(f_drop["t_drop"] - MISS_PRE_S, hit - PRE_S) <= t <= hit + POST_S]
+                    t = np.array([x[0] for x in data]) - f_drop["t_parked"]
+                    counts = np.array([x[1] for x in data], dtype=float)
+                    keep(f_drop["n"], t, counts)
+                    failed(f_drop, "still_loaded", cam_cols)
+                    time.sleep(args.settle_s)
+                    continue
             t = np.array([x[0] for x in data]) - hit
             counts = np.array([x[1] for x in data], dtype=float)          # (n, 4)
+            cols, notes, _ = measure(t, counts, h, args.mass_g, scale)
             zero = counts[t < -0.002].mean(axis=0)
-            force = (counts - zero) * scale
-            k = int(force[t >= 0].max(axis=0).argmax())                    # the sensor it hit
-            a = analyse(t, force[:, k], h, args.mass_g)
-            if a is None:
+            if cols is None and f_drop is not None:
+                print("  !! impact lost: recorded as impact_lost, with its trace")
+                keep(f_drop["n"], t, counts)
+                failed(f_drop, "impact_lost", cam_cols, t_zero="impact")
+                time.sleep(args.settle_s)
+                continue
+            if cols is None:
                 print("  impact lost, not recorded")
                 continue
-            a2 = analyse(t, force[:, k], h, args.mass_g, thr=2 * HIT_N)
-            a["e_measured_2x_edge"] = a2["e_measured"]
-            if a["clean"] and not abs(a2["e_measured"] - a["e_measured"]) <= 0.05:
-                a["clean"] = False
-                print(f"  marginal: e_measured {a['e_measured']:.2f} at a {HIT_N:g} N edge, "
-                      f"{a2['e_measured']:.2f} at {2 * HIT_N:g} N (rocking or a slow second contact)")
-            if a["peak_n"] < SMALL_PEAK_N:
-                print(f"  peak only {a['peak_n']:.2f} N: probably a knock, not a drop (r + enter discards)")
-            drop = len(summary) + 1
-            for j in range(len(t)):
-                raw.append(dict(drop=drop, t_s=round(t[j], 6),
-                                **{f"{ch}_counts": int(counts[j, i]) for i, ch in enumerate(CHANNELS)},
-                                **{f"{ch}_n": round(force[j, i], 4) for i, ch in enumerate(CHANNELS)}))
-            others = max(force[t >= 0][:, i].max() for i in range(4) if i != k)
-            summary.append(dict(drop=drop, wheel=args.wheel, phase=args.phase, height_mm=h,
-                                sensor=k + 1, zero_counts=round(zero[k], 1),
-                                scale_n_per_count=scale[k],
-                                clipped=bool(counts[:, k].max() >= CLIP_COUNTS),
-                                others_peak_n=round(others, 4), **cam_cols,
-                                **{x: (round(v, 4) if isinstance(v, float) else v)
-                                   for x, v in a.items()}))
+            for note in notes:
+                print(note)
+            a = cols
+            k = a["sensor"] - 1
+            drop = len(summary) + 1 if f_drop is None else f_drop["n"]
+            keep(drop, t, counts)
+            summary.append(dict(drop=drop, wheel=args.wheel, height_mm=h, outcome="ok",
+                                t_zero="impact", **cam_cols, **cols))
             if not a["clean"]:
                 print("  no clean flight after the first impact (it rocked or rolled on the"
                       " button): peak kept, bounce numbers blank")
@@ -606,8 +818,11 @@ def run(args, stream, rig, heights, steps, scale, stem) -> None:
             firing["thread"].join(timeout=10.0)
         if summary:
             for path, rows in ((f"{stem}.csv", raw), (f"{stem}_summary.csv", summary)):
+                if not rows:
+                    continue
+                cols = list(dict.fromkeys(c for row in rows for c in row))   # a failed row has fewer
                 with open(path, "w", newline="") as fh:
-                    w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+                    w = csv.DictWriter(fh, fieldnames=cols)
                     w.writeheader()
                     w.writerows(rows)
                 print(f"wrote {path}")

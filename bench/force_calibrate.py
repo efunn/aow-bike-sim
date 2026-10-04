@@ -30,10 +30,10 @@ UNSETTLED_SD = 3.0      # counts; noisier = the weight was still moving
 
 
 class Stream:
-    """The last ~2 s of samples, kept by a background thread."""
+    """The last `maxlen` samples (20000: ~2 s), kept by a background thread."""
 
-    def __init__(self, port: str):
-        self.buf = collections.deque(maxlen=20000)
+    def __init__(self, port: str, maxlen: int = 20000):
+        self.buf = collections.deque(maxlen=maxlen)
         self.lock = threading.Lock()
         self.error = None
         threading.Thread(target=self._run, args=(port,), daemon=True).start()
@@ -66,8 +66,8 @@ def marker(k) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--weights", default="34,38,137",
-                    help="grams, comma-separated; '+' for a stack, e.g. 34+137")
+    ap.add_argument("--weights", default="28.5,33,128,145,182,128+145+182",
+                    help="grams, comma-separated; '+' for a stack, e.g. 128+145+182")
     ap.add_argument("--sensors", default="1,2,3,4", help="which, 1-4 left to right")
     ap.add_argument("--port", default=None)
     ap.add_argument("--out", default=None, help="CSV (default bench/logs/force_cal_<time>.csv)")

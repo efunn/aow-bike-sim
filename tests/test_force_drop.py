@@ -163,3 +163,124 @@ def test_the_edge_speed_is_a_fit_over_the_window():
     v, n = fd.edge_speed(list(zip(t, ticks)), at_tick=ticks[100])
     assert v == pytest.approx(400.0, rel=0.02) and n >= 10
     assert math.isnan(fd.edge_speed(list(zip(t[:3], ticks[:3])), ticks[1])[0])
+
+
+def test_a_dry_run_fires_every_drop_with_no_sensor(capsys):
+    from types import SimpleNamespace
+    c, bus = cam(1500 - 5)
+    c.home()
+    args = SimpleNamespace(hold_s=0.0, settle_s=0.0, corner_mm=0.45, r_rest_mm=13.0)
+    fd.dry_run(args, c, [0.5, 1.0, 1.5, 2.0], [(h, 1) for h in (0.5, 1.0, 1.5, 2.0)])
+    assert c.k == 5                                       # four drops, steps 1-4
+    assert capsys.readouterr().out.count("cycle") == 4
+    assert_forward(bus, -1)
+
+
+def test_a_cam_run_fires_exactly_the_count_and_records_every_miss(monkeypatch, tmp_path):
+    """No impact on any drop: still heights x repeats fires, each a no_impact
+    row with its cam columns and its trace -- a miss is a record, never a
+    re-fire."""
+    import csv
+    import threading
+    from types import SimpleNamespace
+    monkeypatch.setattr(fd, "keys", lambda cmds: None)
+    monkeypatch.setattr(fd, "NO_IMPACT_S", 0.05)
+    monkeypatch.setattr(fd, "MISS_PRE_S", 0.05)
+    c, bus = cam(1500 - 5)
+    c.home()
+    k0 = c.k
+    import time
+
+    class Stream:                     # the sensor's clock runs; nothing ever hits
+        lock = threading.Lock()
+
+        @property
+        def buf(self):
+            now = time.perf_counter()
+            return [(now - 0.002 * i, [0, 0, 0, 0]) for i in range(250, -1, -1)]   # 0.5 s
+    stream = Stream()
+    args = SimpleNamespace(hold_s=0.0, settle_s=0.0, corner_mm=0.45, r_rest_mm=13.0,
+                           wheel="tap", repeats=2)
+    heights = [0.5, 1.0, 1.5, 2.0]
+    steps = [(h, r) for r in (1, 2) for h in heights]
+    fd.run(args, stream, c, heights, steps, np.ones(4), tmp_path / "d")
+    assert c.k - k0 == 8
+    rows = list(csv.DictReader(open(tmp_path / "d_summary.csv")))
+    assert [r["outcome"] for r in rows] == ["no_impact"] * 8
+    assert [int(r["drop"]) for r in rows] == list(range(1, 9))
+    assert [int(r["cam_step"]) for r in rows] == list(range(k0, k0 + 8))
+    assert {r["t_zero"] for r in rows} == {"cam_parked"}       # no impact to time from
+    with open(tmp_path / "d.csv") as fh:                   # counts only: any calibration later
+        assert fh.readline().strip() == "drop,t_s,X_counts,Y_counts,Z_counts,Rz_counts"
+    traced = {int(r["drop"]) for r in csv.DictReader(open(tmp_path / "d.csv"))}
+    assert traced == set(range(1, 9))                      # each miss keeps its window
+    assert all(float(r["pre_drop_n"]) == 0.0 for r in rows)  # unloaded before each drop
+
+
+def test_a_load_that_never_lifts_is_still_loaded_not_a_miss(monkeypatch, tmp_path):
+    """Loaded from just after the zero onwards -- a wheel the cam never lifts
+    clear: every drop is still_loaded, with what the sensor read before it."""
+    import csv
+    import threading
+    import time
+    from types import SimpleNamespace
+    monkeypatch.setattr(fd, "keys", lambda cmds: None)
+    monkeypatch.setattr(fd, "NO_IMPACT_S", 0.05)
+    monkeypatch.setattr(fd, "MISS_PRE_S", 0.05)
+    t_load = time.perf_counter() + 0.05
+
+    class Stream:
+        lock = threading.Lock()
+
+        @property
+        def buf(self):
+            now = time.perf_counter()
+            ts = [now - 0.002 * i for i in range(250, -1, -1)]
+            return [(t, [0, 0, 5 if t > t_load else 0, 0]) for t in ts]
+    c, bus = cam(1500 - 5)
+    c.home()
+    args = SimpleNamespace(hold_s=0.3, settle_s=0.0, corner_mm=0.45, r_rest_mm=13.0,
+                           wheel="tap", repeats=1)
+    heights = [0.5, 1.0, 1.5, 2.0]
+    fd.run(args, Stream(), c, heights, [(h, 1) for h in heights], np.ones(4), tmp_path / "d")
+    rows = list(csv.DictReader(open(tmp_path / "d_summary.csv")))
+    assert [r["outcome"] for r in rows] == ["still_loaded"] * 4
+    assert all(float(r["pre_drop_n"]) == pytest.approx(5.0) for r in rows)
+
+
+def _synthetic_drop(scale, zero=(2020, 1645, 1690, 1670)):
+    """One impact on sensor 3 from the raw counts' side: an 8 ms contact,
+    a 20 ms flight, a 5 ms second contact, then resting at 0.84 N."""
+    t = np.arange(-0.2, 1.4, 1e-4)
+    f = np.zeros_like(t)
+    for t0, dur, peak in ((0.0, 0.008, 5.0), (0.028, 0.005, 1.5)):
+        on = (t >= t0) & (t < t0 + dur)
+        f[on] = peak * np.sin(np.pi * (t[on] - t0) / dur)
+    f[t >= 0.033] = 0.84
+    counts = np.tile(np.array(zero, float), (len(t), 1))
+    counts[:, 2] += np.round(f / scale[2])
+    return t, counts
+
+
+def test_reanalyse_reproduces_the_summary_and_follows_a_new_scale(tmp_path):
+    import csv
+    scale = [0.003043, 0.003040, 0.002797, 0.003105]
+    t, counts = _synthetic_drop(scale)
+    cols, _, _ = fd.measure(t, counts, 2.0, None, scale)
+    assert cols["sensor"] == 3 and cols["peak_n"] == pytest.approx(5.0, abs=0.01)
+    stem = tmp_path / "drops_x"
+    with open(f"{stem}.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["drop", "t_s"] + [f"{c}_counts" for c in fd.CHANNELS])
+        w.writerows([1, round(ti, 6), *map(int, c)] for ti, c in zip(t, counts))
+    row = dict(drop=1, wheel="front", height_mm=2.0, outcome="ok", t_zero="impact", cam_step=7, **cols)
+    with open(f"{stem}_summary.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(row))
+        w.writeheader()
+        w.writerow(row)
+    same = list(csv.DictReader(open(fd.reanalyse(f"{stem}.csv", scale))))[0]
+    assert same == list(csv.DictReader(open(f"{stem}_summary.csv")))[0]
+    new = list(csv.DictReader(open(fd.reanalyse(f"{stem}_summary.csv", [s * 1.1 for s in scale]))))[0]
+    assert float(new["peak_n"]) == pytest.approx(1.1 * cols["peak_n"], rel=1e-3)
+    assert float(new["mass_g"]) == pytest.approx(1.1 * cols["mass_g"], rel=1e-3)
+    assert new["cam_step"] == "7" and new["wheel"] == "front"     # labels kept as recorded
