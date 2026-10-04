@@ -165,6 +165,30 @@ def test_the_edge_speed_is_a_fit_over_the_window():
     assert math.isnan(fd.edge_speed(list(zip(t[:3], ticks[:3])), ticks[1])[0])
 
 
+def test_the_edge_fit_times_the_step_crossing():
+    """fall_ms starts where the fitted line crosses the step tick: within a
+    fraction of a 2 ms read, though no read lands on it."""
+    rng = np.random.default_rng(1)
+    t = np.cumsum(rng.uniform(0.0015, 0.0025, 100))
+    ticks = np.round(-375.0 * DEG * (t - 0.1))           # dir -1, the step at t = 0.1 s
+    _, n, t_cross = fd.edge_fit(list(zip(t, ticks)), at_tick=0)
+    assert n >= 10 and t_cross == pytest.approx(0.1, abs=2e-4)
+
+
+def test_the_sensor_clock_map_takes_the_least_delayed_sample():
+    """Samples arrive late by a varying delay; the map to the sensor's clock
+    uses the smallest, so the jitter does not move it."""
+    import force_calibrate as fc
+    rng = np.random.default_rng(2)
+    s = fc.Stream.__new__(fc.Stream)
+    s.lock = __import__("threading").Lock()
+    t = np.arange(0, 1.0, 1e-4)                         # sensor clock
+    host = 500.0 + t + 0.0002 + rng.exponential(0.004, t.size)   # +0.2 ms at best
+    s.arrivals = list(zip(host, t))
+    assert s.sensor_time(500.6) == pytest.approx(0.6 - 0.0002, abs=5e-5)
+    assert math.isnan(s.sensor_time(400.0))
+
+
 def test_a_dry_run_fires_every_drop_with_no_sensor(capsys):
     from types import SimpleNamespace
     c, bus = cam(1500 - 5)
@@ -193,6 +217,9 @@ def test_a_cam_run_fires_exactly_the_count_and_records_every_miss(monkeypatch, t
 
     class Stream:                     # the sensor's clock runs; nothing ever hits
         lock = threading.Lock()
+
+        def sensor_time(self, host_t, span_s=0.5):
+            return host_t                 # samples stamped on perf_counter
 
         @property
         def buf(self):
@@ -231,6 +258,9 @@ def test_a_load_that_never_lifts_is_still_loaded_not_a_miss(monkeypatch, tmp_pat
 
     class Stream:
         lock = threading.Lock()
+
+        def sensor_time(self, host_t, span_s=0.5):
+            return host_t                 # samples stamped on perf_counter
 
         @property
         def buf(self):
@@ -273,7 +303,8 @@ def test_reanalyse_reproduces_the_summary_and_follows_a_new_scale(tmp_path):
         w = csv.writer(fh)
         w.writerow(["drop", "t_s"] + [f"{c}_counts" for c in fd.CHANNELS])
         w.writerows([1, round(ti, 6), *map(int, c)] for ti, c in zip(t, counts))
-    row = dict(drop=1, wheel="front", height_mm=2.0, outcome="ok", t_zero="impact", cam_step=7, **cols)
+    row = dict(drop=1, wheel="front", height_mm=2.0, outcome="ok", t_zero="impact", cam_step=7,
+               h_contact_mm=2.0, **cols)
     with open(f"{stem}_summary.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(row))
         w.writeheader()
@@ -284,3 +315,80 @@ def test_reanalyse_reproduces_the_summary_and_follows_a_new_scale(tmp_path):
     assert float(new["peak_n"]) == pytest.approx(1.1 * cols["peak_n"], rel=1e-3)
     assert float(new["mass_g"]) == pytest.approx(1.1 * cols["mass_g"], rel=1e-3)
     assert new["cam_step"] == "7" and new["wheel"] == "front"     # labels kept as recorded
+
+
+def test_an_effective_mass_slows_the_fall_and_is_kept_by_reanalyse(tmp_path):
+    """A hinged arm: the contact falls at F_rest / m_eff. Unset, a = g and
+    every number is as before; given, it is recorded and --reanalyse reuses it."""
+    import csv
+    scale = [0.003043, 0.003040, 0.002797, 0.003105]
+    t, counts = _synthetic_drop(scale)
+    free, _, _ = fd.measure(t, counts, 2.0, None, scale)
+    assert free["m_eff_from"] == "static" and free["a_mps2"] == pytest.approx(fd.G, rel=1e-3)
+    hinged, _, _ = fd.measure(t, counts, 2.0, None, scale, m_eff_g=130)
+    assert hinged["m_eff_from"] == "given" and hinged["m_eff_g"] == 130
+    assert hinged["a_mps2"] == pytest.approx(hinged["rest_n"] / 0.130, rel=1e-3)
+    # same flight, slower fall and flight: e_flight scales by sqrt(a / g)
+    assert hinged["e_flight"] == pytest.approx(
+        free["e_flight"] * (hinged["a_mps2"] / free["a_mps2"]) ** 0.5, rel=1e-3)
+    stem = tmp_path / "drops_x"
+    with open(f"{stem}.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["drop", "t_s"] + [f"{c}_counts" for c in fd.CHANNELS])
+        w.writerows([1, round(ti, 6), *map(int, c)] for ti, c in zip(t, counts))
+    row = dict(drop=1, wheel="front", height_mm=2.0, outcome="ok", t_zero="impact", **hinged)
+    with open(f"{stem}_summary.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(row))
+        w.writeheader()
+        w.writerow(row)
+    again = list(csv.DictReader(open(fd.reanalyse(f"{stem}.csv", scale))))[0]
+    assert again == list(csv.DictReader(open(f"{stem}_summary.csv")))[0]
+    other = list(csv.DictReader(open(fd.reanalyse(f"{stem}.csv", scale, m_eff_g=100))))[0]
+    assert float(other["m_eff_g"]) == 100
+
+
+def test_a_dropped_bus_reply_is_retried_and_three_in_a_row_raise(capsys):
+    """Run 20261003-2224 died on one rx timeout at drop 66 of 120."""
+    c, bus = cam(1500 - 5)
+    c.home()
+    real, fails = bus.read_raw, [1]
+
+    def flaky(i, name):
+        if name == "Present Position" and fails[0]:
+            fails[0] -= 1
+            raise RuntimeError("read id=1 Present Position: rc=-3001 err=0")
+        return real(i, name)
+    bus.read_raw = flaky
+    k = c.k
+    c.fire(0.0)
+    assert c.k == k + 1 and "retrying" in capsys.readouterr().out
+    fails[0] = fd.BUS_TRIES
+    with pytest.raises(RuntimeError, match="-3001"):
+        c.pos()
+
+
+def test_an_old_cam_run_is_reanalysed_at_the_contact_through_the_lever(tmp_path):
+    """The cam's heights are the follower's; a run from before h_contact_mm
+    gets the rig's r_contact / r_follower now, and records it."""
+    import csv
+    scale = [0.003043, 0.003040, 0.002797, 0.003105]
+    t, counts = _synthetic_drop(scale)
+    cols, _, _ = fd.measure(t, counts, 2.0, None, scale)
+    stem = tmp_path / "drops_x"
+    with open(f"{stem}.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["drop", "t_s"] + [f"{c}_counts" for c in fd.CHANNELS])
+        w.writerows([1, round(ti, 6), *map(int, c)] for ti, c in zip(t, counts))
+    row = dict(drop=1, wheel="front", height_mm=2.0, outcome="ok", t_zero="impact", cam_step=7, **cols)
+    with open(f"{stem}_summary.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(row))
+        w.writeheader()
+        w.writerow(row)
+    new = list(csv.DictReader(open(fd.reanalyse(f"{stem}.csv", scale))))[0]
+    lever = fd.arm_lever()
+    assert lever == pytest.approx(205 / 124)
+    h_c = fd.contact_drop(2.0)
+    assert h_c == pytest.approx((2.0 - 0.13) * lever, rel=1e-3)
+    assert float(new["h_contact_mm"]) == pytest.approx(h_c, rel=1e-3)
+    # same flight, a longer drop: e_flight falls by sqrt(2 / h_c)
+    assert float(new["e_flight"]) == pytest.approx(cols["e_flight"] * (2.0 / h_c) ** 0.5, rel=1e-3)

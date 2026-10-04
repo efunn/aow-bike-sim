@@ -37,3 +37,38 @@ cam:
   # Goal Current for every move, mA (capped at the Current Limit). One value
   # for lift and drop; the edge speed in the summary says whether it is enough.
   ma: 300
+
+arm:
+  # The hinged arm, from its pivot (CAD/design, user):
+  #     |-----205mm-----|
+  #     o======V====( ( . ) )        o pivot, V cam/follower, wheel
+  #            |--81mm--|
+  # the wheel's contact at 205 mm, the follower edge 81 mm short of the wheel
+  # axle: 124 mm. The cam's heights are at the follower, so the contact drops
+  # 205/124 = 1.65x as far; the analysis works at the contact (h_contact_mm).
+  # Bar level; the pivot sits ~6.5 mm below the bar's line, which tilts each
+  # point's path by ~2-3 deg -- under 0.1% on a drop.
+  r_follower_mm: 124
+  r_contact_mm: 205
+  # The wheel axle sits this far ABOVE the pivot: the bar (5.75 mm tall,
+  # centred 3.875 mm above the axle) rests on a 15 mm collar on the pivot
+  # (user). analysis/drop_rig_sim.py builds the arm with it.
+  axle_above_pivot_mm: 6.5
+  # The cam's labelled heights (0.5/1/1.5/2) are not exact, their differences
+  # are (user): one offset, subtracted at the follower before the lever.
+  # 0.13 +- 0.02 mm, fitted with m_eff below on 20261003-2224.
+  step_offset_mm: 0.13
+  # Effective mass at the contact, g: I_pivot / r_contact^2. Given, the
+  # contact falls at F_rest / m_eff and m_eff stops in the impulse; null, the
+  # static mass and a = g. Per wheel and pinning: --m-eff-g overrides it.
+  # 89 +- 2, measured on 20261003-2224 (front, free wheel): its 2nd impacts
+  # balance F_rest (t_flight1 + t_flight2) / 2 to 0-3.5% (no mass needed), so
+  # each 1st impact's in-speed gives its fall time; over the 4 heights,
+  # contact drop 1.65 (h - c): a 8.30 +- 0.22 m/s^2, c 0.13 mm (c = 0: a 9.27,
+  # 80 g). Against 86 g of wheel + forks near the contact and a static ~78 g.
+  # (fall_ms, the cam encoder's timing, disagrees by +4.3 to -0.7 ms across
+  # the heights -- not used.)
+  # TO REDO from the weighed parts once the arm is taken apart (user,
+  # 2026-10-03): this value and step_offset_mm were fitted together from one
+  # run, so neither is independent of the other.
+  m_eff_g: 89

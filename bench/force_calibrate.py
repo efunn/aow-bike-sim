@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import collections
 import csv
+import multiprocessing
 import sys
 import threading
 import time
@@ -29,22 +30,60 @@ WINDOW_S = 0.5
 UNSETTLED_SD = 3.0      # counts; noisier = the weight was still moving
 
 
+def _read(port: str, conn) -> None:
+    """The sensor reader, in its own process: stamps each sample's arrival on
+    the host clock and sends them on in ~5 ms batches. In a thread it shared
+    the GIL with the servo's reads, and a servo polled flat out cut it to
+    ~2700 of 10000 samples/s, seconds behind (bench, 2026-10-03)."""
+    batch, sent = [], time.perf_counter()
+    try:
+        for t, c in lines(port):
+            host = time.perf_counter()      # one clock across processes (macOS: mach time)
+            batch.append((host, t, c))
+            if len(batch) >= 50 or host - sent > 0.005:
+                conn.send(batch)
+                batch, sent = [], host
+    except BaseException as e:                         # lines() exits via SystemExit
+        conn.send(repr(e))
+
+
 class Stream:
-    """The last `maxlen` samples (20000: ~2 s), kept by a background thread."""
+    """The last `maxlen` samples (20000: ~2 s). A child process reads the port
+    (_read); a thread here files its batches."""
 
     def __init__(self, port: str, maxlen: int = 20000):
         self.buf = collections.deque(maxlen=maxlen)
+        # (host perf_counter on arrival, sensor t) per sample: sensor_time()
+        self.arrivals = collections.deque(maxlen=maxlen)
         self.lock = threading.Lock()
         self.error = None
-        threading.Thread(target=self._run, args=(port,), daemon=True).start()
+        ours, theirs = multiprocessing.Pipe(duplex=False)
+        self.proc = multiprocessing.Process(target=_read, args=(port, theirs), daemon=True)
+        self.proc.start()
+        threading.Thread(target=self._run, args=(ours,), daemon=True).start()
 
-    def _run(self, port):
+    def _run(self, conn):
         try:
-            for t, c in lines(port):
+            while True:
+                batch = conn.recv()
+                if isinstance(batch, str):
+                    self.error = batch
+                    return
                 with self.lock:
-                    self.buf.append((t, c))
-        except BaseException as e:                     # lines() exits via SystemExit
-            self.error = e
+                    self.buf.extend((t, c) for _, t, c in batch)
+                    self.arrivals.extend((h, t) for h, t, _ in batch)
+        except EOFError:
+            self.error = self.error or "the sensor reader process ended"
+
+    def sensor_time(self, host_t: float, span_s: float = 0.5) -> float:
+        """A host perf_counter time on the sensor's clock. Samples arrive late
+        by a varying USB and thread delay, so the offset is the SMALLEST
+        host - sensor over the arrivals within span_s: the least-delayed
+        sample. What is left is that minimum delay, a constant. nan with no
+        arrivals in the span."""
+        with self.lock:
+            d = [h - t for h, t in self.arrivals if abs(h - host_t) <= span_s]
+        return host_t - min(d) if d else float("nan")
 
     def window(self, seconds=WINDOW_S):
         with self.lock:
