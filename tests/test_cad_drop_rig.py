@@ -131,5 +131,49 @@ def test_the_cam_is_drop_cams_own_outline(data):
     assert all(math.dist(a, b) > 1e-4 for a, b in zip(pts, pts[1:] + pts[:1]))
 
 
+@pytest.mark.parametrize("tones", [[(8, 0.6, 0)], [(32, 0.04, 0)], [(3, 1.0, 0), (13, 0.2, 0)]])
+def test_the_wave_cams_nose_touches_and_never_cuts(tones):
+    """A wave cam is the nose centre's path offset by the nose radius: at
+    every cam angle a nose centred on that path touches the outline and does
+    not cut into it, and the lowest point is lift_min over rest."""
+    np = pytest.importorskip("numpy")
+    dc = rig._cam_module()
+    rest, nose, lift = 10.7, 0.45, 0.7
+    P = np.array(dc.wave_profile(rest, nose, lift, tones, n=6000))
+    R = dc.wave_pitch(rest, nose, lift, tones)[0]
+    gaps = [np.min(np.hypot(*(P - [R(a) * math.cos(a), R(a) * math.sin(a)]).T)) - nose
+            for a in np.linspace(0, 2 * math.pi, 400)]
+    assert min(gaps) > -1e-4 and max(gaps) < 2e-3
+    assert np.hypot(*P.T).min() == pytest.approx(rest + lift, abs=2e-3)
+
+
 def test_the_featurescript_lints(data):
     sm.lint_fs(rig.build_fs(data))
+
+
+def test_the_tip_jams_on_the_pad_and_its_nose_is_over_the_cam(data, L):
+    """The tip's pocket is the pad's web plus the fit; the nose is centred
+    over the cam axis and full height across the cam's width."""
+    assert L["tipYi"] == pytest.approx(L["padHalfY"] + L["tipFit"])
+    assert L["tipXi0"] < L["padX0"] and L["tipXd"] - L["tipW"] > L["padX1"]
+    assert L["tipXoB"] < L["tipXi0"]                  # the plate reaches under the whole pad
+    assert L["noseYn"] >= data["r"]["wave"]["thickness"] / 2
+    assert 2 * L["noseR"] == pytest.approx(data["r"]["tip"]["nose_width"])
+
+
+def test_the_wave_kit_fits_the_rig_in_use(data, L):
+    """The tip clears the cover with the wheel RESTING, its nose stopping
+    short of it; every cam in the kit clears the tip's plate away from the
+    nose, the horn collar, and the drop cam's envelope; each is drawn with
+    its lowest point under the follower, where the tip sits."""
+    assert L["tipCoverClear"] >= 0.3
+    assert L["noseYn"] <= L["coverY"] - 0.5
+    assert L["tipCamClear"] >= 0.5
+    assert len(data["r"]["wave_kit"]) >= 2
+    for c in data["r"]["wave_kit"]:
+        pts = rig.wave_points(data, c["tones"])
+        radii = [math.hypot(x, y) for x, y in pts]
+        assert min(radii) - L["collarR"] >= 0.5, c["name"]
+        assert max(radii) <= L["rCamMax"], c["name"]
+        top = max(y for x, y in pts if abs(x) < 0.1)
+        assert L["tipZb"] - L["noseH"] - L["Zc"] == pytest.approx(top + 0.05, abs=0.02), c["name"]

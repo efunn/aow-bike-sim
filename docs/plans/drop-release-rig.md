@@ -1,7 +1,12 @@
 # Drop release rig: one XL330, a hinged arm, a swappable snail cam
 
-Status: **design sketch, nothing built** (2026-10-02). Layout from the
-user's hand sketch of the front rig (2026-10-02); lengths not yet set. Replaces hand drops
+Status: **built and run** (first run 2026-10-03: front wheel, 65 drops;
+findings in `docs/status.md`, contact calibration). The arm as built:
+pivot to the wheel's contact **205 mm**, pivot to the follower **124 mm**
+(lever 1.65), the axle 6.5 mm above the pivot -- `config/drop_rig_bench.yaml`
+`arm`, which `force_drop.py` and `analysis/drop_rig_sim.py` read. The side
+view and the arm/hinge rows below are the 10-02 sketch where they differ
+from the build; the hinge itself was rigged by hand. Replaces hand drops
 for the contact drop test (`contact-protocol.md` §P1). The hand drops on
 2026-10-02 showed what it has to fix:
 
@@ -39,12 +44,12 @@ impact. The cam is under the block, at d from the hinge, not under the axle.
 
 | item | value | why |
 |---|---|---|
-| L, hinge axis to wheel axle | **~200 mm** (not set) | long, so the arc is near-vertical (2 mm drop = 0.6 deg) and the wheel's own spin inertia adds only (r/L)^2 ~ 3% to the impact mass |
-| d, hinge axis to follower | under the clamp block, d < L (not set) | the cam's steps reach the axle as **L/d** times larger: at d/L = 0.75 the 0.5/1/1.5/2 cam drops 0.67/1.33/2/2.67 mm |
+| L, hinge axis to wheel contact | **205 mm** as built (sketch: ~200) | long, so the arc is near-vertical (2 mm drop = 0.6 deg) and the wheel's own spin inertia adds only (r/L)^2 ~ 3% to the impact mass |
+| d, hinge axis to follower | **124 mm** as built (81 short of the axle) | the cam's steps reach the contact **L/d = 1.65** times larger, less a 0.13 mm offset at the follower (`arm.step_offset_mm`, fitted): the 0.5/1/1.5/2 cam drops ~0.61/1.44/2.26/3.09 mm |
 | hinge axis height | **= the axle's height with the wheel resting**, adjustable +-2 mm (slotted post) | the arm is level at impact, so the contact moves straight down |
 | axle height at rest | sensor seat + 8.25 mm (FS20 incl. button, datasheet) + wheel radius (front 50 mm) | measure it on the built base; the slots take up the difference |
-| arm | **two parallel rods**, hinge block to clamp block | stiff in twist, so the wheel cannot lean; keep them light (see "Impact mass") |
-| hinge | bearings in the hinge block, one per rod side, on a steel pin | low friction; their spacing across the arm stops the wheel leaning |
+| arm | sketch: **two parallel rods**; as built, the plastic bar friction-fit in the interface's slot (see "Parts") | stiff in twist, so the wheel cannot lean; keep them light (see "Impact mass") |
+| hinge | sketch: bearings on a steel pin; as built, the bar rests on a 15 mm collar on the pivot (user) | low friction; their spacing across the arm stops the wheel leaning |
 | wheel interface, front | the **clamp block**: a double-D socket like the headset upper (dia 11, 6 mm across the flats, central 6-32), its axis along the arm | reuses the fork's own spigot (`config/steering_cad.yaml` `spigot_*`); no new fork parts |
 | wheel interface, rear | the same block holding the rear dropouts; the axle nut locks the wheel's roller phase | one arm for both wheels; still to design with the new dropouts |
 | follower | **a small printed flat** under the clamp block, in line with the cam; face square to the arm's motion | the release is the cam's step corner passing the flat's downstream corner. On a ramp the contact sits ~5 mm off centre, hence ~6-10 mm wide. Printed corners round to ~0.45 mm, so the release still wants the cam at speed: the script holds at the start of the top flat as a run-up |
@@ -105,8 +110,9 @@ sqrt(g * 0.45 mm) ~ 66 mm/s: ~280 deg/s at the 13.5 mm top radius, ~45% of
 the XL330-M288's 618 deg/s no-load (estimated). Slower, it is let down over
 the corner and the drop starts soft and short. With the follower at d, it
 falls at about g d / L (most of the mass at the axle), so the need drops by
-sqrt(d / L), ~13% at 0.75 (inferred); `force_drop.py --cam` keeps the d = L
-figure, which errs safe.
+sqrt(d / L). As built the contact falls at 8.30 m/s^2 (fitted with m_eff on
+the 10-03 run), so the follower at ~5.0 m/s^2: the need drops ~29%;
+`force_drop.py --cam` keeps the d = L figure, which errs safe.
 
 How many degrees the servo needs to get there depends on its reflected
 inertia, which is not known here: bracketing it, ~2-8 deg to 45% of no-load
@@ -206,11 +212,74 @@ undercut. It starts wherever the cam is, drives forward to the next top
 flat (a drop on the way is not recorded) and zeroes there with the wheel
 lifted. On any exit it goes forward to the next dwell, then torque off.
 Profile Velocity is not used: ROBOTIS applies it in (extended) position
-mode only. Not yet run on the rig (dry-run against a simulated servo and
-sensor, 2026-10-03).
+mode only. First run on the rig 2026-10-03 (front wheel, 65 drops,
+`bench/logs/drops_20261003-2224_summary.csv`).
 
 The XL330 is 5 V: its own supply through the U2D2, never the 12 V chain
 (`untethered-setup.md`).
+
+## AHRS mode: a wave cam, no drops
+
+Added 2026-10-06, drawn, nothing printed. The user's aim is the TM151's DYNAMIC
+response, which the AHRS fixture could not separate: its tau rose with
+vibration above ~2 Hz or with rotation, and that rig "cannot give one
+without the other" (`ahrs-fixture.md`). Here the cam shakes the arm at a
+known frequency with the wheel held clear of the sensor, so nothing drops.
+
+- **Force sensor: not used.** The wheel never touches it in this mode; the
+  truth is the still holds. So no new interface either.
+- **Follower tip** (CAD, `follower tip`, prints Y+): a jam-on cap over
+  either interface's follower pad, located by the pad's downstream face and
+  its 45 deg chamfer, fit 0.05 mm a side (GUESS: jam, or glue). A 0.8 mm
+  plate under the pad and a rounded nose 0.9 wide (user) hanging 1.5 below
+  it, centred over the cam: the nose's bottom is 2.3 mm under the old pad.
+  Walls 6 mm up the pad. The nose runs square-ended from the -Y face (the
+  bed, printed on its side) to 0.1 mm past the cam's +Y face, short of the
+  servo cover; the plate clears the cover by 0.35 mm with the wheel RESTING,
+  so the tip clears the rig with or without the cam holding it up.
+  The flat pad itself cannot ride a wave: it bridges the valleys.
+- **The cam kit** (CAD, `wave cam <name>`, each prints Y+, ~15 min;
+  `config/drop_rig_cad.yaml` `wave_kit`; `drop_cam.py --tones` draws any of
+  them and prints its table). Each cam is a sum of tones -- N lobes per turn,
+  a peak-to-peak height at the follower -- on the same horn pins, never under
+  0.7 mm above the nose's resting height (the wheel ~0.9 mm clear, after the
+  0.13 offset). Numbers at 1 rev/s, at the follower (x1.65 at the contact),
+  computed:
+
+  | cam | asks | Hz | acc pk | arm rate pk |
+  |---|---|---|---|---|
+  | blank | the control: servo and gears turn, the arm does not | -- | -- | -- |
+  | 1x3.0 | rotation with little acceleration | 1 | 6 mg | 4.4 deg/s |
+  | 4x2.4 / 8x0.6 / 16x0.15 / 32x0.04 | frequency at EQUAL acceleration, the rotation halving each step | 4 / 8 / 16 / 32 | 77-82 mg | 14 / 7 / 3.5 / 1.9 deg/s |
+  | 8x0.3 / 8x0.6 / 8x1.0 | acceleration level at one frequency | 8 | 39 / 77 / 129 mg | 3.5 / 7 / 11.6 deg/s |
+  | 3x1.0, 13x0.2, then both | superposition: does tau answer the high band or the total? | 3 + 13 | 86 mg (both) | 8 deg/s |
+
+  Acceleration grows with the speed squared, rotation with the speed: the
+  servo reaches 1.72 rev/s (618 deg/s no-load), and every cam's follower
+  stays on past that (closest: 8x1.0, which would leave at ~2.0 rev/s; the
+  equal-acceleration set at ~2.5). 32x0.04 is under print accuracy: the AHRS's own
+  accelerometer reads the amplitude it really got, which is the input that
+  matters anyway. No room to engrave a name (the horn collar fills the face
+  to r 10): mark each with a pen as it comes off the printer.
+  `--check` (2026-10-06, both wheels, all 11 cams and the tip): no
+  interference, no downward faces on any cam; the plate clears every cam
+  by >= 0.76 mm away from the nose.
+- **The hinge's arc** (computed 2026-10-06): the nose sits ~20 mm below the
+  pivot's height (pivot 6.5 under the axle, `drop_rig_bench.yaml` `arm`), 125
+  mm from it, so it rises along a line 9.25 deg off vertical, not radially.
+  The cams are drawn for a radial follower; on the arc the nose drifts along
+  the cam by lift x 0.16 (<= 0.6 mm), a near-constant phase shift, and every
+  pressure angle gains ~9 deg on one flank: worst 4x2.4 at 29.5 and 8x1.0 at
+  27.2, against ~30. If one sticks or chatters, it is 4x2.4 first. The plate
+  still clears every cam by >= 0.82 mm on the arc.
+- **Vibration vs rotation:** the arm turns at one rate along its length,
+  ~0.2 deg amplitude, ~12 deg/s peak at 10 Hz; acceleration grows with
+  distance from the pivot. Run the AHRS near the pivot, then near the axle:
+  the difference is the acceleration's.
+- **Truth:** still holds, servo stopped, before and after each speed; hold
+  each speed >= 10 s (tau ~1 s moving).
+- **Hookup:** the AHRS, the U2D2 and the force sensor all go on the Pi
+  (user), so one host clock. No driver written yet.
 
 ## Next
 
@@ -219,8 +288,16 @@ The XL330 is 5 V: its own supply through the U2D2, never the 12 V chain
 - Print and check: the M3 pilots, the fork and chainstay joints in their
   new blocks, the bar's friction fit, the follower's parked gap with a
   feeler.
-- **Hinge and arm: not decided** (user, 2026-10-02). The two rods and the
-  hinge block above are the sketch, not a choice; d and L are unset.
+- ~~Hinge and arm~~: built by the user (2026-10-03), contact 205 mm and
+  follower 124 mm from the pivot (`drop_rig_bench.yaml` `arm`).
+- **First AHRS run: the existing drop cam** (user, 2026-10-06), the TM151
+  on the bar, at several stations (record each one's distance from the
+  pivot and height above it). Ramps give slow known rotation, the drops
+  known shocks (force sensor), top flat and dwell the still holds -- which
+  need `force_drop.py --hold-s 3 --settle-s 3`, not the contact test's
+  0.5 / 0.3. Before it, the force sensor epoxied down under weights (user).
+  Still to write: one logger on the Pi for AHRS, servo and force, one clock.
+- The wave kit and the tip: drawn, not printed; 8x0.6 first if one is.
 
 ## Open
 

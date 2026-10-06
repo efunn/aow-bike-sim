@@ -21,6 +21,11 @@ axle straight above it; the arm leaves the board over its short edge.
     rear interface    X+      both case sides' chainstay joint (channel, screw
                               slot, nut slot, from cad_drive), the bar slot,
                               the follower
+    wave cam <name>   Y+      AHRS mode, one per `wave_kit` cam: drop_cam.py's
+                              tones on the horn's pins, drawn `wave.offset`
+                              along Y, `wave.pitch` apart along -X
+    follower tip      Y+      AHRS mode: a jam-on cap over either follower pad
+                              with a rounded nose, drawn on the wave cam there
 
 Both interfaces put the follower at the SAME place over the button -- the
 front tire and the rear wheel differ by 0.05 mm in radius -- so one base and
@@ -62,7 +67,8 @@ OUT_FS = "docs/cad/drop_rig.fs"
 OUT_PNG = "docs/cad/drop_rig{}.png"
 SPLIT_MARK = af.SPLIT_MARK
 WHEELS = ("FRONT", "REAR")
-PARTS = ("base", "back shell", "cover", "cam", "front interface", "rear interface")
+PARTS = ("base", "back shell", "cover", "cam", "front interface", "rear interface",
+         "wave cam", "follower tip")
 HARDWARE = ("X330 case", "X330 horn", "PCB", "FS20", "front tire", "fork mock",
             "rear wheel", "chainstay mock")
 # Contacts that are the design: the screw bores cut into the mocks only.
@@ -80,9 +86,11 @@ def _cam_module():
 def load(rig_path: str = RIG_PARAMS) -> dict:
     """Everything the rig reads, in MILLIMETRES (degrees for _deg keys)."""
     raw = _normalize(yaml.safe_load(Path(rig_path).read_text()))
+    kit = raw.pop("wave_kit", [])                # already mm, a list of cams
     mm = lambda v: v * 1000.0    # noqa: E731
     r = {sec: {k: (v if k.endswith(("_deg", "_n")) else [mm(x) for x in v] if isinstance(v, list) else mm(v))
                for k, v in vals.items()} for sec, vals in raw.items()}
+    r["wave_kit"] = [{"name": c["name"], "tones": [tuple(t) for t in c["tones"]]} for c in kit]
     # the rig's origin is the DROP button: move the board under it
     pc = r["pcb"]
     i = int(pc["drop_button_n"]) - 1
@@ -163,6 +171,7 @@ def layout(data: dict) -> dict:
     L["padX1"] = L["Xc"] + it["follower_downstream"]    # the release corner
     L["parkClear"] = park_clearance(data)
     need(L["parkClear"] >= 0.5, f"parked, the cam is only {L['parkClear']:.2f} mm under the follower")
+    wave_layout(data, L, need)
     # ---- the wheels: axle heights, and the cam's clearance to each
     L["RaF"] = S["R"]
     L["RaR"] = data["drive"]["wheel"]["R"] + r["wheels"]["rear_radius_offset"]   # the contact under test
@@ -264,6 +273,96 @@ def cam_points(data: dict) -> list[tuple[float, float]]:
     return out
 
 
+def wave_layout(data: dict, L: dict, need) -> None:
+    """AHRS mode: the follower tip over the pad and the wave cam it rides.
+    Rig frame, mm. The tip's nose bottom sits `nose_below` under the pad's
+    face, so the wave is drawn for a follower resting that much lower."""
+    r = data["r"]
+    wv, tp, cm = r["wave"], r["tip"], r["cam"]
+    L["tipT"], L["tipW"], L["tipH"], L["tipFit"] = tp["plate"], tp["wall"], tp["height"], tp["fit"]
+    L["noseR"] = tp["nose_width"] / 2
+    L["noseH"] = tp["nose_height"]
+    need(L["noseH"] > L["noseR"], "the nose is shorter than its round end")
+    L["noseBelow"] = L["tipT"] + L["noseH"]
+    L["waveRest"] = L["Zf"] - L["Zc"] - L["noseBelow"]     # nose bottom over the cam axis, wheel resting
+    L["waveLift"] = wv["lift_min"]
+    L["waveT"] = wv["thickness"]
+    L["waveOff"] = wv["offset"]
+    L["wavePitch"] = wv["pitch"]
+    kit = r["wave_kit"]
+    need(len(kit) > 0, "the wave kit is empty")
+    need(0 <= int(wv["tip_on_n"]) < len(kit), "wave.tip_on_n is not a cam in the kit")
+    # in place, over the pad; z of the pad face as drawn: lifted onto a valley
+    # plus 0.05, so polygon chords cannot touch
+    L["tipZl"] = L["Zf"] + L["waveLift"] + 0.05
+    L["tipZb"] = L["tipZl"] - L["tipT"]
+    L["tipZt"] = L["tipZl"] + L["tipH"]
+    L["tipXd"] = L["padX1"] + L["tipFit"] + L["tipW"]       # downstream outer face
+    L["tipXi0"] = L["padX0"] - L["tipFit"] * math.sqrt(2)   # the inner chamfer's foot
+    L["tipXoB"] = L["tipXi0"] - L["tipW"] * math.sqrt(2) + L["tipT"]
+    L["tipXoT"] = L["tipXi0"] - L["tipW"] * math.sqrt(2) - L["tipH"]
+    L["tipYi"] = L["padHalfY"] + L["tipFit"]
+    L["tipYo"] = L["tipYi"] + L["tipW"]
+    L["noseYn"] = wv["thickness"] / 2 + tp["nose_margin"]   # the nose's +Y end; -Y it runs to -tipYo
+    # the cover's cap face, +Y of the cam: the nose stops short of it, and the
+    # plate and walls pass over its top -- checked with the wheel RESTING, so
+    # the tip clears the rig whether or not the cam holds it up
+    L["coverY"] = L["Yh"] - L["capOuter"]
+    need(L["noseYn"] <= L["coverY"] - 0.5, "the nose's +Y end is within 0.5 mm of the cover")
+    L["tipCoverClear"] = L["Zf"] - L["tipT"] - L["coverTop"]
+    need(L["tipCoverClear"] >= 0.3, f"resting, the tip is {L['tipCoverClear']:.2f} mm over the cover")
+    # every cam in the kit: drop_cam.py's checks, the horn collar, the drop
+    # cam's envelope, and the tip's plate away from the nose
+    dc = _cam_module()
+    L["tipCamClear"] = 1e9
+    for c in kit:
+        lines, ok = dc.wave_report(L["waveRest"], L["noseR"], L["waveLift"], c["tones"],
+                                   5.0, 618.0, 124.0, 205.0)
+        need(ok, f"wave cam {c['name']} fails drop_cam.py's checks: " + " ".join(lines))
+        radii = [math.hypot(*q) for q in wave_outline(data, c["tones"])]
+        need(min(radii) - L["collarR"] >= 0.5, f"wave cam {c['name']} is within 0.5 mm of the horn collar")
+        need(max(radii) <= L["rCamMax"], f"wave cam {c['name']} is outside the drop cam's envelope")
+        L["tipCamClear"] = min(L["tipCamClear"], tip_cam_clearance(data, L, c["tones"]))
+    need(L["tipCamClear"] >= 0.5, f"a wave cam comes {L['tipCamClear']:.2f} mm under the tip's plate")
+
+
+def wave_outline(data: dict, tones, n_per_lobe: int = 48) -> list[tuple[float, float]]:
+    """A wave cam in drop_cam.py's frame, mm. Coarser than drop_cam.py's own
+    (48 points a lobe, >= 360): every point is a sketch segment in Onshape."""
+    wv, tp, cm = data["r"]["wave"], data["r"]["tip"], data["r"]["cam"]
+    rest = cm["r_dwell"] + cm["gap"] - tp["plate"] - tp["nose_height"]
+    n = max(360, n_per_lobe * max((t[0] for t in tones), default=1))
+    return _cam_module().wave_profile(rest, tp["nose_width"] / 2, wv["lift_min"], list(tones), n=n)
+
+
+def wave_points(data: dict, tones) -> list[tuple[float, float]]:
+    """A wave cam as looking AT the horn (x right, y up), mm, turned so its
+    lowest point is under the follower (+y), where the tip is drawn."""
+    a = math.pi / 2 - _cam_module().valley_angle(list(tones))
+    return [(x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a))
+            for x, y in wave_outline(data, tones)]
+
+
+def tip_cam_clearance(data: dict, L: dict, tones) -> float:
+    """Worst gap between a wave cam and the tip's underside away from the
+    nose -- the plate, then its outer 45 deg chamfer upstream -- over a turn,
+    the nose riding the cam (radial follower)."""
+    import numpy as np
+    R = _cam_module().wave_pitch(L["waveRest"], L["noseR"], L["waveLift"], list(tones))[0]
+    P = np.array(wave_outline(data, tones))
+    worst = 1e9
+    x0, x1 = L["tipXoB"] - L["Xc"], L["tipXd"] - L["Xc"]
+    for phi in np.linspace(0, 2 * np.pi, 721):
+        zb = R(phi) - L["noseR"] + L["noseH"]               # plate bottom over the cam axis
+        a = np.pi / 2 - phi                                  # cam angle phi under +y
+        x = P[:, 0] * np.cos(a) - P[:, 1] * np.sin(a)
+        y = P[:, 0] * np.sin(a) + P[:, 1] * np.cos(a)
+        m = (x <= x1) & (y > 0)
+        under = np.where(x[m] >= x0, zb, zb + (x0 - x[m]))
+        worst = min(worst, float((under - y[m]).min()))
+    return worst
+
+
 def park_clearance(data: dict) -> float:
     """Parked park_deg past each step, how far the cam stays under the
     follower (worst segment): the pad, and upstream of it the web's 45 deg
@@ -309,6 +408,17 @@ def _fs_array(name: str, rows: list) -> str:
     return f"export const {name} = [\n{body}\n];"
 
 
+def _fs_waves(data: dict) -> str:
+    """The kit: WAVES[i] the outline, WAVE_NAMES[i] its part name, WAVE_TIP the
+    cam the tip is drawn on."""
+    kit = data["r"]["wave_kit"]
+    arrays = ",\n".join("    [" + ", ".join(f"vector({x:.4f}, {y:.4f}) * millimeter" for x, y in wave_points(data, c["tones"]))
+                         + "]" for c in kit)
+    names = ", ".join(f'"wave cam {c["name"]}"' for c in kit)
+    return (f"export const WAVES = [\n{arrays}\n];\nexport const WAVE_NAMES = [{names}];\n"
+            f"export const WAVE_TIP = {int(data['r']['wave']['tip_on_n'])};")
+
+
 FS = r'''FeatureScript %VERSION%;
 import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 
@@ -329,6 +439,8 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 %RIG%
 
 %CAM%
+
+%WAVE%
 
 %PCB_HOLES%
 
@@ -567,6 +679,7 @@ export function dropRigBuild(context is Context, id is Id, opt is map) returns m
     const cs = coordSystem(v(L.Xc, L.Yh, L.Zc), -X, -Y);
     const sv = x330Envelope(context, H + "servo", cs);
 
+
     // ---- the board and the sensors (envelopes, not the parts)
     step("pcb");
     const pcb = boxW(context, H + "pcb", v(L.px0, L.py0, L.zPcbBot), v(L.px1, L.py1, L.zPcbTop));
@@ -584,6 +697,48 @@ export function dropRigBuild(context is Context, id is Id, opt is map) returns m
         unite(context, H + ("fsu" ~ i), [body, btn]);
         sensors = append(sensors, v(b[0], b[1], -1 * mm));
     }
+
+    // ---- AHRS mode, drawn before the printed rig and moved RIG.waveOff along Y before the
+    // drop cam exists, so no point query below can find them: the wave cam
+    // on the horn's pins, and the follower tip lifted onto one of its valleys
+    step("wave cam");
+    var wavePts = [];
+    for (var i = 0; i < size(WAVES); i += 1)
+    {
+        const W = P + ("wave" ~ i);
+        const wCollar = cylIn(context, W + "collar", cs, vector(0 * mm, 0 * mm, -L.wellT), vector(0 * mm, 0 * mm, L.camGap + 0.5 * mm), L.collarR);
+        polyPrism(context, W, "prof", toWorld(cs, vector(0 * mm, 0 * mm, L.camGap)), -Y, X, WAVES[i], L.waveT);
+        unite(context, W + "u", [wCollar, qCreatedBy(W + "profExt", EntityType.BODY)]);
+        const wPt = toWorld(cs, vector(L.collarR + 0.5 * mm, 0 * mm, L.camGap + 0.5 * mm));
+        servoMountBuild(context, W + "horn", cs, HORN_OPT, partAt(context, W, wPt));
+        const shift = L.waveOff * Y - i * L.wavePitch * X;
+        opTransform(context, W + "move", { "bodies" : partAt(context, W, wPt), "transform" : transform(shift) });
+        wavePts = append(wavePts, wPt + shift);
+    }
+    step("follower tip");
+    const T = P + "tip";
+    polyPrism(context, T, "outer", v(0 * mm, L.tipYo, 0 * mm), -Y, X,
+              [vector(L.tipXd, L.tipZb), vector(L.tipXd, L.tipZt), vector(L.tipXoT, L.tipZt), vector(L.tipXoB, L.tipZb)],
+              2 * L.tipYo);
+    polyPrism(context, T, "pocket", v(0 * mm, L.tipYi, 0 * mm), -Y, X,
+              [vector(L.padX1 + L.tipFit, L.tipZl), vector(L.tipXi0, L.tipZl),
+               vector(L.tipXi0 - L.tipH - 1 * mm, L.tipZt + 1 * mm), vector(L.padX1 + L.tipFit, L.tipZt + 1 * mm)],
+              2 * L.tipYi);
+    const tipOuter = qCreatedBy(T + "outerExt", EntityType.BODY);
+    cutFrom(context, T + "pocketCut", tipOuter, [qCreatedBy(T + "pocketExt", EntityType.BODY)]);
+    // the nose in (X, Z): straight sides from inside the plate, a round end
+    const zc = L.tipZb - L.noseH + L.noseR;
+    var nose = [vector(L.Xc + L.noseR, L.tipZb + 0.2 * mm), vector(L.Xc + L.noseR, zc)];
+    for (var k = 1; k < 12; k += 1)
+        nose = append(nose, vector(L.Xc + L.noseR * cos(-k * 15 * degree), zc + L.noseR * sin(-k * 15 * degree)));
+    nose = concatenateArrays([nose, [vector(L.Xc - L.noseR, zc), vector(L.Xc - L.noseR, L.tipZb + 0.2 * mm)]]);
+    // from the -Y face (the bed, printed Y+) to just past the cam's +Y face
+    polyPrism(context, T, "nose", v(0 * mm, L.noseYn, 0 * mm), -Y, X, nose, L.noseYn + L.tipYo);
+    unite(context, T + "u", [tipOuter, qCreatedBy(T + "noseExt", EntityType.BODY)]);
+    const tipPt = v(L.Xc - 2 * mm, 0 * mm, L.tipZb + L.tipT / 2);
+    const tipShift = L.waveOff * Y - WAVE_TIP * L.wavePitch * X;
+    opTransform(context, T + "move", { "bodies" : partAt(context, T, tipPt), "transform" : transform(tipShift) });
+    const tipPtM = tipPt + tipShift;
 
     // ---- base: plate, standoffs with M3 pilots
     step("base");
@@ -650,12 +805,15 @@ export function dropRigBuild(context is Context, id is Id, opt is map) returns m
     step("dress");
     const partC  = color(0.62, 0.64, 0.68);
     const movesC = color(0.30, 0.55, 0.85);
-    const parts = [["base", partAt(context, P, basePt), "Z+", Z, partC],
+    var parts = [["base", partAt(context, P, basePt), "Z+", Z, partC],
                    ["back shell", partAt(context, P, backPt), "Y-", -Y, partC],
                    ["cover", partAt(context, P, coverPt), "Y+", Y, partC],
                    ["cam", partAt(context, P, camPt), "Y+", Y, movesC],
                    ["front interface", partAt(context, P + "fi", fiPt), "X+", X, movesC],
-                   ["rear interface", partAt(context, P + "ri", riPt), "X+", X, movesC]];
+                   ["rear interface", partAt(context, P + "ri", riPt), "X+", X, movesC],
+                   ["follower tip", partAt(context, T, tipPtM), "Y+", Y, movesC]];
+    for (var i = 0; i < size(WAVES); i += 1)
+        parts = append(parts, [WAVE_NAMES[i], partAt(context, P + ("wave" ~ i), wavePts[i]), "Y+", Y, movesC]);
     var prints = [];
     for (var n in parts)
     {
@@ -711,6 +869,7 @@ def build_fs(data: dict, fs_version: str = "3044") -> str:
         "%X330%": _fs_map("X330", data["x330"]),
         "%RIG%": _fs_map("RIG", full_layout(data)),
         "%CAM%": _fs_array("CAM", cam_points(data)),
+        "%WAVE%": _fs_waves(data),
         "%PCB_HOLES%": _fs_array("PCB_HOLES", list(zip(pc["holes_x"], pc["holes_y"]))),
         "%BUTTONS%": _fs_array("BUTTONS", list(zip(pc["buttons_x"], pc["buttons_y"]))),
         "%FIXTURE%": _fs_map("FIXTURE", data["joint"]),
@@ -805,7 +964,10 @@ def judge(console: str, data: dict, wheel: str) -> bool:
         ok &= c == 1
         if c != 1:
             print(f"  part {n} is {c} bodies  FAIL")
-    ok &= len(counts) == len(PARTS)
+    want = len(PARTS) - 1 + len(data["r"]["wave_kit"])     # "wave cam" is one per kit cam
+    ok &= len(counts) == want
+    if len(counts) != want:
+        print(f"  {len(counts)} printed parts, want {want}  FAIL")
     colls = [r for r in rows if r[0] == "COLL" and "ABUT" not in r[4]]
     real = [r for r in colls if {canon(r[2]), canon(r[3])} not in INTENDED]
     ok &= not real
@@ -872,6 +1034,10 @@ def report(data: dict) -> str:
                f"  cam back face {L['coverGap']:.2f} mm off the cover's cap; other buttons "
                f"{L['buttonClear']:.1f} mm under the wheels; base {L['bx1'] - L['bx0']:.0f} x "
                f"{L['by1'] - L['by0']:.0f} mm\n"
+               f"  AHRS mode: tip nose {2 * L['noseR']:.2f} wide, {L['noseBelow']:.2f} under the pad; "
+               f"over the cover {L['tipCoverClear']:.2f} (resting), over the wave cams "
+               f">= {L['tipCamClear']:.2f} mm (plate, in use); {len(data['r']['wave_kit'])} cams drawn "
+               f"{L['waveOff']:.0f} mm along Y\n"
                f"  cam centre {L['Xc']:.1f} mm along the arm from the button; bar slot "
                f"{L['barH']:.2f} x {L['barW']:.2f} x {L['slotDepth']:.1f}, its centre "
                f"{L['hTop'] - L['hWall'] - L['barH'] / 2:.2f} mm over the axle")

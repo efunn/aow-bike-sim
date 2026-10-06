@@ -116,3 +116,56 @@ interface:
   follower_margin: {value: 0.00075, source: design}    # past the cam's faces, each side
   # Where the interface NOT on the rig is drawn: this far along +Y.
   spare_offset: {value: 0.150, source: design}
+
+wave:
+  # AHRS mode (drop-release-rig.md, "AHRS mode"): cams with no steps that
+  # shake the arm, the follower TIP below riding them with the wheel held
+  # clear of the sensor. bench/drop_cam.py --tones draws the same profiles.
+  # The nose never lower than lift_min over its resting height (wheel on the
+  # sensor): the wheel stays ~1.65 x (lift - 0.13 offset) mm clear.
+  lift_min: {value: 0.0007, source: design}
+  thickness: {value: 0.005, source: design (as the drop cam)}
+  # The kit is drawn beside the rig: `offset` along Y (away from the servo),
+  # one cam every `pitch` along -X, the tip on the `tip_on`th's valley.
+  offset: {value: -0.100, source: design}
+  pitch: {value: 0.032, source: design}
+  tip_on_n: {value: 3, source: design}
+
+# The cam kit, MILLIMETRES (not scaled by load()): each cam a sum of tones,
+# [lobes per turn, peak to peak at the follower, phase deg]. What each answers
+# (the TM151's tau rose with vibration above ~2 Hz OR rotation, and the AHRS
+# fixture could not give one without the other -- ahrs-fixture.md):
+wave_kit:
+  - {name: blank, tones: []}                  # the control: the servo and gears turn, the arm does not
+  - {name: 1x3.0, tones: [[1, 3.0, 0]]}       # rotation with little acceleration (eccentric)
+  # EQUAL ACCELERATION at any one speed (pp x lobes^2 constant): 4/8/16/32x
+  # the turn rate, each with half the arm rotation of the one before
+  - {name: 4x2.4, tones: [[4, 2.4, 0]]}
+  - {name: 8x0.6, tones: [[8, 0.6, 0]]}
+  - {name: 16x0.15, tones: [[16, 0.15, 0]]}
+  - {name: 32x0.04, tones: [[32, 0.04, 0]]}   # under print accuracy: the AHRS reads the real amplitude
+  # an amplitude ladder at one frequency, with 8x0.6
+  - {name: 8x0.3, tones: [[8, 0.3, 0]]}
+  - {name: 8x1.0, tones: [[8, 1.0, 0]]}
+  # superposition: does tau answer the high band, or the total? The two
+  # tones alone, then together
+  - {name: 3x1.0, tones: [[3, 1.0, 0]]}
+  - {name: 13x0.2, tones: [[13, 0.2, 0]]}
+  - {name: 3x1.0+13x0.2, tones: [[3, 1.0, 0], [13, 0.2, 0]]}
+
+tip:
+  # A jam-on cap over either interface's follower pad: a plate under the pad,
+  # walls up its sides, its downstream face and its 45 deg chamfer, and a
+  # rounded nose (user: ~0.9 wide, rounded bottom) centred over the cam.
+  # Prints Y+ (on its side, -Y face down): the nose's round end is drawn in
+  # the plane.
+  plate: {value: 0.0008, source: design}
+  wall: {value: 0.001, source: design}
+  height: {value: 0.006, source: design}       # walls above the pad face
+  fit: {value: 0.00005, source: GUESS (print fit; jam, or glue)}
+  nose_width: {value: 0.0009, source: design (user)}
+  nose_height: {value: 0.0015, source: design}  # below the plate, round end included
+  # The nose runs the tip's full width on -Y (nothing there) and stops this
+  # far past the cam's +Y face, short of the servo cover: square ends, and
+  # the -Y end on the bed when printed.
+  nose_margin: {value: 0.0001, source: design}

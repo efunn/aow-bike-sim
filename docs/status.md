@@ -66,7 +66,7 @@ rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
 | **Hardware / onboard** | Pi 3 bench proven: tick jitter p99 < 1 ms with four servos energised. 2.4 GHz house wifi (decided: a router, no AP). The SBC that ships: open | Chassis, pack | `pi-bench-bringup.md`, `untethered-setup.md` |
 | **CAD** | Steer printed and print-checked; drive, righting, whole bike designed. Righting links all 6 mm plates, rear chamfered (~103 g printed, uncalibrated). CAD wheelbase 223.5 (the sim keeps 200): righting 0.5 from the drive, front bulkhead 5 from the straight front wheel (user's rules), wings clear the steer sweep; underside electronics and cage switched off, Pi plate on the drive's face; layout settled for now, nothing printed (10-05) | Rework the righting against `cad_bike --fit righting` (user); underside electronics back in (U2D2/power front, AHRS back); the central screw's head seat binds the righting's rear (bridge chamfer on XC430 A); lower the righting (user) | `bike-assembly-design.md`, `cad-onshape-workflow.md` |
 | **Self-righting** | Four-bar built. Linkage options parked (sim, 9.9 V: 537-575 counts vs 643 as built; the diamond, 547, is the lean) | Decision later | `righting-linkage-margin.md`, `righting-servo-model.md` |
-| **Contact bench** | Drop rig built and run (10-03): the cam fires every drop and records each, release-to-impact timed; analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/drop_rig_sim.py`, with `--fit` | The sensor mount's stiffness; the arm's parts weighed | `drop-release-rig.md`, `contact-measurements.yaml` |
+| **Contact bench** | Drop rig built and run (10-03): the cam fires every drop and records each, release-to-impact timed; analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/drop_rig_sim.py`, with `--fit`. AHRS mode drawn (10-06): a jam-on follower tip and an 11-cam wave kit, nothing printed | The sensor epoxied down; the arm's parts weighed; the first AHRS run on the drop cam (one Pi logger still to write) | `drop-release-rig.md`, `contact-measurements.yaml` |
 
 ---
 
@@ -280,7 +280,7 @@ what moved there from this file on 2026-10-02.
 | `mujoco-modeling-decisions.md` | why the model is built as it is |
 | `floors-and-the-contact-model.md` | solref/solimp, **the floor sweep (risk #1) and the contact split** |
 | `aow-contact-approximations.md` | contact surrogates, timestep/mesh |
-| `drop-release-rig.md` | the drop rig, in design |
+| `drop-release-rig.md` | the drop rig, built and run (10-03) |
 | `drivetrain-model.md` | the detailed drivetrain, the P 100 / P 400 question |
 | `steering-design.md` | the steer in CAD and its first print, **and the 09-21 to 09-30 status log** |
 | `drive-design.md` | the rear drive in CAD |

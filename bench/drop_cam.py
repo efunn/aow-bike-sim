@@ -25,6 +25,21 @@ down it. Follower: a small flat with a crisp downstream corner, not a roller.
     python bench/drop_cam.py --drops 2.5 --out bench/drop_cam_single
     python bench/drop_cam.py --drops 1,1,1,1 --out bench/drop_cam_1mm_x4
     python bench/drop_cam.py --explain docs/plans/drop-cam-explained.svg   # the figure
+
+WAVE CAM (--tones, or --lobes N): no steps, for shaking the arm to test the
+AHRS (drop-release-rig.md, "AHRS mode"). The follower's nose rides a smooth
+sum of tones -- N lobes per turn, pp peak to peak each, never lower than
+--lift-min-mm above where
+it rests with the wheel on the sensor -- so the wheel never touches and
+nothing drops. Same follower height and the same envelope as the drop cam
+(the drop cam's tops reach r_dwell + gap + 2 = 15 mm). The follower is a
+ROUNDED NOSE of radius --nose-r-mm, centred over the cam, its lowest point
+--nose-below-mm under the old pad's face (the jam-on tip's); the profile is the
+nose centre's path offset inward by the nose radius. Either direction works.
+
+    python bench/drop_cam.py --lobes 8 --pp-mm 0.8 --out bench/wave_cam_8x08
+    python bench/drop_cam.py --tones 3:1.0,11:0.2:90 --out bench/wave_cam_two_tone
+    python bench/drop_cam.py --tones none --out bench/wave_cam_blank   # the control
 """
 from __future__ import annotations
 
@@ -56,6 +71,122 @@ def profile(r_dwell, gap, drops, dwell_deg, undercut_deg, top_deg=0.0, n=120):
             a = a_ramp + tp * k / 12
             pts.append((top * math.cos(a), top * math.sin(a)))
     return pts                                      # closing edge = the last step face
+
+
+def parse_tones(text):
+    """"8:0.8" or "3:1.0,11:0.2:90" -> [(lobes, pp_mm, phase_deg)]; "none" -> [] (a
+    plain circle: the servo turns, nothing moves)."""
+    if text.strip().lower() in ("", "none", "blank"):
+        return []
+    out = []
+    for part in text.split(","):
+        f = part.split(":")
+        out.append((int(f[0]), float(f[1]), float(f[2]) if len(f) > 2 else 0.0))
+    return out
+
+
+def _lift_terms(tones, a):
+    """The tones' sum s, s', s'' at cam angle a (rad), mm per rad^k."""
+    s = d1 = d2 = 0.0
+    for n, pp, ph in tones:
+        x = n * a + math.radians(ph)
+        s += pp / 2 * (1 - math.cos(x))
+        d1 += pp / 2 * n * math.sin(x)
+        d2 += pp / 2 * n * n * math.cos(x)
+    return s, d1, d2
+
+
+def _grid(tones, n=None):
+    n = n or max(1440, 120 * max((t[0] for t in tones), default=1))
+    return [2 * math.pi * k / n for k in range(n)]
+
+
+def wave_pitch(rest, nose_r, lift_min, tones):
+    """The nose CENTRE's distance from the cam axis, and its first two
+    derivatives, as functions of cam angle: resting nose bottom `rest`, plus
+    the nose radius, plus lift_min, plus the tones shifted so their lowest
+    point is 0."""
+    s0 = min(_lift_terms(tones, a)[0] for a in _grid(tones)) if tones else 0.0
+    base = rest + nose_r + lift_min - s0
+    R = lambda a: base + _lift_terms(tones, a)[0]          # noqa: E731
+    R1 = lambda a: _lift_terms(tones, a)[1]                # noqa: E731
+    R2 = lambda a: _lift_terms(tones, a)[2]                # noqa: E731
+    return R, R1, R2
+
+
+def valley_angle(tones):
+    """The cam angle of the lowest lift (where the follower is drawn)."""
+    if not tones:
+        return 0.0
+    return min(_grid(tones), key=lambda a: _lift_terms(tones, a)[0])
+
+
+def wave_profile(rest, nose_r, lift_min, tones, n=None):
+    """Closed outline [(x, y) mm] of a wave cam for a round-nosed follower: the
+    pitch curve (nose centre) offset inward by the nose radius, along its
+    normal. A single tone with phase 0 has a valley at angle 0."""
+    R, R1, _ = wave_pitch(rest, nose_r, lift_min, tones)
+    pts = []
+    for a in _grid(tones, n):
+        r, dr = R(a), R1(a)
+        tx, ty = dr * math.cos(a) - r * math.sin(a), dr * math.sin(a) + r * math.cos(a)
+        t = math.hypot(tx, ty)
+        nx, ny = ty / t, -tx / t                    # outward normal of a CCW curve
+        pts.append((r * math.cos(a) - nose_r * nx, r * math.sin(a) - nose_r * ny))
+    return pts
+
+
+def wave_report(rest, nose_r, lift_min, tones, fall_ms2, servo_dps, r_follower, r_contact):
+    """Geometry checks and what the cam does to the arm. Returns (lines, ok)."""
+    R, R1, R2 = wave_pitch(rest, nose_r, lift_min, tones)
+    out, ok = [], True
+    rho_min, phi_max, d2_neg, d2_abs, d1_abs = 1e9, 0.0, 0.0, 0.0, 0.0
+    for a in _grid(tones, 7200):
+        r, r1, r2 = R(a), R1(a), R2(a)
+        den = r * r + 2 * r1 * r1 - r * r2
+        if den > 0:                                  # convex: the profile is the pitch less the nose
+            rho_min = min(rho_min, (r * r + r1 * r1) ** 1.5 / den)
+        phi_max = max(phi_max, math.degrees(math.atan2(abs(r1), r)))
+        d2_neg, d2_abs, d1_abs = max(d2_neg, -r2), max(d2_abs, abs(r2)), max(d1_abs, abs(r1))
+    prof = wave_profile(rest, nose_r, lift_min, tones)
+    rmin = min(math.hypot(*q) for q in prof)
+    rmax = max(math.hypot(*q) for q in prof)
+    span = rmax - rmin
+    out.append(f"nose r {nose_r:g} mm; nose {lift_min:g}-{lift_min + span:.2f} mm over rest "
+               f"({r_contact / r_follower * lift_min:.2f}-{r_contact / r_follower * (lift_min + span):.2f}"
+               f" at the contact); cam r {rmin:.2f}-{rmax:.2f} mm")
+    if not tones:
+        out.append("  a plain circle: the servo and its gears run, the arm does not move")
+        return out, True
+    if rho_min - nose_r < 1.0:
+        ok = False
+        out.append(f"  FAIL: the cam curves at {rho_min - nose_r:.2f} mm under the nose (>= 1 "
+                   f"wanted): fewer lobes, less pp, or a smaller nose")
+    else:
+        out.append(f"  tightest convex curve {rho_min - nose_r:.2f} mm at the cam")
+    out.append(f"  steepest pressure angle {phi_max:.1f} deg")
+    if phi_max > 30:
+        ok = False
+        out.append("  FAIL: pressure angle over 30 deg; the follower may jam or chatter")
+    # radial follower: y = R(Omega t), so its acceleration is R'' Omega^2; it
+    # leaves the cam where that pulls DOWN harder than the arm falls
+    rev_sep = math.sqrt(fall_ms2 / (d2_neg * 1e-3)) / (2 * math.pi) if d2_neg > 0 else 1e9
+    rev_max = servo_dps / 360
+    out.append(f"  follower leaves the cam above {rev_sep:.2f} rev/s (falls at {fall_ms2:g} m/s^2); "
+               f"the servo reaches {rev_max:.2f} rev/s at {servo_dps:g} deg/s")
+    tone_hdr = " ".join(f"{n}x" for n, _, _ in tones)
+    out.append(f"  {'rev/s':>6} {'Hz (' + tone_hdr + ')':>18} {'acc pk follower':>16} "
+               f"{'at contact':>11} {'arm rate pk':>12}")
+    for rev in (0.1, 0.25, 0.5, 1.0, 1.5, min(rev_max, 0.97 * rev_sep)):
+        if rev > min(rev_max, 0.97 * rev_sep) + 1e-9:
+            continue
+        w = 2 * math.pi * rev
+        acc = d2_abs * 1e-3 * w * w / 9.81 * 1e3
+        rate = math.degrees(d1_abs / r_follower * w)
+        hz = "/".join(f"{n * rev:.1f}" for n, _, _ in tones)
+        out.append(f"  {rev:6.2f} {hz:>18} {acc:13.1f} mg {acc * r_contact / r_follower:8.1f} mg "
+                   f"{rate:9.1f} deg/s")
+    return out, ok
 
 
 def d_bore(bore, flat, n=48):
@@ -201,7 +332,43 @@ def main() -> None:
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent / "drop_cam"))
     ap.add_argument("--explain", default=None,
                     help="also write the explainer figure here (docs/plans/drop-cam-explained.svg)")
+    w = ap.add_argument_group("wave cam (--tones / --lobes): no steps, shakes the arm for the AHRS")
+    w.add_argument("--tones", default=None,
+                   help='lobes:pp_mm[:phase_deg], comma-separated, e.g. "3:1.0,11:0.2:90"; "none" = a circle')
+    w.add_argument("--lobes", type=int, default=0, help="one tone, shorthand for --tones N:pp")
+    w.add_argument("--pp-mm", type=float, default=0.8, help="with --lobes: peak to peak at the follower")
+    w.add_argument("--lift-min-mm", type=float, default=0.7,
+                   help="lowest nose position over its resting height (wheel clear by this x lever)")
+    w.add_argument("--nose-r-mm", type=float, default=0.45, help="the follower tip's nose radius")
+    w.add_argument("--nose-below-mm", type=float, default=2.3,
+                   help="the nose's lowest point below the old pad's face (the tip: 0.8 plate + 1.5)")
+    w.add_argument("--fall-ms2", type=float, default=5.0,
+                   help="the follower's free fall: the contact's 8.30 m/s^2 (drop_rig_bench.yaml "
+                        "m_eff fit, 10-03) x 124/205")
+    w.add_argument("--servo-dps", type=float, default=618.0, help="XL330-M288 no-load, deg/s")
+    w.add_argument("--r-follower-mm", type=float, default=124.0, help="pivot to follower")
+    w.add_argument("--r-contact-mm", type=float, default=205.0, help="pivot to wheel contact")
     args = ap.parse_args()
+    tones = (parse_tones(args.tones) if args.tones is not None
+             else [(args.lobes, args.pp_mm, 0.0)] if args.lobes else None)
+    if tones is not None:
+        rest = args.r_dwell + args.gap - args.nose_below_mm
+        lines, ok = wave_report(rest, args.nose_r_mm, args.lift_min_mm, tones, args.fall_ms2,
+                                args.servo_dps, args.r_follower_mm, args.r_contact_mm)
+        print("wave cam: " + (", ".join(f"{n} lobes {pp:g} mm pp" + (f" @{ph:g} deg" if ph else "")
+                                        for n, pp, ph in tones) or "plain circle"))
+        print("\n".join(lines))
+        if not ok:
+            raise SystemExit("not written")
+        outlines = [wave_profile(rest, args.nose_r_mm, args.lift_min_mm, tones)]
+        if args.bore:
+            outlines.append(d_bore(args.bore, args.flat))
+        r_max = max(math.hypot(*q) for q in outlines[0])
+        out = Path(args.out)
+        write_svg(out.with_suffix(".svg"), outlines, 2 * r_max)
+        write_dxf(out.with_suffix(".dxf"), outlines)
+        print(f"wrote {out}.svg / .dxf")
+        return
     drops = [float(x) for x in args.drops.split(",")]
     seg = 360.0 / len(drops)
     ramp_deg = seg - args.dwell_deg - args.top_deg
