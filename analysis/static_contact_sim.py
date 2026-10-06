@@ -80,7 +80,8 @@ def _add_front(spec, car, p) -> None:
     fw = p["bike"]["front_wheel"]
     mesh = spec.add_mesh(name="front_tire")
     mesh.uservert = geometry.crowned_wheel_vertices(
-        fw["radius"], fw["width"], fw["crown_radius"], p["sim"]["mesh_segments"]
+        fw["radius"], fw["width"], fw["crown_radius"], p["sim"]["mesh_segments"],
+        shoulder_radius=fw.get("shoulder_radius"),
     ).flatten()
     body = car.add_body(name="front_wheel")
     body.add_joint(name="front_spin", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0])

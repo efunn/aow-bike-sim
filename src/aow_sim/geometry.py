@@ -32,18 +32,54 @@ def crowned_wheel_vertices(
     crown_radius: float,
     segments: int = 32,
     profile_points: int = 9,
+    shoulder_radius: float | None = None,
+    tread_points: int = 33,
 ) -> np.ndarray:
     """Solid of revolution about local Z: a disc with a circular-arc crowned rim.
 
     Cross-section radius at axial offset z: r(z) = radius - crown_radius
     + sqrt(crown_radius^2 - z^2). Requires width/2 <= crown_radius. The convex
     hull closes the flat sides via the two axis points. Returns (N, 3) vertices.
+
+    With `shoulder_radius`, a COMPOUND profile: the tread is an arc of
+    `crown_radius` through `radius` at z = 0, and either side of it a
+    `shoulder_radius` arc, tangent to it, that comes round to vertical at
+    z = +-width/2. `crown_radius` may be inf: a flat tread of width
+    width - 2 x shoulder_radius. Requires shoulder_radius <= width/2 <
+    crown_radius. Both arcs are sampled by ANGLE -- equal steps in z bunch
+    vertices where the arc is flat and leave the steep end one facet -- and
+    the tread with `tread_points`, because its facets ARE the contact: on a
+    shallow crown a coarse polygon is a row of little flats, and the contact
+    point jumps from one to the next.
     """
     half = width / 2
-    if half > crown_radius:
-        raise ValueError("width/2 must be <= crown_radius for a circular-arc crown")
-    z = np.linspace(-half, half, profile_points)
-    r = radius - crown_radius + np.sqrt(crown_radius**2 - z**2)
+    if shoulder_radius is None:
+        if half > crown_radius:
+            raise ValueError("width/2 must be <= crown_radius for a circular-arc crown")
+        z = np.linspace(-half, half, profile_points)
+        r = radius - crown_radius + np.sqrt(crown_radius**2 - z**2)
+    else:
+        rs, rc = shoulder_radius, crown_radius
+        if not 0 < rs <= half < rc:
+            raise ValueError("need 0 < shoulder_radius <= width/2 < crown_radius")
+        if np.isinf(rc):
+            alpha = 0.0
+            tz = np.linspace(-(half - rs), half - rs, tread_points)
+            tr = np.full(tread_points, radius)
+            zc, rc0 = half - rs, radius - rs        # shoulder centre
+        else:
+            # Shoulder centre sits on the crown's radius at alpha, Rc - Rs
+            # from the crown centre; vertical at the sidewall puts it at
+            # z = width/2 - Rs.
+            alpha = np.arcsin((half - rs) / (rc - rs))
+            a = np.linspace(-alpha, alpha, tread_points)
+            tz, tr = rc * np.sin(a), radius - rc + rc * np.cos(a)
+            zc = (rc - rs) * np.sin(alpha)
+            rc0 = radius - rc + (rc - rs) * np.cos(alpha)
+        a = np.linspace(alpha, np.pi / 2, profile_points)[1:]
+        sz, sr = zc + rs * np.sin(a), rc0 + rs * np.cos(a)
+        z = np.concatenate([-sz[::-1], tz, sz])
+        r = np.concatenate([sr[::-1], tr, sr])
     theta = np.linspace(0, 2 * np.pi, segments, endpoint=False)
     rings = [
         np.column_stack([ri * np.cos(theta), ri * np.sin(theta), np.full(segments, zi)])

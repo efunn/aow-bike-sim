@@ -50,6 +50,7 @@ from .control import DriveController, run
 from .control.balance import extract_state
 from .control.linearize import settle_upright
 from .hw.ground import CURRENT_STEP as _CURRENT_STEP
+from . import geometry
 from .params import params_digest
 
 UPRIGHT_LIMIT_DEG = 60.0
@@ -336,6 +337,40 @@ def _ahrs_tau(text: str) -> float:
     return tau
 
 
+# Front tires to A/B against bike_params.yaml's, mm: diameter, width,
+# shoulder radius (None: one arc across the whole width), crown radius.
+FRONT_WHEEL_PRESETS = {
+    "flat": (102.5, 24.0, 7.0, float("inf")),   # the measured tread, rigid
+    "old": (100.0, 28.0, None, 14.0),           # the designed wheel before 2026-10-05
+}
+
+
+def _front_wheel_override(params: dict, spec: str) -> dict:
+    """`params` with bike.front_wheel's shape replaced from `--front-wheel`."""
+    if spec in FRONT_WHEEL_PRESETS:
+        mm = FRONT_WHEEL_PRESETS[spec]
+    else:
+        try:
+            mm = tuple(float(x) for x in spec.split(","))
+        except ValueError:
+            mm = ()
+        if len(mm) != 4:
+            raise SystemExit(f"--front-wheel takes {' or '.join(FRONT_WHEEL_PRESETS)}"
+                             ", or four mm values D,W,SHOULDER,CROWN (CROWN may "
+                             "be inf)")
+    d, w, sh, rc = (None if x is None else x / 1000 for x in mm)
+    try:
+        geometry.crowned_wheel_vertices(d / 2, w, rc, shoulder_radius=sh)
+    except ValueError as e:
+        raise SystemExit(f"--front-wheel {spec}: {e}") from None
+    fw = {k: v for k, v in params["bike"]["front_wheel"].items()
+          if k != "shoulder_radius"}
+    new = {**fw, "radius": d / 2, "width": w, "crown_radius": rc,
+           **({} if sh is None else {"shoulder_radius": sh})}
+    print(f"FRONT WHEEL -> {spec} (in memory)")
+    return {**params, "bike": {**params["bike"], "front_wheel": new}}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--params", default=None)
@@ -604,6 +639,14 @@ def main() -> None:
                          "(bike.steering.headset_friction_*) in memory, for an "
                          "A/B against the plant without it; the gearbox's "
                          "friction stays. Moves plant_digest")
+    ap.add_argument("--front-wheel", default=None,
+                    metavar="flat|old|D,W,SHOULDER,CROWN",
+                    help="override the front tire in memory (bike_params.yaml "
+                         "untouched). 'flat': the measured wheel's tread as a "
+                         "rigid flat; 'old': the designed 100 x 28 mm wheel "
+                         "with a round 14 mm crown. Or four mm values: "
+                         "diameter, width, shoulder radius, tread crown radius "
+                         "(inf = flat). Moves plant_digest")
     args = ap.parse_args()
     if args.ahrs_gate is not None:
         from . import sim_ahrs
@@ -623,6 +666,8 @@ def main() -> None:
             raise SystemExit(f"--{key[8:]} takes {n} comma-separated numbers")
         print(f"CONTACT {key[8:]} {list(params['sim'][key])} -> {value} (in memory)")
         params = {**params, "sim": {**params["sim"], key: value}}
+    if args.front_wheel is not None:
+        params = _front_wheel_override(params, args.front_wheel)
     if args.no_headset:
         print("HEADSET FRICTION off (in memory); the gearbox's stays")
         steering = {k: v for k, v in params["bike"]["steering"].items()
