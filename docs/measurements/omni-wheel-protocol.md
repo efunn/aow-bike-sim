@@ -68,7 +68,7 @@ disagreement with §2–§3 measurements is expected and useful:
    contact on a cone edge instead of its face). Treat that as a diagnostic to
    resolve, not noise to average away.
 4. Calipers measure the wheel unloaded — correct for the rigid-geometry model
-   (contact softness handles TPU squish). Effective rolling radius under load
+   (contact softness handles rubber squish). Effective rolling radius under load
    is separately calibrated in §7 (distance per hub revolution, loaded).
 
 `omni_wheel.outer_radius` in the YAML is the *nominal* radius used for scene
@@ -112,7 +112,7 @@ axles (makes length/gap measurement fuzzy; not modeled), and only ~80% of each
 roller extends beyond the casing, so intact-wheel diameter readings are
 approximate — final diameters come from teardown.
 
-Also note TPU/rubber hardness impression while handling the cones.
+Also note rubber hardness impression while handling the cones.
 
 ## 4. Gear train — count teeth, don't measure angles
 
@@ -208,15 +208,16 @@ so results are compared like-for-like. Do them in this order:
 3. **Servo step/ramp response** — command velocity steps through the belt, log
    encoder velocity → validates/replaces the placeholder `actuators.drive_kv`
    and the torque/speed limits.
-4. **Incline slide test** — place the (unpowered, locked) wheel sideways on a
-   board on your target floor material, tilt until it slides; μ = tan(angle) →
-   `sim.friction_sliding`.
+4. **Friction pull test** — locked wheel, pulled across the target floor
+   with a spring scale at three loads; mu is the slope →
+   `sim.friction_sliding`. Replaced the incline slide (a floor cannot tilt);
+   procedure in `contact-protocol.md` §P0b.
 5. **Whole-bike CoM** — balance the assembled bike on a straightedge in two
    orientations, or put each wheel on a scale and use moment balance →
    cross-checks the component-position bookkeeping in the YAML.
 6. **Loaded rolling radius** — with the wheel bearing roughly its in-bike load,
    roll it exactly one hub revolution and measure distance traveled ÷ 2π. The
-   §1 envelope calipering is unloaded; TPU squish makes the effective radius
+   §1 envelope calipering is unloaded; rubber squish makes the effective radius
    under load slightly smaller. Compare against the sim's rolled distance to
    tune contact softness (`solref`/`solimp`) if the gap matters.
 7. **Contact stiffness and restitution** — the gap in item 6 turned out to

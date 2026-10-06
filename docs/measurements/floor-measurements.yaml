@@ -22,7 +22,7 @@
 # unambiguous, rather than by the raw pair, which is not.
 
 meta:
-  wheel: "rear omni wheel, TPU rollers"
+  wheel: "rear omni wheel, rubber rollers"
   # The whole point of P0 referencing the AXLE: keeps frame flex out of the
   # reading. Note the roll phase too -- the 8-fold envelope ripple is ~0.6 mm of
   # REAL geometry (omni-wheel-protocol.md section 1) and will otherwise be read
@@ -47,11 +47,11 @@ surfaces:
     p0_static:
       unloaded_reference_mm: 0.0
       points: []             # [{load_kg, deflection_mm}], 2-3 of them
-    # --- P0b, incline slide ----------------------------------------------
-    p0b_incline:
-      # BLOCK THE ROTATION or this measures rolling resistance instead.
-      slide_angle_deg: []    # [float] -- repeat trials, keep them all
-      mu_derived: 0.0        # tan(mean angle)
+    # --- P0b, pull test -------------------------------------------------
+    p0b_pull:
+      # LOCK THE WHEEL or this measures rolling resistance instead.
+      pulls: []              # [{wheel, load_g, pull_g, kind: kinetic|static}]
+      mu_derived: 0.0        # slope of pull_g against load_g
     # --- P1, drop rebound -------------------------------------------------
     p1_drop:
       camera_fps: 0
@@ -88,5 +88,5 @@ across_surfaces:
     The sim currently applies ONE contact to every geom -- rear rollers, front
     tire, righting wings, case panels alike (see the plan doc section 4). Until
     that is split per geom, a per-surface number has nowhere to go: MuJoCo
-    combines a contact pair by solmix-weighted average, so "compliant TPU on
+    combines a contact pair by solmix-weighted average, so "compliant rubber on
     rigid wood" cannot be expressed by setting floor and roller separately.

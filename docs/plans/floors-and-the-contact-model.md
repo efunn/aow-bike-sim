@@ -197,7 +197,7 @@ Separate values do not do what they look like they do. Measured 2026-09-09:
 
     floor [0.001, 1.0]  x  roller [0.010, 0.3]  ->  contact [0.0055, 0.65]
 
-An exact average — so *"compliant TPU on rigid wood"* cannot be expressed by
+An exact average — so *"compliant rubber on rigid wood"* cannot be expressed by
 setting the two geoms independently. You get the mean, never the softer one.
 
 `geom_priority` is the knob that does: where two geoms differ in priority, the
@@ -256,25 +256,23 @@ It does not make a per-geom split necessary for the floor work. One global pair
 still models any single surface correctly, and randomizing over measured
 per-surface pairs still needs no split. What it buys is **fidelity**: a rigid
 printed wing striking the ground is no longer forced to have the compliance of a
-TPU roller, and the front tire — whose contact carries the odometry estimator's
+rubber roller, and the front tire — whose contact carries the odometry estimator's
 whole lateral channel — is no longer forced to be the same material as the rear.
 
 ## 5. The per-floor protocol
 
-> **Open question (2026-09-24):** the incline test below needs a board that
-> tilts, which a real floor is not. The draft
-> [pre-assembly-bench-checklist.md](pre-assembly-bench-checklist.md) proposes
-> per-floor alternatives (F1-F3, friction from the drive's traction limit).
-> They are untested; this section stands until one holds up on hardware.
+> **Updated 2026-10-05:** the incline test needed a board that tilts, which a
+> real floor is not. P0b is now a pull test on the floor as it lies (a locked
+> wheel, a spring scale, three loads); see `contact-protocol.md` §P0b.
 
 Per surface, three tests, all from `contact-protocol.md`. None needs printing;
-all need a weight, a caliper, a phone that shoots slow-mo, and a board that
-tilts.
+all need a weight, a caliper, a phone that shoots slow-mo, and a spring
+scale.
 
 | test | gives | notes |
 |---|---|---|
 | **P0** static load-deflection | the stiffness half | 2–3 loads, not one — the contact is not linear. Reference the **axle**, not the tyre crown, to keep frame flex out |
-| **P0b** incline slide | `mu = tan(theta)` | cheapest test in the project. **Block the rotation**, or you measure rolling resistance |
+| **P0b** pull test | `mu` = slope of pull force against wheel load | cheapest test in the project. **Lock the wheel**, or you measure rolling resistance |
 | **P1** drop rebound | the damping half | `e = sqrt(h1/h0)` off a 240 fps clip, on the bare rolling chassis |
 
 Solve P0 and P1 **jointly** per surface, then express the result as

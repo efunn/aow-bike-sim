@@ -35,7 +35,7 @@ everything is written down", below.
 
 | # | do | why now | doc |
 |---|---|---|---|
-| 1 | **Contact calibration**: stiffen the force sensor's mount (resolder or glue) and check it with a rigid-block drop; then the drop rig with added mass at the wheel (front, then rear), a joint `solref` + `solimp` fit with the dial (P0) data, and the P0b incline slide | First rig run (10-03, front, 65 drops): the rig's load path reads ~7-30x softer than the dial says the wheel alone is, and the base rings at ~170-180 Hz -- probably the sensor mount, so fits so far describe the rig, not the tire. MuJoCo's contact is per unit mass (same bounce at any mass), so a fit reaches the bike only through each wheel's effective mass | `drop-release-rig.md`, `contact-protocol.md`, `analysis/drop_rig_sim.py` |
+| 1 | **Contact calibration**: stiffen the force sensor's mount (resolder or glue) and check it with a rigid-block drop; then the drop rig with added mass at the wheel (front, then rear), a joint `solref` + `solimp` fit with the dial (P0) data, and the P0b pull test and tread print (friction) | First rig run (10-03, front, 65 drops): the rig's load path reads ~7-30x softer than the dial says the wheel alone is, and the base rings at ~170-180 Hz -- probably the sensor mount, so fits so far describe the rig, not the tire. MuJoCo's contact is per unit mass (same bounce at any mass), so a fit reaches the bike only through each wheel's effective mass | `drop-release-rig.md`, `contact-protocol.md`, `analysis/drop_rig_sim.py` |
 | 2 | **Print the rear drive and the righting module**, then the chassis | Held until the steer print settled the shared fits; the bushing and end-play results are in (09-30) | `drive-design.md`, `righting-design.md`, `bike-assembly-design.md` |
 | 3 | **Finish the drivetrain station**: firmware Velocity P and I, the D5 torque-scale check, fit the five drivetrain `GUESS`es | The sim cannot pick the gain (policies tie at P 100 / P 400; P 400 buzzes ~3x harder). Decide on the bike | `drivetrain-model.md`, `drivetrain-measurements.yaml` |
 | 4 | **Sim: the eval score's directional gate** | `_score` is still `survive_rate x track_geo`; a policy that abandons a direction outranks good ones. Risk #2 | `eval-score-rewrite.md` |
@@ -179,7 +179,7 @@ parameter change (the `CLAUDE.md` checklist).
 | `payload.electronics.mass` | 0.076 kg | written for a Zero 2 W stack; the bench runs a Pi 3 | a scale |
 | `payload.battery.mass` | 0.115 kg | no pack yet | the pack |
 | `contact_solimp` | MuJoCo stock | hand drops: the real contact is softer at first touch and stiffer at peak than any `solref` gives | the drop rig + bench fit |
-| `friction_sliding` | 0.9 | nothing | P0b incline slide |
+| `friction_sliding` | 0.9 | nothing | P0b pull test |
 | `friction_torsional` | 0.005 | deferred; the risk is setting it high | later |
 | `drivetrain_model.roller_slop.centring_stiffness` / `.damping` | 1e-3 / 2.9e-5 | the only damping of a roller inside its +-7.8 deg play; set near critical (zeta 0.95). **Sensitivity, 2026-10-02** (`analysis/slop_sensitivity.py`, eval grid): stiffness x0.1, or the slop removed, moves `smooth_temporal` by <= 0.005 (noise floor 0.000); **stiffness x10 drops it 0.818 -> 0.598**, 2 falls. Damping x0.1 / x10 does nothing to it, but `drivetrain_p100_1` (a chaotic grid: x1.01 changes which commands fall) loses 0.21 at damping x10. The hand note "springs back, not every time" points SOFT, the harmless side | qualitative first: does a released roller snap back (stiff) or drift / stick (soft)? A slow-mo release only if stiff |
 | `righting_sign` | +1 | a build decision; the render only | mounting the motor |
@@ -248,7 +248,7 @@ Outstanding with the bench fit: the `contact_solimp` comment in
 2. **A third of training runs drive backwards when told forward**, and the
    score cannot see it (12 seeds, 09-10). Item 4 above
    (`seed-sweep-and-personalities.md`).
-3. **The front tire and the wings still have a TPU roller's compliance.** A
+3. **The front tire and the wings still have a rubber roller's compliance.** A
    one-line `sim.contact_parts` edit now, not a refactor.
 4. **Authority derating.** The torque scale is still the datasheet's
    1.6 N m; D5 or servo-strength randomisation covers it.

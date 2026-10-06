@@ -141,9 +141,9 @@ section_7_calibration:                   # wheel-only testbed experiments, in pr
     fitted_drive_kv: 0.0                 # float
     observed_max_speed_rad_s: 0.0        # float
     observed_stall_torque_Nm: 0.0        # float
-  incline_slide:
+  friction_pull:                         # contact-protocol P0b; raw pulls go in contact-measurements.yaml
     floor_material: ""                   # str
-    slide_angle_deg: 0.0                 # float -> mu = tan(angle)
+    mu: 0.0                              # float -- slope of pull force against wheel load
   whole_bike_com:
     method: ""                           # str — balance line / scale + moments
     com_pos_mm: [0.0, 0.0, 0.0]          # [float, float, float] — chassis frame

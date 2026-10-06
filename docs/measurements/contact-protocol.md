@@ -191,52 +191,91 @@ Method notes:
 - Note the roll phase used, and prefer a repeatable one (single roller in
   contact). Phase is a real confound here, worth §P2 on its own.
 
-### P0b — Incline slide angle → the friction coefficient
+### P0b — Pull test → the friction coefficient; tread print → torsional
 
-> **Open question (2026-09-24):** a floor does not tilt, so this test cannot
-> run on real floors as written. A PROPOSED alternative, untested, is
-> friction from the drive's own traction limit: see "F3" in the draft
-> [pre-assembly-bench-checklist.md](../plans/pre-assembly-bench-checklist.md).
-> This procedure stands until something replaces it on hardware.
+> **A rough plan, not a spec (rewritten 2026-10-05).** The rig gets built and
+> recorded first; details here follow it. Record what the rig actually was
+> alongside the numbers, and fix this section afterwards.
 
-**The cheapest test in this document**: a board that tilts and a phone
-protractor. It calibrates `sim.friction_sliding`, and it is independent of P0
-and P1 — normal and tangential are orthogonal, so do them in either order.
+It calibrates `sim.friction_sliding` (0.9, GUESS) and estimates
+`friction_torsional` (0.005, GUESS). It is independent of P0 and P1: normal
+and tangential directions are orthogonal, so do them in any order.
 
-Rest the wheel on the target surface, tilt slowly until it slides, read the
-angle. `mu = tan(theta)`. The shipped 0.9 corresponds to 42°.
+**Replaces the incline slide.** The incline (`mu = tan(theta)`) needs a board
+that tilts, which a real floor is not. A pull runs on the floor as it lies.
 
-| measured angle | implied `friction_sliding` |
-|---|---|
-| 25° | 0.47 |
-| 31° | 0.60 |
-| 37° | 0.75 |
-| 42° | **0.90 — the shipped guess** |
-| 50° | 1.19 |
-| 55° | 1.43 |
-| 60° | 1.73 |
-| 63° | 1.96 |
+**Setup.**
+- The drop rig's wheel mount, wheel **locked**: front through the spokes,
+  rear by tightening the axle. A wheel free to roll measures rolling
+  resistance instead. That is the one way to get a confidently wrong answer.
+- On the rear, the rollers are not locked, only held by the differential's
+  detent (`drivetrain_model.detent`). Observed: the material slides before the detent
+  lets go. So the rolling direction is clean, and the roller slop does not
+  enter it, because a pull along the tire drags each roller along its own
+  axis.
+- Weight added over the wheel. Light blocks either side keep the rig upright.
+  They **guard, they do not hold**: if the rig leans on a block during a pull,
+  that block's friction is in the reading.
+- **Normal force: the whole weighted rig on a kitchen scale, wheel only on
+  the scale**, blocks off it, in the same stance as the pull. That reading is
+  what the wheel presses into the floor.
+- **Pull force: a hand spring scale** (2 kg), pulled slowly, horizontally and
+  low (axle height or below), along the tire.
 
-Method notes:
-- **Block the rotation.** A wheel free to roll will roll, and you will measure
-  rolling resistance instead. Wedge the hub, or test a single roller offcut,
-  or lay the wheel on its side so no roller can turn. This is the one way to
-  get a confidently wrong answer here.
-- Slide is what counts, not tip. Check the block is not toppling.
-- Read the angle at the moment motion STARTS (static mu). Then, if you can,
-  find the angle at which it keeps sliding once nudged (kinetic mu); MuJoCo
-  has only one coefficient, so if the two differ materially, prefer kinetic —
-  the contact spends its time sliding, not breaking away.
-- Repeat 5x and take the spread, not one reading. This test is noisy and the
-  spread is what sets `randomization.friction_frac`.
-- Same surface as P0/P1, and clean. TPU picks up dust and its mu falls.
+**Loads and repeats.**
+- Three loads on the wheel: about 0.3, 0.6 and 1.0 kg. The model's bike is
+  ~1.0 kg, so roughly 0.5 kg a wheel (computed, not weighed); these bracket
+  it. Under ~1.5 kg, the 2 kg scale reaches mu 1.3.
+- 3-5 pulls at each.
+- Read the **steady value while sliding** (kinetic). The breakaway peak
+  (static) is hard to catch by eye, so film the scale if you want it.
+  MuJoCo has one coefficient; if the two differ, prefer kinetic, because the
+  contact spends its time sliding, not breaking away.
+- Same surface as P0/P1, and clean. Rubber picks up dust and its mu falls.
 
-**Torsional friction** (`friction_torsional`, 0.005) has no equivalent
-one-liner. It resists spin about the contact normal and scales with patch
-size. If it is worth measuring: hold the bike upright and stationary, apply a
-measured torque about the vertical through the rear contact, find the torque
-at which the wheel starts to twist in place. Low priority — see the measured
-sensitivity below, where the risk is setting it too HIGH, not too low.
+**Analysis: mu is the SLOPE of pull force against wheel load**, not one
+ratio.
+- A constant drag (a block brushing, the scale's own friction) lands in the
+  intercept and drops out.
+- If the three points curve, grip depends on load. MuJoCo assumes it does
+  not, so that is a finding.
+- The spread across pulls sets `randomization.friction_frac`, currently 0.2
+  about 0.9. So every policy in `moves/` has seen only mu 0.72-1.08.
+- A 2 kg spring scale reads to ~20-50 g. At 1 kg that is +-0.02-0.05 in mu.
+
+**Directions.**
+- **Rolling direction only, both wheels.** A sideways pull tips a single
+  wheel: its contact is millimetres wide. A block that catches it then takes
+  part of the pull, and the scale over-reads.
+- MuJoCo cannot use a sideways number anyway. A contact `<pair>` takes two
+  tangential frictions, but checked on MuJoCo 3.10 (a box on a plane, 0.2 and
+  1.0, pushed at mu 0.6): the two directions stay on the floor's x and y
+  axes at box yaw 0, 45 and 90 deg. A bike that turns would swap its forward
+  and sideways grip. Wheel-relative anisotropy would need a custom contact.
+- **Front tire, leaned (optional).** The patch moves from the 10 mm flat
+  tread onto the shoulder as the wheel leans; `crown_radius` is a GUESS. A
+  pull or a print at a measured lean angle is worth having even if the rig is
+  finicky to set at an angle. Record the angle with it.
+
+**Torsional friction, from a tread print.**
+- In MuJoCo `friction_torsional` is a LENGTH. The contact resists spin up to
+  `friction_torsional` x normal force. Checked on a sphere at condim 4: 0.8x
+  that torque creeps at ~1 rad/s, 1.2x spins it up to ~30.
+- For a patch of equivalent radius a: about (2/3) mu a with even pressure,
+  or (3 pi / 16) mu a, about 0.59 mu a, with Hertz-like pressure.
+- **Measure a.** Ink or chalk the tread, set the weighted rig down on paper
+  at each of the three loads, and measure the print. Then
+  a = sqrt(area / pi). Take mu from the pull.
+- **Estimate before measuring:** front tire, 10 mm flat on a 51.25 mm
+  radius, sinking 0.05-0.13 mm (dial, 2026-10-01). That gives a patch about
+  6 x 10 mm, a ~ 4.4 mm, and **~0.0026 m at mu 0.9**, against the shipped
+  0.005. The rear sits on one or two rollers, so its patch, and its value,
+  should come out smaller.
+- **Why not measure the twisting torque directly:** at 0.5 kg it is about
+  0.013 N.m. On a 0.2 m lever that is a ~7 g pull, under a spring scale's
+  resolution.
+- Low priority either way. The risk is setting it too HIGH, not too low (see
+  below).
 
 #### Why this one matters, measured 2026-08-22
 
@@ -337,12 +376,12 @@ Only if the bike is meant to run on something other than hard flat floor.
 Note the mixing rule before designing this test: MuJoCo combines a contact
 pair by **`solmix`-weighted average**, verified 2026-08-08 — floor `[0.001,
 1.0]` against roller `[0.010, 0.3]` yields a contact of `[0.0055, 0.65]`. So
-"compliant TPU on rigid wood" *cannot* be expressed by setting the two geoms
+"compliant rubber on rigid wood" *cannot* be expressed by setting the two geoms
 independently; you get the average, not the softer one. To make the roller
 dominate, raise `geom_solmix` on the roller geoms.
 
-For now this does not matter: essentially all the compliance is the TPU, so a
-single global pair calibrated from a TPU-on-wood test **is** the material
+For now this does not matter: essentially all the compliance is the rubber, so a
+single global pair calibrated from a rubber-on-wood test **is** the material
 value. Splitting only earns its keep when the surface changes.
 
 ---
@@ -352,8 +391,7 @@ value. Splitting only earns its keep when the surface changes.
 1. Put raw readings in `contact-measurements.yaml`.
 2. Read the matching `timeconst` / `dampratio` off the tables above, or re-run
    `analysis/contact_calibration.py` with your load and drop height. For P0b
-   the conversion is just `mu = tan(theta)`; the table is there to save you
-   the arithmetic.
+   mu is the slope of pull force against wheel load.
 3. Update `sim.contact_solref` and/or `sim.friction_sliding` in
    `config/bike_params.yaml`, and change the friction `source:` off `GUESS`.
 4. Regenerate the deploy bundle — it is pinned to a params digest and
