@@ -54,10 +54,14 @@ stack:
   clearance: {value: 0.2, source: GUESS (axial running clearance over a boss)}
   boss_ring: {value: 2.5, source: design}       # ring's radial width outside a rod hole
   shoulder_ring_inset: {value: 0.3, source: design}   # the crank shoulder's ring, inside its rim
-  web: {value: 6.0, source: design}             # crank web AND the rocker arm beside it
-  hub_zone: {value: 8.0, source: design}        # rocker hub + ear + crank shoulder
+  # With wing.joint outboard every moving part is one 6 mm plate along Y
+  # (user, 2026-10-05: "rockers, half-crank, and knuckles should be able to
+  # fit in ~6mm each ... similar to the couplers"): the crank web carries its
+  # shoulder, the rocker its ear and boss, and hub_zone is unused.
+  web: {value: 6.0, source: design}             # crank web AND the rocker (arm, ear, boss) beside it
+  hub_zone: {value: 8.0, source: design}        # wing.joint hub_zone only: rocker hub + ear + crank shoulder
   bulkhead: {value: 10.0, source: design}       # = the crank journal's bearing length
-  knuckle: {value: 12.0, source: design}
+  knuckle: {value: 6.0, source: design}         # was 12; the 6-32's head sits 4.6 deep, 1.4 pocket
 
 crank:
   journal_dia: {value: 14.0, source: design (= steering headset shaft)}
@@ -73,12 +77,23 @@ wing:
   # case's 13.2) at the full rise.
   knee_deg: {value: -10.0, source: design}      # right wing, at rest, from +X toward +Z
   knee_r: {value: 20.0, source: design}
-  panel_thickness: {value: 6.0, source: design (= the sim's panel)}
+  # 5 (2026-10-05), was 6 "(= the sim's panel)": the synthesis holds the
+  # panel's LINE 2.5 outside its keep-out (swing_linkage `_keepouts`, the
+  # linkage file's wing_width_mm 5.0, its only use of a thickness). At 6,
+  # centred, the inner face sat 0.5 inside the 35 core, 0.3 from drive
+  # pulley L at the worst pose (user: "use the 5mm that it uses").
+  panel_thickness: {value: 5.0, source: design (= the synthesis's wing_width_mm)}
   boss_from_foot: {value: 6.0, source: design}  # along the panel from its foot
   boss_length: {value: 20.0, source: design}
   boss_depth: {value: 10.0, source: design}     # off the panel's inner face
   tab: {value: 6.0, source: design}             # the panel's tab, along Y: = the web plane; nut + 1.0 wall
-  panel_back: {value: 50.0, source: design}     # how far aft of the mid-plane the right panel runs
+  # How far the panels run from the mid-plane: wing L's FRONT end (and wing
+  # R's, 6.6 behind it, as it is shifted back to its knuckle). 41, was 50
+  # (2026-10-05): the wings stay clear of the front tyre's whole steer sweep
+  # at every pose with the axle 80 ahead of the rod, 2 to spare
+  # (`cad_bike.wing_front_room`; user: "the wing can be fully clear of the
+  # front wheel"). The panels are 77 long, were 86.
+  panel_back: {value: 41.0, source: design}
   # Where the RIGHT wing's second knuckle goes (user, 2026-09-30):
   #   front  -- beyond the front bearing, the L knuckle's twin turned 180 deg
   #             (the first design: every L part is its R turned)
@@ -89,6 +104,19 @@ wing:
   # The drive is asymmetric: its left pulley sits low, its right one high, so
   # under the drive the right side has the room for both knuckles.
   knuckle_r: {value: rear, source: design (user)}
+  # Where the rocker meets the wing (user, 2026-09-30 / 10-05):
+  #   hub_zone -- the first design: the rocker's ear and boss in an 8 mm
+  #               layer outside the web, the wing's tab in the web plane
+  #               beside the arm; the rocker 14 thick in all
+  #   outboard -- the rocker one plate in the web plane; the wing's tab
+  #               past it in Y, beside the bulkhead (the wing is outboard of
+  #               the frame), the 6-32 from the coupler side
+  joint: {value: outboard, source: design (user)}
+  # Which side of each knuckle the wing's tab sits (user, 2026-10-05):
+  #   outer -- beyond the knuckle, at the module's rear (the first design)
+  #   inner -- toward the mid-plane, beside the lower case, as the
+  #            rocker-side tab sits beside the bulkhead
+  knuckle_tab: {value: inner, source: design (user)}
 
 cases:
   # As aow-bike-steering's, whose lower/upper XC330 cases these are.
@@ -118,15 +146,46 @@ cases:
   # joints' depth (2 mm under the interface, 3 thick) would cut 1 mm into the
   # servo. So for `central` the top grows by this, and the bridge with it.
   top_extra: {value: 2.0, source: design}
+  # 45 deg chamfer on the case's -Y +Z edge (user, 2026-10-05): dead space
+  # under the drive's sloping case sides, which came within 1.8 of it at
+  # the bike's 150 (`cad_bike --fit 2`, TIGHT rows). Bounded by the wall over
+  # the servo's top-rear corner. CHECK the cap's connector access by eye.
+  # The central joint's place and its nut slot (user, 2026-10-05): moved
+  # forward of "just behind the lower case" by uc_joint_dy, the nut partly
+  # over the lower case in a relief in its top (1.0 wall left over the servo,
+  # the same as the upper case's), and the slot turned along Y, out
+  # through the case's rear face (`rear`; `across` = along X, the first).
+  # 0 again (user, 2026-10-05): forward, the lower case's undercut blocks
+  # the nut and the screw below it. The turned slot stays.
+  uc_joint_dy: {value: 0.0, source: design (user)}
+  uc_nut_slot: {value: rear, source: design (user)}
+  rear_chamfer: {value: 7.0, source: design}   # the most with the joint behind the lower case (8 meets its ridge)
 
 frame:
   rod_boss_r: {value: 9.0, source: design}
   journal_boss_r: {value: 10.5, source: design}
   web_half: {value: 8.0, source: design}
   top_half: {value: 16.0, source: design}       # the bulkheads' top band; inside the drive pulleys (was 18)
-  bridge_half: {value: 16.0, source: design}    # inside the drive pulleys' inner faces (|x| 17); was 23 for the ears (22.05)
+  # 14.75 (2026-10-05 evening), was 16: 1.25 inside the drive case sides'
+  # fixture tabs (inner faces at |x| 16.0), whose 45 deg lower edges came
+  # down onto the bridge's rear corners (user: "only like 1-1.5mm extra").
+  # Was 23 for the ears (22.05).
+  bridge_half: {value: 14.75, source: design}
+  # length, half-width of the bridge's narrower rear end (user, 2026-10-05):
+  # the drive case sides' skirts wrap the XC430s at |x| 12 and came down
+  # over the bridge's rear corners; 11.5 passes 0.5 inside them. The
+  # central joint's ridge shortens to stay inside it.
+  bridge_rear: {value: [10.0, 11.5], source: design (user)}
   top_band: {value: 20.0, source: design}
   bridge: {value: 8.0, source: design}
+  # leg, |x| from which: the bridge's rear-top edge at 45 deg (user,
+  # 2026-10-05). Case side R came within 0.75 of that corner at |x| 14 at
+  # the bike's 150. Inside |x| 5 the leg is the most that keeps the central
+  # screw's head seat whole: through its counterbore, not into the seat.
+  # 7 = the bridge less 1.
+  # [7, 0] (evening): ONE full-width chamfer at the seat's limit (4.6 here);
+  # the deeper outboard step bought no clearance (user)
+  bridge_chamfer: {value: [7.0, 0.0], source: design}
 
 chassis:
   # The attachment to the (TBD) chassis: nut slots + ridges on the bridge's top
@@ -136,7 +195,10 @@ chassis:
   # with the righting tucked under the drive the drive block's wedge stands
   # on the deck over y -55..-38 here -- a screw there would be buried under
   # it. The plate stops 3 mm past the rear joint's groove.
-  joints_y: {value: [0.0, -30.0], source: design}
+  # [8, -8] (2026-10-05), was [0, -30]: with the righting at 150 in the
+  # bike, -30 lands under the drive block's wedge too. +-8 keeps 10.5 to the
+  # bridge's own screws (jF/jR at +-18.5) and both ahead of the wedge.
+  joints_y: {value: [8.0, -8.0], source: design}
   ridge_half: {value: 6.0, source: design}      # was 10, with the shorter plate
   plate_half: {value: 16.0, source: design}     # inside the drive pulleys (was 25): it is the bike's deck there
 

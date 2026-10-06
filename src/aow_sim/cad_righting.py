@@ -275,7 +275,11 @@ def layout(data: dict) -> dict:
     Y["cpl_out"] = Y["cpl_in"] + st["coupler"]
     Y["web_in"] = Y["cpl_out"] + gb
     Y["web_out"] = Y["web_in"] + st["web"]
-    Y["hz_out"] = Y["web_out"] + st["hub_zone"]
+    # the wing joint OUTBOARD (user, 2026-10-05): the rocker is one plate in
+    # the web plane, its boss included, and the wing's tab sits past it in Y,
+    # beside the bulkhead. No hub zone then: the crank's shoulder is its web.
+    outb = wg["joint"] == "outboard"
+    Y["hz_out"] = Y["web_out"] + (0.0 if outb else st["hub_zone"])
     Y["bh_in"] = Y["hz_out"] + gb
     Y["bh_out"] = Y["bh_in"] + st["bulkhead"]
     Y["kn_in"] = Y["bh_out"] + gb
@@ -293,7 +297,8 @@ def layout(data: dict) -> dict:
     Y["jn_end"] = Y["bh_out"] + ck["journal_proud"]
     Y["hub_front"] = Y["jn_end"] + cp["hub_gap"]           # the hub's socket face
     Y["horn_face"] = Y["hub_front"] + hb["thickness"]
-    Y["tab_out"] = Y["web_out"] - wg["tab"]                # rocker-side tab, into the web plane
+    # rocker-side tab: into the web plane (hub_zone), or past it (outboard)
+    Y["tab_out"] = Y["web_out"] + (wg["tab"] if outb else -wg["tab"])
 
     rr = rd["dia"] / 2
     hub_r = rr + rd["boss_wall"]
@@ -310,7 +315,8 @@ def layout(data: dict) -> dict:
     # the rocker-side tab sits in the web plane beside the rocker arm; its
     # inner corner is as far out as the couplers reach, so it must not run on
     # into their plane
-    need(Y["tab_out"] >= Y["web_in"] - 1e-9, "the panel's rocker-side tab runs into the coupler plane")
+    need(outb or Y["tab_out"] >= Y["web_in"] - 1e-9, "the panel's rocker-side tab runs into the coupler plane")
+    need(not outb or st["web"] - jn["joint_plate"] >= 0.0, "the web is thinner than the joint plate under the head")
     # the head is in the boss, so the nut sits 2 mm past the joint plane, in the tab
     need(wg["tab"] - 2.0 - sc["nutSlotThickness"] >= wall, "the tab leaves no wall past the nut")
     screw = on_panel((u0 + u1) / 2, (n0 + n1) / 2)
@@ -348,7 +354,7 @@ def layout(data: dict) -> dict:
     lugs = [radial_bar(C, 45 + 90 * k, lug0, lug1, cp["lug_width"] / 2, -lug_tip, -Y["jn_end"])
             for k in range(4)]
     crank_base = [slot(C, pin, ck["shoulder_dia"] / 2, hub_r, *wy),
-                  cyl(C, -Y["hz_out"], -Y["web_out"], ck["shoulder_dia"] / 2),
+                  *([] if outb else [cyl(C, -Y["hz_out"], -Y["web_out"], ck["shoulder_dia"] / 2)]),
                   cyl(C, -Y["hz_out"] - bz, -Y["hz_out"], ck["shoulder_dia"] / 2 - st["shoulder_ring_inset"]),
                   cyl(C, -Y["jn_end"], -Y["hz_out"], jr)]
     part("crankR", "half crank R", "crank", [0, -1, 0], crank_base + lugs,
@@ -364,12 +370,26 @@ def layout(data: dict) -> dict:
     # the rocker's ear runs STRAIGHT from the coupler joint to the boss: the
     # knuckle's dog-leg is only there to pass under the servo cases, and
     # nothing inside the bay asks for it
-    rocker_hz = [slot(O, J, hub_r, hub_r, *hz), slot(J, ear_end, hub_r, ehw, *hz), prism(boss, *hz)]
-    part("rockerR", "rocker R", "wR", [0, 1, 0],
-         rocker_hz + [slot(O, J, hub_r, hub_r, *wy)],
-         [cyl(O, hz[0] - 1, wy[1] + 1, rr), cyl(J, hz[0] - 1, wy[1] + 1, rr)],
-         anchor=xyz(J / 2, (hz[0] + hz[1]) / 2),
-         note="Print the hub-zone face down: the arm stands on its own shadow. Rod: ream to run; pin: to press.")
+    if outb:
+        part("rockerR", "rocker R", "wR", [0, 1, 0],
+             [slot(O, J, hub_r, hub_r, *wy), slot(J, ear_end, hub_r, ehw, *wy), prism(boss, *wy)],
+             [cyl(O, wy[0] - 1, wy[1] + 1, rr), cyl(J, wy[0] - 1, wy[1] + 1, rr)],
+             anchor=xyz(J / 2, (wy[0] + wy[1]) / 2),
+             note="One plate in the web plane: hub, arm, ear and the wing's boss. The 6-32 goes in from "
+                  "the coupler side into the wing's tab beyond. Rod: ream to run; pin: to press.")
+    else:
+        rocker_hz = [slot(O, J, hub_r, hub_r, *hz), slot(J, ear_end, hub_r, ehw, *hz), prism(boss, *hz)]
+        part("rockerR", "rocker R", "wR", [0, 1, 0],
+             rocker_hz + [slot(O, J, hub_r, hub_r, *wy)],
+             [cyl(O, hz[0] - 1, wy[1] + 1, rr), cyl(J, hz[0] - 1, wy[1] + 1, rr)],
+             anchor=xyz(J / 2, (hz[0] + hz[1]) / 2),
+             note="Print the hub-zone face down: the arm stands on its own shadow. Rod: ream to run; pin: to press.")
+    tab_y = sorted((-Y["web_out"], -Y["tab_out"]))           # the wing's rocker-side tab
+    # the knuckle-side tab: outside the knuckle (the first design) or inside
+    # it, toward the mid-plane, beside the lower case (user, 2026-10-05:
+    # `wing.knuckle_tab: inner`), as the rocker-side tab sits beside the bulkhead
+    kt_in = wg["knuckle_tab"] == "inner"
+    kn_tab = (Y["kn_in"] - wg["tab"], Y["kn_in"]) if kt_in else (Y["kn_out"], Y["kn_out"] + wg["tab"])
     kn = (Y["kn_in"], Y["kn_out"])
     part("knuckleR", "knuckle R", "wR", [0, -1, 0],
          [slot(O, knee, hub_r, ehw, *kn), slot(knee, ear_end, ehw, ehw, *kn), prism(boss, *kn),
@@ -381,8 +401,8 @@ def layout(data: dict) -> dict:
               "to run. Print the ringed face up.")
     part("wingR", "wing R", "wR", list(np.array([n_in[0], 0, n_in[1]])),
          [prism(panel_q, -wg["panel_back"], Y["kn_out"] + wg["tab"]),
-          prism(boss, -Y["web_out"], -Y["tab_out"]),
-          prism(boss, Y["kn_out"], Y["kn_out"] + wg["tab"])],
+          prism(boss, *tab_y),
+          prism(boss, *kn_tab)],
          anchor=xyz(on_panel(50.0, 0.0), 0.0),
          note="Print the outer face down. A 6-32 along Y into each tab from its boss; the nut goes in first.")
     part("rpinR", "rocker pin R", "wR", None, [cyl(J, hz[0], -Y["cpl_in"], rr)],
@@ -422,8 +442,9 @@ def layout(data: dict) -> dict:
                               "part. Rod: ream to run. Print the ringed face up.")
             elif q["slug"] == "wingR":
                 q["add"] = [prism(panel_q, p0, p0 + span),
-                            prism(boss, -Y["web_out"], -Y["tab_out"]),
-                            prism(boss, p0, -Y["kr_out"])]
+                            prism(boss, *tab_y),
+                            prism(boss, -Y["kr_in"], -Y["kr_in"] + wg["tab"]) if kt_in
+                            else prism(boss, p0, -Y["kr_out"])]
                 q["anchor"] = xyz(on_panel(50.0, 0.0), p0 + span / 2)
             elif q["slug"] in ("knuckleL", "wingL"):
                 q["mirror"], q["twin"] = q["twin"], None    # same volume, not the same solid
@@ -505,7 +526,18 @@ def layout(data: dict) -> dict:
         nut_wall = Zb - 2.0 - sc["nutSlotThickness"] - (C[1] + xc["caseHeight"] - xc["shaftFromEnd"]) \
             - t["caseSideClearance"]
         need(nut_wall >= wall - 1e-6, f"the upper case's nut slot leaves {nut_wall:.2f} mm over the servo")
-        y_uc = lc_back - 0.5 - sc["nutSlotWidth"] / 2
+        # forward of its first place (just behind the lower case) by
+        # uc_joint_dy (user, 2026-10-05): the nut then sits partly over the
+        # lower case, in a relief in its top, still under the upper case's
+        # pad, which it pulls up against. The relief leaves the lower case
+        # the same wall over the servo as the upper case has (nut_wall).
+        nw = sc["nutSlotWidth"]
+        y_uc = lc_back - 0.5 - nw / 2 + cs["uc_joint_dy"]
+        need(y_uc + nw / 2 <= lc_back + 6.8 - wall, "the upper case's nut runs out from under its pad")
+        z_nut = Zb - 2.0 - sc["nutSlotThickness"]
+        if y_uc + nw / 2 > lc_back - 0.5:
+            lc_part = next(q for q in parts if q["slug"] == "lowercase")
+            lc_part["cut"].append(box([-nw / 2, lc_back - 1.0, z_nut], [nw / 2, y_uc + nw / 2 + 0.2, Zb]))
     else:
         need(cs["ear_y0"] > winFar, "the upper case's ears reach down to the cable window")
         need(ear_z1 < wallTop, "the upper case's ears run forward onto the lower case")
@@ -518,8 +550,24 @@ def layout(data: dict) -> dict:
                        [yH + zBack, C[1] + winNear]], -botOuter - 1.0, botOuter + 1.0),
               lbox([slotIn, winNear, upTopZ - 1.0], [botOuter + 1.0, winFar, zBack + 0.1]),
               lbox([-botOuter - 1.0, winNear, upTopZ - 1.0], [-slotIn, winFar, zBack + 0.1])]
+    # the -Y +Z edge, 45 deg (user, 2026-10-05): dead space under the drive's
+    # sloping case sides, which come down onto exactly that corner
+    rc_ = cs["rear_chamfer"]
+    if rc_ > 0:
+        need(central, "cases.rear_chamfer is drawn for uc_joint central only")
+        y_r, z_t = yH + upTopZ, Zb
+        # the servo's cavity corner, top-rear, must keep a wall
+        v = (C[1] + far_l) - (yH + zBack - t["caseFaceClearance"])
+        wall_left = ((z_t - rc_ - y_r) - v) / math.sqrt(2)
+        need(wall_left >= wall, f"the upper case's rear chamfer leaves {wall_left:.2f} mm over the servo")
+        if central:
+            rib = y_uc - (jn["ridge_flat"] / 2 + jn["ridge_height"])
+            need(y_r + rc_ < rib - 0.5, "the upper case's rear chamfer runs into the central joint's ridge")
+        uc_cut.append(prism_x([[y_r - 1.0, z_t - rc_ - 1.0], [y_r - 1.0, z_t + 1.0], [y_r + rc_ + 1.0, z_t + 1.0]],
+                              -botOuter - 1.0, botOuter + 1.0))
     if central:
-        uc_anchor = [-(botOuter - 1.0), yH + upTopZ + 1.0, (Zb0 + Zb) / 2]
+        # a point in the top pad, forward of the rear chamfer
+        uc_anchor = [-(botOuter - 1.0), yH + upTopZ + 1.0 + (rc_ + 0.5 if rc_ > 0 else 0.0), (Zb0 + Zb) / 2]
         uc_note = "The XC330's back half, one 6-32 up into the bridge. Connectors plug in through the cap."
     else:
         uc_anchor = W(-(ear_x + 3.0), cs["ear_y0"] + 3.0, (upTopZ + ear_z1) / 2)
@@ -566,8 +614,52 @@ def layout(data: dict) -> dict:
     else:
         y_back = yH + upTopZ
         need(fr["bridge_half"] >= ear1 + 0.5, "the bridge is narrower than the upper case's ears")
-    part("bridge", "bridge", "fixed", [0, 0, 1],
-         [box([-fr["bridge_half"], y_back, Zb], [fr["bridge_half"], Y["bh_out"], Zb + bt])],
+    # the rear-top edge chamfered outboard of the central screw's head, where
+    # the drive's case sides come down on it (user, 2026-10-05)
+    # In the middle (|x| < bx0) it may run THROUGH the central screw's
+    # counterbore, which is long, but not into the head's seat (user,
+    # 2026-10-05): the largest leg that keeps the seat whole, 0.3 to spare.
+    bc_, bx0 = fr["bridge_chamfer"]
+    br_cut = []
+    L_mid = 0.0
+    if bc_ > 0:
+        need(bc_ <= bt - 1.0, "the bridge's chamfer takes its whole rear end")
+
+        def tri(c):
+            return [[y_back - 1.0, Zb + bt - c - 1.0], [y_back - 1.0, Zb + bt + 1.0], [y_back + c + 1.0, Zb + bt + 1.0]]
+
+        def groove_ok(c):
+            # the groove for the upper case's ridge, under the bridge's rear end
+            gy = y_uc - (jn["ridge_flat"] / 2 + jn["ridge_height"]) - jn["ridge_clearance"]
+            gz = Zb + jn["ridge_height"] + jn["ridge_clearance"]
+            return (Zb + bt - c) + (gy - y_back) - gz >= wall
+
+        if central:
+            need(bx0 <= 0 or bx0 >= sc["headDia"] / 2 + wall, "the bridge's outboard chamfer reaches the central screw's head")
+            need(groove_ok(bc_), "the bridge's chamfer comes down onto the groove for the upper case's ridge")
+            # the plane at the head's rear edge must stay over the seat (head z = Zb + jp)
+            seat_y = y_uc - sc["headDia"] / 2
+            L_mid = min(bc_, (Zb + bt) + (seat_y - y_back) - (Zb + jp) - 0.3)
+            need(L_mid > 0 and groove_ok(L_mid), "no room for the bridge's middle chamfer")
+            if bx0 <= 0:
+                # ONE chamfer, full width, at the seat's limit (user, 2026-10-05:
+                # the deeper outboard step bought no clearance)
+                br_cut = [prism_x(tri(L_mid), -fr["bridge_half"] - 1.0, fr["bridge_half"] + 1.0)]
+            else:
+                br_cut = [prism_x(tri(L_mid), -bx0 - 0.5, bx0 + 0.5)]
+        if not (central and bx0 <= 0):
+            br_cut += [prism_x(tri(bc_), bx0, fr["bridge_half"] + 1.0), prism_x(tri(bc_), -fr["bridge_half"] - 1.0, -bx0)]
+    # its rear end narrower, to pass under the drive case sides' skirts in
+    # the bike (|x| 12; user, 2026-10-05: "the last 10mm ... <24mm")
+    rl_, rh_ = fr["bridge_rear"]
+    if rl_ > 0:
+        need(rh_ < fr["bridge_half"], "the bridge's rear end is no narrower than the bridge")
+        need(rh_ >= sc["headDia"] / 2 + wall, "the bridge's rear end is narrower than the central screw's head")
+        br_add = [box([-fr["bridge_half"], y_back + rl_, Zb], [fr["bridge_half"], Y["bh_out"], Zb + bt]),
+                  box([-rh_, y_back, Zb], [rh_, y_back + rl_ + 0.5, Zb + bt])]
+    else:
+        br_add = [box([-fr["bridge_half"], y_back, Zb], [fr["bridge_half"], Y["bh_out"], Zb + bt])]
+    part("bridge", "bridge", "fixed", [0, 0, 1], br_add, br_cut,
          anchor=[fr["bridge_half"] - 3.0, 12.0, Zb + 2.0],
          note="Ties the front bulkhead, lower and upper cases. Top face: the chassis joints.")
     ph = ch["plate_half"]
@@ -607,9 +699,20 @@ def layout(data: dict) -> dict:
     # the ears' nut slots run along Y: vertical as the case prints, and clear
     # of the case's own top wall (along X they would cut straight through it)
     if central:
-        # the slot runs along X out through both of the case's side walls
-        joint("jU", [0, y_uc, Zb + jp], down, X3, bt - jp, "bridge", "uppercase", True, X3,
-              botOuter - 3.0, Z3, Y3)
+        # the ridge along X, inside the bridge's (narrower) rear end with a wall
+        ju_ridge = botOuter - 3.0
+        if fr["bridge_rear"][0] > 0:
+            ju_ridge = min(ju_ridge, fr["bridge_rear"][1] - jn["ridge_clearance"] - wall)
+        if cs["uc_nut_slot"] == "rear":
+            # turned 90 deg (user, 2026-10-05): along Y, out through the
+            # case's rear face -- its print bed, so open at the bottom as
+            # it prints, as the bearings' slots are
+            joint("jU", [0, y_uc, Zb + jp], down, [0, -1, 0], bt - jp, "bridge", "uppercase", True, X3,
+                  ju_ridge, Z3, Y3, slot_len=y_uc - (yH + upTopZ) + 1.0)
+        else:
+            # the slot runs along X out through both of the case's side walls
+            joint("jU", [0, y_uc, Zb + jp], down, X3, bt - jp, "bridge", "uppercase", True, X3,
+                  ju_ridge, Z3, Y3)
     else:
         for sx, tag in ((1, "jU0"), (-1, "jU1")):
             joint(tag, [sx * ear_x, yH + (upTopZ + ear_z1) / 2, Zb + jp], down, Y3, bt - jp, "bridge",
@@ -625,8 +728,11 @@ def layout(data: dict) -> dict:
     wv = [w[0], 0.0, w[1]]
     niv = [n_in[0], 0.0, n_in[1]]
     s3 = [screw[0], 0.0, screw[1]]
-    for tag, jplane, dirn, far, part_slug in (("jWR", -Y["web_out"], 1, -Y["hz_out"], "rockerR"),
-                                              ("jKR", Y["kn_out"], 1, Y["kn_in"], "knuckleR")):
+    # outboard: the head in the rocker's plate, the screw out (-Y) into the tab
+    jw = (-1, -Y["web_in"]) if outb else (1, -Y["hz_out"])
+    for tag, jplane, dirn, far, part_slug in (("jWR", -Y["web_out"], jw[0], jw[1], "rockerR"),
+                                              ("jKR", Y["kn_in"], -1, Y["kn_out"], "knuckleR") if kt_in
+                                              else ("jKR", Y["kn_out"], 1, Y["kn_in"], "knuckleR")):
         head = [s3[0], jplane - dirn * jp, s3[2]]
         pocket = abs(head[1] - far)
         up = [0, 1, 0] if part_slug == "rockerR" else [0, -1, 0]
@@ -639,9 +745,16 @@ def layout(data: dict) -> dict:
         # knuckle R behind: head in it 4.6 from its back face, the screw
         # running back into the wing's tab
         joints[:] = [j for j in joints if j["tag"] != "jKR"]
-        head = [s3[0], -Y["kr_out"] + jp, s3[2]]
-        joint("jKR", head, [0, -1, 0], wv, abs(head[1] + Y["kr_in"]), "knuckleR", "wingR", False,
-              wv, 0.0, [0, 1, 0], niv, ridge=False)
+        if kt_in:
+            # its tab inside it (toward the mid-plane): head 4.6 from its
+            # front face, the screw running forward into the tab
+            head = [s3[0], -Y["kr_in"] - jp, s3[2]]
+            joint("jKR", head, [0, 1, 0], wv, abs(head[1] + Y["kr_out"]), "knuckleR", "wingR", False,
+                  wv, 0.0, [0, 1, 0], niv, ridge=False)
+        else:
+            head = [s3[0], -Y["kr_out"] + jp, s3[2]]
+            joint("jKR", head, [0, -1, 0], wv, abs(head[1] + Y["kr_in"]), "knuckleR", "wingR", False,
+                  wv, 0.0, [0, 1, 0], niv, ridge=False)
 
     for p in parts:
         p["bbox"] = bbox(p["add"]) if p["add"] else None
@@ -1148,7 +1261,8 @@ def check_wrapper(fs: str) -> str:
         println("BODY|" ~ name(b) ~ "|" ~ toString(bb.minCorner[0] / mm) ~ "|" ~ toString(bb.minCorner[1] / mm)
                 ~ "|" ~ toString(bb.minCorner[2] / mm) ~ "|" ~ toString(bb.maxCorner[0] / mm) ~ "|"
                 ~ toString(bb.maxCorner[1] / mm) ~ "|" ~ toString(bb.maxCorner[2] / mm) ~ "|"
-                ~ toString(evVolume(context, {{ "entities" : b }}) / (mm * mm * mm)));
+                ~ toString(evVolume(context, {{ "entities" : b }}) / (mm * mm * mm)) ~ "|"
+                ~ toString(evArea(context, {{ "entities" : qOwnedByBody(b, EntityType.FACE) }}) / (mm * mm)));
     }}
     for (var i = 0; i + 1 < size(all); i += 1)
         for (var c in evCollision(context, {{ "tools" : all[i], "targets" : qUnion(subArray(all, i + 1, size(all))) }}))
@@ -1198,8 +1312,11 @@ def judge(console: str, L: dict, data: dict) -> bool:
         ok = False
         print(f"  {len(strays)} UNNAMED bodies -- a cutter left behind  FAIL")
     bad = 0
+    areas = {}
     for r in bodies:
         vols[r[1]] = float(r[8])
+        if len(r) > 9:                       # checks before 2026-10-05 carried no area
+            areas[r[1]] = float(r[9])
         p = by_name.get(r[1])
         if p is None or r[1] not in PURE:
             continue
@@ -1241,8 +1358,12 @@ def judge(console: str, L: dict, data: dict) -> bool:
     dens = data["s"]["materials"]
     asa = sum(v for n, v in vols.items() if n in by_name and by_name[n]["kind"] == "print")
     steel = sum(v for n, v in vols.items() if n in by_name and by_name[n]["kind"] == "steel")
-    print(f"  mass, solid: ASA {asa * dens['asa'] / 1000:.1f} g, steel {steel * dens['steel'] / 1000:.1f} g "
-          f"(no servo, screws or chassis plate)")
+    if areas:
+        pr = sum(sm.printed_mass(v, areas[n], density=dens["asa"]) for n, v in vols.items()
+                 if n in by_name and by_name[n]["kind"] == "print")
+        print(f"  mass, ~printed (2 perimeters, 15 % infill, UNCALIBRATED): ASA ~{pr:.0f} g; "
+              f"steel {steel * dens['steel'] / 1000:.1f} g (no servo, screws or chassis plate)")
+    print(f"  (ASA if it were solid: {asa * dens['asa'] / 1000:.1f} g -- nothing prints solid)")
     for r in rows:
         if r[0] == "BED":
             over = sorted((x for x in rows if x[0] == "OVER" and x[1] == r[1]), key=lambda o: -float(o[2]))

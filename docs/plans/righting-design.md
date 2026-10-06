@@ -196,9 +196,137 @@ Changes, each a config switch so the first design stays one edit away:
 `--check`: 24 bodies, 0 interference at rest and over 10 poses, the
 mirrored pairs equal in volume. ASA 269.5 g solid (was 297.3). Tests 11.
 
+## Every moving link one 6 mm plate (2026-10-05, user)
+
+"Rockers, half-crank, and knuckles should be able to fit in ~6mm each
+only the y-axis (similar to the couplers)" (user). This is the outboard wing
+joint from Outstanding, `wing.joint: outboard` (`hub_zone` is the first
+design):
+
+- **The rocker is one plate in the web plane:** hub, arm, ear and the
+  wing's boss. The wing's rocker-side tab moves past it in Y, beside the
+  bulkhead (the wing is outboard of the frame). The 6-32 goes in from the
+  coupler side: head 4.6 deep in the rocker, nut in the tab.
+- **The hub zone is gone.** The crank's shoulder is its web, with the
+  thrust ring on the bulkhead side.
+- **Knuckles 6** (`stack.knuckle`, was 12): the head 4.6 deep, a 1.4 pocket.
+- **Chassis joints at y +8 / -8** (were 0 / -30): at 150 in the bike, -30
+  lands under the drive block's wedge too. +-8 keeps 10.5 to the bridge's
+  own screws at +-18.5.
+
+| along Y from the mid-plane, each side | mm (was) |
+|---|---|
+| couplers | 0.3–6.3 |
+| crank web / rocker plate | 6.9–12.9 |
+| wing's rocker-side tab, outboard of the bulkhead | 12.9–18.9 |
+| bearing: front bulkhead / lower case front wall | 13.5–23.5 (21.5–31.5) |
+| knuckle L / knuckle R behind it | 24.1–30.1 / 30.7–36.7 (32.1–44.1 / 44.7–56.7) |
+| rear: journal end 24.0, horn face 29.7 | (32.0, 37.7) |
+
+So the module is 8 shorter at the front and the servo 8 further forward;
+the knuckles save another 12 behind it.
+
+**Checked before Onshape, by a planar sweep** of the parts' own primitives:
+XZ outlines per Y slab, holes subtracted, every pair of groups, 110 poses.
+The script is scratch (shapely is not a dependency here). The crank web and
+the rocker's arm, ear and boss share a plane and come no closer than 4.47.
+That matches the 4.5 the old arm had, which is how the sweep was trusted.
+The wing tabs stay over 8 from the frame.
+
+`--check`: 24 bodies, 0 interference at rest and over 10 poses, pins exact,
+0 flat crowns / hanging edges. Tests 12 (one new: every moving link is one
+layer thick).
+
+**Mass as printed, ~105 g ASA** (2 perimeters, 15 % infill: skin 0.9 over
+the area plus 15 % of the rest, UNCALIBRATED). The two wings, placeholder
+panels, are ~52 of it. Nothing prints solid (user); solid it would be 222
+(270 before). The estimate came from the parts' outlines, whose solid total
+matches Onshape's less the upper case. From the next `--check` the judge
+prints the printed figure itself: the body rows carry the area now, and
+`printed_mass` moved to `cad_servo_mount` for both generators.
+
+## Rear chamfers and shorter wings (2026-10-05 pm, user)
+
+For the whole bike (`bike-assembly-design.md`, sixth pass):
+
+- **`cases.rear_chamfer` 7:** 45 deg on the upper case's -Y +Z edge, the
+  corner the drive's case sides come down onto ("mostly dead space
+  supporting the attachment to the bridge", user).
+  - 7 is the most with the joint behind the lower case: 8 meets the
+    joint's ridge.
+  - NOT CHECKED: the cap's connector access, by eye.
+- **`frame.bridge_chamfer` [7, 0]:** the bridge's rear-top edge, ONE
+  full-width chamfer at the most that keeps the central screw's head seat
+  whole: 4.6, through the counterbore and 0.3 over the seat (user: "the
+  chamfer can intersect the counterbore"). `[7, 5]` would put a 7 step
+  outboard of |x| 5, which buys 1.75 in the bike under the drive case side's
+  skirt.
+- **`frame.bridge_half` 14.75** (was 16), and **`frame.bridge_rear`
+  [10, 11.5]**: its last 10 mm +-11.5, to pass under the drive case sides'
+  skirts (|x| 12) in the bike. The central joint's ridge shortens to fit
+  (10.35, was 11.05).
+- **The central screw's slot turned along Y** (`uc_nut_slot: rear`,
+  user), out through the case's rear face, its print bed. The case's
+  chamfer crosses the slot's open end: the check's one hanging edge, a 6.55
+  bridge, accepted. `uc_joint_dy` moves the joint forward with a relief in
+  the lower case's top, but stays 0: in 3D the lower case's undercut blocks
+  the nut and the screw below it (user).
+- **`wing.knuckle_tab: inner`** (user): each wing's knuckle tab on the
+  knuckle's +Y side, beside the lower case, the screw's head in the
+  knuckle 4.6 from its far face. (`outer` = the first design.)
+- **`wing.panel_thickness` 5** (was 6): the synthesis's own
+  `wing_width_mm`. It holds the panel's LINE 2.5 outside its keep-out
+  (`swing_linkage._keepouts`; the only place it uses a thickness). At 6,
+  centred, the inner face sat 0.5 inside the 35 core, and that was the
+  whole of wing L's clash with drive pulley L in the bike.
+- **`wing.panel_back` 50 -> 41:** the wings end 9 shorter at the front (77
+  long), clear of the front tyre's steer sweep at every pose with the axle
+  80 ahead of the rod. They are still mirrors.
+- **The servo stays at the rear,** better for its cables (user).
+- **What binds the module's rear in the bike now:** the bridge's middle
+  over the central screw, against the drive's XC430 A.
+
+`--check`: 24 bodies, 0 interference over 10 poses, mirrors equal, 0 flat
+crowns, 1 hanging edge (the slot bridge above). ~103 g printed
+(uncalibrated; Onshape's areas now).
+
+## Fitting the whole bike: the constraints to keep (2026-10-05)
+
+The layout is settled for now and nothing is printed (user). The righting
+will still be reworked before it prints, "without messing up the whole bike
+fit". The bike rebuilds this module from its generator every time, so an
+edit here reaches `aow-bike-whole` by itself. What it must keep:
+
+| rule | now | set by |
+|---|---|---|
+| 0.5 to the drive, at rest AND every pose (`placement.rear_clear`) | 0.50 at the bike's 143.5 | the bridge's middle chamfer (4.6, held by the central screw's head seat) on XC430 A; the narrowed rear end passes the case sides' skirts at 0.5 |
+| the module less its wings 5 from the straight front wheel (`front_clear`) | 5.25 | the front bulkhead (y 23.5) |
+| the wings clear the front tyre's whole steer sweep, every pose, 2 spare (`wing_margin`) | L 2.6 / R 9.2 spare | `wing.panel_back` 41 |
+| the bridge's last 10 under the drive case sides' skirts (\|x\| 12) | +-11.5 | `frame.bridge_rear` |
+| the deck (the chassis plate's top) is what the Pi's plate stops 1 over | module z 68.2 | `chassis`, `frame.bridge` |
+| a wing's panel inside the synthesis's keep-out (35 core + half its width) | `panel_thickness` 5 = `wing_width_mm` | the linkage file |
+
+**After an edit:**
+
+    pytest -m cad                                  # free: generators, the wing sweep rule
+    python -m aow_sim.cad_righting --check         # 1 call: the module itself
+    python -m aow_sim.cad_bike --fit righting      # 1 call: does it still fit the bike?
+
+`--fit righting` runs the pose-aware 0.5 scan from 1.75 ahead of the
+station and the front-wheel distance, and prints FITS or what binds. It
+also gives the room either way: how far the righting could go back now.
+`cad_bike` prints a NOTE whenever the righting no longer matches
+`placement.righting_digest`, which it was last fitted against.
+
+Measured ceiling: with the central screw gone altogether (bridge chamfer
+7, case 8.5) the module would go back to 142.0, 1.5 better
+(`traces/bike_cad/fit2_no_central_screw.txt`). Moving that screw, +Y or
+otherwise, buys at most that. Lowering the mechanism is the larger lever.
+
 ## Outstanding
 
-- **Expected next: shrink the stack (user, 2026-09-30).** The axial stack and
+- **Shrink the stack: the 6 mm plates are DONE (2026-10-05), lowering is not.**
+  Notes from 2026-09-30, kept for the lowering: The axial stack and
   the mechanism's height set the bike's wheelbase
   (`bike-assembly-design.md`, Outstanding). Keep the bulkhead's 10 (the
   journal's bearing length) and the couplers' 6 (user).

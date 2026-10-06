@@ -1940,3 +1940,20 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------- printed mass
+# Nothing here prints solid (user): 2 perimeters, 15 % infill. Shared by the
+# generators' checks (cad_bike, cad_righting).
+SKIN = 0.9          # mm: 2 perimeters x ~0.45, and ~4-5 top/bottom layers at 0.2 -- UNCALIBRATED
+INFILL = 0.15
+
+
+def printed_mass(vol_mm3: float, area_mm2: float, skin: float = SKIN, infill: float = INFILL,
+                 density: float = 1.07) -> float:
+    """Grams as sliced: a skin of `skin` over the whole surface, sparse infill
+    inside it. A back-of-the-envelope figure, not a slicer's: it ignores the
+    skin doubling up at edges and thin walls printing solid beyond the cap
+    below. Calibrate `skin` against a printed part on a scale."""
+    shell = min(vol_mm3, area_mm2 * skin)
+    return (shell + infill * (vol_mm3 - shell)) / 1000 * density

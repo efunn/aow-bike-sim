@@ -75,7 +75,29 @@ def test_the_stack_opens_every_bossed_gap_to_boss_plus_clearance(data, L):
     assert Y["bh_in"] - Y["hz_out"] == pytest.approx(gb)
     assert Y["kn_in"] - Y["bh_out"] == pytest.approx(gb)
     order = ["cpl_in", "cpl_out", "web_in", "web_out", "hz_out", "bh_in", "bh_out", "kn_in", "kn_out", "rod"]
-    assert all(Y[a] < Y[b] for a, b in zip(order, order[1:]))
+    assert all(Y[a] <= Y[b] for a, b in zip(order, order[1:]))      # hz_out = web_out when outboard
+    assert all(Y[a] < Y[b] for a, b in zip(order, order[1:]) if (a, b) != ("web_out", "hz_out"))
+
+
+def test_outboard_joint_makes_every_moving_link_one_plate(data, L):
+    """wing.joint outboard (user, 2026-10-05): crank web, rocker and knuckles
+    are each one stack layer thick along Y, as the couplers are; the wing's
+    rocker-side tab sits past the rocker, not beside it."""
+    assert data["s"]["wing"]["joint"] == "outboard"
+    st, Y = data["s"]["stack"], L["Y"]
+    gb = st["boss"] + st["clearance"]
+    for slug, t in (("rockerR", st["web"]), ("crankR", st["web"]), ("couplerR", st["coupler"]),
+                    ("knuckleL", st["knuckle"]), ("knuckleR", st["knuckle"])):
+        p = part(L, slug)
+        # the plate itself, without a thrust ring (gb thin) or the crank's journal and lugs
+        ys = [(q["y0"], q["y1"]) for q in p["add"]
+              if q["k"] == "slot" or (q["k"] == "prism" and slug != "crankR")]
+        assert {round(b - a, 6) for a, b in ys} == {t}, slug
+    assert st["knuckle"] == pytest.approx(6.0)
+    assert Y["hz_out"] == Y["web_out"]
+    tab = [q for q in part(L, "wingR")["add"] if q["k"] == "prism"][1]
+    assert (tab["y0"], tab["y1"]) == pytest.approx((-Y["web_out"] - data["s"]["wing"]["tab"], -Y["web_out"]))
+    assert Y["bh_in"] - Y["web_out"] == pytest.approx(gb)
 
 
 def test_the_washer_is_four_numbers(tmp_path, data, L):
@@ -125,15 +147,20 @@ def test_the_left_parts_are_the_right_ones_turned(L):
 
 
 def test_the_bearing_nut_slots_are_blind_the_rest_run_through(L):
-    """The front bulkhead's and lower case's slots run along Y and stop, out
-    through the face each part prints on (user); every other slot runs through."""
+    """The front bulkhead's, lower case's and upper case's slots run along Y
+    and stop, out through the face each part prints on (user); every other
+    slot runs through."""
     js = {j["tag"]: j for j in L["RG"]["joints"]}
     for tag, part_up in (("jF", -1.0), ("jR", -1.0)):
         j = js[tag]
         assert not j["through"] and j["slot"] == [0.0, 1.0, 0.0]
         half = (L["Y"]["bh_out"] - L["Y"]["bh_in"]) / 2
         assert j["slotLen"] > half                          # it reaches the face
-    assert all(j["through"] for t, j in js.items() if t not in ("jF", "jR"))
+    # the upper case's, turned along Y (2026-10-05): out through its rear
+    # face, its bed as it prints cap-down
+    ju = js["jU"]
+    assert not ju["through"] and ju["slot"] == [0.0, -1.0, 0.0] and part(L, "uppercase")["up"] == [0.0, 1.0, 0.0]
+    assert all(j["through"] for t, j in js.items() if t not in ("jF", "jR", "jU"))
     # front bulkhead prints inner face up, so its slot leaves by the outer face
     # (+Y, its bed); the lower case prints inner face down (bed at +Y too)
     assert part(L, "bulkheadF")["up"] == [0.0, -1.0, 0.0]
