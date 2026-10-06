@@ -101,8 +101,11 @@ def test_the_split_did_not_move_the_plant_digest():
         95630b212f03ffc4  2026-10-02  righting.wings.min_pinion_radius out of
                           bike_params.yaml (a constant of the retired geared
                           wings, build_model.MIN_PINION_RADIUS); no physics
+        12d9639e3ce90f36  2026-10-05  bike.front_wheel: the measured wheel,
+                          102.5 x 24 mm, 7 mm shoulders, the flat tread as
+                          an 80 mm crown (was a designed 100 x 28 mm wheel)
     """
-    assert plant_digest(load_params()) == "95630b212f03ffc4"
+    assert plant_digest(load_params()) == "12d9639e3ce90f36"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

@@ -273,11 +273,17 @@ def identify_lateral_model(
     return A, B, r2
 
 
-def _weights(cfg, n_state: int = N_STATE) -> tuple[np.ndarray, np.ndarray]:
+def _weights(cfg, n_state: int = N_STATE,
+             standstill: bool = False) -> tuple[np.ndarray, np.ndarray]:
+    """Q, R. `standstill` swaps in `q_steer_standstill` (when set) for the
+    v = 0 designs; the gain schedule interpolates it away by the next grid
+    speed."""
+    q_steer = (cfg.get("q_steer_standstill", cfg["q_steer"]) if standstill
+               else cfg["q_steer"])
     q = [
-        cfg["q_ypos"], cfg["q_roll"], cfg["q_yaw"], cfg["q_steer"],
+        cfg["q_ypos"], cfg["q_roll"], cfg["q_yaw"], q_steer,
         cfg["q_yvel"], cfg["q_roll_rate"],
-        cfg.get("q_yaw_rate", 0.2 * cfg["q_yaw"]), 0.1 * cfg["q_steer"],
+        cfg.get("q_yaw_rate", 0.2 * cfg["q_yaw"]), 0.1 * q_steer,
         cfg.get("q_crawl_rate", 0.01), cfg.get("q_crawl_lag", 0.01),
     ]
     Q = np.diag(q[:n_state])
@@ -424,7 +430,7 @@ def design_lqr(params: dict, model: mujoco.MjModel, v: float = 0.0,
     Designed on `design_plant`'s ideal-drive twin when params carry the
     detailed drivetrain."""
     params, model = design_plant(params, model)
-    Q, R = _weights(params["control"]["lqr"], n_state)
+    Q, R = _weights(params["control"]["lqr"], n_state, standstill=v == 0.0)
     with _undelayed(model):
         eq = settle_rolling(model, params, v)
         A, B, r2 = identify_lateral_model(params, model, eq, n_state=n_state)
@@ -450,9 +456,9 @@ def design_gain_schedule(params: dict, model: mujoco.MjModel):
     params, model = design_plant(params, model)
     grid = sorted(params["control"]["drive"]["speed_grid"])
     speeds = sorted({-v for v in grid} | set(grid))
-    Q, R = _weights(params["control"]["lqr"])
     Ks, r2s = [], []
     for v in speeds:
+        Q, R = _weights(params["control"]["lqr"], standstill=v == 0.0)
         with _undelayed(model):
             eq = settle_rolling(model, params, v)
             A, B, r2 = identify_lateral_model(params, model, eq)

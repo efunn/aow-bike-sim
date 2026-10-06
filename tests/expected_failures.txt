@@ -145,13 +145,24 @@ tests/test_drive.py::test_command_heading[-1.2-90.0-6.0]   # 2026-09-30 headset 
 # fixes nothing. Which cases are red shifts with how each test steps between
 # its run() segments, so the family is the finding, not the list. Accepted
 # by the user ("fine for now"): the LQR is the reference baseline.
+# stop_from_circle and pivot_completes_upright[90] left 2026-10-05, green on
+# the new front wheel; the family shifting, not a fix aimed at them.
 tests/test_balance.py::test_tilt_recovery[lqr]                # 2026-10-02 detailed drivetrain: wobbles (tail roll RMS > 1 deg)
 tests/test_drive.py::test_command_heading[0.0-90.0-6.0]       # 2026-10-02 detailed drivetrain: misses heading
-tests/test_drive.py::test_stop_from_circle                    # 2026-10-02 detailed drivetrain: does not settle after stopping
 tests/test_drive.py::test_straight_sprint[-0.5-0.1]           # 2026-10-02 detailed drivetrain: falls reversing
 tests/test_pivot.py::test_pivot_completes_upright[-90.0]      # 2026-10-02 detailed drivetrain: heading error past bound
 tests/test_pivot.py::test_pivot_completes_upright[180.0]      # 2026-10-02 detailed drivetrain: heading error past bound
-tests/test_pivot.py::test_pivot_completes_upright[90.0]       # 2026-10-02 detailed drivetrain: heading error past bound
+
+# 2026-10-05 THE NEW FRONT WHEEL (80 mm crown; mujoco-modeling-decisions.md).
+# Standstill fixed by q_steer_standstill; at speed nothing tried helped
+# (lqr-baseline.md). Registered pending the user's sign-off.
+tests/test_balance.py::test_push_recovery[lqr]             # 2026-10-05 new front wheel: does not recover a 2 N x 0.1 s push
+tests/test_drive.py::test_circle_tracks[-1]                # 2026-10-05 new front wheel: R0.8 circle, radius err 0.44
+tests/test_drive.py::test_command_heading[0.8-180.0-6.0]   # 2026-10-05 new front wheel: falls turning at 0.8 m/s
+tests/test_drive.py::test_command_heading[0.8-90.0-5.0]    # 2026-10-05 new front wheel: falls turning at 0.8 m/s
+tests/test_drive.py::test_follow_command_drives_the_analytic_controller_like_the_station_does  # 2026-10-05 new front wheel: falls in the 90 deg heading change
+tests/test_drive.py::test_straight_sprint[0.8-0.1]         # 2026-10-05 new front wheel: upright, cross-track 0.149 > 0.10
+tests/test_pivot.py::test_pivot_with_wound_steer           # 2026-10-05 new front wheel: heading error 8.1 deg > 5
 
 # ---------------------------------------------------------------------------
 # THE STEER SERVO AS THE FIRMWARE RUNS IT, no cases now. Registered 2026-09-21
@@ -236,3 +247,7 @@ tests/test_pivot.py::test_pivot_completes_upright[90.0]       # 2026-10-02 detai
 # entry stays so that, when it IS run, a policy that clears it reads
 # UNEXPECTEDLY GREEN. 2026-09-29: 10 of 18 fell (MTBF ~75 s), same policy.
 tests/test_policy_endurance.py::test_policy_stands_for_a_minute_on_its_own_sensors  # 2026-09-22 TM151 attitude: 9 of 18 fall within 60 s standing
+#
+# THE NEW FRONT WHEEL, one case, 2026-10-05, pending sign-off: the policy
+# trained on the old wheel; at tau 0.19 it survives 3 of the 4 commands.
+tests/test_sensor_modes.py::test_sensor_mode_survives_on_the_policy_that_trained_for_it[0.19]  # 2026-10-05 new front wheel: survive 0.75 of the 4-command subset

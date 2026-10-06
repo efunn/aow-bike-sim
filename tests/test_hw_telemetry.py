@@ -11,6 +11,7 @@ bike. So these tests walk the field list rather than spot-checking, and the
 gearbox test compares against MuJoCo's own constraint solve rather than
 against the arithmetic in the module.
 """
+import copy
 import json
 import math
 
@@ -137,10 +138,19 @@ def test_the_gearbox_closed_form_matches_mujocos_own_constraint(built):
     tendon equalities MuJoCo actually solves, driven with real physics -- so
     if `_aow_assembly`'s mixes change, this fails rather than the mirror
     quietly drawing a wheel that turns at the wrong rate.
+
+    AIRBORNE, gravity off (2026-10-05). On the floor the bike fell over
+    under the spinning inputs and the ring residual read whatever load the
+    fall left on the soft equality: 1.0e-3 with the old front wheel, 3.6e-3
+    with the toy wheel, against 2e-3 -- a test of how it landed, not of the
+    mixes. In the air it reads 4e-5 for either wheel.
     """
     from aow_sim import drivetrain_model as dm
     p, m = built
+    m = copy.deepcopy(m)
+    m.opt.gravity[:] = 0.0
     d = mujoco.MjData(m)
+    d.qpos[2] += 0.2                         # clear of the floor
     drive = dm.DrivetrainSim.attach(m, p)    # the drives only move with it
     d.ctrl[:2] = (14.0, -9.0)                # spin the inputs opposite ways
     for _ in range(1500):

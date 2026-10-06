@@ -139,3 +139,39 @@ part and a damping change to a different joint has no reason to reverse it.)
 The drop test implies ~0.30 — the worst-fitting value. There is no setting that
 is both faithful and well-fitting. **Re-derive the bar from the measurement
 rather than carrying 0.93 forward**, once the contact is measured.
+
+## The 2026-10-05 front wheel
+
+The new front tire (80 mm crown, `mujoco-modeling-decisions.md`) makes steer
+push harder on roll: steer cambers the wheel by steer x sin(rake), and on an
+80 mm crown that moves the contact ~6x further than on the old 14 mm one.
+
+**Standstill, on the tests' plant (detailed drivetrain, truth).** The LQR
+rang between its +-15 deg steer stops and fell after 4.9 s, sooner when
+kicked. Fixed by `control.lqr.q_steer_standstill` 50: a heavier steer weight
+in the v = 0 design only, faded out by 0.25 m/s on the schedule. Holds with
+roll-rate kicks to 2 rad/s. What did not work: q_steer raised everywhere
+(30-400 fix standstill but fall at 0.8 m/s, except 100); widening the
+identification's roll amplitude x2-x8 (falls at every width). `pytest -m lqr`
+red at q_steer_standstill 5 / 20 / 50 / 100 / 200: 21 / 18 / 16 / 18 / 18
+(before the bundle re-export, one stale-bundle case in each).
+
+**At speed, not fixed.** Straight at 0.8 m/s survives but drifts 0.149 m
+off line; turns at 0.8 m/s fall. q_steer 3-12 x r_steer 8-50 and lean_ff
+0.55-1.0 turned none green. Registered red, pending sign-off.
+
+**Teleop (`run_drive --teleop --lqr`) is a different loop from the tests**:
+the AHRS error model (`--ahrs tm151`) and the odometry estimate by default,
+and the startup policy's drivetrain (ideal for the current pointer).
+Standstill, 20 s, 3 seeds, that loop run headless (scratch harness):
+
+| sensors | old wheel | new wheel | new + q_steer_standstill 50 |
+|---|---|---|---|
+| truth | held 3/3 | held 3/3 | held 3/3 |
+| `tm151` + odometry (teleop default) | fell 2/3 (11.7, 14.5 s) | fell 3/3 (1.8-2.9 s) | fell 3/3 (2.5-9.9 s) |
+| `tm151_filter` + odometry | held 3/3 | fell 3/3 (3.7-4.3 s) | held 3/3 |
+
+So in teleop the LQR falls on its default sensors with either wheel (as
+2026-10-01 found for the old one), sooner on the new one; to see what the
+tests see, `--ahrs none --no-odometry`; `--ahrs tm151_filter`, the closer
+model of the part, holds.

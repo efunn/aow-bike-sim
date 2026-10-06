@@ -408,3 +408,34 @@ follow-on. `run_drive` prints trajopt vs RL side-by-side; teleop **3** = RL flic
 (**8/9** = trajopt). The user runs training (long, portable across machines);
 `tests/test_rl.py` covers the spec + numpy forward always, the env when
 gymnasium is present, and replay when a trained artifact exists.
+
+## Front tire: the carried-over wheel, flat tread as a crown (2026-10-05)
+
+The front wheel is the original bike's, measured: 102.5 mm diameter, 24 mm
+wide, a 10 mm flat tread with 7 mm shoulders (24 - 2 x 7 = 10). It replaced
+a designed 100 x 28 mm wheel with a fully round 14 mm crown.
+
+**Not modelled as a flat.** MuJoCo gives the tire one contact against the
+floor. On a rigid flat it sits on a tread edge from touchdown and jumps
+10 mm across as the lean changes sign; the LQR stood dead still on the flat
+and fell as soon as the contact reached an edge. A tread of several narrow
+contact rings was rejected: it still jumps, between closer points.
+
+**An 80 mm crown instead** (`front_wheel.crown_radius`, `GUESS`). The tread
+edge sits 0.19 mm below the centre, against the 0.13 mm (+-0.025) the tire
+sank at ~4.5 N in the 2026-10-01 dial pre-test
+(`docs/measurements/contact-measurements.yaml`). A stand-in for the tire
+flattening under load, not a measured profile; a dial test with the wheel
+tilted 1-2 deg would identify it. With the LQR's old weights, crowns of
+20-40 mm stand; 80 and 160 fall, and the flat falls when kicked (standstill
+hold, detailed drivetrain, truth).
+
+`geometry.crowned_wheel_vertices(..., shoulder_radius=)` builds the profile:
+the tread arc and a tangent shoulder arc each side, sampled by angle, the
+tread at 33 points (on a shallow crown the facets ARE the contact; at 80 mm
+the contact steps ~0.34 mm per 0.25 deg of lean). `run_drive --front-wheel
+flat|old|D,W,SHOULDER,CROWN` flies another tire for an A/B.
+
+Side effects measured: the axle rises 1.25 mm (the chassis stays level; the
+fork takes it), spin inertia +14% (uniform-density solid, same 60 g; the real
+wheel's distribution is unknown). Odometry does not use the front radius.

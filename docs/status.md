@@ -47,8 +47,7 @@ they exist. One printed part weighed sooner would calibrate the CAD estimates
 (`cad_bike.printed_mass`).
 
 Bench loose ends: the second XC330 is still id 103 and must become 104 before
-the two share a bus; `front_wheel.radius` is 0.050 against a measured
-51.25 mm.
+the two share a bus.
 
 Not next, deliberately: the ball shot, the privileged critic, the odometry
 rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
@@ -61,9 +60,9 @@ rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
 | workstream | state | blocker | doc |
 |---|---|---|---|
 | **Simulation & model** | Working; 18 `GUESS`es. Opt-in detailed drivetrain (fitted XC430 loop, detent, slop). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30 | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
-| **Control — RL** | Primary. Pointer `general_rl_cmd_curriculum2b`; candidate `smooth_temporal` | Crab one-sided; `turn_asym` ~0.2; the pointer falls standing on its own sensors (10 of 18) | `general-rl-improvements.md`, `policy-smoothness-losses.md` |
+| **Control — RL** | Primary. Pointer `general_rl_cmd_curriculum2b`; candidate `smooth_temporal`. Every export trained on the old front wheel: provisional | Crab one-sided; `turn_asym` ~0.2; the pointer falls standing on its own sensors (10 of 18); on the new front wheel it survives 4 of 6 big turns | `general-rl-improvements.md`, `policy-smoothness-losses.md` |
 | **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` model exists, work in progress (survival 0.05 on the eval grid) | The bike's own AHRS log | `sensor-workstream.md`, `ahrs-fixture.md` |
-| **Control — LQR** | Reference. Stands on truth and on `tm151_filter`; on teleop's default `tm151` it oscillates and falls standing (3 of 3) | Nothing; re-tune once contact moves | `lqr-baseline.md` |
+| **Control — LQR** | Reference. New front wheel (10-05): stands on truth and on `tm151_filter` (with `q_steer_standstill` 50), falls standing on teleop's default `tm151` within ~10 s, falls turning at 0.8 m/s | The at-speed design; re-tune once contact moves | `lqr-baseline.md` |
 | **Hardware / onboard** | Pi 3 bench proven: tick jitter p99 < 1 ms with four servos energised. 2.4 GHz house wifi (decided: a router, no AP). The SBC that ships: open | Chassis, pack | `pi-bench-bringup.md`, `untethered-setup.md` |
 | **CAD** | Steer printed and print-checked; drive, righting, whole bike designed. CAD wheelbase 250 (the sim keeps 200) | Wheelbase and the righting stack to tighten (user) | `bike-assembly-design.md`, `cad-onshape-workflow.md` |
 | **Self-righting** | Four-bar built. Linkage options parked (sim, 9.9 V: 537-575 counts vs 643 as built; the diamond, 547, is the lean) | Decision later | `righting-linkage-margin.md`, `righting-servo-model.md` |
@@ -72,6 +71,14 @@ rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
 ---
 
 ## Health
+
+**NEW FRONT WHEEL (2026-10-05).** The original bike's wheel, measured
+(102.5 x 24 mm, 7 mm shoulders), its 10 mm flat tread modelled as an 80 mm
+crown (`GUESS`; why: `mujoco-modeling-decisions.md`). Costs: the LQR needed
+`q_steer_standstill` to stand and still falls turning at speed
+(`lqr-baseline.md`); the pointer's eval score fell 0.572 -> 0.454, mostly big
+turns (4 of 6 survive, was 6 of 6). **Outstanding:** every policy is
+provisional until retrained on this wheel.
 
 **THE DETAILED DRIVETRAIN IS THE DEFAULT PLANT (2026-10-02).** The overlay
 moved, unchanged, from `config/drivetrain_model.yaml` into `bike_params.yaml`'s
@@ -90,8 +97,14 @@ envs -- runs exactly as before, and the hooked ones (RL envs, teleop,
 `balance.run`, `record`) get the detailed drive.
 `drivetrain_model.attach_hooks` is the one call a physics loop needs.
 
-**Tests, 2026-10-02**, after that change: `10 failed, 744 passed, 17
-skipped`, red set unchanged (10 accepted): **7 registered 2026-10-02** (user: "fine for now"). All seven
+**Tests, 2026-10-05**, after the new front wheel: `16 failed, 790 passed,
+17 skipped`, red set unchanged (16 accepted). 8 registered 2026-10-05,
+pending the user's sign-off: seven LQR cases at speed or under a push, and
+the sensor-mode policy at tau 0.19. Two 2026-10-02 entries went green and
+left. `test_hw_telemetry`'s gearbox check now runs the drive airborne: on the
+floor the bike fell over and the check measured how it landed.
+
+The 2026-10-02 entries: **7 registered 2026-10-02** (user: "fine for now"). All seven
 are the analytic LQR (`PivotController` is `LQRBalance` plus a pivot
 reference) flown closed-loop on the detailed drive: `test_tilt_recovery[lqr]`,
 `test_command_heading[0.0-90]`, `test_stop_from_circle`,
@@ -111,11 +124,12 @@ All three are the analytic LQR in reverse: `command_heading[-0.5-90]`,
 smoothness-loss exports 0 of 18. Take its entry out in the commit that moves
 `control.general_move`.
 
-**Digests, checked 2026-10-02**: `plant_digest` 95630b212f03ffc4,
-`design_digest` a973a9ca3d503b6d; `deploy/bundle.npz` re-exported and
-matches both. No export carries it: the four smoothness-loss exports are at
-9953690d, which differs only by the removed `min_pinion_radius` (no
-physics); the pointer is at e1ec36bf. History: `params-digest-split.md`.
+**Digests, checked 2026-10-05**: `plant_digest` 12d9639e3ce90f36,
+`design_digest` 5fe8c19379988031; `deploy/bundle.npz` re-exported and
+matches both (worst schedule fit R^2 0.962). **Copy it to the Pi by hand**:
+`deploy/` is gitignored. No export carries this plant: the four
+smoothness-loss exports are at 9953690d, the pointer at e1ec36bf -- both
+before the wheel. History: `params-digest-split.md`.
 
 **Open, known:**
 
@@ -152,7 +166,7 @@ is confirmed on the bike. Trained-on-sensors beats trained-on-truth, 1.00 to
 
 ## The guesses
 
-**14 `source: GUESS` in `config/bike_params.yaml`** (2026-10-02): the drivetrain block brought in the roller slop's `centring_stiffness` and `damping`; `righting.wings.min_pinion_radius` left (a constant of the retired geared wings, now `build_model.MIN_PINION_RADIUS`); `input_armature` and the hub/roller joint damping and frictionloss became `design` -- the IDEAL plant's own inertia and only drive losses, kept at their values (the measured inertia is the overlay's `rotor_inertia`), and ZEROED by `DrivetrainSim` on the detailed plant, where the measured coast friction already contains them (`drivetrain_fit.py coast`, the whole wheel in the air) and the slop tendon alone damps a roller in its play. That zeroing changed the detailed plant in code, which no digest sees: the drivetrain-trained exports are now ~1% off their training plant in drive friction (estimated), each with a note there
+**15 `source: GUESS` in `config/bike_params.yaml`** (2026-10-05: the front wheel's `crown_radius`, a stand-in for the flat tread). 2026-10-02: the drivetrain block brought in the roller slop's `centring_stiffness` and `damping`; `righting.wings.min_pinion_radius` left (a constant of the retired geared wings, now `build_model.MIN_PINION_RADIUS`); `input_armature` and the hub/roller joint damping and frictionloss became `design` -- the IDEAL plant's own inertia and only drive losses, kept at their values (the measured inertia is the overlay's `rotor_inertia`), and ZEROED by `DrivetrainSim` on the detailed plant, where the measured coast friction already contains them (`drivetrain_fit.py coast`, the whole wheel in the air) and the slop tendon alone damps a roller in its play. That zeroing changed the detailed plant in code, which no digest sees: the drivetrain-trained exports are now ~1% off their training plant in drive friction (estimated), each with a note there
 on how to identify it. Never promote one quietly: promoting is a physical
 parameter change (the `CLAUDE.md` checklist).
 
@@ -160,6 +174,7 @@ parameter change (the `CLAUDE.md` checklist).
 |---|---|---|---|
 | `chassis.mass` | 0.45 kg, **44% of the bike** | CAD printed-mass estimates per part, uncalibrated (the chassis's new parts ~80 g printed) | the frame; weigh one printed part first |
 | `fork_mass` + `front_wheel.mass` | 0.025 + 0.060 kg | **86 g together** (fork halves + wheel + axle, 09-30), not split | a scale |
+| `front_wheel.crown_radius` | 80 mm | the real tread is a 10 mm flat; the crown stands in for the tire flattening under load | the dial test repeated with the wheel tilted 1-2 deg |
 | `ahrs.mass` | 0.012 kg | the TM151 is on the bench | a scale |
 | `payload.electronics.mass` | 0.076 kg | written for a Zero 2 W stack; the bench runs a Pi 3 | a scale |
 | `payload.battery.mass` | 0.115 kg | no pack yet | the pack |
@@ -171,8 +186,8 @@ parameter change (the `CLAUDE.md` checklist).
 | `hockey.ball.radius` / `.mass` | 33.5 mm / 60 g | the ball shot is parked | the ball |
 
 So: six die on a scale once the as-built parts exist; three with the
-contact work; the roller slop's spring and damping with a measured in-play
-flick; three are parked
+contact work, plus the front crown with a tilted dial test; the roller
+slop's spring and damping with a measured in-play flick; three are parked
 (`righting_sign`, the hockey ball).
 
 **How the drivetrain is carried.** `bike_params.yaml` is the IDEAL drive.
