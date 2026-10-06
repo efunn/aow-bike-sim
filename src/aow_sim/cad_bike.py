@@ -153,6 +153,63 @@ def load(path: str = PARAMS) -> dict:
             "drive": cd.full_layout(cd.load()), "rd": rd, "rL": cr.layout(rd)}
 
 
+def righting_digest(rL: dict) -> str:
+    """A fingerprint of the righting's geometry and poses: what the bike's
+    placement (righting_y, wheelbase) and the carrier's edge were probed
+    against. The bike rebuilds the righting from its generator every time,
+    so a linkage change comes through on its own; the placement does not."""
+    import hashlib
+    import json
+    geo = {"parts": [[q["slug"], q["group"], q["add"], q["cut"]] for q in rL["parts"]],
+           "poses": rL["poses"]}
+    return hashlib.sha256(json.dumps(geo, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def _dist_point_poly(p, poly) -> float:
+    """Distance from a 2D point to a polygon (0 inside)."""
+    x, y = p
+    inside = False
+    d = math.inf
+    n = len(poly)
+    for i in range(n):
+        (ax, ay), (bx, by) = poly[i], poly[(i + 1) % n]
+        if (ay > y) != (by > y) and x < ax + (y - ay) * (bx - ax) / (by - ay):
+            inside = not inside
+        vx, vy = bx - ax, by - ay
+        t = max(0.0, min(1.0, ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy or 1.0)))
+        d = min(d, math.hypot(x - ax - t * vx, y - ay - t * vy))
+    return 0.0 if inside else d
+
+
+def data_deck_top(rL: dict, zr: float) -> float:
+    """The deck's top in the bike frame: the righting's chassis plate."""
+    plate = next(q for q in rL["parts"] if q["slug"] == "chassis")["add"][0]
+    return plate["hi"][2] + zr
+
+
+def wing_front_room(rL: dict, front: float, zc: float, r_ball: float) -> dict:
+    """How far forward each wing's front end may run (module y) to stay
+    clear of the front tyre's whole steer sweep -- a ball of the tyre's
+    radius about the front axle, `front` ahead of the rod and `zc` above it
+    -- at every righting pose. And where each front end is now."""
+    out = {}
+    for slug in ("wingR", "wingL"):
+        p = next(q for q in rL["parts"] if q["slug"] == slug)
+        y_end = max(q["y1"] for q in p["add"] if q["k"] == "prism")
+        # the prisms that reach the front end (the panel; a tab may stop short)
+        ends = [q for q in p["add"] if q["k"] == "prism"]
+        lim = math.inf
+        for ps in rL["poses"].values():
+            g = ps[p["group"]]
+            for q in ends:
+                poly = [list(cr.apply(g, v)) for v in q["pts"]]
+                dxz = _dist_point_poly((0.0, zc), poly)
+                if dxz < r_ball:
+                    lim = min(lim, front - math.sqrt(r_ball ** 2 - dxz ** 2) + (y_end - q["y1"]))
+        out[slug] = {"now": y_end, "max": lim}
+    return out
+
+
 def rx(p, deg):
     c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
     return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]
@@ -216,7 +273,17 @@ def layout(data: dict) -> dict:
     ste = lambda q: _add([0, wb, zf], rx(q, rake))                     # noqa: E731
 
     L = {"wb": wb, "yr": yr, "zr": zr, "zf": zf, "tilt": tilt, "rake": rake, "R": R,
-         "floor": -R}
+         "floor": -R, "rgDigest": righting_digest(rL), "rgDigestProbed": pl["righting_digest"]}
+    # the wings clear the front tyre's whole steer sweep at every righting
+    # pose (user, 2026-10-05: "the wing can be fully clear of the front
+    # wheel"); the righting's own front is fitted by `--fit 2`
+    room = wing_front_room(rL, wb - yr, zf - zr, S["R"])
+    for slug, r in room.items():
+        if r["now"] > r["max"] - pl["wing_margin"]:
+            raise ValueError(f"{slug}'s front end (module y {r['now']:.1f}) reaches the front tyre's steer "
+                             f"sweep: keep it <= {r['max'] - pl['wing_margin']:.1f} (righting_cad.yaml "
+                             f"wing.panel_back), or move the front axle")
+    L["wingRoom"] = room
     L["dAxis"] = rx([0, 0, 1], tilt)
     L["sAxis"] = rx([0, 0, 1], rake)
     L["sOrigin"] = [0, wb, zf]
@@ -286,145 +353,240 @@ def layout(data: dict) -> dict:
     # block's front face, z along the face (up-back) = edge + u, u up the
     # carrier from its lower edge
     cw, cl, ct = el["carrier"]
+    pi = el["pi"]
+    bw, bl, bth = pi["board"]
+    # the underside devices (U2D2, AHRS, power board, switch) and their
+    # cables, OFF for now (user, 2026-10-05: "they need to go back in
+    # later"): the carrier is then one plate the Pi's size, margin round it
+    under = el["underside"]
+    cage = rc["enabled"]
+    if not under:
+        cw, cl = 2 * el["narrow_half"], bl + 2 * pi["margin"]
     fy = D["Yfront"]                                  # the face
     cy0 = fy + el["gap"]                              # carrier underside
     cy1 = cy0 + ct
     e0 = el["edge"]
     W_ = lambda u: e0 + u                             # noqa: E731
     nh = el["narrow_half"]
-    L["carrier"] = {"plates": [[[-nh, cy0, W_(0)], [nh, cy1, W_(el["wide_u"] + 1.0)]],
-                               [[-cw / 2, cy0, W_(el["wide_u"])], [cw / 2, cy1, W_(cl)]]],
-                    "pt": [0.0, cy1 - 0.5, W_(cl / 2)]}
+    if under:
+        plates = [[[-nh, cy0, W_(0)], [nh, cy1, W_(el["wide_u"] + 1.0)]],
+                  [[-cw / 2, cy0, W_(el["wide_u"])], [cw / 2, cy1, W_(cl)]]]
+    else:
+        # the middle stops over the deck (the righting's plate, +-16); the two
+        # legs outboard of it run on down to the board's lower holes (user,
+        # 2026-10-05: "the mounting holes sit wide of the righting assembly")
+        nt = el["notch"]
+        lo_pt = lambda s_: rx([0, cy0, s_], tilt)[2]           # noqa: E731  bike z of the underside
+        s_c = W_(0) + max(0.0, (data_deck_top(rL, zr) + nt["deck_clear"] - lo_pt(W_(0))) / math.cos(math.radians(tilt)))
+        if s_c > W_(0):
+            nx = nt["half"]
+            if nx >= nh - 5.0:
+                raise ValueError("the carrier's legs are too narrow for the board's holes")
+            plates = [[[-nx, cy0, s_c], [nx, cy1, W_(cl)]],
+                      [[nx, cy0, W_(0)], [nh, cy1, W_(cl)]], [[-nh, cy0, W_(0)], [-nx, cy1, W_(cl)]]]
+        else:
+            plates = [[[-nh, cy0, W_(0)], [nh, cy1, W_(cl)]]]
+    note = ("Leans on the drive block's front face on four chassis posts. Pi 3B+ on top (M2.5 standoffs, "
+            "screws from below), USB edge " + ("up" if pi["usb_edge"] == "up" else "down") + " the slope")
+    note += ("; U2D2 / AHRS / power board in the cradles underneath; the switch in the left tab" if under else
+             "; the post screws go in before the Pi")
+    note += ("; the cage's rear foot on the upper end." if cage else ".") + " Print the underside up."
+    # pockets under the plate where the drive pulleys stand proud of the
+    # block's face (left low, right high); fixed to the pulleys, drive frame
+    pockets = []
+    pc = el["pulley_clear"]
+    for sx, zc in ((-1, -D["zs"]), (1, D["zs"])):
+        Rp = D["rFl45"] + pc
+        h = cy0 - D["Ys"]
+        if h < Rp:
+            half = math.sqrt(Rp ** 2 - h ** 2)
+            x0_, x1_ = sx * (D["flangeIn"] - pc), sx * (cw / 2 + 1.0)
+            pockets.append([[min(x0_, x1_), cy0 - 1.0, zc - half], [max(x0_, x1_), D["Ys"] + Rp, zc + half]])
+            if D["Ys"] + Rp > cy1 - 1.0:
+                raise ValueError("a drive pulley pocket leaves under 1 mm of the carrier")
+    L["carrier"] = {"plates": plates, "pt": [0.0, cy1 - 0.5, W_(cl / 2)], "note": note, "pockets": pockets}
     pr = ch["post_dia"] / 2
     ptop = cy1 - el["boss"]
-    posts = [[sx * px, pz] for px, pz in ch["post_at"] for sx in (1, -1)]
+    # mirrored pairs, or the points as given (post_mirror false)
+    posts = ([[sx * px, pz] for px, pz in ch["post_at"] for sx in (1, -1)] if ch["post_mirror"]
+             else [list(q) for q in ch["post_at"]])
     for x, z in posts:
         if abs(x) + pr > 16.0 or abs(z) + pr > D["Zp"]:
             raise ValueError(f"post at ({x:g}, {z:g}) is off the drive block's face")
-    L["posts"] = {"cyl": [[[x, fy - 0.5, z], [x, ptop, z]] for x, z in posts], "r": pr}
-    bosses = [[[x, ptop, z], [x, cy0 + 0.5, z], pr + 1.0] for x, z in posts]
+        if not W_(0) + pr + 1.0 <= z <= W_(cl) - pr - 1.0:
+            raise ValueError(f"post at ({x:g}, {z:g}) is off the carrier (z {W_(0):g}..{W_(cl):g})")
+    # a small gap (user, 2026-10-05: "the pi just comes down as close and
+    # tight here and the 'chassis' works around it"): the carrier, one joint
+    # plate thick, sits on short pads off the drive block's face -- the block
+    # is the drive's placeholder, unioned into the chassis -- with the nuts
+    # IN THE BLOCK. Their slots run out of the block's sides, under the
+    # drive's case sides: the nuts go in before the case sides do.
+    on_face = ct + el["gap"] - el["boss"] < 2.0 + 3.0 + 1.0
+    if on_face:
+        if ct < el["boss"]:
+            raise ValueError(f"near the face the carrier is the joint plate: thickness {ct:g} < {el['boss']:g}")
+        L["posts"] = {"cyl": [[[x, fy - 0.5, z], [x, cy0, z]] for x, z in posts] if el["gap"] > 0 else [],
+                      "r": pr}
+        bosses = []
+    else:
+        # the post's nut: 2 mm past the joint plane, 3 thick, a wall under it
+        if ct + el["gap"] - el["boss"] < 2.0 + 3.0 + 1.0:
+            raise ValueError(f"gap {el['gap']:g}: the posts are too short for their nuts (want >= "
+                             f"{6.0 + el['boss'] - ct:g})")
+        L["posts"] = {"cyl": [[[x, fy - 0.5, z], [x, ptop, z]] for x, z in posts], "r": pr}
+        bosses = [[[x, ptop, z], [x, cy0 + 0.5, z], pr + 1.0] for x, z in posts]
     cgz = W_(el["cage_u"])
-    if el["cage_u"] - 6.0 < el["pi"]["u_usb"] + el["pi"]["board"][1]:
-        raise ValueError("the cage's rear foot is under the Pi: its strut would rise through the board")
-    bosses.append([[0.0, cy1 - 7.0, cgz], [0.0, cy0 + 0.5, cgz], 5.5])   # the cage foot's nut
+    if cage:
+        if el["cage_u"] - 6.0 < el["pi"]["u_usb"] + el["pi"]["board"][1]:
+            raise ValueError("the cage's rear foot is under the Pi: its strut would rise through the board")
+        bosses.append([[0.0, cy1 - 7.0, cgz], [0.0, cy0 + 0.5, cgz], 5.5])   # the cage foot's nut
     for k, (x, z) in enumerate(posts):
-        joint(f"jPost{k}", "drive", [x, cy1, z], [0, -1, 0], [1 if x > 0 else -1, 0, 0], pr + 2.0,
-              "carrier", "chassis", dmY, [0, 0, 1])
-    pi = el["pi"]
-    bw, bl, bth = pi["board"]
-    zu = W_(pi["u_usb"])
+        joint(f"jPost{k}", "drive", [x, cy1, z], [0, -1, 0], [1 if x > 0 else -1, 0, 0],
+              (16.0 - abs(x) + 1.0) if on_face else pr + 2.0, "carrier", "chassis", dmY, [0, 0, 1])
+    # the board along the face: its USB/Ethernet end DOWN the slope (the
+    # first layout, ports at u_usb) or UP it (user, 2026-10-05), turned
+    # 180 deg about its normal, so the GPIO header changes side too
+    up = pi["usb_edge"] == "up"
+    zb0 = W_(pi["margin"]) if up else W_(pi["u_usb"])      # the board's lower edge
+    zb1 = zb0 + bl
     py_ = cy1 + pi["standoff"]                        # the board's underside
     hx, hy = pi["holes"]
     hi_ = pi["hole_inset"]
-    L["piHoles"] = {"at": [[sx * hx / 2, zu + bl - hi_ - k * hy] for k in (0, 1) for sx in (1, -1)],
-                    "y": [cy0 - 1.0, cy1 + 1.0], "cb": [cy0 - 1.0, cy0 + 1.6]}
+    # the holes sit hole_inset from the end AWAY from the USB/Ethernet
+    sd_end, inward = (zb0, 1) if up else (zb1, -1)
+    hole_at = [[sx * hx / 2, sd_end + inward * (hi_ + k * hy)] for k in (0, 1) for sx in (1, -1)]
+    if el["gap"] == 0:
+        # nothing can go under a plate on the face: the standoffs are printed
+        # with the carrier, a self-tap screw down into each (user,
+        # 2026-10-05). The pilot runs into the plate as far as the deepest
+        # pulley pocket allows, 0.5 short of it.
+        sb, pd = pi["standoff_boss"], pi["pilot_dia"]
+        floor = max([q[1][1] for q in L["carrier"]["pockets"]] + [cy0]) + 0.5
+        L["piHoles"] = {"at": hole_at, "y": [floor, py_ + 1.0], "r": pd / 2, "cb": [], "cbR": 0.0}
+        L["piPilotDepth"] = py_ - floor
+        bosses += [[[x, cy1 - 0.5, z], [x, py_, z], sb / 2] for x, z in hole_at]
+    else:
+        L["piHoles"] = {"at": hole_at, "y": [cy0 - 1.0, cy1 + 1.0], "r": 1.45, "cb": [cy0 - 1.0, cy0 + 1.6],
+                        "cbR": 2.6}
     mocks = []
     mocks.append(("battery", "drive",
                   [-bt["size"][0] / 2, bt["y0"], D["Zp"] + bt["gap"] + bt["floor"]],
                   [bt["size"][0] / 2, bt["y0"] + bt["size"][1],
                    D["Zp"] + bt["gap"] + bt["floor"] + bt["size"][2]], [0.2, 0.35, 0.75]))
-    mocks.append(("Pi 3B+", "drive", [-bw / 2, py_, zu], [bw / 2, py_ + bth, zu + bl], [0.1, 0.5, 0.2]))
+    holes = {"y": [py_ - 1.0, py_ + bth + 1.0], "r": pi["hole_dia"] / 2, "at": hole_at}
+    mocks.append(("Pi 3B+", "drive", [-bw / 2, py_, zb0], [bw / 2, py_ + bth, zb1], [0.1, 0.5, 0.2], holes))
     ux, uz_, uh = pi["usb_block"]
-    port = zu - 2.0                                   # the ports' faces
-    mocks.append(("Pi USB + Ethernet", "drive", [-ux / 2, py_ + bth, port],
-                  [ux / 2, py_ + bth + uh, port + uz_], [0.75, 0.75, 0.78]))
-    mocks.append(("Pi GPIO header", "drive", [-bw / 2 + 1.0, py_ + bth, zu + bl - 7.0 - 51.0],
-                  [-bw / 2 + 6.0, py_ + bth + 8.5, zu + bl - 7.0], [0.15, 0.15, 0.15]))
-    # the two cables (user): USB-A plugs in the left stack, a 6 mm hard stub,
-    # then 6 mm-radius bends down past the carrier's lower edge and back
-    # under it into each device's USB-C plug. The upper plug's cable nests
-    # outside the lower one's and shifts across to reach the AHRS.
-    us = el["usb"]
-    ux0, (uw, ul) = us["x0"], us["plug"]
-    sd, sl_ = us["stub"]
-    br = us["bend_r"]
-    cpw, cpt, cpl = us["c_plug"]
-    bt_ = py_ + bth                                   # the board's top
-    for k, (y0_, y1_) in enumerate(((bt_, bt_ + uh / 2), (bt_ + uh / 2, bt_ + uh))):
-        mocks.append((f"USB-A plug {k + 1}", "drive", [ux0, y0_, port - ul], [ux0 + uw, y1_, port],
-                      [0.2, 0.2, 0.2]))
-    xc = ux0 + uw / 2
-    ends = {}
-    for nm, key in (("U2D2", "u2d2"), ("AHRS", "ahrs")):
-        d = el[key]
-        xm = d["x0"] + d["size"][0] / 2
-        ym = cy0 - d["size"][2] / 2
-        w1 = W_(d["u0"])                              # the device's end
-        mocks.append((f"USB-C plug ({nm})", "drive", [xm - cpw / 2, ym - cpt / 2, w1 - cpl],
-                      [xm + cpw / 2, ym + cpt / 2, w1], [0.2, 0.2, 0.2]))
-        ends[nm] = (xm, ym, w1 - cpl)
-    wA = port - ul - sl_ - br                         # the lower cable's corner: stub, then the bend
-    if W_(0) < wA + br + sd / 2 + 0.5:
-        raise ValueError("the carrier's lower edge reaches the cables' turn")
-    wB = wA - us["nest"]
-    yl, yh = bt_ + uh / 4, bt_ + 3 * uh / 4           # the two plugs' centres
-    xA, yA, eA = ends["U2D2"]
-    xB, yB, eB = ends["AHRS"]
-    cs_ = us["c_stub"]
-    cables = [("USB cable to U2D2", [[xc, yl, port - ul], [xc, yl, wA], [xc, yA, wA],
-                                     [xA, yA, eA - cs_], [xA, yA, eA]]),
-              ("USB cable to AHRS", [[xc, yh, port - ul], [xc, yh, wB], [xc + us["shift"], yB, wB],
-                                     [xB, yB, eB - cs_], [xB, yB, eB]])]
-    L["cables"] = []
-    for nm, pts in cables:
-        P = rounded_path(pts, br)
-        # round joints only where the path turns, and not within a radius of
-        # either end (one at the last bend sample poked into the USB-C plug)
-        import numpy as np
-        A = np.array(P)
-        js = [i for i in range(1, len(P) - 1)
-              if np.linalg.norm(np.cross(A[i] - A[i - 1], A[i + 1] - A[i])) > 1e-6
-              and np.linalg.norm(A[i] - A[0]) > sd / 2 + 0.1 and np.linalg.norm(A[i] - A[-1]) > sd / 2 + 0.1]
-        L["cables"].append({"name": nm, "pts": P, "joints": js, "r": sd / 2})
-    rails = []
-    for nm, key, col in (("U2D2", "u2d2", [0.2, 0.2, 0.25]), ("AHRS", "ahrs", [0.55, 0.15, 0.15]),
-                         ("power board", "pdb", [0.15, 0.4, 0.15])):
-        d = el[key]
-        sx_, su_, sh = d["size"]
-        lo = [d["x0"], cy0 - sh, W_(d["u0"])]
-        hi = [d["x0"] + sx_, cy0, W_(d["u0"] + su_)]
-        mocks.append((nm, "drive", lo, hi, col))
-        t, h, c = el["rail"]
-        x0, x1, za, zb = lo[0] - c, hi[0] + c, lo[2] - c, hi[2] + c
-        yr0 = cy0 - h
-        sides = [[[x0 - t, yr0, za - t], [x0, cy0 + 0.5, zb + t]],
-                 [[x1, yr0, za - t], [x1 + t, cy0 + 0.5, zb + t]],
-                 [[x0 - t, yr0, zb], [x1 + t, cy0 + 0.5, zb + t]]]
-        if key == "pdb":                   # the U2D2 and AHRS plug in from the carrier's lower edge
-            sides.append([[x0 - t, yr0, za - t], [x1 + t, cy0 + 0.5, za]])
-        rails += [(nm, b) for b in sides]
-    # a rail between two devices packed edge to edge, or over a post or the
-    # switch, would cut into its neighbour: drop it
-    devs = [(m[0], m[2], m[3]) for m in mocks if m[0] in ("U2D2", "AHRS", "power board")]
-    devs += [("post", [x - pr - 1.0, fy, z - pr - 1.0], [x + pr + 1.0, ptop, z + pr + 1.0]) for x, z in posts]
-    sw = el["switch"]
-    co, ca = sw["cutout"]
-    tx = sw["tab_x"]
-    sgn = 1 if tx > 0 else -1
-    inner = tx - sgn * sw["panel"]
-    swz = W_(sw["u"])
-    devs.append(("switch", [min(inner, inner - sgn * sw["depth"]) - 0.5, cy0 - 1.5 - co, swz - ca / 2 - 0.5],
-                 [max(inner, inner - sgn * sw["depth"]) + 0.5, cy0, swz + ca / 2 + 0.5]))
-    L["rails"] = [b for nm, b in rails
-                  if not any(o != nm and all(b[0][i] < hi[i] and lo[i] < b[1][i] for i in range(3))
-                             for o, lo, hi in devs)]
-    # nothing under the carrier may sit on a post or its boss
-    for nm, lo, hi in devs:
-        if nm == "post":
-            continue
-        for x, z in posts:
-            if lo[0] < x + pr + 1.0 and x - pr - 1.0 < hi[0] and lo[2] < z + pr + 1.0 and z - pr - 1.0 < hi[2]:
-                raise ValueError(f"the {nm} sits on the post at ({x:g}, {z:g}): move it or the edge")
-    sy0, sy1 = cy0 - 1.5 - co, cy0 - 1.5                 # the cutout, out of the face
-    L["sw"] = {"tab": [[min(tx, tx - sgn * sw["panel"]), sy0 - 2.0, swz - ca / 2 - 3.0],
-                       [max(tx, tx - sgn * sw["panel"]), cy0 + 0.5, swz + ca / 2 + 3.0]],
-               "cut": [[tx - 1 - (sw["panel"] if sgn > 0 else 0), sy0, swz - ca / 2],
-                       [tx + 1 + (sw["panel"] if sgn < 0 else 0), sy1, swz + ca / 2]]}
-    mocks.append(("switch", "drive", [min(inner, inner - sgn * sw["depth"]), sy0, swz - ca / 2],
-                  [max(inner, inner - sgn * sw["depth"]), sy1, swz + ca / 2], [0.1, 0.1, 0.1]))
-    bz = sw["bezel"]
-    mocks.append(("switch bezel", "drive", [min(tx, tx + sgn * bz[2]), (sy0 + sy1) / 2 - bz[0] / 2, swz - bz[1] / 2],
-                  [max(tx, tx + sgn * bz[2]), (sy0 + sy1) / 2 + bz[0] / 2, swz + bz[1] / 2], [0.8, 0.1, 0.1]))
+    port = zb1 + 2.0 if up else zb0 - 2.0             # the ports' faces, 2 proud of the board
+    pz0 = port - uz_ if up else port
+    mocks.append(("Pi USB + Ethernet", "drive", [-ux / 2, py_ + bth, pz0],
+                  [ux / 2, py_ + bth + uh, pz0 + uz_], [0.75, 0.75, 0.78]))
+    gx = (bw / 2 - 6.0, bw / 2 - 1.0) if up else (-bw / 2 + 1.0, -bw / 2 + 6.0)
+    g0 = sd_end + inward * 7.0
+    mocks.append(("Pi GPIO header", "drive", [gx[0], py_ + bth, min(g0, g0 + inward * 51.0)],
+                  [gx[1], py_ + bth + 8.5, max(g0, g0 + inward * 51.0)], [0.15, 0.15, 0.15]))
+    if up and not under:
+        if W_(cl) < port:
+            raise ValueError("the carrier ends under the Pi's ports")
+    L["cables"], L["rails"], L["sw"] = [], [], {}
+    if under:
+        if up:
+            raise ValueError("the cables are drawn for the Pi's USB edge down the slope only")
+        zu = zb0
+        # the two cables (user): USB-A plugs in the left stack, a 6 mm hard stub,
+        # then 6 mm-radius bends down past the carrier's lower edge and back
+        # under it into each device's USB-C plug. The upper plug's cable nests
+        # outside the lower one's and shifts across to reach the AHRS.
+        us = el["usb"]
+        ux0, (uw, ul) = us["x0"], us["plug"]
+        sd, sl_ = us["stub"]
+        br = us["bend_r"]
+        cpw, cpt, cpl = us["c_plug"]
+        bt_ = py_ + bth                                   # the board's top
+        for k, (y0_, y1_) in enumerate(((bt_, bt_ + uh / 2), (bt_ + uh / 2, bt_ + uh))):
+            mocks.append((f"USB-A plug {k + 1}", "drive", [ux0, y0_, port - ul], [ux0 + uw, y1_, port],
+                          [0.2, 0.2, 0.2]))
+        xc = ux0 + uw / 2
+        ends = {}
+        for nm, key in (("U2D2", "u2d2"), ("AHRS", "ahrs")):
+            d = el[key]
+            xm = d["x0"] + d["size"][0] / 2
+            ym = cy0 - d["size"][2] / 2
+            w1 = W_(d["u0"])                              # the device's end
+            mocks.append((f"USB-C plug ({nm})", "drive", [xm - cpw / 2, ym - cpt / 2, w1 - cpl],
+                          [xm + cpw / 2, ym + cpt / 2, w1], [0.2, 0.2, 0.2]))
+            ends[nm] = (xm, ym, w1 - cpl)
+        wA = port - ul - sl_ - br                         # the lower cable's corner: stub, then the bend
+        if W_(0) < wA + br + sd / 2 + 0.5:
+            raise ValueError("the carrier's lower edge reaches the cables' turn")
+        wB = wA - us["nest"]
+        yl, yh = bt_ + uh / 4, bt_ + 3 * uh / 4           # the two plugs' centres
+        xA, yA, eA = ends["U2D2"]
+        xB, yB, eB = ends["AHRS"]
+        cs_ = us["c_stub"]
+        cables = [("USB cable to U2D2", [[xc, yl, port - ul], [xc, yl, wA], [xc, yA, wA],
+                                         [xA, yA, eA - cs_], [xA, yA, eA]]),
+                  ("USB cable to AHRS", [[xc, yh, port - ul], [xc, yh, wB], [xc + us["shift"], yB, wB],
+                                         [xB, yB, eB - cs_], [xB, yB, eB]])]
+        L["cables"] = []
+        for nm, pts in cables:
+            P = rounded_path(pts, br)
+            # round joints only where the path turns, and not within a radius of
+            # either end (one at the last bend sample poked into the USB-C plug)
+            import numpy as np
+            A = np.array(P)
+            js = [i for i in range(1, len(P) - 1)
+                  if np.linalg.norm(np.cross(A[i] - A[i - 1], A[i + 1] - A[i])) > 1e-6
+                  and np.linalg.norm(A[i] - A[0]) > sd / 2 + 0.1 and np.linalg.norm(A[i] - A[-1]) > sd / 2 + 0.1]
+            L["cables"].append({"name": nm, "pts": P, "joints": js, "r": sd / 2})
+        rails = []
+        for nm, key, col in (("U2D2", "u2d2", [0.2, 0.2, 0.25]), ("AHRS", "ahrs", [0.55, 0.15, 0.15]),
+                             ("power board", "pdb", [0.15, 0.4, 0.15])):
+            d = el[key]
+            sx_, su_, sh = d["size"]
+            lo = [d["x0"], cy0 - sh, W_(d["u0"])]
+            hi = [d["x0"] + sx_, cy0, W_(d["u0"] + su_)]
+            mocks.append((nm, "drive", lo, hi, col))
+            t, h, c = el["rail"]
+            x0, x1, za, zb = lo[0] - c, hi[0] + c, lo[2] - c, hi[2] + c
+            yr0 = cy0 - h
+            sides = [[[x0 - t, yr0, za - t], [x0, cy0 + 0.5, zb + t]],
+                     [[x1, yr0, za - t], [x1 + t, cy0 + 0.5, zb + t]],
+                     [[x0 - t, yr0, zb], [x1 + t, cy0 + 0.5, zb + t]]]
+            if key == "pdb":                   # the U2D2 and AHRS plug in from the carrier's lower edge
+                sides.append([[x0 - t, yr0, za - t], [x1 + t, cy0 + 0.5, za]])
+            rails += [(nm, b) for b in sides]
+        # a rail between two devices packed edge to edge, or over a post or the
+        # switch, would cut into its neighbour: drop it
+        devs = [(m[0], m[2], m[3]) for m in mocks if m[0] in ("U2D2", "AHRS", "power board")]
+        devs += [("post", [x - pr - 1.0, fy, z - pr - 1.0], [x + pr + 1.0, ptop, z + pr + 1.0]) for x, z in posts]
+        sw = el["switch"]
+        co, ca = sw["cutout"]
+        tx = sw["tab_x"]
+        sgn = 1 if tx > 0 else -1
+        inner = tx - sgn * sw["panel"]
+        swz = W_(sw["u"])
+        devs.append(("switch", [min(inner, inner - sgn * sw["depth"]) - 0.5, cy0 - 1.5 - co, swz - ca / 2 - 0.5],
+                     [max(inner, inner - sgn * sw["depth"]) + 0.5, cy0, swz + ca / 2 + 0.5]))
+        L["rails"] = [b for nm, b in rails
+                      if not any(o != nm and all(b[0][i] < hi[i] and lo[i] < b[1][i] for i in range(3))
+                                 for o, lo, hi in devs)]
+        # nothing under the carrier may sit on a post or its boss
+        for nm, lo, hi in devs:
+            if nm == "post":
+                continue
+            for x, z in posts:
+                if lo[0] < x + pr + 1.0 and x - pr - 1.0 < hi[0] and lo[2] < z + pr + 1.0 and z - pr - 1.0 < hi[2]:
+                    raise ValueError(f"the {nm} sits on the post at ({x:g}, {z:g}): move it or the edge")
+        sy0, sy1 = cy0 - 1.5 - co, cy0 - 1.5                 # the cutout, out of the face
+        L["sw"] = {"tab": [[min(tx, tx - sgn * sw["panel"]), sy0 - 2.0, swz - ca / 2 - 3.0],
+                           [max(tx, tx - sgn * sw["panel"]), cy0 + 0.5, swz + ca / 2 + 3.0]],
+                   "cut": [[tx - 1 - (sw["panel"] if sgn > 0 else 0), sy0, swz - ca / 2],
+                           [tx + 1 + (sw["panel"] if sgn < 0 else 0), sy1, swz + ca / 2]]}
+        mocks.append(("switch", "drive", [min(inner, inner - sgn * sw["depth"]), sy0, swz - ca / 2],
+                      [max(inner, inner - sgn * sw["depth"]), sy1, swz + ca / 2], [0.1, 0.1, 0.1]))
+        bz = sw["bezel"]
+        mocks.append(("switch bezel", "drive", [min(tx, tx + sgn * bz[2]), (sy0 + sy1) / 2 - bz[0] / 2, swz - bz[1] / 2],
+                      [max(tx, tx + sgn * bz[2]), (sy0 + sy1) / 2 + bz[0] / 2, swz + bz[1] / 2], [0.8, 0.1, 0.1]))
     L["bosses"] = bosses
 
     # ---- battery tray, DRIVE frame
@@ -450,84 +612,95 @@ def layout(data: dict) -> dict:
     # tongue screw, nut slot out through the block's face (under the carrier)
     joint("jTray", "drive", [bt["joint_x"], (D["yF0"] + D["yF1"]) / 2, Zp + jp], [0, 0, -1], [0, 1, 0],
           14.0, "tray", "chassis", dZ, [0, 0, 1])
-    L["mocks"] = [{"name": n, "frame": f, "lo": lo, "hi": hi, "color": c}
-                  for n, f, lo, hi, c in mocks]
+    L["mocks"] = [{"name": m[0], "frame": m[1], "lo": m[2], "hi": m[3], "color": m[4],
+                   "holes": m[5] if len(m) > 5 else {"at": []}} for m in mocks]
+    # each wing's most inboard pose (the far wing, mid-throw): ghosted on
+    # request, to show what the righting leaves the lateral layout
+    rp = data["rL"]["poses"]
+    inb = lambda k, g: (rp[k][g]["a"] + 180.0) % 360.0 - 180.0     # noqa: E731
+    gk = {"wR": min(rp, key=lambda k: inb(k, "wR")), "wL": max(rp, key=lambda k: inb(k, "wL"))}
+    L["ghost"] = {g: {"key": k, "name": f"ghost wing {g[1]} (most inboard: {abs(float(k)) * 100:.0f} %, "
+                                         f"{abs(inb(k, g)):.1f} deg in)"} for g, k in gk.items()}
 
-    # ---- roll cage
-    th, w = rc["spine"]
-    fh = rc["foot_half"]
-    # the rear foot on the carrier's top past the Pi, the front foot behind
-    # the steering plate's extension; the bars end on the feet's OUTER faces
-    rear_foot = [[-fh, cy1, cgz - 6.0], [fh, cy1 + jp, cgz + 6.0]]
-    rf = drv([0, cy1 + jp, cgz])
-    front_foot = [[-fh, S["plateBack"] - jp, S["upTopZ"] + 1.5],
-                  [fh, S["plateBack"], S["upTopZ"] + ch["steer_ext"]]]
-    zj = S["upTopZ"] + (1.5 + ch["steer_ext"]) / 2
-    ff = ste([0, S["plateBack"] - jp, zj])
-    # what the rail must clear: every corner of the electronics' envelopes
-    tops = []
-    for m in mocks:
-        if m[1] != "drive" or m[0] == "battery":
-            continue
-        for x in (m[2][0], m[3][0]):
-            for y in (m[2][1], m[3][1]):
-                for z in (m[2][2], m[3][2]):
-                    tops.append(drv([x, y, z]))
-    plate_top = []
-    for b in L["carrier"]["plates"]:
-        for x in (b[0][0], b[1][0]):
-            for z in (b[0][2], b[1][2]):
-                plate_top.append(drv([x, b[1][1], z]))
-    rz = max(max(q[2] for q in tops) + rc["clearance"], max(q[2] for q in plate_top) + 1.0) + w / 2
-    # the rail runs level, then down to the front foot: the bend as far
-    # forward as the clearance over the envelopes allows
-    def ok(yb_):
-        for q in tops:
-            if yb_ <= q[1] <= ff[1]:
-                zl = rz + (ff[2] - rz) * (q[1] - yb_) / (ff[1] - yb_)
-                if zl - w / 2 * math.hypot(1, (ff[2] - rz) / (ff[1] - yb_)) < q[2] + rc["clearance"]:
-                    return False
-        return True
-    # start over the highest point and step forward until the slope clears
-    # everything under it (the cable keep-out reaches further forward than
-    # the front foot, but low, where the slope is far above it)
-    y_bend = max(tops, key=lambda q: q[2])[1]
-    while not ok(y_bend):
-        y_bend += 1.0
-        if y_bend > ff[1] - 10.0:
-            raise ValueError("the cage's slope cannot clear the electronics: raise the rail or move the foot")
-    ry0 = rc["rail_y0"]
-    segs = [[[ry0, rz], [y_bend, rz]],
-            [[rf[1], rf[2]], [rf[1], rz]],
-            [[y_bend, rz], [ff[1], ff[2]]]]
-    # the point that finds the spine: on the rail midway between two ribs,
-    # clear of every rib joint's bore and nut slot (one at 42.4 was in a slot)
-    ys = sorted(rc["ribs_y"])
-    pt_y = (ys[0] + ys[1]) / 2 if len(ys) > 1 else (ry0 + y_bend) / 2
-    L["spine"] = {"segs": segs, "half": th / 2, "w": w, "rearFoot": rear_foot, "frontFoot": front_foot,
-                  "pt": [0, pt_y, rz]}
-    joint("jSpR", "drive", [0, cy1 + jp, cgz], [0, -1, 0], [1, 0, 0], 8.0, "spine", "carrier",
-          [1, 0, 0], dmY)
-    joint("jSpF", "steer", [0, S["yP"], zj], [0, -1, 0], [1, 0, 0], th / 2 + 4.0, "chassis", "spine",
-          [0, 0, 1], [1, 0, 0])
-    rt_y, rt_r = rc["rib"]
-    ribs = []
-    top = rz + w / 2
-    sad = th / 2 + 2.0                          # the saddle's half-width, over the rail's
-    for k, y in enumerate(rc["ribs_y"]):
-        if not ry0 < y < y_bend:
-            raise ValueError(f"rib at y {y:g} is off the level rail ({ry0:g}..{y_bend:.1f})")
-        # the inner arc meets the rail's flat top at |x| = sad, and a saddle
-        # fills the sliver under the crown: a flat seat, not a line contact
-        zc = top - math.sqrt((rc["rib_radius"] - rt_r / 2) ** 2 - sad ** 2)
-        ribs.append({"y": y - rt_y / 2, "t": rt_y, "zc": zc, "r": rc["rib_radius"], "tr": rt_r,
-                     "half": rc["rib_half_angle"],
-                     "saddle": [[-sad, y - rt_y / 2, top], [sad, y + rt_y / 2, zc + rc["rib_radius"]]],
-                     # off the crown: the joint's bore runs down the middle
-                     "pt": [10.0, y, zc + math.sqrt(rc["rib_radius"] ** 2 - 100.0)]})
-        joint(f"jRib{k}", "bike", [0, y, zc + rc["rib_radius"] + rt_r / 2], [0, 0, -1], [1, 0, 0],
-              th / 2 + 3.0, f"rib{k}", "spine", [0, 1, 0], [1, 0, 0])
-    L["ribs"] = ribs
+    # ---- roll cage, OFF for now (user, 2026-10-05: "need to get the rest of
+    # the design sorted before getting that in")
+    L["cage"] = cage
+    L["spine"], L["ribs"] = {}, []
+    if cage:
+        th, w = rc["spine"]
+        fh = rc["foot_half"]
+        # the rear foot on the carrier's top past the Pi, the front foot behind
+        # the steering plate's extension; the bars end on the feet's OUTER faces
+        rear_foot = [[-fh, cy1, cgz - 6.0], [fh, cy1 + jp, cgz + 6.0]]
+        rf = drv([0, cy1 + jp, cgz])
+        front_foot = [[-fh, S["plateBack"] - jp, S["upTopZ"] + 1.5],
+                      [fh, S["plateBack"], S["upTopZ"] + ch["steer_ext"]]]
+        zj = S["upTopZ"] + (1.5 + ch["steer_ext"]) / 2
+        ff = ste([0, S["plateBack"] - jp, zj])
+        # what the rail must clear: every corner of the electronics' envelopes
+        tops = []
+        for m in mocks:
+            if m[1] != "drive" or m[0] == "battery":
+                continue
+            for x in (m[2][0], m[3][0]):
+                for y in (m[2][1], m[3][1]):
+                    for z in (m[2][2], m[3][2]):
+                        tops.append(drv([x, y, z]))
+        plate_top = []
+        for b in L["carrier"]["plates"]:
+            for x in (b[0][0], b[1][0]):
+                for z in (b[0][2], b[1][2]):
+                    plate_top.append(drv([x, b[1][1], z]))
+        rz = max(max(q[2] for q in tops) + rc["clearance"], max(q[2] for q in plate_top) + 1.0) + w / 2
+        # the rail runs level, then down to the front foot: the bend as far
+        # forward as the clearance over the envelopes allows
+        def ok(yb_):
+            for q in tops:
+                if yb_ <= q[1] <= ff[1]:
+                    zl = rz + (ff[2] - rz) * (q[1] - yb_) / (ff[1] - yb_)
+                    if zl - w / 2 * math.hypot(1, (ff[2] - rz) / (ff[1] - yb_)) < q[2] + rc["clearance"]:
+                        return False
+            return True
+        # start over the highest point and step forward until the slope clears
+        # everything under it (the cable keep-out reaches further forward than
+        # the front foot, but low, where the slope is far above it)
+        y_bend = max(tops, key=lambda q: q[2])[1]
+        while not ok(y_bend):
+            y_bend += 1.0
+            if y_bend > ff[1] - 10.0:
+                raise ValueError("the cage's slope cannot clear the electronics: raise the rail or move the foot")
+        ry0 = rc["rail_y0"]
+        segs = [[[ry0, rz], [y_bend, rz]],
+                [[rf[1], rf[2]], [rf[1], rz]],
+                [[y_bend, rz], [ff[1], ff[2]]]]
+        # the point that finds the spine: on the rail midway between two ribs,
+        # clear of every rib joint's bore and nut slot (one at 42.4 was in a slot)
+        ys = sorted(rc["ribs_y"])
+        pt_y = (ys[0] + ys[1]) / 2 if len(ys) > 1 else (ry0 + y_bend) / 2
+        L["spine"] = {"segs": segs, "half": th / 2, "w": w, "rearFoot": rear_foot, "frontFoot": front_foot,
+                      "pt": [0, pt_y, rz]}
+        joint("jSpR", "drive", [0, cy1 + jp, cgz], [0, -1, 0], [1, 0, 0], 8.0, "spine", "carrier",
+              [1, 0, 0], dmY)
+        joint("jSpF", "steer", [0, S["yP"], zj], [0, -1, 0], [1, 0, 0], th / 2 + 4.0, "chassis", "spine",
+              [0, 0, 1], [1, 0, 0])
+        rt_y, rt_r = rc["rib"]
+        ribs = []
+        top = rz + w / 2
+        sad = th / 2 + 2.0                          # the saddle's half-width, over the rail's
+        for k, y in enumerate(rc["ribs_y"]):
+            if not ry0 < y < y_bend:
+                raise ValueError(f"rib at y {y:g} is off the level rail ({ry0:g}..{y_bend:.1f})")
+            # the inner arc meets the rail's flat top at |x| = sad, and a saddle
+            # fills the sliver under the crown: a flat seat, not a line contact
+            zc = top - math.sqrt((rc["rib_radius"] - rt_r / 2) ** 2 - sad ** 2)
+            ribs.append({"y": y - rt_y / 2, "t": rt_y, "zc": zc, "r": rc["rib_radius"], "tr": rt_r,
+                         "half": rc["rib_half_angle"],
+                         "saddle": [[-sad, y - rt_y / 2, top], [sad, y + rt_y / 2, zc + rc["rib_radius"]]],
+                         # off the crown: the joint's bore runs down the middle
+                         "pt": [10.0, y, zc + math.sqrt(rc["rib_radius"] ** 2 - 100.0)]})
+            joint(f"jRib{k}", "bike", [0, y, zc + rc["rib_radius"] + rt_r / 2], [0, 0, -1], [1, 0, 0],
+                  th / 2 + 3.0, f"rib{k}", "spine", [0, 1, 0], [1, 0, 0])
+        L["ribs"] = ribs
     L["joints"] = joints
     return L
 
@@ -693,7 +866,8 @@ export function bkSolids(context is Context, sid is Id) returns Query
 
 /**
  * The whole bike. opt: steer (angle), pose (a RG_POSES key), mocks (bool:
- * the electronics and battery envelopes). Returns the groups the check
+ * the electronics and battery envelopes), ghost (bool: each wing again at
+ * its most inboard pose, translucent). Returns the groups the check
  * sweeps and the new parts' print orientations.
  */
 export function bikeBuild(context is Context, id is Id, opt is map) returns map
@@ -752,6 +926,19 @@ export function bikeBuild(context is Context, id is Id, opt is map) returns map
     for (var g in ["crank", "cR", "cL", "wR", "wL"])
         for (var q in rr.groups[g])
             setAttribute(context, { "entities" : q, "name" : "bk_" ~ g, "attribute" : g });
+
+    // ghosts: each wing copied at its most inboard pose, straight into the
+    // bike frame; untagged, so no pose, sweep or check moves or counts them
+    if (opt.ghost == true)
+        for (var g in ["wR", "wL"])
+        {
+            const gid = id + ("ghost" ~ g);
+            opPattern(context, gid, { "entities" : qUnion(rr.groups[g]),
+                    "transforms" : [rXf * rgXf(RG_POSES[BK.ghost[g].key][g])], "instanceNames" : ["1"] });
+            const gq = qCreatedBy(gid, EntityType.BODY);
+            removeAttributes(context, { "entities" : gq });
+            dress(context, gq, BK.ghost[g].name, color(0.55, 0.75, 1.0, 0.3), "The wing's most inboard pose. Not a part.");
+        }
 
     // poses in the modules' own frames, before they move
     if (opt.steer != undefined && opt.steer != 0 * degree)
@@ -815,27 +1002,37 @@ export function bikeBuild(context is Context, id is Id, opt is map) returns map
         step("carrier");
         // ---- electronics carrier, drive frame: plate, bosses, cradle rails,
         // the switch tab; holes for the Pi's standoffs
-        var cq = [bkBox(context, P + "carrier0", csD, BK.carrier.plates[0]),
-                  bkBox(context, P + "carrier1", csD, BK.carrier.plates[1])];
+        var cq = [];
+        for (var k = 0; k < size(BK.carrier.plates); k += 1)
+            cq = append(cq, bkBox(context, P + ("carrier" ~ k), csD, BK.carrier.plates[k]));
         for (var k = 0; k < size(BK.bosses); k += 1)
             cq = append(cq, cylIn(context, P + ("boss" ~ k), csD, bkV(BK.bosses[k][0]), bkV(BK.bosses[k][1]),
                                   BK.bosses[k][2] * mm));
         for (var k = 0; k < size(BK.rails); k += 1)
             cq = append(cq, bkBox(context, P + ("rail" ~ k), csD, BK.rails[k]));
-        cq = append(cq, bkBox(context, P + "swTab", csD, BK.sw.tab));
-        opBoolean(context, P + "cU", { "tools" : qUnion(cq), "operationType" : BooleanOperationType.UNION });
+        if (size(BK.sw) > 0)
+            cq = append(cq, bkBox(context, P + "swTab", csD, BK.sw.tab));
+        // a union of ONE body is BOOLEAN_BAD_INPUT (2026-10-05: the bare plate)
+        if (size(cq) > 1)
+            opBoolean(context, P + "cU", { "tools" : qUnion(cq), "operationType" : BooleanOperationType.UNION });
         carrier = function() returns Query { return partAt(context, P, toWorld(csD, bkV(BK.carrier.pt))); };
-        var hq = [bkBox(context, P + "swCut", csD, BK.sw.cut)];
+        var hq = size(BK.sw) > 0 ? [bkBox(context, P + "swCut", csD, BK.sw.cut)] : [];
+        for (var k = 0; k < size(BK.carrier.pockets); k += 1)
+            hq = append(hq, bkBox(context, P + ("pocket" ~ k), csD, BK.carrier.pockets[k]));
         const ph = BK.piHoles;
         for (var k = 0; k < size(ph.at); k += 1)
         {
             const h = ph.at[k];
-            hq = append(hq, cylIn(context, P + ("piH" ~ k), csD, bkV([h[0], ph.y[0], h[1]]), bkV([h[0], ph.y[1], h[1]]), 1.45 * mm));
-            hq = append(hq, cylIn(context, P + ("piC" ~ k), csD, bkV([h[0], ph.cb[0], h[1]]), bkV([h[0], ph.cb[1], h[1]]), 2.6 * mm));
+            hq = append(hq, cylIn(context, P + ("piH" ~ k), csD, bkV([h[0], ph.y[0], h[1]]), bkV([h[0], ph.y[1], h[1]]), ph.r * mm));
+            if (size(ph.cb) > 0)
+                hq = append(hq, cylIn(context, P + ("piC" ~ k), csD, bkV([h[0], ph.cb[0], h[1]]), bkV([h[0], ph.cb[1], h[1]]), ph.cbR * mm));
         }
         opBoolean(context, P + "cCut", { "tools" : qUnion(hq), "targets" : carrier(),
                 "operationType" : BooleanOperationType.SUBTRACTION });
 
+    }
+    if (elec && BK.cage)
+    {
         step("cage");
         // ---- roll cage: the spine, then the ribs
         const sp = BK.spine;
@@ -861,6 +1058,8 @@ export function bikeBuild(context is Context, id is Id, opt is map) returns map
     {
         if (!elec && j.tag != "jTray")
             continue;
+        if (!BK.cage && (j.csk == "spine" || j.nut == "spine"))
+            continue;
         const cs = j.frame == "drive" ? csD : (j.frame == "steer" ? csS : W);
         const dv = function(a is array) returns Vector
         {
@@ -879,7 +1078,19 @@ export function bikeBuild(context is Context, id is Id, opt is map) returns map
             const m = BK.mocks[k];
             if (!elec && m.name != "battery")
                 continue;
-            const q = bkBox(context, id + ("mock" ~ k), m.frame == "drive" ? csD : W, [m.lo, m.hi]);
+            const mcs = m.frame == "drive" ? csD : W;
+            const q = bkBox(context, id + ("mock" ~ k), mcs, [m.lo, m.hi]);
+            // mounting holes through the board (the Pi's M2.5)
+            var mh = [];
+            for (var i = 0; i < size(m.holes.at); i += 1)
+            {
+                const h = m.holes.at[i];
+                mh = append(mh, cylIn(context, id + ("mockH" ~ k ~ "_" ~ i), mcs, bkV([h[0], m.holes.y[0], h[1]]),
+                                      bkV([h[0], m.holes.y[1], h[1]]), m.holes.r * mm));
+            }
+            if (size(mh) > 0)
+                opBoolean(context, id + ("mockHc" ~ k), { "tools" : qUnion(mh), "targets" : q,
+                        "operationType" : BooleanOperationType.SUBTRACTION });
             dress(context, q, m.name, color(m.color[0], m.color[1], m.color[2]), "Envelope, not a print.");
         }
     // the cables: a 6 mm pipe along each path, round at every sample point
@@ -907,15 +1118,16 @@ export function bikeBuild(context is Context, id is Id, opt is map) returns map
     dress(context, tray(), "battery tray [print +Z drive]", frameC,
           "On the drive's back between the pulleys; the tongue screws onto the drive block. A strap through the wall slots.");
     if (elec)
-    dress(context, carrier(), "electronics carrier [print underside up]", frameC,
-          "Leans on the drive block's front face on four chassis posts. Pi 3B+ on top (M2.5 standoffs, screws from below), USB edge down the slope; U2D2 / AHRS / power board in the cradles underneath; the switch in the left tab; the cage's rear foot on the upper end. Print the underside up.");
+    dress(context, carrier(), "electronics carrier [print underside up]", frameC, BK.carrier.note);
     var prints = [["chassis", chassis(), Z], ["battery tray", tray(), toD(Z)]];
     if (elec)
+        prints = append(prints, ["electronics carrier", carrier(), -toD(Y)]);
+    if (elec && BK.cage)
     {
         dress(context, spine(), "cage spine [print X]", cageC, "The roll bar: the carrier's upper end to the steering plate. Print on its side.");
-        prints = concatenateArrays([prints, [["electronics carrier", carrier(), -toD(Y)], ["cage spine", spine(), X]]]);
+        prints = append(prints, ["cage spine", spine(), X]);
     }
-    for (var k = 0; k < (elec ? size(BK.ribs) : 0); k += 1)
+    for (var k = 0; k < (elec && BK.cage ? size(BK.ribs) : 0); k += 1)
     {
         const q = partAt(context, P, bkV(BK.ribs[k].pt));
         dress(context, q, "cage rib " ~ (k + 1) ~ " [print Y]", cageC, "An arch across the spine. Print flat.");
@@ -953,12 +1165,14 @@ export const aowBike = defineFeature(function(context is Context, id is Id, defi
         definition.pose is BikePose;
         annotation { "Name" : "Show battery and electronics envelopes", "Default" : true }
         definition.mocks is boolean;
+        annotation { "Name" : "Ghost the wings at their most inboard", "Default" : true }
+        definition.ghost is boolean;
     }
     {
         const keys = { BikePose.REST : "+0.00", BikePose.R50 : "+0.50", BikePose.R100 : "+1.00",
                        BikePose.L50 : "-0.50", BikePose.L100 : "-1.00" };
         bikeBuild(context, id + "build", { "steer" : definition.steer, "pose" : keys[definition.pose],
-                                           "mocks" : definition.mocks });
+                                           "mocks" : definition.mocks, "ghost" : definition.ghost });
         reportFeatureInfo(context, id, "%INFO%");
     });
 '''
@@ -969,7 +1183,7 @@ def build_fs(L: dict, fs_version: str = "3044") -> str:
     keep = ("wb", "yr", "zr", "zf", "tilt", "rake", "dAxis", "sAxis", "sOrigin", "deck", "wedge",
             "gusset", "stTrim", "stExt", "deckPt", "holdPts", "rgFloorPt", "stPlatePt", "blockBores",
             "blockBoreX", "carrier", "posts", "bosses", "piHoles", "sw", "rails", "tray", "mocks",
-            "cables", "spine", "ribs", "joints")
+            "cables", "ghost", "cage", "spine", "ribs", "joints")
     bk = {k: L[k] for k in keep}
     info = (f"Wheelbase {L['wb']:g} mm (CAD only; the sim's is 200); righting rod "
             f"{L['yr']:g} mm ahead of the rear axle, {L['zr'] - L['floor']:.1f} mm off the floor")
@@ -1075,17 +1289,11 @@ def check_wrapper(fs: str) -> str:
 
 
 NEW = ("chassis", "battery tray", "electronics carrier", "cage spine", "cage rib")
-SKIN = 0.9          # mm: 2 perimeters x ~0.45, and ~4-5 top/bottom layers at 0.2 -- UNCALIBRATED
-INFILL = 0.15
+SKIN, INFILL = sm.SKIN, sm.INFILL
 
 
 def printed_mass(vol_mm3: float, area_mm2: float, skin: float = SKIN, infill: float = INFILL) -> float:
-    """Grams as sliced: a skin of `skin` over the whole surface, sparse infill
-    inside it. A back-of-the-envelope figure, not a slicer's: it ignores the
-    skin doubling up at edges and thin walls printing solid beyond the cap
-    below. Calibrate `skin` against a printed part on a scale."""
-    shell = min(vol_mm3, area_mm2 * skin)
-    return (shell + infill * (vol_mm3 - shell)) / 1000 * ASA
+    return sm.printed_mass(vol_mm3, area_mm2, skin, infill, ASA)
 
 
 def _module(name: str) -> str:
@@ -1161,8 +1369,9 @@ def check(text: str, target: str | None) -> bool:
 
 
 def report(L: dict) -> str:
-    c = [L["carrier"]["plates"][0][0], L["carrier"]["plates"][1][1]]
-    seg = L["spine"]["segs"]
+    pl = L["carrier"]["plates"]
+    c = [[min(b[0][i] for b in pl) for i in range(3)], [max(b[1][i] for b in pl) for i in range(3)]]
+    seg = L["spine"]["segs"] if L["cage"] else None
     return "\n".join([
         f"wheelbase {L['wb']:g}; righting rod at y {L['yr']:g}, z {L['zr']:g} "
         f"({L['zr'] - L['floor']:.1f} off the floor)",
@@ -1170,9 +1379,9 @@ def report(L: dict) -> str:
         + "; ".join(f"y {b[0][1]:.1f}..{b[1][1]:.1f} |x|<={b[1][0]:g}" for b in L["deck"]["boxes"]),
         f"carrier (drive frame) {c[1][1] - c[0][1]:g} thick, {c[0][1] - 142.9:.1f}..{c[1][1] - 142.9:.1f} "
         f"off the block's face, z {c[0][2]:g}..{c[1][2]:g} along it",
-        f"cage rail z {seg[0][0][1]:.1f} from y {seg[0][0][0]:g} to {seg[0][1][0]:.1f}, then down to "
-        f"the front foot at ({seg[2][1][0]:.1f}, {seg[2][1][1]:.1f}); ribs at y "
-        + ", ".join(f"{r['y'] + r['t'] / 2:g}" for r in L["ribs"])])
+        (f"cage rail z {seg[0][0][1]:.1f} from y {seg[0][0][0]:g} to {seg[0][1][0]:.1f}, then down to "
+         f"the front foot at ({seg[2][1][0]:.1f}, {seg[2][1][1]:.1f}); ribs at y "
+         + ", ".join(f"{r['y'] + r['t'] / 2:g}" for r in L["ribs"])) if seg else "cage: off"])
 
 
 # --------------------------------------------------------------------------
@@ -1202,7 +1411,12 @@ FIT2 = """function(context is Context, queries)
             "transform" : transform(vector(0, 0, %ZF%) * mm) * rotationAround(line(O, X), %RAKE% * degree) });
     // the front tyre turning 360 deg about an axis through its centre sweeps a ball
     opSphere(context, makeId("ball"), { "center" : vector(0, 0, %ZF%) * mm, "radius" : %RB% * mm });
-    rightingBuild(context, makeId("rg"), { "mocks" : true });
+    const rr = rightingBuild(context, makeId("rg"), { "mocks" : true });
+    // tag the moving groups before anything moves (their queries find
+    // bodies by a point inside)
+    for (var g in ["crank", "cR", "cL", "wR", "wL"])
+        for (var q in rr.groups[g])
+            setAttribute(context, { "entities" : q, "name" : "fp_" ~ g, "attribute" : g });
     var gone = [];
     for (var sid in [makeId("dr"), makeId("st"), makeId("rg")])
         for (var b in evaluateQuery(context, solids(sid)))
@@ -1238,20 +1452,108 @@ FIT2 = """function(context is Context, queries)
             }
         }
     }
+    // 1b. at the station in use: each righting part's closest point to the drive
+    opTransform(context, makeId("rAt"), { "bodies" : rgQ, "transform" : transform(vector(0, %YAT% - at, 0) * mm) });
+    at = %YAT%;
+    const drQ = solids(makeId("dr"));
+    const pt = function(v) returns string
+    {
+        return toString(roundToPrecision(v[0] / mm, 1)) ~ "," ~ toString(roundToPrecision(v[1] / mm, 1)) ~ ","
+             ~ toString(roundToPrecision(v[2] / mm, 1));
+    };
+    for (var b in evaluateQuery(context, rgQ))
+    {
+        const dd = evDistance(context, { "side0" : b, "side1" : drQ });
+        if (dd.distance < 6 * mm)
+        {
+            var who = "?";
+            for (var t in evaluateQuery(context, qContainsPoint(drQ, dd.sides[1].point)))
+                who = name(t);
+            println("TIGHT|" ~ %YAT% ~ "|" ~ name(b) ~ "|" ~ who ~ "|" ~ toString(roundToPrecision(dd.distance / mm, 2))
+                    ~ "|" ~ pt(dd.sides[0].point) ~ "|" ~ pt(dd.sides[1].point));
+        }
+    }
+    // 1c. back from there in 0.25 steps while the righting keeps %CLR% to
+    // the drive, at rest AND at every righting pose (2026-10-05: a scan at
+    // rest alone let wing L, swung inboard, reach drive pulley L)
+    var last = at;
+    const gs = ["crank", "cR", "cL", "wR", "wL"];
+    for (var k = 1; k <= 60; k += 1)
+    {
+        const y = %YAT% - 0.25 * k;
+        opTransform(context, makeId("rd" ~ k), { "bodies" : rgQ, "transform" : transform(vector(0, y - at, 0) * mm) });
+        at = y;
+        const T = transform(vector(0, at, %ZR%) * mm);
+        var best = 1e9 * mm;
+        var tag = "";
+        var pk = 0;
+        for (var key in %POSEKEYS%)
+        {
+            if (key != "+0.00")
+                for (var g in gs)
+                    opTransform(context, makeId("rp" ~ k ~ "_" ~ pk ~ g), { "bodies" : qHasAttribute("fp_" ~ g),
+                            "transform" : T * rgXf(RG_POSES[key][g]) * inverse(T) });
+            const dd = evDistance(context, { "side0" : rgQ, "side1" : drQ });
+            if (dd.distance < best)
+            {
+                best = dd.distance;
+                var mine = "?";
+                for (var t in evaluateQuery(context, qContainsPoint(rgQ, dd.sides[0].point)))
+                    mine = name(t);
+                var who = "?";
+                for (var t in evaluateQuery(context, qContainsPoint(drQ, dd.sides[1].point)))
+                    who = name(t);
+                tag = key ~ "|" ~ mine ~ "|" ~ who ~ "|" ~ pt(dd.sides[0].point);
+            }
+            if (key != "+0.00")
+                for (var g in gs)
+                    opTransform(context, makeId("rb" ~ k ~ "_" ~ pk ~ g), { "bodies" : qHasAttribute("fp_" ~ g),
+                            "transform" : T * inverse(rgXf(RG_POSES[key][g])) * inverse(T) });
+            pk += 1;
+        }
+        println("REARD|" ~ y ~ "|" ~ toString(roundToPrecision(best / mm, 3)) ~ "|" ~ tag);
+        if (best < %CLR% * mm)
+            break;
+        last = y;
+    }
+    println("REARMIN|" ~ last);
     opTransform(context, makeId("rBack"), { "bodies" : rgQ, "transform" : transform(vector(0, -at, 0) * mm) });
-    // 2. front: the front axle slid forward of the righting's origin
+    // 2. front: the front axle slid forward of the righting's origin. The
+    // righting less its wings against the steering as it stands (straight),
+    // by distance; the wings against the tyre's whole steer sweep (the ball)
+    var wingQ = [];
+    var bodyQ = [];
+    for (var b in evaluateQuery(context, rgQ))
+    {
+        if (match(name(b), "wing [LR].*").hasMatch)
+            wingQ = append(wingQ, b);
+        else
+            bodyQ = append(bodyQ, b);
+    }
+    const stQ = solids(makeId("st"));
+    const ballQ = solids(makeId("ball"));
     at = 0;
     for (var f = %F0%; f <= %F1%; f += %DF%)
     {
         opTransform(context, makeId("f" ~ f), { "bodies" : frontQ,
                 "transform" : transform(vector(0, f - at, 0) * mm) });
         at = f;
-        println("FRONT|" ~ f ~ "|" ~ size(evCollision(context, { "tools" : rgQ, "targets" : frontQ })));
+        const ds = evDistance(context, { "side0" : qUnion(bodyQ), "side1" : stQ });
+        var who = "?";
+        for (var t in evaluateQuery(context, qContainsPoint(stQ, ds.sides[1].point)))
+            who = name(t);
+        var mine = "?";
+        for (var t in evaluateQuery(context, qContainsPoint(qUnion(bodyQ), ds.sides[0].point)))
+            mine = name(t);
+        const dw = evDistance(context, { "side0" : qUnion(wingQ), "side1" : ballQ });
+        println("FRONT|" ~ f ~ "|" ~ toString(roundToPrecision(ds.distance / mm, 2)) ~ "|" ~ mine ~ "|" ~ who
+                ~ "|" ~ pt(ds.sides[0].point) ~ "|wings-ball|" ~ toString(roundToPrecision(dw.distance / mm, 2)));
     }
 }"""
 
 
-def fit2_probe(rear=(140, 175, 2.5), front=(80, 90, 2.5)) -> str:
+def fit2_probe(rear=(140, 175, 2.5), front=(80, 90, 2.5), y_at: float | None = None,
+               clearance: float = 0.5) -> str:
     """REAR|y|vs whole drive|vs axle group, FRONT|offset|vs steering + ball."""
     p = load_params(sm.CAD_PARAMS)
     R = p["omni_wheel"]["outer_radius"] * 1000
@@ -1262,7 +1564,9 @@ def fit2_probe(rear=(140, 175, 2.5), front=(80, 90, 2.5)) -> str:
             "%ZF%": f"{st['R'] - R:g}", "%RAKE%": f"{p['bike']['rake_deg']:g}",
             "%RB%": f"{st['R']:g}", "%ZR%": f"{-R - rL['floor_z']:g}",
             "%Y0%": str(rear[0]), "%Y1%": str(rear[1]), "%DY%": str(rear[2]),
-            "%F0%": str(front[0]), "%F1%": str(front[1]), "%DF%": str(front[2])}
+            "%F0%": str(front[0]), "%F1%": str(front[1]), "%DF%": str(front[2]),
+            "%POSEKEYS%": "[" + ", ".join(f'"{k}"' for k in sorted(rL["poses"], key=float)) + "]",
+            "%CLR%": str(clearance), "%YAT%": str(y_at if y_at is not None else load()["s"]["placement"]["righting_y"])}
     s = FIT2
     for k, v in subs.items():
         s = s.replace(k, v)
@@ -1290,11 +1594,20 @@ FITE = """function(context is Context, queries)
         var es = [];
         for (var b in %BOXES%)
         {
-            const q = boxIn(context, E + b[0], csD, bkV([b[1][0], b[1][1] + cfg[1], b[1][2] + cfg[0]]),
+            // b[4]: a floor the box's lower end may not slide below (the
+            // carrier's middle, over the deck)
+            const q = boxIn(context, E + b[0], csD, bkV([b[1][0], b[1][1] + cfg[1], max(b[1][2] + cfg[0], b[4])]),
                             bkV([b[2][0], b[2][1] + cfg[1], b[2][2] + cfg[0]]));
             setProperty(context, { "entities" : q, "propertyType" : PropertyType.NAME, "value" : b[3] });
             es = append(es, q);
         }
+        // the pulley pockets stay with the pulleys
+        var cuts = [];
+        for (var i = 0; i < size(%CUTS%); i += 1)
+            cuts = append(cuts, boxIn(context, E + ("cut" ~ i), csD, bkV(%CUTS%[i][0]), bkV(%CUTS%[i][1])));
+        if (size(cuts) > 0)
+            opBoolean(context, E + "pk", { "tools" : qUnion(cuts), "targets" : qUnion(es),
+                    "operationType" : BooleanOperationType.SUBTRACTION });
         const eq = qUnion(es);
         // closures capture by value in FeatureScript: return, do not assign
         const note = function(pose is string) returns array
@@ -1337,15 +1650,65 @@ FITE = """function(context is Context, queries)
 def fite_probe(L: dict, slides=(0, -2.5, -5, -7.5, -10, -12.5, -15), gaps=(0, 3)) -> str:
     """The electronics' envelopes slid down the drive's face (drive z) and off
     it (drive y), against the bike built without them: rest, steered, posed."""
-    boxes = [[f"c{i}", b[0], b[1], ("carrier, narrow part", "carrier, wide part")[i]]
-             for i, b in enumerate(L["carrier"]["plates"])]
-    boxes.append(["sw", L["sw"]["tab"][0], L["sw"]["tab"][1], "switch tab"])
+    pl = L["carrier"]["plates"]
+    mid = pl[0][0][2] if len(pl) == 3 else -1e9          # the notched middle's floor
+    boxes = [[f"c{i}", b[0], b[1], f"carrier plate {i}", mid if (i == 0 and len(pl) == 3) else -1e9]
+             for i, b in enumerate(pl)]
+    if L["sw"]:
+        boxes.append(["sw", L["sw"]["tab"][0], L["sw"]["tab"][1], "switch tab", -1e9])
     for i, m in enumerate(L["mocks"]):
         if m["frame"] == "drive" and m["name"] != "battery":
-            boxes.append([f"m{i}", m["lo"], m["hi"], m["name"]])
+            boxes.append([f"m{i}", m["lo"], m["hi"], m["name"], -1e9])
     body = sm.geometry_layer(build_fs(L).split(SPLIT_MARK)[0] + "\n" + SPLIT_MARK)
     cfgs = [[s_, g_] for s_ in slides for g_ in gaps]
-    return (FITE.replace("%LAYER%", body).replace("%CFGS%", _fs(cfgs)).replace("%BOXES%", _fs(boxes)))
+    return (FITE.replace("%LAYER%", body).replace("%CFGS%", _fs(cfgs)).replace("%BOXES%", _fs(boxes))
+            .replace("%CUTS%", _fs(L["carrier"]["pockets"])))
+
+
+def fit_righting(L: dict, data: dict, onshape, out: Path = Path("traces/bike_cad/fit_righting.txt")) -> bool:
+    """Does the righting module, as its generator now draws it, still fit the
+    bike at the placement? ONE eval. The rules (user, 2026-10-05): the
+    righting keeps `rear_clear` to the drive at rest and at every pose, and
+    the righting less its wings keeps `front_clear` to the front wheel
+    standing straight. layout() has already checked the wings against the
+    front tyre's whole steer sweep, every pose, locally."""
+    pl = data["s"]["placement"]
+    yr, F = L["yr"], L["wb"] - L["yr"]
+    script = fit2_probe(rear=(yr, yr, 2.5), front=(F, F, 2.5), y_at=yr + 1.75, clearance=pl["rear_clear"])
+    sm.lint_fs(script)
+    reply = onshape.eval_featurescript(script, onshape.resolve(None, "check"))
+    for n in onshape.notice_lines(reply):
+        print(n)
+    con = reply.get("console", "")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(con)
+    rows = [l.split("|") for l in con.splitlines()]
+    rear = [(float(r[1]), float(r[2]), r[3:]) for r in rows if r[0] == "REARD"]
+    stop = next((float(r[1]) for r in rows if r[0] == "REARMIN"), None)
+    front = next((r for r in rows if r[0] == "FRONT"), None)
+    if not rear or stop is None or front is None:
+        print("the probe did not report: see traces/bike_cad/fit_righting.txt  FAIL")
+        return False
+    at = next((d for y, d, _ in rear if abs(y - yr) < 1e-6), None)
+    bind = next(((y, d, w) for y, d, w in rear if d < pl["rear_clear"]), rear[-1])
+    rear_ok = at is not None and at >= pl["rear_clear"] - 0.02
+    print(f"  rear, at rest and every pose, at righting_y {yr:g}: "
+          + (f"{at:.2f} to the drive (want >= {pl['rear_clear']:g})" if at is not None else "does not reach it")
+          + ("  ok" if rear_ok else "  FAIL"))
+    print(f"    it could go back to {stop:g} ({yr - stop:+.2f}); binds: {' | '.join(bind[2][:3])} "
+          f"({bind[1]:.2f} at {bind[0]:g})")
+    fd = float(front[2])
+    front_ok = fd >= pl["front_clear"] - 0.02
+    print(f"  front, less the wings, to the straight front wheel at {F:g}: {fd:.2f} ({front[3]} -> {front[4]}; "
+          f"want >= {pl['front_clear']:g})" + ("  ok" if front_ok else "  FAIL"))
+    print(f"  wings vs the front tyre's sweep, every pose (local): "
+          + ", ".join(f"{k} {v['max'] - v['now']:.1f} spare" for k, v in L["wingRoom"].items()))
+    ok = rear_ok and front_ok
+    if ok and L["rgDigest"] != L["rgDigestProbed"]:
+        print(f"  it fits: set placement.righting_digest to {L['rgDigest']} (and run --check before a push)")
+    print("  FITS" if ok else "  DOES NOT FIT the bike at this placement: change the righting, or re-place it "
+          "(--fit 2 for the station, --fit e for the electronics, then --check)")
+    return ok
 
 
 def main() -> None:
@@ -1361,12 +1724,21 @@ def main() -> None:
     ap.add_argument("--shot", metavar="TAB|URL", nargs="?", const="", default=None,
                     help=f"render a Part Studio (default `{PART_STUDIO}`); ONE billable call")
     ap.add_argument("--view", default="isometric")
-    ap.add_argument("--fit", choices=["2", "e"], default=None,
-                    help="ONE call: slide the righting against the placed drive and steering")
+    ap.add_argument("--fit", choices=["2", "e", "righting"], default=None,
+                    help="ONE call: 2 slides the righting against the placed drive and steering; "
+                         "righting checks the righting module still fits the bike at the placement "
+                         "(after editing it); e slides the electronics")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the check script's size instead of spending a call")
     args = ap.parse_args()
 
+    if args.fit == "righting":
+        from . import onshape
+        data = load(args.params)
+        L = layout(data)                    # refuses a wing in the front tyre's sweep, any pose
+        ok = fit_righting(L, data, onshape)
+        print(onshape.budget_line())
+        raise SystemExit(0 if ok else 1)
     if args.fit == "e":
         from . import onshape
         script = fite_probe(layout(load(args.params)))
@@ -1400,6 +1772,12 @@ def main() -> None:
     sm.lint_fs(text)
     Path(args.output).write_text(text)
     print(f"wrote {len(text)} chars -> {args.output}")
+    if L["rgDigest"] != L["rgDigestProbed"]:
+        print(f"NOTE: the righting changed since the placement was probed (righting_digest "
+              f"{L['rgDigestProbed']} in {args.params}, now {L['rgDigest']}). It is rebuilt from "
+              "its generator as it is now; re-measure what was fitted to it: `--fit 2` "
+              "(righting_y, wheelbase), `--fit e` (electronics.edge), then `--check`, and set "
+              "righting_digest to the new value.")
     print(report(L))
     if args.dry_run:
         print(f"check script: {len(check_wrapper(text))} chars")

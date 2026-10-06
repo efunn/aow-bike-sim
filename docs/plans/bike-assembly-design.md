@@ -1,11 +1,13 @@
 # The whole bike in CAD
 
-> **Status:** new document (2026-09-30). A first assembly, rough in places
-> (user): four passes in one day took the righting under the drive and the
-> electronics onto the drive's front face, wheelbase 300 -> 250.
-> Interference-free, nothing printed. The righting's stack, the
-> electronics' height, the battery holder and the cage are all expected to
-> change: see Outstanding.
+> **Status:** a first assembly, rough in places (user). 2026-09-30: four
+> passes took the righting under the drive and the electronics onto the
+> drive's front face, wheelbase 300 -> 250. 2026-10-05: the righting's links
+> went to 6 mm plates, and the underside electronics and the cage were
+> switched off. The Pi came down onto the drive's face and beside the deck,
+> the righting went back to 0.5 from the drive, and the front was refitted
+> to the user's rule. Wheelbase 223.5.
+> Interference-free, nothing printed. See Outstanding for what changes next.
 
 The drive, steering and righting modules placed in one Part Studio, plus
 the parts that tie them together.
@@ -197,6 +199,174 @@ Consequences:
     (u 1).
   - A test checks every bend's radius from the samples.
 
+**Fifth pass (2026-10-05, user): pared down to place the Pi.**
+
+- **Switched off, not deleted:** the U2D2, AHRS, power board, switch, the
+  two USB cables (`electronics.underside: false`, "they need to go back in
+  later") and the cage (`rollcage.enabled: false`, "get the rest of the
+  design sorted before getting that in"). The test fixture `L_full`
+  switches them all back on at the old placement and checks they still
+  build.
+- **The Pi turned 180 deg** (`pi.usb_edge: up`): USB/Ethernet up the
+  slope, so the GPIO header changes side. Its M2.5 holes go through the
+  board, not only the plate.
+- **The carrier is one plate round the Pi** (+-28, 89 long), on two rows
+  of posts again. The cantilever is gone.
+- **Gap 8 off the drive's face** (was 19): the least that leaves each post
+  its nut (2 past the joint plane, 3 thick, 1 wall).
+- **The righting's 6 mm plates** (`righting-design.md`) let it back from
+  157.5 to 150 (`--fit 2`). The front stays at 85: the wing panels against
+  the front tyre's sweep set it, and they did not change. Wheelbase
+  250 -> 235.
+- **`--fit e`** slid the plate 0..-25 down the face at gap 8/11/14: clean
+  everywhere, at rest, steered and posed. Edge -33 -> -58, which is also as
+  low as the upper post row allows. The plate's lower edge is then ~7.5
+  above the deck over the righting.
+- **Ghost wings** (dialog tickbox, on by default): each wing again at its
+  most inboard pose. That is the far wing at 56 % of the throw, 14.2 deg
+  in, translucent and untagged, so poses and the check ignore it.
+- **`placement.righting_digest`:** the bike rebuilds the righting from its
+  generator every time, so a linkage or stack change comes in on its own.
+  The placement and the edge are measured numbers, though: `cad_bike`
+  prints a NOTE when the righting no longer matches the digest they were
+  probed against. Re-run `--fit 2`, `--fit e` and `--check`, then update it.
+
+**Sixth pass (2026-10-05 pm, user): the front by the user's rule, the
+righting's rear chamfered, the Pi tight.** The process (user): this is
+subassembly design (steer, drive, righting) against how the rest can be
+packed. The packing only has to be "kinda possible", and every constraint
+that turns up gets written down (below).
+
+- **The front:** the righting less its wings sits 5 from the front wheel
+  standing straight. That is the front bulkhead, 5.25 at 80 ahead of the
+  rod, was 85. `--fit 2` now measures it by distance.
+- **The wings clear the tyre's whole steer sweep at every pose,** 2 to
+  spare. `layout()` refuses otherwise (`wing_front_room`). That took
+  `wing.panel_back` 50 -> 41 (panels 77 long, were 86). The binding pose is
+  not rest: a wing swung inboard comes nearer the tyre.
+- **The rear:** at 150 the drive's case sides came down onto the rear-top
+  corners of the bridge (0.75, at |x| 14) and the upper case (1.8, at |x|
+  13), at 45 deg. `--fit 2` TIGHT rows report where it is tight.
+  - Chamfers: 6 on the upper case's -Y +Z edge (2.8 wall left over the
+    servo; 7 at most, then the central joint's ridge), and 6 on the bridge's
+    rear-top edge outboard of |x| 5 (clear of the central screw's head).
+  - The righting goes back to 147.5.
+- **The Pi:**
+  - standoffs 3 (were 6, a guess);
+  - the carrier one joint plate (4.6) thick on 2 mm pads, nuts in the
+    drive block (the block is chassis);
+  - edge -60.5: its corner sits 1.5 over the deck over the righting
+    (`--check` bounding box);
+  - the board's underside is 9.6 off the block's face, was 17 this
+    morning and 28 before.
+- **Wheelbase 227.5** (147.5 + 80).
+
+**Seventh pass (2026-10-05, late pm, user): slammed.**
+- **The righting to ~0.5 from the drive.** `--fit 2` now scans back in
+  0.25 steps (REARD rows) until the distance drops under 0.5: 143.5, at
+  0.66. The chamfers grew first: case 7, bridge 7 outboard, and 4.6 in the
+  middle, THROUGH the central screw's counterbore and stopping 0.3 over its
+  head seat (user: "the chamfer can intersect the counterbore").
+- **The central screw moved 6 forward** (user), its nut slot turned along
+  Y, the nut partly over the lower case in a relief. REVERTED in the eighth
+  pass: the lower case's undercut blocks it in 3D.
+- **But the wings bind first.** The 0.5 scan now tests every righting pose
+  as well as rest. At rest the case and bridge would allow 139.75; with the
+  poses it stops at 143.5, where wing L at +56 % (the far wing, 14 deg
+  inboard) brings its rear end, mid-height on the panel's inner face, to
+  drive pulley L. A rest-only scan had passed 139.75 and the full check
+  caught it.
+- **Fasteners (user):** 6-32 with a captive nut and a countersunk head for
+  the general assembly; self-tap into printed parts is fine; no self-tap
+  into Dynamixel horns (XL330 reused, XC330 only at final assembly; the
+  XC430 has brass inserts).
+- **The Pi's plate ON the face** (gap 0), with a pocket under each drive
+  pulley (they stand ~0.7 proud; 1.7 deep with 1 mm round the flange).
+  - The middle stops 1 over the deck; two legs outboard of +-17 carry the
+    board's lower holes.
+  - Printed standoffs on the plate, a self-tap screw into each (user's plan;
+    which part they finally come from is open). Pilot 2.2 (GUESS), 5.4 deep,
+    stopping 0.5 short of the pockets.
+  - (An intermediate version drew heat-set inserts, which nobody had asked
+    for, and set a false limit on them. Removed.)
+- **Edge -69.5:** clean (`--fit e`); 1.5 further and the board itself
+  meets the deck.
+- **Wheelbase 223.5** (143.5 + 80).
+
+**Eighth pass (2026-10-05, evening, user): the righting made to work.**
+- **The central screw is back behind the lower case** (`uc_joint_dy` 0).
+  Forward, the lower case's undercut blocked the nut and the screw below
+  it (user, seen in 3D). The slot stays turned along Y.
+- **The bridge is one full-width chamfer** (4.6, the head seat's limit)
+  and 14.75 wide (was 16).
+- **The wings' knuckle tabs moved to the knuckles' +Y side** (`knuckle_tab:
+  inner`), beside the lower case, as the rocker-side tabs sit beside the
+  bulkhead.
+- **The panels are 5 thick** (were 6): the synthesis holds the panel's line
+  2.5 outside its 35 core (`wing_width_mm` 5). At 6 the inner face sat 0.5
+  inside it. That was the whole of wing L's interference with drive pulley
+  L; the wings no longer bind.
+- **What binds the rear now: drive case side R's SKIRT.** The band wraps
+  the XC430 at |x| 12-17, and its lower rim comes down at 45 deg over the
+  bridge's rear-top edge, with XC430 A across the middle. It is not the
+  fixture tab at |x| 16-20.6. So narrowing the bridge to 14.75 bought
+  nothing (0.467 at 145 either way); depth of chamfer is the only lever
+  there. The earlier 7 mm step outboard of |x| 5 bought 1.75.
+- **The bridge's last 10 mm narrowed to +-11.5** (user: "<24mm to fit
+  under the drive case sides"). It passes 0.5 inside the skirts. The
+  central joint's ridge shortens to 10.35 to stay inside it.
+- **Righting at 143.5, wheelbase 223.5** (pose-aware scan): the narrow
+  rear end slides past the skirts at 0.5, then the bridge's middle chamfer
+  meets XC430 A (0.48 at 143.25).
+- **The chassis is +-16 throughout** (`deck_half` 16, was 25 for the short
+  piece ahead of the righting; user). The 32 came from the drive pulleys at
+  deck height (|x| 17-34) as far forward as y ~121, and the Pi's carrier
+  legs (|x| 17-28) now come down beside the deck too.
+
+**Settled for now (2026-10-05, user):** the carrier on two screws, on a
+diagonal, (11, 14) and (-11, -24.5) on the face (`post_mirror` false). The
+centreline is avoided because of the tray nut's slot. "Happy with the
+layout for now"; nothing printed in this setup. The righting will be
+reworked against `cad_bike --fit righting` (one call: the pose-aware 0.5
+scan and the front wheel, FITS or what binds), with the constraints in
+`righting-design.md`, "Fitting the whole bike".
+
+**Constraints, as found (kept current; user: "please keep noting things
+that appear as constraints to you"):**
+
+| what binds | where | number | what would free it |
+|---|---|---|---|
+| righting rear | the bridge's middle chamfer (4.6, held by the central screw's head seat) on XC430 A; the narrowed rear end passes the drive's skirts (\|x\| 12) at 0.5; every pose | rod >= 143.5 ahead of the rear axle | the central screw's head seat lower, or the screw elsewhere |
+| wings vs drive pulley L | at 6 thick the inner face sat 0.5 inside the synthesis's 35 core | -- | fixed: panels 5, the synthesis's own width |
+| righting front | front bulkhead to the straight front wheel, 5 (user) | front axle 80 ahead of the rod | the bulkhead's outline, or the user's 5 |
+| wings vs front tyre | wing L's front end against the steer sweep, worst swung inboard | panel_back <= 43.1 at 80 (41 used) | shorter panels; a real steer limit (the ball is +-180 deg) |
+| Pi plate on the face | the drive pulleys stand ~0.7 proud | pockets 1.7 deep, 2.9 of plate left | -- |
+| Pi down the face | the board itself, over the deck | edge -69.5 (-71 touches) | -- |
+| Pi plate's middle | the deck over the righting, +-16 | 1 over it | -- |
+| carrier screws | two, on the block's face and the plate, off the tray nut's slot (x 0) | (11, 14), (-11, -24.5) | -- |
+| carrier nuts | slots out of the block's sides, under the drive's case sides | -- | they go in first; the case-side screws are arbitrary (user) and may cross them |
+| tray tongue nut | its slot leaves through the block's face, under the carrier | -- | assemble the tray first |
+| Pi underside | 3 standoff: header and port pins, microSD socket | -- | measure the pins on the real board |
+| AHRS height | the bike may end under the ~252 mm roll centre (user) | -- | how much the fore-aft place matters: the user's to work out |
+| upper case chamfer | the central joint's ridge (8 meets it) | 7 used, the most | the joint further forward, which the lower case's undercut blocks |
+| upper case's turned nut slot | the case's chamfer crosses its open end: a 6.55 bridge as printed (the check's one hanging edge) | -- | accepted |
+
+**Where the switched-off parts are meant to go (user, 2026-10-05,
+tentative):**
+- the U2D2 and the power distribution board on the front chassis, near the
+  steer servo;
+- the AHRS further back, near the battery. The user recalls "high and far
+  back, orientation unimportant". On record: the bike's roll centre
+  measured ~252 mm above the ground (`ahrs-fixture.md`), above the AHRS's
+  old ~180, so higher means less accelerometer lever arm. Its mount is
+  part of the digest-pinned `DeployModel` (the AHRS mount), so a new
+  orientation means re-exporting the bundle, not ignoring it. Nothing found
+  for "far back";
+- the power switch near the front/steer. Its geometry stays in
+  `electronics.switch`: cutout 13 x 19.4, panel 0.75-3 (2 drawn), 18.5
+  behind the panel, the bezel GUESS, and the tab code in `cad_bike` behind
+  `underside`.
+
 **Printed mass** is now estimated beside the solid figure, using
 `skin x area + 15 % x the rest` with skin 0.9 mm (`cad_bike.printed_mass`).
 UNCALIBRATED: weigh a printed part and fit `SKIN`.
@@ -204,29 +374,28 @@ UNCALIBRATED: weigh a printed part and fit `SKIN`.
 ## As built
 
 `python -m aow_sim.cad_bike` (config `config/bike_cad.yaml`), one feature
-`AOW bike` (dialog: steer angle, righting pose, envelopes on/off) in the
+`AOW bike` (dialog: steer angle, righting pose, envelopes on/off, ghost
+wings on/off) in the
 Feature Studio **aow-bike-whole features**, inserted in the Part Studio
 **aow-bike-whole** (`onshape.yaml` tabs `bike_features` / `bike_assembly`).
-Renders: `docs/cad/bike.png`, `docs/cad/bike_right.png`, `docs/cad/bike_left.png`. Tests:
+Renders: `docs/cad/bike.png`, `docs/cad/bike_right.png`, `docs/cad/bike_left.png`
+(2026-09-30: they predate the fifth pass; the model is read in Onshape, renders only on request). Tests:
 `pytest tests/test_cad_bike.py` (pure).
 
-| new part (second layout) | print | g solid / ~g printed (15 %, 2 perimeters, uncalibrated) |
+| new part (sixth pass) | print | ~g printed (15 %, 2 perimeters, uncalibrated) / g if solid |
 |---|---|---|
-| chassis | deck down | 76.6 / ~34 |
-| battery tray | floor down | 11.4 / ~10 |
-| electronics carrier | underside up | 24.4 / ~19 |
-| cage spine | on its side | 17.6 / ~10 |
-| cage rib x 3 | flat | 3.0 / ~2.3 each |
+| chassis | deck down | ~30 / 68.7 |
+| battery tray | floor down | ~10 / 11.4 |
+| electronics carrier | underside up | ~12.5 / 22.2 |
 
 | `--check`, one call | result |
 |---|---|
-| bodies | 67 |
+| bodies | 57 |
 | interference across modules and new parts: at rest, steered 30 / 90 / 180 / 270 deg, righting at every pose | 0 |
-| downward faces left | nut-slot roofs and edges (posts, cage boss), the tray's strap slots, the switch cutout's top, the righting joints' grooves |
+| downward faces left | nut-slot roofs and edges (both post rows lean 45 deg as printed), the tray's strap slots, the righting joints' grooves |
 
-Landmarks, bike frame, mm: deck z 53.64-58.24; the electronics' top ~166
-(y ~85); cage rail 173.9 to y 90, then down to the steering foot at
-(172.6, 118); ribs at y 0 / 40 / 80 to z 183; the floor -51.2.
+Landmarks, bike frame, mm: wheelbase 223.5, righting rod at y 143.5; deck z
+53.64-58.24; the carrier y 87-154, z 51.9-118; the floor -51.2.
 
 ## Things that cost a call (2026-09-30)
 
@@ -251,51 +420,30 @@ Landmarks, bike frame, mm: deck z 53.64-58.24; the electronics' top ~166
 ## Outstanding
 
 **The state, plainly (user, 2026-09-30): a first assembly, and a mess in
-places.** These four are known to change:
+places.** Known to change:
 
-- **The righting's stack will shrink.** The wing joint moves outboard (the
-  web's 6 and the hub zone's 8 are self-imposed by where it sits). The
-  mechanism may also be lowered. Both shorten the wheelbase; see below.
-- **The electronics can still go further down.** The cables set the limit
-  now, and some more jigging of their route gains room. The drawn cables
-  are also somewhat unrealistic: the real ones are longer than these
-  minimal paths and will be routed with slack. No need to model them fully;
-  the drawn paths only show the plugs, stubs and bend radii fit.
+- **The underside electronics go back in** (U2D2, AHRS, power board,
+  switch, the cables), somewhere other than under a carrier now 8 off the
+  face. The cables are drawn for the Pi's USB edge DOWN; the generator
+  refuses `underside` with `usb_edge: up` until they are re-routed. When
+  they return, the drawn cables were minimal paths: the real ones are
+  longer, and need not be modelled fully (user, 2026-09-30).
+- **The righting's stack: the 6 mm plates are done; lowering it is not.**
 - **The battery holder will likely be a different part or arrangement,**
   for example coming directly off the XC430 cases instead of a tray on the
   drive block's top. The tray here is a placeholder for where the pack sits.
-- **The cage spine and ribs are extremely tentative** and may be replaced
-  outright. They show that something can span the electronics and anchor at
-  both ends, not what the roll cage will be.
-
-- **The bike is taller now.** The cage top moved from z ~145 to ~184
-  (196 -> 235 above the floor), because the leaning electronics reach
-  ~166. The CoM rises with them; not computed.
-- **The carrier hangs on one row of posts and the cage foot** (fourth
-  pass). The lower ~55 mm cantilevers. A lower support wants the devices'
-  final places first.
-- **The righting's axial stack could be thinner** (user, 2026-09-30).
-  The bulkhead (10, the journal's bearing length) and the couplers (6)
-  stay. The web's 6 and the hub zone's 8 are SELF-IMPOSED by where the
-  wing joint was put (user's catch):
-  - the wing's rocker-side tab sits in the web plane, which forces web >=
-    tab (6, for the nut);
-  - its boss and countersunk head sit in the hub zone.
-
-  The wing is outboard (|x| >= 30) of everything near the rod except its
-  own rocker. So the joint can move to the boss's far side, past the hub
-  zone in Y, beside the bulkhead and clear of it (the bulkhead is +-18). The
-  coupler plane never sees the tab then, and both layers only need what the
-  rocker and crank need: the arm's strength and a crank shoulder. The
-  rocker's 14 mm sleeve on the rod is not needed either; the knuckle shares
-  the wing. Not tried; see `righting-design.md`.
+- **The cage is off, and was extremely tentative** (spine and ribs); it
+  may be replaced outright. Switched back on it does not clear the
+  electronics at 235: it was laid out for 250.
+- **The post screws go in before the Pi:** their heads sit under the board.
+- **CoM not computed.**
 - **Lowering the whole righting mechanism shortens the wheelbase more:**
   its binding corner tucks under the drive's 45 deg underside, so ~1 mm
   back per mm lower. That moves the wing pivot, so it belongs to the
   linkage optimisation (`righting-linkage-margin.md`). Kept as is for now
   (user).
-- **Re-run `--fit 2`** after any righting or drive change: its probe
-  excludes the deck plate, so its zero is the bridge's.
+- **Re-run `--fit 2`** after any righting or drive change (the digest NOTE
+  says when): its probe excludes the deck plate, so its zero is the bridge's.
 - **The sim still has wheelbase 200 and its own payload layout.** Nothing
   here reached `bike_params.yaml`, on purpose.
 - **The USB-C ends are guesses:** the plug body (12 x 6.5 x 15), its hard
