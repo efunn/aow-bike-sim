@@ -105,15 +105,22 @@ def pos_delta(now: int, prev: int) -> int:
     return ((now - prev + POS_WRAP // 2) % POS_WRAP) - POS_WRAP // 2
 
 
+SYSFS_USB_SERIAL = Path("/sys/bus/usb-serial/devices")
+
+
 def assert_low_latency(port: str) -> None:
     """Raise unless the FTDI latency timer is 1 ms (Linux only).
 
     The `ftdi_sio` default of 16 ms caps a request/response loop near 60 Hz
     whatever the baud. Checked, not set: setting it needs root. macOS has no
     such file and passes silently; there, run `adjust-ftdi-latency`.
+
+    The port is resolved first: a `/dev/serial/by-id/...` name (bike_params'
+    dxl_port) is a symlink to `ttyUSB0`, and its own name has no sysfs
+    entry, so before 2026-10-07 the check passed silently for it.
     """
-    dev = Path(port).name
-    p = Path(f"/sys/bus/usb-serial/devices/{dev}/latency_timer")
+    dev = Path(port).resolve().name
+    p = SYSFS_USB_SERIAL / dev / "latency_timer"
     if not p.exists():          # non-FTDI adapter, or not Linux
         return
     value = int(p.read_text().strip())

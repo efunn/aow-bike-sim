@@ -218,3 +218,22 @@ def test_the_alert_bit_is_not_a_failed_instruction():
     assert instruction_failed(0, 0x07)              # access error, no alert
     assert instruction_failed(-1000, 0)             # port busy
     assert not instruction_failed(0, 0)
+
+
+def test_the_latency_check_follows_a_by_id_symlink(tmp_path, monkeypatch):
+    """bike_params names the U2D2 by /dev/serial/by-id, a symlink to ttyUSB0:
+    the check must read ttyUSB0's timer, not pass for want of a by-id one."""
+    import pytest
+
+    from aow_sim.hw import dynamixel as dx
+    sysfs = tmp_path / "sys"
+    (sysfs / "ttyUSB0").mkdir(parents=True)
+    (sysfs / "ttyUSB0" / "latency_timer").write_text("16\n")
+    (tmp_path / "ttyUSB0").touch()
+    by_id = tmp_path / "usb-FTDI_USB__-__Serial_Converter_FTB8HNE3-if00-port0"
+    by_id.symlink_to(tmp_path / "ttyUSB0")
+    monkeypatch.setattr(dx, "SYSFS_USB_SERIAL", sysfs)
+    with pytest.raises(RuntimeError, match="16 ms"):
+        dx.assert_low_latency(str(by_id))
+    (sysfs / "ttyUSB0" / "latency_timer").write_text("1\n")
+    dx.assert_low_latency(str(by_id))
