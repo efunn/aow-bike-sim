@@ -221,6 +221,9 @@ def test_a_cam_run_fires_exactly_the_count_and_records_every_miss(monkeypatch, t
         def sensor_time(self, host_t, span_s=0.5):
             return host_t                 # samples stamped on perf_counter
 
+        def host_time(self, sensor_t, span_s=0.5):
+            return sensor_t
+
         @property
         def buf(self):
             now = time.perf_counter()
@@ -237,6 +240,8 @@ def test_a_cam_run_fires_exactly_the_count_and_records_every_miss(monkeypatch, t
     assert [int(r["drop"]) for r in rows] == list(range(1, 9))
     assert [int(r["cam_step"]) for r in rows] == list(range(k0, k0 + 8))
     assert {r["t_zero"] for r in rows} == {"cam_parked"}       # no impact to time from
+    t_host = [float(r["t_zero_host_s"]) for r in rows]          # on the AHRS / servo clock
+    assert t_host == sorted(t_host) and t_host[-1] <= time.perf_counter()
     with open(tmp_path / "d.csv") as fh:                   # counts only: any calibration later
         assert fh.readline().strip() == "drop,t_s,X_counts,Y_counts,Z_counts,Rz_counts"
     traced = {int(r["drop"]) for r in csv.DictReader(open(tmp_path / "d.csv"))}
@@ -261,6 +266,9 @@ def test_a_load_that_never_lifts_is_still_loaded_not_a_miss(monkeypatch, tmp_pat
 
         def sensor_time(self, host_t, span_s=0.5):
             return host_t                 # samples stamped on perf_counter
+
+        def host_time(self, sensor_t, span_s=0.5):
+            return sensor_t
 
         @property
         def buf(self):
@@ -392,3 +400,90 @@ def test_an_old_cam_run_is_reanalysed_at_the_contact_through_the_lever(tmp_path)
     assert float(new["h_contact_mm"]) == pytest.approx(h_c, rel=1e-3)
     # same flight, a longer drop: e_flight falls by sqrt(2 / h_c)
     assert float(new["e_flight"]) == pytest.approx(cols["e_flight"] * (2.0 / h_c) ** 0.5, rel=1e-3)
+
+
+def test_every_servo_read_is_logged_on_the_host_clock_with_its_goal():
+    """The servo log: each read of each move, stamped mid-read, with the goal
+    it was moving to -- lifts and parks too, not only the drop's trace."""
+    import time
+    c, bus = cam(1500 - 5)
+    c.log = []
+    t0 = time.perf_counter()
+    c.home()
+    c.fire(0.0)
+    goals = [g for _, _, g in c.log]
+    assert goals[0] == c.step(c.k - 1) + c.dir * -c.margin       # home: the top flat, held by the lift
+    assert goals[-1] == c.step(c.k - 1) + c.dir * c.park         # then the drop into the dwell
+    assert len(set(goals)) == 2
+    ts = [t for t, _, _ in c.log]
+    assert t0 <= ts[0] and ts == sorted(ts)
+    assert c.log[-1][1] == bus.pos                 # the last read is where it parked
+
+
+def test_save_logs_writes_the_servo_log_and_the_run_record(tmp_path):
+    import csv
+    import json
+    from types import SimpleNamespace
+    c, bus = cam(1500 - 5)
+    c.log = []
+    c.home()
+    c.fire(0.0)
+    args = SimpleNamespace(wheel="front", park_deg=12, margin_deg=30, hold_s=3.0, settle_s=3.0)
+    cc = dict(id=1, index=1500, dir=-1, ma=300, cfg={"arm": {"r_contact_mm": 205}})
+    stem = tmp_path / "drops_x"
+    fd.save_logs(args, stem, c, None, {"force": "/dev/a", "cam": "/dev/b"}, [195.0, 22.0],
+                 cc, [0.5, 1.0, 1.5, 2.0])
+    rows = list(csv.DictReader(open(tmp_path / "archive" / "drops_x_servo.csv")))
+    assert len(rows) == len(c.log) and set(rows[0]) == {"host_s", "ticks", "goal_ticks"}
+    meta = json.load(open(f"{stem}_run.json"))
+    assert meta["ahrs_station_mm"] == dict(along_bar_from_pivot=195.0, above_pivot=22.0,
+                                           outboard_of_bar=0.0)
+    assert meta["cam"]["hold_s"] == 3.0 and meta["arm"] == {"r_contact_mm": 205}
+    assert "ahrs" not in meta["files"]
+
+
+def test_ahrs_needs_its_station(monkeypatch):
+    for argv, says in ((["--wheel", "f", "--ahrs"], "--ahrs-at-mm"),
+                       (["--wheel", "f", "--ahrs", "--ahrs-at-mm", "195"], "--ahrs-at-mm")):
+        monkeypatch.setattr(sys, "argv", ["force_drop.py", *argv])
+        with pytest.raises(SystemExit) as e:
+            fd.main()
+        assert says in str(e.value)
+
+
+def test_a_dry_run_with_the_ahrs_keeps_a_row_per_drop_with_its_release(tmp_path):
+    """No force sensor (the Pi cannot power it with the rest): each drop's row
+    times its release on the host clock, between the drop move's start and
+    the cycle's end, and save_logs writes them as the summary."""
+    import csv
+    import time
+    from types import SimpleNamespace
+    c, bus = cam(1500 - 5)
+    c.log = []
+    c.home()
+    args = SimpleNamespace(hold_s=0.0, settle_s=0.0, corner_mm=0.45, r_rest_mm=13.0,
+                           wheel=None, park_deg=12, margin_deg=30)
+    rows = []
+    fd.dry_run(args, c, [0.5, 1.0], [(0.5, 1), (1.0, 1)], rows)
+    assert [r["drop"] for r in rows] == [1, 2]
+    assert [r["cam_step"] for r in rows] == [c.k - 2, c.k - 1]
+    for r in rows:     # the fake jumps to its goal, so the edge fit may find too few reads
+        assert r["t_drop_host_s"] <= time.perf_counter()
+        assert r["t_release_host_s"] != r["t_release_host_s"] or \
+            r["t_release_host_s"] >= r["t_drop_host_s"]
+    fd.save_logs(args, tmp_path / "d", c, None, {"cam": "/dev/b"}, None, None, [0.5, 1.0], rows)
+    got = list(csv.DictReader(open(tmp_path / "d_summary.csv")))
+    assert len(got) == 2 and "t_release_host_s" in got[0]
+
+
+def test_a_run_never_takes_a_name_already_in_the_logs(tmp_path):
+    """The Pi boots on its last saved clock: a minute can repeat."""
+    stem = tmp_path / "drops_20261007-1228"
+    assert fd.free_stem(stem) == stem
+    (tmp_path / "drops_20261007-1228_ahrs.csv").touch()
+    assert fd.free_stem(stem).name == "drops_20261007-1228-2"
+    (tmp_path / "drops_20261007-1228-2_summary.csv").touch()
+    assert fd.free_stem(stem).name == "drops_20261007-1228-3"
+    (tmp_path / "archive").mkdir()                       # the big logs' folder counts too
+    (tmp_path / "archive" / "drops_20261007-1228-3_ahrs.csv").touch()
+    assert fd.free_stem(stem).name == "drops_20261007-1228-4"

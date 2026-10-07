@@ -279,7 +279,11 @@ known frequency with the wheel held clear of the sensor, so nothing drops.
 - **Truth:** still holds, servo stopped, before and after each speed; hold
   each speed >= 10 s (tau ~1 s moving).
 - **Hookup:** the AHRS, the U2D2 and the force sensor all go on the Pi
-  (user), so one host clock. No driver written yet.
+  (user), so one host clock: `force_drop.py --ahrs --ahrs-at-mm X,Z`
+  (10-07) logs every TM151 frame and every servo read on `perf_counter`,
+  and each drop row carries `t_zero_host_s`. Ports by USB vendor (Teensy
+  16c0, TM151 0483), each checked by what it sends. Wave mode (no drops)
+  has no driver yet.
 
 ## Next
 
@@ -296,8 +300,129 @@ known frequency with the wheel held clear of the sensor, so nothing drops.
   known shocks (force sensor), top flat and dwell the still holds -- which
   need `force_drop.py --hold-s 3 --settle-s 3`, not the contact test's
   0.5 / 0.3. Before it, the force sensor epoxied down under weights (user).
-  Still to write: one logger on the Pi for AHRS, servo and force, one clock.
-- The wave kit and the tip: drawn, not printed; 8x0.6 first if one is.
+  Logger written 10-07 (`--ahrs`, above). **Run 20261007-1219** (Pi,
+  `--dry-run --ahrs`: the Pi reboot-loops with the force sensor on it
+  too, user), the TM151 at 115 mm from the pivot, 22 mm above: 12 drops,
+  15505 frames, 0 CRC failures. Gyro-integrated step within ~0.07 deg of
+  (h - 0.13)/124 rad; the pitch reading settles by 0.5 s after release.
+  The arm turns ~-0.09 deg (against the drop) in each 115 ms run-up, every
+  drop: a top flat that rises, or the rig tilting -- not yet known. The
+  TM151's clock runs 0.30% fast against the Pi's, and the first frame of a
+  run is stale (8.4 s old). **Run 20261007-1228**, the TM151 on the fork
+  at 190 mm, ~25 outboard, bar height, less secure (user): every pitch
+  step ~0.08 deg smaller than on the bar (0.05 / 0.33 / 0.53 / 0.74 against
+  0.12 / 0.41 / 0.63 / 0.80), peak roll rate 2-3x (34-58 against 15-20
+  deg/s); still-hold noise the same, 0.28 deg/s. A rigid arm turns alike
+  everywhere, so the fork moves on the bar: twist, or flex between hanging
+  and resting on the wheel. **Run 20261007-1237**, on the bar at 25 mm
+  (mounted turned 180 deg: signs flip): each 0.5 mm still ~0.23 deg, but
+  every step +0.32 deg over the cam's (115 mm: -0.03, fork: -0.11), peak
+  pitch rate higher than at 115 (51-91 against 36-65 deg/s), roll 5 deg/s
+  against 15-20 and 34-58. **The arm is not rigid**: a bend that moves with
+  the load (follower -> wheel), and a twist growing toward the wheel. So
+  stations do not share a rotation, and "the difference between stations
+  is the acceleration's" (Vibration vs rotation, above) does not hold here:
+  each station's truth has to be its own. The run-up rise is ~0.08-0.10
+  deg at all of them. **Run 20261007-1246**, bar at 70 mm: +0.19 deg over
+  the cam, roll 8-11 deg/s -- between 25 and 115 on both, so the offset
+  falls and the twist grows steadily along the arm (+0.32 / +0.19 / -0.03
+  / -0.11 deg at 25 / 70 / 115 / 190; per 0.5 mm 0.23-0.25 deg at every
+  station). The offsets are ~0.2 mm at the follower, inside the rig's
+  tolerances (user). **Repeats**: 70 mm untouched (1252) +0.19 again, each
+  drop within ~0.02 deg; 115 mm after three re-mounts (1255) -0.05 against
+  -0.03. So the offsets are the station's, not the rig shifting between
+  runs: the arm's angle changes unevenly along it as the load moves from
+  the follower to the wheel (a bend, or play at a joint -- not separated).
+  A fixed tilt (the bar's flatness, the mount) cancels in a step: it is
+  the absolute pitch, 0.4-1.1 deg across the stations.
+- **The filter against the drops** (10-07, a scratch script, not yet in
+  `analysis/`): truth = the TM151's own gyro integrated from each still
+  hold. The fused pitch's error is 0.13-0.29 deg peak, ~0.05 RMS, and does
+  NOT grow along the arm (25 mm: 0.29 / 0.07; 190: 0.17 / 0.04), while the
+  accelerometer's own tilt error in the 0.3 s after release grows 16 -> 37-43
+  deg RMS. `sim_ahrs.run_tilt_filter` on the same gyro and accelerometer
+  predicts 2.6-4.3 deg peak, ~1 RMS: 15-25x too much. Adding the unmeasured
+  `FILTER_ACC_GATE` (skip |acc| further than gate from 1 g), model against
+  the fused output, RMS deg:
+
+  | gate | 25 mm | 70 | 70 | 115 | 115 | 190 |
+  |---|---|---|---|---|---|---|
+  | none | 0.65 | 1.02 | 1.05 | 0.72 | 0.73 | 1.21 |
+  | 0.2 g | 0.19 | 0.22 | 0.25 | 0.09 | 0.12 | 0.05 |
+  | 0.05 g | 0.08 | 0.06 | 0.12 | 0.04 | 0.04 | 0.04 |
+  | 0.02 g | 0.04 | 0.04 | 0.08 | 0.04 | 0.04 | 0.04 |
+
+  So the part rejects SHOCK (|acc| off 1 g) and the lever arm does not
+  reach its output here. What this rig cannot test: a sustained lever-arm
+  or turning acceleration barely moves |acc| (0.1 g sideways: +0.005 g)
+  and passes any such gate. One unit.
+
+  **Against the fixture** (the same gated filter, `filter-model`'s metric,
+  moving RMS deg; the ungated rows reproduce the published fits):
+
+  | gate | upright, repeat | upright | flipped | drops (6 runs) |
+  |---|---|---|---|---|
+  | none | 0.103 | 0.088 | 0.195 | 0.65-1.21 |
+  | 0.2 g | 0.104 | 0.088 | 0.193 | 0.05-0.25 |
+  | 0.1 g | 0.104 | 0.094 | 0.181 | 0.05-0.17 |
+  | 0.05 g | 0.148 | 0.154 | 0.194 | 0.04-0.12 |
+  | 0.02 g | 0.275 | 0.275 | 0.405 | 0.04-0.08 |
+
+  No one magnitude gate fits both: the fixture's moving |acc| sits 11 mg
+  off 1 g at p50, 74 at p99, and the part keeps using it, which a gate under
+  ~0.1 g forbids. **0.1 g** leaves the fixture as fitted and takes the drops
+  from ~1 deg to 0.05-0.17, about the fixture's own level -- a defensible
+  setting, not the part's mechanism (whatever that is also sees the shock's
+  size or length). Not set in `sim_ahrs` yet.
+
+  **Adaptive instead of a gate** (10-07, scratch `adaptive_fit.py`, numba;
+  matches `run_tilt_filter` exactly with it off): the accelerometer's pull
+  scaled by 1 / (1 + (m/d0)^2), m = |acc|'s distance from 1 g, held with a
+  decay h. Grid d0 0.01-0.2 g x h 0-0.5 s; fitted on fixture upright x2 +
+  drops 1219/1246/1228, checked on fixture flipped + drops 1255/1252/1237.
+  Model against the fused output, RMS deg:
+
+  | | fix up | fix up | drops (fit) | fix flipped | drops (check) |
+  |---|---|---|---|---|---|
+  | current model | 0.103 | 0.088 | 0.72-1.21 | 0.195 | 0.65-1.05 |
+  | hard gate 0.1 g | 0.104 | 0.094 | 0.06-0.17 | 0.181 | 0.07-0.14 |
+  | **d0 0.12 g, h 0.1 s** | 0.102 | 0.095 | 0.025-0.032 | 0.148 | 0.023-0.086 |
+  | d0 0.08 g, h 0.1 s | 0.113 | 0.108 | 0.017-0.021 | 0.143 | 0.018-0.041 |
+
+  Both interior to the grid; the check sets hold up, the 25 mm run (1237)
+  worst. d0 0.12 / h 0.1 keeps the fixture and takes the drops to ~0.03.
+  **Set in `sim_ahrs`** (`FILTER_ACC_D0_G`, `FILTER_ACC_HOLD_S`). Eval grid
+  (`general_rl_cmd_curriculum2b`, `tm151_filter`, one process per mode):
+
+  | | fell /20 | hold tilt err p50 / p95 | all commands p50 |
+  |---|---|---|---|
+  | truth | 0 | -- | -- |
+  | `tm151` (noise) | 2 | 2.0 / 3.8 deg | 1.8 |
+  | filter, unweighted | 19 | 8.6 / 14.6 | 8.2 |
+  | hard gate 0.1 g | 7 | 2.6 / 4.5 | 3.4 |
+  | adaptive | 1 | 0.7 / 1.7 | 2.1 |
+
+  The worst left is crabbing (v_lat 0.4), 5.4-5.8 deg: sustained sideways
+  acceleration, the one case neither rig has measured. One unit, two
+  parameters. Power: the XL330 runs from its own 5 V brick (user);
+  throttled=0x0 over a whole AHRS + U2D2 run, and the Pi still restarted
+  between runs twice, once into a loop (U2D2 LED cycling with it).
+- The wave kit and the tip: drawn, not printed. **Print 4x2.4 and 8x0.6
+  with the tip** (10-07): 4x2.4 alone sweeps 1-7 Hz, up to ~230 mg at the
+  follower and 3.5-24 deg/s of arm rate by servo speed (across the filter
+  model's 1-15 deg/s tau band); 8x0.6 has the same acceleration per rev/s
+  at twice the Hz and half the rate, so the pair separates frequency from
+  rotation. 4x2.4 is ~29.5 deg pressure angle on the arc: 8x0.6 is the
+  fallback. Mount the TM151 HIGH near the pivot (a stiff riser, chip ~60-80
+  mm above it): horizontal acceleration is alpha x height, independent of
+  the distance along the bar, and it is the part that tilts the gravity
+  reading without moving |acc|. Control: the usual 115 mm / 22 mm mount.
+  Driver: `bench/wave_run.py` (10-07), velocity mode -- Profile Velocity
+  does not hold a speed in current-based position (user) -- with a speed
+  check that stops it (Current Limit does nothing in velocity mode); the
+  servo's own velocity gains; fake-servo tests only, not yet run on the rig. Big logs (AHRS,
+  servo, ~3.5 MB a run) go to `bench/logs/archive/`, gitignored and
+  Dropbox-synced; the summaries and `_run.json` stay tracked.
 
 ## Open
 

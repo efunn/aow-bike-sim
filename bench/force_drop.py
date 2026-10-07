@@ -44,7 +44,8 @@ angle: Present Position mod 4096. Calibrate once per assembly (torque off):
       a saved run's summary again from its raw counts, at a new calibration
     python bench/force_drop.py --cam --dry-run --repeats 1
       the cam alone, no force sensor and no files: each drop's edge
-      speed, settling and cycle time
+      speed, settling and cycle time (with --ahrs: the AHRS and servo
+      logs, and a row per drop with its release on the host clock)
 
 Start: wherever the cam is; it drives forward to the next top flat (if that
 passes a step, the drop is not recorded) and zeroes there, wheel lifted.
@@ -63,11 +64,30 @@ sqrt(g * --corner-mm) / r_top (~280 deg/s): slower, the corner lets the
 follower down instead of dropping it. q, Ctrl-C or an error: forward to the
 next dwell, then torque off. On the Mac, run adjust-ftdi-latency after
 plugging in the U2D2 (it refuses a bus slower than 5 ms a read).
+
+THE AHRS (--ahrs --ahrs-at-mm X,Z[,Y]): the TM151 is logged for the whole
+run, every frame, beside the drops (bench/ahrs_stream.py). X is the chip's
+distance along the bar from the pivot, Z its height above the pivot's axis,
+Y how far it sits outboard of the bar (on the fork, say; default 0), mm. Every cam run also logs every servo read of every move. Files, beside
+the drops' CSVs:
+  <run>_ahrs.csv    host_s, t_us (the TM151's clock), Euler, quaternion, gyro, acc
+  <run>_servo.csv   host_s, ticks, goal_ticks
+  <run>_run.json    the ports, the station, the arm, the cam, the command line
+host_s is time.perf_counter(), one clock across this script's processes; each
+drop's summary row has t_zero_host_s, its t_s = 0 on that clock. With
+--dry-run (no force sensor) the summary has t_release_host_s instead: the
+cam's fitted crossing of the step. Ports are
+picked by USB vendor (Teensy 16c0, TM151 0483) and each checked by what it
+sends; --port / --ahrs-port override.
+
+    python bench/force_drop.py --wheel front --cam --repeats 3 \
+        --hold-s 3 --settle-s 3 --ahrs --ahrs-at-mm 195,22
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import os
 import sys
@@ -85,6 +105,7 @@ from aow_sim.hw.dynamixel import (MODE_CURRENT_POSITION,  # noqa: E402
                                   DynamixelBus, describe_hardware_error,
                                   signed)
 
+import ahrs_stream  # noqa: E402
 from force_calibrate import Stream, marker  # noqa: E402
 from force_sensor import ADC_MAX, CALIBRATED_N_PER_COUNT, CHANNELS, find_port  # noqa: E402
 
@@ -386,6 +407,7 @@ class Cam:
         phase = (direction * (pos - index)) % TICKS
         self.base = pos - direction * phase           # step 0, at or behind the cam
         self.k = None
+        self.log = None     # a list: every read of every move, (host perf_counter, ticks, goal)
 
     def _bus(self, fn, *a):
         """One register access, retried on a dropped reply: run 20261003-2224
@@ -421,8 +443,11 @@ class Cam:
         while True:
             ta = time.perf_counter()
             p = self.pos()
-            if trace is not None:     # stamped mid-read: the read's latency cancels
-                trace.append(((ta + time.perf_counter()) / 2 - t0, p))
+            tm = (ta + time.perf_counter()) / 2     # stamped mid-read: the read's latency cancels
+            if trace is not None:
+                trace.append((tm - t0, p))
+            if self.log is not None:
+                self.log.append((tm, p, target))
             if abs(p - target) <= POS_TOL:
                 return
             if time.perf_counter() - t0 > timeout_s:
@@ -524,15 +549,25 @@ def cam_report(args, rig, k, trace, h) -> dict:
     return cols
 
 
-def dry_run(args, rig, heights, steps) -> None:
-    """The cam alone: every drop of the run, back to back, no sensor, no files."""
+def dry_run(args, rig, heights, steps, rows=None) -> None:
+    """The cam alone: every drop of the run, back to back, no sensor. `rows`
+    (a list) fills with one row per drop: its cam columns, when the drop move
+    began and when the step's edge passed the follower (t_release_host_s,
+    the fitted crossing), on the host clock."""
     print(f"dry run: {len(steps)} drops, no force sensor.  Ctrl-C to stop\n")
     for i in range(len(steps)):
         t0 = time.perf_counter()
         h = heights[rig.k % len(heights)]
         print(f"drop {i + 1}/{len(steps)}: {h:g} mm, cam step {rig.k % len(heights) + 1}")
-        k, trace = rig.fire(args.hold_s)
-        cam_report(args, rig, k, trace, h)
+        stamp = {}
+        k, trace = rig.fire(args.hold_s, on_drop=lambda: stamp.update(t=time.perf_counter()))
+        cols = cam_report(args, rig, k, trace, h)
+        if rows is not None:
+            t_edge = edge_fit(trace, rig.step(k))[2]
+            rows.append(dict(drop=i + 1, height_mm=h,
+                             h_contact_mm=round(getattr(args, "contact_drop", lambda x: x)(h), 4),
+                             t_drop_host_s=round(stamp["t"], 6),
+                             t_release_host_s=round(rig.trace_t0 + t_edge, 6), **cols))
         time.sleep(args.settle_s)
         print(f"  cycle {time.perf_counter() - t0:.2f} s")
 
@@ -619,6 +654,13 @@ def main() -> None:
                      help="cam radius under the resting follower (r_dwell + gap); top = this + drop")
     cam.add_argument("--corner-mm", type=float, default=0.45,
                      help="cam + follower corner radii, summed (print rounding)")
+    imu = ap.add_argument_group("the AHRS (see the docstring)")
+    imu.add_argument("--ahrs", action="store_true", help="log the TM151 for the whole run")
+    imu.add_argument("--ahrs-port", default=None,
+                     help="default: the one port with USB vendor 0483 (STMicroelectronics)")
+    imu.add_argument("--ahrs-at-mm", default=None, metavar="X,Z[,Y]",
+                     help="the chip's station: along the bar from the pivot, above the "
+                          "pivot's axis, outboard of the bar (default 0), mm (required with --ahrs)")
     args = ap.parse_args()
     if args.reanalyse:
         scale = ([float(x) for x in args.scale.split(",")] if args.scale
@@ -627,6 +669,15 @@ def main() -> None:
             sys.exit("--scale takes four values, one per sensor")
         reanalyse(args.reanalyse, scale, args.mass_g, args.m_eff_g)
         return
+    station = None
+    if args.ahrs:
+        try:
+            station = [float(v) for v in (args.ahrs_at_mm or "").split(",")]
+            assert len(station) in (2, 3)
+            station += [0.0] * (3 - len(station))
+        except (ValueError, AssertionError):
+            sys.exit("--ahrs needs --ahrs-at-mm X,Z[,Y]: the chip along the bar from the "
+                     "pivot, above the pivot's axis, and outboard of the bar, mm")
     cc = cam_config(args) if (args.cam or args.cam_where) else None
     if args.cam_where:
         return cam_where(cc["port"], cc["id"])
@@ -656,18 +707,32 @@ def main() -> None:
         steps = [(h, r) for r in range(1, args.repeats + 1) for h in heights]
     else:
         steps = [(h, r) for h in heights for r in range(1, args.repeats + 1)]
-    stem = Path(__file__).resolve().parent / "logs" / f"drops_{datetime.now():%Y%m%d-%H%M}"
+    stem = free_stem(Path(__file__).resolve().parent / "logs" / f"drops_{datetime.now():%Y%m%d-%H%M}")
     if sys.platform == "darwin":        # no idle sleep mid-run; ends with this process
         import subprocess
         subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
-    stream = None
+    stem.parent.mkdir(exist_ok=True)
+    stream = ahrs = None
+    ports, dry_rows = {}, []
     if not args.dry_run:
-        stream = Stream(args.port or find_port(), maxlen=STREAM_SAMPLES)
+        ports["force"] = args.port or find_port()
+    if args.ahrs:
+        ports["ahrs"] = args.ahrs_port or ahrs_stream.find_port()
+        if ports["ahrs"] == ports.get("force"):
+            sys.exit(f"the force sensor and the TM151 are both on {ports['force']}")
+        ahrs = ahrs_stream.AhrsStream(ports["ahrs"])
+        print(f"ahrs: {ports['ahrs']}, Combo at {ahrs.wait_ready():.0f} Hz, "
+              f"at {station[0]:g} mm from the pivot, {station[1]:g} mm above it")
+    if not args.dry_run:
+        stream = Stream(ports["force"], maxlen=STREAM_SAMPLES)
         time.sleep(1.0)
     rig = None
     if args.cam:
         rig = Cam(open_cam_bus(cc["port"], cc["id"]), cc["id"], cc["dir"], cc["index"],
                   len(heights), args.park_deg, args.margin_deg, cc["ma"], gains=cc["gains"])
+        ports["cam"] = cc["port"]
+        if not args.dry_run or args.ahrs:
+            rig.log = []
         try:
             if rig.home():
                 print("homing passed a step: that drop is not recorded")
@@ -679,7 +744,7 @@ def main() -> None:
         time.sleep(1.0)
     try:
         if args.dry_run:
-            dry_run(args, rig, heights, steps)
+            dry_run(args, rig, heights, steps, dry_rows if args.ahrs else None)
         else:
             run(args, stream, rig, heights, steps, scale, stem)
     finally:
@@ -687,6 +752,71 @@ def main() -> None:
             rig.stop()
             rig.bus.close()
             print("cam parked, torque off")
+        if not args.dry_run or args.ahrs:
+            save_logs(args, stem, rig, ahrs, ports, station, cc, heights, dry_rows)
+
+
+def free_stem(stem: Path) -> Path:
+    """`stem`, or stem-2, -3...: the first no file starts with, beside it or in
+    its archive/. Two runs in a minute, or a Pi without a clock (it boots on
+    its last saved time, and repeated 12:28 on 2026-10-07), would otherwise
+    overwrite a run."""
+    n, cand = 1, stem
+    while any(d.exists() and any(d.glob(cand.name + "*"))
+              for d in (cand.parent, cand.parent / "archive")):
+        n += 1
+        cand = stem.with_name(f"{stem.name}-{n}")
+    return cand
+
+
+def save_logs(args, stem, rig, ahrs, ports, station, cc, heights, dry_rows=()) -> None:
+    """The run's AHRS frames and servo reads, whole, on the host clock -- into
+    archive/ (gitignored, Dropbox-synced: ~3.5 MB a run) -- and
+    <run>_run.json saying what the run was. The drops' rows join them by
+    t_zero_host_s; a dry run's (`dry_rows`, written here as its summary) by
+    t_release_host_s."""
+    big = Path(stem).parent / "archive" / Path(stem).name
+    big.parent.mkdir(exist_ok=True)
+    files = {}
+    if dry_rows:
+        cols = list(dict.fromkeys(c for r in dry_rows for c in r))
+        with open(f"{stem}_summary.csv", "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=cols)
+            w.writeheader()
+            w.writerows(dry_rows)
+        files["summary"] = dict(file=f"{Path(stem).name}_summary.csv", drops=len(dry_rows),
+                                force_sensor=False)
+        print(f"wrote {stem}_summary.csv ({len(dry_rows)} drops, no force sensor)")
+    if ahrs is not None:
+        ahrs.close()
+        n = ahrs.write(f"{big}_ahrs.csv")
+        files["ahrs"] = dict(file=f"archive/{big.name}_ahrs.csv", frames=n,
+                             crc_bad=ahrs.crc_bad, resync_bytes=ahrs.resync_bytes)
+        print(f"wrote {big}_ahrs.csv ({n} frames, {ahrs.crc_bad} CRC failures)")
+    if rig is not None and rig.log:
+        with open(f"{big}_servo.csv", "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(("host_s", "ticks", "goal_ticks"))
+            w.writerows((f"{t:.6f}", p, g) for t, p, g in list(rig.log))
+        files["servo"] = dict(file=f"archive/{big.name}_servo.csv", reads=len(rig.log))
+        print(f"wrote {big}_servo.csv ({len(rig.log)} reads)")
+    if not files:
+        return
+    meta = dict(command=" ".join(sys.argv), written=datetime.now().isoformat(timespec="seconds"),
+                ports=ports, files=files, wheel=args.wheel,
+                clock="host_s: time.perf_counter() (Linux CLOCK_MONOTONIC, macOS mach time); "
+                      "drops: t_zero_host_s per summary row")
+    if station is not None:
+        meta["ahrs_station_mm"] = dict(along_bar_from_pivot=station[0], above_pivot=station[1],
+                                       outboard_of_bar=station[2] if len(station) > 2 else 0.0)
+    if cc is not None:
+        meta["arm"] = cc["cfg"].get("arm")
+        meta["cam"] = dict(id=cc["id"], index=cc["index"], dir=cc["dir"], ma=rig.ma if rig else cc["ma"],
+                           heights_mm=heights, ticks_per_turn=TICKS, park_deg=args.park_deg,
+                           margin_deg=args.margin_deg, hold_s=args.hold_s, settle_s=args.settle_s)
+    with open(f"{stem}_run.json", "w") as fh:
+        json.dump(meta, fh, indent=2, default=str)
+    print(f"wrote {stem}_run.json")
 
 
 def run(args, stream, rig, heights, steps, scale, stem) -> None:
@@ -709,9 +839,14 @@ def run(args, stream, rig, heights, steps, scale, stem) -> None:
     firing = None                 # the cam's drop in flight
     fired, stopping = 0, False    # the cam's drops started; q pressed
 
-    def failed(f, outcome, cam_cols, t_zero="cam_parked"):
+    def host(t_sensor):
+        """A sensor time on the host clock, the AHRS and servo logs' (6 decimals)."""
+        return round(stream.host_time(t_sensor), 6)
+
+    def failed(f, outcome, cam_cols, t_zero="cam_parked", at=None):
         summary.append(dict(drop=f["n"], wheel=args.wheel, height_mm=f["h"], outcome=outcome,
-                            t_zero=t_zero, **cam_cols))
+                            t_zero=t_zero, t_zero_host_s=host(f["t_parked"] if at is None else at),
+                            **cam_cols))
 
     def now():
         """This moment on the sensor's clock. Not the newest sample's time:
@@ -876,7 +1011,7 @@ def run(args, stream, rig, heights, steps, scale, stem) -> None:
             if cols is None and f_drop is not None:
                 print("  !! impact lost: recorded as impact_lost, with its trace")
                 keep(f_drop["n"], t, counts)
-                failed(f_drop, "impact_lost", cam_cols, t_zero="impact")
+                failed(f_drop, "impact_lost", cam_cols, t_zero="impact", at=hit)
                 time.sleep(args.settle_s)
                 continue
             if cols is None:
@@ -889,7 +1024,7 @@ def run(args, stream, rig, heights, steps, scale, stem) -> None:
             drop = len(summary) + 1 if f_drop is None else f_drop["n"]
             keep(drop, t, counts)
             summary.append(dict(drop=drop, wheel=args.wheel, height_mm=h, outcome="ok",
-                                t_zero="impact", **cam_cols, **cols))
+                                t_zero="impact", t_zero_host_s=host(hit), **cam_cols, **cols))
             if not a["clean"]:
                 print("  no clean flight after the first impact (it rocked or rolled on the"
                       " button): peak kept, bounce numbers blank")

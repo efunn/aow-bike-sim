@@ -1,0 +1,57 @@
+{
+  "command": "bench/force_drop.py --cam --dry-run --repeats 3 --hold-s 3 --settle-s 3 --ahrs --ahrs-at-mm 115,22",
+  "written": "2026-10-07T12:21:11",
+  "ports": {
+    "ahrs": "/dev/ttyACM0",
+    "cam": "/dev/ttyUSB0"
+  },
+  "files": {
+    "summary": {
+      "file": "drops_20261007-1219_summary.csv",
+      "drops": 12,
+      "force_sensor": false
+    },
+    "ahrs": {
+      "file": "archive/drops_20261007-1219_ahrs.csv",
+      "frames": 15505,
+      "crc_bad": 0,
+      "resync_bytes": 0
+    },
+    "servo": {
+      "file": "archive/drops_20261007-1219_servo.csv",
+      "reads": 1989
+    }
+  },
+  "wheel": null,
+  "clock": "host_s: time.perf_counter() (Linux CLOCK_MONOTONIC, macOS mach time); drops: t_zero_host_s per summary row",
+  "ahrs_station_mm": {
+    "along_bar_from_pivot": 115,
+    "above_pivot": 22,
+    "outboard_of_bar": 0
+  },
+  "arm": {
+    "r_follower_mm": 124,
+    "r_contact_mm": 205,
+    "axle_above_pivot_mm": 6.5,
+    "step_offset_mm": 0.13,
+    "m_eff_g": 89
+  },
+  "cam": {
+    "id": 150,
+    "index": 1161,
+    "dir": -1,
+    "ma": 300,
+    "heights_mm": [
+      0.5,
+      1.0,
+      1.5,
+      2.0
+    ],
+    "ticks_per_turn": 4096,
+    "park_deg": 12.0,
+    "margin_deg": 30.0,
+    "hold_s": 3.0,
+    "settle_s": 3.0
+  },
+  "ahrs_mount": "on top of the bar (user)"
+}

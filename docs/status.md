@@ -61,12 +61,12 @@ rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
 |---|---|---|---|
 | **Simulation & model** | Working; 18 `GUESS`es. Opt-in detailed drivetrain (fitted XC430 loop, detent, slop). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30 | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
 | **Control — RL** | Primary. Pointer `general_rl_cmd_curriculum2b`; candidate `smooth_temporal`. Every export trained on the old front wheel: provisional | Crab one-sided; `turn_asym` ~0.2; the pointer falls standing on its own sensors (10 of 18); on the new front wheel it survives 4 of 6 big turns | `general-rl-improvements.md`, `policy-smoothness-losses.md` |
-| **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` model exists, work in progress (survival 0.05 on the eval grid) | The bike's own AHRS log | `sensor-workstream.md`, `ahrs-fixture.md` |
+| **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` model exists; with the accelerometer weighting from the drop rig (10-07) it falls 1/20 on the eval grid (19/20 before; `tm151` 2/20), still unproven on sustained acceleration | The bike's own AHRS log | `sensor-workstream.md`, `ahrs-fixture.md` |
 | **Control — LQR** | Reference. New front wheel (10-05): stands on truth and on `tm151_filter` (with `q_steer_standstill` 50), falls standing on teleop's default `tm151` within ~10 s, falls turning at 0.8 m/s | The at-speed design; re-tune once contact moves | `lqr-baseline.md` |
 | **Hardware / onboard** | Pi 3 bench proven: tick jitter p99 < 1 ms with four servos energised. 2.4 GHz house wifi (decided: a router, no AP). The SBC that ships: open | Chassis, pack | `pi-bench-bringup.md`, `untethered-setup.md` |
 | **CAD** | Steer printed and print-checked; drive, righting, whole bike designed. Righting links all 6 mm plates, rear chamfered (~103 g printed, uncalibrated). CAD wheelbase 223.5 (the sim keeps 200): righting 0.5 from the drive, front bulkhead 5 from the straight front wheel (user's rules), wings clear the steer sweep; underside electronics and cage switched off, Pi plate on the drive's face; layout settled for now, nothing printed (10-05) | Rework the righting against `cad_bike --fit righting` (user); underside electronics back in (U2D2/power front, AHRS back); the central screw's head seat binds the righting's rear (bridge chamfer on XC430 A); lower the righting (user) | `bike-assembly-design.md`, `cad-onshape-workflow.md` |
 | **Self-righting** | Four-bar built. Linkage options parked (sim, 9.9 V: 537-575 counts vs 643 as built; the diamond, 547, is the lean) | Decision later | `righting-linkage-margin.md`, `righting-servo-model.md` |
-| **Contact bench** | Drop rig built and run (10-03): the cam fires every drop and records each, release-to-impact timed; analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/drop_rig_sim.py`, with `--fit`. AHRS mode drawn (10-06): a jam-on follower tip and an 11-cam wave kit, nothing printed | The sensor epoxied down; the arm's parts weighed; the first AHRS run on the drop cam (one Pi logger still to write) | `drop-release-rig.md`, `contact-measurements.yaml` |
+| **Contact bench** | Drop rig built and run (10-03): the cam fires every drop and records each, release-to-impact timed; analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/drop_rig_sim.py`, with `--fit`. AHRS mode drawn (10-06): a jam-on follower tip and an 11-cam wave kit, nothing printed. `force_drop.py --ahrs` (10-07) logs the TM151 and the servo whole, beside the drops, one clock. AHRS on the Pi (10-07, no force sensor -- three USB devices reboot-loop the Pi): on the bar at 115 mm, steps within ~0.07 deg of the cam's, settled by 0.5 s; +0.32 / +0.19 / -0.03 / -0.11 deg over the cam at 25 / 70 / 115 / 190 mm (190 on the fork), roll growing toward the wheel; repeats within ~0.02 deg (70 untouched, 115 after re-mounts): the arm's angle changes unevenly along it, so stations do not share a rotation | Print the 4x2.4 and 8x0.6 wave cams + the tip, then `bench/wave_run.py` with the TM151 on a riser (sustained acceleration); power for the force sensor on the Pi (a powered hub?); a local truth per station (the arm is not rigid); the ~0.09 deg run-up rise before each release; the sensor epoxied down; the arm's parts weighed | `drop-release-rig.md`, `contact-measurements.yaml` |
 
 ---
 
@@ -137,7 +137,18 @@ before the wheel. History: `params-digest-split.md`.
   and RL alike; mechanism untested (`lqr-baseline.md`).
 - **`tm151_filter` is not a drop-in**: the sim's accelerometer on a standing
   bike is violent (contact bounce), and the filter reads it as ~8 deg of
-  tilt. Waits on the contact and the bike's AHRS log (`ahrs-fixture.md`).
+  tilt. The drop rig (10-07) says the real part does not: its fused pitch
+  stays within ~0.05 deg RMS through 16-43 deg of accelerometer tilt error,
+  and the model matches it only with `FILTER_ACC_GATE` (1 deg RMS without).
+  Against the fixture: 0.1 g keeps its fits (0.103 / 0.088 / 0.195 ->
+  0.104 / 0.094 / 0.181) and brings the drops to 0.05-0.17; 0.05 g and
+  under break the fixture. An ADAPTIVE weight, 1 / (1 + (m/0.12 g)^2) with
+  a 0.1 s hold, does both: fixture 0.102 / 0.095 / 0.148, drops 0.02-0.09
+  (fitted on half, checked on the other half). SET in `sim_ahrs`
+  (`FILTER_ACC_D0_G` 0.12, `FILTER_ACC_HOLD_S` 0.1). Eval grid,
+  `general_rl_cmd_curriculum2b`: falls 19/20 -> 1/20; standing-hold tilt
+  error 8.6 -> 0.7 deg median. Worst left: crabbing, 5.4-5.8 deg -- the
+  sustained-acceleration case nothing has measured (`drop-release-rig.md`).
 - **The mirror's wifi stalls** (100-550 ms gaps, 09-17) did not repeat;
   cause unknown. Probe when it chugs again (`pi-bench-bringup.md`).
 - **Not yet checked on hardware**: the rear wheel's sent angle against a

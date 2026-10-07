@@ -85,6 +85,13 @@ class Stream:
             d = [h - t for h, t in self.arrivals if abs(h - host_t) <= span_s]
         return host_t - min(d) if d else float("nan")
 
+    def host_time(self, sensor_t: float, span_s: float = 0.5) -> float:
+        """A sensor time on the host perf_counter clock: sensor_time's inverse,
+        the same least-delayed offset, over the arrivals within span_s of it."""
+        with self.lock:
+            d = [h - t for h, t in self.arrivals if abs(t - sensor_t) <= span_s]
+        return sensor_t + min(d) if d else float("nan")
+
     def window(self, seconds=WINDOW_S):
         with self.lock:
             data = list(self.buf)

@@ -12,7 +12,6 @@ Limits: reading clips ~19 N, safe load ~37 N (8 pounds); zero drifts up to 0.07 
 from __future__ import annotations
 
 import argparse
-import glob
 import sys
 
 import serial
@@ -26,11 +25,23 @@ NOMINAL_N_PER_COUNT = FULL_SCALE_N / SPAN_V * ADC_VREF / ADC_MAX
 CALIBRATED_N_PER_COUNT = [0.003043, 0.003040, 0.002797, 0.003105]   # 2026-10-02
 
 
+TEENSY_VID = 0x16C0       # PJRC's USB vendor ID, every Teensy's; not yet read off this unit
+BAD_LINES = 200           # in a row, not `micros,x,y,z,rz`: the wrong device
+
+
 def find_port() -> str:
-    ports = sorted(glob.glob("/dev/cu.usbmodem*") + glob.glob("/dev/ttyACM*"))
-    if not ports:
-        sys.exit("no Teensy serial port found (is force_sensor.ino flashed?)")
-    return ports[0]
+    """The one serial port whose USB vendor is PJRC. Not the first
+    usbmodem / ttyACM by name: the TM151 is one too (STM32, 0483), and
+    which sorts first depends on the USB socket (macOS) or plug order (Linux)."""
+    from serial.tools import list_ports
+    ports = list(list_ports.comports())
+    found = [p for p in ports if p.vid == TEENSY_VID]
+    if len(found) == 1:
+        return found[0].device
+    usb = "\n".join(f"  {p.device}  {p.vid:04x}:{p.pid:04x}  {p.manufacturer or ''} "
+                    f"{p.product or ''}" for p in ports if p.vid is not None) or "  (none)"
+    sys.exit(f"force sensor: {len(found)} ports with USB vendor {TEENSY_VID:04x} (Teensy); "
+             f"pass --port. USB serial ports:\n{usb}")
 
 
 def lines(port: str):
@@ -38,18 +49,23 @@ def lines(port: str):
     with serial.Serial(port, 115200, timeout=1.0) as s:
         s.reset_input_buffer()
         s.readline()                       # drop the partial first line
-        t0 = None
+        t0, bad = None, 0
         while True:
             raw = s.readline()
             if not raw:
                 sys.exit("no data from the sensor in 1 s (old firmware? it only sends HID)")
             parts = raw.decode(errors="replace").strip().split(",")
-            if len(parts) != 5:
-                continue
             try:
+                if len(parts) != 5:
+                    raise ValueError
                 us, *c = (int(p) for p in parts)
             except ValueError:
+                bad += 1
+                if bad >= BAD_LINES:
+                    sys.exit(f"{port}: {bad} lines in a row that are not micros,x,y,z,rz: "
+                             f"not the force sensor (the TM151 sends binary frames)")
                 continue
+            bad = 0
             t0 = us if t0 is None else t0
             yield ((us - t0) & 0xFFFFFFFF) * 1e-6, c   # micros() wraps
 
