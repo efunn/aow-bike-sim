@@ -2521,7 +2521,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # make every recorded comparison incomparable.
     ahrs_model = None
     if ahrs != "none":
-        from .sim_ahrs import (FILTER_TAU_MOTION_S, FILTER_TAU_REST_S,
+        from .sim_ahrs import (FILTER_ACC_D0_G, FILTER_TAU_MOTION_S, FILTER_TAU_REST_S,
                                ORIENT_RMS_DEG, SimAhrs, level_tau_orient_s)
         tau = level_tau_orient_s(ahrs) if ahrs_tau is None else ahrs_tau
         ahrs_model = SimAhrs(model, params, level=ahrs, tau_orient_s=tau)
@@ -2537,7 +2537,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             print(f"AHRS MODEL (tm151_filter): the part's own complementary "
                   f"filter on its own gyro and\n  accelerometer (the chip, ~1 cm "
                   f"off the site), tau {FILTER_TAU_REST_S:g} s still -> "
-                  f"{FILTER_TAU_MOTION_S:g} s turning,\n  plus {r} deg RMS of "
+                  f"{FILTER_TAU_MOTION_S:g} s turning, the accelerometer weighted down off 1 g "
+                  f"(half at {FILTER_ACC_D0_G:g} g),\n  plus {r} deg RMS of "
                   f"wander at {tau:g} s ({why}); yaw {y} deg. Error grows with "
                   f"what the\n  sensor FEELS -- hard turns and sustained "
                   f"acceleration read as lean.")

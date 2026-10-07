@@ -85,3 +85,38 @@ def test_the_gate_skips_the_accelerometer_far_from_one_g():
     assert np.allclose(kept, up)
     near = np.array([0.0, 0.05, 1.0]) * GRAVITY          # within 0.1 g of 1 g
     assert not np.allclose(tilt_filter_step(up, np.zeros(3), near, 0.01, 0.19, gate=0.1), up)
+
+
+def test_a_shock_barely_moves_the_state_with_the_weighting_and_does_without():
+    """The drop rig (2026-10-07): 1-6 g shocks, the accelerometer's tilt
+    tens of degrees off, and the part's fused pitch stayed within ~0.05 deg.
+    A 0.1 s, 3 g knock 42 deg off vertical, at rest's tau."""
+    t = np.arange(0, 1.0, 0.005)
+    acc = np.tile([0.0, 0.0, 1.0], (len(t), 1))
+    hit = (t >= 0.3) & (t < 0.4)
+    acc[hit] = [2.0, 0.0, 2.2]
+    up = [0.0, 0.0, 1.0]
+    still = np.zeros((len(t), 3))
+    tilt = lambda u: np.degrees(np.arccos(np.clip(u[:, 2], -1, 1))).max()
+    assert tilt(run_tilt_filter(t, still, acc, up)) < 0.5
+    assert tilt(run_tilt_filter(t, still, acc, up, d0=0)) > 10.0
+
+
+def test_the_weight_is_near_full_near_one_g_and_held_after_a_shock():
+    from aow_sim.sim_ahrs import (FILTER_ACC_D0_G, FILTER_ACC_HOLD_S, acc_deviation,
+                                  acc_weight)
+    assert acc_weight(0.02) > 0.95                      # the fixture's motion
+    assert acc_weight(FILTER_ACC_D0_G) == pytest.approx(0.5)
+    assert acc_weight(0.5) < 0.06
+    assert acc_weight(0.5, d0=0) == 1.0                 # off: the model before 10-07
+    m = acc_deviation(0.0, [0.0, 0.0, 3.0], 0.005, one_g=1.0)
+    assert m == pytest.approx(2.0)
+    m = acc_deviation(m, [0.0, 0.0, 1.0], FILTER_ACC_HOLD_S, one_g=1.0)
+    assert m == pytest.approx(2.0 * np.exp(-1))         # one hold later, back at 1 g
+
+
+def test_a_sustained_sideways_force_still_tilts_it_the_case_not_measured():
+    """0.1 g sideways moves |acc| by 0.005 g: the weight stays ~1, so a held
+    turn still reads as lean. Neither rig has measured what the part does."""
+    from aow_sim.sim_ahrs import acc_weight
+    assert acc_weight(np.sqrt(1.01) - 1.0) > 0.99

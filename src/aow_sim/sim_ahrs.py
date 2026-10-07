@@ -418,38 +418,76 @@ def filter_tau(rate_dps: float, tau_rest: float = FILTER_TAU_REST_S,
 
 
 # Skip the accelerometer when |acc| is further than this fraction from 1 g.
-# UNMEASURED -- the fixture never saw more than ~50 mg -- and None (no gate)
-# until it is. It exists because the SIM's accelerometer on a standing bike is
-# violent (60% of samples > 0.2 g off, stiff contacts sampled at a point), and
-# ungated that reads as ~8 deg of pitch; see docs/status.md.
+# A hard gate: None (off) by default and superseded by the adaptive weight
+# below, which fits both rigs where no single gate does; kept for
+# `run_drive --ahrs-gate` A/Bs.
 FILTER_ACC_GATE = None
 
+# THE ACCELEROMETER'S WEIGHT FALLS WITH ITS DISTANCE FROM 1 g, measured
+# 2026-10-07 on the drop rig (docs/plans/drop-release-rig.md): through
+# shocks of 1-6 g, the accelerometer's own tilt 16-43 deg RMS off, the real
+# part's fused pitch stayed within ~0.05 deg RMS of its integrated gyro,
+# where this filter without the weight read 0.7-1.2 deg. The pull toward the
+# accelerometer is scaled by
+#     1 / (1 + (m / FILTER_ACC_D0_G)^2)
+# m = ||acc| / 1 g - 1|, held: m = max(that, m_prev exp(-dt / HOLD)), so a
+# shock keeps it muted briefly after. Fitted on two upright fixture sessions
+# + three drop runs, checked on the flipped session + three more, model vs
+# the part's fused output [deg RMS]:
+#     fixture up 0.103 / 0.088 -> 0.102 / 0.095, flipped 0.195 -> 0.148,
+#     drops 0.65-1.21 -> 0.023-0.086.
+# A hard gate could not do both: under ~0.1 g it breaks the fixture (whose
+# moving |acc| runs 11 mg off at p50, 74 at p99, and the part used it).
+# NOT measured: sustained acceleration (a turn, a held lean) barely moves
+# |acc| (0.1 g sideways: +0.005 g) and gets nearly full weight here. One unit.
+FILTER_ACC_D0_G = 0.12           # None: no weighting (the model before 10-07)
+FILTER_ACC_HOLD_S = 0.1
 
-def tilt_filter_step(u, gyro, acc, dt: float, tau: float, gate=None) -> np.ndarray:
+
+def acc_deviation(m_prev: float, acc, dt: float, one_g: float = GRAVITY,
+                  hold_s: float = FILTER_ACC_HOLD_S) -> float:
+    """The held distance of |acc| from 1 g, as a fraction (see FILTER_ACC_D0_G)."""
+    dev = abs(float(np.linalg.norm(acc)) / one_g - 1.0)
+    return max(dev, m_prev * np.exp(-dt / hold_s)) if hold_s > 0 else dev
+
+
+def acc_weight(m: float, d0=None) -> float:
+    """The accelerometer's pull, 0-1, at a held deviation `m` from 1 g."""
+    d0 = FILTER_ACC_D0_G if d0 is None else d0
+    return 1.0 if not d0 else 1.0 / (1.0 + (m / d0) ** 2)
+
+
+def tilt_filter_step(u, gyro, acc, dt: float, tau: float, gate=None,
+                     weight: float = 1.0, one_g: float = GRAVITY) -> np.ndarray:
     """One step of the complementary filter on the gravity direction `u` (unit,
     body frame, the same sign convention as `acc`): turn with the gyro [rad/s],
-    pull toward the normalised accelerometer at 1/tau -- unless |acc| is more
-    than `gate` (a fraction) from 1 g."""
+    pull toward the normalised accelerometer at `weight` / tau -- unless |acc|
+    is more than `gate` (a fraction) from 1 g (`one_g`, in acc's units)."""
     p = _turn(np.asarray(u, float), gyro, dt)
     na = float(np.linalg.norm(acc))
-    if gate is None or abs(na / GRAVITY - 1.0) <= gate:
-        p = p + (dt / tau) * (np.asarray(acc) / na - p)
+    if gate is None or abs(na / one_g - 1.0) <= gate:
+        p = p + (weight * dt / tau) * (np.asarray(acc) / na - p)
     return p / np.linalg.norm(p)
 
 
 def run_tilt_filter(t, gyro, acc, u0, tau_rest: float = FILTER_TAU_REST_S,
                     tau_motion: float = FILTER_TAU_MOTION_S,
-                    smooth_s: float = FILTER_RATE_SMOOTH_S) -> np.ndarray:
+                    smooth_s: float = FILTER_RATE_SMOOTH_S, one_g: float = 1.0,
+                    d0=None, hold_s: float = FILTER_ACC_HOLD_S) -> np.ndarray:
     """The adaptive filter over recorded arrays: what `SimAhrs` runs one step at
-    a time, and what `ahrs_fixture filter-model` checks against a real TM151."""
+    a time, and what `ahrs_fixture filter-model` checks against a real TM151.
+    `acc` in g by default (the TM151's logs); `one_g` = GRAVITY for m/s^2.
+    `d0` 0 turns the accelerometer weighting off."""
     u = np.empty((len(t), 3))
     u[0] = np.asarray(u0, float) / np.linalg.norm(u0)
-    rate = 0.0
+    rate = m = 0.0
     for i in range(1, len(t)):
         dt = float(t[i] - t[i - 1])
         rate += (dt / (smooth_s + dt)) * (np.degrees(np.linalg.norm(gyro[i])) - rate)
+        m = acc_deviation(m, acc[i], dt, one_g, hold_s)
         u[i] = tilt_filter_step(u[i - 1], 0.5 * (gyro[i] + gyro[i - 1]), acc[i], dt,
-                                filter_tau(rate, tau_rest, tau_motion))
+                                filter_tau(rate, tau_rest, tau_motion),
+                                weight=acc_weight(m, d0), one_g=one_g)
     return u
 
 
@@ -569,6 +607,7 @@ class SimAhrs:
         self._acc = 0.0
         self._u = None                     # tm151_filter: gravity direction, body
         self._rate_s = 0.0                 # its smoothed |gyro|, deg/s
+        self._acc_dev = 0.0                # its held |acc| distance from 1 g
         self._w_prev = None                # for the accelerometer's lever arm
         # A misalignment is a FIXED build error, not noise: drawn once per
         # power-on and constant thereafter. Drawing it per tick would make it
@@ -593,6 +632,7 @@ class SimAhrs:
         """
         self._u = None
         self._rate_s = 0.0
+        self._acc_dev = 0.0
         self._w_prev = None
         self._cache = None
         self._acc = 0.0
@@ -663,8 +703,9 @@ class SimAhrs:
             self._rate_s += (dt / (FILTER_RATE_SMOOTH_S + dt)) * (
                 np.degrees(np.linalg.norm(gyro_out)) - self._rate_s)
             tau = filter_tau(self._rate_s, FILTER_TAU_REST_S, self.filter_tau_motion_s)
+            self._acc_dev = acc_deviation(self._acc_dev, accel_out, dt)
             self._u = tilt_filter_step(self._u, gyro_out, accel_out, dt, tau,
-                                       FILTER_ACC_GATE)
+                                       FILTER_ACC_GATE, weight=acc_weight(self._acc_dev))
             # The attitude whose up direction is the filter's: the truth turned,
             # in the body frame, by the rotation taking up_true onto it.
             c = _cross(up_true, self._u)
