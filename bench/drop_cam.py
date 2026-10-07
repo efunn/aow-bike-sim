@@ -136,6 +136,14 @@ def wave_profile(rest, nose_r, lift_min, tones, n=None):
     return pts
 
 
+def wave_separation_rev_s(tones, fall_ms2):
+    """The cam speed [rev/s] above which the follower leaves it: where R''
+    Omega^2 pulls DOWN harder than the arm falls (as wave_report). inf for a
+    plain circle."""
+    d2_neg = max((-_lift_terms(tones, a)[2] for a in _grid(tones, 7200)), default=0.0)
+    return math.sqrt(fall_ms2 / (d2_neg * 1e-3)) / (2 * math.pi) if d2_neg > 0 else math.inf
+
+
 def wave_report(rest, nose_r, lift_min, tones, fall_ms2, servo_dps, r_follower, r_contact):
     """Geometry checks and what the cam does to the arm. Returns (lines, ok)."""
     R, R1, R2 = wave_pitch(rest, nose_r, lift_min, tones)
