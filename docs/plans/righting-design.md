@@ -54,26 +54,37 @@ The XC330 sits at the rear, horn forward. Each L part is its R twin turned
   Only R has lugs (the steering headset upper's four, inside Φ14), into the
   horn hub. So these are two parts.
 - **Couplers,** printed bossed face up. One part, both sides.
-- **Centre washer,** loose on the crankpin between the couplers: printed
-  two layers, or bought and measured into `washer`.
-- **Rocker R / L,** printed hub-zone face down: hub on the rod, arm to its
-  coupler, ear straight from the coupler joint to the panel boss.
-- **Knuckle R / L,** printed ring face up: the rocker's ear and boss without
-  the arm, dog-legged low. It is each wing's second support, beyond the far
-  bearing.
-- **Wing R / L,** printed outer face down: the panel, a tab at each boss.
-  One 6-32 along Y into each, the head in the boss, the nut in the tab.
+- **No washers** (since 2026-10-07, `stack.thrust: loop`). `washer`
+  brings a loose one back on the crankpin and one on the rod, printed two
+  layers or bought and measured.
+- **Rocker R / L,** printed inner face up: hub on the rod (r 5.5), arm to
+  its coupler, ear straight from the coupler joint to the panel boss.
+- **Knuckle R / L,** printed inner face up: the rocker's outline, in the
+  OTHER wing's coupler layer, the rocker pin through rocker, coupler and
+  knuckle (since 2026-10-07; it was dog-legged, beyond the far bearing). A
+  mirror part of the rocker: the same outline and volume, with its ring at
+  the pin, where the rocker's is at the rod.
+- **Wing R / L,** printed outer face down: since 2026-10-07 a STUB (to 30
+  up the panel) whose two Y ends are tongues chamfered 45 deg on both faces,
+  and a tab at each boss. One 6-32 along Y into each, the head in the tab,
+  the nut in the rocker or knuckle.
+- **Wing blade R / L:** DUMMY, the wing proper: an inverted U sliding down
+  over the stub, its legs on the tongues. The panel's own thickness.
 - **Front bulkhead,** printed inner face up: the front journal bearing, the
   rod.
 - **Lower case,** printed inner face down: the rear journal bearing and the
   rod in its front wall, the hub's cavity, the XC330's horn half. It is the
   steering's lower case.
 - **Upper case,** printed cap down: the XC330's back half, the steering's
-  cable window and "H" cap, two ears up to the bridge.
+  cable window and "H" cap. Since 2026-10-07 the servo is turned long end
+  down, and the case is held by one 6-32 forward into the lower case, from a
+  lug on its top (it had ears, then one central screw, up to the bridge).
 - **Horn hub:** the steering's, same numbers (`steering_cad.yaml`), so the
   same part.
-- **Bridge,** printed top up: ties the front bulkhead and both cases, one
-  6-32 each with a ridge. Its top face carries the chassis attachment.
+- **Bridge,** printed top up: ties the front bulkhead and the lower case,
+  one 6-32 each with a ridge, and stops at the lower case's rear face (it
+  reached back over the upper case). 2 over the crank. Its top face carries
+  the chassis attachment (one joint now).
 - **Chassis plate:** PLACEHOLDER.
 
 ## integration into whole bike
@@ -290,6 +301,235 @@ For the whole bike (`bike-assembly-design.md`, sixth pass):
 crowns, 1 hanging edge (the slot bridge above). ~103 g printed
 (uncalibrated; Onshape's areas now).
 
+## Knuckles inside, nuts in the links (2026-10-07, user)
+
+"The 'knuckles' can move inside the bulkheads ... so that they straddle
+the coupler (basically same part as the rockers). The wing hinge pin can
+then be shorter." And: the nuts belong in the knuckles and rockers, with
+the screws from opposite sides; with both from one side, assembly is
+close to impossible.
+
+| switch | value | what |
+|---|---|---|
+| `wing.knuckle_at` | `coupler` (was the outside design: knuckle L behind the lower case, R behind it) | each knuckle in the OTHER wing's coupler layer, on its own wing's side: rocker and knuckle straddle the wing's coupler |
+| `wing.knuckle_hub_wall` | 2.5 (r 5.5, was 6.5) | the other wing's coupler sweeps over the rod 7.6 from its axis at the full stroke |
+| `wing.panel_rear` | 36 | wing L's rear end = wing R's front end (the wings are twins again) |
+| `wing.nut_in` | `link` (was `wing`) | head in the wing's tab from outside, nut in the rocker / knuckle, slid in from the boss's top end (blind slot, 2 deep, 1.0 wall) |
+
+**Why the coupler layer, not a layer of their own.** A knuckle layer
+between web and bulkhead would push each bulkhead out 6.6. That is +13.2 on
+the module and on the wheelbase, since both ends are fitted (0.5 to the
+drive, 5 to the front wheel). In the coupler layer the stack does not grow.
+The bulkheads stay at 13.5-23.5, and the rod runs bulkhead to bulkhead,
+47 long (was 61).
+
+**What sits where now** (the washers and these rings were replaced the
+same day; see "The servo turned" below). Each coupler layer holds one
+coupler and the other wing's knuckle. The two knuckles meet at the
+mid-plane over a second loose washer on the rod, as the couplers do on the crankpin: both faces are
+print beds. Each knuckle's outer face carries a ring at the rod against the
+other side's rocker hub. Every L part is its R turned again, wings and
+knuckles included.
+
+**Clearances, planar sweep over the stroke** (81 poses, holes ignored;
+scratch, shapely):
+
+| pair | closest | where |
+|---|---|---|
+| knuckle x the other wing's coupler | 2.19 (1.19 at hub wall 3.5) | coupler body over the knuckle's hub, full stroke |
+| crank web x rocker (unchanged) | 4.47 | |
+| coupler x the wing's tab | 6.57 | |
+| everything else new | > 8 | |
+
+The knee's place (-10..-40 deg, r 16-24) makes no difference to the
+first row; the hub radius sets it. `test_the_knuckles_sit_beside_the_other_wings_coupler`
+holds 2.0 (it fails at 1.19).
+
+`--check`: 25 bodies, 0 interference at rest and over 10 poses, pins
+exact, every L part equals its R, ~102 g printed. The rocker's and
+knuckle's 8 downward faces are the nut slot's ~8 roof and the hole's
+sacrificial layers, the same as the bearings' slots. The one hanging edge is
+the old one, accepted.
+`cad_bike --fit righting`: FITS, unchanged at 0.50 rear and 5.25 front;
+wings L 2.6 / R 7.6 spare. Bike `--check` clean, 58 bodies.
+
+## Flipping the XC330 (measured, not drawn: 2026-10-07)
+
+The user's idea: turn the servo 180 deg about Y, its long end down, to
+shorten the wheelbase; the bridge would need a new shape. What the rear
+binds on now is the bridge's tail, and behind the bridge the upper case,
+all at the top-rear corner, under the drive's case sides. Two throwaway
+`--fit 2` scans at the bike's 143.5, going back 1 mm a step
+(`traces/bike_cad/fit2_servo_*.py`, the outputs beside them):
+
+| righting as | goes back to | then binds |
+|---|---|---|
+| drawn | 143.5 | the bridge's middle chamfer on XC430 A |
+| upper case, servo and horn removed; bridge cut at the lower case's rear face (y -23.5) | <= 131.5 (the scan's end) | nothing new; wing L 1.0 to pulley L, which is sideways and stays 1.0 along Y |
+| the same, but the upper case, servo and horn TURNED 180 deg about the horn axis | **131.5** (0.77; 0.06 at 130.5) | the turned upper case's former top corner (its central screw's pad), now at the bottom, on drive case side R |
+
+So the flip is worth ~12 off the wheelbase (223.5 -> ~211.5), if the bridge
+stops at the lower case. (A note here first said the connectors would then
+face the floor. They do not: the cap faces -Y, and a turn about Y keeps it
+there; user.)
+
+## The servo turned, the knuckle the rocker's shape, no washers (2026-10-07, user)
+
+User: the knuckle can take the rocker's shape (its dog-leg was for the
+servo cases, no longer near it), the rocker pin through both; choose the
+thrust faces to drop the washers, using the pin's new third part; and draw
+the turned servo "with no attachment to the bridge so I can see the best
+candidate installation"; the lower case "is basically just sliding down
+relative to the servo horn".
+
+| switch | value | what |
+|---|---|---|
+| `wing.knuckle_shape` | `rocker` | the knuckle is the rocker's outline; both on `knuckle_hub_wall` 2.5. Pin pressed in rocker and knuckle, the coupler running between |
+| `stack.thrust` | `loop` | rings below; rocker and knuckle print inner face up |
+| `washer.thickness` | 0 | none; `stack.gap` 0.6 (the mid gap, = boss + clearance) |
+| `cases.servo_end` | `down` | XC330 turned 180 deg about Y with both cases; the bridge stops at the lower case; no `jU`, no rear chamfers, no bridge chamfer or narrow tail |
+
+**Choosing the thrust faces.** A printed ring can only stand on a face that
+is up as its part prints. Enumerating the print faces of rocker, knuckle,
+coupler and front bulkhead (the crank web and the lower case are fixed by
+other needs) gives exactly one washer-free family, with no group of parts
+able to slide along Y. Rocker and knuckle print inner face up and the
+couplers outer face up:
+
+| ring | on | bears on |
+|---|---|---|
+| crank shoulders (as before) | each half crank's outer face, at the journal | the bearings |
+| coupler (as before) | outer face, at the crankpin and the rocker pin | crank web; its own rocker |
+| rocker (new) | inner face, at the rod | the OTHER wing's knuckle |
+| knuckle (new) | inner face, at its rocker pin | its OWN coupler, across the mid-plane |
+
+So the loop is crank -> coupler -> its wing -> the other wing -> the other
+coupler -> crank, and the crank sits between the bearings. Nothing bears at
+the mid-plane at the crankpin or the rod, nor on the front bulkhead (its
+ring is gone); each coupler is held between its own rocker and knuckle.
+Every other running pair is a plain 0.6. The chain is long, so a part's
+axial play adds up across up to five 0.2 clearances: OUTSTANDING, check on
+the print whether a plain 0.6 face ever touches.
+`test_the_thrust_rings_locate_every_moving_group` reads the rings off the
+layout, finds what each bears on, and checks no set of groups slides (it
+fails on the first scheme without washers).
+
+**Sweep:** the rocker-shaped knuckle keeps 2.19 to the other coupler (the
+hub sets it, not the arm); the rocker's 4.47 to the crank web is now 4.90
+on the thinner hub.
+
+**The turned servo.** The lower case's horn-half shell comes down round
+the horn with it. Its bottom is now behind the rod, so the rod's hole stops
+1 into it (blind; the rod cannot walk out the back). The bridge keeps its
+height, so the bike's deck does not move; the crank alone would let it come
+down to ~47.6 above the rod (now 55.6), which is the lowering lever.
+
+| check | result |
+|---|---|
+| righting `--check` | 23 bodies, 0 interference over 10 poses, pins exact, L = R turned, rocker and knuckle the same volume; ~100 g printed; 0 hanging edges |
+| `cad_bike --fit righting` | FITS at 143.5 (1.04 rear, 5.25 front); room to **131.5 (+12.0)**, then the turned upper case's rear-top edge (\|x\| 12, ~39 above the rod) on drive case side R (0.06 at 130.5) |
+| bike `--check` | clean, 56 bodies |
+
+`--fit righting` now scans back in 1 mm steps (`fit2_probe(step, nmax)`):
+55 steps of 0.25 timed out with this much room (a free 500).
+
+The placement stays at 143.5 until the upper case has its attachment;
+moving it re-fits the electronics (`--fit e`) and the chassis joints.
+
+## Knuckle R's ring, a lower bridge, smooth bulkheads (2026-10-07 evening, user)
+
+| switch | now | why |
+|---|---|---|
+| knuckle R's ring at the rod (inner face) | knuckle R only, so L and R are now two parts | closes the rod's mid-plane gap (user) |
+| `washer.thickness` | 0.4 again, on the crankpin only | the couplers' shared faces are both beds; "will need a little washer in there" (user) |
+| `frame.crank_clear` | 2: the bridge's underside 48.58, was 55.64 | the crank and couplers are highest at rest; nothing of the servo's is above them now |
+| `frame.bulkhead_shape` | `hull`: one outline round the rod boss, the journal boss and +-12.35 (the lower case's width) from the journal up | was bands to +-16 (user) |
+| jR, the lower case's bridge nut | through along Y, the nut in from the rear face | user; it passes 6.6 over the turned shell |
+| `chassis.joints_y`, `ridge_half` | one joint at +9.5, ridge 4 | the bike at 120.5 puts the drive block's wedge over module y < +1.6 |
+
+The thrust test now expects the knuckle-knuckle contact at the rod. It
+still finds no group of parts that can slide.
+
+In the bike (`bike-assembly-design.md`), with the drive's rear blocks
+chamfered, the righting went back to **120.5 (wheelbase 200.5)**. There
+the turned upper case passes between the drive case sides, 0.597 to case
+side L's skirt. Next binds: wing L at the +0.56 pose on drive pulley L,
+0.42 at 119.5.
+
+`--check`: 24 bodies, 0 interference over 10 poses, pins exact, ~96 g
+printed, 0 hanging edges.
+
+## The upper case held, two chassis joints, the wing as a stub and blade (2026-10-07 late, user)
+
+**The upper case** (`cases.uc_attach: lower`). One 6-32 along +Y on the
+centreline over the turned servo:
+- **head:** in a lug on the upper case's top, its back face at 45 deg, so it
+  prints cap-down without hanging;
+- **screw axis:** 42.59 above the rod, just high enough for the head's
+  pocket to clear the case's top (38.64);
+- **nut:** in a block the lower case grows back from its bulkhead, between
+  the upper case's front (-37.4, the joint plane) and the bulkhead
+  (-23.5). Its slot runs UP out of the block's top, so the nut goes in from
+  above (user; it first ran -Z into the servo pocket);
+- **jR:** the block closes jR's rear face, so the lower case's bridge nut
+  slot is blind again.
+
+The block's top is 4.4 from XC430 A, 1 mm ahead of the station.
+`--fit righting` still FITS at 120.5 (wheelbase unchanged, as the user
+expected).
+
+**Two chassis joints** again (+-8, ridge 6; user: the chassis is a
+placeholder). In the bike the -8 joint is under the drive block's wedge.
+`cad_bike` now NOTES this rather than refusing, and the wedge stands on the
+deck's top, so the plate keeps the grooves.
+
+**The wing** (`wing.blade: ends`; user: "the wing chamfer can go on two
+sides like roughly Z-aligned ... the wing fits like an inverted U overtop
+... `<<     >>`"):
+
+| piece | what |
+|---|---|
+| stub (printed) | a 6 border round the tabs and bosses (`stub_border`; user: "minimize how much I'm printing to test the mechanism"): 32 up the panel, Y -24.9..18.3 on wing R (was the whole span less 2.5 a side); each Y end a tongue, both faces chamfered 2.25 at 45 deg to a 0.5 flat, the edges along the panel |
+| blade (dummy) | the panel's own outline: body over the stub's top, two legs at the stub's ends that hold the tongues (0.2 clearance). Its body spans the panel, +-41 on both wings (82 long, `panel_rear` = `panel_back`), so it overhangs its stub unequally (16 behind, 23 in front on wing R) |
+
+What holds the blade:
+- the stub's top takes it pushed down;
+- the two legs' chamfers hold it in n both ways;
+- the legs hold it in Y;
+- it slides on DOWN the panel, and nothing holds it up yet (OPEN).
+
+Nothing grows, so the full-stroke floor clearance stays the panel's 1.36.
+The chamfers face 45 deg down as the stub prints outer face down: 0
+downward faces.
+
+REJECTED, the same evening:
+- a one-sided dovetail sliding along Y, with a skin outward. The wing lies
+  flat 1.36 off the floor at full stroke, so the skin had to stay under
+  that (1.6 went 0.44 in; 1.0 left 0.16).
+- tapering that skin at the tip: the wing lies flat, so it bought nothing.
+
+**An oblique sketch plane would not extrude.** The chamfers run along the
+panel, so the tongues are a new primitive (`poly`): an outline extruded
+along any direction. Sketched straight on its oblique plane it failed
+(EXTRUDE_FAILED, two billed evals: an eval that returns an error still
+bills). It is now sketched on a world plane, as the prisms are, and moved
+into place with normalised axes. Every earlier sketch here had an
+axis-aligned normal.
+
+`test_the_wing_is_a_stub_and_the_blade_an_inverted_u_over_it` pins the
+faces, the spans and the 45 deg. `--check`: 26 bodies, 0 interference over
+10 poses, 0 hanging edges, ~66 g printed (the blades not counted; a stub is
+8.7 cm^3 solid, was 12.8 before the trim).
+
+The blades sat 5 apart in Y (user's catch). That was an artefact: wing L had
+been kept at -36..41 when the wings became twins, and wing R is its turn.
+Both are now +-41 (user). `--fit righting` FITS at 120.5, unchanged. The
+closest wing point is wing L's knuckle tab (module y -12.3), sideways to
+drive pulley L at the +0.56 pose, 0.42 at 119.5; the panel's ends come near
+nothing. With the stub trimmed, the wings' front room grew: L 16.2, R 22.8
+spare (the panel's lower front corner had set it).
+
+
 ## Fitting the whole bike: the constraints to keep (2026-10-05)
 
 The layout is settled for now and nothing is printed (user). The righting
@@ -299,9 +539,11 @@ edit here reaches `aow-bike-whole` by itself. What it must keep:
 
 | rule | now | set by |
 |---|---|---|
-| 0.5 to the drive, at rest AND every pose (`placement.rear_clear`) | 0.50 at the bike's 143.5 | the bridge's middle chamfer (4.6, held by the central screw's head seat) on XC430 A; the narrowed rear end passes the case sides' skirts at 0.5 |
+| 0.5 to the drive, at rest AND every pose (`placement.rear_clear`) | 0.597 at the bike's 120.5 (wheelbase 200.5) | the turned upper case between the case sides (flat along Y); next, wing L on drive pulley L, 0.42 at 119.5. Before the turn: the bridge's middle chamfer on XC430 A at 143.5 |
+| the righting's chassis joints vs the drive block's wedge | +-8: -8 is under it, head buried (noted; the chassis is a placeholder) | the wedge stands on the deck's top, so the ridges clear |
+| the wing off the floor at the full stroke (it lies flat) | 1.36 | the panel's thickness; the blade adds nothing outward |
 | the module less its wings 5 from the straight front wheel (`front_clear`) | 5.25 | the front bulkhead (y 23.5) |
-| the wings clear the front tyre's whole steer sweep, every pose, 2 spare (`wing_margin`) | L 2.6 / R 9.2 spare | `wing.panel_back` 41 |
+| the wings clear the front tyre's whole steer sweep, every pose, 2 spare (`wing_margin`) | L 16.2 / R 22.8 spare | `wing.panel_back` = `panel_rear` 41; the blade's body starts 32 up the panel |
 | the bridge's last 10 under the drive case sides' skirts (\|x\| 12) | +-11.5 | `frame.bridge_rear` |
 | the deck (the chassis plate's top) is what the Pi's plate stops 1 over | module z 68.2 | `chassis`, `frame.bridge` |
 | a wing's panel inside the synthesis's keep-out (35 core + half its width) | `panel_thickness` 5 = `wing_width_mm` | the linkage file |
@@ -312,8 +554,8 @@ edit here reaches `aow-bike-whole` by itself. What it must keep:
     python -m aow_sim.cad_righting --check         # 1 call: the module itself
     python -m aow_sim.cad_bike --fit righting      # 1 call: does it still fit the bike?
 
-`--fit righting` runs the pose-aware 0.5 scan from 1.75 ahead of the
-station and the front-wheel distance, and prints FITS or what binds. It
+`--fit righting` runs the pose-aware 0.5 scan, 1 mm steps from 1 ahead of
+the station, and the front-wheel distance, and prints FITS or what binds. It
 also gives the room either way: how far the righting could go back now.
 `cad_bike` prints a NOTE whenever the righting no longer matches
 `placement.righting_digest`, which it was last fitted against.
@@ -321,7 +563,8 @@ also gives the room either way: how far the righting could go back now.
 Measured ceiling: with the central screw gone altogether (bridge chamfer
 7, case 8.5) the module would go back to 142.0, 1.5 better
 (`traces/bike_cad/fit2_no_central_screw.txt`). Moving that screw, +Y or
-otherwise, buys at most that. Lowering the mechanism is the larger lever.
+otherwise, buys at most that. Flipping the servo is the larger lever
+(below, measured 2026-10-07: ~12).
 
 ## Outstanding
 
