@@ -195,9 +195,10 @@ def wing_front_room(rL: dict, front: float, zc: float, r_ball: float) -> dict:
     out = {}
     for slug in ("wingR", "wingL"):
         p = next(q for q in rL["parts"] if q["slug"] == slug)
-        y_end = max(q["y1"] for q in p["add"] if q["k"] == "prism")
-        # the prisms that reach the front end (the panel; a tab may stop short)
-        ends = [q for q in p["add"] if q["k"] == "prism"]
+        # the wing and its blade (when the wing is a stub, 2026-10-07)
+        bl = [q for q in rL["parts"] if q["slug"] == "blade" + slug[-1]]
+        ends = [q for w in [p] + bl for q in w["add"] if q["k"] == "prism"]
+        y_end = max(q["y1"] for q in ends)
         lim = math.inf
         for ps in rL["poses"].values():
             g = ps[p["group"]]
@@ -305,13 +306,16 @@ def layout(data: dict) -> dict:
     boxes = [[[-ch["deck_half"], py1, z0], [ch["deck_half"], y_front, z1]]]
     if py0 > A[1]:
         boxes.append([[-ch["wedge_half"], A[1], z0], [ch["wedge_half"], py0, z1]])
-    # no righting joint may sit under the wedge: its head would be buried
-    for yj in data["rd"]["s"]["chassis"]["joints_y"]:
-        if A[1] - 4.0 < yj + yr < B[1] + 4.0:
-            raise ValueError(f"the righting's chassis joint at y {yj + yr:.1f} sits under the drive "
-                             f"block's wedge ({A[1]:.1f}..{B[1]:.1f}): its head would be buried")
+    # a righting joint under the wedge has its head buried: NOTED, not
+    # refused (user, 2026-10-07: "I know it doesn't 'fit' on the chassis
+    # side but the chassis is really just a placeholder for now")
+    L["notes"] = [f"the righting's chassis joint at y {yj + yr:.1f} sits under the drive block's wedge "
+                  f"({A[1]:.1f}..{B[1]:.1f}): its head is buried (the chassis is a placeholder)"
+                  for yj in data["rd"]["s"]["chassis"]["joints_y"] if A[1] - 4.0 < yj + yr < B[1] + 4.0]
     L["deck"] = {"z0": z0, "z1": z1, "boxes": boxes}
-    L["wedge"] = {"pts": [[A[1], z0], [B[1], z0], [B[1], B[2]], [A[1], A[2]]],
+    # the wedge stands on the deck's TOP (z1): the deck and the righting's
+    # plate fill z0..z1 under it, and the plate keeps the joints' grooves
+    L["wedge"] = {"pts": [[A[1], z1], [B[1], z1], [B[1], B[2]], [A[1], A[2]]],
                   "half": ch["wedge_half"]}
     # a gusset behind the steering plate, stopping under its lower joint's head
     zg = z1 + 8.0
@@ -325,7 +329,10 @@ def layout(data: dict) -> dict:
                    [[-60, S["plateBack"] - 1, S["caseBot"] - 40], [-S["botOuter"], S["yP"] + 1, S["upTopZ"] + 1]]]
     L["stExt"] = [[-ch["steer_ext_half"], S["plateBack"], S["upTopZ"] - 1],
                   [ch["steer_ext_half"], S["yP"], S["upTopZ"] + ch["steer_ext"]]]
-    L["deckPt"] = [0, (A[1] + B[1]) / 2, (z0 + z1) / 2]
+    # a point in the wedge, 2 over the deck: the deck under it may be the
+    # righting's plate, with a joint's screw hole on the centreline (a point
+    # mid-deck fell in one, 2026-10-07: CANNOT_RESOLVE_ENTITIES)
+    L["deckPt"] = [0, (A[1] + B[1]) / 2, z1 + 2.0]
     # the drive's four case-side screws run along X through the block: level
     # as the chassis prints deck-down, so each bore gets a 45 deg crown (+Z)
     L["blockBores"] = [drv([0, y, sz * D["zF"]]) for y in (D["yF0"], D["yF1"]) for sz in (1, -1)]
@@ -1473,14 +1480,14 @@ FIT2 = """function(context is Context, queries)
                     ~ "|" ~ pt(dd.sides[0].point) ~ "|" ~ pt(dd.sides[1].point));
         }
     }
-    // 1c. back from there in 0.25 steps while the righting keeps %CLR% to
+    // 1c. back from there in %STEP% steps while the righting keeps %CLR% to
     // the drive, at rest AND at every righting pose (2026-10-05: a scan at
     // rest alone let wing L, swung inboard, reach drive pulley L)
     var last = at;
     const gs = ["crank", "cR", "cL", "wR", "wL"];
-    for (var k = 1; k <= 60; k += 1)
+    for (var k = 1; k <= %NMAX%; k += 1)
     {
-        const y = %YAT% - 0.25 * k;
+        const y = %YAT% - %STEP% * k;
         opTransform(context, makeId("rd" ~ k), { "bodies" : rgQ, "transform" : transform(vector(0, y - at, 0) * mm) });
         at = y;
         const T = transform(vector(0, at, %ZR%) * mm);
@@ -1553,8 +1560,11 @@ FIT2 = """function(context is Context, queries)
 
 
 def fit2_probe(rear=(140, 175, 2.5), front=(80, 90, 2.5), y_at: float | None = None,
-               clearance: float = 0.5) -> str:
-    """REAR|y|vs whole drive|vs axle group, FRONT|offset|vs steering + ball."""
+               clearance: float = 0.5, step: float = 0.25, nmax: int = 60) -> str:
+    """REAR|y|vs whole drive|vs axle group, FRONT|offset|vs steering + ball.
+    The pose-aware scan back from y_at goes `step` at a time, at most `nmax`
+    steps: 60 of 0.25 with 11 poses each timed out (a free 500) when the
+    righting had ~12 of room (2026-10-07)."""
     p = load_params(sm.CAD_PARAMS)
     R = p["omni_wheel"]["outer_radius"] * 1000
     st = cs.layout(cs.load())
@@ -1566,7 +1576,7 @@ def fit2_probe(rear=(140, 175, 2.5), front=(80, 90, 2.5), y_at: float | None = N
             "%Y0%": str(rear[0]), "%Y1%": str(rear[1]), "%DY%": str(rear[2]),
             "%F0%": str(front[0]), "%F1%": str(front[1]), "%DF%": str(front[2]),
             "%POSEKEYS%": "[" + ", ".join(f'"{k}"' for k in sorted(rL["poses"], key=float)) + "]",
-            "%CLR%": str(clearance), "%YAT%": str(y_at if y_at is not None else load()["s"]["placement"]["righting_y"])}
+            "%CLR%": str(clearance), "%STEP%": str(step), "%NMAX%": str(nmax), "%YAT%": str(y_at if y_at is not None else load()["s"]["placement"]["righting_y"])}
     s = FIT2
     for k, v in subs.items():
         s = s.replace(k, v)
@@ -1674,7 +1684,10 @@ def fit_righting(L: dict, data: dict, onshape, out: Path = Path("traces/bike_cad
     front tyre's whole steer sweep, every pose, locally."""
     pl = data["s"]["placement"]
     yr, F = L["yr"], L["wb"] - L["yr"]
-    script = fit2_probe(rear=(yr, yr, 2.5), front=(F, F, 2.5), y_at=yr + 1.75, clearance=pl["rear_clear"])
+    # 1 mm steps from 1 ahead: the station itself is the first one judged,
+    # and 20 of them say how much room there is to 1 mm without timing out
+    script = fit2_probe(rear=(yr, yr, 2.5), front=(F, F, 2.5), y_at=yr + 1.0, clearance=pl["rear_clear"],
+                        step=1.0, nmax=20)
     sm.lint_fs(script)
     reply = onshape.eval_featurescript(script, onshape.resolve(None, "check"))
     for n in onshape.notice_lines(reply):
@@ -1690,13 +1703,18 @@ def fit_righting(L: dict, data: dict, onshape, out: Path = Path("traces/bike_cad
         print("the probe did not report: see traces/bike_cad/fit_righting.txt  FAIL")
         return False
     at = next((d for y, d, _ in rear if abs(y - yr) < 1e-6), None)
-    bind = next(((y, d, w) for y, d, w in rear if d < pl["rear_clear"]), rear[-1])
+    bind = next(((y, d, w) for y, d, w in rear if d < pl["rear_clear"]), None)
     rear_ok = at is not None and at >= pl["rear_clear"] - 0.02
     print(f"  rear, at rest and every pose, at righting_y {yr:g}: "
           + (f"{at:.2f} to the drive (want >= {pl['rear_clear']:g})" if at is not None else "does not reach it")
           + ("  ok" if rear_ok else "  FAIL"))
-    print(f"    it could go back to {stop:g} ({yr - stop:+.2f}); binds: {' | '.join(bind[2][:3])} "
-          f"({bind[1]:.2f} at {bind[0]:g})")
+    if bind:
+        print(f"    it could go back to {stop:g} ({yr - stop:+.2f}); binds: {' | '.join(bind[2][:3])} "
+              f"({bind[1]:.2f} at {bind[0]:g})")
+    else:
+        y, d, w = rear[-1]
+        print(f"    it could go back to {stop:g} at least ({yr - stop:+.2f}, the scan's end): nothing binds "
+              f"yet; closest {' | '.join(w[:3])} ({d:.2f} at {y:g})")
     fd = float(front[2])
     front_ok = fd >= pl["front_clear"] - 0.02
     print(f"  front, less the wings, to the straight front wheel at {F:g}: {fd:.2f} ({front[3]} -> {front[4]}; "
@@ -1778,6 +1796,8 @@ def main() -> None:
               "its generator as it is now; re-measure what was fitted to it: `--fit 2` "
               "(righting_y, wheelbase), `--fit e` (electronics.edge), then `--check`, and set "
               "righting_digest to the new value.")
+    for n in L["notes"]:
+        print(f"NOTE: {n}")
     print(report(L))
     if args.dry_run:
         print(f"check script: {len(check_wrapper(text))} chars")

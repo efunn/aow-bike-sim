@@ -127,12 +127,21 @@ def test_the_carrier_works_round_the_deck_the_pulleys_and_its_holes(L, data):
     printed standoffs' self-tap pilots stop short of every pocket."""
     from aow_sim.cad_bike import data_deck_top, rx
     el = data["s"]["electronics"]
-    mid, legR, legL = L["carrier"]["plates"]
-    assert rx([0, mid[0][1], mid[0][2]], L["tilt"])[2] >= data_deck_top(data["rL"], L["zr"]) + el["notch"]["deck_clear"] - 1e-6
-    assert legR[0][0] == mid[1][0] and legR[0][2] < mid[0][2]
-    for hx, hz in L["piHoles"]["at"]:
-        leg = legR if hx > 0 else legL
-        assert leg[0][0] < hx < leg[1][0] and leg[0][2] < hz < leg[1][2]
+    plates = L["carrier"]["plates"]
+    deck = data_deck_top(data["rL"], L["zr"]) + el["notch"]["deck_clear"] - 1e-6
+    if len(plates) == 1:
+        # high enough on the face (2026-10-07, edge -44.5) that no notch is needed
+        (lo, hi), = plates
+        assert rx([0, lo[1], lo[2]], L["tilt"])[2] >= deck
+        for hx, hz in L["piHoles"]["at"]:
+            assert lo[0] < hx < hi[0] and lo[2] < hz < hi[2]
+    else:
+        mid, legR, legL = plates
+        assert rx([0, mid[0][1], mid[0][2]], L["tilt"])[2] >= deck
+        assert legR[0][0] == mid[1][0] and legR[0][2] < mid[0][2]
+        for hx, hz in L["piHoles"]["at"]:
+            leg = legR if hx > 0 else legL
+            assert leg[0][0] < hx < leg[1][0] and leg[0][2] < hz < leg[1][2]
     for plo, phi in L["carrier"]["pockets"]:
         assert L["piHoles"]["y"][0] >= phi[1] + 0.5 - 1e-9
     assert len(L["carrier"]["pockets"]) == 2
@@ -237,7 +246,7 @@ def test_a_righting_change_is_noticed(data, L, tmp_path):
     from aow_sim import cad_righting as cr
     assert cb.righting_digest(data["rL"]) == cb.righting_digest(cr.layout(cr.load()))
     rd = copy.deepcopy(data["rd"])
-    rd["s"]["stack"]["coupler"] = 5.0
+    rd["s"]["stack"]["clearance"] = 0.3
     assert cb.righting_digest(cr.layout(rd)) != L["rgDigest"]
 
 

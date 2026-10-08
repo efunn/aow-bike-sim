@@ -371,6 +371,26 @@ tentative):**
 `skin x area + 15 % x the rest` with skin 0.9 mm (`cad_bike.printed_mass`).
 UNCALIBRATED: weigh a printed part and fit `SKIN`.
 
+## Wheelbase 200.5: the righting's servo turned (2026-10-07, user)
+
+The righting's XC330 turned long end down, its bridge 7.1 lower (2 over
+the crank), and the drive case sides' rear blocks chamfered
+(`drive-design.md`, `case.rear_chamfer`). Each moved what binds at the
+rear, so the placement was re-fitted:
+
+| | was | now | how |
+|---|---|---|---|
+| `placement.righting_y` | 143.5 | **120.5** | `--fit righting`, 1 mm steps: the turned upper case passes between the case sides at 0.597, flat along Y; next binds wing L (+0.56 pose) on drive pulley L, 0.42 at 119.5 |
+| `placement.wheelbase` | 223.5 | **200.5** | + the front's 80 (front bulkhead 5.25 from the straight wheel, unchanged) |
+| deck top | 58.24 | 51.18 | the bridge |
+| `electronics.edge` | -69.5 | **-44.5** | one probe, plate slid UP the face in 5 mm steps: the lower case and deck sit under the old spot; clear from +25. The plate is now one piece (no notch needed) |
+| righting `chassis.joints_y` | +8 / -8 | +-8 again (late; +9.5 alone for an afternoon) | user: two nut slots, the chassis is a placeholder. -8 is under the wedge, its head buried: `cad_bike` NOTES it (it refused), and the wedge now stands on the deck's top so the righting plate keeps the grooves |
+
+`deckPt`, how the chassis finds its body after the union, moved into the
+wedge: mid-deck it fell into the -8 joint's screw hole
+(CANNOT_RESOLVE_ENTITIES; a billed eval). The Pi's plate could probably come down again
+between +20 and +25 (not resolved finer).
+
 ## As built
 
 `python -m aow_sim.cad_bike` (config `config/bike_cad.yaml`), one feature

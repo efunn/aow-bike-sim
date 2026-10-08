@@ -23,7 +23,7 @@ placement:
   # wings 5 from the front wheel standing straight (front bulkhead, 5.25 at
   # 80). The wings must clear the tyre's whole steer sweep at every pose:
   # layout() checks it, `wing.panel_back` in righting_cad.yaml sets it.
-  wheelbase: {value: 223.5, source: design}   # 143.5 + 80 (the 0.5 scan)
+  wheelbase: {value: 200.5, source: design}   # 120.5 + 80 (2026-10-07; was 223.5)
   # The wing rod's station, forward of the rear axle. Its height comes from
   # the righting module (rod 41.2 off the floor).
   # 147.5 (pm), was 150: the chamfered upper case and bridge. What binds
@@ -35,7 +35,15 @@ placement:
   # the bridge's middle chamfer (4.6, held by the central screw's head
   # seat) on XC430 A, 0.48 at 143.25. The wings no longer bind since the
   # panels went to 5.
-  righting_y: {value: 143.5, source: design}
+  # 124.5 (2026-10-07), was 143.5: the XC330 turned long end down (no
+  # bridge over its upper case now), the bridge 7.1 lower, and the drive
+  # case sides' rear blocks chamfered 16.9 at 45 deg (user). `--fit
+  # righting` scanned 19 back in 1 mm steps and found nothing under 0.5.
+  # 120.5: the same scan from 124.5 (one chassis joint, forward of the
+  # wedge): the turned upper case passes BETWEEN the case sides, 0.597 to
+  # case side L's skirt, flat along Y; binds next: wing L, swung in (+0.56),
+  # on drive pulley L, 0.42 at 119.5.
+  righting_y: {value: 120.5, source: design}
   wing_margin: {value: 2.0, source: design}   # wings to the front tyre's steer sweep, every pose
   # The righting's fit rules (user, 2026-10-05), checked by `--fit righting`
   # (one call) after any edit to the righting module:
@@ -45,7 +53,7 @@ placement:
   # the righting module's parts and poses (`cad_bike.righting_digest`). The
   # bike always rebuilds the righting from its generator, so a linkage change
   # comes in on its own; cad_bike says when these numbers predate it.
-  righting_digest: {value: 10f2aa7475e2, source: design (cad_bike --fit 2 / --check, 2026-10-05 evening)}
+  righting_digest: {value: 3f1a260e969b, source: design (cad_bike --fit righting / --check, 2026-10-07 late: wings +-41, at 120.5)}
 
 chassis:
   # The deck: the righting's chassis-plate placeholder (its joints already
@@ -121,7 +129,11 @@ electronics:
   # upper post row allows (it must stay on the plate).
   # -60.5 (10-05 pm), gap 2: a further 2.5 down; at -63 the plate meets the
   # deck over the righting (`--fit e`). Its corner is then ~1.4 over it.
-  edge: {value: -69.5, source: design}       # the lower edge, along the face
+  # -44.5 (2026-10-07): the righting 23 back and the deck 7 lower (servo
+  # turned) put the lower case and the deck into the plate at -69.5; slid
+  # UP the face, the plate and board are clear from +25 (one probe, 5 mm
+  # steps, at rest / steered / posed; +20 still meets the deck).
+  edge: {value: -44.5, source: design}       # the lower edge, along the face
   carrier: {value: [76.0, 103.0, 4.6], source: design}  # x (the wide part), u, thickness (4.6: the joint plate, on the face)
   narrow_half: {value: 28.0, source: design}
   wide_u: {value: 52.0, source: design}
