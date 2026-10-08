@@ -416,6 +416,14 @@ def layout(data: dict) -> dict:
     L["wireY1"] = L["wireY0"] + cs["wire_gap_width"]
     L["m25Seat"] = L["xPo"] - cs["screw_cb_depth"]
     L["spacerTop"] = L["caseHalf"] - cs["spacer_height"]
+    # the rear block's +-Z corners at 45 deg (user, 2026-10-07): only the
+    # chainstay's channel and the tension screw are in it, at mid-height
+    L["rcLeg"] = cs["rear_chamfer"]
+    if L["rcLeg"] > 0:
+        need(L["Yc0"] + L["rcLeg"] <= L["Yb"] - c + 1e-6, "the case side's rear chamfer reaches the servo pocket")
+        need(L["Zp"] - L["rcLeg"] >= L["tongueHalf"] + L["tongueClr"] + 2 * wall,
+             "the case side's rear chamfer reaches the chainstay's channel")
+        need(L["Zp"] - L["rcLeg"] >= L["nutHalfY"] + 2 * wall, "the case side's rear chamfer reaches the tension nut")
     return L
 
 
@@ -825,6 +833,17 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
         }
     }
     unite(context, P + "csSpU", spc);
+    if (L.rcLeg > 0 * mm)
+    {
+        // the rear block's +-Z corners, 45 deg (prisms in Y-Z along X)
+        for (var sz in [1, -1])
+        {
+            polyPrism(context, P, "csRc" ~ (sz > 0 ? "p" : "n"), at(-L.xPo - 1 * mm, 0 * mm, 0 * mm), X, Y,
+                      [vector(L.Yc0 - 1 * mm, sz * (L.Zp - L.rcLeg - 1 * mm)), vector(L.Yc0 + L.rcLeg + 1 * mm, sz * (L.Zp + 1 * mm)),
+                       vector(L.Yc0 - 1 * mm, sz * (L.Zp + 1 * mm))], L.xPo - L.skirtTop + 2 * mm);
+            holes = append(holes, qCreatedBy(P + ("csRc" ~ (sz > 0 ? "p" : "n") ~ "Ext"), EntityType.BODY));
+        }
+    }
     revolveProfile(context, P, "csRelCh", xzA, line(pa, X),
             [vector(-L.xPo - 0.1 * mm, z0), vector(-L.xPo - 0.1 * mm, L.reliefR + L.reliefCh + 0.1 * mm),
              vector(-L.xPo + L.reliefCh, L.reliefR), vector(-L.xPo + L.reliefCh, z0)]);

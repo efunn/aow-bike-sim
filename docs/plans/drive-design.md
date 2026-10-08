@@ -148,6 +148,18 @@ downward faces are intended bridges:
 - the channel's 7.3 mm top, the nut slot's roof and the tip slot's roof;
 - the flange lips over the grooves (as in the hand drawing).
 
+## Rear blocks chamfered for the righting (2026-10-07, user)
+
+"The drive cases corners in -Y (the part going towards the chainstays)
+could be cut down/chamfered." `case.rear_chamfer` 16.9 cuts the rear
+block's +-Z corners at 45 deg, from the -Y end to where the servo pocket
+starts. That leaves the end 12.85 tall of 29.75. It holds only the
+chainstay's channel and the tension screw and nut, within +-3.7 of
+mid-height. In the bike, the righting's turned upper case had bound on case
+side R's lower corner there. With the chamfer, nothing bound within 19 mm.
+`--check`: 0 interference, L/R the same part, 0 hanging edges.
+The case sides printed from the hand drawing are square.
+
 ## Outstanding
 
 - **The fits the drawing did not have:**

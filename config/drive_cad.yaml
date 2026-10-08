@@ -125,6 +125,15 @@ case:
   wire_gap_width: {value: 0.0106, source: measured (hand drawing; 6 wires fit)}
   wire_gap_from_shaft: {value: 0.0142, source: measured (hand drawing)}   # gap centre, behind the shaft
   tire_clearance: {value: 0.003, source: design}   # rear block to the wheel's envelope
+  # The rear block's +-Z corners at 45 deg (user, 2026-10-07: "the drive
+  # cases corners in -Y (the part going towards the chainstays) could be
+  # cut down/chamfered"). The block only carries the chainstay's channel and
+  # the tension screw and nut, all within +-3.7 of mid-height; in the bike
+  # the righting's turned upper case comes up under case side R's lower
+  # corner there. The leg along Y and Z, from the block's -Y end: 16.9 runs
+  # the chamfer to where the servo pocket starts, leaving the end 12.85 tall
+  # of 29.75. 0 = square, as printed.
+  rear_chamfer: {value: 0.0169, source: design (user)}
 
 chainstay:
   pulley_gap: {value: 0.001, source: measured (hand drawing)}

@@ -110,6 +110,7 @@ export const DR = {
     "wireY1" : 97.4953 * millimeter,
     "m25Seat" : 18.2 * millimeter,
     "spacerTop" : 14.2 * millimeter,
+    "rcLeg" : 16.9 * millimeter,
     "caseW" : 28.5 * millimeter,
     "caseH" : 46.5 * millimeter,
     "hornT" : 2 * millimeter,
@@ -1877,6 +1878,17 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
         }
     }
     unite(context, P + "csSpU", spc);
+    if (L.rcLeg > 0 * mm)
+    {
+        // the rear block's +-Z corners, 45 deg (prisms in Y-Z along X)
+        for (var sz in [1, -1])
+        {
+            polyPrism(context, P, "csRc" ~ (sz > 0 ? "p" : "n"), at(-L.xPo - 1 * mm, 0 * mm, 0 * mm), X, Y,
+                      [vector(L.Yc0 - 1 * mm, sz * (L.Zp - L.rcLeg - 1 * mm)), vector(L.Yc0 + L.rcLeg + 1 * mm, sz * (L.Zp + 1 * mm)),
+                       vector(L.Yc0 - 1 * mm, sz * (L.Zp + 1 * mm))], L.xPo - L.skirtTop + 2 * mm);
+            holes = append(holes, qCreatedBy(P + ("csRc" ~ (sz > 0 ? "p" : "n") ~ "Ext"), EntityType.BODY));
+        }
+    }
     revolveProfile(context, P, "csRelCh", xzA, line(pa, X),
             [vector(-L.xPo - 0.1 * mm, z0), vector(-L.xPo - 0.1 * mm, L.reliefR + L.reliefCh + 0.1 * mm),
              vector(-L.xPo + L.reliefCh, L.reliefR), vector(-L.xPo + L.reliefCh, z0)]);
