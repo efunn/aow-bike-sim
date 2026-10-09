@@ -1,46 +1,48 @@
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Swing Linkage Stepthrough</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
 :root{
   --bg:#eef1f4; --panel:#f8f9fb; --ink:#1b2330; --muted:#5b6778; --rule:#d3d9e1; --grid:#e3e8ee;
-  --right:#d0432c; --left:#2e6bd0; --crank:#7646c0; --floor:#1b2330; --keep:#c9a227; --com:#1b2330;
-  --good:#2f8a4f; --warn:#b5651d; --accent:#7646c0;
+  --right:#F37716; --left:#008DC3; --crank:#8c1c3a; --floor:#1b2330; --keep:#c9a227; --com:#1b2330;
+  --good:#2f8a4f; --warn:#c62828; --accent:#8c1c3a;
   --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
     --bg:#11151b; --panel:#171c24; --ink:#e2e7ee; --muted:#9aa6b6; --rule:#2a323d; --grid:#1f2630;
-    --right:#f06a50; --left:#6a9cf0; --crank:#a987e6; --floor:#e2e7ee; --keep:#d9b53d; --com:#e2e7ee;
-    --good:#58b877; --warn:#e0955a; --accent:#a987e6; color-scheme:dark;
+    --right:#F37716; --left:#008DC3; --crank:#d0607e; --floor:#e2e7ee; --keep:#d9b53d; --com:#e2e7ee;
+    --good:#58b877; --warn:#ef5350; --accent:#d0607e; color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
   --bg:#11151b; --panel:#171c24; --ink:#e2e7ee; --muted:#9aa6b6; --rule:#2a323d; --grid:#1f2630;
-  --right:#f06a50; --left:#6a9cf0; --crank:#a987e6; --floor:#e2e7ee; --keep:#d9b53d; --com:#e2e7ee;
-  --good:#58b877; --warn:#e0955a; --accent:#a987e6; color-scheme:dark;
+  --right:#F37716; --left:#008DC3; --crank:#d0607e; --floor:#e2e7ee; --keep:#d9b53d; --com:#e2e7ee;
+  --good:#58b877; --warn:#ef5350; --accent:#d0607e; color-scheme:dark;
 }
 body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);padding-inline:16px;padding-block:20px 40px}
 .wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
 h1{font-size:22px;font-weight:600;margin:0;text-wrap:balance}
 .lede{margin:4px 0 0;color:var(--muted);max-width:75ch}
 .controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:10px 14px;position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
-.controls button{font:500 13px var(--sans);background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer;min-width:72px}
+.controls button{font:500 13px var(--sans);background:var(--accent);color:var(--panel);border:0;border-radius:6px;padding:6px 14px;cursor:pointer;min-width:72px}
 .controls button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .controls input[type=range]{flex:1 1 220px;accent-color:var(--accent)}
-.readout{font:13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;min-width:12ch}
+.readout{font:13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;width:36ch;white-space:nowrap}
 .seg{display:inline-flex;border:1px solid var(--rule);border-radius:6px;overflow:hidden}
 .seg label{padding:5px 10px;font-size:12px;cursor:pointer;color:var(--muted)}
 .seg input{position:absolute;opacity:0;pointer-events:none}
 .seg input:checked+span{color:var(--ink);font-weight:600}
 .seg label:has(input:checked){background:var(--bg)}
 .seg label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:-2px}
-.panes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:18px}
+.panes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.viewseg{display:none}
 .pane{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
 .pane select{font:500 14px var(--sans);color:var(--ink);background:var(--bg);border:1px solid var(--rule);border-radius:6px;padding:6px 8px;width:100%}
-.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.stats{display:flex;flex-direction:column;gap:3px}
 .stat{display:flex;flex-direction:column;gap:2px}
 .stat .k{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .stat .v{font:500 16px var(--mono);font-variant-numeric:tabular-nums}
@@ -54,11 +56,14 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
 .badge.hot{border-color:var(--warn);color:var(--warn)}
 .badge.ok{border-color:var(--good);color:var(--good)}
 .planes{display:flex;flex-direction:column;gap:3px}
-.plane{display:grid;grid-template-columns:62px 1fr;align-items:center;gap:8px;font-size:12px}
+.plane{display:grid;grid-template-columns:9.5em 1fr;align-items:center;gap:8px;font-size:12px}
 .plane .n{font:12px var(--mono);color:var(--muted)}
 .plane .chips{display:flex;gap:4px;flex-wrap:wrap}
 .chip{border-radius:4px;padding:1px 7px;font-size:12px;color:#fff}
-.lengths{font:12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.lengths{font-size:12px;color:var(--muted)}
+.fold summary{overflow-wrap:anywhere;cursor:pointer;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.fold summary b{text-transform:uppercase}
+.fold[open]{display:flex;flex-direction:column;gap:3px}
 .chartcard{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
 .chartcard-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 18px}
 .chartcard h2{font-size:15px;font-weight:600;margin:0}
@@ -75,56 +80,74 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
 .notes b{font-weight:600}
 .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted)}
 .sw{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
-.legend.big{font-size:14px;color:var(--ink);flex-direction:column;gap:4px}
+.legend.big{font-size:14px;color:var(--ink);gap:14px}
+.key{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--muted);align-items:center}
+.key label{cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.key input{accent-color:var(--accent);margin:0}
+.key i{display:inline-block;width:26px;vertical-align:middle;margin-right:6px;background:var(--muted)}
 .legend.big .sw{width:30px;height:4px}
-.chartcard-head{flex-direction:column;align-items:flex-start}
+.chartcard-head{flex-direction:row;align-items:baseline;justify-content:flex-start}
 .panehead{display:flex;align-items:center;gap:10px}
 .panehead .sw{flex:none;width:30px;height:4px;margin:0}
 .heat{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
 .heat .bar{display:inline-block;width:140px;height:10px;border-radius:3px;border:1px solid var(--rule)}
 .heat .ticks{font:12px var(--mono);font-variant-numeric:tabular-nums}
-@media (max-width:520px){.views{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:900px){
+  .panes{gap:8px}.pane{padding:8px}.views{grid-template-columns:1fr}
+  
+  .viewseg{display:inline-flex}
+  .controls{gap:6px 10px;padding:6px 10px}.heat{display:none}
+  .plane{display:flex;flex-wrap:wrap;column-gap:6px;row-gap:0;font-size:11px}.plane .n{font-size:11px}
+  
+  body[data-view="mech"] .view.v-floor, body[data-view="floor"] .view.v-mech{display:none}
+}
 </style>
 <div class="wrap">
   <header>
     <h1>Swing linkage stepthrough</h1>
-    <p class="lede">Comparing two self-righting linkage designs (selected from config files that MuJoCo reads).<br>
-    Each panel, left side: the mechanism with the bike standing up, front view. Each panel, right side: the bike resting on the floor at that point in the stroke. Poses are quasi-static (no dynamics).</p>
+    <p class="lede">Comparing two clamshell linkages.<br>Quasi-static, except the sim rows.</p>
   </header>
 
   <div class="controls" role="group" aria-label="Stroke">
     <button id="play" type="button">Play</button>
     <input id="frac" type="range" min="0" max="1000" value="0" aria-label="Fraction of the stroke">
     <span class="readout" id="readout">0% of stroke</span>
-    <span class="heat" aria-label="Pin force colour scale"><span class="k">Pin force, slow stroke</span><span class="bar" id="heatbar"></span><span class="ticks" id="heatticks"></span></span>
+    <span class="seg viewseg" role="radiogroup" aria-label="View">
+      <label><input type="radio" name="view" value="floor" checked><span>On the floor</span></label>
+      <label><input type="radio" name="view" value="mech"><span>Mechanism</span></label>
+    </span>
+    <span class="heat" aria-label="Pin force colour scale"><span class="k">Pin force, quasi-static</span><span class="bar" id="heatbar"></span><span class="ticks" id="heatticks"></span></span>
   </div>
 
   <div class="panes" id="panes"></div>
 
   <section class="chartcard" aria-label="Both panes through the stroke">
     <div class="chartcard-head">
-      <h2>Both designs through the stroke</h2>
       <div class="legend big" id="legend"></div>
+    </div>
+    <div class="key">
+      <label><input type="checkbox" id="show-qs" checked> <i style="height:3px"></i>quasi-static</label>
+      <label><input type="checkbox" id="show-sim" checked> <i style="height:1px"></i>sim (ramped stroke)</label>
     </div>
     <div class="charts">
       <div class="chart">
         <h3>Wing degrees per servo degree</h3>
-        <p>Low is more leverage. The bike is heaviest at the start, so good designs start low. Ending at 0 locks the wing.</p>
+        <p>Low = leverage. Heaviest at the start: good designs start low. Ends at 0: wing self-locks.</p>
         <canvas id="chart-r" aria-label="Ratio against stroke"></canvas>
       </div>
       <div class="chart">
         <h3>Servo torque needed [N m]</h3>
-        <p>The jump is the wheels touching the floor. The triangle is getting moving from rest.</p>
+        <p>▼: breakaway from rest. Jump: wheels touch down.</p>
         <canvas id="chart-m" aria-label="Motor torque against stroke"></canvas>
       </div>
       <div class="chart">
         <h3>Most-loaded pin [N]</h3>
-        <p>Slow stroke. Always the pushing wing's crank/coupler pin, or the servo shaft beside it.</p>
+        <p>Quasi-static. The pushing wing's crank/coupler pin, or the servo shaft.</p>
         <canvas id="chart-pin" aria-label="Largest pin force against stroke"></canvas>
       </div>
       <div class="chart">
         <h3>Bike roll [deg]</h3>
-        <p>How far the bike still leans. 0 is upright.</p>
+        <p>0: upright. Below 0: over centre.</p>
         <canvas id="chart-roll" aria-label="Roll against stroke"></canvas>
       </div>
     </div>
@@ -148,6 +171,15 @@ if (raw.trim() === "/*" + "DATA*/") {      // split so the generator's substitut
 }
 const D = JSON.parse(raw);
 const designs = D.designs, geo = D.geo;
+for (const d of designs) {   // frames arrive as rows under one key list
+  const { keys, pin, rows } = d.frames;
+  d.frames = rows.map((r) => { const f = {}; keys.forEach((k, j) => { f[k] = r[j]; });
+    f.pin = {}; pin.forEach((k, j) => { f.pin[k] = r[keys.length][j]; }); return f; });
+  if (d.cad) d.cad.parts = geo.cad_parts;
+  // roll signed so the stroke reads positive and over centre negative
+  const sg = Math.sign(d.frames.find((f) => Math.abs(f.roll) > 1).roll);
+  d.frames.forEach((f) => { f.rollS = f.roll * sg; });
+}
 const C = {};
 function readColors() {
   const s = getComputedStyle(document.documentElement);
@@ -160,11 +192,12 @@ new MutationObserver(() => { readColors(); panes.forEach((_, i) => fillStatic(i)
   .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
 let frac = 0, playing = false, last = null;
+const show = { qs: true, sim: true };
 const pick = [0, Math.min(1, designs.length - 1)];
 const PANE_STYLE = [{ dash: [], key: "ink" }, { dash: [6, 4], key: "accent" }];
 
 // ---------- the pin-force colour scale, shared by both panes
-const STOPS = [[0, [247, 232, 168]], [0.35, [244, 163, 64]], [0.7, [209, 64, 58]], [1, [106, 27, 94]]];
+const STOPS = [[0, [247, 232, 168]], [0.35, [244, 163, 64]], [0.7, [209, 64, 58]], [1, [74, 38, 18]]];
 function heat(x) {
   x = Math.max(0, Math.min(1, x));
   for (let i = 1; i < STOPS.length; i++) if (x <= STOPS[i][0]) {
@@ -247,7 +280,10 @@ function drawMechanism(g, m, d, fr, T, opts) {
     const hn = []; for (let k = 0; k <= 32; k++) { const a = k / 32 * 2 * Math.PI; hn.push(tp([sh[0] + 8*Math.cos(a), sh[1] + 8*Math.sin(a)])); }
     line(g, m, hn, C.crank, 1, 0.6);
   }
-  for (const [tag, col] of [["L", C.left], ["R", C.right]]) {
+  if (d.cad) drawCad(g, m, d, fr, tp, opts);
+  if (!d.cad && opts.cross) for (const f of d.frames) for (const [tag, col] of [["L", C.left], ["R", C.right]])
+    line(g, m, [f["foot"+tag], f["top"+tag]].map(tp), col, 0.6, 0.18);
+  if (!d.cad) for (const [tag, col] of [["L", C.left], ["R", C.right]]) {
     line(g, m, [fr["pivot"+tag], fr["joint"+tag]].map(tp), col, 2.2, 0.55);
     line(g, m, [fr["foot"+tag], fr["top"+tag]].map(tp), col, 7, 0.8);
   }
@@ -273,6 +309,39 @@ function drawMechanism(g, m, d, fr, T, opts) {
       g.beginPath(); g.arc(q[0], q[1], 16, 0, 2*Math.PI); g.stroke(); g.restore();
     }
     return gap;
+  }
+}
+
+// The CAD entry: every righting part's front section (module frame, posed by
+// the CAD's own group transforms), and both blades -- swept faintly over the
+// whole stroke in the upright view.
+function cadPose(P, gr, p) {
+  const t = P[gr]; if (!t) return p;
+  const a = t.a * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), v = [p[0] - t.p[0], p[1] - t.p[1]];
+  return [v[0] * c + v[1] * s + t.p[0] + t.d[0], -v[0] * s + v[1] * c + t.p[1] + t.d[1]];
+}
+function drawCad(g, m, d, fr, tp, opts) {
+  const cd = d.cad, P = cd.poses[fr.i], sk = (p) => [-p[0], p[1] + cd.pz];
+  const colOf = { wR: C.right, wL: C.left, cR: C.right, cL: C.left, crank: C.crank };
+  // Each wing's panel is one solid: the blade (toe and all) and the wing's
+  // tabs up to the rocker. The rocker, knuckle and pin stay drawn as links.
+  const wing = { wR: [cd.blade.R], wL: [cd.blade.L] };
+  for (const part of cd.parts) if (/^wing [RL]$/.test(part.n)) wing[part.g].push(...part.rings);
+  for (const part of cd.parts) {
+    if (/^wing [RL]$/.test(part.n)) continue;
+    const col = colOf[part.g] || C.muted;
+    for (const r of part.rings) {
+      const pts = r.map((p) => tp(sk(cadPose(P, part.g, p))));
+      poly(g, m, pts, col, 0.10); line(g, m, pts, col, 0.8, 0.5);
+    }
+  }
+  const sides = [["wR", C.right], ["wL", C.left]];
+  // the trail: the blade's outline alone, once per frame
+  if (opts.cross) for (const f of d.frames) for (const [gr, col] of sides)
+    line(g, m, wing[gr][0].map((p) => tp(sk(cadPose(cd.poses[f.i], gr, p)))), col, 0.6, 0.18);
+  for (const [gr, col] of sides) for (const r of wing[gr]) {
+    const pts = r.map((p) => tp(sk(cadPose(P, gr, p))));
+    poly(g, m, pts, col, 0.85); line(g, m, pts, col, 1.2, 1);
   }
 }
 
@@ -302,26 +371,26 @@ function drawPane(i) {
   if (trail.length > 1) line(g, m, trail, C.muted, 1.5, 0.8, [2, 3]);
   drawMechanism(g, m, d, fr, G, { cross: false, com: true });
   // text + badges
-  el.roll.textContent = `${Math.abs(fr.roll).toFixed(0)}° roll · ${fr.regime === "panel" ? "on the panel, wheels up" : "on panel end + wheels"}`;
+  el.roll.textContent = `${fr.rollS.toFixed(0)}° roll · ${fr.regime === "panel" ? "on panel, wheels up" : "on panel end + wheels"}`;
   el.crank.textContent = `crank ${fr.t.toFixed(0)}° of ${d.T.toFixed(0)}° · wing ${fr.wing.toFixed(0)}°`;
   const b = [];
-  if (gap < 8) b.push(d.planes.couplerR === d.planes.couplerL
-    ? `<span class="badge hot">couplers ${gap.toFixed(1)} mm apart, same plane</span>`
-    : `<span class="badge ok">couplers cross here (fine: separate planes)</span>`);
+  // couplers in one plane, 8 mm wide: the gap between their faces
+  if (gap - 8 < 0.5 && d.planes.couplerR === d.planes.couplerL)
+    b.push(`<span class="badge hot">CLEARANCE: couplers ${Math.max(0, gap - 8).toFixed(1)} mm</span>`);
   b.push(`<span class="badge">ratio ${fr.r.toFixed(2)}</span>`);
-  b.push(`<span class="badge">motor ${fr.motor.toFixed(3)} N m</span>`);
+  b.push(`<span class="badge">motor ${fr.motor == null ? "–" : fr.motor.toFixed(3)} N m</span>`);
   el.badges.innerHTML = b.join("");
   return fr;
 }
 
 // ---------- charts
-function drawChart(canvas, field, ymax, refs, tick, fmt, val = (f) => f[field]) {
+function drawChart(canvas, field, ymax, refs, tick, fmt, val = (f) => f[field], ymin = 0, simField = null) {
   const [g, W, H] = setup(canvas);
   const L = 40, Rr = 18, Tt = 10, B = 28, pw = W - L - Rr, ph = H - Tt - B;
-  const X = (f) => L + f * pw, Y = (v) => Tt + ph * (1 - v / ymax);
+  const X = (f) => L + f * pw, Y = (v) => Tt + ph * (1 - (v - ymin) / (ymax - ymin));
   g.font = "11px " + getComputedStyle(document.body).getPropertyValue("--mono");
   g.fillStyle = C.muted; g.strokeStyle = C.grid; g.lineWidth = 1;
-  for (let v = 0; v <= ymax + 1e-9; v += tick) {
+  for (let v = ymin; v <= ymax + 1e-9; v += tick) {
     g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(W - Rr, Y(v)); g.stroke();
     g.textAlign = "right"; g.fillText(fmt(v), L - 6, Y(v) + 4);
   }
@@ -334,13 +403,35 @@ function drawChart(canvas, field, ymax, refs, tick, fmt, val = (f) => f[field]) 
   }
   pick.forEach((di, i) => {
     const d = designs[di], st = PANE_STYLE[i], col = C[st.key];
+    const qs = show.qs || !simField, sim = show.sim && simField;
+    if (qs) {
     g.save(); g.strokeStyle = col; g.lineWidth = 2; g.setLineDash(st.dash); g.beginPath();
-    d.frames.forEach((f, k) => { const x = X(k / (d.frames.length - 1)), y = Y(val(f));
-      k ? g.lineTo(x, y) : g.moveTo(x, y); });
+    // where the model has nothing (over centre, past the flat): a band in
+    // the design's colour, so the line visibly ends on purpose
+    const k0 = d.frames.findIndex((f) => val(f) == null);
+    if (k0 > 0) {
+      const x0 = X(k0 / (d.frames.length - 1));
+      g.save(); g.globalAlpha = 0.12; g.fillStyle = col; g.fillRect(x0, Tt, X(1) - x0, ph);
+      g.restore();
+    }
+    let up = true;   // a null (nothing modelled there) breaks the line
+    d.frames.forEach((f, k) => { const v = val(f); if (v == null) { up = true; return; }
+      const x = X(k / (d.frames.length - 1)), y = Y(v); up ? g.moveTo(x, y) : g.lineTo(x, y); up = false; });
     g.stroke(); g.restore();
-    if (field === "motor") { g.fillStyle = col; const y = Y(d.brk);
+    }
+    if (sim) {   // the sim's trace: thin, the same colour and dash
+      g.save(); g.strokeStyle = col; g.lineWidth = 1; g.globalAlpha = 0.6; g.setLineDash(st.dash); g.beginPath();
+      let up2 = true;
+      d.frames.forEach((f, k) => { const v = f[simField]; if (v == null) { up2 = true; return; }
+        const x = X(k / (d.frames.length - 1)), y = Y(Math.max(ymin, Math.min(ymax, v)));
+        up2 ? g.moveTo(x, y) : g.lineTo(x, y); up2 = false; });
+      g.stroke(); g.restore();
+    }
+    if (field === "motor" && qs) { g.fillStyle = col; const y = Y(d.brk);
       g.beginPath(); g.moveTo(X(0) - 5, y - 6); g.lineTo(X(0) + 5, y - 6); g.lineTo(X(0), y + 2); g.fill(); }
-    const f = frameOf(d); g.fillStyle = col; g.beginPath(); g.arc(X(frac), Y(val(f)), 4, 0, 2*Math.PI); g.fill();
+    // the marker rides whichever line is shown, quasi-static first
+    const f = frameOf(d), v = qs && val(f) != null ? val(f) : sim ? f[simField] : null;
+    if (v != null) { g.fillStyle = col; g.beginPath(); g.arc(X(frac), Y(Math.max(ymin, Math.min(ymax, v))), 4, 0, 2*Math.PI); g.fill(); }
   });
   g.strokeStyle = C.ink; g.globalAlpha = 0.5; g.beginPath(); g.moveTo(X(frac), Tt); g.lineTo(X(frac), Tt + ph); g.stroke();
   g.globalAlpha = 1;
@@ -360,10 +451,9 @@ const panes = [0, 1].map((i) => {
   const div = document.createElement("section"); div.className = "pane";
   div.innerHTML = `
     <div class="panehead"><span class="sw" id="sw-${i}"></span><select id="design-${i}" aria-label="Design, ${i ? "right" : "left"} pane">${designs.map((d, k) => `<option value="${k}">${d.name}</option>`).join("")}</select></div>
-    <div class="stats"></div>
     <div class="views">
-      <div class="view"><span class="cap">Mechanism, bike frame</span><canvas class="mech"></canvas><span class="cap crank"></span></div>
-      <div class="view"><span class="cap">Bike on the floor</span><canvas class="mech ground"></canvas><span class="cap roll"></span></div>
+      <div class="view v-mech"><span class="cap">Mechanism, bike frame</span><canvas class="mech"></canvas><span class="cap crank"></span></div>
+      <div class="view v-floor"><span class="cap">Bike on the floor</span><canvas class="mech ground"></canvas><span class="cap roll"></span></div>
     </div>
     <div class="badges"></div>
     <div class="planes"></div>
@@ -380,26 +470,57 @@ const panes = [0, 1].map((i) => {
 function fillStatic(i) {
   const d = designs[pick[i]], el = panes[i];
   const lock = d.frames[d.frames.length - 1].r < 0.05;
-  el.stats.innerHTML = [
-    ["Sim, 9.9 V", d.sim == null ? "not run" : `${d.sim} counts`],
-    ["Planar, moving", `${d.counts.toFixed(0)} counts`],
-    ["Travel, end", `${d.T.toFixed(0)}°, ${lock ? "locks" : "free"}`],
-    ["Pins, slow: coupler / hinge", `${d.pins.coupler.toFixed(0)} / ${d.pins.hinge.toFixed(0)} N`],
-    ["Coupler pin, sim, at the start", d.pins.lift_sim == null ? "not run" : `${d.pins.lift_sim.toFixed(0)} N`],
-    ["XC330 case", d.fit.case ? `points ${d.fit.case}` : "doesn't fit"],
-  ].map(([k, v]) => `<div class="stat"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
-  const members = { crank: "crank arm", couplerR: "coupler R", couplerL: "coupler L", rockerR: "wing R", rockerL: "wing L" };
-  const col = { crank: C.crank, couplerR: C.right, couplerL: C.left, rockerR: C.right, rockerL: C.left };
-  const byPlane = {};
-  for (const [k, p] of Object.entries(d.planes)) if (members[k]) (byPlane[p] = byPlane[p] || []).push(k);
-  el.planes.innerHTML = `<span class="cap" style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">Fore/aft planes (panels span all)</span>` +
-    Object.keys(byPlane).sort((a, b) => a - b).map((p) => `<div class="plane"><span class="n">plane ${p}</span><span class="chips">${
-      byPlane[p].map((k) => `<span class="chip" style="background:${col[k]}">${members[k]}</span>`).join("")}</span></div>`).join("");
+  const N = (v) => v == null ? "not run" : `${v.toFixed(0)} N`;
+  const summary = [
+    ["Current limit @ 9.9 V (sim)", d.sim == null ? "not run" : `${d.sim} mA · ${Math.round(100 * d.sim / geo.max_ma)}%`],
+    ["Planar", `${d.counts.toFixed(0)} mA · ${Math.round(100 * d.counts / geo.max_ma)}%`],
+    [`Travel, ${lock ? "locks" : "flat"}`, `${d.T.toFixed(0)}°`],
+    ["F in coupler/hinge pins", `${d.pins.coupler.toFixed(0)} / ${d.pins.hinge.toFixed(0)} N`],
+    ["F coupler pin, step (sim)", N(d.pins.lift_sim)],
+  ].map(([k, v]) => `<div class="plane"><span class="n">${v}</span><span class="chips">${k}</span></div>`).join("");
+  el.stats = summary;
+  const det = (summary, body) => `<details class="fold"><summary>${summary}</summary>${body}</details>`;
+  const cols = (a, b) => `<div class="plane" style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em"><span>${a}</span><span>${b}</span></div>`;
+  const kv = (k, v, style = "") => `<div class="plane"><span class="n" style="${style}">${v}</span><span class="chips">${k}</span></div>`;
+  // Fore/aft layers: the CAD's from its layout, else the config's planes.
+  const col = { crank: C.crank, cR: C.right, cL: C.left, wR: C.right, wL: C.left };
+  let layers;
+  if (d.cad) {
+    const n = Math.max(...d.cad.layers.flatMap((q) => q.l));
+    const strip = (l) => "[" + Array.from({ length: n }, (_, k) => l.includes(k + 1) ? "X" : " ").join("") + "]";
+    layers = d.cad.layers.map((q) => kv(`<span class="chip" style="background:${col[q.g]}">${q.n}</span>`, strip(q.l), "white-space:pre")).join("");
+  }
+  else {
+    const members = { crank: ["crank arm", "crank"], couplerR: ["coupler R", "cR"], couplerL: ["coupler L", "cL"], rockerR: ["wing R", "wR"], rockerL: ["wing L", "wL"] };
+    const ps = Object.entries(d.planes).filter(([k]) => members[k]);
+    const n = Math.max(...ps.map(([, p]) => p)) + 1;
+    const strip = (p) => "[" + Array.from({ length: n }, (_, k) => k === p ? "X" : " ").join("") + "]";
+    layers = ps.sort((a, b) => a[1] - b[1]).map(([k, p]) =>
+      kv(`<span class="chip" style="background:${col[members[k][1]]}">${members[k][0]}</span>`, strip(p), "white-space:pre")).join("");
+  }
+  let html = det("Summary", el.stats) + det("Layers, fwd/rev", layers);
+  {
+    const rows = d.cad ? d.cad.clear : d.diag;
+    const bad = (r) => r.kind === "mm2" || r.v < r.target;
+    const row = (r) => kv(`${r.what}${r.target ? ` (want ${r.target})` : ""}${r.t == null ? "" : ` · ${r.t.toFixed(0)}°`}`,
+      r.kind === "mm2" ? `hits ${Math.abs(r.v).toFixed(0)} mm²` : `${r.v.toFixed(1)} mm`, bad(r) ? `color:${C.warn}` : "");
+    let top = "";
+    if (d.cad) {
+      const cd = d.cad;
+      top = kv("blade", cd.src.split("/").pop()) + (cd.meet == null ? kv("toes meet", "never")
+        : kv("toes meet (stop)", `${cd.meet.toFixed(1)}°`, cd.meet > cd.T ? "" : `color:${C.warn}`))
+        + kv(cd.limit ? `links touch (${cd.limit.what})` : "links touch", cd.limit ? `${cd.limit.t.toFixed(1)}°` : "never");
+    }
+    const fails = rows.filter(bad).length;
+    const state = fails ? `<b style="color:${C.warn}">${fails} failing</b>` : `<b style="color:${C.good}">ok</b>`;
+    html += det(`Diagnostics: ${state}`, top + cols("clearance", "to · at crank") + rows.map(row).join(""));
+  }
+  html += det(d.file.split("/").pop(), cols("value", "link") + Object.entries(d.lengths).map(([k, v]) => kv(k, v)).join(""));
+  el.planes.innerHTML = html;
   const ps = PANE_STYLE[i], pc = C[ps.key];
   el.sw.style.background = ps.dash.length
     ? `repeating-linear-gradient(90deg,${pc} 0 6px,transparent 6px 10px)` : pc;
-  const Ls = d.lengths;
-  el.lengths.textContent = `crank ${Ls.crank_length} · coupler ${Ls.coupler_length} · rocker ${Ls.rocker_length} · arms ${Ls.angle_between_cranks}° apart · servo ${Ls.servo_offset} above axle · hinges ±${Ls.wing_pivot_x} mm   [${d.file}]`;
+  el.lengths.innerHTML = "";
 }
 
 function drawAll() {
@@ -408,11 +529,12 @@ function drawAll() {
   const top = Math.max(0.7, ...pick.map((di) => Math.max(designs[di].brk, ...designs[di].frames.map((f) => f.motor))) ) ;
   drawChart(document.getElementById("chart-r"), "r", 1.0, [], 0.2, (v) => v.toFixed(1));
   drawChart(document.getElementById("chart-m"), "motor", Math.ceil(top * 10) / 10,
-            [[geo.stall99, "most the servo gives at 9.9 V"]], 0.1, (v) => v.toFixed(1));
+            [[geo.stall99, "limit"]], 0.2, (v) => v.toFixed(1), undefined, -0.2, "sim_m");
   drawChart(document.getElementById("chart-pin"), "pinmax", heatMax, [], heatMax > 60 ? 20 : 10,
-            (v) => v.toFixed(0), (f) => Math.max(...Object.values(f.pin)));
-  drawChart(document.getElementById("chart-roll"), "roll", 90, [], 15, (v) => `${v}°`,
-            (f) => Math.abs(f.roll));
+            (v) => v.toFixed(0), (f) => f.pin.shaft == null ? null : Math.max(...Object.values(f.pin)),
+            heatMax > 60 ? -20 : -10, "sim_p");
+  drawChart(document.getElementById("chart-roll"), "rollS", 90, [], 15, (v) => `${v}°`,
+            undefined, -15, "sim_r");
   legends();
   const parts = pick.map((di) => { const f = frameOf(designs[di]); return `${f.t.toFixed(0)}°`; });
   document.getElementById("readout").textContent = `${Math.round(frac * 100)}% of stroke · crank ${parts.join(" / ")}`;
@@ -421,9 +543,29 @@ function drawAll() {
 // ---------- controls
 const slider = document.getElementById("frac"), playBtn = document.getElementById("play");
 slider.addEventListener("input", () => { frac = slider.value / 1000; drawAll(); });
+// grabbing the slider pauses the autoplay
+slider.addEventListener("pointerdown", () => { if (playing) { playing = false; playBtn.textContent = "Play"; } });
+document.body.dataset.view = "floor";   // where the loads are worked out
+for (const r of document.querySelectorAll('input[name="view"]'))
+  r.addEventListener("change", () => { document.body.dataset.view = r.value; drawAll(); });
+// which series the charts draw; one of the two always stays on
+for (const [id, k, other] of [["show-qs", "qs", "show-sim"], ["show-sim", "sim", "show-qs"]]) {
+  const box = document.getElementById(id);
+  box.addEventListener("change", () => {
+    if (!box.checked && !document.getElementById(other).checked) {
+      const o = document.getElementById(other); o.checked = true; show[o.id === "show-qs" ? "qs" : "sim"] = true;
+    }
+    show[k] = box.checked; drawAll();
+  });
+}
+let dir = 1;   // plays out and back, bouncing at each end
 function tick(ts) {
   if (!playing) return;
-  if (last != null) { frac += (ts - last) / 4000; if (frac > 1) frac = 0; slider.value = Math.round(frac * 1000); drawAll(); }
+  if (last != null) {
+    frac += dir * (ts - last) / 4000;
+    if (frac >= 1) { frac = 1; dir = -1; } else if (frac <= 0) { frac = 0; dir = 1; }
+    slider.value = Math.round(frac * 1000); drawAll();
+  }
   last = ts; requestAnimationFrame(tick);
 }
 playBtn.addEventListener("click", () => { playing = !playing; playBtn.textContent = playing ? "Pause" : "Play";
@@ -432,5 +574,6 @@ document.getElementById("notes").innerHTML = D.notes.map((n) => `<li>${n}</li>`)
 panes.forEach((_, i) => fillStatic(i));
 new ResizeObserver(() => drawAll()).observe(document.body);
 drawAll();
+playing = true; playBtn.textContent = "Pause"; requestAnimationFrame(tick);   // autoplay
 })();
 </script>

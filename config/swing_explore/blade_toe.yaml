@@ -1,0 +1,24 @@
+# A blade front section for `analysis/swing_stepthrough.py --blade`: the
+# CAD's dummy U blade, plus a toe that runs in UNDER the bike from its foot.
+# An example to edit, not a design. The toes are the mechanism's END STOP:
+# the two wings' toes meet at crank 136.25 deg, past the flat (128.4) and just
+# before the links themselves touch (coupler on the other wing's knuckle,
+# ~137.5). Toe tip [out] at 9 they meet at 96.5, 15 at 125.5, 18 at 134,
+# 19 at 136.25, 20 at 138.25. Tip at out 19 (the midpoint of the two below).
+#
+# The RIGHT wing's blade, stowed (crank 0), bike upright: `out` mm outward
+# from the centreline, `up` mm above the floor. The left blade is its mirror.
+# The wing rod is at out 0, up 41.2; every blade point turns about it.
+#
+# `y`: the fore/aft span in the righting module's frame (+ forward, 0 = the
+# couplers' mid-plane on the rod, which sits at 120.5 ahead of the rear axle).
+# [-61.25, 20.75] is the CAD's 82 mm blade centred at mid-wheelbase (100.25).
+# Only parts whose span overlaps this are checked against it.
+y: [-61.25, 20.75]
+outline:          # [out, up], one closed loop, either winding
+  - [63.9, 147.4]   # top, inner face
+  - [38.5, 50.6]    # foot, inner face
+  - [16.0, 25.0]    # toe tip, upper
+  - [22.0, 20.0]    # toe tip, lower
+  - [43.3, 49.4]    # foot, outer face
+  - [68.7, 146.1]   # top, outer face
