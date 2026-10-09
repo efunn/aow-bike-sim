@@ -1,6 +1,6 @@
 """Roller stripes: the decoration that makes rear-wheel rotation readable.
 
-The omni wheel's rollers ship near-black and are surfaces of revolution, so a
+The omni wheel's rollers are one flat colour and are surfaces of revolution, so a
 spinning roller and a stationary one look identical. Painting stripes along
 each cone gives the eye something to track, which is the whole reason
 `analysis/wheel_slowmo.py` is legible at all.
@@ -22,12 +22,12 @@ import numpy as np
 
 N_AXLES = 8
 STRIPES = 4                          # per cone, every 90 deg
-C_STRIPE = (0.96, 0.97, 1.00, 1.0)   # bright: the rollers themselves are dark
-C_HOT = (1.00, 0.45, 0.10, 1.0)      # the roller currently on the floor
+C_STRIPE = (0.08, 0.08, 0.08, 1.0)   # dark: the rollers themselves are TPU orange
+C_HOT = (0.00, 0.55, 0.76, 1.0)      # the roller on the floor, #008DC3 blue
 # Capsule radius [m]. wheel_slowmo frames the wheel across most of a panel and
 # 0.6 mm is a clean hairline there; teleop's `wheel` camera stands the same
 # 0.45 m off but renders into a shared viewport, so the same stripe lands under
-# a pixel wide on a near-black roller and vanishes. Hence a parameter with the
+# a pixel wide on a flat-coloured roller and vanishes. Hence a parameter with the
 # slowmo value as the default -- the clips stay byte-identical.
 STRIPE_RADIUS = 6e-4
 STRIPE_RADIUS_TELEOP = 1.6e-3

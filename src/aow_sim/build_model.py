@@ -138,6 +138,45 @@ def _part_contact(sim: dict, part: str) -> dict:
     }
 
 
+# The print materials' TPU orange (#F57517) -- what the rollers and the front
+# tyre's quarters are printed in. Viewing only: rgba is in no digest.
+TPU_ORANGE = [0xF5 / 255, 0x75 / 255, 0x17 / 255, 1]
+# The pop blue ASA (#008DC3): the front tyre's other two quarters, the rear hub.
+POP_BLUE = [0x00 / 255, 0x8D / 255, 0xC3 / 255, 1]
+
+
+def _add_tire_quarters(spec: mujoco.MjSpec, front, fw: dict, segments: int) -> None:
+    """The front tyre drawn as four quarters, blue and orange alternating like
+    a centre-of-gravity mark, so its spin reads in teleop. A plain tyre is a
+    surface of revolution and looks the same turning or not.
+
+    Visual only: no contact, no mass. The collision geom `front_tire` is
+    untouched apart from its alpha, so the contact and the inertia are the
+    same model as before. Each quarter is the tyre's own vertices over 90 deg
+    plus the axis points; a sector that narrow is convex, so its hull IS the
+    quarter."""
+    seg = 4 * -(-segments // 4)             # boundaries on a vertex ring
+    v = geometry.crowned_wheel_vertices(
+        fw["radius"], fw["width"], fw["crown_radius"], seg,
+        shoulder_radius=fw.get("shoulder_radius"))
+    rings, caps = v[:-2].reshape(-1, seg, 3), v[-2:]
+    q = seg // 4
+    for k in range(4):
+        idx = [(k * q + j) % seg for j in range(q + 1)]
+        mesh = spec.add_mesh(name=f"front_tire_q{k}")
+        mesh.uservert = np.vstack([rings[:, idx].reshape(-1, 3), caps]).flatten()
+        front.add_geom(
+            name=f"front_tire_q{k}",
+            type=mujoco.mjtGeom.mjGEOM_MESH,
+            meshname=f"front_tire_q{k}",
+            quat=_Y_AXIS_QUAT,
+            mass=0.0,
+            contype=0,
+            conaffinity=0,
+            rgba=TPU_ORANGE if k % 2 else POP_BLUE,
+        )
+
+
 def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
     """Omni wheel assembly + input shafts + couplings + drive actuators.
 
@@ -171,7 +210,7 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
         mass=ow["hub"]["mass"],
         contype=0,
         conaffinity=0,
-        rgba=[0.25, 0.25, 0.3, 1],
+        rgba=POP_BLUE,
     )
 
     ring = hub.add_body(name="roller_ring")
@@ -220,7 +259,7 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
                 contype=DYN_CONTYPE,
                 conaffinity=DYN_CONAFF,
                 **_part_contact(sim, "roller"),
-                rgba=[0.15, 0.15, 0.15, 1],
+                rgba=TPU_ORANGE,
             )
 
     # Roller couplings: axle spin = k_roller * ring relative angle (rigid gearing).
@@ -2006,8 +2045,9 @@ def build_spec(
         contype=DYN_CONTYPE,
         conaffinity=DYN_CONAFF,
         **_part_contact(p["sim"], "front_tire"),
-        rgba=[0.15, 0.15, 0.15, 1],
+        rgba=[0.15, 0.15, 0.15, 0],     # drawn by the quarters below
     )
+    _add_tire_quarters(spec, front, fw, p["sim"]["mesh_segments"])
 
     _add_aow(spec, chassis, p)
 
