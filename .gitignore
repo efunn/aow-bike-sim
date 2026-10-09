@@ -27,3 +27,4 @@ analysis/recordings/
 deploy/
 # Personal working agreements for agents in this checkout; not a team document.
 CLAUDE.md
+.claude/
