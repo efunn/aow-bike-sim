@@ -18,7 +18,7 @@ everything is written down", below.
    measured XC330 laws and headset friction. The contact is the least-measured
    part; bench pre-tests started 2026-10-01.
 2. **RL drives.** `general_rl*` policies balance and drive from a live
-   (velocity, heading) command. The analytic LQR is a reference baseline.
+   (velocity, heading) command. The analytic LQR is DEPRECATED (10-09).
 3. **The onboard path runs on the Pi bench** (09-15 to 09-18): 100 Hz loop,
    TM151 pushing from flash, mirror, telemetry, recorder, fall/cut/re-arm,
    low-voltage cut. Torque on only with the bike held. No pack yet.
@@ -39,7 +39,6 @@ everything is written down", below.
 | 2 | **Print the rear drive and the righting module**, then the chassis | Held until the steer print settled the shared fits; the bushing and end-play results are in (09-30) | `drive-design.md`, `righting-design.md`, `bike-assembly-design.md` |
 | 3 | **Finish the drivetrain station**: firmware Velocity P and I, the D5 torque-scale check, fit the five drivetrain `GUESS`es | The sim cannot pick the gain (policies tie at P 100 / P 400; P 400 buzzes ~3x harder). Decide on the bike | `drivetrain-model.md`, `drivetrain-measurements.yaml` |
 | 4 | **Sim: the eval score's directional gate** | `_score` is still `survive_rate x track_geo`; a policy that abandons a direction outranks good ones. Risk #2 | `eval-score-rewrite.md` |
-| 5 | **Pointer decision: `general_rl_smooth_temporal`** | Candidate since 10-01: ~19x less steer chatter, best score (0.820 vs the pointer's 0.572), passes the endurance bar. One seed | `policy-smoothness-losses.md` §5.1 |
 
 Weighing waits for the as-built parts: the mass entries will be re-cut by
 module (the Pi 3 is a stand-in, the printed modules are new), so weigh once
@@ -60,9 +59,9 @@ rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
 | workstream | state | blocker | doc |
 |---|---|---|---|
 | **Simulation & model** | Working; 18 `GUESS`es. Opt-in detailed drivetrain (fitted XC430 loop, detent, slop). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30 | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
-| **Control — RL** | Primary. Pointer `general_rl_cmd_curriculum2b`; candidate `smooth_temporal`. Every export trained on the old front wheel: provisional | Crab one-sided; `turn_asym` ~0.2; the pointer falls standing on its own sensors (10 of 18); on the new front wheel it survives 4 of 6 big turns | `general-rl-improvements.md`, `policy-smoothness-losses.md` |
+| **Control — RL** | Primary. Pointer `general_rl_smooth_temporal` (10-09, was `cmd_curriculum2b`); teleop flies it on `tm151_filter` by default. Every export trained on the old front wheel: provisional | Crab one-sided (`v_lat_frac` 0 in this export); `turn_asym` ~0.2; one seed | `general-rl-improvements.md`, `policy-smoothness-losses.md` |
 | **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` model exists; with the accelerometer weighting from the drop rig (10-07) it falls 1/20 on the eval grid (19/20 before; `tm151` 2/20), still unproven on sustained acceleration | The bike's own AHRS log | `sensor-workstream.md`, `ahrs-fixture.md` |
-| **Control — LQR** | Reference. New front wheel (10-05): stands on truth and on `tm151_filter` (with `q_steer_standstill` 50), falls standing on teleop's default `tm151` within ~10 s, falls turning at 0.8 m/s | The at-speed design; re-tune once contact moves | `lqr-baseline.md` |
+| **Control — LQR** | **Deprecated 10-09.** `lqr` tests skipped unless named (`pytest -m lqr`: 15 accepted reds, unchanged). The code stays: the RL envs' crawl fallback and the bundle's gain schedule are built on it. Last state (10-05): stands on truth and `tm151_filter`, falls turning at 0.8 m/s | none: not being tuned | `lqr-baseline.md` |
 | **Hardware / onboard** | Pi 3 bench proven: tick jitter p99 < 1 ms with four servos energised. 2.4 GHz house wifi (decided: a router, no AP). The SBC that ships: open | Chassis, pack | `pi-bench-bringup.md`, `untethered-setup.md` |
 | **CAD** | Steer printed and print-checked; drive, righting, whole bike designed. Righting links all 6 mm plates, rear chamfered; knuckles inside the bay beside the other wing's coupler, in the rocker's shape on a through rocker pin, nuts in the links, screws from both sides, thrust rings chosen as one loop with one washer (crankpin), XC330 turned long end down with its upper case held by one 6-32 into the lower case, bridge 2 over the crank, the wing a printed stub with chamfered ends under an inverted-U (dummy) blade, drive case sides' rear blocks chamfered (10-07; righting ~66 g printed without the blades, the stub trimmed to the tabs, uncalibrated). CAD wheelbase 200.5 (the sim keeps 200): righting 0.5 from the drive, front bulkhead 5 from the straight front wheel (user's rules), wings clear the steer sweep; FITS at 120.5 (`--fit righting`, 10-07; wing L on drive pulley L binds next); Pi plate moved up the drive's face to -44.5; two righting chassis joints, one under the drive block's wedge (placeholder chassis); underside electronics and cage switched off, Pi plate on the drive's face; nothing printed | Check the righting in isolation (user); the blade's design and what holds it on (up the panel); the Pi lower via the steering's lower case, and the underside electronics back in (user's next step); underside electronics back in (U2D2/power front, AHRS back); lower the righting (user) | `bike-assembly-design.md`, `cad-onshape-workflow.md` |
 | **Self-righting** | Four-bar built. Linkage options parked (sim, 9.9 V: 537-575 counts vs 643 as built; the diamond, 547, is the lean) | Decision later | `righting-linkage-margin.md`, `righting-servo-model.md` |
@@ -76,7 +75,7 @@ rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
 (102.5 x 24 mm, 7 mm shoulders), its 10 mm flat tread modelled as an 80 mm
 crown (`GUESS`; why: `mujoco-modeling-decisions.md`). Costs: the LQR needed
 `q_steer_standstill` to stand and still falls turning at speed
-(`lqr-baseline.md`); the pointer's eval score fell 0.572 -> 0.454, mostly big
+(`lqr-baseline.md`); the then pointer's (`cmd_curriculum2b`) eval score fell 0.572 -> 0.454, mostly big
 turns (4 of 6 survive, was 6 of 6). **Outstanding:** every policy is
 provisional until retrained on this wheel.
 
@@ -87,7 +86,7 @@ stamp of the four smoothness-loss exports; removing `min_pinion_radius` the
 same day moved it on to **95630b212f03ffc4** with no physics change. `drivetrain_model.base_params` is the IDEAL drive: the LQR is
 designed on it (`linearize.design_plant`, an ideal twin of whatever model it
 is handed) and flown on the detailed one; the flick/pivot/ball envs and every
-export without a `drivetrain_model:` record (the pointer included) run on it;
+export without a `drivetrain_model:` record (`cmd_curriculum2b` included) run on it;
 teleop compiles its startup policy's own plant. **A model built with the
 block IS the ideal plant until `DrivetrainSim.attach` switches it** (native
 drive zeroed, measured rotor inertia, rigid roller couplings off, slop tendons
@@ -96,6 +95,13 @@ that never attaches the hook -- contact studies, settles, the other moves'
 envs -- runs exactly as before, and the hooked ones (RL envs, teleop,
 `balance.run`, `record`) get the detailed drive.
 `drivetrain_model.attach_hooks` is the one call a physics loop needs.
+
+**Tests, 2026-10-09**: `1 failed, 812 passed, 52 skipped`, red set
+unchanged (1 accepted: `test_sensor_modes[0.19]`). The LQR's 15 accepted reds
+are skipped with the deprecated `lqr` marker and still judged under
+`pytest -m lqr` (15 failed, 20 passed, unchanged). The teleop tests now run the
+viewer's `pre_step` (the detailed drive's XC430 loop): without it the new
+pointer had no drive torque and four went red.
 
 **Tests, 2026-10-05**, after the new front wheel: `16 failed, 790 passed,
 17 skipped`, red set unchanged (16 accepted). 8 registered 2026-10-05,
@@ -120,15 +126,14 @@ read the family, not the list. Before the change: 3 failed, 748 passed.
 All three are the analytic LQR in reverse: `command_heading[-0.5-90]`,
 `command_heading[-1.2-90]` (since the headset friction, 09-30) and
 `reverse_circle`. The standing-endurance test is registered red and
-`prospective` (skipped unless named): the pointer falls 10 of 18, the four
-smoothness-loss exports 0 of 18. Take its entry out in the commit that moves
-`control.general_move`.
+`prospective` (skipped unless named): `cmd_curriculum2b` fell 10 of 18.
+Its entry left 10-09 with the pointer move: `smooth_temporal` passes.
 
 **Digests, checked 2026-10-05**: `plant_digest` 12d9639e3ce90f36,
 `design_digest` 5fe8c19379988031; `deploy/bundle.npz` re-exported and
 matches both (worst schedule fit R^2 0.962). **Copy it to the Pi by hand**:
 `deploy/` is gitignored. No export carries this plant: the four
-smoothness-loss exports are at 9953690d, the pointer at e1ec36bf -- both
+smoothness-loss exports are at 9953690d, `cmd_curriculum2b` at e1ec36bf -- both
 before the wheel. History: `params-digest-split.md`.
 
 **Open, known:**
@@ -161,13 +166,13 @@ before the wheel. History: `params-digest-split.md`.
 
 ## What drives the bike
 
-`control.general_move` = **`general_rl_cmd_curriculum2b`** (09-14):
-sensor-trained (odometry estimate + TM151), command-family curriculum.
-Candidate replacement: `general_rl_smooth_temporal` (10-01), above. Six
-policies trained on the detailed drivetrain each beat the pointer at their
-own gain and lose at the other; the pointer stays until the drivetrain model
-is confirmed on the bike. Trained-on-sensors beats trained-on-truth, 1.00 to
-0.20 survival. Standings and pointer history: `sensor-workstream.md`,
+`control.general_move` = **`general_rl_smooth_temporal`** (10-09; was
+`general_rl_cmd_curriculum2b` from 09-14): sensor-trained (odometry estimate
++ TM151 at 0.19), detailed drivetrain at P 100, the temporal smoothness loss.
+~19x less steer chatter than the old pointer, score 0.820 vs 0.572, stands
+the endurance minute (the old pointer fell 10 of 18). One seed. Teleop flies
+it on `tm151_filter` by default (`run_drive --ahrs`), which it did not train
+on. Trained-on-sensors beats trained-on-truth, 1.00 to 0.20 survival. Standings and pointer history: `sensor-workstream.md`,
 `drivetrain-model.md`.
 
 **Do not compare `metrics:` blocks across `moves/*.yaml`**; re-run
@@ -205,7 +210,7 @@ slop's spring and damping with a measured in-play flick; three are parked
 The detailed one is the overlay `config/drivetrain_model.yaml`, and a policy
 trained on it records its own copy in its `moves/*.yaml` (`drivetrain_model:`
 block, gains included); teleop, the eval env and the endurance test rebuild
-that policy's plant from its record. The pointer trained on the ideal drive;
+that policy's plant from its record. `cmd_curriculum2b` trained on the ideal drive;
 `smooth_temporal` and the `drivetrain_p*` policies on the overlay at P 100 /
 P 400.
 
@@ -316,8 +321,7 @@ tools, `bench/logs/` their captures.
 
 ## Explicitly not being worked on
 
-The PD cascade (legacy). The trajopt moves `flick` / `flick_fwd` / `flip`
+The PD cascade (legacy). The analytic LQR (deprecated 10-09). The trajopt moves `flick` / `flick_fwd` / `flip`
 (deprecated and skipped; `flick_rl` is not), re-authored once the as-built
-mass is known. A live gamepad front-end. The ball shot. Re-tuning the LQR
-before the contact is pinned. The disturbance curriculum, parked until the
+mass is known. A live gamepad front-end. The ball shot. The disturbance curriculum, parked until the
 params files are reconciled.

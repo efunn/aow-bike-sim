@@ -430,7 +430,7 @@ def main() -> None:
                     help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
     ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171",
                                        "tm151_filter"),
-                    nargs="?", const="tm151", default="tm151", metavar="LEVEL",
+                    nargs="?", const="tm151", default="tm151_filter", metavar="LEVEL",
                     help="TM151 error model on the ATTITUDE the controller "
                          "reads -- roll, roll_rate, yaw_rate, i.e. the fast "
                          "loop. `typical` (the default when the flag is given "
@@ -440,7 +440,8 @@ def main() -> None:
                          "the better part in the same datasheet at 1.0 deg. "
                          "`tm151_filter` is the MEASURED part instead: its own "
                          "complementary filter on its own gyro and "
-                         "accelerometer (sim_ahrs, from the yaw-roll fixture). "
+                         "accelerometer (sim_ahrs, from the yaw-roll fixture), "
+                         "and the default with no flag. "
                          "INDEPENDENT of --odometry: this is the orientation "
                          "path, that is the velocity path, and they can be "
                          "turned on separately. Expect this to be the one you "
@@ -505,7 +506,8 @@ def main() -> None:
                     help="drive on MuJoCo truth instead of the onboard "
                          "estimate (--odometry is ON by default)")
     ap.add_argument("--lqr", action="store_true",
-                    help="--teleop starts on the analytic LQR instead of the "
+                    help="DEPRECATED (2026-10-09). --teleop starts on the "
+                         "analytic LQR instead of the "
                          "general policy (same as ', ENTER' at startup); ',' "
                          "still opens the policy menu.")
     ap.add_argument("--general", default=None, metavar="NAME",
@@ -3017,7 +3019,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             state["want_general"] = False
             c.command_line(d)
             zero_command(d)
-            print("analytic controller (LQR) — maneuver keys live again")
+            print("analytic controller (LQR, DEPRECATED) — maneuver keys "
+                  "live again")
             return
         prev = gen_name[0]
         gen_name[0] = name

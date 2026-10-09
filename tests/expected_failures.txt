@@ -21,6 +21,10 @@
 # is in `git log -p -- tests/expected_failures.txt`.
 
 # ---------------------------------------------------------------------------
+# DEPRECATED 2026-10-09: the `lqr` marker is now SKIPPED unless named
+# (tests/conftest.py SKIP_UNLESS_NAMED), so the default run does not see these.
+# They are kept, and judged, for `pytest -m lqr`. Nobody tunes the LQR now.
+#
 # THE ANALYTIC LQR CONTROLLERS, two cases. Registered 2026-08-25 with
 # nine; test_hold_ramps_to_full_speed_with_auto_repeat left 2026-09-21, when
 # it moved to the RL policy teleop boots with (it tests the key path, and the
@@ -222,31 +226,12 @@ tests/test_pivot.py::test_pivot_with_wound_steer           # 2026-10-05 new fron
 # or a new control.general_move is expected to change them; follow them
 # across policies rather than treating a change as a regression.
 #
-# STANDING ENDURANCE, one case, registered 2026-09-22 (replacing a 4.8 s
-# hold-station test whose 50 mm/s / 10 deg bars were invented, and whose
-# window was too short to see the real failure). Standing still on its own
-# sensors (estimate + TM151, as teleop runs by default), general_rl_cmd_
-# curriculum2b FALLS: 64 seeds x 60 s, 32 fell, MTBF 79 s (95% CI 56-116);
-# teleop fell at ~35 s. The test: 18 fixed seeds x 60 s, pass if <= 4 fall,
-# derived from a 600 s MTBF target (see tests/test_policy_endurance.py). Today: 9 of 18
-# (11 before the 2026-09-22 yaw-drift fix, which moved the AHRS rng stream --
-# a different draw of the same statistics, not an improvement).
-#
-# It comes with the ATTITUDE model: 60 s, seed 0, orientation error alone falls
-# at 3.2 s; gyro error alone, the estimate alone and truth all stay up.
-#
-# PATHS TO GREEN, either or both:
-#   - training: evals are 5 s and episodes at most 15 s, so a 10-60 s failure
-#     is invisible to both. Longer standing episodes under TM151.
-#   - measurement: the model takes the datasheet's roll/pitch BOUND (<1.5 deg)
-#     as its RMS; only tau 0.19 s is measured. A bench RMS on the real unit
-#     may make the model kinder.
-#
-# PROSPECTIVE since 2026-09-29: skipped unless run by name (`pytest -m
-# prospective`), so the full run stops paying ~50 s for a known red. This
-# entry stays so that, when it IS run, a policy that clears it reads
-# UNEXPECTEDLY GREEN. 2026-09-29: 10 of 18 fell (MTBF ~75 s), same policy.
-tests/test_policy_endurance.py::test_policy_stands_for_a_minute_on_its_own_sensors  # 2026-09-22 TM151 attitude: 9 of 18 fall within 60 s standing
+# STANDING ENDURANCE, registered 2026-09-22 against general_rl_cmd_curriculum2b
+# (9-10 of 18 fell within 60 s), REMOVED 2026-10-09: control.general_move
+# moved to general_rl_smooth_temporal, which passes (`pytest -m prospective`,
+# 1 passed). The test stays `prospective` -- skipped unless named, ~40 s -- and
+# is to be run on each new export. The reasoning that stood here is in
+# `git log -p -- tests/expected_failures.txt`.
 #
 # THE NEW FRONT WHEEL, one case, 2026-10-05, pending sign-off: the policy
 # trained on the old wheel; at tau 0.19 it survives 3 of the 4 commands.

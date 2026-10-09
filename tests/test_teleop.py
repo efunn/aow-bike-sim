@@ -141,7 +141,11 @@ def _capture(monkeypatch, model, params, eq_qpos, hockey=False, analytic=False,
     def fake_loop(m, d, step, on_key, intro, module, draw=None, **kw):
         # **kw so viewer-presentation options (show_ui, ...) can be added
         # without every teleop test failing on the signature.
-        g.update(model=m, data=d, step=step, on_key=on_key, draw=draw)
+        # pre_step is what the viewer runs before every mj_step: the
+        # detailed drivetrain's XC430 loop and the gearbox friction. Dropping
+        # it left a detailed-drivetrain policy with no drive torque at all.
+        g.update(model=m, data=d, step=step, on_key=on_key, draw=draw,
+                 pre_step=kw.get("pre_step"))
 
     monkeypatch.setattr("aow_sim.interactive.teleop_loop", fake_loop)
     from aow_sim.run_drive import _teleop
@@ -150,9 +154,16 @@ def _capture(monkeypatch, model, params, eq_qpos, hockey=False, analytic=False,
         _toggle_controller(g)
         for _ in range(3):
             g["step"](g["model"], g["data"])
-            mujoco.mj_step(g["model"], g["data"])
+            _mj_step(g)
         assert g["c"].mode != "general"
     return g
+
+
+def _mj_step(g):
+    """One physics step as the viewer loop takes it: pre_step, then mj_step."""
+    if g.get("pre_step") is not None:
+        g["pre_step"](g["data"])
+    mujoco.mj_step(g["model"], g["data"])
 
 
 def _toggle_controller(g):
@@ -172,7 +183,7 @@ def _idle(g, seconds):
     m, d, step = g["model"], g["data"], g["step"]
     for _ in range(int(seconds / m.opt.timestep)):
         step(m, d)
-        mujoco.mj_step(m, d)
+        _mj_step(g)
 
 
 def _tap(g, key, settle=0.05):
@@ -191,7 +202,7 @@ def _hold(g, seconds, key, repeat_delay=0.4, repeat_hz=30.0):
             on_key(key)
             nxt = d.time + 1.0 / repeat_hz
         step(m, d)
-        mujoco.mj_step(m, d)
+        _mj_step(g)
 
 
 @pytest.mark.lqr

@@ -4,7 +4,6 @@
     python scripts/readme_media.py                    # all four
     python scripts/readme_media.py --only eval_hold   # just one
     python scripts/readme_media.py --policy general_rl_8m
-    python scripts/readme_media.py --policy general_rl_smooth_temporal --ahrs tm151_filter
 
 Renders each clip with `aow_sim.record`, converts it to an animated WebP, and
 writes it into docs/media/. The mp4s land in traces/ (gitignored) and are kept:
@@ -17,9 +16,10 @@ in one step and that silently goes stale; this is the one place the settings
 live. docs/guide/media.md explains WHAT each clip is and which policy it used --
 this decides HOW.
 
-The policy defaults to `control.general_move` in config/bike_params.yaml, which
-is what teleop drives with, so the tiles and the default driving experience do
-not drift apart. Pass --policy to override.
+The policy defaults to `control.general_move` in config/bike_params.yaml, and
+the AHRS to tm151_filter, which is what teleop drives with, so the tiles and the
+default driving experience do not drift apart. Pass --policy / --ahrs to
+override.
 """
 
 from __future__ import annotations
@@ -91,9 +91,10 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--policy", default=None,
                     help="moves/NAME. Default: control.general_move")
-    ap.add_argument("--ahrs", default=None,
-                    help="passed to aow_sim.record --ahrs (e.g. tm151_filter). "
-                         "Default: what the policy trained with")
+    ap.add_argument("--ahrs", default="tm151_filter",
+                    help="passed to aow_sim.record --ahrs. Default: teleop's "
+                         "own default (run_drive --ahrs), so the tiles are "
+                         "what teleop drives")
     ap.add_argument("--only", action="append", choices=CLIPS, default=None,
                     help="regenerate just this clip (repeatable)")
     ap.add_argument("--keep-mp4", action="store_true", default=True,

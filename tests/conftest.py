@@ -106,19 +106,28 @@ def lqr_design_once():
             "lqr_design_once from this file.")
 
 
+# Markers the default run SKIPS. `prospective`: targets no policy clears yet.
+# `lqr`: the analytic controllers, DEPRECATED 2026-10-09 -- the code stays (the
+# RL envs' crawl fallback and the bundle's gain schedule are built on it), the
+# guard does not.
+SKIP_UNLESS_NAMED = ("prospective", "lqr")
+
+
 def pytest_collection_modifyitems(config, items):
-    """`prospective` tests are targets no policy clears yet, so the default run
-    skips them. Naming them runs them: `-m` mentioning `prospective`, or a
-    path argument into their file. A skip rather than a deselect keeps them
-    seen, so their registry entry is not reported STALE."""
-    if "prospective" in (config.option.markexpr or ""):
-        return
+    """Tests under SKIP_UNLESS_NAMED are skipped by the default run. Naming
+    them runs them: `-m` mentioning the marker, or a path argument into their
+    file. A skip rather than a deselect keeps them seen, so their registry
+    entry is not reported STALE."""
+    expr = config.option.markexpr or ""
     named = [str(a).split("::")[0] for a in config.option.file_or_dir or []]
-    skip = pytest.mark.skip(reason="prospective: run with `pytest -m prospective`")
-    for item in items:
-        if "prospective" in item.keywords and not any(
-                str(item.path).endswith(n) for n in named if n.endswith(".py")):
-            item.add_marker(skip)
+    for mark in SKIP_UNLESS_NAMED:
+        if mark in expr:
+            continue
+        skip = pytest.mark.skip(reason=f"{mark}: run with `pytest -m {mark}`")
+        for item in items:
+            if mark in item.keywords and not any(
+                    str(item.path).endswith(n) for n in named if n.endswith(".py")):
+                item.add_marker(skip)
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):

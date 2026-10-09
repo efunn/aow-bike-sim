@@ -16,14 +16,10 @@ for.
 
 ### Which policy
 
-**`general_rl_smooth_temporal`**, with the AHRS overridden to `tm151_filter` —
-the pairing driven in teleop as
-
-    mjpython -m aow_sim.run_drive --teleop --general general_rl_smooth_temporal --ahrs tm151_filter
-
-It is NOT `control.general_move` (still `general_rl_cmd_curriculum2b`), so the
-tiles are not the default driving experience; `--policy` and `--ahrs` on the
-script below say so explicitly.
+**`general_rl_smooth_temporal`** — what `control.general_move` in
+`config/bike_params.yaml` points at — on the `tm151_filter` AHRS, teleop's
+default. So the tiles are what a bare `mjpython -m aow_sim.run_drive --teleop`
+drives.
 
 | | |
 |---|---|
@@ -72,12 +68,12 @@ a real about-face; it just cannot be read as evidence about handedness.
 python scripts/readme_media.py                    # all four
 python scripts/readme_media.py --only eval_hold   # just one
 python scripts/readme_media.py --policy general_rl_8m
-python scripts/readme_media.py --policy general_rl_smooth_temporal --ahrs tm151_filter   # the current tiles
 ```
 
 It renders each clip with `aow_sim.record`, converts it to WebP, writes
 `docs/media/<name>.webp`, and keeps the source mp4 in `traces/`. It defaults to
-whatever `control.general_move` points at, so the tiles and the default driving
+whatever `control.general_move` points at, on teleop's default AHRS
+(`tm151_filter`), so the tiles and the default driving
 experience cannot drift apart, and it prints the plant-digest comparison above
 every time it runs.
 
