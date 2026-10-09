@@ -143,8 +143,6 @@ class GeneralEnv(gym.Env):
         # A wing touching the floor ENDS the episode as a fall: the wings are
         # there for their inertia, and standing on one is a kickstand.
         self.wing_touch_fails = bool(env.get("wing_touch_fails", False))
-        if self.wing_touch_fails and not (self.wings or self.swing):
-            raise ValueError("wing_touch_fails needs a wing mechanism")
         self.model = build_model(self.p, variant="full", hockey=self.hockey,
                                  righting=self.wings or self.swing,
                                  wings=self.wings,
@@ -426,14 +424,13 @@ class GeneralEnv(gym.Env):
         self._sj = self.model.joint("steer_joint").qposadr[0]
         self._sd = self.model.joint("steer_joint").dofadr[0]
         self._chassis = self.model.body("chassis").id
-        # Geoms of the wing mechanism, and the world's (the floors), for
-        # wing_touch_fails.
-        wb = {i for i in range(self.model.nbody)
-              if "wing" in self.model.body(i).name
-              or self.model.body(i).name.startswith("swing_")}
-        self._wing_geoms = frozenset(
-            g for g in range(self.model.ngeom)
-            if int(self.model.geom_bodyid[g]) in wb)
+        # The wings' floor-contact sensors, for wing_touch_fails.
+        if self.wing_touch_fails and not self.swing_linkage:
+            raise ValueError("wing_touch_fails is built for the four-bar "
+                             "(its swing_wing_*_floor contact sensors)")
+        self._touch_adr = (np.array([self.model.sensor(
+            f"swing_wing_{t}_floor").adr[0] for t in ("right", "left")])
+            if self.wing_touch_fails else None)
         self._wing_touched = False
         self._r_rear = self.p["omni_wheel"]["outer_radius"]
         if self.hockey:
@@ -720,14 +717,11 @@ class GeneralEnv(gym.Env):
         return self.wing_max * float(np.clip(f, 0.0, 1.0))
 
     def _wing_touches_floor(self) -> bool:
-        """Any contact between a wing-mechanism geom and a world geom."""
-        d, gb = self.data, self.model.geom_bodyid
-        for c in d.contact[:d.ncon]:
-            g1, g2 = int(c.geom1), int(c.geom2)
-            if ((g1 in self._wing_geoms and gb[g2] == 0)
-                    or (g2 in self._wing_geoms and gb[g1] == 0)):
-                return True
-        return False
+        """Either wing panel in contact with the world body (the floors), off
+        MuJoCo's own contact sensors (build_model _add_swing_linkage). It runs
+        every physics substep: a Python loop over the contacts there cost ~28%
+        of the env's step rate, a numpy match ~18% (measured 2026-10-09)."""
+        return bool(self.data.sensordata[self._touch_adr].any())
 
     def diff_scale(self) -> float:
         """Fraction of the differential left at the current difficulty, in

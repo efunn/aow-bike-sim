@@ -1423,6 +1423,17 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
                 type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.008, 0, 0],
                 pos=[0.0, float(tip[0]), float(tip[1])], mass=float(tip_mass),
                 contype=0, conaffinity=0, rgba=[0.15, 0.15, 0.15, 1])
+        # Does this wing touch anything on the WORLD body (the floors)?
+        # MuJoCo's own contact sensor, 1.0 when it does, read by
+        # general_env's `wing_touch_fails` every substep at no Python cost.
+        sen = spec.add_sensor(name=f"swing_wing_{tag}_floor")
+        sen.type = mujoco.mjtSensor.mjSENS_CONTACT
+        sen.objtype = mujoco.mjtObj.mjOBJ_BODY
+        sen.objname = f"swing_wing_{tag}"
+        sen.reftype = mujoco.mjtObj.mjOBJ_BODY
+        sen.refname = "world"
+        sen.intprm[0] = 1                    # data: "found"
+        sen.intprm[2] = 1                    # one match is enough
         att = joint0 - pivot
         wing.add_site(name=f"swing_wing_{tag}_attach",
                       pos=[0.0, att[0], att[1]], size=[0.003, 0, 0])
