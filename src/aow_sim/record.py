@@ -648,6 +648,9 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
     gearbox = drivetrain_model.attach_hooks(model, params)
     c = DriveController(params, model)
     c.reset(model, data)
+    # As run_drive's teleop: the overlay in params is compiled above, so the
+    # "flown on the ideal one" NOTE must not fire.
+    c._drivetrain_active = "drivetrain_model" in params
 
     mode = "analytic"
     ahrs_model = odo = None
@@ -683,16 +686,21 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
         want_odo = "front" if spec.get("obs_odometry") else None
         want_enc = str(spec.get("odometry_encoder") or "ideal")
         if ahrs is not None:
+            # A different level brings its own tau, as in teleop: the move's
+            # tau was measured for the level it trained with.
+            if ahrs != want_ahrs:
+                want_tau = None
             want_ahrs = ahrs
         if ahrs_tau is not None:
             want_tau = ahrs_tau
         if odometry is not None:
             want_odo = None if odometry == "none" else odometry
         if want_ahrs != "none":
-            from .sim_ahrs import TAU_ORIENT_S, SimAhrs
+            from .sim_ahrs import SimAhrs, level_tau_orient_s
+            if want_tau is None:
+                want_tau = level_tau_orient_s(want_ahrs)
             ahrs_model = SimAhrs(model, params, level=want_ahrs,
-                                 tau_orient_s=(TAU_ORIENT_S if want_tau is None
-                                               else float(want_tau)))
+                                 tau_orient_s=float(want_tau))
         if want_odo:
             from .sim_odometry import SimOdometry
             odo = SimOdometry(model, params, mode=want_odo, encoder=want_enc,
@@ -932,8 +940,11 @@ def main() -> None:
                          "with into the loop; `truth` drives on MuJoCo ground "
                          "truth, which is what this tool did before the flag "
                          "existed")
-    ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171"),
-                    default=None, help="override the AHRS error model")
+    ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171",
+                                       "tm151_filter"),
+                    default=None, help="override the AHRS error model "
+                    "(`tm151_filter`: the part's own filter, as in teleop); "
+                    "a different level takes its own tau unless --ahrs-tau")
     ap.add_argument("--ahrs-tau", type=float, default=None, metavar="SECONDS",
                     help="override the orientation-error correlation time")
     ap.add_argument("--odometry", default=None,

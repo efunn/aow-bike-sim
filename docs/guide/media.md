@@ -3,7 +3,7 @@
 What the README's clips are, the command behind each, and how to add more.
 
 The four clips are **committed animated WebPs** in `docs/media/`. They loop on
-their own, they render in a clone and with no network, and at ~1.2 MB for the
+their own, they render in a clone and with no network, and at ~0.9 MB for the
 set they are small enough to live in the repo.
 
 They are also **tracked figures**, so the repo's rule applies: each must be
@@ -16,25 +16,23 @@ for.
 
 ### Which policy
 
-**`general_rl_cmd_curriculum2b`** — what `control.general_move` in
-`config/bike_params.yaml` points at, so it is what teleop drives by default.
+**`general_rl_smooth_temporal`**, with the AHRS overridden to `tm151_filter` —
+the pairing driven in teleop as
+
+    mjpython -m aow_sim.run_drive --teleop --general general_rl_smooth_temporal --ahrs tm151_filter
+
+It is NOT `control.general_move` (still `general_rl_cmd_curriculum2b`), so the
+tiles are not the default driving experience; `--policy` and `--ahrs` on the
+script below say so explicitly.
 
 | | |
 |---|---|
-| `plant_digest` | `e1ec36bfa670217e` |
-| current plant | `eda849e7afaaca0f` — **they do not match** |
+| `plant_digest` | `9953690d05e33ab6` |
+| current plant | `12d9639e3ce90f36` (trained before the latest plant change) |
+| drivetrain | the detailed one (XC430 firmware loop), as trained — it is the default plant |
 | `v_max` | 1.2 m/s |
 | `v_lat_frac` | **0.0** — this export has no crab at all, which is why no tile shows one |
-| control rate | 50 Hz |
-| sensors | odometry on (`counts` encoder), TM151 AHRS at `ahrs_tau_s` 0.19, pitch in the observation |
-
-**The digest mismatch is not specific to this policy.** No export in `moves/`
-matches the current plant: 20 carry a stale digest and 19 predate the field.
-The plant moved at commit `5fe1ff9` ("sim: a reduction squares the gain, and
-update servo gains"); everything in `moves/` was trained before it. So every
-policy is provisional against the bike this repo now describes, and these clips
-show one of them driving a plant it was not trained on. It balances and tracks
-fine — but do not read a number off these.
+| sensors | odometry on (`counts` encoder); AHRS **`tm151_filter`** (it trained on `tm151`); pitch in the observation |
 
 ### Which commands
 
@@ -74,6 +72,7 @@ a real about-face; it just cannot be read as evidence about handedness.
 python scripts/readme_media.py                    # all four
 python scripts/readme_media.py --only eval_hold   # just one
 python scripts/readme_media.py --policy general_rl_8m
+python scripts/readme_media.py --policy general_rl_smooth_temporal --ahrs tm151_filter   # the current tiles
 ```
 
 It renders each clip with `aow_sim.record`, converts it to WebP, writes
@@ -123,7 +122,7 @@ ffmpeg -i traces/<script>.mp4 \
     -loop 0 -quality 60 -compression_level 6 docs/media/<script>.webp
 ```
 
-480×360, 48 frames, 151–252 KB per clip, 814 KB for the set. No system
+480×360, 48 frames, 167–267 KB per clip, 883 KB for the set (2026-10-09). No system
 `ffmpeg` is needed — `imageio-ffmpeg` (in the `viz` and `dev` extras) ships a
 binary and the script finds it.
 
@@ -137,18 +136,21 @@ and buries the bike the tile is of.
 
 ### Sensors
 
-The clips run with the **sensors the policy trained against** — here the
-onboard velocity estimate and a TM151 attitude error model at
-`ahrs_tau_s` 0.19 — not MuJoCo ground truth. `record.py` derives that from the
-move file and prints what it resolved on every run:
+By default the clips run with the **sensors the policy trained against**
+— for this one the onboard velocity estimate and a TM151 attitude error
+model at `ahrs_tau_s` 0.19 — not MuJoCo ground truth. `record.py` derives
+that from the move file and prints what it resolved on every run. The current
+tiles override the AHRS:
 
-    sensors: ahrs=tm151 tau=0.19s  odometry=front encoder=counts
+    sensors: ahrs=tm151_filter tau=2s  odometry=front encoder=counts
 
 This matters more than it sounds. A sensor-trained policy replayed on truth is
 getting a cleaner signal than it ever saw, so it looks better than it is, and
 the eval that scores it does not run that way either. `--sensors truth`
 restores the old behaviour for comparison; `--ahrs`, `--ahrs-tau` and
-`--odometry` override individually.
+`--odometry` override individually. Under `tm151_filter` the printed tau is
+only the time of its 0.1 deg residual wander; the filter's own time constants
+are fixed in `sim_ahrs`.
 
 ---
 

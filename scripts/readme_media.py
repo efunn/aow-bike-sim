@@ -4,6 +4,7 @@
     python scripts/readme_media.py                    # all four
     python scripts/readme_media.py --only eval_hold   # just one
     python scripts/readme_media.py --policy general_rl_8m
+    python scripts/readme_media.py --policy general_rl_smooth_temporal --ahrs tm151_filter
 
 Renders each clip with `aow_sim.record`, converts it to an animated WebP, and
 writes it into docs/media/. The mp4s land in traces/ (gitignored) and are kept:
@@ -90,6 +91,9 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--policy", default=None,
                     help="moves/NAME. Default: control.general_move")
+    ap.add_argument("--ahrs", default=None,
+                    help="passed to aow_sim.record --ahrs (e.g. tm151_filter). "
+                         "Default: what the policy trained with")
     ap.add_argument("--only", action="append", choices=CLIPS, default=None,
                     help="regenerate just this clip (repeatable)")
     ap.add_argument("--keep-mp4", action="store_true", default=True,
@@ -126,7 +130,8 @@ def main() -> None:
         subprocess.run(
             [sys.executable, "-m", "aow_sim.record", "--script", name,
              "--general", policy, *CAMERA, "--seconds", SECONDS, "--fps", FPS,
-             "--trail-seconds", TRAIL_S, "--out", str(mp4)],
+             "--trail-seconds", TRAIL_S, "--out", str(mp4),
+             *(["--ahrs", a.ahrs] if a.ahrs else [])],
             cwd=ROOT, check=True)
         subprocess.run(
             [exe, "-y", "-i", str(mp4),
