@@ -277,6 +277,9 @@ def policy_env_overrides(pol) -> dict:
                 ahrs_tau_s=float(getattr(pol, "ahrs_tau_s", TAU_ORIENT_S)),
                 ahrs_channels=str(getattr(pol, "ahrs_channels", "both")),
                 wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)),
+                swing_linkage=bool(getattr(pol, "swing_linkage", False)),
+                swing_tip_mass_kg=float(getattr(pol, "swing_tip_mass_kg", 0.0)),
+                wing_touch_fails=bool(getattr(pol, "wing_touch_fails", False)),
                 # The plant, not a sensor, but the same invisible failure: an
                 # env built without it runs a detailed-drivetrain policy on the
                 # ideal drives. None = ideal, every export before 2026-09-14.

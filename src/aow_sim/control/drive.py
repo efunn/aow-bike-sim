@@ -495,6 +495,28 @@ class DriveController(LQRBalance):
                 f"moves/{name} expects the co-rotating swing wings, but this"
                 " model has no `swing` actuator -- build with"
                 " build_model(..., swing=True)")
+        if self._gen_swing:
+            # Same channel, same layout on both swing mechanisms -- the flags
+            # below are the only thing that tells a four-bar policy from a
+            # geared one, so check them against the model actually built.
+            want_link = bool(getattr(self._gen, "swing_linkage", False))
+            has_link = bool(getattr(self, "_swing_crank", False))
+            if want_link != has_link:
+                raise ValueError(
+                    f"moves/{name} was trained on the "
+                    f"{'four-bar' if want_link else 'geared'} swing wings, but "
+                    f"this model has the {'four-bar' if has_link else 'geared'}"
+                    " pair -- build with build_model(..., swing_linkage="
+                    f"{want_link}, swing={not want_link})")
+            have = getattr(self, "_swing_wing_mass", None)
+            if want_link and have is not None:
+                tip = float(getattr(self._gen, "swing_tip_mass_kg", 0.0))
+                want = float(self.params["righting"]["wings"]["mass"]) + tip
+                if abs(have - want) > 1e-6:
+                    raise ValueError(
+                        f"moves/{name} was trained with {tip*1e3:g} g at each "
+                        f"wing tip; this model's wing is {have*1e3:g} g, not "
+                        f"{want*1e3:g} -- build with swing_tip_mass={tip:g}")
         if (self._gen_obs_wings or self._gen_act_wings) and \
                 "wings" not in self.aid:
             raise ValueError(

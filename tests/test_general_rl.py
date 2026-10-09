@@ -560,6 +560,179 @@ def test_the_family_arm_config_is_wired_end_to_end():
     assert env.resample_s == (2.0, 6.0)
 
 
+
+def _fade_env(fade):
+    pytest.importorskip("gymnasium")
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    cfg = _load_rl_config()
+    env = {**cfg["env"], "ball_prob": 0.0}
+    if fade is not None:
+        env["diff_fade"] = fade
+    cfg = {**cfg, "env": env,
+           "randomization": {**cfg["randomization"], "enabled": False}}
+    return GeneralEnv(rl_cfg=cfg, seed=0)
+
+
+def test_diff_fade_ramps_the_differential_out_with_difficulty():
+    """`diff_fade: [lo, hi]` is full authority below lo, none above hi."""
+    env = _fade_env([0.3, 0.9])
+    got = []
+    for d in (0.0, 0.3, 0.6, 0.9, 1.0):
+        env.set_difficulty(d)
+        got.append(env.diff_scale())
+    assert got == pytest.approx([1.0, 1.0, 0.5, 0.0, 0.0])
+    # Absent key: no fade at any difficulty, so existing configs are unchanged.
+    plain = _fade_env(None)
+    plain.set_difficulty(1.0)
+    assert plain.diff_scale() == 1.0
+
+
+def test_faded_differential_is_dead_and_reads_back_as_zero():
+    """At full fade the diff output must change nothing, and prev_action must
+    carry 0 there -- what replay feeds back for a zero bound."""
+    def run(diff):
+        env = _fade_env([0.3, 0.9])
+        env.reset(seed=11)
+        env.set_difficulty(1.0)
+        out = []
+        for _ in range(20):
+            o, r, *_ = env.step(np.array([0.2, 0.1, diff], np.float32))
+            out.append((o, r))
+        return out, env
+    a, env = run(1.0)
+    b, _ = run(-1.0)
+    for (oa, ra), (ob, rb) in zip(a, b):
+        assert np.array_equal(oa, ob) and ra == rb
+    assert env._prev_a[2] == 0.0
+
+
+def test_diff_fade_must_end_by_difficulty_one():
+    with pytest.raises(ValueError, match="diff_fade"):
+        _fade_env([0.5, 1.2])
+
+
+def test_export_bounds_pin_a_faded_differential():
+    """The .npz carries the bounds replay scales by, so a faded differential
+    is exported as diff_max 0; without a fade the bounds are the config's."""
+    pytest.importorskip("stable_baselines3")
+    from aow_sim.control.general_env import _load_rl_config
+    from aow_sim.train_general_rl import export_bounds
+    cfg = _load_rl_config("config/rl_general_nodiff.yaml")
+    b = export_bounds(cfg)
+    assert b["diff_max"] == 0.0
+    assert b["steer_rate_max"] == cfg["env"]["action_bounds"]["steer_rate_max"]
+    assert cfg["env"]["action_bounds"]["diff_max"] > 0, "config left alone"
+    base = _load_rl_config("config/rl_general_smooth_temporal.yaml")
+    assert export_bounds(base) == base["env"]["action_bounds"]
+
+
+def test_nodiff_config_is_smooth_temporal_plus_its_listed_changes():
+    """The arm differs from the pointer's config in exactly the blocks its
+    header lists, so the comparison stays readable."""
+    from aow_sim.control.general_env import _load_rl_config
+    a = _load_rl_config("config/rl_general_smooth_temporal.yaml")
+    b = _load_rl_config("config/rl_general_nodiff.yaml")
+    ea, eb = a["env"], b["env"]
+    added = {k: eb[k] for k in eb if k not in ea}
+    assert added == {"obs_swing": True, "act_swing": True,
+                     "swing_linkage": True, "swing_tip_mass_kg": 0.1,
+                     "wing_max_deg": 135.0, "wing_touch_fails": True,
+                     "diff_fade": [0.3, 0.9]}
+    assert eb["action_bounds"] == {**ea["action_bounds"], "wing_rate_max": 12.0}
+    assert eb["cmd_families"] == {**ea["cmd_families"],
+                                  "hold_min": 0.5, "hold_max": 0.8}
+    assert b["reward"] == {**a["reward"], "w_smooth": [0.05, 0.05, 0.25, 0.05]}
+    strip = lambda c: {**c, "env": {k: v for k, v in c["env"].items()
+                                    if k not in (*added, "action_bounds",
+                                                 "cmd_families")},
+                       "reward": None}
+    assert strip(a) == strip(b)
+
+
+def _linkage_env(tip=0.1, touch=True):
+    pytest.importorskip("gymnasium")
+    from aow_sim.build_model import load_params
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    cfg = _load_rl_config("config/rl_general_nodiff.yaml")
+    env = {**cfg["env"], "ball_prob": 0.0, "swing_tip_mass_kg": tip,
+           "wing_touch_fails": touch}
+    cfg = {**cfg, "env": env,
+           "randomization": {**cfg["randomization"], "enabled": False}}
+    return GeneralEnv(load_params(), rl_cfg=cfg, seed=0)
+
+
+def test_linkage_env_builds_the_four_bar_with_tip_masses():
+    from aow_sim.build_model import load_params
+    e = _linkage_env()
+    m, w = e.model, load_params()["righting"]["wings"]["mass"]
+    for side in ("right", "left"):
+        assert m.body_mass[m.body(f"swing_wing_{side}").id] == \
+            pytest.approx(w + 0.1)
+    # The channel and its observation are the crank, on the firmware model.
+    assert e._wj == m.joint("swing_crank_joint").qposadr[0]
+    assert e._crank is not None
+    assert e.action_space.shape == (4,)
+    assert e.wing_max <= m.actuator_ctrlrange[m.actuator("swing").id, 1]
+
+
+def test_swing_channel_drives_the_crank_at_servo_speed():
+    """Regression: the env wrote the wing command only for the MIRRORED pair,
+    so a swing policy's 4th action moved nothing in training. And the crank
+    must not outrun the XC330 the way the bare position actuator did."""
+    e = _linkage_env(touch=False)
+    e.reset(seed=1)
+    peak = 0.0
+    for _ in range(10):
+        e.step(np.array([0, 0, 0, 1.0], np.float32))
+        peak = max(peak, abs(float(e.data.qvel[e._wd])))
+    assert e.data.ctrl[e._aid["wings"]] > 0.5
+    assert np.degrees(e.data.qpos[e._wj]) > 30.0
+    assert peak < 14.0, f"crank at {peak:.1f} rad/s; the XC330 no-load is 11.8"
+
+
+def test_geared_swing_channel_is_commanded_too():
+    """The same regression on the geared stand-in."""
+    pytest.importorskip("gymnasium")
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    cfg = _load_rl_config("config/rl_general_swing.yaml")
+    cfg = {**cfg, "env": {**cfg["env"], "ball_prob": 0.0},
+           "randomization": {**cfg["randomization"], "enabled": False}}
+    e = GeneralEnv(rl_cfg=cfg, seed=0)
+    e.reset(seed=1)
+    e.set_difficulty(1.0)
+    for _ in range(5):
+        e.step(np.array([0, 0, 0, 1.0], np.float32))
+    assert e.data.ctrl[e._aid["wings"]] > 0.0
+
+
+def test_a_wing_on_the_floor_is_a_fall():
+    """Full stroke one way at standstill throws the bike onto that wing;
+    with wing_touch_fails the episode ends there, flagged as a wing touch."""
+    e = _linkage_env()
+    e.reset(seed=1)
+    for _ in range(100):
+        _o, _r, term, _t, info = e.step(np.array([0, 0, 0, 1.0], np.float32))
+        if term:
+            break
+    assert term and info["fell"] and info["wing_touch"]
+    e.reset(seed=1)
+    assert not e._wing_touched
+
+
+def test_policy_env_overrides_carry_the_swing_mechanism():
+    """Same layout on both swing mechanisms, so the move's flags are the only
+    record of which one -- and of the tip masses."""
+    from types import SimpleNamespace
+    from aow_sim.control.general_spec import policy_env_overrides
+    pol = SimpleNamespace(obs_swing=True, act_swing=True, swing_linkage=True,
+                          swing_tip_mass_kg=0.1, wing_touch_fails=True)
+    o = policy_env_overrides(pol)
+    assert (o["swing_linkage"], o["swing_tip_mass_kg"],
+            o["wing_touch_fails"]) == (True, 0.1, True)
+    old = policy_env_overrides(SimpleNamespace())
+    assert (old["swing_linkage"], old["swing_tip_mass_kg"]) == (False, 0.0)
+
+
 # -- trainer / replay -----------------------------------------------------
 
 def test_eval_cmds_scale_with_v_max():

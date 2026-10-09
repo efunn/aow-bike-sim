@@ -333,13 +333,24 @@ class LQRBalance(_Base):
         # as "only 0-dimensional arrays can be converted to Python scalars"
         # from a float() several frames away, with nothing pointing at the
         # lookup that actually failed.
-        for _jn in ("wing_right_joint", "swing_right_joint"):
+        # The four-bar's channel is its CRANK (swing_crank_joint), which is
+        # what its servo commands and what a swing_linkage policy observes.
+        for _jn in ("wing_right_joint", "swing_right_joint", "swing_crank_joint"):
             try:
                 wj = model.joint(_jn)
             except (KeyError, ValueError):
                 continue
             self._wj, self._wd = wj.qposadr[0], wj.dofadr[0]
             break
+        # For drive.engage_general's swing-mechanism guard: which pair this
+        # model has, and its wing mass (None where the model object carries
+        # no masses, e.g. the deploy model on the Pi).
+        self._swing_crank = _jn == "swing_crank_joint" and self._wj is not None
+        try:
+            self._swing_wing_mass = float(
+                model.body_mass[model.body("swing_wing_right").id])
+        except (AttributeError, KeyError, ValueError):
+            self._swing_wing_mass = None
         self._ref_yaw = 0.0
         self.steer_frame = SteerFrame()
 

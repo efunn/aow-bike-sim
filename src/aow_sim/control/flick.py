@@ -334,6 +334,11 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         pol.obs_swing = bool(d.get("obs_swing", False))
         pol.act_swing = bool(d.get("act_swing", False))
         pol.wing_max_deg = float(d.get("wing_max_deg", 90.0))
+        # Which swing mechanism (the four-bar or the geared stand-in) and the
+        # tip masses on it: the same layout either way, so only these say.
+        pol.swing_linkage = bool(d.get("swing_linkage", False))
+        pol.swing_tip_mass_kg = float(d.get("swing_tip_mass_kg", 0.0))
+        pol.wing_touch_fails = bool(d.get("wing_touch_fails", False))
         pol.obs_layout = tuple(d.get("obs_layout", ()) or ())
         # The parameter set this policy was TRAINED against. `plant_digest` is
         # the one that means anything for a policy; `params_digest` is the

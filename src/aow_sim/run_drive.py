@@ -692,6 +692,7 @@ def main() -> None:
                          "(m/s)")
     drivetrain_base = servo_gains = None
     drivetrain_source = ""
+    swing_tip_mass = 0.0
     if args.teleop:
         # The plant is COMPILED here, once; see drivetrain_model.teleop_base.
         # Only the firmware gains can follow a policy picked later from the menu.
@@ -701,6 +702,22 @@ def main() -> None:
         startup = args.general or params["control"].get("general_move",
                                                         "general_rl")
         record = drivetrain_model.policy_record(startup)
+        # A policy trained on the FOUR-BAR swing wings flies on the four-bar,
+        # with the tip masses it trained with: build that bike here, since
+        # engage_general refuses any other (drive.py, the swing guard).
+        import yaml
+        from .control.flick import MOVES_DIR
+        try:
+            _mv = yaml.safe_load(
+                (Path(MOVES_DIR) / f"{startup}.yaml").read_text()) or {}
+        except FileNotFoundError:
+            _mv = {}
+        if _mv.get("swing_linkage"):
+            swing_tip_mass = float(_mv.get("swing_tip_mass_kg", 0.0))
+            if not args.swing_linkage:
+                args.swing_linkage = True
+            print(f"{startup}: four-bar swing wings, {swing_tip_mass*1e3:g} g "
+                  "at each tip, as trained")
         drivetrain_base = drivetrain_model.teleop_base(
             record, args.drivetrain, args.drivetrain_without, servo_gains)
         # No base (a startup policy exported without a drivetrain record, and
@@ -741,7 +758,8 @@ def main() -> None:
                                        if isinstance(args.swing_linkage, str)
                                        else None),
                     linkage=args.linkage,
-                    linkage_cfg=args.linkage_config)
+                    linkage_cfg=args.linkage_config,
+                    swing_tip_mass=swing_tip_mass)
     model = build_model(params, rig=rig_cfg, **build_kw)
     design = None
     # On the floor rig too: the LQR identifies the plant by driving it, and

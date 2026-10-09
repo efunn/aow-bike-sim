@@ -398,6 +398,8 @@ def _eval_episodes(env, act_fn, cmds):
             "cmd": (round(v_lon, 3), round(v_lat, 3), round(np.degrees(dpsi))),
             "track": float(info.get("track", 0.0)),
             "fell": fell,
+            # A fall BY A WING on the floor (wing_touch_fails), not by roll.
+            "wing_touch": bool(info.get("wing_touch", False)),
             "vel_err": float(info.get("vel_err", 9.9)),
             "head_err_deg": float(info.get("head_err_deg", 180.0)),
             "drift_m": float(np.hypot(s.e_lon, s.e_lat)),
@@ -475,6 +477,8 @@ def _eval_episodes(env, act_fn, cmds):
 
     tracks = [r["track"] for r in rows]
     m = {"survive_rate": sum(not r["fell"] for r in rows) / n,
+         # Of the falls, how many were a wing touching down.
+         "wing_touch_rate": sum(r.get("wing_touch", False) for r in rows) / n,
          "track": round(float(np.mean(tracks)), 3),
          # Geometric mean: equals the arithmetic mean when commands score
          # alike, but any ABANDONED command (track -> 0) drags it down. The
@@ -746,7 +750,24 @@ class DifficultyLog(BaseCallback):
             self.logger.record("curriculum/difficulty", float(np.mean(d)))
             self.logger.record("curriculum/difficulty_min", float(np.min(d)))
             self.logger.record("curriculum/difficulty_max", float(np.max(d)))
+        f = [i["diff_scale"] for i in self.locals.get("infos", ())
+             if "diff_scale" in i]
+        if f and min(f) < 1.0:
+            self.logger.record("curriculum/diff_scale", float(np.mean(f)))
         return True
+
+
+def export_bounds(cfg) -> dict:
+    """The action bounds a policy is EXPORTED with: the config's, except that a
+    differential faded out by the curriculum (`env.diff_fade`) is written as
+    diff_max 0. The bounds travel in the .npz and replay scales by them, so
+    exporting the training bound would let teleop and the Pi apply a channel
+    the finished policy was never scored with."""
+    b = dict(cfg["env"]["action_bounds"])
+    lo, hi = cfg["env"].get("diff_fade", (0.0, 0.0))
+    if hi > lo:
+        b["diff_max"] = 0.0
+    return b
 
 
 def _export(model, vecnorm, cfg, path_npz: Path):
@@ -762,7 +783,7 @@ def _export(model, vecnorm, cfg, path_npz: Path):
     layers.append((an.weight.detach().cpu().numpy(), an.bias.detach().cpu().numpy()))
     obs_mean = vecnorm.obs_rms.mean.astype(np.float32)
     obs_var = vecnorm.obs_rms.var.astype(np.float32)
-    bounds = ActionBounds(**cfg["env"]["action_bounds"])
+    bounds = ActionBounds(**export_bounds(cfg))
     save_policy_npz(path_npz, layers, "tanh", obs_mean, obs_var, bounds,
                     obs_clip=float(vecnorm.clip_obs))
     return layers, obs_mean, obs_var, bounds
@@ -815,6 +836,10 @@ def _eval(params, cfg, npz_path):
     scales = np.array([pol.bounds.steer_rate_max, pol.bounds.hub_max,
                        pol.bounds.diff_max,
                        max(pol.bounds.wing_rate_max, 1e-9)])
+
+    # A zero bound is a disabled channel (pol.action returns 0 for it);
+    # dividing by it gave 0/0 = NaN, so divide by 1 as ActionBounds.normalize does.
+    scales = np.where(scales == 0.0, 1.0, scales)
 
     def act(obs):
         a = np.asarray(pol.action(obs), float)
@@ -919,6 +944,12 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            "obs_swing": bool(cfg["env"].get("obs_swing", False)),
            "act_swing": bool(cfg["env"].get("act_swing", False)),
            "wing_max_deg": float(cfg["env"].get("wing_max_deg", 90.0)),
+           # WHICH swing mechanism, and what is on it. The layout is the same
+           # for the geared stand-in and the four-bar (one crank channel), so
+           # obs_layout cannot tell them apart; these are the only record.
+           "swing_linkage": bool(cfg["env"].get("swing_linkage", False)),
+           "swing_tip_mass_kg": float(cfg["env"].get("swing_tip_mass_kg", 0.0)),
+           "wing_touch_fails": bool(cfg["env"].get("wing_touch_fails", False)),
            # The resulting entry names, recorded explicitly. Two optional
            # 2-entry blocks make WIDTH ambiguous (a windowed policy and a
            # pitch-observing one are both 17), so replay compares this list

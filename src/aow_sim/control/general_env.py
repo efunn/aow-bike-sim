@@ -129,9 +129,28 @@ class GeneralEnv(gym.Env):
         if self.wings and self.swing:
             raise ValueError("obs/act_wings and obs/act_swing are alternative "
                              "mechanisms -- set one, not both")
+        # `swing_linkage` puts the swing channel on the FOUR-BAR the bike is
+        # being built with (build_model _add_swing_linkage, the CAD's
+        # swing_linkage_smaller.yaml) instead of the geared stand-in. The
+        # channel and its observation are the CRANK: what the servo commands
+        # and its encoder reads. Optional point masses at the wing tips.
+        self.swing_linkage = bool(env.get("swing_linkage", False))
+        self.swing_tip_mass = float(env.get("swing_tip_mass_kg", 0.0))
+        if self.swing_linkage and not self.swing:
+            raise ValueError("swing_linkage needs obs_swing/act_swing")
+        if self.swing_tip_mass and not self.swing_linkage:
+            raise ValueError("swing_tip_mass_kg is a swing_linkage option")
+        # A wing touching the floor ENDS the episode as a fall: the wings are
+        # there for their inertia, and standing on one is a kickstand.
+        self.wing_touch_fails = bool(env.get("wing_touch_fails", False))
+        if self.wing_touch_fails and not (self.wings or self.swing):
+            raise ValueError("wing_touch_fails needs a wing mechanism")
         self.model = build_model(self.p, variant="full", hockey=self.hockey,
                                  righting=self.wings or self.swing,
-                                 wings=self.wings, swing=self.swing)
+                                 wings=self.wings,
+                                 swing=self.swing and not self.swing_linkage,
+                                 swing_linkage=self.swing_linkage,
+                                 swing_tip_mass=self.swing_tip_mass)
         # The opt-in detailed drivetrain (drivetrain_model.py), present only
         # when the params carry the overlay. None otherwise, and every line
         # below that reads it is then a no-op -- the default env is unchanged.
@@ -139,7 +158,25 @@ class GeneralEnv(gym.Env):
         # The XC330s' measured gearbox friction (steer, and the swing crank
         # when present), load-proportional: re-limited before every substep.
         self._gearbox = gearbox_friction.attach_native(self.model, self.p)
+        # Settled BEFORE the crank servo attaches: it zeroes the native
+        # actuator, and settle_upright steps without our pre_step.
         self._eq = settle_upright(self.model).qpos.copy()
+        # The four-bar's crank on its FIRMWARE model (current-based position,
+        # back-EMF inside the loop), as teleop flies it. The bare position
+        # actuator spins the crank at 23-32 rad/s against the XC330's 11.8
+        # no-load (measured 2026-10-09, 0 and 100 g tips), and the wings'
+        # SPEED is the thing this mechanism is being asked about. The model
+        # carries its own gearbox friction, so the native one comes off.
+        self._crank = None
+        if self.swing_linkage:
+            from ..righting_servo import CurrentBasedPositionServo
+            self._crank = CurrentBasedPositionServo.attach(
+                self.model, self.p, torque_nm=float(
+                    self.model.actuator_forcerange[
+                        self.model.actuator("swing").id, 1]),
+                at_output=True)
+            self._gearbox = [g for g in (
+                gearbox_friction.attach_steer(self.model, self.p),) if g]
         self.data = mujoco.MjData(self.model)
         # Crawl-balance fallback gain from the ball-free model, as ball_env.
         # Designed on the IDEAL drivetrain: the detailed one replaces the
@@ -342,7 +379,22 @@ class GeneralEnv(gym.Env):
         # and the bike must balance on two wheels; above open_hi it is the full
         # wing_max. Absent => open from the start, which is what the first two
         # wings runs did.
+        if self.swing_linkage:
+            # The crank's own travel is the hard stop; the cap cannot pass it.
+            self.wing_max = min(self.wing_max, float(self.model.actuator_ctrlrange[
+                self.model.actuator("swing").id, 1]))
         self.wing_open = tuple(env.get("wing_open", (0.0, 0.0)))
+        # Curriculum FADE-OUT of the rear differential, as [fade_lo, fade_hi]
+        # in difficulty: full authority below fade_lo, none above fade_hi.
+        # The mirror image of wing_open -- balance is learned first with the
+        # differential, then the policy has to move it onto steer and hub as
+        # the channel goes away. Absent => no fade. fade_hi must be <= 1 so the
+        # eval (difficulty 1) and the export (diff_max written as 0) both see
+        # the channel gone.
+        self.diff_fade = tuple(env.get("diff_fade", (0.0, 0.0)))
+        if self.diff_fade[1] > self.diff_fade[0] and self.diff_fade[1] > 1.0:
+            raise ValueError(f"diff_fade {self.diff_fade}: the upper end must "
+                             "be <= 1, or the eval keeps part of the channel")
 
         cur = self.cfg["curriculum"]
         self.cur_on = bool(cur["enabled"])
@@ -366,13 +418,23 @@ class GeneralEnv(gym.Env):
             # the only thing that differs, and the signed clip below is the
             # only behavioural difference.
             act = "swing" if self.swing else "wings"
-            jnt = "swing_right_joint" if self.swing else "wing_right_joint"
+            jnt = ("swing_crank_joint" if self.swing_linkage else
+                   "swing_right_joint" if self.swing else "wing_right_joint")
             self._aid["wings"] = self.model.actuator(act).id
             self._wj = self.model.joint(jnt).qposadr[0]
             self._wd = self.model.joint(jnt).dofadr[0]
         self._sj = self.model.joint("steer_joint").qposadr[0]
         self._sd = self.model.joint("steer_joint").dofadr[0]
         self._chassis = self.model.body("chassis").id
+        # Geoms of the wing mechanism, and the world's (the floors), for
+        # wing_touch_fails.
+        wb = {i for i in range(self.model.nbody)
+              if "wing" in self.model.body(i).name
+              or self.model.body(i).name.startswith("swing_")}
+        self._wing_geoms = frozenset(
+            g for g in range(self.model.ngeom)
+            if int(self.model.geom_bodyid[g]) in wb)
+        self._wing_touched = False
         self._r_rear = self.p["omni_wheel"]["outer_radius"]
         if self.hockey:
             bjid = int(self.model.body("ball").jntadr[0])
@@ -657,6 +719,24 @@ class GeneralEnv(gym.Env):
         f = (self._diff - lo) / (hi - lo)
         return self.wing_max * float(np.clip(f, 0.0, 1.0))
 
+    def _wing_touches_floor(self) -> bool:
+        """Any contact between a wing-mechanism geom and a world geom."""
+        d, gb = self.data, self.model.geom_bodyid
+        for c in d.contact[:d.ncon]:
+            g1, g2 = int(c.geom1), int(c.geom2)
+            if ((g1 in self._wing_geoms and gb[g2] == 0)
+                    or (g2 in self._wing_geoms and gb[g1] == 0)):
+                return True
+        return False
+
+    def diff_scale(self) -> float:
+        """Fraction of the differential left at the current difficulty, in
+        [0, 1]. 1.0 when no `diff_fade` is set."""
+        lo, hi = self.diff_fade
+        if hi <= lo:
+            return 1.0
+        return 1.0 - float(np.clip((self._diff - lo) / (hi - lo), 0.0, 1.0))
+
     def _w_wing_now(self) -> float:
         """Wing penalty at the current curriculum difficulty.
 
@@ -857,6 +937,12 @@ class GeneralEnv(gym.Env):
             self._next_resample = 10 ** 9      # hold for the whole episode
         for g in self._gearbox:
             g.reset(self.data)
+        self._wing_touched = False
+        if self._crank is not None:
+            # Same battery as the steer: follow actuator_frac's draw.
+            self._crank.set_supply(self._rand.supply_scale
+                                   if self.rand["enabled"] else 1.0)
+            self._crank.reset(self.data)
         if self._drive is not None:
             # LAST, after every other draw, so the detent phase takes the one
             # extra number off the stream and nothing drawn above moves.
@@ -880,6 +966,13 @@ class GeneralEnv(gym.Env):
 
     def step(self, action):
         action = np.asarray(action, np.float32)
+        if self.full and self.diff_fade[1] > self.diff_fade[0]:
+            # Scale the ACTION, not only the command, so prev_action and the
+            # smoothness term see what was applied. At full fade the channel
+            # reads 0, which is what replay feeds back for a zero bound
+            # (ActionBounds.normalize in drive.py).
+            action = action.copy()
+            action[2] *= self.diff_scale()
         scaled = scale_action(action, self.bounds)
         steer_rate, hub, diff = scaled[0], scaled[1], scaled[2]
         # Bounded to STEER_LEAD_MAX of the measured steer -- the same call
@@ -909,8 +1002,12 @@ class GeneralEnv(gym.Env):
         self.data.ctrl[self._aid["drive_a"]] = a
         self.data.ctrl[self._aid["drive_b"]] = b
         self.data.ctrl[self._aid["steer"]] = self._steer
-        if self.wings:
+        if self.wings or self.swing:
             # Held at 0 (stowed) when the policy does not own the channel.
+            # `or self.swing` added 2026-10-09: gated on the mirrored pair
+            # alone, the swing actuator was never commanded in training, so
+            # general_swing_rl and general_swing_open_rl trained with a 4th
+            # action wired to nothing (replay, drive.py, did drive it).
             self.data.ctrl[self._aid["wings"]] = self._wing
 
         self.data.xfrc_applied[self._chassis, :] = 0.0
@@ -924,7 +1021,12 @@ class GeneralEnv(gym.Env):
                 self._drive.pre_step(self.data)
             for g in self._gearbox:
                 g.pre_step(self.data)
+            if self._crank is not None:
+                self._crank.pre_step(self.data)
             mujoco.mj_step(self.model, self.data)
+            if self.wing_touch_fails and self._wing_touches_floor():
+                self._wing_touched = True
+                break
             if self.w_copper:
                 u = self.data.actuator_force[self._cu_ids] * self._cu_inv_stall
                 self._cu_sum += float(u @ u)
@@ -1055,7 +1157,8 @@ class GeneralEnv(gym.Env):
             self._track_sum += 0.5 * (r_vel + r_head)
             self._track_n += 1
 
-        fell = abs(s.roll) > self.fall or not np.all(np.isfinite(self.data.qpos))
+        fell = (abs(s.roll) > self.fall or self._wing_touched
+                or not np.all(np.isfinite(self.data.qpos)))
         terminated = False
         if fell:
             reward -= rw["penalty_fall"]
@@ -1087,10 +1190,12 @@ class GeneralEnv(gym.Env):
                          if (self.wings or self.swing) else 0.0),
             "head_err_deg": float(np.degrees(abs(psi_err))),
             "difficulty": float(self._diff),
+            "diff_scale": self.diff_scale(),
             # Mean sum (tau/tau_stall)^2 over this step's substeps; 0.0 unless
             # w_copper is set, because it is only accumulated then.
             "copper": float(copper),
             "fell": bool(fell),
+            "wing_touch": bool(self._wing_touched),
             # No task "success" for an always-on controller: surviving the
             # episode while tracking well is the whole objective.
             "success": bool(not fell), "is_success": bool(not fell)}

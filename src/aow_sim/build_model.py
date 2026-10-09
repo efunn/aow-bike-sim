@@ -1254,7 +1254,8 @@ def _wrap_pi(a: float) -> float:
     return float((a + np.pi) % (2 * np.pi) - np.pi)
 
 
-def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
+def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
+                       tip_mass: float = 0.0) -> None:
     """Co-rotating FOUR-BAR wing pair (build_model(..., swing_linkage=True)).
 
     The driveable counterpart to analysis/swing_linkage.py, which until now was
@@ -1411,6 +1412,17 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None
             mass=w_ref["mass"], contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
             **_part_contact(sim, "righting"),
             rgba=[0.85, 0.2, 0.2, 1] if side < 0 else [0.2, 0.4, 0.8, 1])
+        if tip_mass:
+            # A point mass at the panel's far end from the pivot, for the
+            # balance-by-inertia study (rl_general_nodiff.yaml). NO CONTACT:
+            # the panel's own geom already covers the tip, and a wing that
+            # reaches the floor is what `wing_touch_fails` is there to catch.
+            tip = max((lo_p, hi_p), key=lambda q: float(np.linalg.norm(q)))
+            wing.add_geom(
+                name=f"swing_wing_{tag}_tip_mass",
+                type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.008, 0, 0],
+                pos=[0.0, float(tip[0]), float(tip[1])], mass=float(tip_mass),
+                contype=0, conaffinity=0, rgba=[0.15, 0.15, 0.15, 1])
         att = joint0 - pivot
         wing.add_site(name=f"swing_wing_{tag}_attach",
                       pos=[0.0, att[0], att[1]], size=[0.003, 0, 0])
@@ -1873,6 +1885,7 @@ def build_spec(
     swing_linkage: bool = False,
     swing_linkage_cfg: str | Path | None = None,
     rig: dict | None = None,
+    swing_tip_mass: float = 0.0,
 ) -> mujoco.MjSpec:
     """`rig`: a RESOLVED floor-rig config (see `floor_rig.resolve`). The whole
     bike is built exactly as usual, freejoint included, and the rig's
@@ -2139,7 +2152,10 @@ def build_spec(
             raise ValueError("swing_linkage is an ALTERNATIVE to "
                              "wings/linkage/swing -- pick one mechanism")
         _add_swing_linkage(spec, chassis, p, yaml.safe_load(
-            Path(swing_linkage_cfg or SWING_LINKAGE_CFG).read_text()))
+            Path(swing_linkage_cfg or SWING_LINKAGE_CFG).read_text()),
+            tip_mass=swing_tip_mass)
+    elif swing_tip_mass:
+        raise ValueError("swing_tip_mass is a swing_linkage option")
     if swing:
         if wings or linkage:
             raise ValueError("swing wings are an ALTERNATIVE to wings/linkage, "
@@ -2251,18 +2267,20 @@ def build_model(
     flywheel: bool = False, flywheel_cfg: str | Path | None = None,
     swing: bool = False, swing_cfg: str | Path | None = None,
     swing_linkage: bool = False, swing_linkage_cfg: str | Path | None = None,
-    rig: dict | None = None,
+    rig: dict | None = None, swing_tip_mass: float = 0.0,
 ) -> mujoco.MjModel:
     model = build_spec(params, variant, training_wheels, hockey, payload,
                       righting, wings, linkage, linkage_cfg,
                       flywheel, flywheel_cfg, swing, swing_cfg,
-                      swing_linkage, swing_linkage_cfg, rig).compile()
+                      swing_linkage, swing_linkage_cfg, rig,
+                      swing_tip_mass).compile()
     _BUILD_ARGS[model] = dict(
         variant=variant, training_wheels=training_wheels, hockey=hockey,
         payload=payload, righting=righting, wings=wings, linkage=linkage,
         linkage_cfg=linkage_cfg, flywheel=flywheel, flywheel_cfg=flywheel_cfg,
         swing=swing, swing_cfg=swing_cfg, swing_linkage=swing_linkage,
-        swing_linkage_cfg=swing_linkage_cfg, rig=rig)
+        swing_linkage_cfg=swing_linkage_cfg, rig=rig,
+        swing_tip_mass=swing_tip_mass)
     # Exactly one floor is solid and visible to start with. They are all
     # COMPILED collidable (see the note at the floor block: compiling one
     # inert prunes it permanently), so this is the reversible switch-off
