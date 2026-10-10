@@ -2,7 +2,10 @@
 # stand still on steer, hub and the swing wings alone?
 #
 # rl_general_smooth_temporal.yaml plus the blocks marked below -- diff the two
-# to check. Same seed, same AHRS (tm151, 0.19).
+# to check. Same seed, same AHRS. (general_rl_nodiff_2 trained on tm151 at
+# 0.19 and on the V1 four-bar, before the lineage moved to tm151_filter and
+# the bike to the V2 righting module on 2026-10-09; its move yaml records
+# both. This file now trains V2.)
 #
 # THE QUESTION is standstill stability (user, 2026-10-09: "mostly for
 # standstill stability interest"). Without the differential the bike is a
@@ -10,7 +13,8 @@
 # standing, it has the track stand (front wheel turned, rocking on the hub)
 # and now the wings. Each wing tip roughly doubles its lateral reach over the
 # stroke; with 100 g at each that moves the CoM up to 7 mm sideways, ~0.09 N m,
-# the gravity torque of ~3.5 deg of lean (measured on the model, 2026-10-09).
+# the gravity torque of ~3.5 deg of lean (measured on the V1 model, 2026-10-09;
+# a second, rougher solve gave ~14 mm -- unresolved, and V2 is not measured).
 # A hand search over wings-only full-state feedback at standstill, wing
 # collisions off, at most doubled the time to fall (0.67 -> 1.68 s from
 # 0.5 deg) -- and that ran on a crank 2-3x faster than the servo, so the
@@ -88,16 +92,18 @@ env:
   ahrs_level: tm151_filter   # the TM151 as its own fusion filter (c6d37b3 weighting); was tm151 to 10-09
   ahrs_tau_s: 2.0            # the level's own: the filter has its 0.19 built in; this only times its 0.1 deg residual
   obs_pitch: true            # in the state; no w_pitch penalty this run.
-  # THE WINGS, for their INERTIA. The four-bar the bike is being built with
-  # (swing_linkage_smaller.yaml), driven by the policy through its crank on
-  # the XC330's firmware model, with 100 g at each wing tip. The channel is a
-  # crank RATE integrated into a position target, capped inside the crank's
-  # +-136.5 deg travel.
+  # THE WINGS, for their INERTIA. The bike's righting module (V2, the
+  # diamond with its blades -- bike_params righting.module), driven by the
+  # policy through its crank on the XC330's firmware model, with 100 g at
+  # each blade's far end. The channel is a crank RATE integrated into a
+  # position target, capped at the crank's +-129.3 deg travel (level;
+  # the toes stop it at ~130).
   obs_swing: true
   act_swing: true
   swing_linkage: true
+  righting_module: v2        # was V1 (swing_linkage_smaller) for nodiff_2
   swing_tip_mass_kg: 0.1     # each tip; user, 2026-10-09: "100g tips for now"
-  wing_max_deg: 135.0        # crank angle
+  wing_max_deg: 129.3        # crank angle: V2's whole commanded stroke
   wing_touch_fails: true     # a wing on the floor is a fall: no kickstand
   control_rate_hz: 50
   max_episode_s: 15.0    # long: the policy must hold a command, not finish one

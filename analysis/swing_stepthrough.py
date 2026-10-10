@@ -18,19 +18,21 @@ says "not run" rather than carrying a number from somewhere else.
     python analysis/swing_stepthrough.py config/a.yaml config/b.yaml --labels A B
     python analysis/swing_stepthrough.py --blade my_blade.yaml cad   # CAD entries
 
-V1 is the linkage built today, as the sim builds it. V2 is the CAD: the
+V2 is the bike's righting module, what is going on the bike and what the sim
+builds by default (bike_params `righting.module`, since 2026-10-09): the
 diamond exactly as `cad_righting` builds it -- its links at `linkage.scale`
 (1.25) about the wing rod, the XC330 long end DOWN, and every righting part's
 front section from `cad_righting.layout()`, posed with the CAD's own group
-transforms (no Onshape call) -- with the blade in
-config/swing_explore/blade_toe.yaml swept on each wing. Past the flat it runs
-on to where the two blades meet (the toe stop). Its diagnostics: that angle,
-the angle the links themselves first touch, and the blade's least clearance
-to every part sharing its fore/aft span and to the floor with the bike
-upright. The sim runs the config with its links scaled the same way, written
-to a temp file; it has its own flat panel and never sees the blade. The
-servo case is drawn DOWN whatever the 1 mm rule says (the rule keeps the
-case off the hinge rod; the CAD breaks it on purpose).
+transforms (no Onshape call) -- with the blade in config/righting_blade.yaml
+swept on each wing. Past the flat it runs on to where the two blades meet
+(the toe stop). Its diagnostics: that angle, the angle the links themselves
+first touch, and the blade's least clearance to every part sharing its
+fore/aft span and to the floor with the bike upright. Its sim is the default
+build: the module's own blades (toes and all), masses and crank. V1 is the
+earlier four-bar (swing_linkage_smaller.yaml), flat panels, from its config.
+The quasi-static mass properties (`swing_linkage.mass_props`) are the bike's,
+so V2's for both. The servo case is drawn DOWN whatever the 1 mm rule says
+(the rule keeps the case off the hinge rod; the CAD breaks it on purpose).
 """
 
 from __future__ import annotations
@@ -65,6 +67,13 @@ FIT_MM = 1.0         # least clearance that counts as fitting
 ROD_R = 1.6          # a 1/8 in hinge rod
 PANEL_HALF = 3.0     # the panel box's half-thickness in the sim
 SERVO_CLEAR_MM = 5.0  # the blade to the servo and its cases (user, 2026-10-09)
+# Least clearance between two parts of different groups that share fore/aft
+# space, below which the page WARNS. 2 mm (user, 2026-10-09), so the knuckle
+# on the other wing's coupler (1.81 at the ~130 toe stop) shows as a warning
+# on purpose: the toes stop the crank before the links meet, and the hard
+# floor is test_cad_righting's 1.5.
+LINK_CLEAR_MM = 2.0
+LINK_SHOW_MM = 8.0    # pairs listed in the diagnostics: closer than this
 
 
 def servo_rect(shaft, orient: str):
@@ -116,7 +125,15 @@ def servo_fit(lk, T: float, shaft) -> dict:
     return {"case": None, **out["down"]}
 
 
-def lift_pin_peak(params, path: Path, counts: int = 700, supply: float = 9.9) -> float:
+def _travel_deg(params, path: Path | None) -> float:
+    """`stroke.crank_travel_deg` of a config, or of the bike's righting module
+    (V2) for None -- which is also what `rcs.fallen(..., None)` builds."""
+    cfg = (params["righting"]["module"]["linkage"] if path is None
+           else yaml.safe_load(path.read_text()))
+    return float(cfg["stroke"]["crank_travel_deg"])
+
+
+def lift_pin_peak(params, path: Path | None, counts: int = 700, supply: float = 9.9) -> float:
     """Peak coupler-pin force [N] in the sim while the stepped stroke lifts the
     bike to upright (not the fall after it). On every design it lands in the
     first 1-3 ms: the servo stepping from holding to full current against a
@@ -126,7 +143,7 @@ def lift_pin_peak(params, path: Path, counts: int = 700, supply: float = 9.9) ->
     import righting_current_sweep as rcs
     from aow_sim.control.righting import roll_pitch
     from aow_sim.righting_servo import CURRENT_LIMIT
-    dep = np.deg2rad(float(yaml.safe_load(path.read_text())["stroke"]["crank_travel_deg"]))
+    dep = np.deg2rad(_travel_deg(params, path))
     m, d0, srv, hooks = start = rcs.fallen(params, 1.0, 2.0, path)
     best = {g: rcs.trial(params, 1.0, g, CURRENT_LIMIT, 1.0, 4.0, 5.0, start)["min_roll"]
             for g in (dep, -dep)}
@@ -151,7 +168,7 @@ def lift_pin_peak(params, path: Path, counts: int = 700, supply: float = 9.9) ->
     return round(peak[0], 1)
 
 
-def sim_trace(params, path: Path, end_deg: float, slew_dps: float = 40.0,
+def sim_trace(params, path: Path | None, end_deg: float, slew_dps: float = 40.0,
               supply: float = 9.9, every: int = 5) -> dict:
     """The sim through the stroke, for the charts: the bike settled on its
     side as `lift_pin_peak` starts it, then the crank goal RAMPED at
@@ -166,7 +183,7 @@ def sim_trace(params, path: Path, end_deg: float, slew_dps: float = 40.0,
     import righting_current_sweep as rcs
     from aow_sim.control.righting import roll_pitch
     from aow_sim.righting_servo import CURRENT_LIMIT
-    dep = np.deg2rad(float(yaml.safe_load(path.read_text())["stroke"]["crank_travel_deg"]))
+    dep = np.deg2rad(_travel_deg(params, path))
     m, d0, srv, hooks = start = rcs.fallen(params, 1.0, 2.0, path)
     best = {g: rcs.trial(params, 1.0, g, CURRENT_LIMIT, 1.0, 4.0, 5.0, start)["min_roll"]
             for g in (dep, -dep)}
@@ -178,7 +195,7 @@ def sim_trace(params, path: Path, end_deg: float, slew_dps: float = 40.0,
     srv.set_goal_current(CURRENT_LIMIT)
     aid = m.actuator("swing").id
     qadr = m.jnt_qposadr[m.actuator_trnid[aid, 0]]
-    q0, end, rate = float(d.qpos[qadr]), np.deg2rad(end_deg), np.deg2rad(slew_dps)
+    end, rate = np.deg2rad(end_deg), np.deg2rad(slew_dps)
     out, k = [], [0]
 
     def on(dd):
@@ -189,7 +206,10 @@ def sim_trace(params, path: Path, end_deg: float, slew_dps: float = 40.0,
         rows = np.flatnonzero(dd.efc_type[:dd.nefc] == mujoco.mjtConstraint.mjCNSTR_EQUALITY)
         pin = max((float(np.linalg.norm(dd.efc_force[rows[dd.efc_id[rows] == e]]))
                    for e in range(m.neq)), default=0.0)
-        out.append([float(np.degrees(sgn * (dd.qpos[qadr] - q0))), float(sgn * srv.torque),
+        # The crank's ABSOLUTE angle, as every other curve on the page uses.
+        # It was measured from `q0`, where the fall left it (back-driven
+        # ~10 deg on V2), which slid the whole trace ~10 deg to the right.
+        out.append([float(np.degrees(sgn * dd.qpos[qadr])), float(sgn * srv.torque),
                     pin, float(roll_pitch(dd.qpos[3:7])[0])])
     rcs.step(m, d, hooks, end_deg / slew_dps + 1.0, on)
     a = np.array(out)
@@ -216,23 +236,25 @@ DIAMOND = ROOT / "config" / "swing_linkage_shared_rod.yaml"
 # diamond as cad_righting builds it, with that blade swept.
 DEFAULT = [
     (SWING_LINKAGE_CFG, "V1", None),                                       # built today
-    (DIAMOND, "V2", ROOT / "config" / "swing_explore" / "blade_toe.yaml"),  # the CAD
+    (DIAMOND, "V2", ROOT / "config" / "righting_blade.yaml"),  # the bike's module
 ]
 NOTES = [
-    "<b>V1.</b> Linkage V1 (swing_linkage_smaller.yaml), from its config.",
-    "<b>V2.</b> Linkage V2 (swing_linkage_shared_rod.yaml), from the CAD.",
+    "<b>V1.</b> Linkage V1 (swing_linkage_smaller.yaml), the earlier four-bar, from its config.",
+    "<b>V2.</b> Linkage V2 (swing_linkage_shared_rod.yaml), from the CAD: the bike's righting "
+    "module, what the sim builds by default, blades from righting_blade.yaml.",
     "<b>Where V1 and V2 come from.</b> V2's CAD is generated as solid parts "
-    "(cad_righting, 1.25x, with blade_toe.yaml), so the page reads its real "
+    "(cad_righting, 1.25x, with righting_blade.yaml), so the page reads its real "
     "part outlines and checks the blade against them. V1's CAD is a 2D "
     "sketch generated from the same config (cad_swing_linkage): lines, no "
     "parts. So V1 is drawn and checked from its config's links and limits.",
     "<b>Colours.</b> Orange: the wing that pushes the bike up. Blue: the one "
     "that rises and tucks in. Burgundy: the servo's crank. The slider runs the "
-    "stroke from lying on its side (0%) to upright (100%); V2 runs on past the "
-    "flat to where its toes meet.",
+    "stroke from lying on its side (0%) to the commanded stroke (100%); V2 runs "
+    "on past it to where its toes meet.",
     "<b>Quasi-static.</b> At each crank angle the linkage is solved, the bike "
-    "set where it rests on the floor, and every force is a static balance: no "
-    "speed, inertia or impacts. Past the flat the bike falls over centre, "
+    "set where it rests on the floor (V2 on its blade's whole section, toe and "
+    "both faces; V1 on its panel line), and every force is a static balance: no "
+    "speed, inertia or impacts. Past level the bike falls over centre, "
     "which has no static balance; only the sim has values there.",
     "<b>mA.</b> The servo's Goal Current: the ceiling on the current its "
     "position loop may use. <i>Current limit @ 9.9 V (sim)</i>: the lowest "
@@ -263,11 +285,11 @@ def plane_of(lk, member: str):
     return lk.planes.get(member, lk.planes.get(member[:-1]))
 
 
-def sim_counts(params, path: Path, supply: float = 9.9) -> int:
+def sim_counts(params, path: Path | None, supply: float = 9.9) -> int:
     """Lowest Goal Current (10-count steps) that rights the bike, stepped."""
     import righting_current_sweep as rcs
     from aow_sim.righting_servo import CURRENT_LIMIT
-    dep = np.deg2rad(float(yaml.safe_load(path.read_text())["stroke"]["crank_travel_deg"]))
+    dep = np.deg2rad(_travel_deg(params, path))
     start = rcs.fallen(params, 1.0, 2.0, path)
     best = {g: rcs.trial(params, 1.0, g, CURRENT_LIMIT, 1.0, 4.0, 5.0, start)["min_roll"]
             for g in (dep, -dep)}
@@ -430,10 +452,45 @@ def cad_sweep(data, L, parts, bl, frames, pz: float, T: float, meet) -> dict:
         if key not in best or v < best[key]["v"]:
             best[key] = {"v": round(float(v), 2), "t": round(float(t), 1), "kind": kind}
 
+    # PART AGAINST PART, as V1's coupler check does for a config: every pair of
+    # parts in different groups sharing fore/aft span, at every frame (the
+    # frames run on to the toe stop). Pairs already overlapping in section at
+    # stow -- a pin in its boss, a hub on the rod, faces that bear -- are
+    # joints, not clearances, and are left out.
+    from itertools import combinations
+    P0 = cr.poses(lk, 0.0, L["C"], L["pin"], L["J"])
+    def sec(part, P):
+        return [(_posed(g, P.get(part["g"])), a, c) for g, a, c in part["pieces"]]
+    def share(A, B):
+        return any(a1 > b0 and a0 < b1 for _, a0, a1 in A for _, b0, b1 in B)
+    pairs = []
+    for p1, p2 in combinations(parts, 2):
+        if p1["g"] == p2["g"] or (p1["g"] == "fixed" and p2["g"] == "fixed"):
+            continue
+        A, B = sec(p1, P0), sec(p2, P0)
+        if not share(A, B):
+            continue
+        if any(ga.intersection(gb).area > 1e-3 for ga, a0, a1 in A for gb, b0, b1 in B
+               if a1 > b0 and a0 < b1):
+            continue
+        pairs.append((p1, p2))
+    links: dict[str, dict] = {}
+
     poses = []
     for fr in frames:
         t = fr["t"]
         P = cr.poses(lk, t, L["C"], L["pin"], L["J"])
+        tight = None
+        for p1, p2 in pairs:
+            A, B = sec(p1, P), sec(p2, P)
+            v = min(ga.distance(gb) - (ga.intersection(gb).area > 1e-3) * ga.intersection(gb).area
+                    for ga, a0, a1 in A for gb, b0, b1 in B if a1 > b0 and a0 < b1)
+            key = f"{p1['n']} x {p2['n']}"
+            if key not in links or v < links[key]["v"]:
+                links[key] = {"v": round(float(v), 2), "t": round(float(t), 1), "kind": "mm"}
+            if tight is None or v < tight[1]:
+                tight = (key, float(v))
+        fr["link"] = None if tight is None else [tight[0], round(tight[1], 2)]
         poses.append({g: {k: [round(float(x), 3) for x in v] if isinstance(v, list)
                           else round(float(v), 3) for k, v in P[g].items()}
                       for g in ("crank", "wR", "wL", "cR", "cL")})
@@ -463,6 +520,13 @@ def cad_sweep(data, L, parts, bl, frames, pz: float, T: float, meet) -> dict:
                   key=lambda r: (r["kind"] != "mm2", r["v"]))
     for r in rows:
         r["target"] = SERVO_CLEAR_MM if r["what"] in ("XC330", "lower case") else 0.0
+    # The parts against each other, up to the toe stop: the closest pairs.
+    rows += sorted(({"what": k, **v, "target": LINK_CLEAR_MM} for k, v in links.items()
+                    if v["v"] < LINK_SHOW_MM), key=lambda r: r["v"])
+    # A CAD design FAILS only by touching (overlap, or under 0 mm); under its
+    # target it WARNS (user, 2026-10-09). A config design's targets stay hard.
+    for r in rows:
+        r["fail"] = 0.0
     # Layers, numbered from the back: the moving parts' fore/aft faces,
     # merged within 1 mm, cut the span into cells; each part lists the
     # cells it fills. The pins and the washer only thread through them.
@@ -483,20 +547,23 @@ def cad_sweep(data, L, parts, bl, frames, pz: float, T: float, meet) -> dict:
     return {"pz": pz, "floor_z": fz, "poses": poses, "src": bl["src"], "y": [y0, y1],
             "layers": layers,
             "meet": meet, "T": round(float(T), 1), "limit": link_limit(data, L, parts, T),
+            "link_target": LINK_CLEAR_MM,
             "parts": [{"n": p["n"], "g": p["g"],
                        "rings": [r for geom, _, _ in p["pieces"] for r in _rings(geom)]}
                       for p in parts],
             "blade": {"R": _rings(bR)[0], "L": _rings(bL)[0]}, "clear": rows}
 
 
-def rest_over_centre(lk, t: float) -> dict:
-    """Past the flat: the bike on the deploying panel's far end and the
-    wheels, CoM beyond the wheels -- over centre, tipping toward the other
-    side. `resting_pose` refuses it (no static rest); for the picture it is
-    posed on that edge anyway, the commanded crank fixing the roll."""
+def rest_over_centre(lk, t: float, pts=None) -> dict:
+    """Past level: the bike on the deploying wing's far point and the wheels,
+    CoM beyond the wheels -- over centre, tipping toward the other side.
+    `resting_pose` refuses it (no static rest); for the picture it is posed
+    on that edge anyway, the commanded crank fixing the roll. `pts`: the
+    wing's support points at `t` (the blade), else the panel's two ends."""
     pz = lk.pose(-1, t)
+    pts = [pz["top"], pz["foot"]] if pts is None else list(pts)
     wheel = np.array([0.0, -lk.wheel_radius])
-    for end in (pz["top"], pz["foot"]):
+    for end in pts:
         v = end - wheel
         roll = -np.degrees(np.arctan2(v[1], v[0]))
         if roll > 90:
@@ -504,9 +571,28 @@ def rest_over_centre(lk, t: float) -> dict:
         elif roll < -90:
             roll += 180
         floor = sl._rot(wheel, roll)[1]
-        if all(sl._rot(q, roll)[1] >= floor - 1e-6 for q in (pz["top"], pz["foot"])):
+        if all(sl._rot(q, roll)[1] >= floor - 1e-6 for q in pts):
             return {"to_floor": (float(roll), float(floor)), "regime": "over"}
     raise ValueError(f"no over-centre rest at crank {t:.1f}")
+
+
+def blade_in_sketch(lk, blade: dict) -> np.ndarray:
+    """The blade's section at stow (cad_parts' polygon: module frame, mm out
+    from the centreline and up from the wing rod) in the planar model's
+    sketch frame (right wing at -x, z from the axle). Its vertices are the
+    supports `resting_pose_on` turns with the wing."""
+    xy = np.asarray(blade["geom"].exterior.coords, float)[:-1]
+    return np.column_stack([-xy[:, 0], xy[:, 1] + float(lk.pivot(-1)[1])])
+
+
+def turned_points(lk, t: float, pts0) -> np.ndarray:
+    """`pts0` (sketch mm, at stow) turned with the deploying wing to crank t."""
+    p0, pz = lk.pose(-1, 0.0), lk.pose(-1, t)
+    h = np.asarray(pz["pivot"], float)
+    a = (np.arctan2(*(pz["top"] - pz["foot"])[::-1])
+         - np.arctan2(*(p0["top"] - p0["foot"])[::-1]))
+    R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+    return (np.asarray(pts0, float) - h) @ R.T + h
 
 
 def _seg_dist(a, b, c, d) -> float:
@@ -563,13 +649,21 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
     lk = cad[0]["lk"] if cad else sl.SwingLinkage(copy.deepcopy(cfg))
     table = ss.load_table(*ss.reference_panel(cfg, None), lk.wheel_radius)
     st = ss.stroke(lk, table, sc)
-    T = st["T"]
+    # The COMMANDED stroke, as the sim's crank, teleop and the ground station
+    # use it: the config's crank_travel_deg (V2: 129.3, level on the blade).
+    # The synthesis's own geometric command (its "flat", st["T"]) only
+    # scores the planar stroke -- for V2 it was 128.4, 0.9 short of level.
+    T = float(cfg["stroke"]["crank_travel_deg"])
     # A CAD blade whose toes meet past the flat runs on to them: that touch,
     # not the commanded travel, is the mechanism's end.
     meet = blade_meet(cad[0], cad[1], cad[3]) if cad else None
     end = meet if meet is not None and meet > T else T
     mp = sl.mass_props()
     M, mw = mp["total"], mp["wing"]
+    # A CAD entry RESTS ON ITS BLADE -- every vertex of the section, toe and
+    # both faces -- with the wing's CoM from the sim. The panel line is the
+    # blade's centre line, which left out its half-thickness and the toe.
+    blade0 = blade_in_sketch(lk, cad[3]) if cad else None
     frames = []
     for f in np.linspace(0.0, 1.0, 121):
         t = float(f * end)
@@ -580,11 +674,17 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
                 fr[k + tag] = [round(float(v), 1) for v in pz[k]]
         # Past the flat (a CAD entry running on to its toe stop) there is no
         # static rest: the bike goes over centre on the panel's far end.
-        rest = sl.resting_pose(lk, t) or rest_over_centre(lk, t)
+        if blade0 is None:
+            rest = sl.resting_pose(lk, t) or rest_over_centre(lk, t)
+        else:
+            rest = (sl.resting_pose_on(lk, t, blade0, mp["wing_com"])
+                    or rest_over_centre(lk, t, turned_points(lk, t, blade0)))
         pz = lk.pose(-1, t)
         g = abs(sl.ratio_at(lk, -1, t, pz) or 0.0)
         load = max(float(np.interp(pz["wing_deg"], *table)), 0.0)
-        com = ((M - mw) * mp["rest"] + mw * 0.5 * (pz["foot"] + pz["top"])) / M
+        wing_c = (0.5 * (pz["foot"] + pz["top"]) if blade0 is None
+                  else turned_points(lk, t, [mp["wing_com"]])[0])
+        com = ((M - mw) * mp["rest"] + mw * wing_c) / M
         # Past the flat the quasi-static model has no load: the bike is
         # falling over centre. Pins and motor are left empty (a gap in the
         # charts) rather than given a number nothing computed.
@@ -614,14 +714,14 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
     for k, fr in enumerate(frames):
         fr["i"] = k
     print(f"{label:<40} planar {st['counts']:.0f}  sim {sim if sim is not None else '--'}  "
-          f"travel {T:.0f}")
+          f"travel {T:.1f}")
     sweep = cad_sweep(*cad, frames, float(lk.pivot(1)[1]), T, meet) if cad else None
     if sweep:
         lim = sweep["limit"]
         meet = sweep["meet"] if sweep["meet"] is not None else "never"
         touch = f"{lim['t']:.1f} ({lim['what']})" if lim else "never"
-        print(f"  blade ({sweep['src']}): blades meet at crank {meet}, flat at "
-              f"{sweep['T']:.0f}, links touch at {touch};\n"
+        print(f"  blade ({sweep['src']}): blades meet at crank {meet}, commanded "
+              f"stroke {sweep['T']:.1f}, links touch at {touch};\n"
               f"least clearance over the stroke:")
         for r in sweep["clear"]:
             unit = "mm2 OVERLAP" if r["kind"] == "mm2" else "mm"
@@ -690,26 +790,19 @@ def main() -> int:
            # stall there, or the firmware limit if that is lower
            "max_ma": round(min(ss.counts(sc, sc["ts"] * ss.SUPPLY), ss.CURRENT_LIMIT_A * 1000)),
            "limit_nm": sc["k"] * (ss.CURRENT_LIMIT_A - sc["i0"])}
-    # The CAD entries' sim: the config with its links scaled about the wing
-    # rod as cad_righting does, written to a temp file the sim reads. One
-    # run serves every blade (the sim has its own flat panel, no blade).
+    # The CAD entries' sim: the bike's own righting module, the default build
+    # (bike_params righting.module -- these links scaled as cad_righting
+    # does, its blades from config/righting_blade.yaml, toes and all). One
+    # run serves every CAD entry; a `--blade` other than the module's is
+    # swept on the page but not simulated.
     if args.sim and any(d["cad"] for d in designs):
-        import tempfile
-        from aow_sim import cad_righting as cr
-        cfg = yaml.safe_load(DIAMOND.read_text())
-        k = float(cr.load()["scale"])
-        m = cfg["mechanism"]
-        for n in ("crank_length", "coupler_length", "rocker_length"):
-            m[n] *= k
-        m["servo_offset"] = m["wing_pivot_z"] + k * (m["servo_offset"] - m["wing_pivot_z"])
-        with tempfile.TemporaryDirectory() as tmp:
-            scaled = Path(tmp) / "shared_rod_cad_scale.yaml"
-            scaled.write_text(yaml.safe_dump(cfg))
-            sim, lift = sim_counts(params, scaled), lift_pin_peak(params, scaled)
-            for d in designs:
-                if d["cad"]:
-                    on_frames(sim_trace(params, scaled, d["frames"][-1]["t"]), d["frames"])
-        print(f"CAD linkage x{k:g} in the sim: {sim} mA, coupler pin at the start {lift} N")
+        k = float(params["righting"]["module"]["linkage"]["_source"]["scale"])
+        sim, lift = sim_counts(params, None), lift_pin_peak(params, None)
+        for d in designs:
+            if d["cad"]:
+                on_frames(sim_trace(params, None, d["frames"][-1]["t"]), d["frames"])
+        print(f"the righting module (CAD linkage x{k:g}) in the sim: {sim} mA, "
+              f"coupler pin at the start {lift} N")
         for d in designs:
             if d["cad"]:
                 d["sim"], d["pins"]["lift_sim"] = sim, lift

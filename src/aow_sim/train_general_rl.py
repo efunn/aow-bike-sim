@@ -38,7 +38,7 @@ from .smooth_ppo import SmoothPPO, parse_smooth
 from .control.balance import extract_state
 from .control.flick import MOVES_DIR, reserve_move_name
 from .control.general_env import GeneralEnv, _load_rl_config
-from .control.general_spec import ActionBounds, obs_layout
+from .control.general_spec import ActionBounds, obs_layout, righting_module_for
 from .control.policy import save_policy_npz
 from .sim_ahrs import level_tau_orient_s
 
@@ -952,6 +952,10 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # for the geared stand-in and the four-bar (one crank channel), so
            # obs_layout cannot tell them apart; these are the only record.
            "swing_linkage": bool(cfg["env"].get("swing_linkage", False)),
+           # The righting module the bike carried in training (v2 / v1 /
+           # none), driven or not: a non-swing policy still trained with
+           # its mass and its blades.
+           "righting_module": righting_module_for(cfg["env"]),
            "swing_tip_mass_kg": float(cfg["env"].get("swing_tip_mass_kg", 0.0)),
            "wing_touch_fails": bool(cfg["env"].get("wing_touch_fails", False)),
            # The resulting entry names, recorded explicitly. Two optional

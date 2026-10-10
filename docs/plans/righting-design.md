@@ -566,6 +566,84 @@ Measured ceiling: with the central screw gone altogether (bridge chamfer
 otherwise, buys at most that. Flipping the servo is the larger lever
 (below, measured 2026-10-07: ~12).
 
+## In the sim, as the default bike (2026-10-09, user)
+
+User: V2 "is what is going on the bike so yea it needs to be in all the
+environments, including the toe and blade". Decisions: the default plant (not
+an opt-in); the pill roof stays, no bumpers; masses from the CAD volumes,
+`GUESS`, the fixed parts ADDED to `chassis.mass`; the toe a uniform 5 mm.
+
+**What builds it.** `build_model` with no mechanism flag builds bike_params
+`righting.module`. `params.resolve_righting_module` inlines the scaled
+linkage (this file's `linkage.config` at `linkage.scale`) and the blade
+outline (`config/righting_blade.yaml`, was `swing_explore/blade_toe.yaml`)
+into params, so `plant_digest` moves when either file does.
+`swing_linkage=False` is the wingless bike every earlier export trained on;
+`wings=` / `linkage=` / `swing=` / a `swing_linkage_cfg` build their study
+mechanism instead.
+
+**The blade** is two convex meshes per wing, blade and toe, placed about the
+wing rod from the outline: the vertices match the file to 0.1 mm at qpos0.
+The two blades share a contact bit with nothing else, so **the toes are the
+end stop**: as first built they touched at crank 136.25 both ways (held
+136.6-136.7 under the full 0.55 N.m). The toe went from flared (7.8 mm across
+the tip) to a uniform 5 mm on the same tip midpoint: stop 136.25 -> 136.5
+on the planar search, nothing material lost.
+
+**Masses, GUESS** (CAD check volumes of 10-07, 2 perimeters / 15 % infill,
+`cad_servo_mount.printed_mass`):
+
+| body | g |
+|---|---|
+| crank: both halves, horn hub, steel crankpin | 11.2 |
+| each coupler | 2.3 |
+| each wing hub: rocker, knuckle, stub, steel rocker pin | 14.9 |
+| each blade (660 mm2 x 82 mm) | 28.6 |
+| fixed: cases, bulkhead, bridge, steel rod, XC330 | 64.1 |
+
+Bike 1.016 -> 1.228 kg: +167 g of module, +45 g of roof.
+
+**The crank needed an armature.** V2's crank alone is 2.5e-6 kg m2 (the
+wings reach it only through the loop's soft constraints), and the bare
+position actuator rang at 1200-1300 deg/s holding any angle but stow. The
+XC330's reflected rotor inertia was missing from every servo in the model;
+`crank_armature` 1e-3 (GUESS, the order of the XC430's measured 2.2e-3)
+stops it. On the firmware model it costs 6 % of the full-rate stroke
+(0 -> 110 deg: 0.183 s at 1e-4, 0.194 at 1e-3).
+
+**Measured on it:** the stepthrough's sim rights the bike at 547 mA at 9.9 V
+(the flat-panel diamond scored 547 too); the blade clears the floor by
+1.64 mm upright at crank 127. The ground station (`hw/ground.py`) strokes
+the module's stroke now -- it read V1's 136.6, which on this hardware drives
+the toes together. GeneralEnv holds the crank at stow on the firmware model
+for policies that do not drive it: env throughput 1.26x the wingless cost
+(1.16x on the bare actuator).
+
+**The commanded stroke is 129.3, level on the blade (2026-10-09, user).**
+`swing_linkage_shared_rod.yaml` carried 128.4, the synthesis's "flat": its
+placeholder panel line -- which is the blade's CENTRE line -- horizontal in
+the bike frame. The stepthrough now rests V2 on the blade's whole section
+(both faces and the toe) with the sim's wing CoM, and it and the sim trace
+cross roll 0 at ~129.3 (the trace had been plotted from the crank's
+post-fall angle, -10.6 deg on V2, ~10 deg right of everything else; fixed).
+Measured in the sim with no policy (steer straight, wheels held, 9.9 V):
+commanded 125 settles at crank 125.8 / +2.4 deg roll; 126 and over carries
+the bike past level onto its other side. Cost: knuckle R to coupler L, least
+over the stroke, 2.19 mm at 128.4 -> 1.99 at 129.3 (0.41 at the toe stop),
+under the CAD test's 2.0 -- open.
+
+**The toe is 2.2 mm longer: it stops the crank before the links collide
+(2026-10-09, user).** Each knuckle closes on the other wing's coupler past
+~130 deg (2.19 mm least at 128.4, 1.99 at 129.3, 1.83 at 130, 0.41 at
+136.25, touching at 138.0) -- "the knuckle and coupler really are gonna run
+into each other at past 130deg". The uniform toe runs on along its centreline
+to 37.4 mm from the foot: the toes now meet at 129.75-130.0 planar, 129.9 in
+the sim, held at 130.5 under full torque, where the knuckle still has ~1.7 mm.
+`test_the_knuckles_sit_beside_the_other_wings_coupler` sweeps to 131 (1.5 mm
+floor) instead of the commanded stroke (2.0). OPTIONAL, LATER: a dogleg
+coupler, bent round the other knuckle, for more travel; the toe would then be
+shortened again.
+
 ## Outstanding
 
 - **Shrink the stack: the 6 mm plates are DONE (2026-10-05), lowering is not.**
@@ -602,5 +680,6 @@ otherwise, buys at most that. Flipping the servo is the larger lever
   chassis plate is a placeholder.
 - **Torque still reaches the servo:** a knock twisting a wing about the rod
   goes through the linkage to the gearbox. Pin forces do not.
-- **The 1.25× linkage has not been re-run in the sim,** only on the planar
-  scorer.
+- **The 1.25× linkage is in the sim (2026-10-09)** as the default bike, blades
+  and toe stop included; 547 mA at 9.9 V. Its masses are CAD `GUESS`es and the
+  crank's armature is a `GUESS`: weigh the parts, coast the crank down.

@@ -197,6 +197,26 @@ def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False,
     return tuple(names)
 
 
+RIGHTING_MODULES = ("v2", "v1", "none")
+
+
+def righting_module_for(env: dict) -> str:
+    """Which righting module an env config flies (GeneralEnv's
+    `righting_module`): `v2` the bike's own (the default), `v1` the earlier
+    four-bar, `none` wingless. A config that predates the key and sets
+    `swing_linkage` meant V1; the mirrored `wings` and the geared `swing`
+    replace the module, so they read `none`."""
+    link = bool(env.get("swing_linkage", False))
+    if (env.get("obs_wings") or env.get("act_wings")
+            or ((env.get("obs_swing") or env.get("act_swing")) and not link)):
+        return "none"
+    mod = str(env.get("righting_module", "v1" if link else "v2"))
+    if mod not in RIGHTING_MODULES:
+        raise ValueError(f"righting_module: one of {RIGHTING_MODULES}, "
+                         f"got {mod!r}")
+    return mod
+
+
 def policy_flags(pol) -> dict:
     """The optional-block flags a loaded policy declares, with defaults.
 
@@ -278,6 +298,9 @@ def policy_env_overrides(pol) -> dict:
                 ahrs_channels=str(getattr(pol, "ahrs_channels", "both")),
                 wing_max_deg=float(getattr(pol, "wing_max_deg", 90.0)),
                 swing_linkage=bool(getattr(pol, "swing_linkage", False)),
+                # The module it TRAINED on: "none" for every export before
+                # 2026-10-09, so a replay rebuilds its own training bike.
+                righting_module=str(getattr(pol, "righting_module", "none")),
                 swing_tip_mass_kg=float(getattr(pol, "swing_tip_mass_kg", 0.0)),
                 wing_touch_fails=bool(getattr(pol, "wing_touch_fails", False)),
                 # The plant, not a sensor, but the same invisible failure: an

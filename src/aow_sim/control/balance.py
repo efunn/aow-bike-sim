@@ -346,6 +346,16 @@ class LQRBalance(_Base):
         # model has, and its wing mass (None where the model object carries
         # no masses, e.g. the deploy model on the Pi).
         self._swing_crank = _jn == "swing_crank_joint" and self._wj is not None
+        # Which four-bar: the bike's own module (V2) carries the blades' toe
+        # pieces, the earlier one (V1) a flat panel. None where the model
+        # object has no geoms (the deploy model on the Pi).
+        try:
+            model.geom("swing_wing_right_toe")
+            self._righting_module = "v2"
+        except (KeyError, ValueError):
+            self._righting_module = "v1" if self._swing_crank else "none"
+        except AttributeError:
+            self._righting_module = None
         try:
             self._swing_wing_mass = float(
                 model.body_mass[model.body("swing_wing_right").id])

@@ -96,11 +96,13 @@ SEND_HZ = 50.0
 # Stow at mid-scale: 2048 counts on a 4096-count turn, so +-travel is reachable
 # without winding the servo into extended position.
 STOW_RAD = math.radians(180.0)
-# Where the deployed angle comes from. `_smaller` is the config that WON the
-# swing-linkage optimisation (docs/plans/wing-linkage-design-and-optimization.md
-# line 501: "_smaller ... _smaller_v2 was tried as an even smaller envelope and
-# did not buy enough"), and the linkage's servo drives the CRANK directly --
-# gear ratio 1, unlike the geared pair -- so crank degrees ARE servo degrees.
+# Where the deployed angle comes from: the bike's righting MODULE (V2, the
+# diamond -- bike_params `righting.module`, resolved by params.py, no MuJoCo),
+# whose `stroke.crank_travel_deg` is 129.3, level. Until 2026-10-09 this
+# read swing_linkage_smaller.yaml (V1, 136.6), which on V2 hardware would
+# drive the blades' toes into each other (they meet at ~130). The servo
+# drives the CRANK directly -- gear ratio 1 -- so crank degrees ARE servo
+# degrees. LINKAGE_CONFIG stays for `--travel-deg`-less runs of an older bike.
 LINKAGE_CONFIG = (Path(__file__).resolve().parents[3] / "config"
                   / "swing_linkage_smaller.yaml")
 
@@ -294,6 +296,14 @@ def _wrap(a: float) -> float:
     return (a + math.pi) % (2 * math.pi) - math.pi
 
 
+def module_travel_deg():
+    """`stroke.crank_travel_deg` of the bike's righting module (V2), or None
+    if this params file has no module."""
+    from ..params import load_params
+    mod = (load_params().get("righting") or {}).get("module")
+    return None if not mod else float(mod["linkage"]["stroke"]["crank_travel_deg"])
+
+
 def linkage_travel_deg(path=LINKAGE_CONFIG):
     """`stroke.crank_travel_deg` from a swing-linkage config, or None.
 
@@ -407,12 +417,13 @@ def main() -> None:
                          "Mid-scale by default, so the stroke reaches both "
                          "ways without winding into extended position")
     ap.add_argument("--travel-deg", type=float, default=None,
-                    help=f"swing either way from stow. Defaults to "
-                         f"stroke.crank_travel_deg in {LINKAGE_CONFIG}")
+                    help="swing either way from stow. Defaults to the "
+                         "righting module's stroke.crank_travel_deg "
+                         "(bike_params righting.module, V2: 129.3)")
     args = ap.parse_args()
     travel = args.travel_deg
     if travel is None:
-        travel = linkage_travel_deg()
+        travel = module_travel_deg()
     run(args.host, args.port, args.v_max, math.radians(args.stow_deg),
         None if travel is None else math.radians(travel))
 

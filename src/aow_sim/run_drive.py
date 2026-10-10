@@ -42,7 +42,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from .build_model import (FLOOR_CONAFF, FLOOR_CONTYPE, _FLOOR_ALPHA,
+from .build_model import (FLOOR_CONAFF, FLOOR_CONTYPE, SWING_LINKAGE_CFG, _FLOOR_ALPHA,
                           build_model, load_params, tune_lighting)
 from .wheel_overlay import (STRIPE_RADIUS_TELEOP, add_stripes,
                             stripe_frames)
@@ -585,13 +585,15 @@ def main() -> None:
                          "keys, but the actuator drives the CRANK")
     ap.add_argument("--swing-linkage", nargs="?", const=True, default=False,
                     metavar="CONFIG",
-                    help="co-rotating FOUR-BAR wing pair; the driveable form "
-                         "of analysis/swing_linkage.py. Same 3-position "
-                         "teleop. Takes an OPTIONAL config path -- there are "
-                         "fourteen swing_linkage*.yaml and the bare flag uses "
+                    help="a STUDY four-bar instead of the bike's own righting "
+                         "module (V2, built by default since 2026-10-09). "
+                         "Takes an OPTIONAL config path -- there are fourteen "
+                         "swing_linkage*.yaml -- and the bare flag builds V1, "
                          "build_model.SWING_LINKAGE_CFG "
-                         "(config/swing_linkage_smaller.yaml, what the CAD "
-                         "path builds).")
+                         "(config/swing_linkage_smaller.yaml), flat panels.")
+    ap.add_argument("--no-righting", action="store_true",
+                    help="the wingless bike: no righting module (what every "
+                         "export before 2026-10-09 trained on)")
     ap.add_argument("--righting-ideal", action="store_true",
                     help="under --swing-linkage, drive the crank with the "
                          "bare PD + torque clip instead of the current-based "
@@ -713,11 +715,15 @@ def main() -> None:
         except FileNotFoundError:
             _mv = {}
         if _mv.get("swing_linkage"):
+            # A policy that DRIVES the crank flies the four-bar it trained on:
+            # V1 (before 2026-10-09, no `righting_module` key) needs the study
+            # config; V2 is the default bike.
             swing_tip_mass = float(_mv.get("swing_tip_mass_kg", 0.0))
-            if not args.swing_linkage:
+            mod = str(_mv.get("righting_module", "v1"))
+            if mod == "v1" and not args.swing_linkage:
                 args.swing_linkage = True
-            print(f"{startup}: four-bar swing wings, {swing_tip_mass*1e3:g} g "
-                  "at each tip, as trained")
+            print(f"{startup}: drives the {mod.upper()} four-bar, "
+                  f"{swing_tip_mass*1e3:g} g at each tip, as trained")
         drivetrain_base = drivetrain_model.teleop_base(
             record, args.drivetrain, args.drivetrain_without, servo_gains)
         # No base (a startup policy exported without a drivetrain record, and
@@ -749,14 +755,21 @@ def main() -> None:
             rig_cfg["heading"] = args.rig_heading
         rig_cfg = resolve(rig_cfg, params)
         print(describe_rig(rig_cfg))
+    # The bike's righting module (V2) unless another mechanism, a study
+    # four-bar (--swing-linkage) or none (--no-righting) is asked for.
+    righting_module = not (args.wings or args.linkage or args.swing
+                           or args.swing_linkage or args.no_righting)
     build_kw = dict(variant="full", hockey=args.hockey,
                     righting=(args.wings or args.linkage or args.swing
-                              or args.swing_linkage),
+                              or bool(args.swing_linkage)),
                     wings=args.wings and not args.linkage,
-                    swing=args.swing, swing_linkage=bool(args.swing_linkage),
+                    swing=args.swing,
+                    swing_linkage=(True if args.swing_linkage
+                                   else False if args.no_righting else None),
                     swing_linkage_cfg=(args.swing_linkage
                                        if isinstance(args.swing_linkage, str)
-                                       else None),
+                                       else str(SWING_LINKAGE_CFG)
+                                       if args.swing_linkage else None),
                     linkage=args.linkage,
                     linkage_cfg=args.linkage_config,
                     swing_tip_mass=swing_tip_mass)
@@ -786,7 +799,9 @@ def main() -> None:
                 v_max=params["control"]["drive"]["v_max"], show_ui=args.ui,
                 travel_deg=getattr(args, "travel_deg", None),
                 swing_cfg=(args.swing_linkage
-                           if isinstance(args.swing_linkage, str) else None),
+                           if isinstance(args.swing_linkage, str)
+                           else params["righting"]["module"]["linkage"]
+                           if righting_module else None),
                 frame_stats=args.frame_stats)
         return
     if args.teleop:
@@ -794,7 +809,7 @@ def main() -> None:
                 hockey=args.hockey,
                 general=args.general, show_ui=args.ui,
                 wings=args.wings, linkage=args.linkage,
-                swing=args.swing or args.swing_linkage,
+                swing=bool(args.swing or args.swing_linkage or righting_module),
                 righting_ideal=args.righting_ideal,
                 record=args.record,
                 slowmo_x=args.slowmo, odometry=args.odometry,
@@ -2085,10 +2100,13 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
     # ones), so a station reading a different file than the builder did would
     # command a stroke the rendered mechanism cannot reach -- and `pose` would
     # return None at the ends, which reads as the wings freezing.
+    # A path, or the righting module's resolved linkage (a dict: V2 has no
+    # single file -- params.resolve_righting_module scales the CAD's).
     cfg_path = swing_cfg or SWING_LINKAGE_CFG
     travel = None if travel_deg is None else np.deg2rad(float(travel_deg))
     if travel is None:
-        got = linkage_travel_deg(cfg_path)
+        got = (float(cfg_path["stroke"]["crank_travel_deg"])
+               if isinstance(cfg_path, dict) else linkage_travel_deg(cfg_path))
         travel = None if got is None else np.deg2rad(got)
     onb = params["control"].get("onboard", {})
     stow = np.deg2rad(float(onb.get("righting_stow_deg", 180.0)))
@@ -2102,9 +2120,13 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
     swing_pose = None
     if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT,
                          "swing_crank_joint") >= 0:
-        with open(cfg_path) as fh:
-            solver = SwingLinkageSolver(yaml.safe_load(fh),
+        if isinstance(cfg_path, dict):
+            solver = SwingLinkageSolver(cfg_path,
                                         params["omni_wheel"]["outer_radius"])
+        else:
+            with open(cfg_path) as fh:
+                solver = SwingLinkageSolver(yaml.safe_load(fh),
+                                            params["omni_wheel"]["outer_radius"])
 
         def swing_pose(servo_rad, _s=solver, _z=stow, _g=r_sign):
             """Servo angle -> every joint in the loop.
@@ -2762,8 +2784,11 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         linkage_form = any(model.joint(j).name == "swing_crank_joint"
                            for j in range(model.njnt))
         if linkage_form:
-            scfg = _yaml.safe_load(SWING_LINKAGE_CFG.read_text())
-            dep = np.deg2rad(float(scfg["stroke"]["crank_travel_deg"]))
+            # The stroke the model was BUILT with: the crank actuator's range
+            # is exactly `crank_travel_deg` of whichever four-bar that is (V2
+            # 129.3, V1 136.6) -- reading one fixed file here commanded V1's
+            # stroke on every four-bar.
+            dep = float(model.actuator_ctrlrange[model.actuator("swing").id, 1])
             ratio = 1.0
             poses = None
         else:

@@ -58,13 +58,13 @@ rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
 
 | workstream | state | blocker | doc |
 |---|---|---|---|
-| **Simulation & model** | Working; 18 `GUESS`es. Opt-in detailed drivetrain (fitted XC430 loop, detent, slop). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30 | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
-| **Control — RL** | Primary. Pointer `general_rl_smooth_temporal` (10-09, was `cmd_curriculum2b`); teleop flies it on `tm151_filter` by default. Every export trained on the old front wheel: provisional | Crab one-sided (`v_lat_frac` 0 in this export); `turn_asym` ~0.2; one seed | `general-rl-improvements.md`, `policy-smoothness-losses.md` |
-| **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` model exists; with the accelerometer weighting from the drop rig (10-07) it falls 1/20 on the eval grid (19/20 before; `tm151` 2/20), still unproven on sustained acceleration | The bike's own AHRS log | `sensor-workstream.md`, `ahrs-fixture.md` |
+| **Simulation & model** | Working; 21 `GUESS`es in bike_params. **The default bike carries the V2 righting module (10-09):** the diamond four-bar with its blades and toe stop, from the CAD's own files, 1.016 -> 1.228 kg (+167 g module, +45 g roof); `swing_linkage=False` is the old wingless bike. Opt-in detailed drivetrain (fitted XC430 loop, detent, slop). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30 | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
+| **Control — RL** | Primary. Pointer `general_rl_smooth_temporal` (10-09, was `cmd_curriculum2b`); teleop flies it on `tm151_filter` by default; the current config lineage (`smooth_*`, `nodiff`) TRAINS on it from 10-09. No-diff arm `general_rl_nodiff_2` trained (V1 four-bar, see below). Every export trained on the old front wheel AND wingless (nodiff_2: V1): provisional; teleop and the endurance test now fly them on the V2 bike (pointer: 0/18 falls) | Crab one-sided (`v_lat_frac` 0 in this export); `turn_asym` ~0.2; one seed | `general-rl-improvements.md`, `policy-smoothness-losses.md` |
+| **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` model exists; with the accelerometer weighting from the drop rig (10-07) it falls 1/20 on the eval grid (19/20 before; `tm151` 2/20), still unproven on sustained acceleration. The training level from 10-09, provisional: more physical tests to come | The bike's own AHRS log; the wave cams (sustained acceleration) | `sensor-workstream.md`, `ahrs-fixture.md` |
 | **Control — LQR** | **Deprecated 10-09.** `lqr` tests skipped unless named (`pytest -m lqr`: 15 accepted reds, unchanged). The code stays: the RL envs' crawl fallback and the bundle's gain schedule are built on it. Last state (10-05): stands on truth and `tm151_filter`, falls turning at 0.8 m/s | none: not being tuned | `lqr-baseline.md` |
 | **Hardware / onboard** | Pi 3 bench proven: tick jitter p99 < 1 ms with four servos energised. 2.4 GHz house wifi (decided: a router, no AP). The SBC that ships: open | Chassis, pack | `pi-bench-bringup.md`, `untethered-setup.md` |
 | **CAD** | Steer printed and print-checked; drive, righting, whole bike designed. Righting links all 6 mm plates, rear chamfered; knuckles inside the bay beside the other wing's coupler, in the rocker's shape on a through rocker pin, nuts in the links, screws from both sides, thrust rings chosen as one loop with one washer (crankpin), XC330 turned long end down with its upper case held by one 6-32 into the lower case, bridge 2 over the crank, the wing a printed stub with chamfered ends under an inverted-U (dummy) blade, drive case sides' rear blocks chamfered (10-07; righting ~66 g printed without the blades, the stub trimmed to the tabs, uncalibrated). CAD wheelbase 200.5 (the sim keeps 200): righting 0.5 from the drive, front bulkhead 5 from the straight front wheel (user's rules), wings clear the steer sweep; FITS at 120.5 (`--fit righting`, 10-07; wing L on drive pulley L binds next); Pi plate moved up the drive's face to -44.5; two righting chassis joints, one under the drive block's wedge (placeholder chassis); underside electronics and cage switched off, Pi plate on the drive's face; nothing printed | Check the righting in isolation (user); the blade's design and what holds it on (up the panel); the Pi lower via the steering's lower case, and the underside electronics back in (user's next step); underside electronics back in (U2D2/power front, AHRS back); lower the righting (user) | `bike-assembly-design.md`, `cad-onshape-workflow.md` |
-| **Self-righting** | Four-bar built. Linkage options parked (sim, 9.9 V: 537-575 counts vs 643 as built; the diamond, 547, is the lean) | Decision later | `righting-linkage-margin.md`, `righting-servo-model.md` |
+| **Self-righting** | V2, the diamond with blades, is the bike's module and the sim's default (10-09): rights at 547 counts at 9.9 V (V1: 643), commanded stroke 129.3 (10-09, user: where the bike reaches level on the blade -- was 128.4, the synthesis's panel-line "flat"). The blades' toes stop the crank at ~130 (toe lengthened 2.2 mm, user), BEFORE each knuckle reaches the other coupler (they would collide past ~130; ~1.7 mm left at the stop). More travel later: a dogleg coupler (optional), the blade clears the floor by 1.64 mm upright at crank 127. The ground station strokes 128.4 now (it read V1's 136.6). Masses and the crank armature are CAD `GUESS`es | Weigh the printed parts; a crank coast-down for the XC330's reflected inertia | `righting-linkage-margin.md`, `righting-servo-model.md` |
 | **Contact bench** | Drop rig built and run (10-03): the cam fires every drop and records each, release-to-impact timed; analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/drop_rig_sim.py`, with `--fit`. AHRS mode drawn (10-06): a jam-on follower tip and an 11-cam wave kit, nothing printed. `force_drop.py --ahrs` (10-07) logs the TM151 and the servo whole, beside the drops, one clock. AHRS on the Pi (10-07, no force sensor -- three USB devices reboot-loop the Pi): on the bar at 115 mm, steps within ~0.07 deg of the cam's, settled by 0.5 s; +0.32 / +0.19 / -0.03 / -0.11 deg over the cam at 25 / 70 / 115 / 190 mm (190 on the fork), roll growing toward the wheel; repeats within ~0.02 deg (70 untouched, 115 after re-mounts): the arm's angle changes unevenly along it, so stations do not share a rotation | Print the 4x2.4 and 8x0.6 wave cams + the tip, then `bench/wave_run.py` with the TM151 on a riser (sustained acceleration); power for the force sensor on the Pi (a powered hub?); a local truth per station (the arm is not rigid); the ~0.09 deg run-up rise before each release; the sensor epoxied down; the arm's parts weighed | `drop-release-rig.md`, `contact-measurements.yaml` |
 
 ---
@@ -140,20 +140,16 @@ before the wheel. History: `params-digest-split.md`.
 
 - **AHRS error costs far more without the velocity estimate**, for the LQR
   and RL alike; mechanism untested (`lqr-baseline.md`).
-- **`tm151_filter` is not a drop-in**: the sim's accelerometer on a standing
-  bike is violent (contact bounce), and the filter reads it as ~8 deg of
-  tilt. The drop rig (10-07) says the real part does not: its fused pitch
-  stays within ~0.05 deg RMS through 16-43 deg of accelerometer tilt error,
-  and the model matches it only with `FILTER_ACC_GATE` (1 deg RMS without).
-  Against the fixture: 0.1 g keeps its fits (0.103 / 0.088 / 0.195 ->
-  0.104 / 0.094 / 0.181) and brings the drops to 0.05-0.17; 0.05 g and
-  under break the fixture. An ADAPTIVE weight, 1 / (1 + (m/0.12 g)^2) with
-  a 0.1 s hold, does both: fixture 0.102 / 0.095 / 0.148, drops 0.02-0.09
-  (fitted on half, checked on the other half). SET in `sim_ahrs`
-  (`FILTER_ACC_D0_G` 0.12, `FILTER_ACC_HOLD_S` 0.1). Eval grid,
-  `general_rl_cmd_curriculum2b`: falls 19/20 -> 1/20; standing-hold tilt
-  error 8.6 -> 0.7 deg median. Worst left: crabbing, 5.4-5.8 deg -- the
-  sustained-acceleration case nothing has measured (`drop-release-rig.md`).
+- **`tm151_filter` is now what training uses (10-09), provisionally.** The
+  unweighted filter read contact bounce as ~8 deg of tilt; the accelerometer
+  weighting fitted on the drop rig and fixture (c6d37b3; `FILTER_ACC_D0_G`
+  0.12, `FILTER_ACC_HOLD_S` 0.1) took `cmd_curriculum2b` from 19/20 falls to
+  1/20 on the eval grid (`tm151` 2/20). On the endurance minute (18 seeds)
+  `smooth_temporal` falls 0/18 on it, 1/18 on the `tm151` it trained on.
+  Unmeasured: sustained acceleration (turns, crab -- 5.4-5.8 deg there), the
+  next physical tests (`drop-release-rig.md`). Its `ahrs_tau_s` only times
+  the 0.1 deg residual wander (2.0 s); the filter's own 0.19 / 1.0 s is
+  built in. Every export before 10-09 trained on `tm151` at 0.19.
 - **The mirror's wifi stalls** (100-550 ms gaps, 09-17) did not repeat;
   cause unknown. Probe when it chugs again (`pi-bench-bringup.md`).
 - **Not yet checked on hardware**: the rear wheel's sent angle against a
@@ -175,6 +171,20 @@ it on `tm151_filter` by default (`run_drive --ahrs`), which it did not train
 on. Trained-on-sensors beats trained-on-truth, 1.00 to 0.20 survival. Standings and pointer history: `sensor-workstream.md`,
 `drivetrain-model.md`.
 
+**No-diff probe, `general_rl_nodiff_2` (10-09, one seed, not the pointer).** A one-off test of how a plain bike could use the swing linkage with tip masses to balance; NOT a line of work -- no further no-diff runs are planned (user, 10-09).
+common-mode drive + steer + the four-bar swing wings with 100 g tips, the
+differential faded out by the curriculum (zero by ~10M of 18M steps), a wing
+on the floor a fall. On its own sensors it stands the endurance minute 0/18
+falls (`tm151` and `tm151_filter` both) -- but CREEPS forward ~7 cm/s on a
+zero command (4.4-5.7 m in 60 s). The wing is BALLAST: the crank sits near
+-95 deg, the bike leans ~3.8 deg, the low wing hovers 4-6 mm off the floor at
+its closest and ~11 mm median, never touching. Frozen at that angle it
+still stands 0/18 (roll spread 0.8 deg vs 1.25 live); frozen at stow 18/18
+fall (MTBF ~11 s). The 5 s training eval cannot see the creep. Trained on
+the V1 linkage (`swing_linkage_smaller`), NOT V2, the bike's module; it
+does not transfer. `rl_general_nodiff.yaml` was moved to V2 with the rest
+of the configs, for consistency only.
+
 **Do not compare `metrics:` blocks across `moves/*.yaml`**; re-run
 `analysis/per_command.py` (`CLAUDE.md`).
 
@@ -182,13 +192,15 @@ on. Trained-on-sensors beats trained-on-truth, 1.00 to 0.20 survival. Standings 
 
 ## The guesses
 
-**15 `source: GUESS` in `config/bike_params.yaml`** (2026-10-05: the front wheel's `crown_radius`, a stand-in for the flat tread). 2026-10-02: the drivetrain block brought in the roller slop's `centring_stiffness` and `damping`; `righting.wings.min_pinion_radius` left (a constant of the retired geared wings, now `build_model.MIN_PINION_RADIUS`); `input_armature` and the hub/roller joint damping and frictionloss became `design` -- the IDEAL plant's own inertia and only drive losses, kept at their values (the measured inertia is the overlay's `rotor_inertia`), and ZEROED by `DrivetrainSim` on the detailed plant, where the measured coast friction already contains them (`drivetrain_fit.py coast`, the whole wheel in the air) and the slop tendon alone damps a roller in its play. That zeroing changed the detailed plant in code, which no digest sees: the drivetrain-trained exports are now ~1% off their training plant in drive friction (estimated), each with a note there
+**21 `source: GUESS` in `config/bike_params.yaml`** (2026-10-09: the righting module's five masses and its crank armature; 2026-10-05: the front wheel's `crown_radius`, a stand-in for the flat tread). 2026-10-02: the drivetrain block brought in the roller slop's `centring_stiffness` and `damping`; `righting.wings.min_pinion_radius` left (a constant of the retired geared wings, now `build_model.MIN_PINION_RADIUS`); `input_armature` and the hub/roller joint damping and frictionloss became `design` -- the IDEAL plant's own inertia and only drive losses, kept at their values (the measured inertia is the overlay's `rotor_inertia`), and ZEROED by `DrivetrainSim` on the detailed plant, where the measured coast friction already contains them (`drivetrain_fit.py coast`, the whole wheel in the air) and the slop tendon alone damps a roller in its play. That zeroing changed the detailed plant in code, which no digest sees: the drivetrain-trained exports are now ~1% off their training plant in drive friction (estimated), each with a note there
 on how to identify it. Never promote one quietly: promoting is a physical
 parameter change (the `CLAUDE.md` checklist).
 
 | parameter | value | what is known | dies at |
 |---|---|---|---|
-| `chassis.mass` | 0.45 kg, **44% of the bike** | CAD printed-mass estimates per part, uncalibrated (the chassis's new parts ~80 g printed) | the frame; weigh one printed part first |
+| `chassis.mass` | 0.45 kg, **37% of the bike** (44% before the righting module, 10-09) | CAD printed-mass estimates per part, uncalibrated (the chassis's new parts ~80 g printed) | the frame; weigh one printed part first |
+| `righting.module` masses (crank, coupler, wing_hub, blade, fixed) | 11.2 / 2.3 / 14.9 / 28.6 / 64.1 g, **167 g** with both sides | CAD check volumes (10-07), 2 perimeters / 15 % infill, steel pins; the blade from its outline (`righting-design.md`) | weigh the printed parts |
+| `righting.module.crank_armature` | 1e-3 kg m2 | the XC330's reflected rotor inertia, unmodelled anywhere before; >= 1e-5 stops the bare actuator ringing; 1e-4 -> 1e-3 slows the full stroke 6 % | a crank coast-down, as `drivetrain_fit.py coast` |
 | `fork_mass` + `front_wheel.mass` | 0.025 + 0.060 kg | **86 g together** (fork halves + wheel + axle, 09-30), not split | a scale |
 | `front_wheel.crown_radius` | 80 mm | the real tread is a 10 mm flat; the crown stands in for the tire flattening under load | the dial test repeated with the wheel tilted 1-2 deg |
 | `ahrs.mass` | 0.012 kg | the TM151 is on the bench | a scale |

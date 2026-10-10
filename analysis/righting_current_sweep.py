@@ -47,7 +47,9 @@ from aow_sim.righting_servo import CURRENT_LIMIT, CurrentBasedPositionServo  # n
 
 def fallen(params, side: float, settle_s: float, cfg=None):
     """Model, data and servo with the bike settled on its side, crank at centre.
-    `cfg`: a swing-linkage config path; None is `SWING_LINKAGE_CFG`."""
+    `cfg`: a swing-linkage config path; None is the bike's righting module
+    (V2, bike_params `righting.module`, blades and all -- since 2026-10-09;
+    before, None meant V1, `SWING_LINKAGE_CFG`)."""
     m = build_model(params, righting=True, swing_linkage=True, swing_linkage_cfg=cfg)
     d = mujoco.MjData(m)
     d.qpos[:] = settle_upright(m).qpos
@@ -108,8 +110,9 @@ def main() -> int:
     ap.add_argument("--settle-s", type=float, default=2.0)
     ap.add_argument("--level-deg", type=float, default=5.0)
     ap.add_argument("--config", type=Path, default=None,
-                    help="swing-linkage config (default: build_model's "
-                         "SWING_LINKAGE_CFG, the live `_smaller`)")
+                    help="swing-linkage config (default: the bike's "
+                         "righting module, V2 -- bike_params righting.module; "
+                         "config/swing_linkage_smaller.yaml for V1)")
     ap.add_argument("--slew-dps", type=float, default=None,
                     help="ramp the crank goal at this rate instead of stepping it: "
                          "slow enough and the lift is quasi-static, so the "

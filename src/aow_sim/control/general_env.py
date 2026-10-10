@@ -33,10 +33,12 @@ import numpy as np
 from gymnasium import spaces
 
 from .. import drivetrain_model, gearbox_friction
-from ..build_model import build_model, load_params, reset_actuator_state
+from ..build_model import (SWING_LINKAGE_CFG, build_model, load_params,
+                           reset_actuator_state)
 from .balance import extract_state, mix
 from .general_spec import (ACT_DIM, ActionBounds, act_dim_for, build_obs,
                            command_to_body, obs_dim_for, obs_layout,
+                           righting_module_for,
                            rotate_to_body, scale_action, vel_filter_alpha,
                            vel_filter_step, wrap_pi)
 from .linearize import design_crawl_fallback, settle_upright
@@ -129,26 +131,43 @@ class GeneralEnv(gym.Env):
         if self.wings and self.swing:
             raise ValueError("obs/act_wings and obs/act_swing are alternative "
                              "mechanisms -- set one, not both")
-        # `swing_linkage` puts the swing channel on the FOUR-BAR the bike is
-        # being built with (build_model _add_swing_linkage, the CAD's
-        # swing_linkage_smaller.yaml) instead of the geared stand-in. The
-        # channel and its observation are the CRANK: what the servo commands
-        # and its encoder reads. Optional point masses at the wing tips.
+        # THE RIGHTING MODULE on the bike (2026-10-09): `righting_module`
+        #   v2    the bike's own -- the diamond four-bar with its blades
+        #         (bike_params righting.module). THE DEFAULT: every config
+        #         flies it, its crank held at stow unless the policy drives it.
+        #   v1    the earlier four-bar (swing_linkage_smaller.yaml, flat
+        #         panels), what general_rl_nodiff_2 trained on.
+        #   none  the wingless bike every export before 2026-10-09 trained on.
+        # A config that predates the key and sets `swing_linkage` meant V1.
+        # `wings` / geared `swing` replace the module entirely, as before.
+        # `swing_linkage` puts the swing CHANNEL on the module's crank (what
+        # the servo commands and its encoder reads) instead of the geared
+        # stand-in; it needs v1 or v2. Optional point masses at the wing tips.
         self.swing_linkage = bool(env.get("swing_linkage", False))
+        self.righting_module = righting_module_for(env)
         self.swing_tip_mass = float(env.get("swing_tip_mass_kg", 0.0))
         if self.swing_linkage and not self.swing:
             raise ValueError("swing_linkage needs obs_swing/act_swing")
-        if self.swing_tip_mass and not self.swing_linkage:
-            raise ValueError("swing_tip_mass_kg is a swing_linkage option")
+        if self.swing_linkage and self.righting_module == "none":
+            raise ValueError("swing_linkage drives the righting module's crank: "
+                             "righting_module v1 or v2")
+        if self.swing_tip_mass and self.righting_module == "none":
+            raise ValueError("swing_tip_mass_kg goes on the righting module's "
+                             "wings: righting_module v1 or v2")
+        # The module's crank is THERE, driven or not.
+        self.four_bar = self.righting_module != "none"
         # A wing touching the floor ENDS the episode as a fall: the wings are
         # there for their inertia, and standing on one is a kickstand.
         self.wing_touch_fails = bool(env.get("wing_touch_fails", False))
-        self.model = build_model(self.p, variant="full", hockey=self.hockey,
-                                 righting=self.wings or self.swing,
-                                 wings=self.wings,
-                                 swing=self.swing and not self.swing_linkage,
-                                 swing_linkage=self.swing_linkage,
-                                 swing_tip_mass=self.swing_tip_mass)
+        geared = self.wings or (self.swing and not self.swing_linkage)
+        self.model = build_model(
+            self.p, variant="full", hockey=self.hockey,
+            righting=geared, wings=self.wings,
+            swing=self.swing and not self.swing_linkage,
+            swing_linkage=self.four_bar,
+            swing_linkage_cfg=(SWING_LINKAGE_CFG if self.righting_module == "v1"
+                               else None),
+            swing_tip_mass=self.swing_tip_mass)
         # The opt-in detailed drivetrain (drivetrain_model.py), present only
         # when the params carry the overlay. None otherwise, and every line
         # below that reads it is then a no-op -- the default env is unchanged.
@@ -166,7 +185,7 @@ class GeneralEnv(gym.Env):
         # SPEED is the thing this mechanism is being asked about. The model
         # carries its own gearbox friction, so the native one comes off.
         self._crank = None
-        if self.swing_linkage:
+        if self.four_bar:
             from ..righting_servo import CurrentBasedPositionServo
             self._crank = CurrentBasedPositionServo.attach(
                 self.model, self.p, torque_nm=float(
@@ -425,7 +444,7 @@ class GeneralEnv(gym.Env):
         self._sd = self.model.joint("steer_joint").dofadr[0]
         self._chassis = self.model.body("chassis").id
         # The wings' floor-contact sensors, for wing_touch_fails.
-        if self.wing_touch_fails and not self.swing_linkage:
+        if self.wing_touch_fails and not self.four_bar:
             raise ValueError("wing_touch_fails is built for the four-bar "
                              "(its swing_wing_*_floor contact sensors)")
         self._touch_adr = (np.array([self.model.sensor(

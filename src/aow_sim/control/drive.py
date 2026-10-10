@@ -508,10 +508,26 @@ class DriveController(LQRBalance):
                     f"this model has the {'four-bar' if has_link else 'geared'}"
                     " pair -- build with build_model(..., swing_linkage="
                     f"{want_link}, swing={not want_link})")
+            # WHICH four-bar: a policy that drives the crank learned that
+            # linkage's geometry and masses. (A policy that does not drive it
+            # flies on whatever module the bike has -- a plant mismatch its
+            # plant_digest already reports.)
+            want_mod = str(getattr(self._gen, "righting_module", "v1"))
+            has_mod = getattr(self, "_righting_module", None)
+            if want_link and has_mod is not None and want_mod != has_mod:
+                raise ValueError(
+                    f"moves/{name} drives the {want_mod.upper()} four-bar, but "
+                    f"this model has {has_mod.upper()} -- "
+                    + ("build with build_model(..., swing_linkage=True, "
+                       "swing_linkage_cfg=SWING_LINKAGE_CFG)" if want_mod == "v1"
+                       else "build the default bike (righting.module)"))
             have = getattr(self, "_swing_wing_mass", None)
             if want_link and have is not None:
                 tip = float(getattr(self._gen, "swing_tip_mass_kg", 0.0))
-                want = float(self.params["righting"]["wings"]["mass"]) + tip
+                mod = self.params["righting"].get("module") or {}
+                want = (float(mod["blade"]["mass"]) + float(mod["wing_hub"]["mass"])
+                        if want_mod == "v2"
+                        else float(self.params["righting"]["wings"]["mass"])) + tip
                 if abs(have - want) > 1e-6:
                     raise ValueError(
                         f"moves/{name} was trained with {tip*1e3:g} g at each "

@@ -635,8 +635,9 @@ def test_nodiff_config_is_smooth_temporal_plus_its_listed_changes():
     ea, eb = a["env"], b["env"]
     added = {k: eb[k] for k in eb if k not in ea}
     assert added == {"obs_swing": True, "act_swing": True,
-                     "swing_linkage": True, "swing_tip_mass_kg": 0.1,
-                     "wing_max_deg": 135.0, "wing_touch_fails": True,
+                     "swing_linkage": True, "righting_module": "v2",
+                     "swing_tip_mass_kg": 0.1,
+                     "wing_max_deg": 129.3, "wing_touch_fails": True,
                      "diff_fade": [0.3, 0.9]}
     assert eb["action_bounds"] == {**ea["action_bounds"], "wing_rate_max": 12.0}
     assert eb["cmd_families"] == {**ea["cmd_families"],
@@ -664,7 +665,9 @@ def _linkage_env(tip=0.1, touch=True):
 def test_linkage_env_builds_the_four_bar_with_tip_masses():
     from aow_sim.build_model import load_params
     e = _linkage_env()
-    m, w = e.model, load_params()["righting"]["wings"]["mass"]
+    mod = load_params()["righting"]["module"]
+    m, w = e.model, mod["blade"]["mass"] + mod["wing_hub"]["mass"]
+    assert e.righting_module == "v2"
     for side in ("right", "left"):
         assert m.body_mass[m.body(f"swing_wing_{side}").id] == \
             pytest.approx(w + 0.1)
@@ -1275,17 +1278,28 @@ def test_wing_command_is_clipped_to_the_no_lift_cap():
             break
 
 
-def test_wings_off_builds_the_wingless_model():
-    """The gating guarantee: without the flags this is today's robot, with no
-    wing actuator and a 3-channel action."""
+def test_wings_off_flies_the_righting_module_held_at_stow():
+    """Without the wing flags the policy still has 3 channels and the base
+    observation -- but since 2026-10-09 the bike CARRIES its righting module
+    (V2), its crank held at stow by the firmware model. `righting_module:
+    none` is the wingless bike every earlier export trained on."""
     env = _env()
     assert env.obs_dim == OBS_DIM and env.action_space.shape == (3,)
-    # 3 commands; the detailed drivetrain appends its two motor actuators.
+    # 3 commands + the crank; the detailed drivetrain appends two more.
     from aow_sim import drivetrain_model as dm
-    assert not env.wings
-    assert env.model.nu == 3 + 2 * dm.enabled(env.p, "servo")
-    assert all("wing" not in env.model.joint(i).name
-               for i in range(env.model.njnt))
+    assert not env.wings and not env.swing
+    assert env.righting_module == "v2" and env._crank is not None
+    assert env.model.nu == 4 + 2 * dm.enabled(env.p, "servo")
+    env.reset(seed=0)
+    for _ in range(25):
+        env.step(np.zeros(3, np.float32))
+    crank = env.model.joint("swing_crank_joint").qposadr[0]
+    assert abs(np.degrees(env.data.qpos[crank])) < 1.0, "held at stow"
+
+    bare = _env(righting_module="none")
+    assert bare.model.nu == 3 + 2 * dm.enabled(bare.p, "servo")
+    assert all("wing" not in bare.model.joint(i).name
+               for i in range(bare.model.njnt))
 
 
 def test_drift_is_decomposed_in_the_commanded_heading_frame():

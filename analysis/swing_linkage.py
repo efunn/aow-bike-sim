@@ -1740,8 +1740,13 @@ def mass_props() -> dict:
         M, mw = float(m.body_subtreemass[ch]), float(m.body_subtreemass[w])
         com = (M * d.subtree_com[ch] - mw * d.subtree_com[w]) / (M - mw)
         local = d.xmat[ch].reshape(3, 3).T @ (com - d.xpos[ch])
+        # The deploying wing's own CoM at stow, same frame: what a rest on
+        # the BLADE turns with the wing (`resting_pose_on`), where the panel
+        # model uses the panel's midpoint.
+        wl = d.xmat[ch].reshape(3, 3).T @ (d.subtree_com[w] - d.xpos[ch])
         _MASS = {"total": M, "wing": mw,
-                 "rest": np.array([local[1], local[2]]) * 1000.0}
+                 "rest": np.array([local[1], local[2]]) * 1000.0,
+                 "wing_com": np.array([wl[1], wl[2]]) * 1000.0}
     return _MASS
 
 
@@ -1791,13 +1796,50 @@ def rest_on_panel(foot, top, hinge, wheel_radius: float,
     """`resting_pose` from the deploying panel's ends and hinge directly, in
     sketch mm -- no linkage needed, which is what lets a load table be built
     for a panel and hinge that no config describes yet (swing_synthesis.py)."""
+    foot, top = (np.asarray(v, float) for v in (foot, top))
+    return rest_on_points({"foot": foot, "top": top}, hinge, wheel_radius,
+                          0.5 * (foot + top), friction)
+
+
+def resting_pose_on(lk: SwingLinkage, travel: float, outline, wing_com,
+                    friction: float = FLOOR_FRICTION_EFF) -> dict | None:
+    """`resting_pose` on a real wing SHAPE instead of the panel line: every
+    point of `outline` (the deploying wing's section at stow, sketch mm) is a
+    support, turned with the wing about its hinge -- the panel is rigid with
+    the rocker, so the panel line's rotation since stow IS the shape's.
+    `wing_com` is the wing's CoM at stow (mass_props()["wing_com"]).
+
+    The panel line is the blade's CENTRE line, so resting on it leaves the
+    blade's half-thickness and its toe out of the contact (2026-10-09)."""
+    p0, pz = lk.pose(-1, 0.0), lk.pose(-1, travel)
+    if pz is None:
+        return None
+    hinge = np.asarray(pz["pivot"], float)
+    a0 = np.arctan2(*(p0["top"] - p0["foot"])[::-1])
+    a1 = np.arctan2(*(pz["top"] - pz["foot"])[::-1])
+    turn = a1 - a0
+    c, s_ = np.cos(turn), np.sin(turn)
+    R = np.array([[c, -s_], [s_, c]])
+    turned = lambda q: hinge + R @ (np.asarray(q, float) - hinge)  # noqa: E731
+    sup = {f"p{i}": turned(q) for i, q in enumerate(outline)}
+    return rest_on_points(sup, hinge, lk.wheel_radius, turned(wing_com), friction)
+
+
+def rest_on_points(sup: dict, hinge, wheel_radius: float, wing_com,
+                   friction: float = FLOOR_FRICTION_EFF) -> dict | None:
+    """The rest itself, on any set of the deploying wing's support points
+    (`sup`, name -> sketch mm) and the wheels' contact, with the wing's CoM
+    at `wing_com`. Two points (the panel's ends) is `rest_on_panel`."""
     mp = mass_props()
     M, mw = mp["total"], mp["wing"]
-    foot, top, hinge = (np.asarray(v, float) for v in (foot, top, hinge))
+    hinge = np.asarray(hinge, float)
     rest = mp["rest"]
-    com = ((M - mw) * rest + mw * 0.5 * (foot + top)) / M
-    pts = {"foot": foot, "top": top, "wheel": np.array([0.0, -wheel_radius])}
-    for a, b in (("foot", "top"), ("foot", "wheel"), ("top", "wheel")):
+    com = ((M - mw) * rest + mw * np.asarray(wing_com, float)) / M
+    pts = {k: np.asarray(v, float) for k, v in sup.items()}
+    pts["wheel"] = np.array([0.0, -wheel_radius])
+    names = list(pts)                       # the wheel last, so it is always `b`
+    for a, b in ((names[i], names[j]) for i in range(len(names))
+                 for j in range(i + 1, len(names))):
         v = pts[b] - pts[a]
         for roll in (-np.degrees(np.arctan2(v[1], v[0])),
                      180.0 - np.degrees(np.arctan2(v[1], v[0]))):
