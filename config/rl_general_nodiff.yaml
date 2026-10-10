@@ -85,8 +85,8 @@ env:
   odometry_mode: front   # what the Pi runs today; `blend` is the experiment
   # The two changes from rl_general_odo.yaml.
   odometry_encoder: counts   # 4096 counts/rev, differenced, 25 ms RateFilter
-  ahrs_level: tm151          # the part we own, at its DYNAMIC accuracy
-  ahrs_tau_s: 0.19           # PINNED at the MEASURED value (see the header).
+  ahrs_level: tm151_filter   # the TM151 as its own fusion filter (c6d37b3 weighting); was tm151 to 10-09
+  ahrs_tau_s: 2.0            # the level's own: the filter has its 0.19 built in; this only times its 0.1 deg residual
   obs_pitch: true            # in the state; no w_pitch penalty this run.
   # THE WINGS, for their INERTIA. The four-bar the bike is being built with
   # (swing_linkage_smaller.yaml), driven by the policy through its crank on

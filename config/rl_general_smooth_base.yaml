@@ -2,7 +2,7 @@
 #
 # rl_general_cmd_curriculum2b (the general_move pointer) with ONE addition:
 # the detailed drivetrain at P 100 (two lines under env:). Everything else --
-# reward, curriculum, sensors (odometry + fixed tm151), randomization -- is the
+# reward, curriculum, sensors (odometry + TM151), randomization -- is the
 # pointer's, so a difference between this run and the pointer is the plant
 # that moved since 2026-09-14, and nothing chosen here:
 #
@@ -11,8 +11,17 @@
 #   squared reduction gain, the 45 deg steer lead bound, AHRS yaw drift;
 #   opt-in, switched on here: the detailed drivetrain.
 #
-# Left off on purpose: contact randomization, tm151_filter, AHRS parameter
-# randomization, reward.w_copper (all 2026-10-01 decisions).
+# Left off on purpose: contact randomization, AHRS parameter randomization,
+# reward.w_copper (all 2026-10-01 decisions).
+#
+# AHRS MOVED 2026-10-09: tm151 (noise model, tau 0.19) -> tm151_filter (the
+# part's own fusion filter, accelerometer weighted by distance from 1 g,
+# c6d37b3), here and in every arm below. Off on 10-01 because the unweighted
+# filter read ~8 deg of tilt on a standing bike; weighted, cmd_curriculum2b
+# falls 1/20 on it against 2/20 on tm151. Still unmeasured on sustained
+# acceleration (turns, crab) and due for more physical tests: provisional.
+# Every export from these configs before 10-09 trained on tm151 at 0.19 --
+# read the move yaml's ahrs_level, not this file.
 #
 # Three arms add `algo.smooth` to this file and change nothing else -- diff
 # them against it:
@@ -67,8 +76,8 @@ env:
   odometry_mode: front   # what the Pi runs today; `blend` is the experiment
   # The two changes from rl_general_odo.yaml.
   odometry_encoder: counts   # 4096 counts/rev, differenced, 25 ms RateFilter
-  ahrs_level: tm151          # the part we own, at its DYNAMIC accuracy
-  ahrs_tau_s: 0.19           # PINNED at the MEASURED value (see the header).
+  ahrs_level: tm151_filter   # the TM151 as its own fusion filter (c6d37b3 weighting); was tm151 to 10-09
+  ahrs_tau_s: 2.0            # the level's own: the filter has its 0.19 built in; this only times its 0.1 deg residual
   obs_pitch: true            # in the state; no w_pitch penalty this run.
   control_rate_hz: 50
   max_episode_s: 15.0    # long: the policy must hold a command, not finish one

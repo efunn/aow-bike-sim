@@ -40,7 +40,7 @@ from .control.flick import MOVES_DIR, reserve_move_name
 from .control.general_env import GeneralEnv, _load_rl_config
 from .control.general_spec import ActionBounds, obs_layout
 from .control.policy import save_policy_npz
-from .sim_ahrs import TAU_ORIENT_S
+from .sim_ahrs import level_tau_orient_s
 
 RUN_DIR = Path(__file__).resolve().parents[2] / "runs" / "general_rl"
 
@@ -925,8 +925,12 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # even when the config left it defaulted, so the export pins the
            # number rather than inheriting whatever `sim_ahrs.TAU_ORIENT_S`
            # happens to be later -- it has already moved once, 2.0 -> 0.19.
+           # The default is the LEVEL's own, as SimAhrs takes it: for
+           # tm151_filter that is the wander time (2.0), not 0.19.
            "ahrs_level": str(cfg["env"].get("ahrs_level", "none")),
-           "ahrs_tau_s": float(cfg["env"].get("ahrs_tau_s", TAU_ORIENT_S)),
+           "ahrs_tau_s": float(cfg["env"].get(
+               "ahrs_tau_s", level_tau_orient_s(
+                   str(cfg["env"].get("ahrs_level", "none"))))),
            "ahrs_channels": str(cfg["env"].get("ahrs_channels", "both")),
            # THE DRIVETRAIN, resolved: the whole overlay dict, or null for the
            # ideal drives. The dict rather than a path, so the policy replays
