@@ -179,3 +179,81 @@ def test_the_ground_station_strokes_v2():
     V1's 136.6 -- which on V2 hardware drives the toes into each other."""
     from aow_sim.hw.ground import module_travel_deg
     assert module_travel_deg() == pytest.approx(129.3)
+
+
+# ---------------------------------------------------------------- blade outlines
+# params.blade_points (the file format: points, runs, cubic curves) and
+# build_model._convex_pieces (the sim's split of any outline). 2026-10-10.
+
+def _convex(P) -> bool:
+    e = np.roll(P, -1, axis=0) - P
+    t = e[:, 0] * np.roll(e[:, 1], -1) - e[:, 1] * np.roll(e[:, 0], -1)
+    return bool((t >= -1e-9).all() or (t <= 1e-9).all())
+
+
+def test_a_plain_outline_is_unchanged_and_v2_keeps_its_two_pieces():
+    from aow_sim.build_model import _convex_pieces
+    from aow_sim.params import blade_points
+    ol = yaml.safe_load((ROOT / "config/righting_blade.yaml").read_text())["outline"]
+    assert blade_points(ol) == [[float(a), float(b)] for a, b in ol]
+    assert _convex_pieces(np.array(ol, float)) == [[0, 1, 4, 5], [1, 2, 3, 4]]
+
+
+@pytest.mark.parametrize("end_deg", (0.0, 15.0))
+def test_a_curve_is_tangent_to_its_neighbours_by_angle(end_deg):
+    """start_deg / end_deg are relative to the straight sections either side;
+    a run's dir_deg is from level, counter-clockwise: 90 is straight up."""
+    from aow_sim.params import blade_points
+    ol = [[0, 0], [10, 0],
+          {"curve": {"to": [30, 20], "handles": [8, 8], "start_deg": 0, "end_deg": end_deg}},
+          {"dir_deg": 90, "len": 10}]
+    P = np.array(blade_points(ol, segments=4000))   # the last facet lags the tangent by half its turn
+    assert P[-1] == pytest.approx([30, 30])                  # the run: straight up
+    d0, d1 = P[2] - P[1], P[-2] - P[-3]                      # first / last facet of the curve
+    assert np.degrees(np.arctan2(d0[1], d0[0])) == pytest.approx(0.0, abs=0.5)
+    assert np.degrees(np.arctan2(d1[1], d1[0])) == pytest.approx(90.0 + end_deg, abs=0.5)
+
+
+@pytest.mark.parametrize("outline", (
+    # a curve straight after point 2, into the toe
+    [[63.9, 147.4], [38.5, 50.6],
+     {"curve": {"to": [15.69, 22.32], "handles": [10, 10], "start_deg": -10}},
+     [19.57, 19.24], [43.3, 49.4], [68.7, 146.1]],
+    # an inward dent in the outer face (inside the 5 mm blade: the inner face
+    # is at 48.8 there, the straight outer face at 54.0)
+    [[63.9, 147.4], [38.5, 50.6], [15.69, 22.32], [19.57, 19.24], [43.3, 49.4],
+     [51.5, 90.0], [68.7, 146.1]],
+    "config/swing_explore/blade_v3.yaml",
+))
+def test_any_outline_is_cut_into_convex_pieces_that_tile_it(outline):
+    from aow_sim.build_model import _convex_pieces, _shoelace
+    from aow_sim.params import blade_points
+    if isinstance(outline, str):
+        outline = yaml.safe_load((ROOT / outline).read_text())["outline"]
+    P = np.array(blade_points(outline))
+    cut = _convex_pieces(P)
+    assert all(_convex(P[q]) for q in cut)
+    assert sum(abs(_shoelace(P[q])) for q in cut) == pytest.approx(abs(_shoelace(P)))
+    assert any(0 in q for q in cut) and any(2 in q for q in cut)
+
+
+def test_runs_alone_draw_a_polygon_that_closes_itself():
+    from aow_sim.params import blade_points
+    sq = [[40, 60], {"dir_deg": 90, "len": 20}, {"dir_deg": 0, "len": 20},
+          {"dir_deg": 270, "len": 20}]
+    assert np.array(blade_points(sq)) == pytest.approx(np.array([[40, 60], [40, 80], [60, 80], [60, 60]]))
+
+
+def test_v3_builds_with_its_toe_stop(params):
+    """The exploring V3 blade, as the stepthrough builds it: a variant of the
+    module with that outline. Its toes still stop the crank where V2's do."""
+    import copy
+    from aow_sim.params import blade_points
+    spec = yaml.safe_load((ROOT / "config/swing_explore/blade_v3.yaml").read_text())
+    p = copy.deepcopy(params)
+    p["righting"]["module"]["blade_outline"] = blade_points(spec["outline"])
+    m = build_model(p)
+    names = {m.geom(g).name for g in range(m.ngeom)}
+    assert {"swing_wing_right", "swing_wing_right_toe"} <= names
+    first, _ = _drive_crank(m, 150.0)
+    assert first == pytest.approx(129.9, abs=0.5)

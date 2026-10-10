@@ -71,6 +71,68 @@ def _shoelace(pts) -> float:
     return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
 
 
+def _convex_pieces(pts) -> list[list[int]]:
+    """A simple polygon cut into convex pieces along chords between its own
+    vertices: each piece is a sorted list of vertex indices. Repeatedly takes
+    the first reflex vertex and the inside chord from it that leaves the
+    fewest reflex vertices (then the shortest). MuJoCo collides a mesh as its
+    convex hull, so a non-convex blade outline has to be split. On V2's six
+    points it gives the two hand-picked pieces it replaced (blade 0 1 4 5,
+    toe 1 2 3 4), so V2's model is unchanged."""
+    P = np.asarray(pts, float)
+    sgn = np.sign(_shoelace(P))
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    def reflex(poly):
+        m = len(poly)
+        return [k for k in range(m)
+                if sgn * cross(P[poly[k - 1]], P[poly[k]], P[poly[(k + 1) % m]]) < -1e-9]
+
+    def inside(poly, i, j):
+        """The chord P[i]-P[j] runs inside `poly`: crosses no edge, and its
+        midpoint is inside."""
+        a, b = P[i], P[j]
+        m = len(poly)
+        for k in range(m):
+            u, v = poly[k], poly[(k + 1) % m]
+            if {u, v} & {i, j}:
+                continue
+            d1, d2 = cross(a, b, P[u]), cross(a, b, P[v])
+            d3, d4 = cross(P[u], P[v], a), cross(P[u], P[v], b)
+            if d1 * d2 <= 0 and d3 * d4 <= 0:
+                return False
+        mid, hit = 0.5 * (a + b), False
+        for k in range(m):
+            u, v = P[poly[k]], P[poly[(k + 1) % m]]
+            if (u[1] > mid[1]) != (v[1] > mid[1]) and \
+                    mid[0] < u[0] + (mid[1] - u[1]) * (v[0] - u[0]) / (v[1] - u[1]):
+                hit = not hit
+        return hit
+    todo, done = [list(range(len(P)))], []
+    while todo:
+        poly = todo.pop()
+        r = reflex(poly)
+        if not r:
+            done.append(sorted(poly))
+            continue
+        k, m, best = r[0], len(poly), None
+        for j in range(m):
+            if j in (k, (k - 1) % m, (k + 1) % m) or not inside(poly, poly[k], poly[j]):
+                continue
+            A = [poly[(k + q) % m] for q in range((j - k) % m + 1)]
+            B = [poly[(j + q) % m] for q in range((k - j) % m + 1)]
+            score = (len(reflex(A)) + len(reflex(B)), float(np.linalg.norm(P[poly[k]] - P[poly[j]])))
+            if best is None or score < best[0]:
+                best = (score, A, B)
+        if best is None:
+            raise ValueError("blade outline could not be cut into convex pieces "
+                             "(is it a simple polygon?)")
+        todo += [best[1], best[2]]
+    return sorted(done)
+
+
 def _quat_z_to(v) -> np.ndarray:
     """Quaternion (w,x,y,z) rotating local +Z onto direction v."""
     v = np.asarray(v, dtype=float)
@@ -1462,9 +1524,12 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
             # up from the floor, extruded over its fore/aft span. Placed in
             # this body's frame relative to its pivot -- the wing rod, which
             # every outline point turns about -- so at crank 0 it sits exactly
-            # where the file draws it. TWO convex pieces, the blade (outline
-            # points 1 2 5 6) and the toe (2 3 4 5): MuJoCo collides a mesh
-            # as its convex hull, and the whole outline is not convex.
+            # where the file draws it. In CONVEX pieces (`_convex_pieces`):
+            # MuJoCo collides a mesh as its convex hull, and the outline is
+            # not convex. The piece holding outline point 1 (top, inner) is
+            # the blade, `swing_wing_<side>`; the one holding point 3 (the toe
+            # tip) is `_toe`; any others `_p<n>`. V2 gives exactly two, blade
+            # 1 2 5 6 and toe 2 3 4 5.
             ol = np.asarray(module["blade_outline"], float)
             floor_z = to_bike(0.0, 0.0)[1]
 
@@ -1474,7 +1539,13 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
                 return np.array([side * pt[0] / 1000.0,
                                  floor_z + pt[1] / 1000.0 - pivot_z])
             y0, y1 = (v / 1000.0 for v in module["blade_y"])
-            pieces = (("", [0, 1, 4, 5]), ("_toe", [1, 2, 3, 4]))
+            cut = _convex_pieces(ol)
+            blade_i = next(i for i, q in enumerate(cut) if 0 in q)
+            toe_i = next((i for i, q in enumerate(cut) if 2 in q and i != blade_i), None)
+            order = [blade_i] + ([toe_i] if toe_i is not None else []) + \
+                [i for i in range(len(cut)) if i not in (blade_i, toe_i)]
+            pieces = tuple(("" if i == blade_i else "_toe" if i == toe_i else f"_p{n}", cut[i])
+                           for n, i in enumerate(order))
             areas = [abs(_shoelace(ol[idx])) for _, idx in pieces]
             for (suffix, idx), a in zip(pieces, areas):
                 q = [local(ol[i]) for i in idx]

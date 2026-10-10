@@ -21,9 +21,11 @@
 # wing's knuckle, would push the link collision past 138 and let the toe be
 # shortened again. Not done; the toe blocks it for now.
 #
-# The RIGHT wing's blade, stowed (crank 0), bike upright: `out` mm outward
-# from the centreline, `up` mm above the floor. The left blade is its mirror.
-# The wing rod is at out 0, up 41.2; every blade point turns about it.
+# The RIGHT wing's blade seen from BEHIND, stowed (crank 0), bike upright:
+# [x, y] mm, x out from the midline (to the right), y up from the floor. The
+# left blade is its mirror. The wing rod is at (0, 41.2); every blade point
+# turns about it. (The entry kinds -- points, runs, curves -- are in
+# params.blade_points; this one is plain points.)
 #
 # `y`: the fore/aft span in the righting module's frame (+ forward, 0 = the
 # couplers' mid-plane on the rod, which sits at 120.5 ahead of the rear axle).
@@ -33,7 +35,7 @@
 # The sim builds the outline as TWO convex pieces, the blade (points 1, 2, 5,
 # 6) and the toe (2, 3, 4, 5), so keep each of those quads convex.
 y: [-61.25, 20.75]
-outline:          # [out, up], one closed loop, either winding
+outline:          # [x, y], one closed loop, either winding
   - [63.9, 147.4]   # top, inner face
   - [38.5, 50.6]    # foot, inner face
   - [15.69, 22.32]  # toe tip, upper

@@ -131,9 +131,78 @@ def resolve_righting_module(p: dict) -> dict:
         return p
     mod["linkage"] = scaled_linkage(mod["linkage_cad"])
     blade = yaml.load((ROOT / mod["blade_file"]).read_text(), Loader=_Loader)
-    mod["blade_outline"] = [[float(a), float(b)] for a, b in blade["outline"]]
+    mod["blade_outline"] = blade_points(blade["outline"])
     mod["blade_y"] = [float(v) for v in blade["y"]]
     return p
+
+
+BLADE_CURVE_SEGMENTS = 40
+
+
+def blade_points(outline, segments: int = BLADE_CURVE_SEGMENTS) -> list:
+    """A blade file's `outline` as plain [x, y] points: the RIGHT wing seen
+    from BEHIND, mm, x out from the midline (to the right), y up from the
+    floor. Angles are counter-clockwise in that view. Each entry is one of:
+
+      [x, y]                         a point.
+      {dir_deg: a, len: L}           a straight run of L mm from the previous
+                                     point, at a deg FROM LEVEL: 0 level
+                                     outward, 90 straight up, 180 level
+                                     inward. E.g. the outer face, its angle
+                                     one number.
+      {curve: {to: [x, y],           a CUBIC Bezier from the previous point to
+               handles: [h0, h1],    `to`, tangent at both ends to the
+               start_deg: 0,         straight sections either side by
+               end_deg: 0}}          default; start_deg / end_deg (optional)
+                                     turn an end off tangent, relative to its
+                                     neighbour, for a deliberate kink.
+                                     `handles` [mm]: how far each end runs
+                                     along its tangent before turning -- the
+                                     tuning knobs.
+
+    The loop closes itself, last point back to the first.
+
+    Curves are cut into `segments` straight pieces here. Two curves may not
+    share a point (each one's tangent is relative to a STRAIGHT neighbour).
+    An outline of plain points comes back as floats, unchanged."""
+    import numpy as np
+    nodes = []                              # (position, the curve arriving there)
+    for e in outline:
+        if isinstance(e, dict) and "curve" in e:
+            nodes.append((np.asarray(e["curve"]["to"], float), e["curve"]))
+        elif isinstance(e, dict):
+            if not nodes:
+                raise ValueError("blade outline starts with a run; give a point first")
+            a = math.radians(float(e["dir_deg"]))
+            nodes.append((nodes[-1][0] + float(e["len"]) * np.array([math.cos(a), math.sin(a)]),
+                          None))
+        else:
+            nodes.append((np.asarray(e, float), None))
+    n = len(nodes)
+
+    def unit(v):
+        return v / np.linalg.norm(v)
+
+    def turn(v, deg):
+        c, s_ = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+        return np.array([c * v[0] - s_ * v[1], s_ * v[0] + c * v[1]])
+    out = []
+    for i, (p, c) in enumerate(nodes):
+        if c is not None:
+            if nodes[i - 1][1] is not None or nodes[(i + 1) % n][1] is not None:
+                raise ValueError("two blade curves share a point; put a straight section between")
+            a, before, after = nodes[i - 1][0], nodes[i - 2][0], nodes[(i + 1) % n][0]
+            t0 = turn(unit(a - before), float(c.get("start_deg", 0.0)))
+            t1 = turn(unit(after - p), float(c.get("end_deg", 0.0)))
+            h0, h1 = (float(v) for v in c["handles"])
+            P = [a, a + h0 * t0, p - h1 * t1, p]
+            for k in range(1, segments):
+                t = k / segments
+                w = [(1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t ** 2, t ** 3]
+                out.append([float(sum(wi * q[0] for wi, q in zip(w, P))),
+                            float(sum(wi * q[1] for wi, q in zip(w, P)))])
+        out.append([float(p[0]), float(p[1])])
+    return out
 
 
 def load_params(path: str | Path | None = None) -> dict:
