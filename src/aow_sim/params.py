@@ -119,20 +119,42 @@ def scaled_linkage(cad_cfg: str | Path) -> dict:
     return cfg
 
 
-def resolve_righting_module(p: dict) -> dict:
+def resolve_righting_module(p: dict, blade_file: str | Path | None = None) -> dict:
     """Inline the righting module's files into `p` (bike_params.yaml
     `righting.module`): `linkage` (the scaled four-bar) and `blade_outline` /
     `blade_y` (the blade's front section). Inlined rather than read at build
     time so that plant_digest, a hash of this dict, moves when the CAD's
     linkage, its scale or the blade does. Mutates and returns `p`; a params
-    file without the block is left alone."""
+    file without the block is left alone.
+
+    `blade_file` swaps in another blade (teleop's --blade). A blade file may
+    also carry the two things that follow the blade rather than the linkage,
+    and they then win over bike_params / the linkage config: `mass` (each
+    blade) and `crank_travel_deg`, the commanded stroke -- the blade's own
+    level point, which differs per blade (V2 129.3, V3 116.9) and which
+    teleop, the actuator's range and the ground station all read from here."""
     mod = (p.get("righting") or {}).get("module")
     if not isinstance(mod, dict) or "linkage" in mod:
         return p
+    if blade_file is not None:
+        # from the caller's directory, or else the repo's (as blade_file is)
+        bf = Path(blade_file)
+        if not bf.is_absolute():
+            bf = Path.cwd() / bf if (Path.cwd() / bf).exists() else ROOT / bf
+        bf = bf.resolve()
+        # relative to the repo when inside it: the path is hashed into the
+        # digest, and an absolute one would differ per machine
+        mod["blade_file"] = (bf.relative_to(ROOT).as_posix()
+                             if bf.is_relative_to(ROOT) else str(bf))
     mod["linkage"] = scaled_linkage(mod["linkage_cad"])
     blade = yaml.load((ROOT / mod["blade_file"]).read_text(), Loader=_Loader)
     mod["blade_outline"] = blade_points(blade["outline"])
     mod["blade_y"] = [float(v) for v in blade["y"]]
+    if "mass" in blade:
+        m = blade["mass"]
+        mod["blade"]["mass"] = float(m["value"] if isinstance(m, dict) else m)
+    if "crank_travel_deg" in blade:
+        mod["linkage"]["stroke"]["crank_travel_deg"] = float(blade["crank_travel_deg"])
     return p
 
 
@@ -205,10 +227,13 @@ def blade_points(outline, segments: int = BLADE_CURVE_SEGMENTS) -> list:
     return out
 
 
-def load_params(path: str | Path | None = None) -> dict:
+def load_params(path: str | Path | None = None,
+                blade: str | Path | None = None) -> dict:
+    """`blade`: another righting blade file in place of the module's own
+    (resolve_righting_module) -- a different plant, so a different digest."""
     with open(path or DEFAULT_PARAMS) as f:
         return resolve_righting_module(
-            derive_righting(_normalize(yaml.load(f, Loader=_Loader))))
+            derive_righting(_normalize(yaml.load(f, Loader=_Loader))), blade)
 
 
 def params_digest(params: dict) -> str:

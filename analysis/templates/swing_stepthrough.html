@@ -505,7 +505,8 @@ function fillStatic(i) {
     ["Current limit @ 9.9 V (sim)", d.sim == null ? "not run" : `${d.sim} mA · ${Math.round(100 * d.sim / geo.max_ma)}%`],
     ["Planar", `${d.counts.toFixed(0)} mA · ${Math.round(100 * d.counts / geo.max_ma)}%`],
     [`Travel, commanded${lock ? " (locks)" : ""}${d.T_is_level ? ", = level" : ""}`, `${d.T.toFixed(1)}°`],
-    ...(d.level == null ? [] : [["Level (roll 0), on the blade", `${d.level.toFixed(2)}°`]]),
+    ...(d.level == null ? [] : [["Level (roll 0), on the blade", `${d.level.toFixed(2)}°`
+        + (d.level_drift ? ` <b style="color:var(--warn)">≠ pinned ${d.T.toFixed(1)}: update crank_travel_deg</b>` : "")]]),
     ["F in coupler/hinge pins", `${d.pins.coupler.toFixed(0)} / ${d.pins.hinge.toFixed(0)} N`],
     ["F coupler pin, step (sim)", N(d.pins.lift_sim)],
   ].map(([k, v]) => `<div class="plane"><span class="n">${v}</span><span class="chips">${k}</span></div>`).join("");

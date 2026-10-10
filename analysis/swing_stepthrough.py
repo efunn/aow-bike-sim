@@ -23,9 +23,11 @@ points, straight runs at an angle, cubic curves -- are documented in
 `aow_sim.params.blade_points`; the right wing seen from behind, x out from the
 midline, y up from the floor. A blade other than the module's own (V3) gets,
 on the page and in its sim: its own outline, its file's `mass`, and its
-commanded stroke set to its LEVEL point, worked out here (or its file's
-`crank_travel_deg`, if given, pins it). Its dropdown on the page lists the
-file. To try blades without adding them to `DEFAULT`, give one
+file's `crank_travel_deg` as the commanded stroke -- the number the sim,
+teleop (`--blade`) and the ground station read too. Without one, the stroke
+is the blade's LEVEL point, worked out here; with one, the page still works
+the level out and flags the pin when they differ (copy the new level in
+after a shape change). Its dropdown on the page lists the file. To try blades without adding them to `DEFAULT`, give one
 or more (each is the V2 linkage with that blade); the two panes open on the
 last two, and `--labels` names them:
 
@@ -671,6 +673,11 @@ def rest_over_centre(lk, t: float, pts=None) -> dict:
     raise ValueError(f"no over-centre rest at crank {t:.1f}")
 
 
+# How far a blade file's pinned `crank_travel_deg` may sit from the level
+# point the rest gives before the page flags it (V2: 129.3 vs 129.35).
+LEVEL_DRIFT_DEG = 0.25
+
+
 def level_point(lk, blade0, mp: dict, upto: float | None) -> float | None:
     """The crank angle where the bike, resting on the blade (`blade0`, sketch
     mm at stow) and its wheels, comes to roll 0: stepped at 0.5 deg, then
@@ -791,6 +798,11 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
         T = float(cad[3]["travel"])
     elif variant and level is not None:
         T = np.floor(level * 10.0) / 10.0
+    if cad and cad[3].get("travel") is not None and level is not None \
+            and abs(T - level) > LEVEL_DRIFT_DEG:
+        print(f"WARNING {label}: crank_travel_deg {T:g} pinned in {cad[3]['src']}, "
+              f"but this blade comes level at {level:.2f}; set it to "
+              f"{np.floor(level * 10.0) / 10.0:.1f}")
     end = meet if meet is not None and meet > T else T
     frames = []
     for f in np.linspace(0.0, 1.0, 121):
@@ -860,6 +872,9 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
             else str(path), "T": round(T, 1), "planes": planes, "cad": sweep,
             "level": None if level is None else round(level, 2),
             "T_is_level": bool(variant and cad[3].get("travel") is None and level is not None),
+            # a PINNED stroke that no longer matches this blade's level point
+            "level_drift": bool(cad and cad[3].get("travel") is not None and level is not None
+                                and abs(T - level) > LEVEL_DRIFT_DEG),
             "counts": st["counts"], "brk": round(st["brk"], 4), "sim": sim,
             "pins": {"coupler": max(f["fc"] for f in frames if f["fc"] is not None),
                      "hinge": max(f["fh"] for f in frames if f["fh"] is not None),

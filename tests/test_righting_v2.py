@@ -3,11 +3,18 @@
 V2 is the diamond four-bar `cad_righting` draws (config/righting_cad.yaml:
 swing_linkage_shared_rod.yaml at linkage.scale) with the blades of
 config/righting_blade.yaml. These pin the sim to the CAD: the same links, the
-blade where the file draws it, the toes stopping the stroke where the
-stepthrough says they meet, and the mass the module adds. Invalidated by a
-change to the module's files, `righting.module` in bike_params.yaml, or
-build_model's `_add_swing_linkage`.
+blade where the file draws it, the toes stopping the stroke past the
+commanded travel and short of the knuckles, and the mass the module adds.
+Invalidated by a change to the module's files, `righting.module` in
+bike_params.yaml, or build_model's `_add_swing_linkage`.
+
+BLADE-AGNOSTIC (user, 2026-10-10): whatever blade the module carries, these
+read its numbers from the resolved params, not V2's -- so a new blade passes
+unless it actually breaks something. V2's own numbers are pinned only by the
+tests that name V2's file or V3's.
 """
+
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -30,13 +37,34 @@ def model(params):
     return build_model(params)
 
 
+V3 = "config/swing_explore/blade_v3.yaml"
+
+
+def _blade_geoms(model, tag):
+    """One wing's blade pieces: the blade, `_toe`, and `_p{n}` for any more
+    the convex split of its outline makes."""
+    out = []
+    for g in range(model.ngeom):
+        n = model.geom(g).name
+        rest = n[len(f"swing_wing_{tag}"):] if n.startswith(f"swing_wing_{tag}") else None
+        if rest is not None and model.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH and \
+                (rest in ("", "_toe") or (rest.startswith("_p") and rest[2:].isdigit())):
+            out.append(g)
+    return out
+
+
+def _stroke(params):
+    return params["righting"]["module"]["linkage"]["stroke"]["crank_travel_deg"]
+
+
 def test_the_default_bike_carries_v2(params, model):
     names = {model.geom(g).name for g in range(model.ngeom)}
     assert {"swing_wing_right_toe", "swing_wing_left_toe",
             "righting_fixed", "roof"} <= names
     assert not {"bumper_left", "bumper_right"} & names   # user: no bumpers
     lo, hi = np.degrees(model.actuator_ctrlrange[model.actuator("swing").id])
-    assert (lo, hi) == pytest.approx((-129.3, 129.3))   # level on the blade, commanded
+    # the commanded stroke: the linkage's, or the blade file's own level point
+    assert (lo, hi) == pytest.approx((-_stroke(params), _stroke(params)))
 
 
 def test_the_links_are_the_cads(params):
@@ -62,8 +90,7 @@ def test_the_blade_sits_where_the_file_draws_it(params, model):
     want = {(round(o, 1), round(u, 1)) for o, u in ol}
     for tag, side in (("right", -1), ("left", 1)):
         got = set()
-        for sfx in ("", "_toe"):
-            g = model.geom(f"swing_wing_{tag}{sfx}").id
+        for g in _blade_geoms(model, tag):
             mid = model.geom_dataid[g]
             V = model.mesh_vert[model.mesh_vertadr[mid]:
                                 model.mesh_vertadr[mid] + model.mesh_vertnum[mid]]
@@ -81,8 +108,7 @@ def _drive_crank(model, target_deg, seconds=4.0, rate_dps=40.0):
     aid = m.actuator("swing").id
     m.actuator_ctrlrange[aid] = np.deg2rad([-170, 170])
     qa = m.joint("swing_crank_joint").qposadr[0]
-    blades = {m.geom(f"swing_wing_{t}{s}").id
-              for t in ("right", "left") for s in ("", "_toe")}
+    blades = set(_blade_geoms(m, "right") + _blade_geoms(m, "left"))
     d = mujoco.MjData(m)
     q0 = d.qpos.copy()
     q0[2] += 0.15
@@ -102,16 +128,19 @@ def _drive_crank(model, target_deg, seconds=4.0, rate_dps=40.0):
 
 @pytest.mark.parametrize("sign", (1, -1))
 def test_the_toes_are_the_end_stop(params, sign):
-    """Driven past the commanded stroke, the blades' toes meet where the
-    stepthrough finds them geometrically (129.75-130.0 at its 0.25 deg step)
-    and stop the crank there, both ways -- BEFORE each knuckle reaches the
-    other wing's coupler (user, 2026-10-09). Held under the full 0.55 N.m it
-    must stay inside the 131 deg that test_cad_righting clears the knuckle
-    to. config/righting_blade.yaml."""
+    """Driven past the commanded stroke, the blades meet and stop the crank,
+    both ways -- AFTER the stroke the wing keys command, and BEFORE each
+    knuckle reaches the other wing's coupler (user, 2026-10-09): held under
+    the full 0.55 N.m it must stay inside the 131 deg that test_cad_righting
+    clears the knuckle to. (V2's toes meet at 129.75-130.0, the stepthrough's
+    geometry; any blade on this linkage must land in the same window.)"""
+    _check_end_stop(params, sign)
+
+
+def _check_end_stop(params, sign):
     first, end = _drive_crank(build_model(params), sign * 150.0)
-    assert first is not None, "the toes never met"
-    assert abs(first) == pytest.approx(129.9, abs=0.5)
-    assert params["righting"]["module"]["linkage"]["stroke"]["crank_travel_deg"] < abs(first)
+    assert first is not None, "the blades never met"
+    assert _stroke(params) < abs(first) < 131.0
     assert abs(end) < 131.0
 
 
@@ -174,11 +203,14 @@ def test_the_other_mechanisms_still_build_instead(params, kw):
     assert "swing_wing_right_toe" not in names and "righting_fixed" not in names
 
 
-def test_the_ground_station_strokes_v2():
-    """The real station's default stroke is the module's (V2's 129.3), not
-    V1's 136.6 -- which on V2 hardware drives the toes into each other."""
+def test_the_ground_station_strokes_the_module(params):
+    """The real station's default stroke is the module's -- with its blade's
+    own `crank_travel_deg` if the file gives one -- not V1's 136.6, which on
+    V2 hardware drives the toes into each other."""
     from aow_sim.hw.ground import module_travel_deg
-    assert module_travel_deg() == pytest.approx(129.3)
+    v1 = yaml.safe_load(SWING_LINKAGE_CFG.read_text())["stroke"]["crank_travel_deg"]
+    assert module_travel_deg() == pytest.approx(_stroke(params))
+    assert module_travel_deg() != pytest.approx(v1)
 
 
 # ---------------------------------------------------------------- blade outlines
@@ -191,10 +223,16 @@ def _convex(P) -> bool:
     return bool((t >= -1e-9).all() or (t <= 1e-9).all())
 
 
+# V2's six points as built 2026-10-09, frozen here: the splitter's
+# regression case, whatever config/righting_blade.yaml later becomes.
+V2_OUTLINE = [[63.9, 147.4], [38.5, 50.6], [15.69, 22.32], [19.57, 19.24],
+              [43.3, 49.4], [68.7, 146.1]]
+
+
 def test_a_plain_outline_is_unchanged_and_v2_keeps_its_two_pieces():
     from aow_sim.build_model import _convex_pieces
     from aow_sim.params import blade_points
-    ol = yaml.safe_load((ROOT / "config/righting_blade.yaml").read_text())["outline"]
+    ol = V2_OUTLINE
     assert blade_points(ol) == [[float(a), float(b)] for a, b in ol]
     assert _convex_pieces(np.array(ol, float)) == [[0, 1, 4, 5], [1, 2, 3, 4]]
 
@@ -244,16 +282,30 @@ def test_runs_alone_draw_a_polygon_that_closes_itself():
     assert np.array(blade_points(sq)) == pytest.approx(np.array([[40, 60], [40, 80], [60, 80], [60, 60]]))
 
 
-def test_v3_builds_with_its_toe_stop(params):
-    """The exploring V3 blade, as the stepthrough builds it: a variant of the
-    module with that outline. Its toes still stop the crank where V2's do."""
-    import copy
-    from aow_sim.params import blade_points
-    spec = yaml.safe_load((ROOT / "config/swing_explore/blade_v3.yaml").read_text())
-    p = copy.deepcopy(params)
-    p["righting"]["module"]["blade_outline"] = blade_points(spec["outline"])
+def test_v3_builds_with_its_toe_stop():
+    """The exploring V3 blade swapped onto the module, as teleop's --blade
+    does: its outline, and its file's mass and stroke (its own level point,
+    116.9 -- not the linkage's 129.3, which would drive it 12 deg past
+    level). Its toes, V2's, still stop the crank past that and short of the
+    knuckles."""
+    p = load_params(blade=V3)
+    spec = yaml.safe_load((ROOT / V3).read_text())
+    mod = p["righting"]["module"]
+    assert _stroke(p) == spec["crank_travel_deg"] == pytest.approx(116.9)
+    assert mod["blade"]["mass"] == spec["mass"]["value"]
     m = build_model(p)
-    names = {m.geom(g).name for g in range(m.ngeom)}
-    assert {"swing_wing_right", "swing_wing_right_toe"} <= names
-    first, _ = _drive_crank(m, 150.0)
-    assert first == pytest.approx(129.9, abs=0.5)
+    assert np.degrees(m.actuator_ctrlrange[m.actuator("swing").id, 1]) == pytest.approx(116.9)
+    assert len(_blade_geoms(m, "right")) == len(_blade_geoms(m, "left")) >= 2
+    _check_end_stop(p, 1.0)
+
+
+def test_a_swapped_blade_is_another_plant(params):
+    """--blade is a different bike: the digest moves, and it moves the SAME
+    whether the path is given relative or absolute (the path is hashed, and
+    an absolute one would differ per machine). Naming the module's own file
+    is no change at all."""
+    own = params["righting"]["module"]["blade_file"]
+    other = V3 if Path(own) != Path(V3) else "config/righting_blade.yaml"
+    a, b = load_params(blade=other), load_params(blade=ROOT / other)
+    assert plant_digest(a) == plant_digest(b) != plant_digest(params)
+    assert plant_digest(load_params(blade=own)) == plant_digest(params)

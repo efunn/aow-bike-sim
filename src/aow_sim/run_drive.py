@@ -591,6 +591,13 @@ def main() -> None:
                          "swing_linkage*.yaml -- and the bare flag builds V1, "
                          "build_model.SWING_LINKAGE_CFG "
                          "(config/swing_linkage_smaller.yaml), flat panels.")
+    ap.add_argument("--blade", default=None, metavar="YAML",
+                    help="another blade on the bike's righting module, in "
+                         "memory (bike_params.yaml untouched), e.g. "
+                         "config/swing_explore/blade_v3.yaml: its outline, and "
+                         "its file's `mass` and `crank_travel_deg` (the wing "
+                         "keys' stroke) where it gives them. Moves "
+                         "plant_digest, so a policy loaded here warns")
     ap.add_argument("--no-righting", action="store_true",
                     help="the wingless bike: no righting module (what every "
                          "export before 2026-10-09 trained on)")
@@ -655,7 +662,16 @@ def main() -> None:
     if args.ahrs_gate is not None:
         from . import sim_ahrs
         sim_ahrs.FILTER_ACC_GATE = float(args.ahrs_gate)
-    params = load_params(args.params)
+    if args.blade and (args.no_righting or args.swing_linkage or args.wings
+                       or args.linkage or args.swing):
+        ap.error("--blade goes on the righting module; every other mechanism "
+                 "flag (and --no-righting) replaces that module")
+    params = load_params(args.params, blade=args.blade)
+    if args.blade:
+        mod = params["righting"]["module"]
+        print(f"BLADE {mod['blade_file']} (in memory): stroke "
+              f"{mod['linkage']['stroke']['crank_travel_deg']:g} deg, "
+              f"{mod['blade']['mass'] * 1000:.1f} g each")
     if args.wheelbase is not None:
         print(f"WHEELBASE {params['bike']['wheelbase'] * 1000:.0f} -> "
               f"{args.wheelbase * 1000:.0f} mm (in memory; chassis CoM held)")
