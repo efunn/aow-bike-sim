@@ -44,8 +44,7 @@ import numpy as np
 
 from .build_model import (FLOOR_CONAFF, FLOOR_CONTYPE, SWING_LINKAGE_CFG, _FLOOR_ALPHA,
                           build_model, load_params, tune_lighting)
-from .wheel_overlay import (STRIPE_RADIUS_TELEOP, add_stripes,
-                            stripe_frames)
+from .wheel_overlay import STRIPE_RADIUS_TELEOP, add_stripes
 from .control import DriveController, run
 from .control.balance import extract_state
 from .control.linearize import settle_upright
@@ -790,6 +789,7 @@ def main() -> None:
                     linkage_cfg=args.linkage_config,
                     swing_tip_mass=swing_tip_mass)
     model = build_model(params, rig=rig_cfg, **build_kw)
+    _enlarge_drawn_floor(model, TELEOP_FLOOR_M)
     design = None
     # On the floor rig too: the LQR identifies the plant by driving it, and
     # that must be the FREE bike, not the bike held by the rig.
@@ -949,8 +949,18 @@ _SPAWN_Z = 0.13     # m. The spawn arrow marks the RESPAWN POINT rather than
                     #   so it is lifted clear instead of lying in the surface,
                     #   where it competed with the dial and the checker.
 _CMD = (0.25, 1.0, 0.35, 1.0)      # green  — commanded
+# The commanded heading is an ARC riding the rim (user, 2026-10-10: it was a
+# big arrow across it, beside a cyan tick for the actual heading, now gone --
+# the bike itself shows where it points). Half-width and thickness:
+_CMD_ARC_DEG = 14.0
+_CMD_ARC_W = 0.008                 # m, capsule radius
+# The velocity gauge (orange commanded, yellow actual, centre-out arrows):
+# hidden for now (user, 2026-10-10); flip to bring it back.
+_SHOW_VELOCITY = False
+# The magenta DOWNHILL ray on a tilted floor: hidden with the rest
+# (user, 2026-10-10). The tilt still shows in the grid riding the slope.
+_SHOW_DOWNHILL = False
 _CMD_V = (1.0, 0.55, 0.1, 1.0)     # orange — commanded velocity
-_ACT = (0.2, 0.8, 1.0, 1.0)        # cyan   — actual heading
 _ACT_V = (1.0, 0.92, 0.35, 1.0)    # yellow — actual velocity
 _RING = (0.65, 0.65, 0.62, 0.35)   # grey   — dial rim
 _TRAIL = (0.90, 0.10, 0.10)        # red    — where the bike has actually been
@@ -1205,6 +1215,28 @@ def active_floor_normal(model, data):
 # grid says how far the ground actually went, and slip is the difference.
 # Extent shrinks with it so the line COUNT stays sane.
 _WHEEL_GRID_PITCH = 0.025
+# Half-width of the floor teleop DRAWS (`_enlarge_drawn_floor`). 30 m: a
+# session drives further than a recording (record.py draws 20).
+TELEOP_FLOOR_M = 30.0
+
+
+def _enlarge_drawn_floor(model, half_m: float) -> None:
+    """Draw every floor plane out to `half_m` on the COMPILED model.
+
+    A MuJoCo plane collides everywhere but is drawn only out to its size,
+    `sim.floor_size` (3 m), so the tracked cameras followed the bike off the
+    edge "into nothingness" while it was still, physically, on the ground
+    (user, 2026-10-10; record.py's _RENDER_FLOOR is the same fix).
+
+    Here rather than in bike_params (hashed into plant_digest: a cosmetic
+    edit would mark every policy stale) or in a params copy passed to the
+    builder (the compiler sizes `stat.extent` from the floor, 0.6 -> 6.0 m at
+    30, and the viewer's opening camera distance and near clip scale with
+    it -- the opening view would have moved 9 m out). Measured identical
+    physics: 4000 steps from a nudge, qpos bit-equal at 3 and 30 m.
+    tune_lighting, called after this, widens the shadows to match."""
+    for gid in floor_geoms(model):
+        model.geom_size[gid, :2] = np.maximum(model.geom_size[gid, :2], half_m)
 _WHEEL_GRID_HALF = 0.30
 _WHEEL_GRID_RGBA = (0.42, 0.60, 0.78, 0.55)
 
@@ -1249,14 +1281,17 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
              stripes=None, wheel_view=False, spawn=None):
     """Ground dial under the bike showing the teleop command against reality.
 
-    Headings live ON the rim as radial ticks; velocities are arrows from the
-    centre, scaled so the rim means v_max. Keeping the two on different radii
-    matters: the commanded course normally points along the commanded
-    heading, so drawing both as centre-out rays from the same origin buries
-    the (short) velocity arrow inside the (full-length) heading one.
+    The commanded heading is a green arc ON the rim; velocities (hidden while
+    `_SHOW_VELOCITY` is off) are arrows from the centre, scaled so the rim
+    means v_max, on a smaller radius so the two never bury each other.
 
-      green tick  = commanded heading      cyan tick   = actual heading
+      green arc   = commanded heading
       orange ray  = commanded velocity     yellow ray  = actual velocity
+
+    The rear rollers' spin reads from the model itself, which paints each
+    cone in blue/orange quarters (build_model._add_roller_quarters).
+    `stripes` (hairline capsules, wheel_slowmo's) is no longer passed by
+    teleop: they stood proud of the surface.
     """
     # reset=True for the viewer's user_scn (ours alone, cleared each frame);
     # reset=False to append onto an mjvScene that already holds the model
@@ -1316,10 +1351,6 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
     def ray(heading, length, width, rgba):
         seg(base, at(heading, length), mujoco.mjtGeom.mjGEOM_ARROW, width, rgba)
 
-    def tick(heading, r0, r1, width, rgba):
-        seg(at(heading, r0), at(heading, r1),
-            mujoco.mjtGeom.mjGEOM_ARROW, width, rgba)
-
     def floor_grid(pitch, half, rgba, width, centre):
         """A world-FIXED reference. Without it a tracking camera keeps the
         bike centred and stationary-looking, so translation is invisible --
@@ -1362,7 +1393,7 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
     # the fixed camera (see --slope-bearing) and by the reference grid, which
     # rides the tilted plane a few lines above.
     n = active_floor_normal(model, data)
-    if float(np.linalg.norm(n[:2])) > 1e-9:
+    if _SHOW_DOWNHILL and float(np.linalg.norm(n[:2])) > 1e-9:
         ray(float(np.arctan2(n[1], n[0])), _DIAL_R * 1.25, 0.006, _SLOPE)
 
     # The spawn dial: where the bike will be facing after the next respawn.
@@ -1444,8 +1475,6 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
                     np.array([x1, y1, floor_z((x1, y1)) + 0.002]),
                     mujoco.mjtGeom.mjGEOM_LINE, 5.0, (*_TRAIL, a))
 
-    R = data.body("chassis").xmat.reshape(3, 3)
-    yaw = float(np.arctan2(R[1, 0], R[0, 0]))
     v = np.asarray(data.qvel[:2], float)
     vscale = _VEL_R / max(v_max, 1e-6)      # inner gauge full scale == v_max
     # `command` lets a recorder replay the (heading, velocity) that was
@@ -1454,18 +1483,22 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
     h_cmd, v_cmd = _command_ref(c, data) if command is None else command
 
     # velocities: centre-out arrows inside the gauge, actual under commanded
-    speed = float(np.linalg.norm(v))
-    if speed > 1e-3:
-        ray(float(np.arctan2(v[1], v[0])),
-            min(vscale * speed, _VEL_R), 0.010, _ACT_V)
-    cmd_speed = float(np.linalg.norm(v_cmd))
-    if cmd_speed > 1e-3:
-        ray(float(np.arctan2(v_cmd[1], v_cmd[0])),
-            min(vscale * cmd_speed, _VEL_R), 0.020, _CMD_V)
+    if _SHOW_VELOCITY:
+        speed = float(np.linalg.norm(v))
+        if speed > 1e-3:
+            ray(float(np.arctan2(v[1], v[0])),
+                min(vscale * speed, _VEL_R), 0.010, _ACT_V)
+        cmd_speed = float(np.linalg.norm(v_cmd))
+        if cmd_speed > 1e-3:
+            ray(float(np.arctan2(v_cmd[1], v_cmd[0])),
+                min(vscale * cmd_speed, _VEL_R), 0.020, _CMD_V)
 
-    # headings: ticks straddling the rim, clear of the velocity gauge
-    tick(yaw, _DIAL_R * 0.88, _DIAL_R * 1.08, 0.012, _ACT)
-    tick(h_cmd, _DIAL_R * 0.80, _DIAL_R * 1.30, 0.024, _CMD)
+    # the commanded heading: an arc along the rim, centred on it
+    arc = np.deg2rad(_CMD_ARC_DEG)
+    hs = np.linspace(h_cmd - arc, h_cmd + arc, 9)
+    for h0, h1 in zip(hs, hs[1:]):
+        seg(at(h0, _DIAL_R), at(h1, _DIAL_R),
+            mujoco.mjtGeom.mjGEOM_CAPSULE, _CMD_ARC_W, _CMD)
 
 
 # -- teleop input model ---------------------------------------------------
@@ -2750,11 +2783,18 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # uses. Acted on IMMEDIATELY -- see `ensure_mode` for why not deferred.
     t_prev = [0.0]
     view = [None]              # the viewer handle, once teleop_loop hands it over
+    home_cam = [None]          # the camera the viewer OPENED with; free mode returns to it
+
+    def on_view(v):
+        """teleop_loop's handoff: keep the handle, and snapshot the viewer's
+        opening camera -- MuJoCo's default free camera on the model, aimed at
+        the spawn point -- so cycling back to `free` restores exactly it."""
+        with v.lock():
+            home_cam[0] = (v.cam.lookat.copy(), float(v.cam.distance),
+                           float(v.cam.azimuth), float(v.cam.elevation))
+        view[0] = v
     chassis_id = model.body("chassis").id
     hub_id = model.body("aow_hub").id
-    # Static stripe geometry, computed once against the model; only the
-    # live body pose changes per frame. Costs 64 scene geoms when drawn.
-    stripe_geom = stripe_frames(model, params)
     ax_v, ax_psi, ax_lat = _Axis(), _Axis(), _Axis()
     # The spawn dial gets its OWN axis so its heading ramps exactly like
     # teleop's turn keys -- tap to nudge, hold to sweep -- without sharing
@@ -3298,20 +3338,25 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         if v is None:
             return
         if cam_mode[0] == "free":
-            # Hand the camera back ONCE per switch, re-framed to the 3/4 view
-            # the viewer opens with and centred on the bike -- otherwise free
-            # mode inherits whatever overhead left behind (elevation -89, i.e.
-            # staring straight down) and reads as a broken toggle. After the
-            # handoff it is the user's camera again: mouse orbit/pan/zoom are
-            # not fought for, which is the whole point of free mode.
+            # Hand the camera back ONCE per switch, as the view the viewer
+            # OPENED with (`home_cam`: world-fixed, on the spawn point) --
+            # otherwise free mode inherits whatever overhead left behind
+            # (elevation -89, i.e. staring straight down) and reads as a
+            # broken toggle. It used to re-centre a made-up 3/4 view on the
+            # bike, which was neither the opening view nor fixed (user,
+            # 2026-10-10). After the handoff it is the user's camera again:
+            # mouse orbit/pan/zoom are not fought for, the point of free mode.
             if cam_free_pending[0]:
                 cam_free_pending[0] = False
                 with v.lock():
                     v.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
                     v.cam.trackbodyid = -1
-                    v.cam.lookat[:] = d.body("chassis").xpos
-                    v.cam.azimuth, v.cam.elevation, v.cam.distance = (
-                        135.0, -25.0, 2.4)
+                    if home_cam[0] is not None:
+                        look, dist, az, el = home_cam[0]
+                        v.cam.lookat[:] = look
+                        v.cam.distance, v.cam.azimuth, v.cam.elevation = dist, az, el
+                    else:
+                        mujoco.mjv_defaultFreeCamera(model, v.cam)
             return
         R = d.body("chassis").xmat.reshape(3, 3)
         yaw = float(np.degrees(np.arctan2(R[1, 0], R[0, 0])))
@@ -3324,8 +3369,10 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             # it dots +1.60. yaw+180 therefore filmed the bike head-on, and
             # in plan view pointed it down the screen.
             if cam_mode[0] == "follow":
+                # 0.8 m, about the opening view's 0.9 (user, 2026-10-10: 1.6
+                # left the bike small in frame)
                 v.cam.azimuth, v.cam.elevation, v.cam.distance = (
-                    yaw, -18.0, 1.6)
+                    yaw, -18.0, 0.8)
             elif cam_mode[0] == "wheel":
                 # Broadside on the rear wheel, tracking the HUB rather than the
                 # chassis so the wheel stays centred through a lean.
@@ -3802,8 +3849,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         apply_pending_respawn(m, d)
         _overlay(scn, m, d, c, overlay_on, v_max, trail=trail, grid=True,
                  trail_level=trail_levels[trail_level[0]],
-                 stripes=stripe_geom, wheel_view=cam_mode[0] == "wheel",
-                 spawn=spawn)
+                 wheel_view=cam_mode[0] == "wheel", spawn=spawn)
         if menu["open"] and view[0] is not None:
             active = gen_name[0] if c.mode == "general" else policy_menu.ANALYTIC
             policy_menu.draw(scn, view[0].cam, menu["entries"],
@@ -3896,7 +3942,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 show_ui=show_ui,
                 slowmo=slowmo,
                 paused=paused,
-                on_start=lambda v: view.__setitem__(0, v),
+                on_start=on_view,
                 pre_step=(None if drive_sim[0] is None and crank_servo is None
                           and not rig_servos and not gearbox else pre_step),
                 stats=None if frame_stats is None else FrameStats(frame_stats))

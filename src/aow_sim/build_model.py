@@ -215,8 +215,107 @@ def _part_contact(sim: dict, part: str) -> dict:
 # The print materials' TPU orange (#F57517) -- what the rollers and the front
 # tyre's quarters are printed in. Viewing only: rgba is in no digest.
 TPU_ORANGE = [0xF5 / 255, 0x75 / 255, 0x17 / 255, 1]
-# The pop blue ASA (#008DC3): the front tyre's other two quarters, the rear hub.
+# The pop blue ASA (#008DC3): the other two quarters of the front tyre and
+# of every roller cone.
 POP_BLUE = [0x00 / 255, 0x8D / 255, 0xC3 / 255, 1]
+# The rear hub (2026-10-10, user: it was pop blue, and read as part of the
+# rollers' pattern).
+HUB_BLACK = [0.08, 0.08, 0.08, 1]
+# The hub as DRAWN (user, 2026-10-10): smaller than its inertia cylinder
+# (hub.body_radius 38 mm) but just covering every roller's inner corners
+# seen from the side -- the small end's inner edge, the farthest in from
+# the wheel axis, 33.0 mm here -- by this margin. Smaller (25 mm) left an
+# air gap under the rollers that drew the eye.
+HUB_DRAWN_MARGIN = 0.0003
+# The lug each roller pair's axle sits in, between the pair's big ends:
+# its thickness across the wheel, and the boss around the axle.
+LUG_HALF_THICK = 0.004
+LUG_BOSS_RADIUS = 0.0045
+
+
+def _add_roller_quarters(spec: mujoco.MjSpec, axle, i: int, side: int,
+                         roller: dict, segments: int, pos, quat, radial) -> None:
+    """One roller cone drawn as four quarters, blue and orange alternating,
+    exactly as `_add_tire_quarters` draws the front tyre: the cone's own
+    vertices over 90 deg plus its axis points, so the paint IS the surface
+    (the overlay's stripe capsules stood proud of it), no mass, no contact.
+    The collision cone is made transparent by the caller.
+
+    PHASED to the wheel: quarter 0 starts at the wheel's radial direction on
+    every roller, and both cones of a pair carry each colour at the same
+    angle about the axle, so the rollers -- geared to one ring, so
+    physically in step (spread <= 5.3 deg under a torque step, then equal)
+    -- also LOOK in step."""
+    seg = 4 * -(-segments // 4)
+    v = geometry.truncated_cone_vertices(
+        roller["big_diameter"] / 2, roller["small_diameter"] / 2,
+        roller["length"], seg)
+    big, small, caps = v[:seg], v[seg:2 * seg], v[2 * seg:]
+    # the radial direction in the cone's own frame -> a turn about its +Z
+    R = np.zeros(9)
+    mujoco.mju_quat2Mat(R, np.asarray(quat, float))
+    loc = R.reshape(3, 3).T @ np.asarray(radial, float)
+    phi = np.arctan2(loc[1], loc[0])
+    # The pair's two cones point their +Z away from each other, so a sector
+    # turns the other way on each: a quarter turn more on one side puts every
+    # colour at the same angle about the axle on both (user, 2026-10-10: a
+    # checker across the pair read as neighbours 90 deg out of phase).
+    if side > 0:
+        phi += np.pi / 2
+    qz = np.array([np.cos(phi / 2), 0.0, 0.0, np.sin(phi / 2)])
+    q = np.zeros(4)
+    mujoco.mju_mulQuat(q, np.asarray(quat, float), qz)
+    n = seg // 4
+    tag = "a" if side < 0 else "b"
+    for k in range(4):
+        idx = [(k * n + j) % seg for j in range(n + 1)]
+        name = f"roller_{i}_{tag}_q{k}"
+        mesh = spec.add_mesh(name=name)
+        mesh.uservert = np.vstack([big[idx], small[idx], caps]).flatten()
+        axle.add_geom(name=name, type=mujoco.mjtGeom.mjGEOM_MESH, meshname=name,
+                      pos=pos, quat=q, mass=0.0, contype=0, conaffinity=0,
+                      rgba=TPU_ORANGE if k % 2 else POP_BLUE)
+
+
+def _add_hub_drawing(hub, ow: dict, n: int, cant: float) -> None:
+    """The rear hub as it LOOKS: a black disc just over the rollers' inner
+    corners (HUB_DRAWN_MARGIN) and, for
+    each roller pair, a black lug from it out to the pair's axle -- a block
+    plus a boss round the axle, in the gap between the pair's big ends -- so
+    the rollers sit on something. On the hub body (the lugs do not turn with
+    the rollers). Visual only, no mass, no contact; the inertia cylinders
+    `hub_body` and `ring_body` are made transparent by the caller."""
+    ro = ow["roller"]
+    gap = ro["pair_gap"]
+    r_ax = ow["axle_mount_radius"]
+    # side view: a cone's inner corners sit at (r_ax - its radius) in, and
+    # gap/2 (big end) or gap/2 + length (small end) along the axle
+    r_hub = HUB_DRAWN_MARGIN + max(
+        np.hypot(r_ax - ro["big_diameter"] / 2, gap / 2),
+        np.hypot(r_ax - ro["small_diameter"] / 2, gap / 2 + ro["length"]))
+    hub.add_geom(name="hub_drawn", type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+                 size=[r_hub, ow["hub"]["body_width"] / 2, 0],
+                 quat=_Y_AXIS_QUAT, mass=0.0, contype=0, conaffinity=0,
+                 rgba=HUB_BLACK)
+    half_t = 0.45 * gap                 # clear of both big ends
+    r0 = r_hub - 0.002                  # rooted inside the disc
+    for i in range(n):
+        theta = 2 * np.pi * i / n
+        radial = np.array([np.cos(theta), 0.0, np.sin(theta)])
+        tangent = np.array([-np.sin(theta), 0.0, np.cos(theta)])
+        if cant:
+            tangent = tangent * np.cos(cant) - np.array([0.0, 1.0, 0.0]) * np.sin(cant)
+        across = np.cross(radial, tangent)
+        q = np.zeros(4)
+        mujoco.mju_mat2Quat(q, np.column_stack([radial, tangent, across]).flatten())
+        hub.add_geom(name=f"hub_lug_{i}", type=mujoco.mjtGeom.mjGEOM_BOX,
+                     pos=0.5 * (r0 + r_ax) * radial, quat=q,
+                     size=[0.5 * (r_ax - r0), half_t, LUG_HALF_THICK],
+                     mass=0.0, contype=0, conaffinity=0, rgba=HUB_BLACK)
+        hub.add_geom(name=f"hub_boss_{i}", type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+                     pos=r_ax * radial, quat=_quat_z_to(tangent),
+                     size=[LUG_BOSS_RADIUS, half_t, 0],
+                     mass=0.0, contype=0, conaffinity=0, rgba=HUB_BLACK)
 
 
 def _add_tire_quarters(spec: mujoco.MjSpec, front, fw: dict, segments: int) -> None:
@@ -284,7 +383,7 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
         mass=ow["hub"]["mass"],
         contype=0,
         conaffinity=0,
-        rgba=POP_BLUE,
+        rgba=[*HUB_BLACK[:3], 0],       # drawn smaller by _add_hub_drawing
     )
 
     ring = hub.add_body(name="roller_ring")
@@ -299,7 +398,8 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
         mass=ow["ring"]["mass"],
         contype=0,
         conaffinity=0,
-        rgba=[0.8, 0.5, 0.1, 1],
+        # transparent: at 30 mm it showed round the smaller drawn hub
+        rgba=[0.8, 0.5, 0.1, 0],
     )
 
     n = ow["n_axles"]
@@ -333,8 +433,12 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
                 contype=DYN_CONTYPE,
                 conaffinity=DYN_CONAFF,
                 **_part_contact(sim, "roller"),
-                rgba=TPU_ORANGE,
+                rgba=[*TPU_ORANGE[:3], 0],      # drawn by its quarters
             )
+            _add_roller_quarters(spec, axle, i, side, roller, sim["mesh_segments"],
+                                 side * s_center * tangent, _quat_z_to(z_dir), radial)
+
+    _add_hub_drawing(hub, ow, n, cant)
 
     # Roller couplings: axle spin = k_roller * ring relative angle (rigid gearing).
     for i in range(n):
@@ -2013,11 +2117,34 @@ def _add_world(spec: mujoco.MjSpec, p: dict) -> None:
     # off into flat grey, which shows up in any recording with real
     # translation (the drive scripts, and the righting demo especially, which
     # ends ~8 m out). Directional light has no falloff, so the bike is lit the
-    # same wherever it is. `pos` is ignored for a directional light; the
-    # direction is what matters.
-    sun = spec.worldbody.add_light(name="sun", pos=[0.5, 0.3, 2.0],
-                                   dir=[-0.2, -0.1, -1.0])
+    # same wherever it is. Added by `_add_sun`, once the body it rides on
+    # exists.
+
+
+# The sun's world position at qpos0, and its direction.
+_SUN_POS, _SUN_DIR = np.array([0.5, 0.3, 2.0]), [-0.2, -0.1, -1.0]
+# Half-width of the shadow map around the sun when it TRACKS the bike: the
+# bike and its near surroundings, at full sharpness (8192 texels over 6 m is
+# 0.7 mm). See tune_lighting.
+SHADOW_HALF_M = 3.0
+
+
+def _add_sun(body, origin) -> None:
+    """The directional sun. Its `pos` sets no lighting -- a directional light
+    has none -- but MuJoCo CENTRES THE SHADOW MAP ON IT (a square of half-size
+    shadowclip * stat.extent). On the world body that pinned the shadows to
+    the origin: sharp there and gone a few metres out, or, sized to cover a
+    whole floor, blocky everywhere (30 m: 7 mm texels, user, 2026-10-10). On
+    the CHASSIS with mode trackcom it follows the bike at a fixed world
+    offset, direction fixed in the world, so a small sharp map goes wherever
+    the bike does. Rendered at x = 0 and 10 m: sharp at both. Viewing only:
+    no physics reads a light. `origin` is the body's world position at
+    qpos0, so the sun starts where it always was."""
+    sun = body.add_light(name="sun", pos=list(_SUN_POS - np.asarray(origin)),
+                         dir=_SUN_DIR)
     sun.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
+    if body.name != "world":
+        sun.mode = mujoco.mjtCamLight.mjCAMLIGHT_TRACKCOM
 
 
 def _apply_options(spec: mujoco.MjSpec, p: dict) -> None:
@@ -2073,6 +2200,7 @@ def build_spec(
     _add_world(spec, p)
 
     if variant == "testbed":
+        _add_sun(spec.worldbody, [0, 0, 0])     # the bike stays on its stand
         stand = spec.worldbody.add_body(
             name="stand",
             pos=[0, 0, p["omni_wheel"]["outer_radius"] + p["testbed"]["stand_clearance"]],
@@ -2112,6 +2240,7 @@ def build_spec(
     # Chassis frame: origin at the rear axle center, +X toward the front wheel.
     chassis = spec.worldbody.add_body(name="chassis", pos=[0, 0, r_rear])
     chassis.add_freejoint()
+    _add_sun(chassis, [0, 0, r_rear])
     # The chassis lumps are inertia primitives, not contact shapes — normally
     # nothing above the wheels can touch anything, which is exactly right for a
     # bike that stays upright. A FALLEN bike lands on them, so the righting
@@ -2399,7 +2528,15 @@ def tune_lighting(model: mujoco.MjModel) -> None:
     # shadowclip look washed out. At clip 6 / size 8192 the strength is
     # 0.70/0.69/0.68/0.54 across x = 0..-12, against 0.74 for the stock setup
     # at the origin only.
-    half = float(model.geom_size[model.geom("floor").id][0]) or 3.0
+    #
+    # Unless the sun TRACKS the bike (`_add_sun`, every full build since
+    # 2026-10-10): then the map moves with it and only has to cover the bike's
+    # surroundings, SHADOW_HALF_M, which keeps it sharp however big the drawn
+    # floor is (teleop draws 30 m).
+    tracks = any(model.light_mode[i] != mujoco.mjtCamLight.mjCAMLIGHT_FIXED
+                 for i in range(model.nlight) if model.light(i).name == "sun")
+    half = (SHADOW_HALF_M if tracks
+            else float(model.geom_size[model.geom("floor").id][0]) or 3.0)
     model.vis.map.shadowclip = max(1.0, half / max(model.stat.extent, 1e-6))
     model.vis.quality.shadowsize = max(int(model.vis.quality.shadowsize), 8192)
 

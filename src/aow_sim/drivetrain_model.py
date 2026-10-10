@@ -334,8 +334,18 @@ def _set_const(model) -> None:
     """Re-derive what the compiler computed from the fields `_switch` edits:
     the armature feeds `dof_invweight0` / `body_invweight0`, which scale every
     soft constraint's impedance (the contacts included). Left stale, a
-    switched model is not the model compiled with those values."""
+    switched model is not the model compiled with those values.
+
+    It ALSO re-derives the VIEWING statistics -- stat.extent / center /
+    meansize -- from the geoms as they are now, and those are kept as
+    compiled: teleop draws its floor out to 30 m after compiling
+    (run_drive._enlarge_drawn_floor), and a re-derived extent of 6.0 instead
+    of 0.6 scaled the shadow box 3 -> 30 m (8 mm shadow pixels), the near
+    clip, and the opening camera distance with it (2026-10-10). No physics
+    reads them."""
+    keep = (model.stat.extent, model.stat.center.copy(), model.stat.meansize)
     mujoco.mj_setConst(model, mujoco.MjData(model))
+    model.stat.extent, model.stat.center[:], model.stat.meansize = keep
 
 
 class DrivetrainSim:

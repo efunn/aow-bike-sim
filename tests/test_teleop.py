@@ -357,7 +357,7 @@ def test_overlay_draws_and_toggles(monkeypatch, model, params, eq_qpos):
     _hold(g, 0.6, UP)
     scn = mujoco.MjvScene(model, 2000)
     g["draw"](scn, g["model"], g["data"])
-    assert scn.ngeom > 24, "dial should draw a rim plus ticks and arrows"
+    assert scn.ngeom > 24, "dial should draw a rim plus the heading arc"
     g["on_key"](ord("2"))
     _idle(g, 3 * model.opt.timestep)
     g["draw"](scn, g["model"], g["data"])
@@ -663,9 +663,9 @@ def test_trail_thins_to_the_geom_budget_without_starving_the_dial(
     assert scn.ngeom < scn.maxgeom, "trail filled the scene to the brim"
     # inf keeps every point in the buffer; only the DRAWING is strided down.
     assert len(trail) == len(seeded) + 1
-    arrows = sum(scn.geoms[i].type == mujoco.mjtGeom.mjGEOM_ARROW
-                 for i in range(scn.ngeom))
-    assert arrows > 0, "dial ticks/rays were starved by the trail"
+    from aow_sim.run_drive import _CMD
+    arc = sum(np.allclose(scn.geoms[i].rgba, _CMD) for i in range(scn.ngeom))
+    assert arc > 0, "the dial's heading arc was starved by the trail"
 
 
 def test_trail_is_solid_inside_the_window_then_ramps_to_clear(
