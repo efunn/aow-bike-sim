@@ -266,13 +266,22 @@ def test_knuckle_r_sits_behind_knuckle_l(tmp_path):
     assert front == pytest.approx(Y["jn_end"])
 
 
+# Where the blades' toes hold the crank under full torque, plus margin: the
+# farthest any knuckle and the other wing's coupler can get to each other.
+TOE_STOP_MAX_DEG = 131.0
+
+
 def test_the_knuckles_sit_beside_the_other_wings_coupler(data, L):
     """`wing.knuckle_at: coupler` (user, 2026-10-07): each knuckle in the
     other wing's coupler layer, so a wing's rocker and knuckle straddle its
     own coupler and the stack does not grow; every L part its R turned
-    again. Over the whole stroke the
-    other coupler keeps 2 mm off the knuckle (2.19 in the planar sweep; it
-    passes over the rod 7.6 from its axis, hence the thinner hub)."""
+    again. The other coupler closes on the knuckle past ~130 deg (it passes
+    over the rod 7.6 from its axis, hence the thinner hub): 2.19 mm least at
+    128.4, 1.99 at 129.3, 0.41 at 136.25. So the BLADES' TOES are the stop
+    (user, 2026-10-09: "make the toe block the collision"), meeting at ~129.9
+    and held inside 131 under full torque (test_righting_v2). Swept to 131
+    both ways, it keeps 1.5 mm (~1.7 at 130.5). A dogleg coupler is the
+    noted way to more travel (config/righting_blade.yaml)."""
     Y = L["Y"]
     kr, kl = part(L, "knuckleR")["bbox"], part(L, "knuckleL")["bbox"]
     bz = data["s"]["stack"]["boss"]
@@ -291,14 +300,14 @@ def test_the_knuckles_sit_beside_the_other_wings_coupler(data, L):
     kn = _outline([q for q in part(L, "knuckleR")["add"] if q["y0"] < Y["cpl_out"]], n=96)
     cp = _outline(part(L, "couplerL")["add"], n=96)
     worst = np.inf
-    for f in np.linspace(-1, 1, 41):
-        ps = cr.poses(data["lk"], data["T"] * f, L["C"], L["pin"], L["J"])
+    for f in np.linspace(-1, 1, 81):
+        ps = cr.poses(data["lk"], TOE_STOP_MAX_DEG * f, L["C"], L["pin"], L["J"])
         A = np.array([cr.apply(ps["wR"], p) for p in kn])
         B = np.array([cr.apply(ps["cL"], p) for p in cp])
         near = B[np.linalg.norm(B - A.mean(0), axis=1) < np.ptp(A, axis=0).max() + 5]
         if len(near):
             worst = min(worst, cKDTree(near).query(A)[0].min())
-    assert worst > 2.0
+    assert worst > 1.5
 
 
 def _covers(q, pt, y):

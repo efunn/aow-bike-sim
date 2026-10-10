@@ -38,6 +38,12 @@ _FLOOR_ALPHA = 1.0     # opaque. 0.75 was tried to see the dial through the
 FLOOR_GRID_M = 0.25   # default metres per checker square; override with
                       #   sim.floor_grid_m (record.py exposes --grid)
 DYN_CONTYPE, DYN_CONAFF = 2, 1
+# The righting module's two BLADES also see EACH OTHER, through a bit nothing
+# else carries: their toes meeting is the mechanism's end stop (~130 deg,
+# config/righting_blade.yaml). Everything else about them is DYN: the floor
+# yes, the bike's own parts no.
+BLADE_BIT = 16
+BLADE_CONTYPE, BLADE_CONAFF = DYN_CONTYPE | BLADE_BIT, DYN_CONAFF | BLADE_BIT
 # Hockey extras (build_model(..., hockey=True)). The base 2-bit scheme lets
 # dynamic geoms touch only the floor; the ball needs to touch floor + stick +
 # wheels (a wheel strike is physical, so it can be detected and penalized) while
@@ -57,6 +63,12 @@ CONES = {
     "pyramidal": mujoco.mjtCone.mjCONE_PYRAMIDAL,
     "elliptic": mujoco.mjtCone.mjCONE_ELLIPTIC,
 }
+
+
+def _shoelace(pts) -> float:
+    """Signed area of a closed 2-D polygon."""
+    x, y = np.asarray(pts, float).T
+    return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
 
 
 def _quat_z_to(v) -> np.ndarray:
@@ -417,7 +429,8 @@ def _add_hockey(spec: mujoco.MjSpec, chassis, p: dict) -> None:
     )
 
 
-def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True) -> None:
+def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True,
+                  bumper: bool = True) -> None:
     """Self-righting study extras (build_model(..., righting=True)); see
     docs/plans/self-righting.md and the `righting` block in bike_params.yaml.
 
@@ -455,7 +468,7 @@ def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True) -> No
             rgba=[0.35, 0.6, 0.85, 0.55],
         )
 
-    if "bumper" in rg:
+    if bumper and "bumper" in rg:
         b = rg["bumper"]
         for side, tag in ((1, "left"), (-1, "right")):
             chassis.add_geom(
@@ -1255,8 +1268,15 @@ def _wrap_pi(a: float) -> float:
 
 
 def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
-                       tip_mass: float = 0.0) -> None:
+                       tip_mass: float = 0.0, module: dict | None = None) -> None:
     """Co-rotating FOUR-BAR wing pair (build_model(..., swing_linkage=True)).
+
+    `module` is bike_params' `righting.module` (resolved): THE BIKE'S OWN
+    righting module, V2. With it the wings are its BLADES (two convex mesh
+    pieces each, blade and toe, from `blade_outline`, whose toes stop the
+    stroke against each other) and every mass is the module's CAD estimate,
+    at its station. Without it, a study config: the flat box panel and the
+    `righting.wings` masses, as V1 was always built.
 
     The driveable counterpart to analysis/swing_linkage.py, which until now was
     a planar study with no model behind it -- the optimised geometries could be
@@ -1293,7 +1313,14 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
     sim = p["sim"]
     w_ref = p["righting"]["wings"]           # mass/servo reused from there
     r_rear = p["omni_wheel"]["outer_radius"]
-    px = w_ref["pivot"][0]                   # fore/aft station
+    px = (float(module["station_x"]) if module is not None
+          else w_ref["pivot"][0])            # fore/aft station
+    # Masses: the module's own when building it, else the study's split of
+    # `righting.wings.mass` (crank 15 % per arm, coupler 20 %, panel 100 %).
+    m_arm = (module["crank"]["mass"] / 2.0 if module is not None
+             else w_ref["mass"] * 0.15)
+    m_coupler = (module["coupler"]["mass"] if module is not None
+                 else w_ref["mass"] * 0.2)
 
     def to_bike(y_mm, z_mm):
         return np.array([y_mm / 1000.0, z_mm / 1000.0 - r_rear])
@@ -1340,6 +1367,19 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         raise ValueError(f"wing_angle_mode: expected 'fixed', 'vertical_rest' "
                          f"or 'flat_deploy', got {mode!r}")
 
+    if module is not None:
+        # The module's FIXED parts -- cases, bulkhead, bridge, the steel wing
+        # rod and the XC330 -- as one inertia box on the chassis at their
+        # centroid (module frame: out, up from the rod, fore). No contact:
+        # the chassis lumps and the roof already make the shell.
+        fx = module["fixed"]
+        at = np.asarray(fx["at"], float) / 1000.0
+        chassis.add_geom(
+            name="righting_fixed", type=mujoco.mjtGeom.mjGEOM_BOX,
+            size=np.asarray(fx["size"], float) / 2.0,
+            pos=[px + at[2], -at[0], sl.pivot_z + at[1]],
+            mass=fx["mass"], contype=0, conaffinity=0,
+            rgba=[0.3, 0.3, 0.3, 0.5])
     crank = chassis.add_body(name="swing_crank", pos=[px, servo[0], servo[1]])
     # The servo's gearbox friction at its no-load static value, for loops that
     # step without the servo model; CurrentBasedPositionServo makes it
@@ -1347,6 +1387,8 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
     crank_j = crank.add_joint(
         name="swing_crank_joint", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[1, 0, 0],
         frictionloss=float(p["servos"]["xc330_t181"]["friction_static_nm"]))
+    if module is not None:
+        crank_j.armature = float(module["crank_armature"])   # the XC330 rotor, GUESS
     crank_j.solref_friction = gearbox_friction.solref(spec.option.timestep)
     crank_j.solimp_friction = gearbox_friction.SOLIMP
     tips = {}
@@ -1357,7 +1399,7 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
             name=f"swing_crank_{tag}",
             type=mujoco.mjtGeom.mjGEOM_CAPSULE, size=[0.004, 0, 0],
             fromto=[0, 0, 0, 0, tip[0], tip[1]],
-            mass=w_ref["mass"] * 0.15, contype=0, conaffinity=0,
+            mass=m_arm, contype=0, conaffinity=0,
             rgba=[0.5, 0.2, 0.6, 1])
 
     for side, tag in ((-1, "right"), (1, "left")):
@@ -1381,7 +1423,7 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
             name=f"swing_coupler_{tag}",
             type=mujoco.mjtGeom.mjGEOM_CAPSULE, size=[0.0035, 0, 0],
             fromto=[0, 0, 0, 0, vec[0], vec[1]],
-            mass=w_ref["mass"] * 0.2, contype=0, conaffinity=0,
+            mass=m_coupler, contype=0, conaffinity=0,
             rgba=[0.2, 0.6, 0.3, 1])
         coup.add_site(name=f"swing_coupler_{tag}_end",
                       pos=[0.0, vec[0], vec[1]], size=[0.003, 0, 0])
@@ -1401,17 +1443,65 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         origin = (joint0 - pivot) + side * norm_off * n_hat
         z_min = float((ground_clear - pivot_z - origin[1]) / w_hat[1])
         lo_p, hi_p = origin + z_min * w_hat, origin + z_max * w_hat
-        mid = 0.5 * (lo_p + hi_p)
-        length = float(np.linalg.norm(hi_p - lo_p))
-        wing.add_geom(
-            name=f"swing_wing_{tag}",
-            type=mujoco.mjtGeom.mjGEOM_BOX,
-            size=[w_ref.get("panel_length_x", 0.030), 0.003, length / 2],
-            pos=[0.0, mid[0], mid[1]],
-            quat=_quat_z_to([0.0, float(w_hat[0]), float(w_hat[1])]),
-            mass=w_ref["mass"], contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
-            **_part_contact(sim, "righting"),
-            rgba=[0.85, 0.2, 0.2, 1] if side < 0 else [0.2, 0.4, 0.8, 1])
+        # The print theme (TPU orange, pop blue ASA): right wing orange, left blue.
+        rgba = TPU_ORANGE if side < 0 else POP_BLUE
+        if module is None:
+            mid = 0.5 * (lo_p + hi_p)
+            length = float(np.linalg.norm(hi_p - lo_p))
+            wing.add_geom(
+                name=f"swing_wing_{tag}",
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=[w_ref.get("panel_length_x", 0.030), 0.003, length / 2],
+                pos=[0.0, mid[0], mid[1]],
+                quat=_quat_z_to([0.0, float(w_hat[0]), float(w_hat[1])]),
+                mass=w_ref["mass"], contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
+                **_part_contact(sim, "righting"), rgba=rgba)
+        else:
+            # THE BLADE, from its front section (config/righting_blade.yaml):
+            # the right wing's outline, stowed, mm out from the centreline and
+            # up from the floor, extruded over its fore/aft span. Placed in
+            # this body's frame relative to its pivot -- the wing rod, which
+            # every outline point turns about -- so at crank 0 it sits exactly
+            # where the file draws it. TWO convex pieces, the blade (outline
+            # points 1 2 5 6) and the toe (2 3 4 5): MuJoCo collides a mesh
+            # as its convex hull, and the whole outline is not convex.
+            ol = np.asarray(module["blade_outline"], float)
+            floor_z = to_bike(0.0, 0.0)[1]
+
+            def local(pt):
+                # `out` is away from the centreline: side = -1 is the right
+                # wing, on -y
+                return np.array([side * pt[0] / 1000.0,
+                                 floor_z + pt[1] / 1000.0 - pivot_z])
+            y0, y1 = (v / 1000.0 for v in module["blade_y"])
+            pieces = (("", [0, 1, 4, 5]), ("_toe", [1, 2, 3, 4]))
+            areas = [abs(_shoelace(ol[idx])) for _, idx in pieces]
+            for (suffix, idx), a in zip(pieces, areas):
+                q = [local(ol[i]) for i in idx]
+                mesh = spec.add_mesh(name=f"swing_wing_{tag}{suffix}_mesh")
+                mesh.uservert = np.array([[x, yz[0], yz[1]] for x in (y0, y1)
+                                          for yz in q]).flatten()
+                wing.add_geom(
+                    name=f"swing_wing_{tag}{suffix}",
+                    type=mujoco.mjtGeom.mjGEOM_MESH,
+                    meshname=f"swing_wing_{tag}{suffix}_mesh",
+                    mass=module["blade"]["mass"] * a / sum(areas),
+                    contype=BLADE_CONTYPE, conaffinity=BLADE_CONAFF,
+                    **_part_contact(sim, "righting"), rgba=rgba)
+            # The rest of the wing body -- rocker, knuckle, the printed stub,
+            # the steel rocker pin -- as one point mass at their centroid
+            # (module frame: out, up from the rod, fore).
+            hub = np.asarray(module["wing_hub"]["at"], float) / 1000.0
+            wing.add_geom(
+                name=f"swing_wing_{tag}_hub",
+                type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.006, 0, 0],
+                pos=[hub[2], side * hub[0], hub[1]],
+                mass=module["wing_hub"]["mass"], contype=0, conaffinity=0,
+                rgba=[0.5, 0.5, 0.5, 1])
+            # The tip-mass study's "far end": the blade point farthest from
+            # the rod.
+            lo_p = hi_p = max((local(pt) + 0.0 for pt in ol),
+                              key=lambda q: float(np.linalg.norm(q)))
         if tip_mass:
             # A point mass at the panel's far end from the pivot, for the
             # balance-by-inertia study (rl_general_nodiff.yaml). NO CONTACT:
@@ -1421,7 +1511,9 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
             wing.add_geom(
                 name=f"swing_wing_{tag}_tip_mass",
                 type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.008, 0, 0],
-                pos=[0.0, float(tip[0]), float(tip[1])], mass=float(tip_mass),
+                pos=[0.0 if module is None else
+                     0.5 * sum(module["blade_y"]) / 1000.0,
+                     float(tip[0]), float(tip[1])], mass=float(tip_mass),
                 contype=0, conaffinity=0, rgba=[0.15, 0.15, 0.15, 1])
         # Does this wing touch anything on the WORLD body (the floors)?
         # MuJoCo's own contact sensor, 1.0 when it does, read by
@@ -1893,7 +1985,7 @@ def build_spec(
     flywheel_cfg: str | Path | None = None,
     swing: bool = False,
     swing_cfg: str | Path | None = None,
-    swing_linkage: bool = False,
+    swing_linkage: bool | None = None,
     swing_linkage_cfg: str | Path | None = None,
     rig: dict | None = None,
     swing_tip_mass: float = 0.0,
@@ -1929,6 +2021,19 @@ def build_spec(
         return spec
     if variant != "full":
         raise ValueError(f"unknown variant {variant!r}; expected 'full' or 'testbed'")
+
+    # THE BIKE'S RIGHTING MODULE IS THE DEFAULT (2026-10-09): `swing_linkage`
+    # None builds bike_params' `righting.module` -- V2, the diamond with its
+    # blades -- unless another mechanism was asked for, each of which is an
+    # ALTERNATIVE to it (four wings, double-counted mass). False is the
+    # wingless bike every export before then trained on; True with a
+    # `swing_linkage_cfg` is a study four-bar (V1: swing_linkage_smaller.yaml)
+    # with its flat panels; True without one is the module again.
+    if swing_linkage is None:
+        swing_linkage = (not (righting or wings or linkage or swing)
+                         and "module" in (p.get("righting") or {}))
+    module = (p["righting"]["module"]
+              if swing_linkage and swing_linkage_cfg is None else None)
 
     bike, ow = p["bike"], p["omni_wheel"]
     r_rear, r_front = ow["outer_radius"], bike["front_wheel"]["radius"]
@@ -2141,8 +2246,10 @@ def build_spec(
     # `wings` implies the righting shell, and swaps the single arm for the wing
     # pair — the bumper rails are shared, the two mechanisms never coexist.
     if righting or wings or linkage or swing or swing_linkage:
+        # The module keeps the roof and has no bumpers (user, 2026-10-09).
         _add_righting(spec, chassis, p,
-                      arm=not (wings or linkage or swing or swing_linkage))
+                      arm=not (wings or linkage or swing or swing_linkage),
+                      bumper=module is None)
     if wings:
         _add_wings(spec, chassis, p)
     if linkage:
@@ -2162,9 +2269,11 @@ def build_spec(
         if wings or linkage or swing:
             raise ValueError("swing_linkage is an ALTERNATIVE to "
                              "wings/linkage/swing -- pick one mechanism")
-        _add_swing_linkage(spec, chassis, p, yaml.safe_load(
-            Path(swing_linkage_cfg or SWING_LINKAGE_CFG).read_text()),
-            tip_mass=swing_tip_mass)
+        _add_swing_linkage(
+            spec, chassis, p,
+            module["linkage"] if module is not None else yaml.safe_load(
+                Path(swing_linkage_cfg or SWING_LINKAGE_CFG).read_text()),
+            tip_mass=swing_tip_mass, module=module)
     elif swing_tip_mass:
         raise ValueError("swing_tip_mass is a swing_linkage option")
     if swing:
@@ -2277,7 +2386,7 @@ def build_model(
     linkage_cfg: str | Path | None = None,
     flywheel: bool = False, flywheel_cfg: str | Path | None = None,
     swing: bool = False, swing_cfg: str | Path | None = None,
-    swing_linkage: bool = False, swing_linkage_cfg: str | Path | None = None,
+    swing_linkage: bool | None = None, swing_linkage_cfg: str | Path | None = None,
     rig: dict | None = None, swing_tip_mass: float = 0.0,
 ) -> mujoco.MjModel:
     model = build_spec(params, variant, training_wheels, hockey, payload,

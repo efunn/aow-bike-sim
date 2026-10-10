@@ -950,11 +950,15 @@ training_wheels:
   clearance: 0.002      # gap above floor when upright, so they never carry standing load
 
 righting:
-  # Self-righting study (build_model(..., righting=True)); see
-  # docs/plans/self-righting.md. NOTHING HERE IS BUILT YET -- this block exists
-  # so that falls can be simulated and candidate geometry compared. Every
-  # dimension is `design` in the "record the intent" sense, not the "we chose
-  # this" sense.
+  # THE BIKE'S RIGHTING MODULE is `module` below (2026-10-09): the V2 diamond
+  # four-bar with its blades, what is going on the bike, and what build_model
+  # builds BY DEFAULT. Everything else in this block is the older self-righting
+  # STUDY (build_model(..., righting=True) / wings= / linkage= / swing=; see
+  # docs/plans/self-righting.md): mechanisms that were never built, kept so the
+  # studies still run. Each of those flags builds its own mechanism INSTEAD of
+  # the module. Their dimensions are `design` in the "record the intent" sense,
+  # not the "we chose this" sense. The roof (below) is shared: the module keeps
+  # it, the bumpers it does not.
   #
   # righting=True does two things regardless of the sub-blocks:
   #   1. makes the chassis lumps (frame box, servos, AHRS, payload) COLLIDABLE,
@@ -1245,6 +1249,56 @@ righting:
     # there. At the servo shaft; the builder squares gear_ratio.
     servo_kp: 1.48      # the arm's derivation, k = 0.83
     servo_kv: 0.0473
+  module:
+    # V2, THE RIGHTING MODULE THE BIKE IS BUILT WITH: the diamond four-bar as
+    # aow_sim.cad_righting draws it (one crankpin, one wing rod), the blades of
+    # `blade_file`, the XC330 in current-based position mode. build_model builds it
+    # unless asked for another mechanism (or swing_linkage=False, the wingless
+    # bike every export before 2026-10-09 trained on).
+    #
+    # The geometry is NOT copied here. `linkage_cad` names the CAD's own config,
+    # whose `linkage.config` at `linkage.scale` is the four-bar, and
+    # params.resolve_righting_module inlines it and the blade outline into the
+    # loaded params -- so plant_digest moves when either file does, and the sim
+    # and the CAD cannot drift apart.
+    linkage_cad: {value: config/righting_cad.yaml, source: design}
+    blade_file: {value: config/righting_blade.yaml, source: design}
+    # The couplers' mid-plane on the wing rod, ahead of the rear axle: the
+    # CAD's (wheelbase 200.5 there, 200 in the sim). Module-frame fore/aft
+    # positions below are relative to it.
+    station_x: {value: 0.1205, source: design}
+    # MASSES, all GUESS: printed parts at 1.07 g/cm3, 2 perimeters / 15 %
+    # infill (cad_servo_mount.printed_mass), steel at 7.85, from the CAD
+    # check's per-part volumes (traces/righting_check.txt, 2026-10-07);
+    # UNCALIBRATED, nothing printed. `at`: the group's centroid in the module
+    # frame, mm -- [out (+ = the right wing's side), up from the wing rod,
+    # fore] -- from the CAD sections, ignoring holes. Weigh the parts.
+    crank:     # both half cranks, horn hub, steel crankpin, washer
+      mass: {value: 0.0112, source: GUESS}
+    coupler:   # each
+      mass: {value: 0.0023, source: GUESS}
+    wing_hub:  # each: rocker + knuckle + printed stub + steel rocker pin
+      mass: {value: 0.0149, source: GUESS}
+      at: [31.0, 17.1, -3.3]
+    blade:     # each, from its outline x span (660 mm2 x 82 mm), 2 perim / 15 %
+      mass: {value: 0.0286, source: GUESS}
+    fixed:     # cases, bulkhead, bridge, steel wing rod (41.1 g) + XC330 (23 g, datasheet)
+      mass: {value: 0.0641, source: GUESS}
+      at: [0.0, 16.6, -19.3]
+      size: [0.034, 0.024, 0.060]   # inertia box, full extents (x fore, y, z): the module's envelope
+    # The crank servo: the four-bar's own `limits.torque_nm` caps it, as for
+    # every swing-linkage config (build_model._add_swing_linkage).
+    servo: xc330_t181
+    # The XC330's rotor + gearbox inertia seen at the crank. Nothing in the
+    # model carried one, and V2's crank alone is 2.5e-6 kg m2 (the wings reach
+    # it only through the loop's soft constraints), so the bare position
+    # actuator rang at 1200-1300 deg/s holding any angle but stow. >= 1e-5
+    # stops that; the value is the ORDER of the XC430's measured 2.2e-3 at its
+    # shaft (drivetrain_model.servo.rotor_inertia), for the smaller motor.
+    # Effect on the firmware model's full-rate stroke (0 -> 110 deg, bike held):
+    # 1e-4 0.183 s, 1e-3 0.194 s, 2e-3 0.210 s. Dies at: a crank coast-down,
+    # as drivetrain_fit.py coast did the XC430.
+    crank_armature: {value: 1.0e-3, source: GUESS}
 
 hockey:
   # Ball-shot move extras (build_model(..., hockey=True)); see

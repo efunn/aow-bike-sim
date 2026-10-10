@@ -1,0 +1,42 @@
+# THE RIGHTING BLADE, V2 (the diamond, cad_righting): the front section of
+# each wing's blade, toe included. The sim builds it (build_model's default
+# righting module, via params.resolve_righting_module) and
+# `analysis/swing_stepthrough.py` sweeps it against the CAD's parts. Was
+# config/swing_explore/blade_toe.yaml, an example; promoted 2026-10-09.
+#
+# The toes are the mechanism's END STOP: the two wings' toes meet at crank
+# ~130 deg, just past level (129.3, the commanded stroke). THEY MUST STOP IT
+# BEFORE THE LINKS DO (user, 2026-10-09): each knuckle closes on the other
+# wing's coupler past ~130 -- 2.19 mm least at 128.4, 1.99 at 129.3, 1.83
+# at 130, 0.41 at 136.25, touching at 138.0.
+#
+# THE TOE IS A UNIFORM 5 mm (2026-10-09, user), the blade's own thickness,
+# down the old flared toe's centreline (foot midpoint (40.9, 50.0) towards
+# the old tip midpoint (19.0, 22.5)), and 2.2 mm LONGER than that, 37.4 mm
+# from the foot: the tip midpoint is now (17.63, 20.78). Stop vs extension
+# past (19.0, 22.5), `swing_stepthrough.blade_meet` (0.25 deg steps):
+#   0 -> 136.5   1.0 -> 133.5   2.0 -> 130.75   2.2 -> 130.0   2.5 -> 129.25
+#
+# MORE TRAVEL LATER (optional): a DOGLEG coupler, bent to clear the other
+# wing's knuckle, would push the link collision past 138 and let the toe be
+# shortened again. Not done; the toe blocks it for now.
+#
+# The RIGHT wing's blade, stowed (crank 0), bike upright: `out` mm outward
+# from the centreline, `up` mm above the floor. The left blade is its mirror.
+# The wing rod is at out 0, up 41.2; every blade point turns about it.
+#
+# `y`: the fore/aft span in the righting module's frame (+ forward, 0 = the
+# couplers' mid-plane on the rod, which sits at 120.5 ahead of the rear axle).
+# [-61.25, 20.75] is the CAD's 82 mm blade centred at mid-wheelbase (100.25).
+# The stepthrough checks only parts whose span overlaps this.
+#
+# The sim builds the outline as TWO convex pieces, the blade (points 1, 2, 5,
+# 6) and the toe (2, 3, 4, 5), so keep each of those quads convex.
+y: [-61.25, 20.75]
+outline:          # [out, up], one closed loop, either winding
+  - [63.9, 147.4]   # top, inner face
+  - [38.5, 50.6]    # foot, inner face
+  - [15.69, 22.32]  # toe tip, upper
+  - [19.57, 19.24]  # toe tip, lower
+  - [43.3, 49.4]    # foot, outer face
+  - [68.7, 146.1]   # top, outer face

@@ -97,9 +97,49 @@ def derive_righting(p: dict) -> dict:
 _Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 
+ROOT = DEFAULT_PARAMS.parents[1]
+
+
+def scaled_linkage(cad_cfg: str | Path) -> dict:
+    """The four-bar a righting CAD config builds: its `linkage.config` with
+    the links at `linkage.scale` about the wing rod -- the three lengths
+    times k, the servo's height pulled toward the rod's by the same k -- as
+    `cad_righting.load` and `analysis/swing_stepthrough.py` scale it. Angles,
+    the panel and the stroke are left as the file has them."""
+    cad = _normalize(yaml.load((ROOT / cad_cfg).read_text(), Loader=_Loader))
+    cfg = yaml.load((ROOT / cad["linkage"]["config"]).read_text(), Loader=_Loader)
+    k = float(cad["linkage"]["scale"])
+    m = cfg["mechanism"]
+    for n in ("crank_length", "coupler_length", "rocker_length"):
+        m[n] = float(m[n]) * k
+    pz = float(m["wing_pivot_z"])
+    m["servo_offset"] = pz + k * (float(m["servo_offset"]) - pz)
+    cfg["_source"] = {"cad": str(cad_cfg), "config": str(cad["linkage"]["config"]),
+                      "scale": k}
+    return cfg
+
+
+def resolve_righting_module(p: dict) -> dict:
+    """Inline the righting module's files into `p` (bike_params.yaml
+    `righting.module`): `linkage` (the scaled four-bar) and `blade_outline` /
+    `blade_y` (the blade's front section). Inlined rather than read at build
+    time so that plant_digest, a hash of this dict, moves when the CAD's
+    linkage, its scale or the blade does. Mutates and returns `p`; a params
+    file without the block is left alone."""
+    mod = (p.get("righting") or {}).get("module")
+    if not isinstance(mod, dict) or "linkage" in mod:
+        return p
+    mod["linkage"] = scaled_linkage(mod["linkage_cad"])
+    blade = yaml.load((ROOT / mod["blade_file"]).read_text(), Loader=_Loader)
+    mod["blade_outline"] = [[float(a), float(b)] for a, b in blade["outline"]]
+    mod["blade_y"] = [float(v) for v in blade["y"]]
+    return p
+
+
 def load_params(path: str | Path | None = None) -> dict:
     with open(path or DEFAULT_PARAMS) as f:
-        return derive_righting(_normalize(yaml.load(f, Loader=_Loader)))
+        return resolve_righting_module(
+            derive_righting(_normalize(yaml.load(f, Loader=_Loader))))
 
 
 def params_digest(params: dict) -> str:

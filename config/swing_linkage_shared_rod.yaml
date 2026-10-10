@@ -65,4 +65,11 @@ bounds:
   - 10.0
   - 50.0
 stroke:
-  crank_travel_deg: 128.4
+  # 129.3 (user, 2026-10-09): where the bike reaches LEVEL resting on the
+  # blade (config/righting_blade.yaml) at righting_cad's 1.25 -- the
+  # stepthrough's blade rest and the sim trace both cross roll 0 at ~129.3.
+  # Was 128.4, the synthesis's "flat" (its placeholder panel line, the
+  # blade's centre line, horizontal in the bike frame), 0.9 short of level.
+  # The blades' toes stop the crank at ~130, before the knuckles reach the
+  # couplers (config/righting_blade.yaml).
+  crank_travel_deg: 129.3

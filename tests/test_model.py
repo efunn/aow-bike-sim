@@ -41,15 +41,20 @@ def _step_for(model, data, seconds):
     assert np.all(np.isfinite(data.qacc)), "simulation blew up"
 
 
-def test_variants_compile_with_expected_dofs(full_model, testbed_model):
-    # full: free(6) + steer + front + hub + ring + 8 rollers + 2 inputs = 20
-    assert full_model.nv == 20
-    assert full_model.nu == 3  # drive_a, drive_b, steer
+def test_variants_compile_with_expected_dofs(full_model, testbed_model, params):
+    # full: free(6) + steer + front + hub + ring + 8 rollers + 2 inputs = 20,
+    # + the righting module (2026-10-09): crank, 2 couplers, 2 wings = 25
+    assert full_model.nv == 25
+    assert full_model.nu == 4  # drive_a, drive_b, steer, swing
+    plain = build_model(params, variant="full", swing_linkage=False)
+    assert (plain.nv, plain.nu) == (20, 3)
     # testbed: hub + ring + 8 rollers + 2 inputs = 12
     assert testbed_model.nv == 12
     assert testbed_model.nu == 2
-    # 8 roller couplings + 2 gearbox tendon constraints
-    assert full_model.neq == 10
+    # 8 roller couplings + 2 gearbox tendon constraints (+ the module's two
+    # four-bar loop closures on the default bike)
+    assert plain.neq == 10
+    assert full_model.neq == 12
 
 
 def test_steering_joint_unlimited(full_model):
@@ -229,14 +234,20 @@ def wing_model(params):
 
 def test_righting_mechanisms_are_exclusive(params):
     """`righting=True` is the single arm, `wings=True` swaps it for the pair,
-    and neither leaks into the default bike. The arm's mass would otherwise
-    land in every wing torque reading and make the two studies incomparable."""
+    and neither leaks into the plain bike -- nor does the righting MODULE
+    (the default bike since 2026-10-09) leak into either study. The arm's
+    mass would otherwise land in every wing torque reading and make the two
+    studies incomparable."""
     from aow_sim.build_model import build_spec
 
-    plain = build_spec(params).to_xml()
+    plain = build_spec(params, swing_linkage=False).to_xml()
+    default = build_spec(params).to_xml()
     arm = build_spec(params, righting=True).to_xml()
     wings = build_spec(params, righting=True, wings=True).to_xml()
     assert "wing" not in plain and "righting" not in plain
+    assert "swing_wing_right_toe" in default and "righting_arm" not in default
+    assert "bumper_left" not in default         # the module has none (user)
+    assert "swing_wing" not in arm and "swing_wing" not in wings
     assert "wing" not in arm and "righting_arm" in arm
     assert "righting_arm" not in wings and "wing_left_joint" in wings
     # Both mechanisms share the bumper pads that set the resting attitude.

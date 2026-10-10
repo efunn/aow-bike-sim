@@ -70,7 +70,8 @@ def test_factory_gains_are_the_native_actuators(params):
 
 
 def test_absent_without_the_swing_linkage(params):
-    assert rs.CurrentBasedPositionServo.attach(build_model(params), params) is None
+    assert rs.CurrentBasedPositionServo.attach(
+        build_model(params, swing_linkage=False), params) is None
 
 
 def test_native_actuator_becomes_a_command_holder(params):

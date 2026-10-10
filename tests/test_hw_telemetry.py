@@ -127,8 +127,10 @@ def test_build_is_keyword_only():
 
 @pytest.fixture(scope="module")
 def built():
+    """The plain bike: no righting module (the default carries V2 since
+    2026-10-09; `swung` is that one)."""
     p = load_params()
-    m = build_model(p)
+    m = build_model(p, swing_linkage=False)
     return p, m
 
 
@@ -327,20 +329,19 @@ def test_integration_survives_only_for_a_bike_that_cannot_send_it(built):
 
 @pytest.fixture(scope="module")
 def swung():
-    """A bike WITH the co-rotating four-bar. Separate from `built` because
-    nearly every other test here wants the plain model, and the mechanism adds
-    six joints that shift nothing else only because `PoseAdr` works by name."""
-    import yaml
-
-    from aow_sim.build_model import SWING_LINKAGE_CFG, SwingLinkageSolver
+    """The bike WITH its righting module (V2, the default build), rendered by
+    the solver on the module's own resolved linkage -- as `run_drive --mirror`
+    does. Separate from `built` because nearly every other test here wants the
+    plain model, and the mechanism adds six joints that shift nothing else
+    only because `PoseAdr` works by name."""
+    from aow_sim.build_model import SwingLinkageSolver
     p = load_params()
-    m = build_model(p, variant="full", righting=True, swing_linkage=True)
+    m = build_model(p, variant="full")
     onb = p["control"]["onboard"]
     stow = np.deg2rad(float(onb["righting_stow_deg"]))
     sign = float(onb["righting_sign"])
-    with open(SWING_LINKAGE_CFG) as fh:
-        solver = SwingLinkageSolver(yaml.safe_load(fh),
-                                    p["omni_wheel"]["outer_radius"])
+    solver = SwingLinkageSolver(p["righting"]["module"]["linkage"],
+                                p["omni_wheel"]["outer_radius"])
     return p, m, solver, (lambda rad: solver.pose((float(rad) - stow) * sign)), stow
 
 
@@ -460,14 +461,16 @@ def test_a_model_without_the_mechanism_ignores_the_solver(built):
 
 def test_this_geometry_turns_all_the_way_round(swung):
     """MEASURED, and not what the config's name suggests. `crank_travel_deg`
-    136.6 is the DESIGN stroke -- what reach and clearance ask for -- not a
-    kinematic limit: this crank closes the loop at every angle in 360 deg.
+    (V2: 129.3, level) is the DESIGN stroke, not a kinematic limit: the
+    links close the loop at every angle in 360 deg. On the bike the blades'
+    toes stop it at ~130 (test_righting_v2); the drawn linkage has no toes.
 
     Worth pinning because the guard below looks like dead code otherwise, and
     because "the mechanism stopped at the end of its travel" would be the wrong
-    explanation for a station that froze at 136 deg."""
-    _, _, solver, pose, stow = swung
-    assert solver.travel_max == pytest.approx(np.deg2rad(136.6), abs=1e-3)
+    explanation for a station that froze at the stroke's end."""
+    p, _, solver, pose, stow = swung
+    assert solver.travel_max == pytest.approx(np.deg2rad(
+        p["righting"]["module"]["linkage"]["stroke"]["crank_travel_deg"]), abs=1e-3)
     assert all(pose(stow + np.deg2rad(d)) is not None
                for d in range(-180, 181)), "expected a full-rotation crank"
 
@@ -583,7 +586,8 @@ def test_a_deployed_wing_never_sinks_through_the_floor(swung):
     ground."""
     p, m, solver, pose, stow = swung
     adr, d = T.PoseAdr(m), mujoco.MjData(m)
-    assert adr.panels, "the mechanism's panels must be found by name"
+    assert adr.panels or adr.blades, "the mechanism's panels must be found by name"
+    full = float(np.rad2deg(solver.travel_max))
 
     def lowest(roll_deg, servo_deg):
         a = np.deg2rad(roll_deg) / 2
@@ -596,14 +600,11 @@ def test_a_deployed_wing_never_sinks_through_the_floor(swung):
                   - float(p["omni_wheel"]["outer_radius"]),
                   float(d.body("front_wheel").xpos[2])
                   - float(p["bike"]["front_wheel"]["radius"])]
-        for gid, size in adr.panels:
-            rot = d.geom_xmat[gid].reshape(3, 3)
-            floors.append(float(d.geom_xpos[gid][2])
-                          - float(np.abs(rot[2]) @ size))
+        floors.append(T.lowest_righting_z(d, adr))
         return min(floors)
 
     for roll in (0, 30, 61, 90):
-        for servo in (0, 68, 136):
+        for servo in (0, full / 2, full):
             assert lowest(roll, servo) > -1e-9, (
                 f"something is through the floor at roll {roll}, "
                 f"servo {servo}")
@@ -617,7 +618,7 @@ def test_grounding_on_a_wing_lifts_the_wheels_rather_than_the_other_way(swung):
     adr, d = T.PoseAdr(m), mujoco.MjData(m)
     a = np.deg2rad(61.0) / 2
     tel = sample(quat=[float(np.cos(a)), float(np.sin(a)), 0.0, 0.0],
-                 righting_pos=float(stow + np.deg2rad(136.0)))
+                 righting_pos=float(stow + solver.travel_max))
     T.apply_pose(m, d, tel, adr, p, rest_z=0.05, dt=1 / 60, swing_pose=pose)
     mujoco.mj_forward(m, d)
     rear = (float(d.body("aow_hub").xpos[2])

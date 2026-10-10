@@ -191,14 +191,18 @@ def test_roll_servo_fixed_is_rigid_and_current_only_caps():
     """`fixed` (Current Limit + top P gain) holds a 3 N side push near
     upright; 300 counts at the righting gains gives way. Goal Current only
     CAPS the torque: under a 1 N push that neither cap reaches, 600 and 910
-    counts lean the same -- the P gain's stiffness, not the cap."""
+    counts lean the same -- the P gain's stiffness, not the cap.
+
+    0.5 N, not 1 N, since 2026-10-09: with the righting module on the default
+    bike (+212 g, the roof high) a 1 N push reaches the 600-count cap (600
+    leans 43.7 deg, 910 20.7). At 0.5 N both lean 9.8."""
     soft, _ = _servo_push(300, push=3.0)
     rigid, srv = _servo_push("fixed", push=3.0)
     assert srv.goal_current == 910
     assert abs(rigid) < 1.0
     assert abs(soft) > 10.0
-    mid, _ = _servo_push(600, push=1.0)
-    top, _ = _servo_push(910, push=1.0)
+    mid, _ = _servo_push(600, push=0.5)
+    top, _ = _servo_push(910, push=0.5)
     assert abs(mid - top) < 0.5
     assert abs(top) < abs(soft)
 

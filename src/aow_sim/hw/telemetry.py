@@ -449,11 +449,35 @@ class PoseAdr:
         # names its panels the same way (`wing_left`, `swing_wing_right`), and
         # an empty tuple is the normal case: a bike with no mechanism built.
         self.panels = []
+        # The righting MODULE's blades (V2) are convex MESHES, not boxes: kept
+        # as their vertices in the geom frame, eight per piece.
+        self.blades = []
         for g in range(model.ngeom):
             name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g)
-            if (name and ("wing" in name)
-                    and model.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX):
+            if not (name and "wing" in name):
+                continue
+            if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX:
                 self.panels.append((g, model.geom_size[g].copy()))
+            elif model.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH:
+                mid = int(model.geom_dataid[g])
+                a = int(model.mesh_vertadr[mid])
+                self.blades.append(
+                    (g, model.mesh_vert[a:a + int(model.mesh_vertnum[mid])].copy()))
+
+
+def lowest_righting_z(data, adr) -> float:
+    """The lowest point of every righting panel and blade, world z, or +inf
+    with none: a box's lowest corner (centre minus the half-extents projected
+    onto z), a blade's lowest vertex."""
+    import numpy as np
+    low = float("inf")
+    for gid, size in (getattr(adr, "panels", None) or ()):
+        rot = data.geom_xmat[gid].reshape(3, 3)
+        low = min(low, float(data.geom_xpos[gid][2]) - float(np.abs(rot[2]) @ size))
+    for gid, verts in (getattr(adr, "blades", None) or ()):
+        rot = data.geom_xmat[gid].reshape(3, 3)
+        low = min(low, float(data.geom_xpos[gid][2]) + float((verts @ rot[2]).min()))
+    return low
 
 
 def gearbox_mix(params: dict) -> dict:
@@ -510,13 +534,10 @@ def ground_the_bike(model, data, params: dict, adr=None) -> float:
     r_front = float(params["bike"]["front_wheel"]["radius"])
     low = min(float(data.body("aow_hub").xpos[2]) - r_rear,
               float(data.body("front_wheel").xpos[2]) - r_front)
-    for gid, size in (getattr(adr, "panels", None) or ()):
-        pos = data.geom_xpos[gid]
-        rot = data.geom_xmat[gid].reshape(3, 3)
-        # Only the z row of the rotation matters, so the lowest corner is the
-        # centre minus the sum of |projection| of each half-extent onto z --
-        # no need to enumerate the eight of them.
-        low = min(low, float(pos[2]) - float(np.abs(rot[2]) @ size))
+    # Only the z row of each rotation matters: a box's lowest corner is its
+    # centre minus the sum of |projection| of each half-extent onto z, a
+    # blade's its lowest vertex (lowest_righting_z).
+    low = min(low, lowest_righting_z(data, adr))
     data.qpos[2] -= low
     return -low
 

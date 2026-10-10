@@ -104,8 +104,14 @@ def test_the_split_did_not_move_the_plant_digest():
         12d9639e3ce90f36  2026-10-05  bike.front_wheel: the measured wheel,
                           102.5 x 24 mm, 7 mm shoulders, the flat tread as
                           an 80 mm crown (was a designed 100 x 28 mm wheel)
+        0e0e957e15c0248e  2026-10-09  righting.module: the V2 righting module (the
+                          diamond + blades) on the default bike, its linkage
+                          and blade inlined from their files, masses and the
+                          crank armature GUESS, stroke 128.4 -> 129.3 (level
+                          on the blade), the toe 2.2 mm longer (the stop
+                          ~130, before the links) (righting-design.md)
     """
-    assert plant_digest(load_params()) == "12d9639e3ce90f36"
+    assert plant_digest(load_params()) == "0e0e957e15c0248e"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():
