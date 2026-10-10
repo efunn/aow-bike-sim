@@ -1,0 +1,29 @@
+# THE RIGHTING BLADE, V3 (exploring, 2026-10-10): V2's linkage, a new blade.
+# The sim's default bike still builds V2 (config/righting_blade.yaml);
+# `analysis/swing_stepthrough.py` sweeps and simulates this one as a variant.
+#
+# V2's inner face and toe; the toe's outer edge curves into an outer face
+# whose ANGLE is one number, `dir_deg`, from level (user, 2026-10-10). The curve is a
+# cubic, tangent to the toe edge and to the face (the default; start_deg /
+# end_deg would put a deliberate kink there), so tilting the face takes the
+# curve with it; `handles` shape it. Flattened to points on
+# load (params.blade_points, which documents the entries).
+#
+# Frame as righting_blade.yaml: the RIGHT wing seen from BEHIND, stowed
+# (crank 0), bike upright; [x, y] mm, x out from the midline (to the right),
+# y up from the floor; the wing rod at (0, 41.2). One closed loop, closing
+# itself. The sim cuts it into convex pieces
+# itself; point 1 names the blade piece and point 3 the toe.
+outline:
+  - [63.9, 147.4]       # 1 top, inner                         (V2)
+  - [38.5, 50.6]        # 2 foot, inner                        (V2)
+  - [15.69, 22.32]      # 3 toe tip, upper                     (V2)
+  - [19.57, 19.24]      # 4 toe tip, lower                     (V2)
+  - [43.3, 49.4]        # 5 foot, outer: the curve leaves here (V2)
+  - curve: {to: [68.7, 122.76], handles: [27.39, 27.39]}   # tangent both ends
+  - {dir_deg: 90, len: 23.34}  # the OUTER FACE, deg from level: 90 = vertical at stow (< 90 leans out)
+y: [-61.25, 20.75]      # fore/aft span, as V2
+# No `crank_travel_deg`: the stepthrough commands this blade to its own LEVEL
+# point, worked out from the rest (where it also first touches the floor
+# with the bike standing on its wheels). Give one here to pin it instead.
+mass: {value: 0.0388, source: GUESS}   # each: cad_servo_mount.printed_mass of the section x span, 2 perim / 15 %

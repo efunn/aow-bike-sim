@@ -194,7 +194,7 @@ new MutationObserver(() => { readColors(); panes.forEach((_, i) => fillStatic(i)
 
 let frac = 0, playing = false, last = null;
 const show = { qs: true, sim: true };
-const pick = [0, Math.min(1, designs.length - 1)];
+const pick = [Math.max(0, designs.length - 2), designs.length - 1];   // the newest two
 const PANE_STYLE = [{ dash: [], key: "ink" }, { dash: [6, 4], key: "accent" }];
 
 // ---------- the pin-force colour scale, shared by both panes
@@ -238,10 +238,13 @@ function setup(canvas) {
   g.clearRect(0, 0, r.width, r.height);
   return [g, r.width, r.height];
 }
+// The bike is drawn seen from BEHIND (user, 2026-10-10): the sketch frame
+// has the right wing at -x, a FRONT view, so x is mirrored here -- the right
+// (orange) wing on the right, as the blade files' (x, y) have it.
 function mapper(W, H, box, pad = 8) {
   const [x0, x1, y0, y1] = box, s = Math.min((W - 2*pad) / (x1 - x0), (H - 2*pad) / (y1 - y0));
   const ox = pad + ((W - 2*pad) - s * (x1 - x0)) / 2, oy = pad + ((H - 2*pad) - s * (y1 - y0)) / 2;
-  return { s, f: (p) => [ox + (p[0] - x0) * s, oy + (y1 - p[1]) * s] };
+  return { s, f: (p) => [ox + (x1 - p[0]) * s, oy + (y1 - p[1]) * s] };
 }
 function line(g, m, pts, color, width, alpha = 1, dash = []) {
   g.save(); g.globalAlpha = alpha; g.strokeStyle = color; g.lineWidth = width; g.lineCap = "round";
@@ -346,27 +349,49 @@ function drawCad(g, m, d, fr, tp, opts) {
   }
 }
 
+// The floor view's box: centred on everything it draws -- the chassis box,
+// the wheel and each wing's panel line, rested, every frame of every design
+// -- and fixed for the page, so the picture neither jumps nor sits to one
+// side (the lying bike reaches much further one way than the other).
+let FLOOR_BOX = null;
+function floorBox(BOX) {
+  if (FLOOR_BOX) return FLOOR_BOX;
+  const R = geo.R, K = geo.keepout;
+  let lo = Infinity, hi = -Infinity;
+  for (const d of designs) for (const f of d.frames) {
+    const pts = [[-K.half, K.z_lo], [K.half, K.z_lo], [K.half, 170], [-K.half, 170], [-7, -R], [7, R],
+                 f.footR, f.topR, f.footL, f.topL, f.pivotR, f.pivotL];
+    for (const p of pts) { const x = rot(p, f.roll)[0]; lo = Math.min(lo, x); hi = Math.max(hi, x); }
+  }
+  const c = (lo + hi) / 2, half = Math.max((BOX[1] - BOX[0]) / 2, (hi - lo) / 2 + 12);
+  return (FLOOR_BOX = [c - half, c + half, BOX[2], BOX[3]]);
+}
+
 function drawPane(i) {
   const d = designs[pick[i]], fr = frameOf(d), el = panes[i];
   // mechanism, bike frame
   let [g, W, H] = setup(el.mech);
   // The SAME box as the floor view, shifted by the wheel radius, so both
   // pictures share one scale and one floor line.
-  const R = geo.R, BOX = [-135, 135, -12, 215];
+  // ...and the same WIDTH as the floor view's box (which is centred on the
+  // lying bike and can be wider than the default), so the scale, the grid
+  // and the floor line match between the two exactly.
+  const R = geo.R, FB = floorBox([-135, 135, -12, 215]), hw = (FB[1] - FB[0]) / 2;
+  const BOX = [-hw, hw, FB[2], FB[3]];
   let m = mapper(W, H, [BOX[0], BOX[1], BOX[2] - R, BOX[3] - R]);
-  for (let y = -140; y <= 140; y += 20) line(g, m, [[y, BOX[2] - R], [y, BOX[3] - R]], C.grid, 1);
+  for (let y = -Math.floor(hw / 20) * 20; y <= hw; y += 20) line(g, m, [[y, BOX[2] - R], [y, BOX[3] - R]], C.grid, 1);
   for (let z = 0; z <= BOX[3]; z += 20) line(g, m, [[BOX[0], z - R], [BOX[1], z - R]], C.grid, 1);
   poly(g, m, [[BOX[0], -R], [BOX[1], -R], [BOX[1], BOX[2] - R], [BOX[0], BOX[2] - R]], C.muted, 0.18);
   line(g, m, [[BOX[0], -R], [BOX[1], -R]], C.ink, 1.5);
   const gap = drawMechanism(g, m, d, fr, (p) => p, { cross: true, com: false });
   // on the floor
   [g, W, H] = setup(el.ground);
-  m = mapper(W, H, BOX);
+  m = mapper(W, H, FB);
   const G = (p) => { const q = rot(p, fr.roll); return [q[0], q[1] - fr.floor]; };
-  for (let x = -140; x <= 140; x += 20) line(g, m, [[x, BOX[2]], [x, BOX[3]]], C.grid, 1);
-  for (let z = 0; z <= BOX[3]; z += 20) line(g, m, [[BOX[0], z], [BOX[1], z]], C.grid, 1);
-  poly(g, m, [[BOX[0], 0], [BOX[1], 0], [BOX[1], BOX[2]], [BOX[0], BOX[2]]], C.muted, 0.18);
-  line(g, m, [[BOX[0], 0], [BOX[1], 0]], C.ink, 1.5);
+  for (let x = Math.ceil(FB[0] / 20) * 20; x <= FB[1]; x += 20) line(g, m, [[x, FB[2]], [x, FB[3]]], C.grid, 1);
+  for (let z = 0; z <= FB[3]; z += 20) line(g, m, [[FB[0], z], [FB[1], z]], C.grid, 1);
+  poly(g, m, [[FB[0], 0], [FB[1], 0], [FB[1], FB[2]], [FB[0], FB[2]]], C.muted, 0.18);
+  line(g, m, [[FB[0], 0], [FB[1], 0]], C.ink, 1.5);
   const n = Math.round(frac * (d.frames.length - 1));
   const trail = d.frames.slice(0, n + 1).map((f) => { const q = rot(f.com, f.roll); return [q[0], q[1] - f.floor]; });
   if (trail.length > 1) line(g, m, trail, C.muted, 1.5, 0.8, [2, 3]);
@@ -479,7 +504,8 @@ function fillStatic(i) {
   const summary = [
     ["Current limit @ 9.9 V (sim)", d.sim == null ? "not run" : `${d.sim} mA · ${Math.round(100 * d.sim / geo.max_ma)}%`],
     ["Planar", `${d.counts.toFixed(0)} mA · ${Math.round(100 * d.counts / geo.max_ma)}%`],
-    [`Travel, commanded${lock ? " (locks)" : ""}`, `${d.T.toFixed(1)}°`],
+    [`Travel, commanded${lock ? " (locks)" : ""}${d.T_is_level ? ", = level" : ""}`, `${d.T.toFixed(1)}°`],
+    ...(d.level == null ? [] : [["Level (roll 0), on the blade", `${d.level.toFixed(2)}°`]]),
     ["F in coupler/hinge pins", `${d.pins.coupler.toFixed(0)} / ${d.pins.hinge.toFixed(0)} N`],
     ["F coupler pin, step (sim)", N(d.pins.lift_sim)],
   ].map(([k, v]) => `<div class="plane"><span class="n">${v}</span><span class="chips">${k}</span></div>`).join("");
@@ -528,6 +554,7 @@ function fillStatic(i) {
     html += det(`Diagnostics: ${state}`, top + cols("clearance", "to · at crank") + rows.map(row).join(""));
   }
   html += det(d.file.split("/").pop(), cols("value", "link") + Object.entries(d.lengths).map(([k, v]) => kv(k, v)).join(""));
+  if (d.blade) html += det(d.blade.file, d.blade.rows.map(([k, v]) => kv(k, v, "white-space:pre")).join(""));
   el.planes.innerHTML = html;
   const ps = PANE_STYLE[i], pc = C[ps.key];
   el.sw.style.background = ps.dash.length

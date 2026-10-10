@@ -1,38 +1,68 @@
-"""An interactive page stepping swing-linkage designs through their righting stroke.
+"""The swing-linkage stepthrough page: righting designs stepped through their stroke.
 
-Reads the SAME config files the sim does (`build_model(..., swing_linkage_cfg=)`,
-`righting_current_sweep.py --config`), poses them with `swing_linkage.SwingLinkage`
-(held to the builder's own solver by tests/test_hw_telemetry.py), rests the bike
-on the floor with `swing_linkage.resting_pose`, and scores them with
-`swing_synthesis.stroke`. Writes one self-contained HTML file from
-`analysis/templates/swing_stepthrough.html`: two panes with a shared stroke
-slider, each showing the mechanism in the bike frame and the bike on the floor,
-plus ratio and motor-torque curves.
+RENDER IT (from the repo root):
 
-`--sim` also runs each config in the sim at 9.9 V -- the sweep's own `fallen`
-and `trial`, goal stepped as teleop does -- bisecting to 10 mA on one side
-(the pair is mirror-symmetric). A few seconds a config. Without it the page
-says "not run" rather than carrying a number from somewhere else.
+    python analysis/swing_stepthrough.py --sim     # ~17 s: the tracked page, sim rows filled
+    python analysis/swing_stepthrough.py           # ~6 s: the same, sim rows read "not run"
 
-    python analysis/swing_stepthrough.py --sim            # V1 and V2, the tracked page
-    python analysis/swing_stepthrough.py config/a.yaml config/b.yaml --labels A B
-    python analysis/swing_stepthrough.py --blade my_blade.yaml cad   # CAD entries
+Either writes analysis/plots/swing_stepthrough.html (self-contained); open it
+in a browser. Re-run after editing any file a design reads -- nothing
+re-renders on its own. Commit the page from a --sim run, so its sim numbers
+are real.
 
-V2 is the bike's righting module, what is going on the bike and what the sim
-builds by default (bike_params `righting.module`, since 2026-10-09): the
-diamond exactly as `cad_righting` builds it -- its links at `linkage.scale`
-(1.25) about the wing rod, the XC330 long end DOWN, and every righting part's
-front section from `cad_righting.layout()`, posed with the CAD's own group
-transforms (no Onshape call) -- with the blade in config/righting_blade.yaml
-swept on each wing. Past the flat it runs on to where the two blades meet
-(the toe stop). Its diagnostics: that angle, the angle the links themselves
-first touch, and the blade's least clearance to every part sharing its
-fore/aft span and to the floor with the bike upright. Its sim is the default
-build: the module's own blades (toes and all), masses and crank. V1 is the
-earlier four-bar (swing_linkage_smaller.yaml), flat panels, from its config.
-The quasi-static mass properties (`swing_linkage.mass_props`) are the bike's,
-so V2's for both. The servo case is drawn DOWN whatever the 1 mm rule says
-(the rule keeps the case off the hinge rod; the CAD breaks it on purpose).
+THE DESIGNS (`DEFAULT`, in this file):
+
+    V1   config/swing_linkage_smaller.yaml      the earlier four-bar, flat panels
+    V2   config/swing_linkage_shared_rod.yaml   the bike's righting module, as the
+         + config/righting_blade.yaml           sim builds it by default
+    V3   V2's linkage                           exploring: a new blade
+         + config/swing_explore/blade_v3.yaml
+
+TO CHANGE A BLADE, edit its yaml and re-render. The outline's entries --
+points, straight runs at an angle, cubic curves -- are documented in
+`aow_sim.params.blade_points`; the right wing seen from behind, x out from the
+midline, y up from the floor. A blade other than the module's own (V3) gets,
+on the page and in its sim: its own outline, its file's `mass`, and its
+commanded stroke set to its LEVEL point, worked out here (or its file's
+`crank_travel_deg`, if given, pins it). Its dropdown on the page lists the
+file. To try blades without adding them to `DEFAULT`, give one
+or more (each is the V2 linkage with that blade); the two panes open on the
+last two, and `--labels` names them:
+
+    python analysis/swing_stepthrough.py --blade config/swing_explore/my_blade.yaml
+    python analysis/swing_stepthrough.py --sim \
+        --blade config/righting_blade.yaml config/swing_explore/my_blade.yaml --labels V2 mine
+
+That page holds only the `--blade` entries and goes to
+analysis/swing_stepthrough_custom.html (scratch, gitignored; `--out` to put it
+elsewhere), so the tracked page only changes on a plain run. To add a design
+for good, add a line to `DEFAULT`.
+
+THE PAGE: two panes, each a design picked from a dropdown, under one stroke
+slider; each shows the mechanism in the bike frame and the bike resting on
+the floor, both seen from behind, with its summary, diagnostics (clearances:
+red touching, amber under target) and files; then torque, pin-force, ratio
+and roll curves for both. Notes under "More info".
+
+HOW (for changing this file): the configs are the sim's own
+(`build_model(..., swing_linkage_cfg=)`), posed with
+`swing_linkage.SwingLinkage` (held to the builder's own solver by
+tests/test_hw_telemetry.py) and scored with `swing_synthesis.stroke`. A CAD
+entry (V2, V3) is the diamond exactly as `cad_righting` builds it -- links at
+`linkage.scale` (1.25), the XC330 long end DOWN, every righting part's front
+section posed with the CAD's own group transforms (no Onshape call) -- with
+the blade swept on each wing; past its commanded stroke it runs on to where
+the two toes meet (the stop). Its diagnostics: that angle, where the links
+themselves first touch, and the blade's least clearance to every part
+sharing its fore/aft span and to the floor with the bike standing on its
+wheels. The bike rests on the blade's whole section (a curve's facets
+interpolated, `swing_linkage.rest_on_points`), with that bike's mass
+properties (`swing_linkage.mass_props`). `--sim` runs each in the sim at
+9.9 V -- the righting sweep's own `fallen` and `trial`, goal stepped as
+teleop does -- bisecting the Goal Current to 10 mA, plus a slow ramped
+stroke for the faded chart traces. The servo case is drawn DOWN whatever the
+1 mm rule says (the rule keeps the case off the hinge rod; the CAD breaks it
+on purpose).
 """
 
 from __future__ import annotations
@@ -51,10 +81,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import swing_linkage as sl  # noqa: E402
 import swing_synthesis as ss  # noqa: E402
 from aow_sim.build_model import SWING_LINKAGE_CFG, load_params  # noqa: E402
+from aow_sim.params import blade_points  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = Path(__file__).resolve().parent / "templates" / "swing_stepthrough.html"
 OUT = Path(__file__).resolve().parent / "plots" / "swing_stepthrough.html"
+# A page of other entries (--blade, config arguments): scratch, gitignored.
+OUT_CUSTOM = Path(__file__).resolve().parent / "swing_stepthrough_custom.html"
 # The XC330 case in the FRONT view (shaft along fore/aft): 20 x 34 mm, the
 # shaft 7.5 mm off centre along the 34 -- so 9.5 mm from one end, 24.5 from
 # the other (docs/cad/cad_layout.yaml, `righting.linkage_crank_servo`,
@@ -237,17 +270,44 @@ DIAMOND = ROOT / "config" / "swing_linkage_shared_rod.yaml"
 DEFAULT = [
     (SWING_LINKAGE_CFG, "V1", None),                                       # built today
     (DIAMOND, "V2", ROOT / "config" / "righting_blade.yaml"),  # the bike's module
+    (DIAMOND, "V3", ROOT / "config" / "swing_explore" / "blade_v3.yaml"),  # exploring
 ]
+
+
+def blade_params(params: dict, spec: dict | None) -> dict:
+    """The bike with `spec`'s blade on the righting module: the live params
+    for the module's own blade (or the CAD dummy), else a copy with the
+    outline, span and -- if the file gives one -- the blade mass swapped.
+    What a CAD entry's rest, wing CoM and sim are computed on."""
+    mod = params["righting"]["module"]
+    if spec is None or (ROOT / mod["blade_file"]).resolve() == (ROOT / spec["_file"]).resolve():
+        return params
+    p = copy.deepcopy(params)
+    m = p["righting"]["module"]
+    m["blade_outline"] = blade_points(spec["outline"])
+    m["blade_y"] = [float(v) for v in spec["y"]]
+    if "mass" in spec:
+        m["blade"]["mass"] = float(spec["mass"]["value"])
+    if "crank_travel_deg" in spec:     # the blade's own level point
+        m["linkage"]["stroke"]["crank_travel_deg"] = float(spec["crank_travel_deg"])
+    return p
 NOTES = [
     "<b>V1.</b> Linkage V1 (swing_linkage_smaller.yaml), the earlier four-bar, from its config.",
     "<b>V2.</b> Linkage V2 (swing_linkage_shared_rod.yaml), from the CAD: the bike's righting "
     "module, what the sim builds by default, blades from righting_blade.yaml.",
+    "<b>V3.</b> Exploring (2026-10-10): V2's linkage with a new blade, "
+    "swing_explore/blade_v3.yaml -- the outer face vertical at stow, V2's "
+    "inner face and toe kept, curving into the toe (a cubic, tangent to both; the face angle one number). "
+    "Its rest, wing CoM and sim carry "
+    "that blade, its mass (38.8 g each, GUESS; V2's 28.6) and its own stroke, to its level point.",
     "<b>Where V1 and V2 come from.</b> V2's CAD is generated as solid parts "
     "(cad_righting, 1.25x, with righting_blade.yaml), so the page reads its real "
     "part outlines and checks the blade against them. V1's CAD is a 2D "
     "sketch generated from the same config (cad_swing_linkage): lines, no "
     "parts. So V1 is drawn and checked from its config's links and limits.",
-    "<b>Colours.</b> Orange: the wing that pushes the bike up. Blue: the one "
+    "<b>View.</b> The bike is drawn seen from behind: the right wing on the "
+    "right, as the blade files' (x, y) have it.",
+    "<b>Colours.</b> Orange: the wing that pushes the bike up (the right one). Blue: the one "
     "that rises and tucks in. Burgundy: the servo's crank. The slider runs the "
     "stroke from lying on its side (0%) to the commanded stroke (100%); V2 runs "
     "on past it to where its toes meet.",
@@ -377,10 +437,45 @@ def cad_parts(blade: dict | None):
         geom, y0, y1 = cad_blade
         src = "the CAD's dummy U blade"
     else:
-        geom = Polygon([(o, u + fz) for o, u in blade["outline"]]).buffer(0)
+        geom = Polygon([(o, u + fz) for o, u in blade_points(blade["outline"])]).buffer(0)
         y0, y1 = (float(v) for v in blade["y"])
         src = blade.get("_file", "--blade")
-    return data, L, parts, {"geom": geom, "y": (y0, y1), "src": src}
+    return data, L, parts, {"geom": geom, "y": (y0, y1), "src": src,
+                            "travel": None if blade is None else blade.get("crank_travel_deg"),
+                            "summary": None if blade is None else blade_summary(blade, geom)}
+
+
+def blade_summary(blade: dict, geom) -> list:
+    """The blade file as the page's dropdown lists it, [label, value] rows:
+    its outline as written (a curve's control point marked), span, stroke
+    and mass -- the file at a glance, not its flattened points."""
+    pt = lambda p: f"({p[0]:g}, {p[1]:g})"  # noqa: E731
+    rows = [["outline (x, y) mm, right wing from behind", ""]]
+    k = 0
+    for e in blade["outline"]:
+        k += 1
+        if isinstance(e, dict) and "curve" in e:
+            c = e["curve"]
+            h = ", ".join(f"{v:g}" for v in c["handles"])
+            rows.append([f"  {k} curve to", pt(c["to"])])
+            if c.get("start_deg", 0) or c.get("end_deg", 0):     # a deliberate kink
+                rows.append(["      off tangent, start / end [deg]",
+                             f"{c.get('start_deg', 0):g} / {c.get('end_deg', 0):g}"])
+            rows.append(["      handles [mm]", h])
+        elif isinstance(e, dict):
+            rows.append([f"  {k} run, angle from level [deg] / length [mm]",
+                         f"{e['dir_deg']:g} / {e['len']:g}"])
+        else:
+            rows.append([f"  {k} point", pt(e)])
+    y0, y1 = blade["y"]
+    rows += [["span fore/aft [mm]", f"{y1 - y0:g}"],
+             ["section [mm²]", f"{geom.area:.0f}"]]
+    if "crank_travel_deg" in blade:
+        rows.append(["commanded stroke [deg], pinned", f"{blade['crank_travel_deg']:g}"])
+    if "mass" in blade:
+        rows.append([f"mass each [g] ({blade['mass'].get('source', '')})",
+                     f"{blade['mass']['value'] * 1000:g}"])
+    return rows
 
 
 def _posed(geom, g):
@@ -513,7 +608,7 @@ def cad_sweep(data, L, parts, bl, frames, pz: float, T: float, meet) -> dict:
             # wing stowing after a righting); past the flat the bike stands
             # on the blade by construction.
             if t <= T + 1e-6:
-                note("floor, upright", min(z for _, z in b.exterior.coords) - fz, t)
+                note("floor, bike standing on its wheels", min(z for _, z in b.exterior.coords) - fz, t)
         # The blades are not checked against each other: they may cross
         # (user, 2026-10-09), e.g. toes under the bike in different layers.
     rows = sorted(({"what": k, **v} for k, v in best.items()),
@@ -576,6 +671,27 @@ def rest_over_centre(lk, t: float, pts=None) -> dict:
     raise ValueError(f"no over-centre rest at crank {t:.1f}")
 
 
+def level_point(lk, blade0, mp: dict, upto: float | None) -> float | None:
+    """The crank angle where the bike, resting on the blade (`blade0`, sketch
+    mm at stow) and its wheels, comes to roll 0: stepped at 0.5 deg, then
+    bisected to 1e-4 deg. None if it never does before `upto` (the toe stop)
+    or the deploying side's toggle."""
+    def roll(t):
+        r = sl.resting_pose_on(lk, t, blade0, mp["wing_com"], mp=mp)
+        return -1.0 if r is None else r["to_floor"][0]    # no rest: over centre
+    top = upto if upto is not None else sl.critical_angles(lk).deploy
+    prev = 0.0
+    for t in np.arange(0.5, top + 1e-9, 0.5):
+        if roll(t) <= 0:
+            lo, hi = prev, float(t)
+            while hi - lo > 1e-4:
+                mid = 0.5 * (lo + hi)
+                lo, hi = (mid, hi) if roll(mid) > 0 else (lo, mid)
+            return lo
+        prev = float(t)
+    return None
+
+
 def blade_in_sketch(lk, blade: dict) -> np.ndarray:
     """The blade's section at stow (cad_parts' polygon: module frame, mm out
     from the centreline and up from the wing rod) in the planar model's
@@ -636,7 +752,7 @@ def config_diag(lk, cfg: dict, frames: list, T: float, planes: dict, fit: dict) 
     if np.isfinite(keep[0]):
         rows.append({"what": "panel on chassis keep-out", "v": keep[0], "t": keep[1],
                      "kind": "mm", "target": 0.0})
-    rows.append({"what": "floor, upright", "v": floor[0], "t": floor[1], "kind": "mm", "target": 0.0})
+    rows.append({"what": "floor, bike standing on its wheels", "v": floor[0], "t": floor[1], "kind": "mm", "target": 0.0})
     for r in rows:      # to 0.1 mm: the synthesis holds these AT their limit
         r["v"] = round(float(r["v"]), 1)
         r["t"] = None if r["t"] is None else round(float(r["t"]), 1)
@@ -644,7 +760,7 @@ def config_diag(lk, cfg: dict, frames: list, T: float, planes: dict, fit: dict) 
 
 
 def design(path: Path, label: str, sc: dict, params, run_sim: bool,
-           cad: tuple | None = None) -> dict:
+           cad: tuple | None = None, bparams: dict | None = None) -> dict:
     cfg = yaml.safe_load(path.read_text())
     lk = cad[0]["lk"] if cad else sl.SwingLinkage(copy.deepcopy(cfg))
     table = ss.load_table(*ss.reference_panel(cfg, None), lk.wheel_radius)
@@ -654,16 +770,28 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
     # The synthesis's own geometric command (its "flat", st["T"]) only
     # scores the planar stroke -- for V2 it was 128.4, 0.9 short of level.
     T = float(cfg["stroke"]["crank_travel_deg"])
-    # A CAD blade whose toes meet past the flat runs on to them: that touch,
-    # not the commanded travel, is the mechanism's end.
-    meet = blade_meet(cad[0], cad[1], cad[3]) if cad else None
-    end = meet if meet is not None and meet > T else T
-    mp = sl.mass_props()
+    # A CAD entry's bike carries ITS blade (V3's is heavier than V2's).
+    variant = bool(cad) and bparams is not None and bparams is not params
+    mp = sl.mass_props(bparams if variant else None)
     M, mw = mp["total"], mp["wing"]
     # A CAD entry RESTS ON ITS BLADE -- every vertex of the section, toe and
     # both faces -- with the wing's CoM from the sim. The panel line is the
     # blade's centre line, which left out its half-thickness and the toe.
     blade0 = blade_in_sketch(lk, cad[3]) if cad else None
+    # A CAD blade whose toes meet past the flat runs on to them: that touch,
+    # not the commanded travel, is the mechanism's end.
+    meet = blade_meet(cad[0], cad[1], cad[3]) if cad else None
+    # Where the bike, lying on its side, comes LEVEL on this blade -- also
+    # the crank where the blade first touches the floor with the bike
+    # standing on its wheels. A variant blade (V3) is COMMANDED to it,
+    # rounded down to 0.1 (as V2's 129.3 is from 129.35), unless its file
+    # pins `crank_travel_deg`; the module's own blade keeps the config's.
+    level = level_point(lk, blade0, mp, meet) if cad else None
+    if cad and cad[3].get("travel") is not None:
+        T = float(cad[3]["travel"])
+    elif variant and level is not None:
+        T = np.floor(level * 10.0) / 10.0
+    end = meet if meet is not None and meet > T else T
     frames = []
     for f in np.linspace(0.0, 1.0, 121):
         t = float(f * end)
@@ -677,7 +805,7 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
         if blade0 is None:
             rest = sl.resting_pose(lk, t) or rest_over_centre(lk, t)
         else:
-            rest = (sl.resting_pose_on(lk, t, blade0, mp["wing_com"])
+            rest = (sl.resting_pose_on(lk, t, blade0, mp["wing_com"], mp=mp)
                     or rest_over_centre(lk, t, turned_points(lk, t, blade0)))
         pz = lk.pose(-1, t)
         g = abs(sl.ratio_at(lk, -1, t, pz) or 0.0)
@@ -730,11 +858,15 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
                   f"  at crank {r['t']:.0f}{flag}")
     return {"name": label, "file": str(path.relative_to(ROOT)) if path.is_relative_to(ROOT)
             else str(path), "T": round(T, 1), "planes": planes, "cad": sweep,
+            "level": None if level is None else round(level, 2),
+            "T_is_level": bool(variant and cad[3].get("travel") is None and level is not None),
             "counts": st["counts"], "brk": round(st["brk"], 4), "sim": sim,
             "pins": {"coupler": max(f["fc"] for f in frames if f["fc"] is not None),
                      "hinge": max(f["fh"] for f in frames if f["fh"] is not None),
                      "lift_sim": lift_pin},
             "fit": fit,
+            "blade": None if not cad or not cad[3].get("summary") else
+                     {"file": Path(cad[3]["src"]).name, "rows": cad[3]["summary"]},
             "diag": None if cad else config_diag(lk, cfg, frames, T, planes, fit),
             "shaft": [0.0, round(float(lk.shaft[1]), 2)],
             # as posed (the CAD's are scaled), not as the file has them
@@ -751,19 +883,24 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("configs", nargs="*", type=Path)
-    ap.add_argument("--labels", nargs="*", default=None)
+    ap.add_argument("--labels", nargs="*", default=None,
+                    help="names for the entries, in order: configs, then blades")
     ap.add_argument("--sim", action="store_true", help="run each in the sim at 9.9 V")
-    ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument("--out", type=Path, default=None,
+                    help=f"default {OUT.relative_to(ROOT)}; with --blade or configs, "
+                         f"{OUT_CUSTOM.relative_to(ROOT)} (scratch)")
     ap.add_argument("--blade", type=Path, nargs="*", default=None,
                     help="blade front-section yamls: one CAD entry each ('cad' for the "
                          "CAD's own dummy blade)")
     args = ap.parse_args()
     if args.configs or args.blade:
-        entries = [(p.resolve(), (args.labels or [])[i] if i < len(args.labels or []) else p.stem,
-                    None) for i, p in enumerate(args.configs)]
-        entries += [(DIAMOND, f"CAD, {Path(f).stem}", None if str(f) == "cad" else Path(f))
-                    for f in args.blade or []]
-        entries = [(p, label, "cad" if label == "CAD, cad" else b) for p, label, b in entries]
+        # --labels name the entries in order: configs first, then blades.
+        labels = list(args.labels or [])
+        lab = lambda i, default: labels[i] if i < len(labels) else default  # noqa: E731
+        entries = [(p.resolve(), lab(i, p.stem), None) for i, p in enumerate(args.configs)]
+        n = len(entries)
+        entries += [(DIAMOND, lab(n + i, Path(f).stem), "cad" if str(f) == "cad" else Path(f))
+                    for i, f in enumerate(args.blade or [])]
     else:
         entries = list(DEFAULT)
     params = load_params()
@@ -773,11 +910,14 @@ def main() -> int:
         if b == "cad":
             return None
         spec = yaml.safe_load(Path(b).read_text())
-        spec["_file"] = str(Path(b).resolve().relative_to(ROOT))
+        p = Path(b).resolve()
+        spec["_file"] = str(p.relative_to(ROOT)) if p.is_relative_to(ROOT) else str(p)
         return spec
+    specs = [blade_spec(b) if b is not None else None for _, _, b in entries]
+    bps = [blade_params(params, sp) for sp in specs]
     designs = [design(Path(p), label, sc, params, args.sim,
-                      cad_parts(blade_spec(b)) if b is not None else None)
-               for p, label, b in entries]
+                      cad_parts(sp) if b is not None else None, bp)
+               for (p, label, b), sp, bp in zip(entries, specs, bps)]
     pairs = [(p, label) for p, label, _ in entries]
     ref = yaml.safe_load(Path(pairs[0][0]).read_text())
     box = ((ref.get("clearance") or {}).get("panel_keepout") or [{}])[0]
@@ -792,20 +932,21 @@ def main() -> int:
            "limit_nm": sc["k"] * (ss.CURRENT_LIMIT_A - sc["i0"])}
     # The CAD entries' sim: the bike's own righting module, the default build
     # (bike_params righting.module -- these links scaled as cad_righting
-    # does, its blades from config/righting_blade.yaml, toes and all). One
-    # run serves every CAD entry; a `--blade` other than the module's is
-    # swept on the page but not simulated.
-    if args.sim and any(d["cad"] for d in designs):
+    # does, toes and all), carrying each entry's blade (`blade_params`: V2's
+    # is the module's own, V3's swaps the outline and its mass). The CAD's
+    # dummy blade is not simulated.
+    if args.sim:
         k = float(params["righting"]["module"]["linkage"]["_source"]["scale"])
-        sim, lift = sim_counts(params, None), lift_pin_peak(params, None)
-        for d in designs:
-            if d["cad"]:
-                on_frames(sim_trace(params, None, d["frames"][-1]["t"]), d["frames"])
-        print(f"the righting module (CAD linkage x{k:g}) in the sim: {sim} mA, "
-              f"coupler pin at the start {lift} N")
-        for d in designs:
-            if d["cad"]:
-                d["sim"], d["pins"]["lift_sim"] = sim, lift
+        for d, sp, bp in zip(designs, specs, bps):
+            if not d["cad"] or sp is None:
+                continue
+            if bp is not params:      # the variant's stroke: its file's, or its level point
+                bp["righting"]["module"]["linkage"]["stroke"]["crank_travel_deg"] = d["T"]
+            sim, lift = sim_counts(bp, None), lift_pin_peak(bp, None)
+            on_frames(sim_trace(bp, None, d["frames"][-1]["t"]), d["frames"])
+            print(f"{d['name']}: the righting module (CAD linkage x{k:g}, {sp['_file']}) "
+                  f"in the sim: {sim} mA, coupler pin at the start {lift} N")
+            d["sim"], d["pins"]["lift_sim"] = sim, lift
     if args.sim:          # the config designs' traces, on their own configs
         for (path, _), d in zip(pairs, designs):
             if not d["cad"]:
@@ -827,6 +968,8 @@ def main() -> int:
     page = TEMPLATE.read_text(encoding="utf-8")
     if page.count(tag + "/*DATA*/</script>") != 1:
         raise SystemExit(f"{TEMPLATE.name}: expected exactly one data tag")
+    if args.out is None:
+        args.out = OUT_CUSTOM if (args.configs or args.blade) else OUT
     args.out.write_text(page.replace(tag + "/*DATA*/", tag + data), encoding="utf-8")
     print(f"wrote {args.out.relative_to(ROOT) if args.out.is_relative_to(ROOT) else args.out}")
     return 0

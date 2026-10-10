@@ -1715,10 +1715,10 @@ less than that here because the rear omni's rollers let the wheel side slide
 freely. Matters only after touchdown -- on the panel alone the load needs no
 horizontal force at all."""
 
-_MASS: dict | None = None
+_MASS: dict = {}
 
 
-def mass_props() -> dict:
+def mass_props(params: dict | None = None) -> dict:
     """Mass and CoM of the bike, split at the DEPLOYING wing, in sketch mm.
 
     From the MuJoCo model at its rest pose, not from constants: the
@@ -1727,13 +1727,16 @@ def mass_props() -> dict:
     in the chassis frame (the sketch frame: y lateral, z from the axle). The
     link masses differ by grams between geometries, so this is built once
     against the live config and treated as a property of the bike.
+    `params`: a variant bike (a different blade, say), built once per plant
+    digest; None is the live config.
     """
-    global _MASS
-    if _MASS is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from aow_sim.build_model import build_model, load_params
+    from aow_sim.params import plant_digest
+    key = None if params is None else plant_digest(params)
+    if key not in _MASS:
         import mujoco
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-        from aow_sim.build_model import build_model, load_params
-        m = build_model(load_params(), righting=True, swing_linkage=True)
+        m = build_model(params or load_params(), righting=True, swing_linkage=True)
         d = mujoco.MjData(m)
         mujoco.mj_forward(m, d)
         ch, w = 1, m.body("swing_wing_right").id
@@ -1744,10 +1747,10 @@ def mass_props() -> dict:
         # the BLADE turns with the wing (`resting_pose_on`), where the panel
         # model uses the panel's midpoint.
         wl = d.xmat[ch].reshape(3, 3).T @ (d.subtree_com[w] - d.xpos[ch])
-        _MASS = {"total": M, "wing": mw,
-                 "rest": np.array([local[1], local[2]]) * 1000.0,
-                 "wing_com": np.array([wl[1], wl[2]]) * 1000.0}
-    return _MASS
+        _MASS[key] = {"total": M, "wing": mw,
+                      "rest": np.array([local[1], local[2]]) * 1000.0,
+                      "wing_com": np.array([wl[1], wl[2]]) * 1000.0}
+    return _MASS[key]
 
 
 def resting_pose(lk: SwingLinkage, travel: float,
@@ -1802,12 +1805,13 @@ def rest_on_panel(foot, top, hinge, wheel_radius: float,
 
 
 def resting_pose_on(lk: SwingLinkage, travel: float, outline, wing_com,
-                    friction: float = FLOOR_FRICTION_EFF) -> dict | None:
+                    friction: float = FLOOR_FRICTION_EFF, mp: dict | None = None) -> dict | None:
     """`resting_pose` on a real wing SHAPE instead of the panel line: every
     point of `outline` (the deploying wing's section at stow, sketch mm) is a
     support, turned with the wing about its hinge -- the panel is rigid with
     the rocker, so the panel line's rotation since stow IS the shape's.
-    `wing_com` is the wing's CoM at stow (mass_props()["wing_com"]).
+    `wing_com` is the wing's CoM at stow (mass_props()["wing_com"]); `mp`
+    the mass properties it came from, None for the live bike's.
 
     The panel line is the blade's CENTRE line, so resting on it leaves the
     blade's half-thickness and its toe out of the contact (2026-10-09)."""
@@ -1822,32 +1826,81 @@ def resting_pose_on(lk: SwingLinkage, travel: float, outline, wing_com,
     R = np.array([[c, -s_], [s_, c]])
     turned = lambda q: hinge + R @ (np.asarray(q, float) - hinge)  # noqa: E731
     sup = {f"p{i}": turned(q) for i, q in enumerate(outline)}
-    return rest_on_points(sup, hinge, lk.wheel_radius, turned(wing_com), friction)
+    normals = {f"p{i}": R @ n for i, n in smooth_normals(outline).items()}
+    return rest_on_points(sup, hinge, lk.wheel_radius, turned(wing_com), friction, mp,
+                          normals, ring=list(sup))
+
+
+SMOOTH_TURN_DEG = 5.0   # an outline vertex turning less than this is on a curve
+
+
+def smooth_normals(outline) -> dict:
+    """Outward unit normals at the outline's SMOOTH vertices (index -> normal):
+    those where the outline turns less than SMOOTH_TURN_DEG, i.e. points on a
+    curve cut into facets (V3's arc) or the tangent points at its ends. A
+    real corner -- a toe tip, the blade's top -- gets none and stays sharp."""
+    P = np.asarray(outline, float)
+    n = len(P)
+    area2 = sum(P[i, 0] * P[(i + 1) % n, 1] - P[(i + 1) % n, 0] * P[i, 1] for i in range(n))
+    out = {}
+    for i in range(n):
+        e0, e1 = P[i] - P[i - 1], P[(i + 1) % n] - P[i]
+        if np.linalg.norm(e0) < 1e-9 or np.linalg.norm(e1) < 1e-9:
+            continue
+        e0, e1 = e0 / np.linalg.norm(e0), e1 / np.linalg.norm(e1)
+        if np.degrees(np.arccos(np.clip(e0 @ e1, -1.0, 1.0))) >= SMOOTH_TURN_DEG:
+            continue
+        t = e0 + e1
+        nrm = np.array([t[1], -t[0]]) if area2 > 0 else np.array([-t[1], t[0]])
+        out[i] = nrm / np.linalg.norm(nrm)
+    return out
 
 
 def rest_on_points(sup: dict, hinge, wheel_radius: float, wing_com,
-                   friction: float = FLOOR_FRICTION_EFF) -> dict | None:
+                   friction: float = FLOOR_FRICTION_EFF, mp: dict | None = None,
+                   normals: dict | None = None, ring: list | None = None) -> dict | None:
     """The rest itself, on any set of the deploying wing's support points
     (`sup`, name -> sketch mm) and the wheels' contact, with the wing's CoM
-    at `wing_com`. Two points (the panel's ends) is `rest_on_panel`."""
-    mp = mass_props()
+    at `wing_com`. Two points (the panel's ends) is `rest_on_panel`.
+
+    `normals` (name -> outward unit normal) marks points on a smooth curve.
+    Resting wheels-up on a facet between two of them, the contact is
+    INTERPOLATED: the point along the facet where the blended normal passes
+    through the CoM, the bike rolled so that normal points straight down --
+    where a real curve would rest. Without it the rest sits on whole facets
+    and the roll steps by the facet angle (2026-10-10, V3's arc). `ring`: the
+    points in outline order, so the search can walk the curve's facets (the
+    blended normals put the rest up to a facet away from the one the hull
+    search lands on)."""
+    mp = mp or mass_props()
     M, mw = mp["total"], mp["wing"]
     hinge = np.asarray(hinge, float)
     rest = mp["rest"]
     com = ((M - mw) * rest + mw * np.asarray(wing_com, float)) / M
     pts = {k: np.asarray(v, float) for k, v in sup.items()}
     pts["wheel"] = np.array([0.0, -wheel_radius])
+    # Only points on the convex hull can ever be lowest, so the rest is
+    # searched over those alone (pair order kept, so the same rest is found):
+    # a finely faceted curve -- V3's arc, 40-odd points -- made the all-pairs
+    # search below cubic in them.
+    if len(pts) > 4:
+        from shapely.geometry import MultiPoint, Point
+        rim = MultiPoint([tuple(p) for p in pts.values()]).convex_hull.boundary
+        pts = {k: p for k, p in pts.items() if k == "wheel" or rim.distance(Point(p)) < 1e-9}
     names = list(pts)                       # the wheel last, so it is always `b`
-    for a, b in ((names[i], names[j]) for i in range(len(names))
-                 for j in range(i + 1, len(names))):
+    P = np.array([pts[k] for k in names])
+    for i, j in ((i, j) for i in range(len(names)) for j in range(i + 1, len(names))):
+        a, b = names[i], names[j]
         v = pts[b] - pts[a]
         for roll in (-np.degrees(np.arctan2(v[1], v[0])),
                      180.0 - np.degrees(np.arctan2(v[1], v[0]))):
             roll = (roll + 180.0) % 360.0 - 180.0
-            W = {k: _rot(p, roll) for k, p in pts.items()}
+            r_ = np.deg2rad(roll)
+            z = np.sin(r_) * P[:, 0] + np.cos(r_) * P[:, 1]    # _rot's height, all at once
+            W = {a: _rot(pts[a], roll), b: _rot(pts[b], roll)}
             floor = W[a][1]
-            others = [k for k in pts if k not in (a, b)]
-            if any(W[k][1] < floor - 1e-6 for k in others):
+            z[[i, j]] = np.inf
+            if (z < floor - 1e-6).any():
                 continue                          # not a hull edge this way up
             C = _rot(com, roll)
             if C[1] <= floor:
@@ -1869,6 +1922,32 @@ def rest_on_points(sup: dict, hinge, wheel_radius: float, wing_com,
             # never changes sign, but a panel far enough out lifts the CoM
             # above its upright height mid-stroke (60 mm out: 132 mm vs 122)
             # and that is exactly where it would.
+            if b != "wheel" and normals and ring and a in normals and b in normals:
+                k = len(ring)
+                ia = ring.index(a)
+                smooth = None
+                for off in sorted(range(-k // 2, k // 2 + 1), key=abs):
+                    p, q = ring[(ia + off) % k], ring[(ia + off + 1) % k]
+                    if p in normals and q in normals:
+                        smooth = _smooth_contact(sup[p], sup[q], normals[p], normals[q], com)
+                        if smooth is not None:
+                            break
+                if smooth is not None:
+                    # rolled onto the curve, nothing sharp -- the wheel, a
+                    # corner -- may be lower (the curve's own facets sit a
+                    # few hundredths under its interpolated contact). If one
+                    # is, this is the frame the wheels touch down: the facet
+                    # rest stands, a facet's worth of roll off at most.
+                    r_ = np.deg2rad(smooth[0])
+                    sharp = np.array([k not in normals for k in names])
+                    z = np.sin(r_) * P[sharp, 0] + np.cos(r_) * P[sharp, 1]
+                    if (z < smooth[1] - 1e-6).any():
+                        smooth = None
+                if smooth is not None:
+                    roll, floor = smooth
+                    S, H = _rot(rest, roll), _rot(hinge, roll)
+                    tau = (M - mw) * g * (S[0] - H[0])
+                    C = _rot(com, roll)
             load = -tau
             if b == "wheel":
                 load += friction * n_panel * (H[1] - floor) / 1000.0
@@ -1876,6 +1955,35 @@ def rest_on_points(sup: dict, hinge, wheel_radius: float, wing_com,
                     "regime": "wheels" if b == "wheel" else "panel",
                     "to_floor": (roll, floor), "com_h": float(C[1] - floor)}
     return None
+
+
+def _smooth_contact(pa, pb, na, nb, com, tol: float = 1e-9):
+    """(roll, floor) resting on the facet pa-pb of a smooth curve: the point
+    P(s) = pa + s (pb - pa) whose blended normal n(s) passes through `com`,
+    rolled so n(s) points straight down. None if no such point on the facet."""
+    def f(s):
+        nn = (1 - s) * na + s * nb
+        d = com - (pa + s * (pb - pa))
+        return nn[0] * d[1] - nn[1] * d[0]
+    lo, hi = 0.0, 1.0
+    flo, fhi = f(lo), f(hi)
+    if flo * fhi > 0:
+        return None
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        fm = f(mid)
+        if flo * fm <= 0:
+            hi, fhi = mid, fm
+        else:
+            lo, flo = mid, fm
+        if hi - lo < tol:
+            break
+    s = 0.5 * (lo + hi)
+    nn = (1 - s) * na + s * nb
+    roll = -90.0 - np.degrees(np.arctan2(nn[1], nn[0]))
+    roll = (roll + 180.0) % 360.0 - 180.0
+    p = pa + s * (pb - pa)
+    return roll, float(_rot(p, roll)[1])
 
 
 def pin_forces(lk: SwingLinkage, travel: float,

@@ -9,7 +9,7 @@ traces/
 bench/logs/archive/
 # Loose output dropped BESIDE an analysis script is scratch and stays out;
 # figures worth keeping go in analysis/plots/, which docs/ links point at.
-# This works because a gitignore `*` does not cross `/`, so these two patterns
+# This works because a gitignore `*` does not cross `/`, so these patterns
 # match only direct children of analysis/ and never analysis/plots/*.png --
 # no negation rule needed. Do not "tidy" them to analysis/** without adding
 # one, or the tracked figures silently disappear from the index.
@@ -17,6 +17,7 @@ bench/logs/archive/
 # briefly tracked here at ~7 MB each, which is what these rules came from.)
 analysis/*.png
 analysis/*.mp4
+analysis/*.html
 # Raw TM151 captures (analysis/tm151_record.py). Instrument data, not results:
 # megabytes per capture, superseded by the next one, and the CONCLUSIONS go in
 # the plan doc. Keep a capture worth citing by moving it out of here by hand.
