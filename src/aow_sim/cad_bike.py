@@ -90,9 +90,20 @@ ASA = 1.07                      # g/cm^3, solid (righting_cad.yaml materials)
 # the modules' geometry layers, merged
 # --------------------------------------------------------------------------
 
+def righting_v1() -> dict:
+    """The righting as THIS bike was laid out round it: the `ends` stub and
+    U blade. The module itself moved on to `outline` (the V3 blade, for
+    aow-bike-whole-v2, 2026-10-11), whose toe reaches this layout's front
+    tyre; v1 is frozen rather than re-fitted (docs/plans/aow-bike-whole-v2.md)."""
+    rd = cr.load()
+    rd["s"]["wing"]["blade"] = "ends"
+    rd["T"] = rd["T_linkage"]           # and the linkage's stroke, which `ends` ran to
+    return rd
+
+
 def module_texts() -> dict[str, str]:
     """Each module's whole Feature Studio, generated from local config now."""
-    rd = cr.load()
+    rd = righting_v1()
     return {"steering": cs.build_fs(cs.load()),
             "drive": cd.build_fs(cd.load()),
             "righting": cr.build_fs(cr.layout(rd), rd)}
@@ -148,7 +159,7 @@ def merge_layers(texts: dict[str, str]) -> str:
 def load(path: str = PARAMS) -> dict:
     raw = _normalize(yaml.safe_load(Path(path).read_text()))
     p = load_params(sm.CAD_PARAMS)
-    rd = cr.load()
+    rd = righting_v1()
     return {"s": raw, "params": p, "steer": cs.layout(cs.load()),
             "drive": cd.full_layout(cd.load()), "rd": rd, "rL": cr.layout(rd)}
 
@@ -1568,7 +1579,7 @@ def fit2_probe(rear=(140, 175, 2.5), front=(80, 90, 2.5), y_at: float | None = N
     p = load_params(sm.CAD_PARAMS)
     R = p["omni_wheel"]["outer_radius"] * 1000
     st = cs.layout(cs.load())
-    rL = cr.layout(cr.load())
+    rL = cr.layout(righting_v1())
     body = sm.geometry_layer("\n".join(["FeatureScript 3044;", merge_layers(module_texts()), SPLIT_MARK]))
     subs = {"%LAYER%": body, "%TILT%": f"{p['drivetrain']['drive_servo_angle_deg']:g}",
             "%ZF%": f"{st['R'] - R:g}", "%RAKE%": f"{p['bike']['rake_deg']:g}",

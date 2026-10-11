@@ -244,7 +244,7 @@ def test_a_righting_change_is_noticed(data, L, tmp_path):
     stack gives a different digest (and cad_bike says so), the same one the same."""
     import copy
     from aow_sim import cad_righting as cr
-    assert cb.righting_digest(data["rL"]) == cb.righting_digest(cr.layout(cr.load()))
+    assert cb.righting_digest(data["rL"]) == cb.righting_digest(cr.layout(cb.righting_v1()))
     rd = copy.deepcopy(data["rd"])
     rd["s"]["stack"]["clearance"] = 0.3
     assert cb.righting_digest(cr.layout(rd)) != L["rgDigest"]

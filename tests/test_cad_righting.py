@@ -202,7 +202,9 @@ def test_the_links_hold_the_nuts_and_the_screws_come_from_both_sides(data, L):
     js = {j["tag"]: j for j in L["RG"]["joints"]}
     for side in "RL":
         w, k = js["jW" + side], js["jK" + side]
-        assert w["csk"] == k["csk"] == "wing" + side
+        # one wing part, or (wing.blade outline) a stub per tab
+        assert w["csk"] == "wing" + side
+        assert k["csk"] == ("wingK" if wg["blade"] == "outline" else "wing") + side
         assert w["zIn"][1] * k["zIn"][1] == -1.0
         # each head faces away from the mid-plane: it points in at the module
         for j in (w, k):
@@ -376,13 +378,54 @@ def test_the_thrust_rings_locate_every_moving_group(data, L):
             assert any(b in S and a not in S for a, b, *_ in contacts), f"{S} slides -Y"
 
 
-def test_the_wing_is_a_stub_and_the_blade_an_inverted_u_over_it(data, L):
+def test_the_wing_is_two_stubs_and_the_blade_the_whole_section(data, L):
+    """`wing.blade: outline` (user, 2026-10-11): each wing is two printed
+    stubs -- the tab blocks the 6-32s pass through, nothing of the panel --
+    and a dummy blade, the blade file's section along the panel's span. The
+    stubs stand on the blade's inner face, which is the panel's, and each
+    tab's screw has its own stub."""
+    wg = data["s"]["wing"]
+    assert wg["blade"] == "outline"
+    blade = part(L, "bladeR")
+    assert blade["kind"] == "dummy"
+    (q,) = blade["add"]
+    # both blades on wing.blade_y (centred on the wheelbase, user 2026-10-11):
+    # the left one MIRRORED across the midline, not turned
+    assert (q["y0"], q["y1"]) == pytest.approx(tuple(wg["blade_y"]))
+    bl = part(L, "bladeL")
+    (qL,) = bl["add"]
+    assert bl["mirror"] == "bladeR" and bl["twin"] is None
+    assert (qL["y0"], qL["y1"]) == (q["y0"], q["y1"])
+    assert sorted(map(tuple, qL["pts"])) == sorted((-x, z) for x, z in q["pts"])
+    # the studio gets the exact outline: V3's outer face is a cubic Bezier
+    assert any(len(s) == 4 for s in q["segs"]) and any(len(s) == 4 for s in qL["segs"])
+    assert all(a[-1] == b[0] for a, b in zip(q["segs"], q["segs"][1:] + q["segs"][:1]))
+    spec = yaml.safe_load(Path(wg["blade_file"]).read_text())
+    from aow_sim.params import blade_points
+    want = [[x, y + L["floor_z"]] for x, y in blade_points(spec["outline"])]
+    assert np.allclose(q["pts"], want)
+    for slug in ("wingR", "wingKR"):
+        (b,) = part(L, slug)["add"]
+        assert b["k"] == "prism" and b["y1"] - b["y0"] == pytest.approx(wg["tab"])
+        # two corners on the blade's inner face (V2/V3 points 1-2)
+        a, c = np.array(want[0]), np.array(want[1])
+        e = (c - a) / np.linalg.norm(c - a)
+        d = [abs(e[0] * (p[1] - a[1]) - e[1] * (p[0] - a[0])) for p in b["pts"]]
+        assert sorted(d)[1] < 0.05
+    js = {j["tag"]: j for j in L["RG"]["joints"]}
+    assert js["jKR"]["csk"] == "wingKR" and js["jKL"]["csk"] == "wingKL"
+
+
+def test_the_wing_is_a_stub_and_the_blade_an_inverted_u_over_it(tmp_path):
     """`wing.blade: ends` (user, 2026-10-07): the printed wing is a stub
     whose two Y ends are tongues, both faces chamfered 45 deg along the
     panel; the blade (a dummy) is an inverted U over it. Across the panel
     (n, + inward) both keep the panel's own faces, so nothing grows and the
     floor clearance at full stroke is the panel's. Along Y the blade spans
-    the panel's ends, the stub stops short of them by the legs."""
+    the panel's ends, the stub stops short of them by the legs. (v1's bike
+    is still built round it: cad_bike.righting_v1.)"""
+    data = variant(tmp_path, wing__blade="ends")
+    L = cr.layout(data)
     wg = data["s"]["wing"]
     half = wg["panel_thickness"] / 2
     foot, top = L["foot"], L["top"]

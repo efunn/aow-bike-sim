@@ -61,7 +61,7 @@ import yaml
 
 from . import cad_ahrs_fixture as af
 from . import cad_servo_mount as sm
-from .params import _normalize, load_params
+from .params import _normalize, blade_points, blade_segments, load_params
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "analysis"))
@@ -118,8 +118,16 @@ def load(path: str = PARAMS, steer_path: str = STEER_PARAMS,
     x330 = {"caseDepth": mm(d), "caseWidth": mm(w), "caseHeight": mm(h),
             "shaftFromEnd": mm(sv["shaft_from_end"]),
             "hornThickness": mm(sv["horn_thickness"]), "hornDiameter": mm(sv["horn_diameter"])}
+    # The stroke the poses run to: the linkage's (V2's level point), or the
+    # blade file's own commanded stroke (its level point) when the CAD draws
+    # that blade -- V3 levels at 116.9 and is 12 deg into the floor by 129.3.
+    T_lk = float(ref["stroke"]["crank_travel_deg"])
+    T = T_lk
+    if s["wing"]["blade"] == "outline":
+        spec = yaml.safe_load((ROOT / s["wing"]["blade_file"]).read_text())
+        T = float(spec.get("crank_travel_deg", T_lk))
     return {"s": s, "hub": hub, "coupling": coupling, "lk": lk, "scale": k,
-            "T": float(ref["stroke"]["crank_travel_deg"]), "pivot_z": pz,
+            "T": T, "T_linkage": T_lk, "pivot_z": pz,
             "wheel_r": ref["bike"]["wheel_radius"], "x330": x330,
             "table": sm.servo_table(params, mounts), "screw": sm.screw_table(mounts)}
 
@@ -203,6 +211,8 @@ def turned_prim(pr: dict) -> dict:
     elif q["k"] == "prism":
         q["pts"] = [[-x, z] for x, z in q["pts"]][::-1]
         q["y0"], q["y1"] = -q["y1"], -q["y0"]
+        if "segs" in q:
+            q["segs"] = [[[-x, z] for x, z in s][::-1] for s in q["segs"]][::-1]
     elif q["k"] == "slot":
         q["pts"] = [[-x, z] for x, z in q["pts"]]
         q["mids"] = [[-x, z] for x, z in q["mids"]]
@@ -237,6 +247,16 @@ def convex_hull(pts) -> list:
             h.append(p)
         return h[:-1]
     return [list(p) for p in half(P) + half(P[::-1])]
+
+
+def _dist_to_outline(p, pts) -> float:
+    """Distance from a 2D point to a closed polyline's edges."""
+    best = math.inf
+    for a, b in zip(pts, pts[1:] + pts[:1]):
+        ab = b - a
+        s_ = float(np.clip(np.dot(p - a, ab) / max(np.dot(ab, ab), 1e-12), 0.0, 1.0))
+        best = min(best, float(np.linalg.norm(p - (a + s_ * ab))))
+    return best
 
 
 def bbox(prims: list) -> tuple[list, list]:
@@ -514,7 +534,51 @@ def layout(data: dict) -> dict:
     def pq(u0, u1, n0, n1):
         return [on_panel(u0, n0), on_panel(u1, n0), on_panel(u1, n1), on_panel(u0, n1)]
 
-    if wg["blade"] == "ends":
+    if wg["blade"] == "outline":
+        # aow-bike-whole-v2 (user, 2026-10-11): "just draw stubs (the
+        # countersunk screw hole rectangle bits, not extending into the wing
+        # part at all), then the blade as the whole external shape for now,
+        # no design consideration for how it attaches". So each wing is two
+        # printed STUBS -- the tab blocks the 6-32s go through, nothing of
+        # the panel -- and a DUMMY blade: the blade file's section (the
+        # right wing seen from behind, stowed; module x = its x, z = its y
+        # + floor_z) along the panel's span. The stubs stand on the blade's
+        # inner face, which is the panel's.
+        spec = yaml.safe_load((ROOT / wg["blade_file"]).read_text())
+        fzb = -(data["wheel_r"] + pz)
+        sec = [np.array([x, y + fzb]) for x, y in blade_points(spec["outline"])]
+        # the EXACT outline for the studio: lines and the cubic Beziers, so
+        # Onshape draws the spline, not the flattening (`pts` stays, for
+        # the checks here and in cad_bike)
+        segs = [[[x, y + fzb] for x, y in (s.get("line") or s["bezier"])]
+                for s in blade_segments(spec["outline"])]
+        # the stubs must stand on the blade: the boss's base corners on its inner face
+        for q in (boss[0], boss[1]):
+            d_edge = _dist_to_outline(q, sec)
+            need(d_edge < 0.05, f"a stub's base corner is {d_edge:.2f} off the blade file's section: "
+                 "its inner face is not the panel's")
+        # the blades' span: wing.blade_y, centred on the bike's wheelbase
+        # (user, 2026-10-11) -- both blades the same span, the stubs where
+        # the links put them (cad_bike_v2 checks the centring)
+        ya, yb = wg["blade_y"]
+        need(ya <= min(tab_y[0], -kn_tab[1]) and yb >= max(kn_tab[1], -tab_y[0]),
+             "the blade's span does not cover both wings' stubs")
+        # anchors near a base corner: the boss's centre is the screw's axis,
+        # and a point there finds nothing once the bore is cut
+        corner = on_panel(u0 + 1.0, n0 + 1.0)
+        part("wingR", "wing R stub (rocker)", "wR", [0, -1, 0], [prism(boss, *tab_y)],
+             anchor=xyz(corner, (tab_y[0] + tab_y[1]) / 2),
+             note="STUB: the rocker-side tab block only. " + screws + " Print the outer (-Y) face up.")
+        part("wingKR", "wing R stub (knuckle)", "wR", [0, 1, 0], [prism(boss, *kn_tab)],
+             anchor=xyz(corner, (kn_tab[0] + kn_tab[1]) / 2),
+             note="STUB: the knuckle-side tab block only. Print the outer (+Y) face up.")
+        blade_prim = prism([list(v) for v in sec], ya, yb)
+        blade_prim["segs"] = segs
+        part("bladeR", "wing R blade", "wR", None, [blade_prim],
+             anchor=xyz(on_panel(Lp / 2, half - 1.0), (ya + yb) / 2),
+             kind="dummy", color=(0.35, 0.55, 0.85),
+             note=f"DUMMY: the blade's whole external shape ({wg['blade_file']}). How it holds the stubs: open.")
+    elif wg["blade"] == "ends":
         # the printed STUB and a blade over it like an inverted U (user,
         # 2026-10-07): each Y end of the stub a tongue, both faces chamfered
         # 45 deg along the panel; the blade's legs hold them, its body sits
@@ -594,6 +658,17 @@ def layout(data: dict) -> dict:
                 q["note"] = "Print the web face down. Crankpin hole: ream to press. No lugs: it only supports."
             parts.append(q)
 
+    if wg["blade"] == "outline":
+        # the left blade MIRRORED across the midline, its span the right
+        # one's (centred on the wheelbase): a turn would put it the other
+        # way along Y. Same volume, not the same solid.
+        bR, bL = (next(q for q in parts if q["slug"] == s_) for s_ in ("bladeR", "bladeL"))
+        m = copy.deepcopy(bR["add"][0])
+        m["pts"] = [[-x, z] for x, z in m["pts"]][::-1]
+        m["segs"] = [[[-x, z] for x, z in s][::-1] for s in m["segs"]][::-1]
+        bL["add"] = [m]
+        bL["anchor"] = [-bR["anchor"][0], bR["anchor"][1], bR["anchor"][2]]
+        bL["mirror"], bL["twin"] = "bladeR", None
     if loop:
         # knuckle R alone gets a ring at the rod on its inner face (user,
         # 2026-10-07): it closes the mid-plane gap there without the rod
@@ -1000,11 +1075,11 @@ def layout(data: dict) -> dict:
         if nut_link:
             head = [s3[0], y_plane + s * jp, s3[2]]
             joint(tag, f(head), f([0, -s, 0]), f(wv), abs(tab_far - head[1]), wing, link, False, f(wv), 0.0,
-                  f(niv), up, ridge=False, slot_len=nut_slot)
+                  ups[wing], up, ridge=False, slot_len=nut_slot)
         else:
             head = [s3[0], y_plane - s * jp, s3[2]]
             joint(tag, f(head), f([0, s, 0]), f(wv), abs(link_far - head[1]), link, wing, False, f(wv), 0.0,
-                  up, f(niv), ridge=False)
+                  up, ups[wing], ridge=False)
 
     # the rocker's tab past it (outboard, s -1) or in the web plane (hub_zone)
     rk = ("rockerR", -Y["web_out"], -1 if outb else 1, -Y["web_in"] if outb else -Y["hz_out"], -Y["tab_out"])
@@ -1014,9 +1089,10 @@ def layout(data: dict) -> dict:
         kk = ("knuckleR", Y["kn_in"], -1, Y["kn_out"], Y["kn_in"] - wg["tab"])
     else:
         kk = ("knuckleR", Y["kn_out"], 1, Y["kn_in"], Y["kn_out"] + wg["tab"])
-    for tag, (link, *geo) in (("jW", rk), ("jK", kk)):
-        wing_joint(tag + "R", link, "wingR", *geo)
-        wing_joint(tag + "L", link[:-1] + "L", "wingL", *geo, turn=True)
+    kstub = "wingK" if wg["blade"] == "outline" else "wing"     # outline: each tab its own stub
+    for tag, (link, *geo), w_ in (("jW", rk, "wing"), ("jK", kk, kstub)):
+        wing_joint(tag + "R", link, w_ + "R", *geo)
+        wing_joint(tag + "L", link[:-1] + "L", w_ + "L", *geo, turn=True)
     if rear_kr:
         # knuckle R behind knuckle L: not knuckle L turned
         joints[:] = [j for j in joints if j["tag"] != "jKR"]
@@ -1313,6 +1389,18 @@ export function rgPrim(context is Context, id is Id, q is map) returns Query
             skArc(sk, "ab", { "start" : P(q.pts[1]), "mid" : P(q.mids[0]), "end" : P(q.pts[2]) });
             skLineSegment(sk, "l2", { "start" : P(q.pts[2]), "end" : P(q.pts[3]) });
             skArc(sk, "aa", { "start" : P(q.pts[3]), "mid" : P(q.mids[1]), "end" : P(q.pts[0]) });
+        }
+        else if (q.segs != undefined)
+        {
+            // exact pieces: [p0, p1] a line, [P0, P1, P2, P3] a cubic Bezier
+            for (var i = 0; i < size(q.segs); i += 1)
+            {
+                const s = q.segs[i];
+                if (size(s) == 2)
+                    skLineSegment(sk, "s" ~ i, { "start" : P(s[0]), "end" : P(s[1]) });
+                else
+                    skBezier(sk, "b" ~ i, { "points" : [P(s[0]), P(s[1]), P(s[2]), P(s[3])] });
+            }
         }
         else
         {
