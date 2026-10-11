@@ -169,3 +169,36 @@ def test_the_featurescript_builds_and_lints(data):
         assert f'"{part}"' in text
     # the case joints carry the ridge on the case (ridgeOnNut true)
     assert text.count("L.ridgeHalf, Y, Z)") == 1 and ", true, X, L.ridgeHalf" in text
+
+
+def test_v2_turns_the_servo_out_the_front_and_drops_the_plate(data):
+    """`--v2` (aow-bike-steering-v2, user 2026-10-11): the lug's screw sits
+    out past the upper case's far face, its nut slot short of the servo
+    pocket; the side joints behind the turning cavity, their ridges apart;
+    no mount plate in the parts or the extents; the studio lints."""
+    L = st.full_layout(data)
+    wall = data["s"]["print"]["min_wall"]
+    # upper -> lower, a screw a side: the lugs' front faces on the connector
+    # window's aft edge, the head's pocket clear of the upper case's side
+    assert L["v2UlY0"] == pytest.approx(L["winNear"])
+    assert L["v2UlX"] - data["screw"]["headDia"] / 2 > L["botOuter"]
+    # short lugs and blocks: 45 deg each, the block's under its nut
+    assert L["v2LugTop"] < L["upTopZ"] and L["v2BlkBot"] >= L["v2PadTop"]
+    assert L["v2BlkTop"] < L["v2HeadZ"] - 6.6 - data["screw"]["nutSlotThickness"]
+    # lower -> bike: on the axis at the bushing's mid-height, the hole a
+    # wall short of the bore; the pad puts the nut slot's inner face on the
+    # cup's original side (side_pad 5 = jp + 2 + nut 3 - jp... the user's 1.5 more)
+    assert L["caseBot"] < L["v2SideZ"] < L["sleeveTop"]
+    assert L["v2SideBoreWall"] >= wall
+    nut_in = L["v2SideX"] + 4.6 - 6.6 - data["screw"]["nutSlotThickness"]
+    assert nut_in == pytest.approx(L["cupHalf"])
+    # the front: the foot, straight up, 45 deg forward; under_floor left
+    # beneath the servo's front end
+    assert L["v2Rise"] + (L["v2Foot"] - L["yServoFar"]) == pytest.approx(
+        L["zCF"] - data["s"]["v2"]["under_floor"])
+    assert "mount plate" not in st.extents(L, "SCREWS", v2=True)
+    assert "mount plate" not in st.PARTS_V2
+    text = st.build_fs(data, v2=True)
+    sm.lint_fs(text)
+    assert "export const STEER_V2 = true;" in text and '"AOW steering v2"' in text
+    assert "export const STEER_V2 = false;" in st.build_fs(data)

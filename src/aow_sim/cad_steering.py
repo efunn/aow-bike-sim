@@ -36,6 +36,13 @@ print check.
     python -m aow_sim.cad_steering --check             # both variants, ONE call
     python -m aow_sim.cad_steering --push steering_features
     python -m aow_sim.cad_steering --shot              # -> docs/cad/steering.png
+
+    python -m aow_sim.cad_steering --v2 --check --push steering_v2_features
+
+--v2 builds aow-bike-steering-v2 (2026-10-11): the servo turned 180 deg about
+Z, its body out the FRONT; one 6-32 from a lug on the upper case down into
+the lower case; two 6-32 nut joints a side on the lower case for the bike
+(nothing drawn there yet); no mount plate. Config `v2:` in steering_cad.yaml.
 """
 
 from __future__ import annotations
@@ -53,10 +60,12 @@ from .params import _normalize, load_params
 STEER_PARAMS = "config/steering_cad.yaml"
 X330_PARAMS = "config/x330_fixture_cad.yaml"
 OUT_FS = "docs/cad/steering.fs"
+OUT_FS_V2 = "docs/cad/steering_v2.fs"
 OUT_PNG = "docs/cad/steering{}.png"
 SPLIT_MARK = af.SPLIT_MARK
 PARTS = ("fork R", "fork L", "headset lower", "headset upper", "horn hub",
          "lower case", "upper case", "mount plate")
+PARTS_V2 = PARTS[:-1]           # v2: no mount plate
 HARDWARE = ("X330 case", "X330 horn", "wheel", "tire", "axle")
 # Interference that is the design: both legs' holes are a press fit on the
 # axle (one size, so the fork halves are one part).
@@ -64,7 +73,6 @@ INTENDED = ({"axle", "fork L"}, {"axle", "fork R"})
 # (attach, key) built by --check: between them every dialog option.
 VARIANTS = (("SCREWS", "CROSS"), ("PINS", "FLAT"))
 SWEEP = (30, 90, 180, 270)      # steer angles the clash sweep visits
-PLA = 1.24e-3                   # g / mm^3, solid
 
 
 def load(steer_path: str = STEER_PARAMS, cad_path: str = sm.CAD_PARAMS,
@@ -258,13 +266,54 @@ def layout(data: dict) -> dict:
     L["zUS"] = L["upTopZ"] - cs["pad_height"] / 2
     L["padBot"] = L["upTopZ"] - cs["pad_height"]
     need(L["padBot"] >= L["wallTop"] + 1.0, "the upper case's pad reaches down to the lower case's walls")
+    # ---- v2 (`--v2`), in v1's frame (body -Y = the FRONT once turned).
+    v2 = s["v2"]
+    hr = sc["headDia"] / 2
+    nut_c = sc["nutSlotWidth"] / math.sqrt(3)                        # the nut's corner
+    # upper -> lower, two a side: lugs off the upper case's sides, their
+    # front faces on the connector window's aft edge; heads jp above the
+    # joint plane (the upper case's underside)
+    L["v2HeadZ"] = L["upBot"] + jp
+    L["v2UlX"] = L["botOuter"] + hr + v2["ul_pocket_gap"]            # the screws' x: the pocket off the case
+    L["v2UlY0"] = L["winNear"]                                       # the lugs' front faces
+    L["v2UlHalfY"] = max(hr, sc["nutSlotWidth"] / 2) + v2["lug_side_wall"]
+    L["v2UlY"] = L["v2UlY0"] + L["v2UlHalfY"]
+    L["v2UlOut"] = L["v2UlX"] + max(hr, nut_c) + v2["lug_side_wall"]  # the lugs' and blocks' outer faces
+    need(L["v2UlY"] + L["v2UlHalfY"] <= L["yUpNear"], "the side lugs run off the upper case's aft end")
+    # short lugs: the outer face up to the head, then 45 deg back to the case
+    L["v2LugTop"] = L["v2HeadZ"] + (L["v2UlOut"] - L["botOuter"])
+    need(L["v2LugTop"] <= L["upTopZ"], "the lugs' 45 deg tops run past the cap")
+    L["v2UlPocket"] = L["v2UlOut"] - (L["v2UlX"] - hr) + 1.0           # up through the 45 deg top
+    # the blocks: the cup's side straight up, 45 deg out, under_nut_wall under the nut
+    L["v2BlkTop"] = L["v2HeadZ"] - (jp + 2.0) - sc["nutSlotThickness"] - v2["under_nut_wall"]
+    L["v2BlkBot"] = L["v2BlkTop"] - (L["v2UlOut"] - L["cupHalf"])
+    need(L["v2UlX"] - nut_c >= L["topOuter"] + 0.5 * wall, "the upper case's nuts reach the lower case's walls")
+    # lower -> the bike: one a side on the axis at the bushing's mid-height,
+    # the interface on a full-length pad; the hole stops a wall short of the bore
+    L["v2SideZ"] = (L["caseBot"] + L["sleeveTop"]) / 2
+    L["v2SideRidge"] = cs["ridge_half"]
+    L["v2SideX"] = L["cupHalf"] + v2["side_pad"]
+    L["v2SideBoreWall"] = L["v2SideX"] + jp - sc["holeDepth"] - L["boreR"]
+    need(L["v2SideBoreWall"] >= wall, f"a side screw's hole comes {L['v2SideBoreWall']:.2f} from the bushing bore")
+    need(L["v2SideZ"] - sc["nutSlotWidth"] / 2 >= L["caseBot"] + wall, "a side nut slot runs out of the bed")
+    L["v2PadTop"] = L["v2SideZ"] + max(sc["nutSlotWidth"] / 2, hr) + 1.5
+    need(L["v2PadTop"] <= L["zCF"], "the side pads run up past the cup")
+    need(L["v2BlkBot"] >= L["v2PadTop"], "the nut blocks' 45 deg undersides start below the side pads' tops")
+    # the front: the foot, straight up, then 45 deg forward to the walls'
+    # face, meeting it at the underside of the servo shell's cap (zCF less
+    # the cap): any higher and the cap's last 3 mm hang level (a 74 mm2
+    # downward face, --check 2026-10-11)
+    L["v2Foot"] = -v2["foot_front"]
+    L["v2Rise"] = L["zCF"] - v2["under_floor"] - (L["v2Foot"] - L["yServoFar"])
+    need(L["v2Rise"] >= L["v2SideZ"] + sc["nutSlotWidth"] / 2 + wall, "the vertical front ends under the side nut slots' tops")
+    need(L["v2Foot"] <= -(L["v2SideRidge"] + 1.0), "the foot is shorter than the side joints' ridges")
     return L
 
 
-def extents(L: dict, attach: str) -> dict[str, tuple[float, float]]:
+def extents(L: dict, attach: str, v2: bool = False) -> dict[str, tuple[float, float]]:
     """Each part's Z extent as built -- what --check measures."""
     hub_top = L["zH"] + (L["wellT"] if attach == "PINS" else 0.0)
-    return {"headset lower": (L["blockBot"], L["zS"] + L["spigotH"]),
+    e = {"headset lower": (L["blockBot"], L["zS"] + L["spigotH"]),
             "headset upper": (L["zS"], L["lugTop"]),
             "horn hub": (L["hubBot"], hub_top),
             "lower case": (L["caseBot"], L["wallTop"]),
@@ -272,6 +321,9 @@ def extents(L: dict, attach: str) -> dict[str, tuple[float, float]]:
             "mount plate": (L["caseBot"], L["upTopZ"]),
             "fork R": (-L["legHalf"], L["blockTop"]),
             "fork L": (-L["legHalf"], L["blockTop"])}
+    if v2:
+        del e["mount plate"]
+    return e
 
 
 def full_layout(data: dict) -> dict:
@@ -303,8 +355,10 @@ def full_layout(data: dict) -> dict:
     return L
 
 
-def mass_estimate(vols: dict[str, float]) -> str:
-    return ", ".join(f"{k} {v * PLA:.1f} g" for k, v in vols.items())
+def mass_estimate(vols: dict[str, float], areas: dict[str, float]) -> str:
+    """Each part as printed in ASA: cad_servo_mount.printed_mass (a 0.9 skin
+    over the surface, 15 % infill inside, 1.07 g/cm^3) -- UNCALIBRATED."""
+    return ", ".join(f"{k} {sm.printed_mass(v, areas[k]):.1f} g" for k, v in vols.items())
 
 
 def _fs_map(name: str, d: dict) -> str:
@@ -341,6 +395,8 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 %FIXTURE%
 
 %HORN_OPT%
+
+%V2%
 
 %CASE_OPT%
 
@@ -436,6 +492,68 @@ export function plainScrewJoint(context is Context, id is Id, head is Vector,
 }
 
 /**
+ * v2's joints: the shared screw geometry with a BLIND nut slot (out along
+ * `slotDir` for `slotLen`, back only past the nut) and an optional ridge on
+ * the nut's part -- aow_sim.cad_righting's rgJoint. `cskPart` may be
+ * qNothing(): the head then sits in a part not drawn yet (the bike).
+ */
+export function blindScrewJoint(context is Context, id is Id, head is Vector, zIn is Vector,
+                                slotDir is Vector, slotLen is ValueWithUnits, pocket is ValueWithUnits,
+                                cskPart is Query, nutPart is Query, ridge is boolean, ridgeDir is Vector,
+                                ridgeHalf is ValueWithUnits,
+                                cskUp is Vector, nutUp is Vector)
+{
+    const f  = FIXTURE;
+    const mm = millimeter;
+    const cs = coordSystem(head, slotDir, zIn);
+    const nd = f.joint_plate + 2 * mm;
+    screwJointGeometry(context, id + "scr", cs, mergeMaps(SCREW_OPT, {
+            "nutDepth" : nd, "headPocket" : pocket, "bothWays" : false, "nutSlotLength" : slotLen }));
+    if (ridge)
+    {
+        const r = ridgeSolid(context, id + "ridge", head + f.joint_plate * zIn, ridgeDir, -zIn, f.ridge_height,
+                             0 * mm, ridgeHalf);
+        opBoolean(context, id + "rAdd", { "tools" : qUnion([nutPart, r]),
+                "operationType" : BooleanOperationType.UNION });
+    }
+    opBoolean(context, id + "slotCut", { "tools" : qCreatedBy(id + "scr" + "slotExt", EntityType.BODY),
+            "targets" : nutPart, "operationType" : BooleanOperationType.SUBTRACTION });
+    opBoolean(context, id + "cut", { "tools" : qCreatedBy(id + "scr" + "screwRev", EntityType.BODY),
+            "targets" : qUnion([cskPart, nutPart]), "operationType" : BooleanOperationType.SUBTRACTION });
+    const rB = SCREW_OPT.holeDia / 2;
+    for (var pu in [[cskPart, cskUp, "tdC"], [nutPart, nutUp, "tdN"]])
+    {
+        // no teardrop in a part that is not drawn (a boolean needs a target)
+        if (abs(dot(pu[1], zIn)) > 0.5 || isQueryEmpty(context, pu[0]))
+            continue;
+        const upP = normalize(pu[1] - dot(pu[1], zIn) * zIn);
+        polyPrism(context, id, pu[2], head - 1 * mm * zIn, zIn, cross(upP, zIn),
+                  [vector(0 * mm, 0 * mm), vector(rB / sqrt(2), rB / sqrt(2)),
+                   vector(0 * mm, rB * sqrt(2)), vector(-rB / sqrt(2), rB / sqrt(2))],
+                  SCREW_OPT.holeDepth + 1 * mm);
+        opBoolean(context, id + (pu[2] ~ "Cut"), {
+                "tools" : qCreatedBy(id + (pu[2] ~ "Ext"), EntityType.BODY),
+                "targets" : pu[0], "operationType" : BooleanOperationType.SUBTRACTION });
+    }
+    // the slot's roof bridged in two layers where it is a ceiling as printed
+    const along = dot(nutUp, zIn);
+    if (abs(along) > 0.5)
+    {
+        const L  = f.bridge_layer;
+        const rH = SCREW_OPT.holeDia / 2;
+        const w  = SCREW_OPT.nutSlotWidth;
+        const d0 = along > 0 ? nd + SCREW_OPT.nutSlotThickness : nd;
+        const sg = along > 0 ? 1 : -1;
+        const l1 = boxIn(context, id + "br1", cs, vector(-rH, -w / 2, d0 + (sg > 0 ? 0 * mm : -L)),
+                         vector(rH, w / 2, d0 + (sg > 0 ? L : 0 * mm)));
+        const l2 = boxIn(context, id + "br2", cs, vector(-rH, -rH, d0 + sg * L + (sg > 0 ? 0 * mm : -L)),
+                         vector(rH, rH, d0 + sg * L + (sg > 0 ? L : 0 * mm)));
+        opBoolean(context, id + "brCut", { "tools" : qUnion([l1, l2]), "targets" : nutPart,
+                "operationType" : BooleanOperationType.SUBTRACTION });
+    }
+}
+
+/**
  * Every part and the hardware. `opt.attach` SCREWS or PINS (the hub on the
  * horn), `opt.key` CROSS or FLAT (the upper's lugs). Returns the stages (what
  * is fixed, what turns with the steer), each printed part with the direction
@@ -452,6 +570,9 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     const P  = id + "parts";
     const H  = id + "hw";
     const pins = opt.attach == "PINS";
+    // v2: the servo's body out the FRONT, no mount plate; built as v1 (body
+    // -Y) and the case group turned 180 deg about Z at the end
+    const v2 = opt.v2 == undefined ? STEER_V2 : opt.v2;
     const step = function(label is string) { if (opt.debug == true) println("STEP|" ~ label); };
     const at = function(x, y, z) returns Vector { return vector(x, y, z); };
     const holeR = SCREW_OPT.holeDia / 2;
@@ -618,10 +739,37 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     // pocket, turning cavity, bushing; the X330 horn-half shell (cap, far-row
     // pins) onto it, and near-row pins where they clear the cavity
     step("lower case");
-    const cup = boxW(context, P + "cup", at(-L.cupHalf, L.yP, L.caseBot), at(L.cupHalf, L.cupNear, L.zCF));
+    // the cup runs back to the mount plane (v1), or to the lug's far face
+    // (v2), where it carries the side joints and the upper case's nut block
+    const yCup = v2 ? L.yWallFar : L.yP;
+    const cup = boxW(context, P + "cup", at(-L.cupHalf, yCup, L.caseBot), at(L.cupHalf, L.cupNear, L.zCF));
     const walls = boxW(context, P + "walls", at(-L.topOuter, L.yWallFar, L.zCF - 1 * mm), at(L.topOuter, L.yWallNear, L.wallTop));
-    unite(context, P + "lcU", [cup, walls]);
-    const lcPt = at(L.cupHalf - 0.5 * mm, L.yP + 1 * mm, L.caseBot + 1 * mm);
+    var lcAdd = [cup, walls];
+    if (v2)
+    {
+        for (var sg in [1, -1])
+        {
+            const tg = sg > 0 ? "P" : "N";
+            // the side pad, the cup's whole length
+            lcAdd = append(lcAdd, boxW(context, P + ("pad" ~ tg),
+                    at(sg > 0 ? L.cupHalf - 0.5 * mm : -L.v2SideX, L.yWallFar, L.caseBot),
+                    at(sg > 0 ? L.v2SideX : -L.cupHalf + 0.5 * mm, L.cupNear, L.v2PadTop)));
+            // the upper case's nut block: off the cup's side at 45 deg, out
+            // to the block under its nut; profile (|x|, z) on a plane normal
+            // +Y, whose second axis is cross(Y, sg X) = -sg Z
+            const pz = function(x, z) returns Vector { return vector(x, -sg * z); };
+            polyPrism(context, P, "ulBlk" ~ tg, at(0 * mm, L.v2UlY0, 0 * mm), Y, sg * X,
+                      [pz(L.cupHalf - 0.5 * mm, L.v2BlkBot - 0.5 * mm), pz(L.cupHalf, L.v2BlkBot),
+                       pz(L.v2UlOut, L.v2BlkTop), pz(L.v2UlOut, L.upBot), pz(L.cupHalf - 0.5 * mm, L.upBot)],
+                      2 * L.v2UlHalfY);
+            lcAdd = append(lcAdd, qCreatedBy(P + ("ulBlk" ~ tg ~ "Ext"), EntityType.BODY));
+        }
+    }
+    unite(context, P + "lcU", lcAdd);
+    // v2: high in the cup, behind the turning cavity -- the front-bottom
+    // corner the old point sat in is chamfered away
+    var lcPt = v2 ? at(L.cupHalf - 0.5 * mm, -L.cavR - 2.5 * mm, L.zCF - 2 * mm)
+                  : at(L.cupHalf - 0.5 * mm, yCup + 1 * mm, L.caseBot + 1 * mm);
     opBoolean(context, P + "lcCut", { "tools" : qUnion([
             boxW(context, P + "lcPocket", at(-L.inner, L.yServoFar, L.zCF), at(L.inner, L.yServoNear, L.zBack + 1 * mm)),
             cylW(context, P + "lcCav", at(0 * mm, 0 * mm, L.sleeveTop), at(0 * mm, 0 * mm, L.zCF + 0.5 * mm), L.cavR),
@@ -630,6 +778,19 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     caseShellBuild(context, P + "lcShell", cs, mergeMaps(CASE_OPT, { "part" : "TOP" }), partAt(context, P, lcPt));
     if (L.lowerNearPins > 0.5 * mm)
         nearRowPins(context, P + "lcNear", cs, "TOP", partAt(context, P, lcPt));
+    if (v2)
+    {
+        // the front: off forward of the foot, straight up to v2Rise, then
+        // 45 deg forward to the walls' face (a prism in (y, z) along X).
+        // AFTER the shell, so the shell's cap goes with it
+        const run = L.v2Foot - L.yWallFar + 1 * mm;
+        polyPrism(context, P, "lcCh", at(-L.v2UlOut - 1 * mm, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.v2Foot, L.caseBot - 1 * mm), vector(L.v2Foot, L.v2Rise),
+                   vector(L.yWallFar - 1 * mm, L.v2Rise + run), vector(L.yWallFar - 1 * mm, L.caseBot - 1 * mm)],
+                  2 * L.v2UlOut + 2 * mm);
+        opBoolean(context, P + "lcChCut", { "tools" : qCreatedBy(P + "lcChExt", EntityType.BODY),
+                "targets" : partAt(context, P, lcPt), "operationType" : BooleanOperationType.SUBTRACTION });
+    }
 
     // ---- upper case: the X330 back-half shell, then the cap and the walls
     // carried round the whole servo, nesting over the lower's; the side walls
@@ -638,7 +799,7 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     // connectors (an "H" left); near-row pins in the back
     step("upper case");
     caseShellBuild(context, P + "ucShell", cs, mergeMaps(CASE_OPT, { "part" : "BOTTOM" }), qNothing());
-    const ucPt = at(L.botOuter - 0.5 * mm, (L.yWallFar + L.yWrap) / 2, L.upTopZ - 0.5 * mm);
+    var ucPt = at(L.botOuter - 0.5 * mm, (L.yWallFar + L.yWrap) / 2, L.upTopZ - 0.5 * mm);
     const yJ = L.yWrap - 1 * mm;       // a millimetre into the shell's own far wrap
     const ucWrap = boxW(context, P + "ucWrap", at(-L.botOuter, yJ, L.upBot), at(L.botOuter, L.yUpNear, L.upTopZ));
     // the window, in (y, z), through both side walls along X; its far edge
@@ -646,8 +807,28 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     polyPrism(context, P, "ucWin", at(-L.botOuter - 1 * mm, 0 * mm, 0 * mm), X, Y,
               [vector(L.winFar, L.zBack), vector(L.winFar, L.winBot), vector((L.winFar + L.winNear) / 2, L.winApex),
                vector(L.winNear, L.winBot), vector(L.winNear, L.zBack)], 2 * L.botOuter + 2 * mm);
-    const ucPad = boxW(context, P + "ucPad", at(-L.padHalf, L.yP, L.padBot), at(L.padHalf, L.yUpFar + 1 * mm, L.upTopZ));
-    unite(context, P + "ucU", [partAt(context, P, ucPt), ucWrap, ucPad]);
+    // v1: a pad back to the mount plate. v2: the lug for the screw down
+    // into the lower case -- its far face up to the head, then 45 deg back
+    // to the case (it prints cap-down, so a level top would hang)
+    var ucAdd = [partAt(context, P, ucPt), ucWrap];
+    if (v2)
+    {
+        // a lug a side, its front face on the connector window's aft edge:
+        // the outer face up to the head, then 45 deg back to the case's side
+        // (it prints cap-down); profile (|x|, z) as the lower case's blocks
+        for (var sg in [1, -1])
+        {
+            const tg = sg > 0 ? "P" : "N";
+            const pz = function(x, z) returns Vector { return vector(x, -sg * z); };
+            polyPrism(context, P, "ucLug" ~ tg, at(0 * mm, L.v2UlY0, 0 * mm), Y, sg * X,
+                      [pz(L.botOuter - 0.5 * mm, L.upBot), pz(L.v2UlOut, L.upBot), pz(L.v2UlOut, L.v2HeadZ),
+                       pz(L.botOuter - 0.5 * mm, L.v2LugTop + 0.5 * mm)], 2 * L.v2UlHalfY);
+            ucAdd = append(ucAdd, qCreatedBy(P + ("ucLug" ~ tg ~ "Ext"), EntityType.BODY));
+        }
+    }
+    else
+        ucAdd = append(ucAdd, boxW(context, P + "ucPad", at(-L.padHalf, L.yP, L.padBot), at(L.padHalf, L.yUpFar + 1 * mm, L.upTopZ)));
+    unite(context, P + "ucU", ucAdd);
     opBoolean(context, P + "ucCut", { "tools" : qUnion([
             boxW(context, P + "ucNest", at(-L.nestBore, yJ - 0.1 * mm, L.upBot - 1 * mm), at(L.nestBore, L.yNestNear, L.wallTop)),
             boxW(context, P + "ucCav", at(-L.inner, yJ - 0.1 * mm, L.wallTop - 1 * mm), at(L.inner, L.yServoNear, L.zBack)),
@@ -660,37 +841,40 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     // ---- mount plate (placeholder), and the clamp tab off its bottom edge,
     // back, in the plane that is level at the bike's rake: its underside
     // through the plate's back-bottom edge, normal nT = world up
-    step("mount plate");
-    const plate = boxW(context, P + "plate", at(-L.botOuter, L.plateBack, L.caseBot), at(L.botOuter, L.yP, L.upTopZ));
     const plPt = at(L.botOuter - 1 * mm, (L.plateBack + L.yP) / 2, L.caseBot + 1 * mm);
-    const nT = vector(0, sin(L.rakeDeg), cos(L.rakeDeg));
-    const dT = vector(0, -cos(L.rakeDeg), sin(L.rakeDeg));      // along the tab, away from the plate
-    const t0 = at(0 * mm, L.plateBack, L.caseBot);
-    // sketch on the +X side face, normal -X: (u, v) = (dT, cross(-X, dT) = nT)
-    polyPrism(context, P, "tab", t0 + L.tabW / 2 * X, -X, dT,
-              [vector(0 * mm, 0 * mm), vector(L.tabL, 0 * mm), vector(L.tabL, L.tabT), vector(0 * mm, L.tabT)], L.tabW);
-    // a FOOT: the plate's bottom widened to the tab's width, so the tab's
-    // root stands on plate all the way across (printed -Y up, a tab wider
-    // than the plate hung its root 3.3 mm off the bed)
-    const foot = boxW(context, P + "plateFoot", at(-L.tabW / 2, L.plateBack, L.caseBot),
-                      at(L.tabW / 2, L.yP, L.caseBot + L.tabT / cos(L.rakeDeg) + 1 * mm));
-    unite(context, P + "plU", [plate, foot, qCreatedBy(P + "tabExt", EntityType.BODY)]);
-    // four 10-32 through it, teardropped toward -Y (up, as the plate prints)
-    const upT = normalize(-Y - dot(-Y, nT) * nT);
-    const rT = L.tabHole / 2;
-    var tabCut = [];
-    for (var i = 0; i < 4; i += 1)
+    if (!v2)
     {
-        const c = t0 + ((i < 2) ? 1 : -1) * L.tabSpanX / 2 * X
-                     + (L.tabL / 2 + ((i % 2 == 0) ? 1 : -1) * L.tabSpanD / 2) * dT - 1 * mm * nT;
-        tabCut = append(tabCut, cylW(context, P + ("tabHole" ~ i), c, c + (L.tabT + 2 * mm) * nT, rT));
-        polyPrism(context, P, "tabTd" ~ i, c, nT, cross(upT, nT),
-                  [vector(0 * mm, 0 * mm), vector(rT / sqrt(2), rT / sqrt(2)),
-                   vector(0 * mm, rT * sqrt(2)), vector(-rT / sqrt(2), rT / sqrt(2))], L.tabT + 2 * mm);
-        tabCut = append(tabCut, qCreatedBy(P + ("tabTd" ~ i ~ "Ext"), EntityType.BODY));
+        step("mount plate");
+        const plate = boxW(context, P + "plate", at(-L.botOuter, L.plateBack, L.caseBot), at(L.botOuter, L.yP, L.upTopZ));
+        const nT = vector(0, sin(L.rakeDeg), cos(L.rakeDeg));
+        const dT = vector(0, -cos(L.rakeDeg), sin(L.rakeDeg));      // along the tab, away from the plate
+        const t0 = at(0 * mm, L.plateBack, L.caseBot);
+        // sketch on the +X side face, normal -X: (u, v) = (dT, cross(-X, dT) = nT)
+        polyPrism(context, P, "tab", t0 + L.tabW / 2 * X, -X, dT,
+                  [vector(0 * mm, 0 * mm), vector(L.tabL, 0 * mm), vector(L.tabL, L.tabT), vector(0 * mm, L.tabT)], L.tabW);
+        // a FOOT: the plate's bottom widened to the tab's width, so the tab's
+        // root stands on plate all the way across (printed -Y up, a tab wider
+        // than the plate hung its root 3.3 mm off the bed)
+        const foot = boxW(context, P + "plateFoot", at(-L.tabW / 2, L.plateBack, L.caseBot),
+                          at(L.tabW / 2, L.yP, L.caseBot + L.tabT / cos(L.rakeDeg) + 1 * mm));
+        unite(context, P + "plU", [plate, foot, qCreatedBy(P + "tabExt", EntityType.BODY)]);
+        // four 10-32 through it, teardropped toward -Y (up, as the plate prints)
+        const upT = normalize(-Y - dot(-Y, nT) * nT);
+        const rT = L.tabHole / 2;
+        var tabCut = [];
+        for (var i = 0; i < 4; i += 1)
+        {
+            const c = t0 + ((i < 2) ? 1 : -1) * L.tabSpanX / 2 * X
+                         + (L.tabL / 2 + ((i % 2 == 0) ? 1 : -1) * L.tabSpanD / 2) * dT - 1 * mm * nT;
+            tabCut = append(tabCut, cylW(context, P + ("tabHole" ~ i), c, c + (L.tabT + 2 * mm) * nT, rT));
+            polyPrism(context, P, "tabTd" ~ i, c, nT, cross(upT, nT),
+                      [vector(0 * mm, 0 * mm), vector(rT / sqrt(2), rT / sqrt(2)),
+                       vector(0 * mm, rT * sqrt(2)), vector(-rT / sqrt(2), rT / sqrt(2))], L.tabT + 2 * mm);
+            tabCut = append(tabCut, qCreatedBy(P + ("tabTd" ~ i ~ "Ext"), EntityType.BODY));
     }
     opBoolean(context, P + "tabCut", { "tools" : qUnion(tabCut), "targets" : partAt(context, P, plPt),
             "operationType" : BooleanOperationType.SUBTRACTION });
+    }
 
     // ---- the screw joints. Fork -> block: one a side, head in the fork's
     // outer face, no ridge -- the ledge takes the vertical load, the cheeks
@@ -704,20 +888,51 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
                         -sg * X, Z, L.forkPocket, partAt(context, P, forkPt[tag]), partAt(context, P, hlPt),
                         -sg * X, Z);
     }
-    screwJoint(context, P + "jLC", at(0 * mm, L.plateBack, L.zLS), Y, Z, 0 * mm,
-               partAt(context, P, plPt), partAt(context, P, lcPt), true, X, L.ridgeHalf, Y, Z);
-    screwJoint(context, P + "jUC", at(0 * mm, L.plateBack, L.zUS), Y, Z, 0 * mm,
-               partAt(context, P, plPt), partAt(context, P, ucPt), true, X, L.padHalf - 1 * mm, Y, -Z);
+    if (!v2)
+    {
+        screwJoint(context, P + "jLC", at(0 * mm, L.plateBack, L.zLS), Y, Z, 0 * mm,
+                   partAt(context, P, plPt), partAt(context, P, lcPt), true, X, L.ridgeHalf, Y, Z);
+        screwJoint(context, P + "jUC", at(0 * mm, L.plateBack, L.zUS), Y, Z, 0 * mm,
+                   partAt(context, P, plPt), partAt(context, P, ucPt), true, X, L.padHalf - 1 * mm, Y, -Z);
+    }
+    else
+    {
+        // upper -> lower, one a side: head in the lug (its pocket up
+        // through the lug's top), down into the nut block, the slot out of
+        // the block's side
+        for (var sg in [1, -1])
+            blindScrewJoint(context, P + ("jUL" ~ (sg > 0 ? "P" : "N")), at(sg * L.v2UlX, L.v2UlY, L.v2HeadZ), -Z, sg * X,
+                            L.v2UlOut - L.v2UlX + 1 * mm, L.v2UlPocket,
+                            partAt(context, P, ucPt), partAt(context, P, lcPt), false, X, 0 * mm, -Z, Z);
+        // lower -> the bike, one a side on the axis at the bushing's
+        // mid-height: heads in parts not drawn yet, the ridge along Y on the
+        // pad, the nut slot forward (build -Y) out of the case's front
+        var k = 0;
+        for (var sg in [1, -1])
+        {
+            blindScrewJoint(context, P + ("jS" ~ k), at(sg * (L.v2SideX + FIXTURE.joint_plate), 0 * mm, L.v2SideZ),
+                            -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
+                            partAt(context, P, lcPt), true, Y, L.v2SideRidge, Z, Z);
+            k += 1;
+        }
+        // the servo's body out the front: the case group turned about the axis
+        const rz = function(p is Vector) returns Vector { return vector(-p[0], -p[1], p[2]); };
+        opTransform(context, id + "turn", { "bodies" : qUnion([sv.caseQ, partAt(context, P, lcPt), partAt(context, P, ucPt)]),
+                "transform" : rotationAround(line(O, Z), 180 * degree) });
+        lcPt = rz(lcPt);
+        ucPt = rz(ucPt);
+    }
 
     // ---- names, colours, print orientation
-    const parts = [["fork R", forkPt["fR"], "X-", -X, "steer"],
-                   ["fork L", forkPt["fL"], "X+", X, "steer"],
-                   ["headset lower", hlPt, "Z+", Z, "steer"],
-                   ["headset upper", upPt, "Z+", Z, "steer"],
-                   ["horn hub", hubPt, pins ? "Z+" : "Z-", pins ? Z : -Z, "steer"],
-                   ["lower case", lcPt, "Z+", Z, "static"],
-                   ["upper case", ucPt, "Z-", -Z, "static"],
-                   ["mount plate", plPt, "Y-", -Y, "static"]];
+    var parts = [["fork R", forkPt["fR"], "X-", -X, "steer"],
+                 ["fork L", forkPt["fL"], "X+", X, "steer"],
+                 ["headset lower", hlPt, "Z+", Z, "steer"],
+                 ["headset upper", upPt, "Z+", Z, "steer"],
+                 ["horn hub", hubPt, pins ? "Z+" : "Z-", pins ? Z : -Z, "steer"],
+                 ["lower case", lcPt, "Z+", Z, "static"],
+                 ["upper case", ucPt, "Z-", -Z, "static"]];
+    if (!v2)
+        parts = append(parts, ["mount plate", plPt, "Y-", -Y, "static"]);
     const turnC  = color(0.93, 0.56, 0.20);
     const fixedC = color(0.62, 0.64, 0.68);
     var stages = { "static" : [sv.caseQ], "steer" : [sv.horn] };
@@ -802,7 +1017,10 @@ def horn_opt(data: dict) -> dict:
     return d
 
 
-def build_fs(data: dict, fs_version: str = "3044") -> str:
+def build_fs(data: dict, fs_version: str = "3044", v2: bool = False) -> str:
+    """v2 (aow-bike-steering-v2): the servo's body out the front, no mount
+    plate. The same steeringBuild either way; STEER_V2 is its default, and
+    the feature is named for its studio."""
     t = data["table"]["XC330"]
     pick = lambda keys: {"servo": "XC330", **{k: t[k] * 1000 for k in keys}}  # noqa: E731
     subs = {
@@ -816,8 +1034,13 @@ def build_fs(data: dict, fs_version: str = "3044") -> str:
         "%SERVO_MOUNT%": af._servo_mount_layer(data, fs_version),
         "%HELPERS%": af.FS_HELPERS.rstrip("\n") + "\n",
         "%SPLIT%": SPLIT_MARK,
+        "%V2%": f"export const STEER_V2 = {'true' if v2 else 'false'};",
     }
     text = FS
+    if v2:
+        text = text.replace('"Feature Type Name" : "AOW steering"', '"Feature Type Name" : "AOW steering v2"')
+        text = text.replace("export const aowSteering = ", "export const aowSteeringV2 = ")
+        text = text.replace("Front steer module: mock wheel", "Front steer module v2 (servo out the front, no mount plate): mock wheel")
     for k, v in subs.items():
         text = text.replace(k, v)
     return text
@@ -848,14 +1071,15 @@ def check_wrapper(fs: str, variants=VARIANTS) -> str:
     {{
     println("VER=" ~ va[0] ~ "/" ~ va[1]);
     const id = makeId("chk" ~ va[0] ~ va[1]);
-    const r = steeringBuild(context, id, {{ "attach" : va[0], "key" : va[1], "debug" : true }});
+    const r = steeringBuild(context, id, {{ "attach" : va[0], "key" : va[1], "debug" : true, "v2" : STEER_V2 }});
     const all = evaluateQuery(context, qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID));
     for (var b in all)
     {{
         const bb = evBox3d(context, {{ "topology" : b, "tight" : true }});
         println("BODY|" ~ name(b) ~ "|" ~ toString(bb.minCorner[2] / millimeter) ~ "|"
                 ~ toString(bb.maxCorner[2] / millimeter) ~ "|"
-                ~ toString(evVolume(context, {{ "entities" : b }}) / (millimeter * millimeter * millimeter)));
+                ~ toString(evVolume(context, {{ "entities" : b }}) / (millimeter * millimeter * millimeter)) ~ "|"
+                ~ toString(evArea(context, {{ "entities" : qOwnedByBody(b, EntityType.FACE) }}) / (millimeter * millimeter)));
     }}
     for (var i = 0; i + 1 < size(all); i += 1)
         clashes("rest", all[i], qUnion(subArray(all, i + 1, size(all))));
@@ -885,7 +1109,7 @@ def canon(name: str) -> str:
     return max(hits, key=len) if hits else name
 
 
-def check(text: str, data: dict, target: str | None, variants=VARIANTS) -> bool:
+def check(text: str, data: dict, target: str | None, variants=VARIANTS, v2: bool = False) -> bool:
     """ONE billable call for every variant."""
     from . import onshape
 
@@ -895,7 +1119,7 @@ def check(text: str, data: dict, target: str | None, variants=VARIANTS) -> bool:
         print(f"  {line}")
     console = reply.get("console") or ""
     Path("traces").mkdir(exist_ok=True)
-    Path("traces/steering_check.txt").write_text(console)
+    Path(f"traces/steering{'_v2' if v2 else ''}_check.txt").write_text(console)
     if any(n["message"]["level"] == "ERROR" for n in reply.get("notices", [])):
         print(console[-3000:])
         print(onshape.budget_line())
@@ -907,25 +1131,26 @@ def check(text: str, data: dict, target: str | None, variants=VARIANTS) -> bool:
     for sec in sections:
         ver, _, body = sec.partition("\n")
         print(f"--- {ver}")
-        ok &= judge(body, data, ver.split("/")[0].strip())
+        ok &= judge(body, data, ver.split("/")[0].strip(), v2)
     print(onshape.budget_line())
     return ok
 
 
-def judge(console: str, data: dict, attach: str) -> bool:
+def judge(console: str, data: dict, attach: str, v2: bool = False) -> bool:
     rows = [l.split("|") for l in console.splitlines()]
     L = full_layout(data)
-    want = extents(L, attach)
+    want = extents(L, attach, v2)
     ok = True
     bodies = [r for r in rows if r[0] == "BODY"]
     strays = [r for r in bodies if r[1] == "UNNAMED"]
     ok &= not strays
     if strays:
         print(f"  {len(strays)} UNNAMED bodies -- a cutter left behind  FAIL")
-    vols = {}
+    vols, areas = {}, {}
     for r in bodies:
         n = canon(r[1])
         if n in want:
+            areas[n] = float(r[5])
             lo, hi = float(r[2]), float(r[3])
             good = abs(lo - want[n][0]) < 1e-3 and abs(hi - want[n][1]) < 1e-3
             ok &= good
@@ -937,7 +1162,7 @@ def judge(console: str, data: dict, attach: str) -> bool:
         ok &= c == 1
         if c != 1:
             print(f"  part {n} is {c} bodies  FAIL")
-    ok &= len(counts) == len(PARTS)
+    ok &= len(counts) == len(PARTS_V2 if v2 else PARTS)
     colls = [r for r in rows if r[0] == "COLL" and "ABUT" not in r[4]]
     real = [r for r in colls if {canon(r[2]), canon(r[3])} not in INTENDED]
     ok &= not real
@@ -949,7 +1174,7 @@ def judge(console: str, data: dict, attach: str) -> bool:
     print(f"  fork halves the same part (volumes {fv}): {'ok' if same else 'FAIL'}")
     for r in real[:40]:
         print(f"    {r[1]:10} {r[2]}  x  {r[3]}  ({r[4]})")
-    print(f"  solid PLA: {mass_estimate(vols)}")
+    print(f"  ~printed ASA (0.9 skin, 15 % infill, UNCALIBRATED): {mass_estimate(vols, areas)}")
     for r in rows:
         if r[0] == "BED":
             over = sorted((x for x in rows if x[0] == "OVER" and x[1] == r[1]),
@@ -998,6 +1223,9 @@ def main() -> None:
     ap.add_argument("--params", default=sm.CAD_PARAMS)
     ap.add_argument("-o", "--output", default=OUT_FS)
     ap.add_argument("--fs-version", default="3044")
+    ap.add_argument("--v2", action="store_true",
+                    help="aow-bike-steering-v2: servo out the front, no mount plate "
+                         "(-> docs/cad/steering_v2.fs, pushes `steering_v2_features` only)")
     ap.add_argument("--check", metavar="TAB|URL", nargs="?", const="", default=None,
                     help="build both variants in Onshape and check them; ONE billable "
                          "call, defaults to the `check` tab")
@@ -1011,8 +1239,10 @@ def main() -> None:
     args = ap.parse_args()
 
     data = load(args.steer, args.params)
-    text = build_fs(data, args.fs_version)
+    text = build_fs(data, args.fs_version, args.v2)
     sm.lint_fs(text)
+    if args.v2 and args.output == OUT_FS:
+        args.output = OUT_FS_V2
     Path(args.output).write_text(text)
     print(f"wrote {len(text)} chars -> {args.output}")
     print(report(data))
@@ -1020,13 +1250,14 @@ def main() -> None:
         print(check_wrapper(text))
         return
     if args.check is not None:
-        if not check(text, data, args.check or None):
+        if not check(text, data, args.check or None, v2=args.v2):
             raise SystemExit("check FAILED -- not pushing")
     if args.push is not None:
         from . import onshape
-        if args.push != "steering_features":
+        own = "steering_v2_features" if args.v2 else "steering_features"
+        if args.push != own:
             raise SystemExit(f"refusing to push at {args.push or 'the default'!r}: "
-                             "this generator owns `steering_features` only")
+                             f"this generator{' with --v2' if args.v2 else ''} owns `{own}` only")
         url = onshape.resolve(args.push, args.push)
         reply = onshape.push_feature_studio(text, url)
         print(f"pushed {len(text)} chars -> {url}  (microversion "
@@ -1034,7 +1265,7 @@ def main() -> None:
         print(onshape.budget_line())
     if args.shot is not None:
         from . import onshape
-        url = onshape.resolve(args.shot or None, "steering")
+        url = onshape.resolve(args.shot or None, "steering_v2" if args.v2 else "steering")
         tag = "" if args.view == "isometric" else "_" + args.view
         out, _ = onshape.shaded_view(url, Path(OUT_PNG.format(tag)), view=args.view)
         print(f"rendered -> {out}")

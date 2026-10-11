@@ -237,3 +237,45 @@ joint:
   ridge_flat: {value: 0.0046, source: design}
   ridge_clearance: {value: 0.00015, source: design}
   bridge_layer: {value: 0.0002, source: design (layer height)}
+
+v2:
+  # aow-bike-steering-v2 (user, 2026-10-11; docs/plans/aow-bike-whole-v2.md):
+  # `cad_steering --v2`. The servo turned 180 deg about Z, its body out the
+  # FRONT (+Y); NO mount plate. Built in v1's frame (body -Y) and the case
+  # group turned at the end -- exact, because the fork, headset, horn hub
+  # and horn are all symmetric under the turn.
+  #
+  # UPPER -> LOWER: TWO 6-32 countersunk, one a side (user, 2026-10-11 pm;
+  # was one, on the centreline through a lug off the front), running down.
+  # Each head in a lug off the upper case's side, the lug's front face
+  # TOUCHING the connector window's aft edge ("just aft (touching) the
+  # cutout connectors"). The screw sits far enough out that the head's
+  # pocket never cuts the upper case's side (user, 2026-10-11 late; it cut
+  # in to 1 outside the nest bore, a long counterbore). The lug is short
+  # (user): its outer face up to the head, then 45 deg back to the case's
+  # side, as the case prints cap-down. Each nut in a block on the lower
+  # case: the cup's side goes straight up, then 45 deg out to the block,
+  # meeting it under_nut_wall below the nut slot; the slot out of the side.
+  ul_pocket_gap: {value: 0.0005, source: design}   # the head's pocket to the upper case's side face
+  under_nut_wall: {value: 0.001, source: design}  # the block's 45 deg underside to its nut slot
+  lug_side_wall: {value: 0.0015, source: design}   # the nut's corner / the head to the lug's and block's faces
+  # LOWER -> BIKE (TBD): from the sides +-X (user). ONE 6-32 a side ("just 2
+  # screws, lower so they line up with the steerer shaft; nut slots can come
+  # from the front"): on the steering axis (y 0) at the bushing's mid-height,
+  # pointing at the shaft; the nut slot runs forward out of the case's front.
+  # Nuts in the lower case, the heads in whatever the bike becomes (nothing
+  # drawn); the ridge along Y on the case (the house joint, cases.ridge_half).
+  # Each side grows a PAD side_pad thick, the whole length of the cup (user:
+  # "the pad can extend all the way to the back"): 5.0 (user, was 3.5) puts
+  # the nut slot's inner face on the cup's original side face.
+  side_pad: {value: 0.005, source: design (user)}
+  # THE FRONT (user, 2026-10-11 pm): the bottom (what bears on the headset)
+  # runs foot_front ahead of the axis; from there the face goes STRAIGHT UP,
+  # then undercuts at 45 deg forward to the case's front edge. The vertical
+  # goes as high as leaves under_floor beneath the servo's front end (user,
+  # 2026-10-11 late: "can also go straight up further"); the cut is made
+  # after the servo shell, so it takes the shell's cap with it (cut before,
+  # the cap's front 3 mm hung level). Was a 26 mm 45 deg chamfer under
+  # a central screw block.
+  foot_front: {value: 0.01255, source: design (user; the bottom's length kept)}
+  under_floor: {value: 0.002, source: design}   # least floor left under the servo by the undercut
