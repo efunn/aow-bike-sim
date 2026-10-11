@@ -1,0 +1,99 @@
+# aow-bike-whole-v2: the modules placed, the electronics free-floating, NO
+# chassis yet (user, 2026-10-11; docs/plans/aow-bike-whole-v2.md). Read by
+# aow_sim.cad_bike_v2. Millimetres, BIKE FRAME: origin on the rear axle, +Y
+# forward, +X right, +Z up (the floor at -51.2).
+#
+# CAD ONLY, as v1 (config/bike_cad.yaml): nothing here reaches the sim.
+#
+# Modules, each from its own generator and config, built fresh every time:
+#   drive     cad_drive, the fixture mock OFF
+#   steering  cad_steering --v2 (servo out the front, no mount plate)
+#   righting  cad_righting, wing.blade outline (the V3 blade); its floor
+#             mock and chassis-plate placeholder are left out here
+
+placement:
+  # The wing rod's station ahead of the rear axle (its height is the
+  # module's: rod 41.2 off the floor). v1's last fit, carried over as the
+  # starting point; --check says whether it still clears the drive now the
+  # blade is V3 and the drive has lost its fixture tabs.
+  righting_y: {value: 120.5, source: design (v1's fit, 2026-10-07)}
+  # The front axle ahead of the rod. 80 (2026-10-11 pm), was 86: the
+  # blades are now CENTRED ON THE WHEELBASE (user; righting_cad.yaml
+  # wing.blade_y), so their front ends sit 20.75 ahead of the rod, not 41,
+  # and no longer bind against the front tyre's steer sweep. 80 is v1's
+  # front (the righting's front bulkhead 5 from the straight front wheel),
+  # and it puts mid-wheelbase exactly on blade_y's centre. layout() refuses
+  # a wheelbase the blades are not centred on, and says the span to use.
+  front: {value: 80.0, source: design (v1's front; centres the blades)}
+  wing_margin: {value: 2.0, source: design}
+
+# THE ELECTRONICS, free to move (user: "can reposition these to find the
+# best layout, then design case/routing around it"). Each is a box `size`
+# [x, y, z] about `at`, its centre, in `frame`:
+#   bike  -- the bike frame
+#   drive -- the drive module's frame: origin on the rear axle, Y along the
+#            belt (up the drive's 45 deg), Z across it; its +Z face looks
+#            up and back, its front face (the skirt's wall, y 118.9) up and
+#            forward
+#   steer -- the steering module's frame: origin on the front axle, Z up the
+#            raked steering axis, Y forward (the servo's side)
+# `rx` turns the box about its own X axis, deg, before placing it. The Pi
+# is drawn in detail (`pi:` below) in its box's frame instead of as a box.
+# `mass` in grams where known.
+#
+# Where each is, and why (2026-10-11, user's second review):
+#   battery  on the drive's back, between the pulleys, on the case sides;
+#            NOTHING on it: "battery needs to be able to come in and out
+#            easily" (user)
+#   AHRS     flat on the drive's front face, between the servos (user:
+#            "looks good"), slid to the face's lower part to make room for
+#   power    beside it on the face (user: "can go along with the AHRS on the
+#            drive case"), overhanging the face's upper edge toward the
+#            battery's side -- forward of the battery, not over it
+#   Pi       parallel to the face, past the pulleys' rims (143.6)
+#   U2D2     "tentatively put it in parallel with the steering" (user): its
+#            long side along the steering axis, centred just aft of the
+#            steering cases. Its connectors are on one end and a long side.
+components:
+  battery:
+    size: {value: [22.0, 58.0, 30.0], source: measured (58 x 30 x 22)}
+    frame: {value: drive, source: design}
+    at: {value: [0.0, 87.0, 45.75], source: design}      # on the case sides (Zp 29.75) + 1
+    mass: {value: 76.0, source: measured}
+  ahrs:
+    size: {value: [34.0, 12.6, 40.0], source: datasheet}
+    frame: {value: drive, source: design}
+    at: {value: [0.0, 125.7, -9.75], source: design}     # the face (118.9) + 0.5 + half; its lower edge on the face's (-29.75)
+    mass: {value: null, source: GUESS (not weighed)}
+  power:
+    # the user: "the envelope of this may change but ok to keep it a bit
+    # big/oversize for now"
+    size: {value: [30.0, 25.0, 30.0], source: GUESS (oversize on purpose)}
+    frame: {value: drive, source: design}
+    at: {value: [0.0, 131.9, 26.25], source: design}     # on the face beside the AHRS (0.5 apart along z)
+    mass: {value: null, source: GUESS}
+  pi:
+    size: {value: [56.0, 20.0, 89.0], source: datasheet (the box the detail sits in; the ports 2 proud of the board's end)}
+    frame: {value: drive, source: design}
+    at: {value: [0.0, 161.0, 0.0], source: design}       # the box: drive y 151..171, past the pulley rims
+    mass: {value: 50.0, source: datasheet (approx.)}
+  u2d2:
+    size: {value: [18.0, 14.9, 48.0], source: measured (18 x 48 x 14.9)}
+    frame: {value: steer, source: design}
+    at: {value: [0.0, -22.0, 100.0], source: design}     # its front face 1 aft of the upper case's (-13.55); z 76..124
+    mass: {value: null, source: GUESS (not weighed)}
+
+# The Pi 3B+ in detail, in its box's frame (x across, y the board's normal,
+# z along it): the board with its four M2.5 holes, the USB + Ethernet block
+# and the GPIO header, on the +y face. Numbers as v1's (bike_cad.yaml
+# electronics.pi), USB/Ethernet end at +z (up the drive's slope, user
+# 2026-10-05), the holes hole_inset from the other end.
+pi:
+  board: {value: [56.0, 85.0, 1.4], source: datasheet}       # x, along z, thick
+  board_y: {value: -6.7, source: design}                     # its mid-plane in the box (box -10 + 2.6 of pins + 0.7)
+  board_z: {value: -2.0, source: design}                     # its centre along the box: the ports' 2 at +z inside it
+  holes: {value: [49.0, 58.0], source: datasheet}
+  hole_inset: {value: 3.5, source: datasheet}
+  hole_dia: {value: 2.75, source: datasheet}
+  usb_block: {value: [53.0, 17.5, 16.0], source: datasheet}  # x, along z, height; ports 2 proud of the board's end
+  gpio: {value: [5.0, 51.0, 8.5], source: datasheet}         # x, along z, height; 1 in from the +x edge, 7 from the hole end
