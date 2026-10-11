@@ -121,7 +121,11 @@ def read(tab: str) -> str:
         for part, area, lo, hi in faces.get(m["name"], []):
             by_part[part].append((area, lo, hi))
         for part, fs in by_part.items():
-            lines.append(f"    -> {part}: {len(fs)} faces, e.g. {fs[0][1]} .. {fs[0][2]}")
+            lines.append(f"    -> {part}: {len(fs)} faces")
+            # every face: an edit that picks several edges is only pinned
+            # down by all of them (one example left the drive's second
+            # chamfer edge ambiguous, 2026-10-11)
+            lines += [f"         {area:>8} mm2  {lo} .. {hi}" for area, lo, hi in fs]
     text = "\n".join(lines)
     (OUT / f"{tab}_hand_edits.txt").write_text(text + "\n")
     return text

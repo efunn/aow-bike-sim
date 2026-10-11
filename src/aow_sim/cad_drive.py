@@ -1,6 +1,6 @@
 """The rear drive module: mock rear wheel, the two XC430s, the spline pulleys,
-drive pulleys, case sides and chainstays, and a mock fixture, as ONE custom
-feature, `AOW drive`, in its own Feature Studio. Spec:
+drive pulleys, case sides and chainstays (and, on request, a mock fixture),
+as ONE custom feature, `AOW drive`, in its own Feature Studio. Spec:
 docs/plans/drive-design.md. Numbers: config/drive_cad.yaml, plus
 bike_params_cad's belt, XC430 and omni wheel blocks.
 
@@ -18,10 +18,15 @@ B (horn +X, above it). So each pair is one part, by construction.
     drive pulley     X+/X-   45T on the XC430 horn: 4 pins, 4 M2 x 6
     case side        X+/X-   plate on one servo's horn face and the other's
                              back; skirt, spacers, 8 M2.5; the chainstay
-                             channel at -Y, the fixture tab at +Y
+                             channel at -Y (the fixture tab at +Y only
+                             with the fixture)
     chainstay        X+/X-   axle boss, hex pocket (M5 head / nut), bearing
-                             stub, a riser inside the belt loop, the tongue
-    fixture mock     Y+      PLACEHOLDER between the tabs, 2 x 6-32 a side
+                             stub, a riser inside the belt loop, the tongue;
+                             the user's chamfers, gusset and fillets
+    fixture mock     Y+      PLACEHOLDER between the tabs, 2 x 6-32 a side.
+                             OFF in the module since 2026-10-11 (the dialog's
+                             "Fixture mock" box); cad_bike (v1) always builds
+                             it, its chassis grows from the block
 
 The axle stack is the user's hand drawing (50.5 between the M5's head and
 nut, which preload chainstay -> pulley cone -> wheel hub). The belt plane is
@@ -51,7 +56,8 @@ OUT_FS = "docs/cad/drive.fs"
 OUT_PNG = "docs/cad/drive{}.png"
 SPLIT_MARK = af.SPLIT_MARK
 PARTS = ("spline pulley L", "spline pulley R", "drive pulley L", "drive pulley R",
-         "case side L", "case side R", "chainstay L", "chainstay R", "fixture mock")
+         "case side L", "case side R", "chainstay L", "chainstay R")
+FIXTURE_PART = "fixture mock"     # only with opt.fixture; --check builds without
 HARDWARE = ("XC430 A", "XC430 B", "XC430 horn A", "XC430 horn B", "belt L", "belt R",
             "rear wheel", "M5 axle")
 # The belts are drawn as plain rings round the pitch line, so they run
@@ -409,6 +415,16 @@ def layout(data: dict) -> dict:
         - L["rFl45"] - L["headR"]
     need(L["fixHead"] >= fx["head_clearance"], "a fixture screw's head is behind the drive pulley")
     need(L["Zp"] - L["zF"] - L["headR"] >= 2 * wall, "a fixture screw's head runs off the plate")
+    # ---- the chainstay's finishing (the user's hand edits, 2026-10-11): the
+    # front chamfer and its fillets stay off the riser's top, the riser's
+    # chamfer and its fillet off the tongue, the gusset on the bed
+    L["cyFront"], L["cyRiserCh"] = ch["front_chamfer"], ch["riser_chamfer"]
+    L["cyFillet"], L["cyEdgeCh"] = ch["chamfer_fillet"], ch["edge_chamfer"]
+    run = L["cyFillet"] * math.tan(math.radians(22.5))     # a fillet's tangent run on a 135 deg edge
+    need(L["xCo"] - L["cyFront"] - run >= L["riserTop"] + L["cyEdgeCh"],
+         "the chainstay's front chamfer reaches the riser's top")
+    need(L["Yr0"] + L["cyRiserCh"] + run <= L["Yc0"], "the riser's chamfer runs into the tongue")
+    need(L["xCi"] - L["cyRiserCh"] - run >= L["riserTop"], "the gusset runs past the riser's top")
     # ---- the case plate's horn relief and wire gap
     L["reliefR"] = cs["relief_dia"] / 2
     need(L["Yf"] + c - Ys > L["reliefR"], "the horn relief breaks the skirt")
@@ -788,12 +804,15 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
     // the chainstay's channel, the fixture tab; pocket, spacers, horn relief,
     // wire gap, 8 M2.5, the tension joint's slot and nut slot
     step("case side");
-    const csBody = [boxW(context, P + "csPlate", at(-L.xPo, L.Yc0, -L.Zp), at(-L.caseHalf, L.Yfront, L.Zp)),
-                    boxW(context, P + "csSkirt", at(-L.caseHalf - 0.01 * mm, L.Ysk0, -L.Zp), at(-L.skirtTop, L.Ytab0, L.Zp)),
-                    boxW(context, P + "csRear", at(-L.xPo, L.Yc0, -L.Zp), at(-L.xRin, L.Yb - L.skClr, L.Zp)),
-                    boxW(context, P + "csTab", at(-L.xPo, L.Yf + L.skClr, -L.Zp), at(-L.xTab, L.Yfront, L.Zp))];
+    // without the fixture the plate ends at the skirt's front wall, no tab
+    const fix = opt.fixture == true;
+    var csBody = [boxW(context, P + "csPlate", at(-L.xPo, L.Yc0, -L.Zp), at(-L.caseHalf, fix ? L.Yfront : L.Ytab0, L.Zp)),
+                  boxW(context, P + "csSkirt", at(-L.caseHalf - 0.01 * mm, L.Ysk0, -L.Zp), at(-L.skirtTop, L.Ytab0, L.Zp)),
+                  boxW(context, P + "csRear", at(-L.xPo, L.Yc0, -L.Zp), at(-L.xRin, L.Yb - L.skClr, L.Zp))];
+    if (fix)
+        csBody = append(csBody, boxW(context, P + "csTab", at(-L.xPo, L.Yf + L.skClr, -L.Zp), at(-L.xTab, L.Yfront, L.Zp)));
     unite(context, P + "csU", csBody);
-    const csPt = at(-L.xPo + 0.5 * mm, L.Ytab0 + 1 * mm, z0);
+    const csPt = fix ? at(-L.xPo + 0.5 * mm, L.Ytab0 + 1 * mm, z0) : at(-L.xPo + 0.5 * mm, L.Ytab0 - 0.5 * mm, z0);
     cutFrom(context, P + "csPocket", partAt(context, P, csPt), [
             boxW(context, P + "csPk", at(-L.skirtTop + 1 * mm, L.Yb - L.skClr, -L.Zi), at(-L.caseHalf, L.Yf + L.skClr, L.Zi))]);
     var spc = [partAt(context, P, csPt)];
@@ -913,6 +932,29 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
             cylW(context, P + "cyHead", at(-L.xCo - 1 * mm, ys, z0), at(-cbTop, ys, z0), L.headBoreR),
             qCreatedBy(P + "cyCskRev", EntityType.BODY),
             cylW(context, P + "cyHole", at(-(L.xH - L.cskDepth) - 0.01 * mm, ys, z0), at(-L.tongueTop + 1 * mm, ys, z0), L.holeR)]);
+    // finishing, the user's hand edits (2026-10-11), every edge found by a
+    // point on it at z 0: the front-outer corner, the riser's rear-top edge
+    // and a gusset of the same size in the concave corner riser x bed; a
+    // fillet on both long edges of each chamfer; then the outer face's rim,
+    // round the boss and on along the side edges (one tangent chain)
+    const cy = partAt(context, P, cyPt);
+    const edgeAt = function(p is Vector) returns Query
+    {
+        return qContainsPoint(qOwnedByBody(cy, EntityType.EDGE), p);
+    };
+    const c1 = L.cyFront;
+    const c2 = L.cyRiserCh;
+    opChamfer(context, P + "cyCh1", { "entities" : edgeAt(at(-L.xCo, L.Yj1, z0)),
+            "chamferType" : ChamferType.EQUAL_OFFSETS, "width" : c1 });
+    opChamfer(context, P + "cyCh2", { "entities" : qUnion([edgeAt(at(-L.riserTop, L.Yr0, z0)), edgeAt(at(-L.xCi, L.Yr0, z0))]),
+            "chamferType" : ChamferType.EQUAL_OFFSETS, "width" : c2 });
+    opFillet(context, P + "cyFil", { "entities" : qUnion([
+            edgeAt(at(-L.xCo, L.Yj1 - c1, z0)), edgeAt(at(-(L.xCo - c1), L.Yj1, z0)),
+            edgeAt(at(-(L.riserTop + c2), L.Yr0, z0)), edgeAt(at(-L.riserTop, L.Yr0 + c2, z0)),
+            edgeAt(at(-L.xCi, L.Yr0 - c2, z0)), edgeAt(at(-(L.xCi - c2), L.Yr0, z0))]),
+            "radius" : L.cyFillet });
+    opChamfer(context, P + "cyCh3", { "entities" : edgeAt(at(-L.xCo, -L.csBossR, z0)),
+            "chamferType" : ChamferType.EQUAL_OFFSETS, "width" : L.cyEdgeCh, "tangentPropagation" : true });
 
     // ---- the right side: every left part and its hardware turned 180 deg
     // about Y. One part per pair, by construction.
@@ -928,18 +970,21 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
 
     // ---- fixture mock between the tabs; 2 x 6-32 a side, heads in the case
     // sides' outer faces, nuts in the block, a ridge along Y on each case
-    step("fixture");
-    boxW(context, P + "fixture", at(-L.xTab, L.Ytab0 + L.fixGap, -L.Zp), at(L.xTab, L.Yfront, L.Zp));
     const fxPt = at(z0, L.Yfront - 1 * mm, z0);
-    var jn = 0;
-    for (var sg in [1, -1])
+    if (fix)
     {
-        const cq = partAt(context, P, sg > 0 ? csPt : flip(csPt));
-        for (var y in [L.yF0, L.yF1])
+        step("fixture");
+        boxW(context, P + "fixture", at(-L.xTab, L.Ytab0 + L.fixGap, -L.Zp), at(L.xTab, L.Yfront, L.Zp));
+        var jn = 0;
+        for (var sg in [1, -1])
         {
-            screwJoint(context, P + ("jF" ~ jn), at(-sg * L.xPo, y, sg * L.zF), sg * X, sg * Z, 0 * mm,
-                       cq, partAt(context, P, fxPt), false, Y, L.ridgeHalf, sg * X, Y);
-            jn += 1;
+            const cq = partAt(context, P, sg > 0 ? csPt : flip(csPt));
+            for (var y in [L.yF0, L.yF1])
+            {
+                screwJoint(context, P + ("jF" ~ jn), at(-sg * L.xPo, y, sg * L.zF), sg * X, sg * Z, 0 * mm,
+                           cq, partAt(context, P, fxPt), false, Y, L.ridgeHalf, sg * X, Y);
+                jn += 1;
+            }
         }
     }
 
@@ -951,11 +996,12 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
     // ---- names, colours, print orientation
     const pulleyC = color(0.93, 0.56, 0.20);
     const frameC  = color(0.62, 0.64, 0.68);
-    const parts = [["spline pulley L", spPt, "X+", X, "move", pulleyC], ["spline pulley R", flip(spPt), "X-", -X, "move", pulleyC],
-                   ["drive pulley L", dpPt, "X+", X, "fixed", pulleyC], ["drive pulley R", flip(dpPt), "X-", -X, "fixed", pulleyC],
-                   ["case side L", csPt, "X+", X, "fixed", frameC], ["case side R", flip(csPt), "X-", -X, "fixed", frameC],
-                   ["chainstay L", cyPt, "X+", X, "move", frameC], ["chainstay R", flip(cyPt), "X-", -X, "move", frameC],
-                   ["fixture mock", fxPt, "Y+", Y, "fixed", color(0.45, 0.62, 0.45)]];
+    var parts = [["spline pulley L", spPt, "X+", X, "move", pulleyC], ["spline pulley R", flip(spPt), "X-", -X, "move", pulleyC],
+                 ["drive pulley L", dpPt, "X+", X, "fixed", pulleyC], ["drive pulley R", flip(dpPt), "X-", -X, "fixed", pulleyC],
+                 ["case side L", csPt, "X+", X, "fixed", frameC], ["case side R", flip(csPt), "X-", -X, "fixed", frameC],
+                 ["chainstay L", cyPt, "X+", X, "move", frameC], ["chainstay R", flip(cyPt), "X-", -X, "move", frameC]];
+    if (fix)
+        parts = append(parts, ["fixture mock", fxPt, "Y+", Y, "fixed", color(0.45, 0.62, 0.45)]);
     var stages = { "fixed" : [], "move" : [] };
     var prints = [];
     for (var n in parts)
@@ -984,22 +1030,24 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
     }
     if (opt.shift != undefined && opt.shift != 0 * mm)
         opTransform(context, id + "shift", { "bodies" : qUnion(stages["move"]), "transform" : transform(-opt.shift * Y) });
-    opMateConnector(context, id + "axleMC", { "coordSystem" : coordSystem(O, X, Z), "owner" : partAt(context, P, fxPt) });
+    opMateConnector(context, id + "axleMC", { "coordSystem" : coordSystem(O, X, Z), "owner" : partAt(context, P, fix ? fxPt : csPt) });
     return { "stages" : stages, "belts" : belts, "prints" : prints };
 }
 
 %SPLIT%
 
 annotation { "Feature Type Name" : "AOW drive",
-             "Feature Type Description" : "Rear drive module: mock wheel, XC430s, pulleys, case sides, chainstays, fixture; Y along the belt" }
+             "Feature Type Description" : "Rear drive module: mock wheel, XC430s, pulleys, case sides, chainstays, optional fixture mock; Y along the belt" }
 export const aowDrive = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
     {
         annotation { "Name" : "Chainstays back by (belt tension)" }
         isLength(definition.shift, { (millimeter) : [0, 0, %TRAVEL%] } as LengthBoundSpec);
+        annotation { "Name" : "Fixture mock (and the case sides' tabs)", "Default" : false }
+        definition.fixture is boolean;
     }
     {
-        driveBuild(context, id + "build", { "shift" : definition.shift });
+        driveBuild(context, id + "build", { "shift" : definition.shift, "fixture" : definition.fixture });
         reportFeatureInfo(context, id, "Belt centres " ~ toString(roundToPrecision(DR.C / millimeter, 2))
                 ~ " mm; tension travel " ~ toString(roundToPrecision(DR.travel / millimeter, 2)) ~ " mm");
     });
@@ -1076,8 +1124,7 @@ def extents(L: dict) -> dict[str, tuple[float, float]]:
     e = {"spline pulley L": (-L["outerFace"], -(L["hubFace"] - L["splineLen"])),
          "drive pulley L": (-L["outerFace"], -(L["xHorn"] - L["pinL"])),
          "case side L": (-L["xPo"], -min(L["xRin"], L["skirtTop"])),
-         "chainstay L": (-L["xCo"], -L["tongueEnd"]),
-         "fixture mock": (-L["xTab"], L["xTab"])}
+         "chainstay L": (-L["xCo"], -L["tongueEnd"])}
     for k in list(e):
         if k.endswith(" L"):
             lo, hi = e[k]
@@ -1183,8 +1230,9 @@ def report(data: dict) -> str:
             ("-- along Y --", None),
             ("case rear edge (tire + clearance)", L["Yc0"]), ("riser", L["Yr0"]),
             ("tension screw", L["Yscr"]), ("riser/tongue front = channel end", L["Yj1"]),
-            ("servo backs", L["Yb"]), ("servo fronts", L["Yf"]), ("fixture tab", L["Ytab0"]),
-            ("front", L["Yfront"])]
+            ("servo backs", L["Yb"]), ("servo fronts", L["Yf"]),
+            ("case sides' front (the skirt's wall)", L["Ytab0"]),
+            ("front with the fixture's tabs (off)", L["Yfront"])]
     out = [f"  {'' if v is None else f'{v:8.2f}'}  {k}" for k, v in rows]
     out.append(f"  tip {L['tipPast']:.2f} past the nut; countersink web {L['cskWeb']:.2f}; "
                f"hex floor {L['xCo'] - L['clampX']:.2f} up the chainstay (clamp span {2 * L['clampX']:.2f})")

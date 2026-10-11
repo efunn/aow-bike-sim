@@ -105,6 +105,10 @@ export const DR = {
     "zF" : 23 * millimeter,
     "ridgeHalf" : 6 * millimeter,
     "fixHead" : 0.674504 * millimeter,
+    "cyFront" : 15 * millimeter,
+    "cyRiserCh" : 5 * millimeter,
+    "cyFillet" : 3 * millimeter,
+    "cyEdgeCh" : 2 * millimeter,
     "reliefR" : 11.05 * millimeter,
     "wireY0" : 86.8953 * millimeter,
     "wireY1" : 97.4953 * millimeter,
@@ -1833,12 +1837,15 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
     // the chainstay's channel, the fixture tab; pocket, spacers, horn relief,
     // wire gap, 8 M2.5, the tension joint's slot and nut slot
     step("case side");
-    const csBody = [boxW(context, P + "csPlate", at(-L.xPo, L.Yc0, -L.Zp), at(-L.caseHalf, L.Yfront, L.Zp)),
-                    boxW(context, P + "csSkirt", at(-L.caseHalf - 0.01 * mm, L.Ysk0, -L.Zp), at(-L.skirtTop, L.Ytab0, L.Zp)),
-                    boxW(context, P + "csRear", at(-L.xPo, L.Yc0, -L.Zp), at(-L.xRin, L.Yb - L.skClr, L.Zp)),
-                    boxW(context, P + "csTab", at(-L.xPo, L.Yf + L.skClr, -L.Zp), at(-L.xTab, L.Yfront, L.Zp))];
+    // without the fixture the plate ends at the skirt's front wall, no tab
+    const fix = opt.fixture == true;
+    var csBody = [boxW(context, P + "csPlate", at(-L.xPo, L.Yc0, -L.Zp), at(-L.caseHalf, fix ? L.Yfront : L.Ytab0, L.Zp)),
+                  boxW(context, P + "csSkirt", at(-L.caseHalf - 0.01 * mm, L.Ysk0, -L.Zp), at(-L.skirtTop, L.Ytab0, L.Zp)),
+                  boxW(context, P + "csRear", at(-L.xPo, L.Yc0, -L.Zp), at(-L.xRin, L.Yb - L.skClr, L.Zp))];
+    if (fix)
+        csBody = append(csBody, boxW(context, P + "csTab", at(-L.xPo, L.Yf + L.skClr, -L.Zp), at(-L.xTab, L.Yfront, L.Zp)));
     unite(context, P + "csU", csBody);
-    const csPt = at(-L.xPo + 0.5 * mm, L.Ytab0 + 1 * mm, z0);
+    const csPt = fix ? at(-L.xPo + 0.5 * mm, L.Ytab0 + 1 * mm, z0) : at(-L.xPo + 0.5 * mm, L.Ytab0 - 0.5 * mm, z0);
     cutFrom(context, P + "csPocket", partAt(context, P, csPt), [
             boxW(context, P + "csPk", at(-L.skirtTop + 1 * mm, L.Yb - L.skClr, -L.Zi), at(-L.caseHalf, L.Yf + L.skClr, L.Zi))]);
     var spc = [partAt(context, P, csPt)];
@@ -1958,6 +1965,29 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
             cylW(context, P + "cyHead", at(-L.xCo - 1 * mm, ys, z0), at(-cbTop, ys, z0), L.headBoreR),
             qCreatedBy(P + "cyCskRev", EntityType.BODY),
             cylW(context, P + "cyHole", at(-(L.xH - L.cskDepth) - 0.01 * mm, ys, z0), at(-L.tongueTop + 1 * mm, ys, z0), L.holeR)]);
+    // finishing, the user's hand edits (2026-10-11), every edge found by a
+    // point on it at z 0: the front-outer corner, the riser's rear-top edge
+    // and a gusset of the same size in the concave corner riser x bed; a
+    // fillet on both long edges of each chamfer; then the outer face's rim,
+    // round the boss and on along the side edges (one tangent chain)
+    const cy = partAt(context, P, cyPt);
+    const edgeAt = function(p is Vector) returns Query
+    {
+        return qContainsPoint(qOwnedByBody(cy, EntityType.EDGE), p);
+    };
+    const c1 = L.cyFront;
+    const c2 = L.cyRiserCh;
+    opChamfer(context, P + "cyCh1", { "entities" : edgeAt(at(-L.xCo, L.Yj1, z0)),
+            "chamferType" : ChamferType.EQUAL_OFFSETS, "width" : c1 });
+    opChamfer(context, P + "cyCh2", { "entities" : qUnion([edgeAt(at(-L.riserTop, L.Yr0, z0)), edgeAt(at(-L.xCi, L.Yr0, z0))]),
+            "chamferType" : ChamferType.EQUAL_OFFSETS, "width" : c2 });
+    opFillet(context, P + "cyFil", { "entities" : qUnion([
+            edgeAt(at(-L.xCo, L.Yj1 - c1, z0)), edgeAt(at(-(L.xCo - c1), L.Yj1, z0)),
+            edgeAt(at(-(L.riserTop + c2), L.Yr0, z0)), edgeAt(at(-L.riserTop, L.Yr0 + c2, z0)),
+            edgeAt(at(-L.xCi, L.Yr0 - c2, z0)), edgeAt(at(-(L.xCi - c2), L.Yr0, z0))]),
+            "radius" : L.cyFillet });
+    opChamfer(context, P + "cyCh3", { "entities" : edgeAt(at(-L.xCo, -L.csBossR, z0)),
+            "chamferType" : ChamferType.EQUAL_OFFSETS, "width" : L.cyEdgeCh, "tangentPropagation" : true });
 
     // ---- the right side: every left part and its hardware turned 180 deg
     // about Y. One part per pair, by construction.
@@ -1973,18 +2003,21 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
 
     // ---- fixture mock between the tabs; 2 x 6-32 a side, heads in the case
     // sides' outer faces, nuts in the block, a ridge along Y on each case
-    step("fixture");
-    boxW(context, P + "fixture", at(-L.xTab, L.Ytab0 + L.fixGap, -L.Zp), at(L.xTab, L.Yfront, L.Zp));
     const fxPt = at(z0, L.Yfront - 1 * mm, z0);
-    var jn = 0;
-    for (var sg in [1, -1])
+    if (fix)
     {
-        const cq = partAt(context, P, sg > 0 ? csPt : flip(csPt));
-        for (var y in [L.yF0, L.yF1])
+        step("fixture");
+        boxW(context, P + "fixture", at(-L.xTab, L.Ytab0 + L.fixGap, -L.Zp), at(L.xTab, L.Yfront, L.Zp));
+        var jn = 0;
+        for (var sg in [1, -1])
         {
-            screwJoint(context, P + ("jF" ~ jn), at(-sg * L.xPo, y, sg * L.zF), sg * X, sg * Z, 0 * mm,
-                       cq, partAt(context, P, fxPt), false, Y, L.ridgeHalf, sg * X, Y);
-            jn += 1;
+            const cq = partAt(context, P, sg > 0 ? csPt : flip(csPt));
+            for (var y in [L.yF0, L.yF1])
+            {
+                screwJoint(context, P + ("jF" ~ jn), at(-sg * L.xPo, y, sg * L.zF), sg * X, sg * Z, 0 * mm,
+                           cq, partAt(context, P, fxPt), false, Y, L.ridgeHalf, sg * X, Y);
+                jn += 1;
+            }
         }
     }
 
@@ -1996,11 +2029,12 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
     // ---- names, colours, print orientation
     const pulleyC = color(0.93, 0.56, 0.20);
     const frameC  = color(0.62, 0.64, 0.68);
-    const parts = [["spline pulley L", spPt, "X+", X, "move", pulleyC], ["spline pulley R", flip(spPt), "X-", -X, "move", pulleyC],
-                   ["drive pulley L", dpPt, "X+", X, "fixed", pulleyC], ["drive pulley R", flip(dpPt), "X-", -X, "fixed", pulleyC],
-                   ["case side L", csPt, "X+", X, "fixed", frameC], ["case side R", flip(csPt), "X-", -X, "fixed", frameC],
-                   ["chainstay L", cyPt, "X+", X, "move", frameC], ["chainstay R", flip(cyPt), "X-", -X, "move", frameC],
-                   ["fixture mock", fxPt, "Y+", Y, "fixed", color(0.45, 0.62, 0.45)]];
+    var parts = [["spline pulley L", spPt, "X+", X, "move", pulleyC], ["spline pulley R", flip(spPt), "X-", -X, "move", pulleyC],
+                 ["drive pulley L", dpPt, "X+", X, "fixed", pulleyC], ["drive pulley R", flip(dpPt), "X-", -X, "fixed", pulleyC],
+                 ["case side L", csPt, "X+", X, "fixed", frameC], ["case side R", flip(csPt), "X-", -X, "fixed", frameC],
+                 ["chainstay L", cyPt, "X+", X, "move", frameC], ["chainstay R", flip(cyPt), "X-", -X, "move", frameC]];
+    if (fix)
+        parts = append(parts, ["fixture mock", fxPt, "Y+", Y, "fixed", color(0.45, 0.62, 0.45)]);
     var stages = { "fixed" : [], "move" : [] };
     var prints = [];
     for (var n in parts)
@@ -2029,22 +2063,24 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
     }
     if (opt.shift != undefined && opt.shift != 0 * mm)
         opTransform(context, id + "shift", { "bodies" : qUnion(stages["move"]), "transform" : transform(-opt.shift * Y) });
-    opMateConnector(context, id + "axleMC", { "coordSystem" : coordSystem(O, X, Z), "owner" : partAt(context, P, fxPt) });
+    opMateConnector(context, id + "axleMC", { "coordSystem" : coordSystem(O, X, Z), "owner" : partAt(context, P, fix ? fxPt : csPt) });
     return { "stages" : stages, "belts" : belts, "prints" : prints };
 }
 
 // ==== UI LAYER BELOW -- dropped by --check ====
 
 annotation { "Feature Type Name" : "AOW drive",
-             "Feature Type Description" : "Rear drive module: mock wheel, XC430s, pulleys, case sides, chainstays, fixture; Y along the belt" }
+             "Feature Type Description" : "Rear drive module: mock wheel, XC430s, pulleys, case sides, chainstays, optional fixture mock; Y along the belt" }
 export const aowDrive = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
     {
         annotation { "Name" : "Chainstays back by (belt tension)" }
         isLength(definition.shift, { (millimeter) : [0, 0, 3] } as LengthBoundSpec);
+        annotation { "Name" : "Fixture mock (and the case sides' tabs)", "Default" : false }
+        definition.fixture is boolean;
     }
     {
-        driveBuild(context, id + "build", { "shift" : definition.shift });
+        driveBuild(context, id + "build", { "shift" : definition.shift, "fixture" : definition.fixture });
         reportFeatureInfo(context, id, "Belt centres " ~ toString(roundToPrecision(DR.C / millimeter, 2))
                 ~ " mm; tension travel " ~ toString(roundToPrecision(DR.travel / millimeter, 2)) ~ " mm");
     });

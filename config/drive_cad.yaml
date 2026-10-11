@@ -21,11 +21,13 @@
 #   drive pulley     X+/X-   45T on the XC430 horn: 4 pins, 4 M2 x 6
 #   case side        X+/X-   plate on both servos (one's horn face, the other's
 #                            back), skirt, spacers, 8 M2.5; the chainstay
-#                            channel at -Y, the fixture tab at +Y
+#                            channel at -Y, the fixture tab at +Y (only
+#                            with the fixture)
 #   chainstay        X+/X-   axle boss (hex pocket for the M5 head / nut), the
 #                            bearing stub, a riser inside the belt loop, the
 #                            tongue into the case side's channel
-#   fixture mock     Y+      PLACEHOLDER between the case sides' tabs
+#   fixture mock     Y+      PLACEHOLDER between the case sides' tabs; OFF
+#                            unless asked for (see fixture:)
 
 wheel:
   # The mock casing, as the hand drawing's mock: a core, a rim ring each side
@@ -155,6 +157,20 @@ chainstay:
   riser_length: {value: 0.020, source: design}   # along Y, inside the belt loop
   flange_clearance: {value: 0.002, source: design}   # riser to the 45T flange
   belt_clearance: {value: 0.001, source: design}     # riser to the belt's tooth side
+  # FINISHING, folded in from the user's hand edits in `aow-bike-drive`
+  # (readback 2026-10-11, traces/hand_edits/drive_hand_edits.txt; drawn on
+  # chainstay L only, the twin follows by construction). In order:
+  #   front_chamfer   the front-outer corner (outer face x front face), 45 deg
+  #   riser_chamfer   the riser's rear-top edge, AND the same size as a gusset
+  #                   (material added) in the concave corner riser x bed
+  #   chamfer_fillet  both long edges of each of those three chamfer faces
+  #   edge_chamfer    the outer face's rim, round the boss and on along the
+  #                   side edges over the chamfer to the riser top (one
+  #                   tangent chain)
+  front_chamfer: {value: 0.015, source: design (user, hand edit)}
+  riser_chamfer: {value: 0.005, source: design (user, hand edit)}
+  chamfer_fillet: {value: 0.003, source: design (user, hand edit)}
+  edge_chamfer: {value: 0.002, source: design (user, hand edit)}
 
 tension:
   # The chainstay's tongue slides along Y in a channel at the case side's -Y
@@ -189,6 +205,11 @@ tension:
   nut_roof: {value: 0.001, source: design}          # over the tip slot
 
 fixture:
+  # OFF in the module (2026-10-11, user: "for now, drop the fixture mock and
+  # the extensions to the case sides that meet with it"): the case sides end
+  # at the skirt's front wall. `AOW drive`'s "Fixture mock" box puts it back;
+  # the v1 whole bike (cad_bike) builds it always, since its chassis grows
+  # from the block.
   # 2 x 6-32 a side into a mock block between the case sides' tabs, the
   # locator a ridge along Y (the shared screw joint). The heads sit out of the
   # drive pulley's disc, so a driver reaches them with the pulley on.

@@ -901,7 +901,7 @@ export function bikeBuild(context is Context, id is Id, opt is map) returns map
     const DRi = id + "dr";
     const RGi = id + "rg";
     const rs = steeringBuild(context, STi, { "attach" : "SCREWS", "key" : "CROSS" });
-    driveBuild(context, DRi, { "shift" : 0 * mm });
+    driveBuild(context, DRi, { "shift" : 0 * mm, "fixture" : true });
     const rr = rightingBuild(context, RGi, { "mocks" : true });
     // NO NAMES DURING REGENERATION: getProperty works in an eval and throws
     // in a Part Studio (2026-09-30), so every part is found by a point
@@ -1410,7 +1410,7 @@ FIT2 = """function(context is Context, queries)
     };
     const X = vector(1, 0, 0);
     const O = vector(0, 0, 0) * mm;
-    driveBuild(context, makeId("dr"), { "shift" : 0 * mm });
+    driveBuild(context, makeId("dr"), { "shift" : 0 * mm, "fixture" : true });
     opTransform(context, makeId("drT"), { "bodies" : solids(makeId("dr")),
             "transform" : rotationAround(line(O, X), %TILT% * degree) });
     steeringBuild(context, makeId("st"), { "attach" : "SCREWS", "key" : "CROSS" });
