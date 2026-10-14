@@ -538,6 +538,15 @@ def main() -> None:
                          "(default: each policy's training gains, else the "
                          "overlay's factory 100:1920). Implies the drivetrain "
                          "if nothing else asks for it. e.g. 400:3840")
+    ap.add_argument("--drive-friction", default=None, metavar="A[:B]",
+                    help="the drive servos' Coulomb friction in N.m at the "
+                         "input shaft, one number for both or A:B per side "
+                         "(servo 101 : 102), PINNED for the session over the "
+                         "policy's training value (bike_params: 0.15). The "
+                         "bench coast-downs fit 0.16:0.21 "
+                         "(docs/plans/drivetrain-model.md). Implies the "
+                         "drivetrain if nothing else asks for it. "
+                         "e.g. 0.16:0.21")
     ap.add_argument("--crab-max", type=float, default=None, metavar="M/S",
                     help="teleop only: the crab command's clamp (1 / 3 keys) in "
                          "m/s, REPLACING the loaded policy's own envelope "
@@ -593,7 +602,8 @@ def main() -> None:
     ap.add_argument("--blade", default=None, metavar="YAML",
                     help="another blade on the bike's righting module, in "
                          "memory (bike_params.yaml untouched), e.g. "
-                         "config/swing_explore/blade_v3.yaml: its outline, and "
+                         "config/righting_blade.yaml (V2; the default is V3): "
+                         "its outline, and "
                          "its file's `mass` and `crank_travel_deg` (the wing "
                          "keys' stroke) where it gives them. Moves "
                          "plant_digest, so a policy loaded here warns")
@@ -699,8 +709,8 @@ def main() -> None:
     params = {**params, "sim": {**params["sim"],
                                 "floor_tilt_steps": FLOOR_TILT_STEPS,
                                 "floor_tilt_bearing_deg": args.slope_bearing}}
-    if (args.drivetrain or args.drivetrain_without or args.servo_gains) \
-            and not args.teleop:
+    if (args.drivetrain or args.drivetrain_without or args.servo_gains
+            or args.drive_friction) and not args.teleop:
         raise SystemExit("--drivetrain is teleop-only: the scripted "
                          "scenarios and --view run the analytic controller "
                          "without the per-step drivetrain hook")
@@ -739,8 +749,15 @@ def main() -> None:
                 args.swing_linkage = True
             print(f"{startup}: drives the {mod.upper()} four-bar, "
                   f"{swing_tip_mass*1e3:g} g at each tip, as trained")
+        drive_friction = None
+        if args.drive_friction:
+            fc = [float(x) for x in args.drive_friction.split(":")]
+            if len(fc) not in (1, 2) or min(fc) < 0:
+                raise SystemExit("--drive-friction takes A or A:B, N.m >= 0")
+            drive_friction = fc[0] if len(fc) == 1 else fc
         drivetrain_base = drivetrain_model.teleop_base(
-            record, args.drivetrain, args.drivetrain_without, servo_gains)
+            record, args.drivetrain, args.drivetrain_without, servo_gains,
+            friction=drive_friction)
         # No base (a startup policy exported without a drivetrain record, and
         # no flag) is the IDEAL drive it trained on -- not bike_params'
         # default detailed one, which load_params() carries.
@@ -752,7 +769,9 @@ def main() -> None:
             drivetrain_source = (
                 "from --drivetrain" if args.drivetrain or args.drivetrain_without
                 else f"from {startup}'s training record" if record
-                else "from bike_params.yaml (--servo-gains)")
+                else "from bike_params.yaml (--servo-gains / --drive-friction)")
+            if drive_friction is not None:
+                drivetrain_source += f", friction PINNED at {args.drive_friction}"
     rig_cfg = None
     if (args.rig or args.rig_mode or args.rig_lock or args.rig_free or args.rig_servo
             or args.rig_heading):

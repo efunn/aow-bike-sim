@@ -174,6 +174,9 @@ def describe(params: dict) -> str:
     if enabled(params, "servo"):
         s = cfg["servo"]
         bits.append(f"servo P{s['velocity_p_gain']}/I{s['velocity_i_gain']}")
+        fc = s["coulomb_friction"]
+        if isinstance(fc, (list, tuple)):
+            bits.append(f"friction {fc[0]:g} / {fc[1]:g} N.m (a / b)")
     if enabled(params, "detent"):
         bits.append("detent")
     if enabled(params, "roller_slop"):
@@ -209,21 +212,32 @@ def policy_params(params: dict, name: str, moves_dir=None) -> dict:
     return from_env_config(params, {KEY: policy_record(name, moves_dir)})
 
 
-def teleop_base(record, drivetrain=None, without=(), gains=None):
+def teleop_base(record, drivetrain=None, without=(), gains=None,
+                friction=None):
     """The overlay teleop COMPILES, before any gains follow a policy.
 
     `--drivetrain [PATH]` or `--drivetrain-without` pin the file; else the
-    startup policy's own `record`; else `--servo-gains` alone asks for the
-    default file; else None, the ideal plant.
+    startup policy's own `record`; else `--servo-gains` or `--drive-friction`
+    alone asks for the default file; else None, the ideal plant.
+
+    `friction` (--drive-friction) pins the servos' Coulomb friction, one
+    number or [side a, side b] in N.m, over whichever overlay that picked --
+    so it holds across every policy picked from the menu.
     """
     if drivetrain or without:
         path = None if drivetrain in (None, True) else drivetrain
-        return with_drivetrain({}, path, without=tuple(without))[KEY]
-    if record:
-        return copy.deepcopy(record)
-    if gains is not None:
-        return load()
-    return None
+        base = with_drivetrain({}, path, without=tuple(without))[KEY]
+    elif record:
+        base = copy.deepcopy(record)
+    elif gains is not None or friction is not None:
+        base = load()
+    else:
+        return None
+    if friction is not None:
+        f = [float(x) for x in friction] if isinstance(friction, (list, tuple)) \
+            else float(friction)
+        base["servo"]["coulomb_friction"] = f
+    return base
 
 
 def _flat(d, pre=""):

@@ -272,6 +272,27 @@ def test_policy_carries_its_drivetrain():
     assert got["drivetrain_model"] is overlay
 
 
+def test_teleop_drive_friction_is_pinned_across_policies(params):
+    """--drive-friction: per-side Coulomb friction over whichever overlay the
+    launch picked, held through teleop_overlay (a policy picked from the
+    menu), and alone it asks for the file as --servo-gains does."""
+    p400 = dm.with_drivetrain({}, gains=(400, 1920))[dm.KEY]
+    base = dm.teleop_base(p400, friction=[0.16, 0.21])
+    assert base["servo"]["coulomb_friction"] == [0.16, 0.21]
+    assert p400["servo"]["coulomb_friction"] != [0.16, 0.21], "record untouched"
+    got, notes = dm.teleop_overlay(base, p400)
+    assert got["servo"]["coulomb_friction"] == [0.16, 0.21]
+    assert any("servo.coulomb_friction" in n for n in notes)
+    assert "0.16 / 0.21" in dm.describe({dm.KEY: got})
+    alone = dm.teleop_base(None, friction=0.2)
+    assert alone["servo"]["coulomb_friction"] == 0.2
+    sim_params = {**dm.base_params(params), dm.KEY: got}
+    from aow_sim.build_model import build_model
+    model = build_model(sim_params)
+    sim = dm.DrivetrainSim(model, sim_params)
+    assert sim.fc_in[1] / sim.fc_in[0] == pytest.approx(0.21 / 0.16)
+
+
 def test_teleop_gains_follow_the_policy_unless_pinned(params):
     import copy
     file_cfg = dm.load()
