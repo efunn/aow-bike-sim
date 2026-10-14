@@ -1252,7 +1252,10 @@ righting:
   module:
     # V2, THE RIGHTING MODULE THE BIKE IS BUILT WITH: the diamond four-bar as
     # aow_sim.cad_righting draws it (one crankpin, one wing rod), the blades of
-    # `blade_file`, the XC330 in current-based position mode. build_model builds it
+    # `blade_file` -- V3 since 2026-10-14 (user: "v3 wing should also be the
+    # default now for teleop and training"; the CAD already drew it), V2's
+    # config/righting_blade.yaml before -- the XC330 in current-based
+    # position mode. build_model builds it
     # unless asked for another mechanism (or swing_linkage=False, the wingless
     # bike every export before 2026-10-09 trained on).
     #
@@ -1262,7 +1265,7 @@ righting:
     # loaded params -- so plant_digest moves when either file does, and the sim
     # and the CAD cannot drift apart.
     linkage_cad: {value: config/righting_cad.yaml, source: design}
-    blade_file: {value: config/righting_blade.yaml, source: design}
+    blade_file: {value: config/swing_explore/blade_v3.yaml, source: design}   # V3; V2 is config/righting_blade.yaml
     # The couplers' mid-plane on the wing rod, ahead of the rear axle: the
     # CAD's (wheelbase 200.5 there, 200 in the sim). Module-frame fore/aft
     # positions below are relative to it.

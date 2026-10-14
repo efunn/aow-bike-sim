@@ -1,6 +1,7 @@
-# THE RIGHTING BLADE, V3 (exploring, 2026-10-10): V2's linkage, a new blade.
-# The sim's default bike still builds V2 (config/righting_blade.yaml);
-# `analysis/swing_stepthrough.py` sweeps and simulates this one as a variant.
+# THE RIGHTING BLADE, V3 (2026-10-10): V2's linkage, a new blade. THE SIM'S
+# DEFAULT BIKE since 2026-10-14 (bike_params `righting.module.blade_file`),
+# as it already was the CAD's (config/righting_cad.yaml); V2 is
+# config/righting_blade.yaml, kept for --blade and the stepthrough.
 #
 # V2's inner face and toe; the toe's outer edge curves into an outer face
 # whose ANGLE is one number, `dir_deg`, from level (user, 2026-10-10). The curve is a

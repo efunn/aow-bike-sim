@@ -13,10 +13,10 @@ are real.
 THE DESIGNS (`DEFAULT`, in this file):
 
     V1   config/swing_linkage_smaller.yaml      the earlier four-bar, flat panels
-    V2   config/swing_linkage_shared_rod.yaml   the bike's righting module, as the
-         + config/righting_blade.yaml           sim builds it by default
-    V3   V2's linkage                           exploring: a new blade
-         + config/swing_explore/blade_v3.yaml
+    V2   config/swing_linkage_shared_rod.yaml   the righting module's linkage,
+         + config/righting_blade.yaml           with its first blade
+    V3   V2's linkage                           the bike's blade: the sim's
+         + config/swing_explore/blade_v3.yaml   default since 2026-10-14
 
 TO CHANGE A BLADE, edit its yaml and re-render. The outline's entries --
 points, straight runs at an angle, cubic curves -- are documented in
@@ -271,8 +271,8 @@ DIAMOND = ROOT / "config" / "swing_linkage_shared_rod.yaml"
 # diamond as cad_righting builds it, with that blade swept.
 DEFAULT = [
     (SWING_LINKAGE_CFG, "V1", None),                                       # built today
-    (DIAMOND, "V2", ROOT / "config" / "righting_blade.yaml"),  # the bike's module
-    (DIAMOND, "V3", ROOT / "config" / "swing_explore" / "blade_v3.yaml"),  # exploring
+    (DIAMOND, "V2", ROOT / "config" / "righting_blade.yaml"),  # the first blade
+    (DIAMOND, "V3", ROOT / "config" / "swing_explore" / "blade_v3.yaml"),  # the bike's
 ]
 
 

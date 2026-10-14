@@ -40,7 +40,7 @@ FLOOR_GRID_M = 0.25   # default metres per checker square; override with
 DYN_CONTYPE, DYN_CONAFF = 2, 1
 # The righting module's two BLADES also see EACH OTHER, through a bit nothing
 # else carries: their toes meeting is the mechanism's end stop (~130 deg,
-# config/righting_blade.yaml). Everything else about them is DYN: the floor
+# righting.module.blade_file). Everything else about them is DYN: the floor
 # yes, the bike's own parts no.
 BLADE_BIT = 16
 BLADE_CONTYPE, BLADE_CONAFF = DYN_CONTYPE | BLADE_BIT, DYN_CONAFF | BLADE_BIT
@@ -1640,7 +1640,7 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
                 mass=w_ref["mass"], contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
                 **_part_contact(sim, "righting"), rgba=rgba)
         else:
-            # THE BLADE, from its front section (config/righting_blade.yaml):
+            # THE BLADE, from its front section (righting.module.blade_file):
             # the right wing's outline, stowed, mm out from the centreline and
             # up from the floor, extruded over its fore/aft span. Placed in
             # this body's frame relative to its pivot -- the wing rod, which

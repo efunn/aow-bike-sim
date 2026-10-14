@@ -1,6 +1,8 @@
 # THE RIGHTING BLADE, V2 (the diamond, cad_righting): the front section of
-# each wing's blade, toe included. The sim builds it (build_model's default
-# righting module, via params.resolve_righting_module) and
+# each wing's blade, toe included. The sim's default 2026-10-09 to 10-14;
+# since then V3 (config/swing_explore/blade_v3.yaml), and this one is
+# `run_drive --blade config/righting_blade.yaml`. Was built by build_model's
+# default righting module, via params.resolve_righting_module, and
 # `analysis/swing_stepthrough.py` sweeps it against the CAD's parts. Was
 # config/swing_explore/blade_toe.yaml, an example; promoted 2026-10-09.
 #

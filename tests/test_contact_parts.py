@@ -110,8 +110,12 @@ def test_the_split_did_not_move_the_plant_digest():
                           crank armature GUESS, stroke 128.4 -> 129.3 (level
                           on the blade), the toe 2.2 mm longer (the stop
                           ~130, before the links) (righting-design.md)
+        bc66ca20e1af66d5  2026-10-14  righting.module.blade_file: the V3 blade
+                          (outer face vertical at stow, curving into V2's
+                          toe), 28.6 -> 38.8 g each, stroke 129.3 -> 116.9
+                          (its own level point); the linkage unchanged
     """
-    assert plant_digest(load_params()) == "0e0e957e15c0248e"
+    assert plant_digest(load_params()) == "bc66ca20e1af66d5"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():
