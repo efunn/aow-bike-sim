@@ -179,6 +179,43 @@ def test_the_module_adds_its_listed_mass(params, model):
         pytest.approx(listed, abs=1e-9)
 
 
+@pytest.mark.parametrize("study", (False, True))
+def test_a_rigid_module_is_the_jointed_one_welded_at_stow(params, model, study):
+    """`righting_rigid` keeps every body, gram and geom of whichever four-bar
+    is built and drops what moves it: 5 hinges, the 2 loop closures, the
+    `swing` actuator and its sensors. At crank 0 the jointed build sits at
+    stow, so there the two must put every mass and every blade in the same
+    place -- else "rigid" would quietly be a different bike."""
+    kw = (dict(swing_linkage=True, swing_linkage_cfg=SWING_LINKAGE_CFG)
+          if study else {})
+    jointed = model if not study else build_model(params, **kw)
+    rigid = build_model(params, righting_rigid=True, **kw)
+    assert rigid.body_subtreemass[1] == pytest.approx(
+        jointed.body_subtreemass[1], abs=1e-12)
+    assert jointed.nv - rigid.nv == 5
+    assert jointed.neq - rigid.neq == 2
+    names = lambda m, n, f: {f(i).name for i in range(n)}
+    assert "swing" in names(jointed, jointed.nu, jointed.actuator)
+    assert "swing" not in names(rigid, rigid.nu, rigid.actuator)
+    assert not any("swing" in n for n in names(rigid, rigid.njnt, rigid.joint))
+    assert names(rigid, rigid.ngeom, rigid.geom) == names(jointed, jointed.ngeom,
+                                                         jointed.geom)
+    dj, dr = mujoco.MjData(jointed), mujoco.MjData(rigid)
+    mujoco.mj_forward(jointed, dj)
+    mujoco.mj_forward(rigid, dr)
+    np.testing.assert_allclose(dr.subtree_com[1], dj.subtree_com[1], atol=1e-12)
+    for g in range(rigid.ngeom):
+        n = rigid.geom(g).name
+        if n.startswith("swing_"):
+            np.testing.assert_allclose(dr.geom_xpos[g], dj.geom_xpos[jointed.geom(n).id],
+                                       atol=1e-12, err_msg=n)
+
+
+def test_rigid_needs_a_four_bar_to_weld(params):
+    with pytest.raises(ValueError, match="righting_rigid"):
+        build_model(params, swing_linkage=False, righting_rigid=True)
+
+
 def test_the_digest_sees_the_blade_file(params, tmp_path):
     """The blade is inlined into params, so a changed blade file moves the
     plant digest even though bike_params.yaml did not change."""

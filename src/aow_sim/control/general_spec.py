@@ -301,6 +301,7 @@ def policy_env_overrides(pol) -> dict:
                 # The module it TRAINED on: "none" for every export before
                 # 2026-10-09, so a replay rebuilds its own training bike.
                 righting_module=str(getattr(pol, "righting_module", "none")),
+                righting_rigid=bool(getattr(pol, "righting_rigid", False)),
                 swing_tip_mass_kg=float(getattr(pol, "swing_tip_mass_kg", 0.0)),
                 wing_touch_fails=bool(getattr(pol, "wing_touch_fails", False)),
                 # The plant, not a sensor, but the same invisible failure: an

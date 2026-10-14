@@ -1434,7 +1434,8 @@ def _wrap_pi(a: float) -> float:
 
 
 def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
-                       tip_mass: float = 0.0, module: dict | None = None) -> None:
+                       tip_mass: float = 0.0, module: dict | None = None,
+                       rigid: bool = False) -> None:
     """Co-rotating FOUR-BAR wing pair (build_model(..., swing_linkage=True)).
 
     `module` is bike_params' `righting.module` (resolved): THE BIKE'S OWN
@@ -1469,6 +1470,18 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
           -> coupler (hinged at that arm's tip, free end carries a site)
         wing (hinged at its own pivot on the chassis, carries a site)
     and an mjEQ_CONNECT between the two sites closes each four-bar.
+
+    RIGID (`build_model(..., righting_rigid=True)`): the same bodies, masses,
+    geoms and contacts, laid out at crank 0 -- the stow pose -- with NO joints,
+    no loop closures, no `swing` actuator and no crank sensors. A body with no
+    joint is welded to its parent, so the module's mass and inertia ride on
+    the chassis exactly where the jointed build puts them at stow, and the
+    wings still touch the floor, but there is nothing to solve: on the M4 the
+    jointed module costs ~1.27x per `mj_step` (5 DOF and 6 equality rows).
+    For training a policy that does not drive the module; whichever module
+    `righting.module` describes is the one made rigid, so there is no second
+    copy of it to keep in step. What it gives up: the wings cannot hang or
+    shake on their linkage, and their servo draws nothing.
 
     FRAMES. The config is millimetres from the FLOOR and the centreline, as the
     2D study uses; everything here is metres from the REAR AXLE. `wheel_radius`
@@ -1550,13 +1563,15 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
     # The servo's gearbox friction at its no-load static value, for loops that
     # step without the servo model; CurrentBasedPositionServo makes it
     # load-proportional (gearbox_friction.py).
-    crank_j = crank.add_joint(
-        name="swing_crank_joint", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[1, 0, 0],
-        frictionloss=float(p["servos"]["xc330_t181"]["friction_static_nm"]))
-    if module is not None:
-        crank_j.armature = float(module["crank_armature"])   # the XC330 rotor, GUESS
-    crank_j.solref_friction = gearbox_friction.solref(spec.option.timestep)
-    crank_j.solimp_friction = gearbox_friction.SOLIMP
+    if not rigid:
+        crank_j = crank.add_joint(
+            name="swing_crank_joint", type=mujoco.mjtJoint.mjJNT_HINGE,
+            axis=[1, 0, 0],
+            frictionloss=float(p["servos"]["xc330_t181"]["friction_static_nm"]))
+        if module is not None:
+            crank_j.armature = float(module["crank_armature"])  # the XC330 rotor, GUESS
+        crank_j.solref_friction = gearbox_friction.solref(spec.option.timestep)
+        crank_j.solimp_friction = gearbox_friction.SOLIMP
     tips = {}
     for side, tag in ((-1, "right"), (1, "left")):
         tip = crank_len * sl.arm_dir(side, 0.0)
@@ -1581,9 +1596,10 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         # about +X, so one constraint row is redundant and the solver has slack
         # to chatter in; damping is what makes the pose settle instead. It is
         # also physically real -- these are bearings, not ideal pins.
-        coup.add_joint(name=f"swing_coupler_{tag}_joint",
-                       type=mujoco.mjtJoint.mjJNT_HINGE, axis=[1, 0, 0],
-                       damping=[0.002, 0, 0])
+        if not rigid:
+            coup.add_joint(name=f"swing_coupler_{tag}_joint",
+                           type=mujoco.mjtJoint.mjJNT_HINGE, axis=[1, 0, 0],
+                           damping=[0.002, 0, 0])
         vec = joint0 - c
         coup.add_geom(
             name=f"swing_coupler_{tag}",
@@ -1596,9 +1612,10 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
 
         wing = chassis.add_body(name=f"swing_wing_{tag}",
                                 pos=[px, side * sl.pivot_y, pivot_z])
-        wing.add_joint(name=f"swing_wing_{tag}_joint",
-                       type=mujoco.mjtJoint.mjJNT_HINGE, axis=[1, 0, 0],
-                       damping=[0.002, 0, 0])
+        if not rigid:
+            wing.add_joint(name=f"swing_wing_{tag}_joint",
+                           type=mujoco.mjtJoint.mjJNT_HINGE, axis=[1, 0, 0],
+                           damping=[0.002, 0, 0])
         # The rocker IS the wing: the panel is rigid with it, hung at
         # `wing_angle_from_rocker` off its bearing and offset normal to it.
         r = joint0 - pivot
@@ -1704,6 +1721,8 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         att = joint0 - pivot
         wing.add_site(name=f"swing_wing_{tag}_attach",
                       pos=[0.0, att[0], att[1]], size=[0.003, 0, 0])
+        if rigid:
+            continue
 
         eq = spec.add_equality()
         eq.type = mujoco.mjtEq.mjEQ_CONNECT
@@ -1716,6 +1735,8 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         eq.solref = [0.002, 1.0]
         eq.solimp = [0.99, 0.9999, 1e-4, 0.5, 2.0]
 
+    if rigid:
+        return      # no crank to drive or sense
     xc330 = p["servos"][cfg.get("servo", "xc330_t181")] if isinstance(
         cfg.get("servo", "xc330_t181"), str) else p["servos"]["xc330_t181"]
     act = spec.add_actuator(name="swing")
@@ -2187,12 +2208,17 @@ def build_spec(
     swing_linkage_cfg: str | Path | None = None,
     rig: dict | None = None,
     swing_tip_mass: float = 0.0,
+    righting_rigid: bool = False,
 ) -> mujoco.MjSpec:
     """`rig`: a RESOLVED floor-rig config (see `floor_rig.resolve`). The whole
     bike is built exactly as usual, freejoint included, and the rig's
     yaw/tilt/roll/pitch chain is appended after everything else with its last
     body welded to the chassis -- so every existing qpos, ctrl and sensor
-    index is unchanged."""
+    index is unchanged.
+
+    `righting_rigid`: the four-bar (the righting module, or a study one)
+    built with no joints, welded at its stow pose -- mass, inertia and
+    contacts without the dynamics. See `_add_swing_linkage`."""
     p = params or load_params()
     spec = mujoco.MjSpec()
     spec.modelname = f"aow_bike_{variant}"
@@ -2473,9 +2499,12 @@ def build_spec(
             spec, chassis, p,
             module["linkage"] if module is not None else yaml.safe_load(
                 Path(swing_linkage_cfg or SWING_LINKAGE_CFG).read_text()),
-            tip_mass=swing_tip_mass, module=module)
+            tip_mass=swing_tip_mass, module=module, rigid=righting_rigid)
     elif swing_tip_mass:
         raise ValueError("swing_tip_mass is a swing_linkage option")
+    elif righting_rigid:
+        raise ValueError("righting_rigid welds the four-bar righting module, "
+                         "and this build has none")
     if swing:
         if wings or linkage:
             raise ValueError("swing wings are an ALTERNATIVE to wings/linkage, "
@@ -2596,19 +2625,20 @@ def build_model(
     swing: bool = False, swing_cfg: str | Path | None = None,
     swing_linkage: bool | None = None, swing_linkage_cfg: str | Path | None = None,
     rig: dict | None = None, swing_tip_mass: float = 0.0,
+    righting_rigid: bool = False,
 ) -> mujoco.MjModel:
     model = build_spec(params, variant, training_wheels, hockey, payload,
                       righting, wings, linkage, linkage_cfg,
                       flywheel, flywheel_cfg, swing, swing_cfg,
                       swing_linkage, swing_linkage_cfg, rig,
-                      swing_tip_mass).compile()
+                      swing_tip_mass, righting_rigid).compile()
     _BUILD_ARGS[model] = dict(
         variant=variant, training_wheels=training_wheels, hockey=hockey,
         payload=payload, righting=righting, wings=wings, linkage=linkage,
         linkage_cfg=linkage_cfg, flywheel=flywheel, flywheel_cfg=flywheel_cfg,
         swing=swing, swing_cfg=swing_cfg, swing_linkage=swing_linkage,
         swing_linkage_cfg=swing_linkage_cfg, rig=rig,
-        swing_tip_mass=swing_tip_mass)
+        swing_tip_mass=swing_tip_mass, righting_rigid=righting_rigid)
     # Exactly one floor is solid and visible to start with. They are all
     # COMPILED collidable (see the note at the floor block: compiling one
     # inert prunes it permanently), so this is the reversible switch-off

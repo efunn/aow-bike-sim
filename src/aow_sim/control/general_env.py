@@ -154,7 +154,19 @@ class GeneralEnv(gym.Env):
         if self.swing_tip_mass and self.righting_module == "none":
             raise ValueError("swing_tip_mass_kg goes on the righting module's "
                              "wings: righting_module v1 or v2")
-        # The module's crank is THERE, driven or not.
+        # `righting_rigid`: the module's mass, inertia and contacts, welded at
+        # stow -- no joints, no crank servo (build_model righting_rigid). For
+        # a policy that does not drive it: the jointed module costs ~1.27x per
+        # mj_step and ~1.3x per env step (M4, 2026-10-13). Applies to whichever
+        # module `righting_module` picks.
+        self.righting_rigid = bool(env.get("righting_rigid", False))
+        if self.righting_rigid and self.righting_module == "none":
+            raise ValueError("righting_rigid welds the righting module: "
+                             "righting_module v1 or v2")
+        if self.righting_rigid and self.swing_linkage:
+            raise ValueError("righting_rigid has no crank to drive: it "
+                             "excludes swing_linkage")
+        # The module's crank is THERE, driven or not -- unless welded.
         self.four_bar = self.righting_module != "none"
         # A wing touching the floor ENDS the episode as a fall: the wings are
         # there for their inertia, and standing on one is a kickstand.
@@ -167,7 +179,8 @@ class GeneralEnv(gym.Env):
             swing_linkage=self.four_bar,
             swing_linkage_cfg=(SWING_LINKAGE_CFG if self.righting_module == "v1"
                                else None),
-            swing_tip_mass=self.swing_tip_mass)
+            swing_tip_mass=self.swing_tip_mass,
+            righting_rigid=self.righting_rigid)
         # The opt-in detailed drivetrain (drivetrain_model.py), present only
         # when the params carry the overlay. None otherwise, and every line
         # below that reads it is then a no-op -- the default env is unchanged.
@@ -185,7 +198,7 @@ class GeneralEnv(gym.Env):
         # SPEED is the thing this mechanism is being asked about. The model
         # carries its own gearbox friction, so the native one comes off.
         self._crank = None
-        if self.four_bar:
+        if self.four_bar and not self.righting_rigid:
             from ..righting_servo import CurrentBasedPositionServo
             self._crank = CurrentBasedPositionServo.attach(
                 self.model, self.p, torque_nm=float(

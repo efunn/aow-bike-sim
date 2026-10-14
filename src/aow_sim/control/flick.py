@@ -341,6 +341,7 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         # the wingless bike, or V1 for a four-bar policy (nodiff_2).
         pol.righting_module = str(d.get(
             "righting_module", "v1" if pol.swing_linkage else "none"))
+        pol.righting_rigid = bool(d.get("righting_rigid", False))
         pol.swing_tip_mass_kg = float(d.get("swing_tip_mass_kg", 0.0))
         pol.wing_touch_fails = bool(d.get("wing_touch_fails", False))
         pol.obs_layout = tuple(d.get("obs_layout", ()) or ())

@@ -956,6 +956,13 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
            # none), driven or not: a non-swing policy still trained with
            # its mass and its blades.
            "righting_module": righting_module_for(cfg["env"]),
+           # ...and whether it was WELDED at stow (no joints, no servo). The
+           # eval rebuilds it that way; teleop and the bike fly it jointed.
+           "righting_rigid": bool(cfg["env"].get("righting_rigid", False)),
+           # Training DR, never replayed (the eval builds no ball), but it
+           # also put 2 x 20 g of hockey-stick panels on the chassis: the
+           # only record of whether this policy trained with them.
+           "ball_prob": float(cfg["env"].get("ball_prob", 0.0)),
            "swing_tip_mass_kg": float(cfg["env"].get("swing_tip_mass_kg", 0.0)),
            "wing_touch_fails": bool(cfg["env"].get("wing_touch_fails", False)),
            # The resulting entry names, recorded explicitly. Two optional
