@@ -211,6 +211,25 @@ def test_a_rigid_module_is_the_jointed_one_welded_at_stow(params, model, study):
                                        atol=1e-12, err_msg=n)
 
 
+def test_a_rigid_module_never_touches_the_floor(params):
+    """Welded, the wings take no contact (user, 2026-10-14) and carry no floor
+    sensor: a stowed V3 blade first meets the floor ~53 deg into a fall and
+    could prop the bike under the env's 60 deg cutoff. Dropped onto its side,
+    the rigid bike comes to rest on everything but a wing."""
+    m = build_model(params, righting_rigid=True)
+    wing = [g for g in range(m.ngeom) if m.geom(g).name.startswith("swing_wing_")]
+    assert wing and not any(m.geom_contype[g] or m.geom_conaffinity[g] for g in wing)
+    assert not any("swing_wing" in m.sensor(i).name for i in range(m.nsensor))
+    d = mujoco.MjData(m)
+    q = np.zeros(4)
+    mujoco.mju_axisAngle2Quat(q, np.array([1.0, 0, 0]), np.radians(60.0))
+    d.qpos[3:7] = q
+    mujoco.mj_forward(m, d)
+    for _ in range(int(1.0 / m.opt.timestep)):
+        mujoco.mj_step(m, d)
+        assert not any(c.geom1 in wing or c.geom2 in wing for c in d.contact[:d.ncon])
+
+
 def test_rigid_needs_a_four_bar_to_weld(params):
     with pytest.raises(ValueError, match="righting_rigid"):
         build_model(params, swing_linkage=False, righting_rigid=True)

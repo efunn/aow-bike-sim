@@ -154,8 +154,9 @@ class GeneralEnv(gym.Env):
         if self.swing_tip_mass and self.righting_module == "none":
             raise ValueError("swing_tip_mass_kg goes on the righting module's "
                              "wings: righting_module v1 or v2")
-        # `righting_rigid`: the module's mass, inertia and contacts, welded at
-        # stow -- no joints, no crank servo (build_model righting_rigid). For
+        # `righting_rigid`: the module's mass and inertia, welded at stow, with
+        # no floor contact -- no joints, no crank servo (build_model
+        # righting_rigid). For
         # a policy that does not drive it: the jointed module costs ~1.27x per
         # mj_step and ~1.3x per env step (M4, 2026-10-13). Applies to whichever
         # module `righting_module` picks.
@@ -171,6 +172,9 @@ class GeneralEnv(gym.Env):
         # A wing touching the floor ENDS the episode as a fall: the wings are
         # there for their inertia, and standing on one is a kickstand.
         self.wing_touch_fails = bool(env.get("wing_touch_fails", False))
+        if self.wing_touch_fails and self.righting_rigid:
+            raise ValueError("wing_touch_fails needs the wings' floor contact, "
+                             "which righting_rigid switches off")
         geared = self.wings or (self.swing and not self.swing_linkage)
         self.model = build_model(
             self.p, variant="full", hockey=self.hockey,

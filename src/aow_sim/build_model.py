@@ -1475,9 +1475,10 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
     geoms and contacts, laid out at crank 0 -- the stow pose -- with NO joints,
     no loop closures, no `swing` actuator and no crank sensors. A body with no
     joint is welded to its parent, so the module's mass and inertia ride on
-    the chassis exactly where the jointed build puts them at stow, and the
-    wings still touch the floor, but there is nothing to solve: on the M4 the
-    jointed module costs ~1.27x per `mj_step` (5 DOF and 6 equality rows).
+    the chassis exactly where the jointed build puts them at stow, but there
+    is nothing to solve: on the M4 the jointed module costs ~1.27x per
+    `mj_step` (5 DOF and 6 equality rows). The wings do NOT touch the floor
+    (no contact, no floor sensors; see the loop below).
     For training a policy that does not drive the module; whichever module
     `righting.module` describes is the one made rigid, so there is no second
     copy of it to keep in step. What it gives up: the wings cannot hang or
@@ -1707,6 +1708,20 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
                      0.5 * sum(module["blade_y"]) / 1000.0,
                      float(tip[0]), float(tip[1])], mass=float(tip_mass),
                 contype=0, conaffinity=0, rgba=[0.15, 0.15, 0.15, 1])
+        if rigid:
+            # NO CONTACT when welded (user, 2026-10-14): a rigid module is for
+            # policies that never use it, and a stowed blade reaches the floor
+            # only in a fall -- first at ~53 deg roll, past which no policy
+            # recovers, and the env ends the episode at 60. Colliding, a V3
+            # blade could PROP a fallen bike at ~56 deg, under that cutoff
+            # (seen at rest after uncontrolled falls, 2026-10-14). The C
+            # solver did not care (12.4 vs 12.6 us per mj_step); MJX checks
+            # every candidate pair every step, and the blades were 12 % of it.
+            # Nothing to sense either, so no floor sensor and no closure.
+            for g in wing.geoms:
+                g.contype = 0
+                g.conaffinity = 0
+            continue
         # Does this wing touch anything on the WORLD body (the floors)?
         # MuJoCo's own contact sensor, 1.0 when it does, read by
         # general_env's `wing_touch_fails` every substep at no Python cost.
@@ -1721,8 +1736,6 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         att = joint0 - pivot
         wing.add_site(name=f"swing_wing_{tag}_attach",
                       pos=[0.0, att[0], att[1]], size=[0.003, 0, 0])
-        if rigid:
-            continue
 
         eq = spec.add_equality()
         eq.type = mujoco.mjtEq.mjEQ_CONNECT
