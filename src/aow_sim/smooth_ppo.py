@@ -94,6 +94,33 @@ class SmoothPPO(PPO):
         super().__init__(*args, **kwargs)
         self.smooth = parse_smooth(smooth)
 
+    def _evaluate(self, obs: th.Tensor, actions: th.Tensor):
+        """`policy.evaluate_actions` (SB3 2.9.0), also returning the mean it
+        already computed, so the bound term costs no forward pass of its own.
+
+        Measured 2026-10-14, one real rollout, same weights and seeds:
+        train() 0.56 -> 0.46 s on the M4; 2.24-2.50 -> 1.88-1.92 s on the
+        box (temporal), 2.56 -> 2.16 (second). Same maths, but the gradient's
+        two paths through the actor now sum in one graph, so an update equals
+        the separate-pass one to float32 rounding (5e-10 against a 1e-3 step,
+        test_smooth_ppo), not bit for bit. On the box that is moot: 16-thread
+        CPU torch differs by ~0.004 between two runs of the same update.
+        NOT DONE: batching a window's 2-3 steps into one actor pass -- no gain
+        on the M4, worse on the box for temporal, slightly better for second."""
+        pol = self.policy
+        features = pol.extract_features(obs)
+        if pol.share_features_extractor:
+            latent_pi, latent_vf = pol.mlp_extractor(features)
+        else:
+            pi_features, vf_features = features
+            latent_pi = pol.mlp_extractor.forward_actor(pi_features)
+            latent_vf = pol.mlp_extractor.forward_critic(vf_features)
+        distribution = pol._get_action_dist_from_latent(latent_pi)
+        log_prob = distribution.log_prob(actions)
+        values = pol.value_net(latent_vf)
+        entropy = distribution.entropy()
+        return values, log_prob, entropy, distribution.distribution.mean
+
     def _mu(self, obs: th.Tensor) -> th.Tensor:
         """Pre-clip deterministic mean: what MLPPolicy.mean replays."""
         return self.policy.get_distribution(obs).distribution.mean
@@ -111,13 +138,13 @@ class SmoothPPO(PPO):
             out[name] = th.as_tensor(obs, device=self.device)
         return out
 
-    def _smooth_loss(self, obs: th.Tensor, win: dict, n: int):
+    def _smooth_loss(self, obs: th.Tensor, win: dict, n: int, mu=None):
         """(weighted loss, {term: unweighted mean}) for one minibatch. Temporal
         windows are drawn at random, `n` of them, so each term sees as many
         samples as the PPO minibatch."""
         s, loss, parts = self.smooth, 0.0, {}
         if s["bound"]:
-            v = bound_term(self._mu(obs)).mean()
+            v = bound_term(self._mu(obs) if mu is None else mu).mean()
             loss, parts["bound"] = loss + s["bound"] * v, v.item()
         for name in ("temporal", "second"):
             if name not in win or len(win[name]) == 0:
@@ -159,7 +186,12 @@ class SmoothPPO(PPO):
                     # Convert discrete action from float to long
                     actions = rollout_data.actions.long().flatten()
 
-                values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
+                if smooth_on:                                       # SMOOTH
+                    values, log_prob, entropy, mu = self._evaluate(
+                        rollout_data.observations, actions)
+                else:
+                    mu = None
+                    values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
                 values = values.flatten()
                 # Normalize advantage
                 advantages = rollout_data.advantages
@@ -206,7 +238,7 @@ class SmoothPPO(PPO):
 
                 if smooth_on:                                       # SMOOTH
                     s_loss, parts = self._smooth_loss(
-                        rollout_data.observations, win, len(advantages))
+                        rollout_data.observations, win, len(advantages), mu)
                     loss = loss + s_loss
                     for k, v in parts.items():
                         smooth_parts[k].append(v)

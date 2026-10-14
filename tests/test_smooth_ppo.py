@@ -120,3 +120,51 @@ def test_a_smooth_checkpoint_loads_both_ways(tmp_path):
     plain = PPO.load(z, device="cpu")
     for k, v in _params(b).items():
         assert th.equal(v, _params(plain)[k])
+
+
+def test_evaluate_is_sb3s_plus_the_mean_it_already_had():
+    """`SmoothPPO._evaluate` copies SB3's `evaluate_actions` to hand back the
+    mean as well, so the bound term needs no forward pass of its own. An SB3
+    upgrade that changes the original shows up here."""
+    pytest.importorskip("gymnasium")
+    import torch as th
+    from aow_sim.smooth_ppo import SmoothPPO
+    m = SmoothPPO("MlpPolicy", "Pendulum-v1", n_steps=64, batch_size=32, seed=3,
+                  device="cpu", policy_kwargs=dict(net_arch=[16, 16]),
+                  smooth={"bound": 1.0})
+    obs = th.randn(50, 3)
+    act = th.randn(50, 1)
+    v, lp, ent, mu = m._evaluate(obs, act)
+    v0, lp0, ent0 = m.policy.evaluate_actions(obs, act)
+    for got, want in ((v, v0), (lp, lp0), (ent, ent0), (mu, m._mu(obs))):
+        assert th.equal(got, want)
+
+
+def test_reusing_the_mean_leaves_the_update_unchanged():
+    """One update with the bound term on, against the same update computing
+    the term from a SEPARATE forward pass (how it was done until 2026-10-14).
+    Same maths; the gradient's two contributions through the actor are
+    summed in a different order, so it is equal to float32 rounding, not bit
+    for bit: 4.7e-10 here against a 1.2e-3 update (and against ~0.004 between
+    two runs of the SAME update on the box's 16-thread CPU torch)."""
+    pytest.importorskip("gymnasium")
+    from aow_sim.smooth_ppo import SmoothPPO, bound_term
+
+    class TwoPass(SmoothPPO):
+        def _evaluate(self, obs, actions):
+            return (*self.policy.evaluate_actions(obs, actions), None)
+
+    common = dict(n_steps=64, batch_size=32, n_epochs=2, seed=3, device="cpu",
+                  policy_kwargs=dict(net_arch=[16, 16]), smooth={"bound": 1.0})
+    import torch as th
+
+    def run(cls):
+        m = cls("MlpPolicy", "Pendulum-v1", **common)
+        with th.no_grad():
+            m.policy.action_net.bias.fill_(1.5)   # where the term is non-zero
+            assert bound_term(m._mu(th.randn(64, 3))).mean() > 0.1
+        m.learn(64)
+        return _params(m)
+    a, b = run(TwoPass), run(SmoothPPO)
+    for k in a:
+        assert th.allclose(a[k], b[k], rtol=0, atol=1e-8), k
