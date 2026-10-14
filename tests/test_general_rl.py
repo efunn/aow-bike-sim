@@ -643,9 +643,13 @@ def test_nodiff_config_is_smooth_temporal_plus_its_listed_changes():
     assert eb["cmd_families"] == {**ea["cmd_families"],
                                   "hold_min": 0.5, "hold_max": 0.8}
     assert b["reward"] == {**a["reward"], "w_smooth": [0.05, 0.05, 0.25, 0.05]}
+    # Not one of nodiff's changes: temporal's ball went to 0 on 2026-10-13,
+    # after both trained at 0.25, so a copy would not carry it. nodiff's
+    # config still records what its run had.
+    assert (ea["ball_prob"], eb["ball_prob"]) == (0.0, 0.25)
     strip = lambda c: {**c, "env": {k: v for k, v in c["env"].items()
                                     if k not in (*added, "action_bounds",
-                                                 "cmd_families")},
+                                                 "cmd_families", "ball_prob")},
                        "reward": None}
     assert strip(a) == strip(b)
 
@@ -1300,6 +1304,38 @@ def test_wings_off_flies_the_righting_module_held_at_stow():
     assert bare.model.nu == 3 + 2 * dm.enabled(bare.p, "servo")
     assert all("wing" not in bare.model.joint(i).name
                for i in range(bare.model.njnt))
+
+
+def test_righting_rigid_carries_the_module_with_no_servo_to_run():
+    """`righting_rigid: true`: the module welded at stow (build_model
+    righting_rigid) -- no crank, so no crank servo and no `swing` actuator;
+    the env steps, and a policy that wants to DRIVE the crank is refused."""
+    from aow_sim import drivetrain_model as dm
+    env = _env(righting_rigid=True)
+    assert env.righting_module == "v2" and env._crank is None
+    assert env.model.nu == 3 + 2 * dm.enabled(env.p, "servo")
+    assert all("swing" not in env.model.joint(i).name
+               for i in range(env.model.njnt))
+    assert env.model.body("swing_wing_right").id > 0, "the bodies stay"
+    env.reset(seed=0)
+    for _ in range(25):
+        _o, _r, term, _t, _i = env.step(np.zeros(3, np.float32))
+        assert not term
+    with pytest.raises(ValueError, match="righting_rigid"):
+        _env(righting_rigid=True, righting_module="none")
+    with pytest.raises(ValueError, match="righting_rigid"):
+        _env(righting_rigid=True, swing_linkage=True, obs_swing=True,
+             act_swing=True)
+
+
+def test_a_rigid_trained_policy_replays_rigid():
+    """The export records `righting_rigid` and the replay overlay rebuilds
+    it; a policy exported before the field replays jointed."""
+    from types import SimpleNamespace
+    from aow_sim.control.general_spec import policy_env_overrides
+    assert policy_env_overrides(SimpleNamespace(righting_rigid=True))[
+        "righting_rigid"] is True
+    assert policy_env_overrides(SimpleNamespace())["righting_rigid"] is False
 
 
 def test_drift_is_decomposed_in_the_commanded_heading_frame():

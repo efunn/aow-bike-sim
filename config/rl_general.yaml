@@ -39,9 +39,15 @@ env:
   p_v_zero: 0.2          # chance the speed command is exactly 0 (stop is a
                          #   first-class command, not an edge case)
   resample_s: [1.5, 4.0] # command re-drawn as a STEP change this often
-  ball_prob: 0.25        # fraction of episodes with a ball parked nearby --
-                         #   contact robustness only, NO ball reward. Set to
-                         #   0.0 to train on the ball-free model.
+  ball_prob: 0.0         # fraction of episodes with a ball parked nearby --
+                         #   contact robustness only, NO ball reward. Was 0.25
+                         #   until 2026-10-13.
+                         #   0.0 builds NO ball and NO hockey-stick panels
+                         #   (2 x 20 g on the chassis): the model every eval,
+                         #   teleop and the bike use. >0 builds both into
+                         #   EVERY episode, the ball parked far off when not
+                         #   placed -- a floor contact and 6 dof each step
+                         #   (~4% of an env step, measured 2026-10-13).
   ball_place_radius: 0.5 # ball dropped within this radius of the start pose
   action_bounds:
     steer_rate_max: 8.0
