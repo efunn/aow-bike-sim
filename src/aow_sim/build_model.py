@@ -2606,7 +2606,27 @@ def reset_actuator_state(model: mujoco.MjModel, data: mujoco.MjData,
     -- the standing integral there is what holds the speed against droop.
 
     A no-op at ki = 0, where na = 0 and the drives are memoryless.
+
+    ALSO THE COMMAND DELAY LINE AND THE SOLVER WARM START (2026-10-14), the
+    other two things `mj_resetData` clears and a hand-rolled reset did not.
+    The steer's native delay (`steer_command_delay_s`, 4 ms = 10 samples)
+    kept the previous episode's last TARGETS, so each episode's first 4 ms
+    drove the steer toward where the last one ended: up to 1.7 deg of steer
+    and 0.7 deg of roll in the first 0.1 s (a stale target >= ~30 deg),
+    against the eval's 0.5 deg start. A reused env was therefore not
+    repeatable -- the same seeded episode differed by up to 0.68 m of qpos
+    over 2 s depending on the episode before it. The line is rebuilt as a
+    fresh MjData lays it out (zero targets, timestamps ending now); with the
+    warm start zeroed too, a reused env reproduces a fresh one EXACTLY
+    (measured, tests/test_reset_repeatable.py). The warm start alone was
+    ~1e-7 m: solver-tolerance noise, cleared because exact beats close.
     """
+    for i in np.flatnonzero(model.actuator_history[:, 0]):
+        n = int(model.actuator_history[i, 0])
+        mujoco.mj_initCtrlHistory(
+            model, data, int(i),
+            data.time + model.opt.timestep * np.arange(-n, 0.0), np.zeros(n))
+    data.qacc_warmstart[:] = 0.0
     if not model.na:
         return
     data.act[:] = 0.0 if act is None else act
