@@ -64,6 +64,7 @@ def fly(policy: str, episode_s: float, cut_roll_deg: float):
     for k, (v_lon, v_lat, dpsi) in enumerate(eval_cmds(cfg["env"]["v_max"])):
         obs, _ = env.reset(seed=10_000 + k, options={
             "v_cmd": (v_lon, v_lat), "psi_cmd_rel": dpsi, "difficulty": 1.0})
+        pol.reset()  # a memory policy starts each episode empty
         buf = []
         inner = st.pre_step
 

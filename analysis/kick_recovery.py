@@ -82,6 +82,7 @@ def _reset(env, seed):
 def trial(pol, env, scale, dv, seed, seconds=8.0, t_kick=3.0, window=1.0):
     """One kick. Returns (survived, mean |hub| over `window` after the kick)."""
     obs = _reset(env, seed)
+    pol.reset()  # a memory policy starts each episode empty
     k0, kw = int(t_kick / env.ctrl_dt), int(window / env.ctrl_dt)
     hub = []
     for k in range(int(seconds / env.ctrl_dt)):

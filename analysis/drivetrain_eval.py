@@ -113,6 +113,7 @@ def build(name, variant, encoder, ahrs, tau):
     def act(o):
         return (np.asarray(pol.action(o), float) / scale)[:n_act]
 
+    act.reset = pol.reset          # per episode, for a memory policy
     return env, act, cfg
 
 
@@ -132,6 +133,7 @@ def bench(name, variants, steps, encoder, ahrs, tau):
     for v in variants:
         env, act, _cfg = build(name, v, encoder, ahrs, tau)
         obs, _ = env.reset(seed=0, options={"v_cmd": (0.0, 0.0), "difficulty": 1.0})
+        act.reset()
         for _ in range(50):                 # warm up caches and the policy
             obs, *_ = env.step(act(obs))
         t0 = time.perf_counter()
@@ -140,6 +142,7 @@ def bench(name, variants, steps, encoder, ahrs, tau):
             if term or trunc:
                 obs, _ = env.reset(seed=0, options={"v_cmd": (0.0, 0.0),
                                                     "difficulty": 1.0})
+                act.reset()
         rate = steps / (time.perf_counter() - t0)
         base = base or rate
         print(f"  {v:<16s} {rate:7.0f} env steps/s   x{rate / base:.3f}")

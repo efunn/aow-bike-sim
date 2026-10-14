@@ -83,6 +83,7 @@ def make_act(pol, env, mode, rng):
             o[ip] += np.deg2rad(NOISE_DEG) * rng.standard_normal()
             o[ir] += np.deg2rad(RATE_NOISE_DEG_S) * rng.standard_normal()
         return (np.asarray(pol.action(o), float) / scale)[:n]
+    act.reset = pol.reset          # per episode, for a memory policy
     return act
 
 
@@ -91,6 +92,7 @@ def probe(pol, env, mode, v, rng, rev_s=4.0, turn_s=8.0):
     act = make_act(pol, env, mode, rng)
     obs, _ = env.reset(seed=7, options={"v_cmd": (v, 0.0), "psi_cmd_rel": 0.0,
                                         "difficulty": 1.0})
+    act.reset()
     n_rev = int(rev_s / env.ctrl_dt)
     pit, when = [], None
     for i in range(n_rev + int(turn_s / env.ctrl_dt)):
@@ -121,16 +123,19 @@ def onset(pol, env):
         obs, _ = env.reset(seed=7, options={"v_cmd": (v, 0.0),
                                             "psi_cmd_rel": 0.0,
                                             "difficulty": 1.0})
+        pol.reset()  # a memory policy starts each episode empty
         n_rev = int(4.0 / env.ctrl_dt)
         for i in range(n_rev + int(8.0 / env.ctrl_dt)):
             if i == n_rev:
                 env._psi_cmd += np.pi
                 c, s = np.cos(env._psi_cmd), np.sin(env._psi_cmd)
                 env._v_cmd_w = np.array([c * v, s * v])
-            a_real = np.asarray(pol.action(obs), float) / scale
+            # The blanked query is a what-if on THIS step: `peek` leaves a
+            # memory policy's state where the real step will advance it from.
             o = np.asarray(obs, float).copy()
             o[ip] = o[ir] = 0.0
-            a_blank = np.asarray(pol.action(o), float) / scale
+            a_blank = np.asarray(pol.peek(o), float) / scale
+            a_real = np.asarray(pol.action(obs), float) / scale
             rows.append((abs(np.degrees(extract_state(env.data, env._p0).pitch)),
                          float(np.abs(a_real - a_blank).max())))
             obs, _r, term, trunc, _i = env.step(a_real[:n])

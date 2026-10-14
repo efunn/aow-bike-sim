@@ -194,6 +194,7 @@ def _verify_replication(params, cfg, pol, solref=(None, None), n_ctrl=5,
         override_solref(e.model, *solref)
     o_r, _ = ref.reset(seed=7, options=_HOLD)
     o_m, _ = mine.reset(seed=7, options=_HOLD)
+    pol.reset()  # a memory policy starts each episode empty
     for _ in range(n_ctrl):
         a = _norm_action(pol, o_r)
         o_r, *_ = ref.step(a)
@@ -242,6 +243,7 @@ def rollout(pol, env, seconds, frame_dt, rear_geoms, floor):
     render it plus the scalars the HUD reads, so rendering never re-simulates.
     """
     obs, _ = env.reset(seed=7, options=_HOLD)
+    pol.reset()  # a memory policy starts each episode empty
     weight = float(env.model.body_subtreemass[env.model.body("chassis").id] * 9.81)
     verts = wheel_vertices(env.model, rear_geoms)
     dt = env.model.opt.timestep

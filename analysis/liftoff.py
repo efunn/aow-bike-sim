@@ -94,6 +94,7 @@ def run(pol, env, v_cmd, seconds):
     scale = np.array([b.steer_rate_max, b.hub_max, b.diff_max])
     obs, _ = env.reset(seed=7, options={"v_cmd": v_cmd, "psi_cmd_rel": 0.0,
                                         "difficulty": 1.0})
+    pol.reset()  # a memory policy starts each episode empty
     R, F, P = [], [], []
     for _ in range(int(seconds / env.ctrl_dt)):
         a = np.asarray(pol.action(obs), float) / scale

@@ -147,6 +147,10 @@ def random_like(pol, seed):
     import copy
     r = copy.copy(pol)
     r.layers = layers
+    if hasattr(pol, "enc"):         # a memory policy: its front end too
+        r.enc, r.mem = [(rng.normal(0, np.sqrt(2.0 / W.shape[1]), W.shape),
+                         np.zeros_like(b)) for W, b in (pol.enc, pol.mem)]
+        r.reset()
     return r
 
 
@@ -156,6 +160,7 @@ def trace(pol, env, cond, steps):
     obs, _ = env.reset(seed=7, options={"v_cmd": (v_lon, v_lat),
                                         "psi_cmd_rel": np.deg2rad(dpsi),
                                         "difficulty": 1.0})
+    pol.reset()  # a memory policy starts each episode empty
     out = []
     for _ in range(steps):
         out.append(np.asarray(obs, float))

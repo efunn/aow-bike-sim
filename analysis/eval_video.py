@@ -86,6 +86,7 @@ def _rollout(job):
     for k, (v_lon, v_lat, dpsi) in enumerate(eval_cmds(cfg["env"]["v_max"])):
         obs, _ = env.reset(seed=10_000 + k, options={
             "v_cmd": (v_lon, v_lat), "psi_cmd_rel": dpsi, "difficulty": 1.0})
+        pol.reset()  # a memory policy starts each episode empty
         n_show = int(window / env.ctrl_dt) + 1
         qpos, steps, fell = [env.data.qpos.copy()], 0, False
         while True:

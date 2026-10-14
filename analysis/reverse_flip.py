@@ -58,6 +58,7 @@ def probe(pol, env, v, rev_s, turn_s):
     n_act = env.action_space.shape[0]
     obs, _ = env.reset(seed=7, options={"v_cmd": (v, 0.0), "psi_cmd_rel": 0.0,
                                         "difficulty": 1.0})
+    pol.reset()  # a memory policy starts each episode empty
     n_rev = int(rev_s / env.ctrl_dt)
     pit, rol, when = [], [], None
     for i in range(n_rev + int(turn_s / env.ctrl_dt)):

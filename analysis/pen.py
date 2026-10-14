@@ -76,6 +76,7 @@ def trace(pol, env, v_cmd, dpsi_deg, seconds):
     obs, _ = env.reset(seed=7, options={"v_cmd": v_cmd,
                                         "psi_cmd_rel": np.deg2rad(dpsi_deg),
                                         "difficulty": 1.0})
+    pol.reset()  # a memory policy starts each episode empty
     xy, psi, v_lon, v_lat = [], [], [], []
     for _ in range(int(seconds / env.ctrl_dt)):
         if held:

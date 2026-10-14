@@ -89,6 +89,7 @@ def hold_quality(pol, env, steps):
     from aow_sim.control.balance import extract_state
     obs, _ = env.reset(seed=7, options={"v_cmd": (0.0, 0.0),
                                         "psi_cmd_rel": 0.0, "difficulty": 1.0})
+    pol.reset()  # a memory policy starts each episode empty
     V, A, ST = [], [], []
     for _ in range(steps):
         a = pol.action(obs)

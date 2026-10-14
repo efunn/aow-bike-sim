@@ -109,6 +109,7 @@ def hold_trace(pol, env, steps):
 
     obs, _ = env.reset(seed=7, options={"v_cmd": (0.0, 0.0),
                                         "psi_cmd_rel": 0.0, "difficulty": 1.0})
+    pol.reset()  # a memory policy starts each episode empty
     b = pol.bounds
     scale = np.array([b.steer_rate_max, b.hub_max, b.diff_max])
     hub0 = float(data.qpos[hub_adr])

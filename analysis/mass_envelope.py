@@ -100,6 +100,7 @@ def rl_trial(name, k, com_shift, seconds=12.0):
     obs, _ = env.reset(seed=7, options={"v_cmd": (0.0, 0.0),
                                         "psi_cmd_rel": 0.0, "difficulty": 1.0})
     env.data.qacc_warmstart[:] = 0.0
+    pol.reset()  # a memory policy starts each episode empty
     H, fell = [], False
     for _ in range(int(seconds / env.ctrl_dt)):
         a = (np.asarray(pol.action(obs), float) / sc)[:env.action_space.shape[0]]

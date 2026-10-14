@@ -146,7 +146,9 @@ def act_fn(pol, env):
     harness."""
     scale = np.asarray(pol.bounds.to_list(), float)[:pol.act_dim]
     n = env.action_space.shape[0]
-    return lambda obs: (np.asarray(pol.action(obs), float) / scale)[:n]
+    act = lambda obs: (np.asarray(pol.action(obs), float) / scale)[:n]
+    act.reset = pol.reset          # per episode, for a memory policy
+    return act
 
 
 def run_grid(pol, env, cmds):
@@ -162,6 +164,7 @@ def run_grid(pol, env, cmds):
     scale = np.asarray(pol.bounds.to_list(), float)[:pol.act_dim]
     n = env.action_space.shape[0]
     act = lambda obs: (np.asarray(pol.action(obs), float) / scale)[:n]
+    act.reset = pol.reset          # per episode, for a memory policy
     return _eval_episodes(env, act, cmds)
 
 

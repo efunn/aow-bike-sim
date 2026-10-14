@@ -541,8 +541,9 @@ def study_transfer(policy="general_rl_smooth_stiff", cfg_name="rl_general_smooth
         try:
             env = env_for(pol, params, cfg)
             width = env.action_space.shape[0]
-            agg, _ = _eval_episodes(
-                env, lambda o: (np.asarray(pol.action(o), float) / scale)[:width], cmds)
+            act = lambda o: (np.asarray(pol.action(o), float) / scale)[:width]
+            act.reset = pol.reset      # per episode, for a memory policy
+            agg, _ = _eval_episodes(env, act, cmds)
         finally:
             bm._add_aow = orig
         return agg

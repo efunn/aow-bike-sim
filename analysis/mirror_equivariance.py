@@ -80,7 +80,14 @@ def sample_states(n, rng, obs_dim=None):
 def mirror_error(pol, O) -> float:
     """Mean |a(M o) - M_a a(o)|, normalized per action channel so steer, hub
     and diff contribute comparably despite their different units."""
-    act = lambda X: np.array([pol.action(x) for x in X])
+    # Independent observations, not a trajectory: a memory policy is reset
+    # before each, so this measures its response from an EMPTY memory.
+    def act(X):
+        out = []
+        for x in X:
+            pol.reset()
+            out.append(pol.action(x))
+        return np.array(out)
     base = act(O)
     # Slicing is safe precisely because the un-windowed layout is a strict
     # PREFIX of the windowed one -- see control/general_spec.py.
@@ -93,6 +100,10 @@ def random_like(pol, seed):
     g = np.random.default_rng(seed)
     r.layers = [(g.normal(0, np.sqrt(2.0 / W.shape[1]), W.shape), np.zeros_like(b))
                 for W, b in pol.layers]
+    if hasattr(pol, "enc"):         # a memory policy: its front end too
+        r.enc, r.mem = [(g.normal(0, np.sqrt(2.0 / W.shape[1]), W.shape),
+                         np.zeros_like(b)) for W, b in (pol.enc, pol.mem)]
+        r.reset()
     return r
 
 

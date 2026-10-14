@@ -166,6 +166,7 @@ def roll_out(pol, env, v_cmd, dpsi_deg, seconds, seed: int = 7):
     obs, _ = env.reset(seed=seed, options={"v_cmd": v_cmd,
                                         "psi_cmd_rel": np.deg2rad(dpsi_deg),
                                         "difficulty": 1.0})
+    pol.reset()  # a memory policy starts each episode empty
     xy, fell = [], False
     for _ in range(int(seconds / env.ctrl_dt)):
         a = np.asarray(pol.action(obs), float) / scale
