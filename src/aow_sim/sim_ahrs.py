@@ -158,6 +158,7 @@ measurement contributes a defensible FLOOR, which it did not have before.
 
 from __future__ import annotations
 
+import math
 from contextlib import contextmanager
 
 import numpy as np
@@ -506,6 +507,46 @@ def _small_angle_quat(rpy) -> np.ndarray:
     return q / np.linalg.norm(q)
 
 
+# --- the same arithmetic on plain floats, for SimAhrs.sample ------------------
+#
+# sample() runs twice per policy step in every AHRS env, and on 3- and
+# 4-vectors numpy's per-call overhead is most of the cost: 54 -> ~15 us a call
+# for tm151_filter, measured 2026-10-13 (M4). These do the SAME float
+# operations in the SAME order as the numpy helpers above, so the output is
+# bit-identical, which test_sim_ahrs checks against `_sample_numpy` over a
+# rollout. Two orders are not obvious and were measured on this machine
+# (Accelerate), 50k random vectors each: np.linalg.norm of a 3-vector sums
+# left to right, of a 4-vector PAIRWISE, (x0^2 + x2^2) + (x1^2 + x3^2). And
+# math.exp/cos/sin/atan2/log matched numpy's scalars on all of them. Another
+# BLAS or libm may order or round differently -- then the test says so; the
+# statistics, which are all the model claims, are unaffected either way.
+
+def _n3(x0, x1, x2):
+    return math.sqrt((x0 * x0 + x1 * x1) + x2 * x2)
+
+
+def _n4(a, b, c, d):
+    return math.sqrt((a * a + c * c) + (b * b + d * d))
+
+
+def _fcross(a0, a1, a2, b0, b1, b2):
+    return (a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0)
+
+
+def _fquat_mul(a, b):
+    w1, x1, y1, z1 = a
+    w2, x2, y2, z2 = b
+    return (w1*w2 - x1*x2 - y1*y2 - z1*z2,
+            w1*x2 + x1*w2 + y1*z2 - z1*y2,
+            w1*y2 - x1*z2 + y1*w2 + z1*x2,
+            w1*z2 + x1*y2 - y1*x2 + z1*w2)
+
+
+def _fnormalized4(q):
+    n = _n4(*q)
+    return (q[0] / n, q[1] / n, q[2] / n, q[3] / n)
+
+
 class SimAhrs:
     """TM151 error model over the model's own AHRS sensors.
 
@@ -641,8 +682,165 @@ class SimAhrs:
         adr, dim = self.adr[name]
         return np.array(data.sensordata[adr:adr + dim], dtype=float)
 
+    def _consts(self, dt: float) -> tuple:
+        """Everything sample() derives from `dt` and the error parameters,
+        recomputed only when one of them changes -- with the same numpy
+        expressions the reference uses, so the values are identical."""
+        key = (dt, self.tau_orient_s, self.tau_bias_s, self.orient_rms_deg,
+               self.level)
+        if getattr(self, "_ck", None) != key:
+            a_o = np.exp(-dt / self.tau_orient_s)
+            a_b = np.exp(-dt / self.tau_bias_s)
+            self._ck = key
+            self._cv = (
+                float(a_o), float(np.sqrt(max(0.0, 1.0 - a_o * a_o))),
+                float(a_b), float(np.sqrt(max(0.0, 1.0 - a_b * a_b))),
+                tuple(np.deg2rad(self.orient_rms_deg).tolist()),
+                float(np.deg2rad(YAW_DRIFT_DEG_PER_S[self.level])),
+                tuple((TM151_TO_SITE @ TM151_ACCEL_OFFSET_M).tolist()),
+                float(np.deg2rad(GYRO_NOISE_PP_DPS * PP_TO_SIGMA)),
+                float(np.deg2rad(GYRO_BIAS_STABILITY_DPH / 3600.0)),
+                float(np.deg2rad(GYRO_G_SENS_DPS_PER_G)))
+        return self._cv
+
     def sample(self, data, dt: float) -> dict:
-        """Advance the error state by `dt` and cache one corrupted reading."""
+        """Advance the error state by `dt` and cache one corrupted reading.
+
+        `_sample_numpy` is the same model written on numpy arrays, and the
+        readable reference: this is it on plain floats, operation for
+        operation (see `_n3`), because at this size numpy's call overhead
+        was most of the time."""
+        sd = data.sensordata
+        aq, ag, aa = (self.adr["ahrs_quat"][0], self.adr["ahrs_gyro"][0],
+                      self.adr["ahrs_accel"][0])
+        quat = tuple(sd[aq:aq + 4].tolist())
+        gyro = tuple(sd[ag:ag + 3].tolist())
+        accel = tuple(sd[aa:aa + 3].tolist())
+        if self.level == "none":
+            self._cache = {"quat": np.array(quat), "gyro": np.array(gyro),
+                           "accel": np.array(accel)}
+            return self._cache
+        (a_o, s_o, a_b, s_b, rms, drift_rate, d,
+         sigma_g, bias_sigma, k_g) = self._consts(dt)
+        filt = self.level == "tm151_filter"
+
+        if filt:
+            # accel_at_offset
+            w_prev = self._w_prev
+            if w_prev is not None:
+                al = tuple((gyro[i] - w_prev[i]) / dt for i in range(3))
+            else:
+                al = (0.0, 0.0, 0.0)
+            c1 = _fcross(*al, *d)
+            c2 = _fcross(*gyro, *_fcross(*gyro, *d))
+            accel = tuple((accel[i] + c1[i]) + c2[i] for i in range(3))
+            self._w_prev = gyro
+
+        # ONE draw for the four noise vectors, in the reference's order --
+        # orientation, bias, gyro, accelerometer: identical to four draws of 3.
+        z = self.rng.standard_normal(12).tolist()
+        oe = self._orient_err
+        oe = tuple(a_o * oe[i] + (s_o * rms[i]) * z[i] for i in range(3))
+        self._orient_err = oe
+
+        self._yaw_drift += (drift_rate * dt * self._yaw_drift_sign)
+        h = 0.5 * self._yaw_drift
+        q_drift = (math.cos(h), 0.0, 0.0, math.sin(h))
+        q_err = _fnormalized4((1.0, oe[0] / 2.0, oe[1] / 2.0, oe[2] / 2.0))
+        if not filt:
+            quat_out = _fnormalized4(
+                _fquat_mul(q_drift, _fquat_mul(q_err, quat)))
+
+        gb = self._gyro_bias
+        gb = tuple(a_b * gb[i] + (s_b * bias_sigma) * z[3 + i] for i in range(3))
+        self._gyro_bias = gb
+        gyro_out = tuple(((gyro[i] + gb[i]) + k_g * (accel[i] / GRAVITY))
+                         + sigma_g * z[6 + i] for i in range(3))
+
+        sigma_a = ACCEL_NOISE_PP_MG * 1e-3 * GRAVITY * PP_TO_SIGMA
+        ct = _fcross(*self._accel_tilt, *accel)
+        accel_out = tuple((accel[i] + ct[i]) + sigma_a * z[9 + i]
+                          for i in range(3))
+
+        if filt:
+            qc = (quat[0], -quat[1], -quat[2], -quat[3])
+            q = qc
+            up_true = _fquat_mul(_fquat_mul(q, (0.0, 0.0, 0.0, 1.0)),
+                                 (q[0], -q[1], -q[2], -q[3]))[1:]
+            if self._u is None:
+                self._u = up_true
+            self._rate_s += (dt / (FILTER_RATE_SMOOTH_S + dt)) * (
+                _n3(*gyro_out) * (180.0 / math.pi) - self._rate_s)
+            # filter_tau
+            lo = math.log(FILTER_RATE_REST_DPS)
+            hi = math.log(FILTER_RATE_MOTION_DPS)
+            f = (math.log(max(self._rate_s, 1e-6)) - lo) / (hi - lo)
+            f = 0.0 if f < 0.0 else (1.0 if f > 1.0 else f)
+            ltr = math.log(FILTER_TAU_REST_S)
+            tau = math.exp(ltr + f * (math.log(self.filter_tau_motion_s) - ltr))
+            # acc_deviation, acc_weight
+            dev = abs(_n3(*accel_out) / GRAVITY - 1.0)
+            m = (max(dev, self._acc_dev * math.exp(-dt / FILTER_ACC_HOLD_S))
+                 if FILTER_ACC_HOLD_S > 0 else dev)
+            self._acc_dev = m
+            weight = acc_weight(m)
+            # tilt_filter_step: _turn, then the pull toward the accelerometer
+            u = self._u
+            nw = _n3(*gyro_out)
+            th = nw * dt
+            if th < 1e-12:
+                p = u
+            else:
+                k = tuple(-w / nw for w in gyro_out)
+                ck = _fcross(*k, *u)
+                kv = (k[0] * u[0] + k[1] * u[1]) + k[2] * u[2]
+                cth, sth = math.cos(th), math.sin(th)
+                p = tuple((u[i] * cth + ck[i] * sth) + (k[i] * kv) * (1 - cth)
+                          for i in range(3))
+            na = _n3(*accel_out)
+            gate = FILTER_ACC_GATE
+            if gate is None or abs(na / GRAVITY - 1.0) <= gate:
+                g = weight * dt / tau
+                p = tuple(p[i] + g * (accel_out[i] / na - p[i]) for i in range(3))
+            npn = _n3(*p)
+            self._u = u = (p[0] / npn, p[1] / npn, p[2] / npn)
+            c = _fcross(*up_true, *u)
+            nc = _n3(*c)
+            ang = math.atan2(nc, (up_true[0] * u[0] + up_true[1] * u[1])
+                             + up_true[2] * u[2])
+            if ang > 1e-12:
+                rv = (-(c[0] / nc * ang), -(c[1] / nc * ang), -(c[2] / nc * ang))
+                th = _n3(*rv)
+            else:
+                rv, th = (-0.0, -0.0, -0.0), 0.0
+            if th < 1e-12:
+                qa = (1.0, 0.0, 0.0, 0.0)
+            else:
+                sh = math.sin(th / 2)
+                qa = (math.cos(th / 2), sh * rv[0] / th, sh * rv[1] / th,
+                      sh * rv[2] / th)
+            q_tilted = _fquat_mul(quat, qa)
+            quat_out = _fnormalized4(
+                _fquat_mul(q_drift, _fquat_mul(q_err, q_tilted)))
+
+        if self.channels == "orient":
+            gyro_out = gyro          # clean rates, corrupted attitude
+        elif self.channels == "gyro":
+            quat_out = quat          # clean attitude, corrupted rates
+        self._cache = {"quat": np.array(quat_out), "gyro": np.array(gyro_out),
+                       "accel": np.array(accel_out)}
+        return self._cache
+
+    def _sample_numpy(self, data, dt: float) -> dict:
+        """The reference implementation of `sample`, on numpy arrays. Kept
+        for test_sim_ahrs, which holds the two bit-identical; read this one."""
+        # `sample` keeps its state as tuples; either may follow the other.
+        self._orient_err = np.asarray(self._orient_err, float)
+        self._gyro_bias = np.asarray(self._gyro_bias, float)
+        if self._u is not None:
+            self._u = np.asarray(self._u, float)
+        if self._w_prev is not None:
+            self._w_prev = np.asarray(self._w_prev, float)
         quat = self._raw(data, "ahrs_quat")
         gyro = self._raw(data, "ahrs_gyro")
         accel = self._raw(data, "ahrs_accel")

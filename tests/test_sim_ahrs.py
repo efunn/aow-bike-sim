@@ -471,3 +471,40 @@ def test_restart_starts_the_filter_from_the_true_attitude(model, params):
     fresh = np.degrees(_rpy(a.sample(level, 0.01)["quat"])[0])
     assert abs(stale) > 20 and abs(fresh) < 1.0
     assert np.array_equal(a._accel_tilt, tilt0)
+
+
+@pytest.mark.parametrize("level", [lv for lv in LEVELS if lv != "none"])
+def test_the_float_sample_is_bit_identical_to_the_numpy_reference(model, params, level):
+    """`sample` is `_sample_numpy` rewritten on plain floats for speed (54 ->
+    ~20 us a call for tm151_filter, 2026-10-13). Same operations in the same
+    order, so EQUAL, not close: over a tumbling, shaking trajectory, through
+    every channel setting, a mid-run `set_error_params` (the cached
+    constants must follow it), a `restart`, and a still tick (the filter's
+    no-rotation branch). A mismatch here means one of them changed alone --
+    or a BLAS/libm that orders a norm or rounds a cos differently (see
+    sim_ahrs._n3), which would make this machine-specific, not wrong."""
+    rng = np.random.default_rng(7)
+    d = mujoco.MjData(model)
+    d.qpos[:] = settle_upright(model).qpos
+    for channels in ("both", "orient", "gyro"):
+        fast = SimAhrs(model, params, level=level, seed=11, channels=channels)
+        ref = SimAhrs(model, params, level=level, seed=11, channels=channels)
+        w = np.zeros(3)
+        for i in range(240):
+            if i == 120:
+                for a in (fast, ref):
+                    a.set_error_params(orient_rms_roll_deg=0.8, tau_orient_s=0.5,
+                                       filter_tau_motion_s=1.7)
+            if i == 180:
+                fast.restart(); ref.restart()
+            w = 0.9 * w + rng.normal(0, 3.0, 3) * (i % 40 != 0)   # every 40th still
+            if i % 40 == 0:
+                w[:] = 0.0
+            d.qvel[3:6] = w
+            d.qvel[:3] = rng.normal(0, 0.5, 3)
+            mujoco.mj_integratePos(model, d.qpos, d.qvel, 0.01)
+            d.qacc[:] = rng.normal(0, 20.0, model.nv)
+            mujoco.mj_forward(model, d)
+            a, b = fast.sample(d, 0.01), ref._sample_numpy(d, 0.01)
+            for k in ("quat", "gyro", "accel"):
+                assert np.array_equal(a[k], b[k]), (channels, i, k, a[k] - b[k])
