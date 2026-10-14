@@ -35,6 +35,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from .build_model import load_params
 from .params import params_digest, plant_digest
 from .smooth_ppo import SmoothPPO, parse_smooth
+from .recurrent_ppo import MemoryPolicy, RecurrentSmoothPPO, parse_memory, sb3_actor
 from .control.balance import extract_state
 from .control.flick import MOVES_DIR, reserve_move_name
 from .control.general_env import GeneralEnv, _load_rl_config
@@ -340,6 +341,11 @@ def _eval_episodes(env, act_fn, cmds):
     for k, (v_lon, v_lat, dpsi) in enumerate(cmds):
         obs, _ = env.reset(seed=10_000 + k, options={
             "v_cmd": (v_lon, v_lat), "psi_cmd_rel": dpsi, "difficulty": 1.0})
+        # A policy with memory starts every episode empty. `act_fn.reset` is
+        # set by sb3_actor and by the replay paths below; a plain lambda
+        # around an MLP needs none.
+        if hasattr(act_fn, "reset"):
+            act_fn.reset()
         done, info = False, {}
         steps = 0
         t_head = None                      # first step inside _HEAD_TOL_DEG
@@ -692,11 +698,7 @@ class BestByScore(BaseCallback):
         if self._env is None:      # lazily built; randomization off
             self._env = GeneralEnv(self.params, _eval_cfg(self.cfg))
         vn = self.model.get_vec_normalize_env()
-
-        def act(obs):
-            o = vn.normalize_obs(obs) if vn is not None else obs
-            return self.model.predict(o, deterministic=True)[0]
-
+        act = sb3_actor(self.model, vn)        # stateful for a memory policy
         m, rows = _eval_episodes(self._env, act, self.cmds)
         score = _score(m)
         keys = ["survive_rate", "track", "track_geo", "vel_err",
@@ -772,8 +774,14 @@ def export_bounds(cfg) -> dict:
 
 def _export(model, vecnorm, cfg, path_npz: Path):
     """Pull the deterministic policy MLP + VecNormalize obs stats out of SB3
-    and save as a numpy .npz (see control/policy.py for the replay side)."""
+    and save as a numpy .npz (see control/policy.py for the replay side).
+    A MemoryPolicy also writes its encoder and MinGRU layer."""
     policy = model.policy
+    memory = None
+    if isinstance(policy, MemoryPolicy):
+        def wb(m):
+            return (m.weight.detach().cpu().numpy(), m.bias.detach().cpu().numpy())
+        memory = (wb(policy.encoder), wb(policy.memory.lin))
     layers = []
     for m in policy.mlp_extractor.policy_net:          # Linear/Tanh sequence
         if isinstance(m, torch.nn.Linear):
@@ -785,22 +793,26 @@ def _export(model, vecnorm, cfg, path_npz: Path):
     obs_var = vecnorm.obs_rms.var.astype(np.float32)
     bounds = ActionBounds(**export_bounds(cfg))
     save_policy_npz(path_npz, layers, "tanh", obs_mean, obs_var, bounds,
-                    obs_clip=float(vecnorm.clip_obs))
+                    obs_clip=float(vecnorm.clip_obs), memory=memory)
     return layers, obs_mean, obs_var, bounds
 
 
 def _verify_export(model, vecnorm, npz_path):
     """The numpy export must match the trained net. Check a batch of random
-    observations agree before trusting the artifact."""
+    observations agree before trusting the artifact. Fed as ONE SEQUENCE
+    from an empty memory, so a memory policy's recurrence is checked too
+    (a stateless MLP is unaffected by the order)."""
     from .control.policy import load_policy_npz
     pol = load_policy_npz(npz_path)
     rng = np.random.default_rng(0)
     worst = 0.0
+    trained = sb3_actor(model, vecnorm)
+    trained.reset()
+    pol.reset()
     for _ in range(64):
         obs = rng.standard_normal(pol.obs_mean.shape[0]).astype(np.float32)
-        norm = vecnorm.normalize_obs(obs)
         with torch.no_grad():
-            sb3_mean = model.policy.predict(norm, deterministic=True)[0]
+            sb3_mean = trained(obs)
         act = pol.action(obs)
         # Arity follows the policy's output width (3, or 4 with the wing
         # channel), so unpack positionally rather than by fixed name count.
@@ -845,6 +857,7 @@ def _eval(params, cfg, npz_path):
         a = np.asarray(pol.action(obs), float)
         return (a / scales[:len(a)])[:env.action_space.shape[0]]
 
+    act.reset = pol.reset
     m, rows = _eval_episodes(env, act, eval_cmds(cfg["env"]["v_max"]))
     _print_rows(rows)
     return m
@@ -874,6 +887,11 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
     if any(smooth.values()):
         # The loss it trained under; nothing in the weights records it.
         trained["smooth"] = smooth
+    memory = parse_memory(a.get("memory"))
+    if memory:
+        # The .npz says it is recurrent (arch: mingru); this records how it
+        # was trained (state width, truncated-backprop length).
+        trained["memory"] = memory
     if source:
         trained["exported_from"] = source
     doc = {"name": name, "type": "rl", "kind": "general",
@@ -1012,9 +1030,7 @@ def _scan_checkpoints(params, cfg, every=1):
             print(f"{steps:>9}  (stale obs spec — skipped; retrain)")
             continue
 
-        def act(obs):
-            return model.predict(vn.normalize_obs(obs), deterministic=True)[0]
-
+        act = sb3_actor(model, vn)
         m, _ = _eval_episodes(env, act, cmds)
         score = _score(m)
         rows.append((steps, score, m))
@@ -1159,13 +1175,23 @@ def main():
                        else (PPO, {}))
     if any(smooth.values()):
         print(f"smoothness loss: {smooth}")
+    # MEMORY in the actor (recurrent_ppo.py): absent `algo.memory` leaves the
+    # MLP path above untouched.
+    memory = parse_memory(a.get("memory"))
+    policy_cls = "MlpPolicy"
+    if memory:
+        algo_cls, extra = RecurrentSmoothPPO, {"smooth": smooth, "bptt": memory["bptt"]}
+        policy_cls = MemoryPolicy
+        policy_kwargs["memory_hidden"] = memory["hidden"]
+        print(f"memory: MinGRU {memory['hidden']} in the actor, "
+              f"backprop over {memory['bptt']}-step chunks")
     if args.resume and last_ckpt:
         model = algo_cls.load(str(last_ckpt[-1]), env=venv)
         if extra:
             model.smooth = smooth        # the config wins over the checkpoint
         print(f"resumed from {last_ckpt[-1].name}")
     else:
-        model = algo_cls("MlpPolicy", venv, learning_rate=a["learning_rate"],
+        model = algo_cls(policy_cls, venv, learning_rate=a["learning_rate"],
                          n_steps=a["n_steps"], batch_size=a["batch_size"],
                          n_epochs=a["n_epochs"], gamma=a["gamma"],
                          gae_lambda=a["gae_lambda"], clip_range=a["clip_range"],

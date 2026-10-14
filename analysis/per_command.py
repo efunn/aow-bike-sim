@@ -311,6 +311,7 @@ def _one_policy(job):
     def act(o):
         return (np.asarray(pol.action(o), float) / scale)[:n_act]
 
+    act.reset = pol.reset          # per episode, for a memory policy
     _m, rows = _eval_episodes(env, act, eval_cmds(cfg["env"]["v_max"]))
     return name, rows
 

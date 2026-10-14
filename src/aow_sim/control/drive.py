@@ -398,10 +398,10 @@ class DriveController(LQRBalance):
         hw/run_bike.py:277.
 
         `reuse=True` keeps the already-loaded policy when the name matches
-        instead of reading it off disk again. The policy object is stateless
-        (`MLPPolicy.action` is a pure function of the observation; every
-        per-episode state lives on this controller and is reset below), so
-        reuse is safe. It is opt-in because teleop's policy menu relies on a
+        instead of reading it off disk again. An MLP policy is stateless
+        (`MLPPolicy.action` is a pure function of the observation); a memory
+        policy's state is cleared by `reset()` below with the controller's
+        own per-episode state, so reuse is safe either way. It is opt-in because teleop's policy menu relies on a
         reload picking up a fresh export. run_bike opts in: the reload is a
         68 ms stall on a Pi 3B+, measured at a re-arm -- the first ticks after
         a fall, handed to a policy running 68 ms late."""
@@ -562,6 +562,9 @@ class DriveController(LQRBalance):
         self._gen_u = None
         self._gen_steer = float(data.qpos[self._sj])
         self._gen_prev_a = np.zeros(3)
+        # A policy with MEMORY (MinGRUPolicy) starts every engage empty, as
+        # every training episode did; a no-op for the MLP.
+        self._gen.reset()
         # Seed the low-pass from the measured velocity, matching
         # GeneralEnv.reset — engaging must not inject a startup transient the
         # policy never saw in training.

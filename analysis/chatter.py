@@ -72,6 +72,7 @@ import numpy as np
 
 from aow_sim.build_model import load_params
 from aow_sim.control.flick import MOVES_DIR
+from aow_sim.control.flick_spec import scale_action
 from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 from aow_sim.control.policy import load_policy_npz
 from aow_sim.sim_ahrs import TAU_ORIENT_S
@@ -209,11 +210,17 @@ def rollout_grid(pol, env, cmds, params):
     acts, rates, mus = [], [], []
 
     def act(obs):
-        a = np.asarray(pol.action(obs), float) / scale
+        # ONE policy call per step: a memory policy advances its state on
+        # every call, so `action` and `mean` both would step it twice.
+        # `action` is exactly the clipped, scaled mean (control/policy.py).
+        mu = np.asarray(pol.mean(obs), float)
+        a = np.asarray(scale_action(np.clip(mu, -1.0, 1.0), pol.bounds), float) / scale
         acts.append(a)
-        mus.append(pol.mean(obs))
+        mus.append(mu)
         rates.append(float(env.data.qvel[env._sd]))
         return a[:env.action_space.shape[0]]
+
+    act.reset = pol.reset          # per episode, for a memory policy
 
     # Surface speeds, so the columns share a unit: tread = hub x outer radius;
     # roller = k_roller x ring_spin (geared RELATIVE to the hub) x mean roller
