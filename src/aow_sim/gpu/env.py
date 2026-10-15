@@ -40,7 +40,7 @@ BATCHED = ("body_mass", "geom_friction", "actuator_forcerange",
 class GpuGeneralEnv:
     def __init__(self, config: str, nworld: int, seed: int = 0, device=None,
                  nconmax: int = 32, njmax: int = 128, cfg_override=None,
-                 rebase: bool = True):
+                 rebase: bool = True, shared_curriculum_envs: int = 0):
         from ..control.general_env import GeneralEnv, _load_rl_config
         cfg = _load_rl_config(config)
         if cfg_override:
@@ -90,6 +90,26 @@ class GpuGeneralEnv:
         self.raw_prev = z(n)
         self.next_resample = z(n, dt=int)
         self.diff = wp.full(n, float(env._diff), dtype=float, device=device)
+        # The curriculum, PER WORLD by default (GeneralEnv's rule: +diff_step
+        # on each good episode, in that world). Its pace in samples scales
+        # with the world count: reaching 1.0 takes nworld x (1/diff_step)
+        # good episodes -- 1600 for SB3's 32 envs, ~205k (>= 154M steps) at
+        # 4096 worlds. shared_curriculum_envs = K > 0 instead keeps ONE
+        # difficulty for all worlds, raised by diff_step / K per good episode
+        # anywhere: the MEAN difficulty then moves per good episode exactly
+        # as K per-world envs' mean does (K = 32: v3's SB3 run), at any
+        # nworld. Each increment is still earned at the current level. A
+        # world picks the shared value up at its next reset, as a GeneralEnv
+        # picks up its own at episode end. (2026-10-15, A40 run 2: per world
+        # at 4096, difficulty ~0.013 after 20M steps; v3_s0 was at 1.0 by 5M.)
+        self.shared_k = int(shared_curriculum_envs)
+        self.diff_shared = wp.full(1, float(env._diff), dtype=float, device=device)
+        self.c_cmd_step = self.c_cmd
+        if self.shared_k > 0:
+            if not env.cur_on:
+                raise ValueError("shared_curriculum_envs with the curriculum disabled")
+            self.c_cmd_step = gcmd.const_from(env)
+            self.c_cmd_step.cur_on = 0        # after_step must not advance per world
         self.v_cmd_w = z(n, 2)
         self.psi_cmd = z(n)
         self.obs = z(n, gobs.OBS_DIM)
@@ -188,9 +208,14 @@ class GpuGeneralEnv:
                     self.track_sum, self.track_n, self.obs, self.reward,
                     self.terminated, self.truncated)
         wp.launch(gcmd.after_step, self.nworld, [
-            self.c_cmd, self.terminated, self.truncated, self.step_i, self.psi,
+            self.c_cmd_step, self.terminated, self.truncated, self.step_i, self.psi,
             self.track_sum, self.track_n, self.next_resample, self.diff, self.v_cmd_w,
             self.psi_cmd, self.rng], device=self.device)
+        if self.shared_k > 0:
+            wp.launch(_advance_shared, self.nworld, [
+                self.terminated, self.truncated, self.track_sum, self.track_n,
+                float(self.c_cmd.diff_thresh), float(self.c_cmd.diff_step) / self.shared_k,
+                self.diff_shared], device=self.device)
         wp.launch(_done, self.nworld, [self.terminated, self.truncated, self.done],
                   device=self.device)
         wp.launch(_episode_stats, self.nworld, [
@@ -198,6 +223,9 @@ class GpuGeneralEnv:
             self.track_n, self.diff, self.ep_ret, self.ep_end, self.last_ret,
             self.last_len, self.last_track, self.last_fell, self.last_diff],
             device=self.device)
+        if self.shared_k > 0:   # after the stats: last_diff is the ENDED episode's
+            wp.launch(_take_shared, self.nworld, [self.done, self.diff_shared, self.diff],
+                      device=self.device)
         self._reset_done()
         return self.obs, self.reward, self.terminated, self.truncated
 
@@ -221,6 +249,32 @@ def _episode_stats(done: wp.array(dtype=int), term: wp.array(dtype=int),
         last_diff[w] = diff[w]
         r = 0.0
     ep_ret[w] = r
+
+
+@wp.kernel
+def _advance_shared(term: wp.array(dtype=int), trunc: wp.array(dtype=int),
+                    track_sum: wp.array(dtype=float), track_n: wp.array(dtype=int),
+                    thresh: float, inc: float, shared: wp.array(dtype=float)):
+    """commands.after_step's advance rule (a truncated episode whose mean
+    tracking clears the threshold), adding to the ONE shared difficulty."""
+    w = wp.tid()
+    if trunc[w] == 1 and term[w] == 0:
+        if track_sum[w] / float(wp.max(1, track_n[w])) > thresh:
+            wp.atomic_add(shared, 0, inc)
+
+
+@wp.kernel
+def _take_shared(done: wp.array(dtype=int), shared: wp.array(dtype=float),
+                 diff: wp.array(dtype=float)):
+    """Worlds about to reset take the shared difficulty, capped at 1. Every
+    thread computes the same min, so world 0's write-back of the cap races
+    with nobody's result."""
+    w = wp.tid()
+    d = wp.min(1.0, shared[0])
+    if w == 0:
+        shared[0] = d
+    if done[w] == 1:
+        diff[w] = d
 
 
 @wp.kernel

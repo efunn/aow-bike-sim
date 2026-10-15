@@ -1,0 +1,76 @@
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.18.0
+Module aow_sim.gpu.commands 73418d1 load on device 'cuda:0' took 0.52 ms  (cached)
+Module aow_sim.gpu.reset 27b6353 load on device 'cuda:0' took 0.51 ms  (cached)
+Module mujoco_warp._src.smooth b9cc505 load on device 'cuda:0' took 6.57 ms  (cached)
+Module _nxn_broadphase__locals__kernel_5ea22428 5ea2242 load on device 'cuda:0' took 0.38 ms  (cached)
+Module _primitive_narrowphase__locals__primitive_narrowphase_1280ba14 1280ba1 load on device 'cuda:0' took 0.61 ms  (cached)
+Module mujoco_warp._src.constraint 9435a53 load on device 'cuda:0' took 0.39 ms  (cached)
+Module _equality_joint__locals__kernel_66ba6c83 66ba6c8 load on device 'cuda:0' took 0.45 ms  (cached)
+Module _equality_tendon__locals__kernel_d03f3a93 d03f3a9 load on device 'cuda:0' took 0.37 ms  (cached)
+Module _friction_dof__locals__kernel_eadd710f eadd710 load on device 'cuda:0' took 0.36 ms  (cached)
+Module _friction_tendon__locals__kernel_8ac2823e 8ac2823 load on device 'cuda:0' took 0.37 ms  (cached)
+Module _limit_tendon__locals__kernel_36d520cc 36d520c load on device 'cuda:0' took 0.39 ms  (cached)
+Module _efc_contact_init__locals__kernel_48b1da0a 48b1da0 load on device 'cuda:0' took 0.37 ms  (cached)
+Module _efc_contact_jac_dense__locals__kernel_cde1aa89 037dfea load on device 'cuda:0' took 0.45 ms  (cached)
+Module _efc_contact_update__locals__kernel_cf1f607c cf1f607 load on device 'cuda:0' took 0.37 ms  (cached)
+Module mujoco_warp._src.sensor 764597f load on device 'cuda:0' took 1.13 ms  (cached)
+Module mujoco_warp._src.history 5cd4baa load on device 'cuda:0' took 0.58 ms  (cached)
+Module mujoco_warp._src.forward f44d3e1 load on device 'cuda:0' took 0.75 ms  (cached)
+Module mujoco_warp._src.forward 0a75030 load on device 'cuda:0' took 0.71 ms  (cached)
+Module mujoco_warp._src.passive 80f3681 load on device 'cuda:0' took 0.70 ms  (cached)
+Module _qfrc_smooth__locals__kernel_8b823980 8b82398 load on device 'cuda:0' took 0.38 ms  (cached)
+Module mujoco_warp._src.support f39c2de load on device 'cuda:0' took 0.42 ms  (cached)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_dcb711f9 176c226 load on device 'cuda:0' took 39.01 ms  (cached)
+Module _solve_init_dof__locals__kernel_1d7ecfa4 1d7ecfa load on device 'cuda:0' took 0.41 ms  (cached)
+Module mujoco_warp._src.solver c97221b load on device 'cuda:0' took 0.70 ms  (cached)
+Module _solve_init_jaref_kernel__locals__kernel_b9a13353 b9a1335 load on device 'cuda:0' took 0.39 ms  (cached)
+Module mul_m_kernel__locals___mul_m_d74bd8d9 d74bd8d load on device 'cuda:0' took 0.38 ms  (cached)
+Module _update_constraint_efc__locals__kernel_4b172e8b 4b172e8 load on device 'cuda:0' took 0.40 ms  (cached)
+Module _update_constraint_init_qfrc_constraint_dense__locals__kernel_c29c2cfc c29c2cf load on device 'cuda:0' took 0.42 ms  (cached)
+Module _update_gradient_zero_grad_dot__locals__kernel_93442399 9344239 load on device 'cuda:0' took 0.40 ms  (cached)
+Module _update_gradient_grad__locals__kernel_378e7517 378e751 load on device 'cuda:0' took 0.43 ms  (cached)
+Module _update_gradient_JTDAJ_dense_tiled__locals__kernel_a2b3407d e5623df load on device 'cuda:0' took 0.94 ms  (cached)
+Module _update_gradient_cholesky__locals__kernel_571f0b08 c80663a load on device 'cuda:0' took 42.96 ms  (cached)
+Module _linesearch_iterative_kernel__locals__kernel_d8c09560 2a5cf42 load on device 'cuda:0' took 0.51 ms  (cached)
+Module aow_sim.gpu.ahrs 7ed1d2b load on device 'cuda:0' took 0.47 ms  (cached)
+Module aow_sim.gpu.obs_reward d38f452 load on device 'cuda:0' took 0.46 ms  (cached)
+Module bench_env 3d29957 load on device 'cuda:0' took 0.50 ms  (cached)
+Module aow_sim.gpu.action ea87bd8 load on device 'cuda:0' took 0.44 ms  (cached)
+Module aow_sim.gpu.drivetrain 00c52bc load on device 'cuda:0' took 0.56 ms  (cached)
+Module aow_sim.gpu.gearbox 52747b8 load on device 'cuda:0' took 0.47 ms  (cached)
+Module mujoco_warp._src.derivative 1d93a53 load on device 'cuda:0' took 0.72 ms  (cached)
+Module _next_time_builder__locals___next_time_f604e0b3 f604e0b load on device 'cuda:0' took 0.43 ms  (cached)
+Module aow_sim.gpu.odometry 3d8a02e load on device 'cuda:0' took 0.53 ms  (cached)
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.50 ms  (cached)
+Module aow_sim.gpu.env 1b1808d load on device 'cuda:0' took 0.58 ms  (cached)
+GPU (NVIDIA A40): 640 worlds x 250 steps in 22.8 s; falls 1/640
+GeneralEnv (_eval_episodes): 20 episodes in 15.2 s; falls 0/20
+               command falls gpu   cpu |             head_err_med |              vel_err_med |                 t_head_s |                  drift_m
+         (0.0, 0.0, 0)      0/32 False |   1.68 vs   2.32 [ 1.27, 5.92] |   0.04 vs   0.03 [ 0.01, 0.05] |   0.02 vs   0.02 [ 0.02, 0.02] |   0.08 vs   0.08 [ 0.01, 0.12]
+        (0.0, 0.0, 90)      0/32 False |   3.77 vs   4.92 [ 1.76, 8.91] |   0.05 vs   0.05 [ 0.03, 0.11] |   1.22 vs   1.30 [ 1.22, 1.60] |   0.32 vs   0.33 [ 0.28, 0.36]
+       (0.0, 0.0, 180)      0/32 False | 161.89 vs 170.67 [149.50,178.81] |   0.04 vs   0.05 [ 0.04, 0.08] |   5.00 vs   5.00 [ 5.00, 5.00] |   0.20 vs   0.23 [ 0.16, 0.30]
+       (0.804, 0.0, 0)      0/32 False |   0.50 vs   0.42 [ 0.27, 0.68] |   0.05 vs   0.06 [ 0.04, 0.08] |   0.02 vs   0.02 [ 0.02, 0.02] |   3.86* vs   3.74 [ 3.63, 3.81]
+      (0.804, 0.0, 90)      0/32 False |   1.89 vs   3.03 [ 1.45, 5.95] |   0.07 vs   0.08 [ 0.06, 0.11] |   0.72* vs   0.80 [ 0.74, 0.92] |   3.78 vs   3.74 [ 3.70, 3.85]
+     (0.804, 0.0, 180)      0/32 False | 177.65 vs 177.43 [175.23,179.13] |   0.08 vs   0.07 [ 0.07, 0.08] |   5.00 vs   5.00 [ 5.00, 5.00] |   4.24* vs   4.22 [ 4.20, 4.23]
+         (1.2, 0.0, 0)      0/32 False |   1.16 vs   1.06 [ 0.60, 2.52] |   0.06 vs   0.06 [ 0.05, 0.07] |   0.02 vs   0.02 [ 0.02, 0.02] |   6.09 vs   6.13 [ 5.95, 6.17]
+      (-0.504, 0.0, 0)      0/32 False |   1.59 vs   1.18 [ 0.52, 2.29] |   0.03 vs   0.03 [ 0.03, 0.05] |   0.02 vs   0.02 [ 0.02, 0.02] |   2.46* vs   2.41 [ 2.27, 2.44]
+     (-0.504, 0.0, 90)      0/32 False |   5.09 vs   6.86 [ 2.24,10.20] |   0.12 vs   0.09 [ 0.06, 0.12] |   2.28 vs   2.30 [ 2.02, 2.54] |   2.06* vs   2.19 [ 2.06, 2.26]
+       (0.0, 0.396, 0)      0/32 False |   2.29* vs  14.04 [ 7.88,29.06] |   0.40* vs   0.37 [ 0.33, 0.39] |   0.02 vs   0.02 [ 0.02, 0.02] |   1.70* vs   2.04 [ 1.75, 2.37]
+        (0.6, 0.0, 45)      0/32 False |   1.82 vs   1.61 [ 0.53, 2.52] |   0.10 vs   0.06 [ 0.05, 0.10] |   0.48 vs   0.47 [ 0.44, 0.52] |   2.64 vs   2.77 [ 2.60, 2.80]
+     (0.6, 0.396, 180)      0/32 False | 142.38 vs 144.58 [138.22,146.75] |   0.04 vs   0.04 [ 0.03, 0.09] |   5.00 vs   5.00 [ 5.00, 5.00] |   3.37 vs   3.40 [ 3.29, 3.44]
+       (0.0, 0.0, 170)      0/32 False | 160.96 vs 151.20 [126.37,173.88] |   0.03 vs   0.05 [ 0.02, 0.10] |   5.00 vs   5.00 [ 4.64, 5.00] |   0.13 vs   0.22 [ 0.09, 0.32]
+      (0.0, 0.0, -170)      0/32 False | 175.32 vs 170.75 [162.70,176.74] |   0.06 vs   0.07 [ 0.05, 0.09] |   5.00 vs   5.00 [ 5.00, 5.00] |   0.27 vs   0.29 [ 0.21, 0.45]
+       (0.0, 0.0, -90)      0/32 False |   1.95* vs   4.46 [ 2.47, 8.13] |   0.04 vs   0.05 [ 0.03, 0.08] |   1.54 vs   1.54 [ 1.24, 1.76] |   0.34 vs   0.32 [ 0.28, 0.36]
+     (0.804, 0.0, -90)      0/32 False |   7.42 vs   4.79 [ 1.11, 9.64] |   0.13 vs   0.09 [ 0.05, 0.16] |   0.86 vs   0.92 [ 0.84, 1.04] |   3.47 vs   3.50 [ 3.30, 3.62]
+    (-0.504, 0.0, -90)      0/32 False |   7.82* vs   4.32 [ 1.19, 7.68] |   0.15* vs   0.10 [ 0.05, 0.14] |   2.20* vs   1.85 [ 1.64, 2.02] |   1.56* vs   1.84 [ 1.70, 2.08]
+      (0.0, -0.396, 0)      1/32 False |   6.23 vs   5.04 [ 2.95, 9.93] |   0.41 vs   0.39 [ 0.34, 0.43] |   0.02 vs   0.02 [ 0.02, 0.02] |   0.74 vs   0.84 [ 0.60, 1.51]
+       (0.6, 0.0, -45)      0/32 False |   4.00 vs   4.19 [ 2.69, 6.89] |   0.09 vs   0.10 [ 0.05, 0.18] |   0.58 vs   0.56 [ 0.46, 0.62] |   2.62 vs   2.50 [ 2.15, 2.74]
+    (0.6, -0.396, 180)      0/32 False | 136.08 vs 132.14 [124.08,137.68] |   0.34 vs   0.43 [ 0.32, 0.52] |   5.00 vs   5.00 [ 4.06, 5.00] |   2.18 vs   1.78 [ 1.12, 2.23]
+GeneralEnv's value inside the GPU seeds' range (* = outside):
+  head_err_med 17/20, vel_err_med 18/20, head_err_tail 19/20, vel_err_tail 18/20, t_head_s 18/20, drift_m 14/20, v_ach 18/20

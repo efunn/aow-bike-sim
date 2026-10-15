@@ -24,6 +24,10 @@ step venv python -m venv --system-site-packages ~/venv
 step pip_mujoco_warp pip install -q "mujoco==3.10.0" "mujoco-warp==3.10.0.3"
 step pip_mjx_jax pip install -q "mujoco-mjx==3.10.0" "jax[cuda12]"
 step pip_nccl pip install -q nvidia-nccl-cu12
-step warp_init python -c "import warp as wp; wp.init(); print(wp.__version__, wp.get_device())"
+# FAIL here if CUDA is unusable: Warp otherwise falls back to the CPU without
+# an error. 2026-10-14, a CA-MTL-1 A40: nvidia-smi listed the card, but cuInit
+# gave error 999 (torch too), and the export ran on the CPU (2.8 GB graph)
+# for 6 min before anyone noticed the GPU sat at 0 %.
+step warp_init python -c "import warp as wp; wp.init(); print(wp.__version__, wp.get_device()); assert wp.is_cuda_available(), 'CUDA unusable on this pod (Warp fell back to the CPU) -- replace the pod'"
 pip freeze | grep -iE "mujoco|warp|jax|nccl" > results/versions.txt
 cat results/versions.txt

@@ -40,16 +40,20 @@ from pathlib import Path
 import warp as wp
 
 OUTPUTS = ("obs", "reward", "terminated", "truncated", "ep_end", "last_ret",
-           "last_len", "last_track", "last_fell", "last_diff")
+           "last_len", "last_track", "last_fell", "last_diff", "diff_shared")
 
 
-def export(config: str, nworld: int, out: str, seed: int = 0, device=None) -> dict:
+def export(config: str, nworld: int, out: str, seed: int = 0, device=None,
+           curriculum_envs: int = 32) -> dict:
     import mujoco
     import mujoco_warp
 
     from .env import GpuGeneralEnv
 
-    env = GpuGeneralEnv(config, nworld=nworld, seed=seed, device=device)
+    # Training graphs share one curriculum difficulty, paced as v3's 32 SB3
+    # envs (env.py, shared_curriculum_envs); 0 = GeneralEnv's per-world rule.
+    env = GpuGeneralEnv(config, nworld=nworld, seed=seed, device=device,
+                        shared_curriculum_envs=curriculum_envs)
     act_in = wp.zeros((nworld, 3), dtype=float, device=device)
     env.reset()
     env.step(act_in)            # compile every kernel and module before the capture
@@ -68,6 +72,8 @@ def export(config: str, nworld: int, out: str, seed: int = 0, device=None) -> di
         "seed": seed, "device": str(wp.get_device(device)),
         "substeps": env.substeps, "ctrl_dt": env.cpu.ctrl_dt,
         "max_steps": int(env.cpu.max_steps), "buffers": bufs,
+        "curriculum": ({"shared": True, "envs": curriculum_envs} if curriculum_envs > 0
+                       else {"shared": False}),
         "versions": {"warp": wp.__version__, "mujoco": mujoco.__version__,
                      "mujoco_warp": getattr(mujoco_warp, "__version__", "?")},
     }
@@ -81,10 +87,12 @@ if __name__ == "__main__":
     ap.add_argument("--nworld", type=int, default=4096)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="graphs/aow_bike")
+    ap.add_argument("--curriculum-envs", type=int, default=32,
+                    help="shared difficulty paced as this many per-env curricula; 0 = per world")
     a = ap.parse_args()
     wp.config.quiet = True
     wp.init()
-    meta = export(a.config, a.nworld, a.out, a.seed)
+    meta = export(a.config, a.nworld, a.out, a.seed, curriculum_envs=a.curriculum_envs)
     size = sum(f.stat().st_size for f in Path(a.out).parent.rglob("*")
                if f.is_file() and f.name.startswith(Path(a.out).name))
     print(json.dumps({"saved": a.out, "nworld": meta["nworld"], "device": meta["device"],

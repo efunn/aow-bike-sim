@@ -1,0 +1,227 @@
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.18.0
+Module aow_sim.gpu.commands 73418d1 load on device 'cuda:0' took 0.61 ms  (cached)
+Module aow_sim.gpu.reset 27b6353 load on device 'cuda:0' took 0.62 ms  (cached)
+Module mujoco_warp._src.smooth b9cc505 load on device 'cuda:0' took 8.96 ms  (cached)
+Module _nxn_broadphase__locals__kernel_5ea22428 5ea2242 load on device 'cuda:0' took 0.50 ms  (cached)
+Module _primitive_narrowphase__locals__primitive_narrowphase_1280ba14 1280ba1 load on device 'cuda:0' took 0.56 ms  (cached)
+Module mujoco_warp._src.constraint 9435a53 load on device 'cuda:0' took 0.39 ms  (cached)
+Module _equality_joint__locals__kernel_66ba6c83 66ba6c8 load on device 'cuda:0' took 0.36 ms  (cached)
+Module _equality_tendon__locals__kernel_d03f3a93 d03f3a9 load on device 'cuda:0' took 0.36 ms  (cached)
+Module _friction_dof__locals__kernel_eadd710f eadd710 load on device 'cuda:0' took 0.36 ms  (cached)
+Module _friction_tendon__locals__kernel_8ac2823e 8ac2823 load on device 'cuda:0' took 0.36 ms  (cached)
+Module _limit_tendon__locals__kernel_36d520cc 36d520c load on device 'cuda:0' took 0.36 ms  (cached)
+Module _efc_contact_init__locals__kernel_48b1da0a 48b1da0 load on device 'cuda:0' took 0.35 ms  (cached)
+Module _efc_contact_jac_dense__locals__kernel_cde1aa89 037dfea load on device 'cuda:0' took 0.43 ms  (cached)
+Module _efc_contact_update__locals__kernel_cf1f607c cf1f607 load on device 'cuda:0' took 0.36 ms  (cached)
+Module mujoco_warp._src.sensor 764597f load on device 'cuda:0' took 1.16 ms  (cached)
+Module mujoco_warp._src.history 5cd4baa load on device 'cuda:0' took 0.56 ms  (cached)
+Module mujoco_warp._src.forward f44d3e1 load on device 'cuda:0' took 0.71 ms  (cached)
+Module mujoco_warp._src.forward 0a75030 load on device 'cuda:0' took 0.70 ms  (cached)
+Module mujoco_warp._src.passive 80f3681 load on device 'cuda:0' took 0.68 ms  (cached)
+Module _qfrc_smooth__locals__kernel_8b823980 8b82398 load on device 'cuda:0' took 0.37 ms  (cached)
+Module mujoco_warp._src.support f39c2de load on device 'cuda:0' took 0.43 ms  (cached)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_dcb711f9 176c226 load on device 'cuda:0' took 32.62 ms  (cached)
+Module _solve_init_dof__locals__kernel_1d7ecfa4 1d7ecfa load on device 'cuda:0' took 0.38 ms  (cached)
+Module mujoco_warp._src.solver c97221b load on device 'cuda:0' took 0.66 ms  (cached)
+Module _solve_init_jaref_kernel__locals__kernel_b9a13353 b9a1335 load on device 'cuda:0' took 0.39 ms  (cached)
+Module mul_m_kernel__locals___mul_m_d74bd8d9 d74bd8d load on device 'cuda:0' took 0.37 ms  (cached)
+Module _update_constraint_efc__locals__kernel_4b172e8b 4b172e8 load on device 'cuda:0' took 0.40 ms  (cached)
+Module _update_constraint_init_qfrc_constraint_dense__locals__kernel_c29c2cfc c29c2cf load on device 'cuda:0' took 0.38 ms  (cached)
+Module _update_gradient_zero_grad_dot__locals__kernel_93442399 9344239 load on device 'cuda:0' took 0.39 ms  (cached)
+Module _update_gradient_grad__locals__kernel_378e7517 378e751 load on device 'cuda:0' took 0.41 ms  (cached)
+Module _update_gradient_JTDAJ_dense_tiled__locals__kernel_a2b3407d e5623df load on device 'cuda:0' took 0.92 ms  (cached)
+Module _update_gradient_cholesky__locals__kernel_571f0b08 c80663a load on device 'cuda:0' took 40.70 ms  (cached)
+Module _linesearch_iterative_kernel__locals__kernel_d8c09560 2a5cf42 load on device 'cuda:0' took 0.53 ms  (cached)
+Module aow_sim.gpu.ahrs 7ed1d2b load on device 'cuda:0' took 0.64 ms  (cached)
+Module aow_sim.gpu.obs_reward d38f452 load on device 'cuda:0' took 0.47 ms  (cached)
+Module bench_env 3d29957 load on device 'cuda:0' took 0.48 ms  (cached)
+Module aow_sim.gpu.action ea87bd8 load on device 'cuda:0' took 0.47 ms  (cached)
+Module aow_sim.gpu.drivetrain 00c52bc load on device 'cuda:0' took 0.54 ms  (cached)
+Module aow_sim.gpu.gearbox 52747b8 load on device 'cuda:0' took 0.46 ms  (cached)
+Module mujoco_warp._src.derivative 1d93a53 load on device 'cuda:0' took 0.75 ms  (cached)
+Module _next_time_builder__locals___next_time_f604e0b3 f604e0b load on device 'cuda:0' took 0.42 ms  (cached)
+Module aow_sim.gpu.odometry 3d8a02e load on device 'cuda:0' took 0.62 ms  (cached)
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.58 ms  (cached)
+Module aow_sim.gpu.env 1b1808d load on device 'cuda:0' took 0.52 ms  (cached)
+{"nworld": 1024, "device": "NVIDIA A40", "policy": "moves/general_rl_v3_s0.npz", "steps_profiled": 5, "falls_during": 0, "graph_ms_per_policy_step": 83.402, "gpu_ms_per_policy_step": 117.871, "graph_overhead_ms": -34.469, "physics_only_graph_ms": 80.366, "physics_only_steps_per_s": 637088, "eager_wall_ms_per_policy_step": 504.4, "sections_ms": {"mjw.step": 113.6823, "mjw.forward": 2.1611, "drivetrain.pre_step": 0.7056, "gearbox.pre_step": 0.6618, "guard.restore": 0.228, "mlp": 0.1807, "guard.save": 0.0687, "ahrs.sample": 0.0396, "ahrs.draw_z": 0.0288, "odometry.advance": 0.0251, "obs_reward": 0.016, "copy": 0.0144, "reset_worlds": 0.0124, "rebase": 0.0104, "after_step": 0.0089, "launch:_episode_stats": 0.0081, "reset_obs": 0.0069, "action.apply": 0.0064, "_done": 0.0056}, "calls_per_step": {"mlp": 1, "copy": 1, "action.apply": 1, "drivetrain.pre_step": 50, "gearbox.pre_step": 50, "mjw.step": 50, "ahrs.draw_z": 3, "ahrs.sample": 3, "odometry.advance": 2, "rebase": 1, "obs_reward": 1, "after_step": 1, "_done": 1, "launch:_episode_stats": 1, "reset_worlds": 1, "guard.save": 1, "mjw.forward": 1, "guard.restore": 1, "reset_obs": 1}, "groups_ms": {"physics (MJWarp step)": 113.6823, "reset path (every step)": 2.477, "our hooks, per substep": 1.3674, "policy net": 0.1807, "our sense tick (100 Hz)": 0.0934, "our per-policy-step work": 0.0617, "other": 0.0081}, "mjw_step_top_kernels_ms": [["forward kernel _linesearch_iterative_kernel__locals__kernel_cbb38e10", 13.8229], ["forward kernel _primitive_narrowphase__locals__primitive_narrowphase_fa70a895", 13.2536], ["forward kernel _update_gradient_JTCJ_dense_f52c2ac2", 11.5833], ["forward kernel _update_gradient_JTDAJ_dense_tiled__locals__kernel_c9db1ef1", 6.1357], ["forward kernel _update_gradient_cholesky__locals__kernel_412d88a6", 5.3626], ["memset", 4.6489], ["forward kernel _update_constraint_efc__locals__kernel_9c16a648", 3.8876], ["forward kernel mul_m_kernel__locals___mul_m_ff3bc617", 3.6814], ["forward kernel _update_constraint_init_qfrc_constraint_dense__locals__kernel_4d31aa3f", 2.9929], ["forward kernel _cfrc_backward_72237d38", 2.339], ["forward kernel _update_gradient_grad__locals__kernel_230cc1c2", 2.2568], ["memcpy DtoD", 2.0025]]}
+
+1024 worlds on NVIDIA A40: graph 83.40 ms per policy step; summed GPU time 117.87 ms; gaps/launch -34.47 ms
+  bare physics, same model, as a graph: 80.37 ms (0.64M physics steps/s); the whole env takes x1.04
+  physics (MJWarp step)             113.682 ms   96.4 %  (x1.00 of physics)
+  reset path (every step)             2.477 ms    2.1 %  (x0.02 of physics)
+  our hooks, per substep              1.367 ms    1.2 %  (x0.01 of physics)
+  policy net                          0.181 ms    0.2 %  (x0.00 of physics)
+  our sense tick (100 Hz)             0.093 ms    0.1 %  (x0.00 of physics)
+  our per-policy-step work            0.062 ms    0.1 %  (x0.00 of physics)
+  other                               0.008 ms    0.0 %  (x0.00 of physics)
+  sections:
+    mjw.step               113.6823 ms   96.4 %  x50
+    mjw.forward              2.1611 ms    1.8 %  x1
+    drivetrain.pre_step      0.7056 ms    0.6 %  x50
+    gearbox.pre_step         0.6618 ms    0.6 %  x50
+    guard.restore            0.2280 ms    0.2 %  x1
+    mlp                      0.1807 ms    0.2 %  x1
+    guard.save               0.0687 ms    0.1 %  x1
+    ahrs.sample              0.0396 ms    0.0 %  x3
+    ahrs.draw_z              0.0288 ms    0.0 %  x3
+    odometry.advance         0.0251 ms    0.0 %  x2
+    obs_reward               0.0160 ms    0.0 %  x1
+    copy                     0.0144 ms    0.0 %  x1
+    reset_worlds             0.0124 ms    0.0 %  x1
+    rebase                   0.0104 ms    0.0 %  x1
+    after_step               0.0089 ms    0.0 %  x1
+    launch:_episode_stats    0.0081 ms    0.0 %  x1
+    reset_obs                0.0069 ms    0.0 %  x1
+    action.apply             0.0064 ms    0.0 %  x1
+    _done                    0.0056 ms    0.0 %  x1
+  inside mjw.step, top kernels:
+    forward kernel _linesearch_iterative_kernel__locals__kernel_  13.8229 ms
+    forward kernel _primitive_narrowphase__locals__primitive_nar  13.2536 ms
+    forward kernel _update_gradient_JTCJ_dense_f52c2ac2           11.5833 ms
+    forward kernel _update_gradient_JTDAJ_dense_tiled__locals__k   6.1357 ms
+    forward kernel _update_gradient_cholesky__locals__kernel_412   5.3626 ms
+    memset                                                         4.6489 ms
+    forward kernel _update_constraint_efc__locals__kernel_9c16a6   3.8876 ms
+    forward kernel mul_m_kernel__locals___mul_m_ff3bc617           3.6814 ms
+    forward kernel _update_constraint_init_qfrc_constraint_dense   2.9929 ms
+    forward kernel _cfrc_backward_72237d38                         2.3390 ms
+    forward kernel _update_gradient_grad__locals__kernel_230cc1c   2.2568 ms
+    memcpy DtoD                                                    2.0025 ms
+{"nworld": 4096, "device": "NVIDIA A40", "policy": "moves/general_rl_v3_s0.npz", "steps_profiled": 5, "falls_during": 0, "graph_ms_per_policy_step": 172.987, "gpu_ms_per_policy_step": 208.66, "graph_overhead_ms": -35.673, "physics_only_graph_ms": 165.181, "physics_only_steps_per_s": 1239849, "eager_wall_ms_per_policy_step": 592.8, "sections_ms": {"mjw.step": 202.1122, "mjw.forward": 3.8448, "drivetrain.pre_step": 0.9596, "gearbox.pre_step": 0.7028, "mlp": 0.5445, "guard.restore": 0.2363, "guard.save": 0.0805, "ahrs.sample": 0.0386, "ahrs.draw_z": 0.0318, "odometry.advance": 0.0259, "obs_reward": 0.0164, "reset_worlds": 0.0127, "copy": 0.0112, "rebase": 0.0103, "after_step": 0.008, "reset_obs": 0.0065, "action.apply": 0.0064, "launch:_episode_stats": 0.0063, "_done": 0.0052}, "calls_per_step": {"mlp": 1, "copy": 1, "action.apply": 1, "drivetrain.pre_step": 50, "gearbox.pre_step": 50, "mjw.step": 50, "ahrs.draw_z": 3, "ahrs.sample": 3, "odometry.advance": 2, "rebase": 1, "obs_reward": 1, "after_step": 1, "_done": 1, "launch:_episode_stats": 1, "reset_worlds": 1, "guard.save": 1, "mjw.forward": 1, "guard.restore": 1, "reset_obs": 1}, "groups_ms": {"physics (MJWarp step)": 202.1122, "reset path (every step)": 4.1809, "our hooks, per substep": 1.6624, "policy net": 0.5445, "our sense tick (100 Hz)": 0.0963, "our per-policy-step work": 0.0575, "other": 0.0063}, "mjw_step_top_kernels_ms": [["forward kernel _update_gradient_JTCJ_dense_f52c2ac2", 38.9666], ["forward kernel _linesearch_iterative_kernel__locals__kernel_cbb38e10", 21.5914], ["forward kernel _update_gradient_JTDAJ_dense_tiled__locals__kernel_c9db1ef1", 14.4825], ["forward kernel _primitive_narrowphase__locals__primitive_narrowphase_fa70a895", 14.0733], ["forward kernel _update_gradient_cholesky__locals__kernel_412d88a6", 12.1728], ["forward kernel _update_constraint_efc__locals__kernel_9c16a648", 7.3671], ["forward kernel _update_constraint_init_qfrc_constraint_dense__locals__kernel_4d31aa3f", 5.774], ["forward kernel mul_m_kernel__locals___mul_m_ff3bc617", 5.1237], ["memset", 4.8675], ["forward kernel _efc_contact_jac_dense__locals__kernel_506f0133", 4.4528], ["forward kernel _tile_cholesky_factorize_solve_block__locals__kernel_6146bb5a", 4.126], ["forward kernel _geom_local_to_global_e28b714c", 3.6924]]}
+
+4096 worlds on NVIDIA A40: graph 172.99 ms per policy step; summed GPU time 208.66 ms; gaps/launch -35.67 ms
+  bare physics, same model, as a graph: 165.18 ms (1.24M physics steps/s); the whole env takes x1.05
+  physics (MJWarp step)             202.112 ms   96.9 %  (x1.00 of physics)
+  reset path (every step)             4.181 ms    2.0 %  (x0.02 of physics)
+  our hooks, per substep              1.662 ms    0.8 %  (x0.01 of physics)
+  policy net                          0.544 ms    0.3 %  (x0.00 of physics)
+  our sense tick (100 Hz)             0.096 ms    0.0 %  (x0.00 of physics)
+  our per-policy-step work            0.058 ms    0.0 %  (x0.00 of physics)
+  other                               0.006 ms    0.0 %  (x0.00 of physics)
+  sections:
+    mjw.step               202.1122 ms   96.9 %  x50
+    mjw.forward              3.8448 ms    1.8 %  x1
+    drivetrain.pre_step      0.9596 ms    0.5 %  x50
+    gearbox.pre_step         0.7028 ms    0.3 %  x50
+    mlp                      0.5445 ms    0.3 %  x1
+    guard.restore            0.2363 ms    0.1 %  x1
+    guard.save               0.0805 ms    0.0 %  x1
+    ahrs.sample              0.0386 ms    0.0 %  x3
+    ahrs.draw_z              0.0318 ms    0.0 %  x3
+    odometry.advance         0.0259 ms    0.0 %  x2
+    obs_reward               0.0164 ms    0.0 %  x1
+    reset_worlds             0.0127 ms    0.0 %  x1
+    copy                     0.0112 ms    0.0 %  x1
+    rebase                   0.0103 ms    0.0 %  x1
+    after_step               0.0080 ms    0.0 %  x1
+    reset_obs                0.0065 ms    0.0 %  x1
+    action.apply             0.0064 ms    0.0 %  x1
+    launch:_episode_stats    0.0063 ms    0.0 %  x1
+    _done                    0.0052 ms    0.0 %  x1
+  inside mjw.step, top kernels:
+    forward kernel _update_gradient_JTCJ_dense_f52c2ac2           38.9666 ms
+    forward kernel _linesearch_iterative_kernel__locals__kernel_  21.5914 ms
+    forward kernel _update_gradient_JTDAJ_dense_tiled__locals__k  14.4825 ms
+    forward kernel _primitive_narrowphase__locals__primitive_nar  14.0733 ms
+    forward kernel _update_gradient_cholesky__locals__kernel_412  12.1728 ms
+    forward kernel _update_constraint_efc__locals__kernel_9c16a6   7.3671 ms
+    forward kernel _update_constraint_init_qfrc_constraint_dense   5.7740 ms
+    forward kernel mul_m_kernel__locals___mul_m_ff3bc617           5.1237 ms
+    memset                                                         4.8675 ms
+    forward kernel _efc_contact_jac_dense__locals__kernel_506f01   4.4528 ms
+    forward kernel _tile_cholesky_factorize_solve_block__locals_   4.1260 ms
+    forward kernel _geom_local_to_global_e28b714c                  3.6924 ms
+{"nworld": 16384, "device": "NVIDIA A40", "policy": "moves/general_rl_v3_s0.npz", "steps_profiled": 5, "falls_during": 0, "graph_ms_per_policy_step": 552.764, "gpu_ms_per_policy_step": 584.976, "graph_overhead_ms": -32.212, "physics_only_graph_ms": 527.004, "physics_only_steps_per_s": 1554448, "eager_wall_ms_per_policy_step": 904.6, "sections_ms": {"mjw.step": 567.9313, "mjw.forward": 10.7406, "drivetrain.pre_step": 2.302, "mlp": 2.0515, "gearbox.pre_step": 1.1995, "guard.restore": 0.3644, "guard.save": 0.1615, "ahrs.sample": 0.0459, "ahrs.draw_z": 0.0403, "odometry.advance": 0.0335, "obs_reward": 0.0251, "rebase": 0.015, "copy": 0.0148, "reset_worlds": 0.0129, "after_step": 0.0092, "action.apply": 0.0088, "launch:_episode_stats": 0.0073, "reset_obs": 0.0068, "_done": 0.0053}, "calls_per_step": {"mlp": 1, "copy": 1, "action.apply": 1, "drivetrain.pre_step": 50, "gearbox.pre_step": 50, "mjw.step": 50, "ahrs.draw_z": 3, "ahrs.sample": 3, "odometry.advance": 2, "rebase": 1, "obs_reward": 1, "after_step": 1, "_done": 1, "launch:_episode_stats": 1, "reset_worlds": 1, "guard.save": 1, "mjw.forward": 1, "guard.restore": 1, "reset_obs": 1}, "groups_ms": {"physics (MJWarp step)": 567.9313, "reset path (every step)": 11.2862, "our hooks, per substep": 3.5015, "policy net": 2.0515, "our sense tick (100 Hz)": 0.1197, "our per-policy-step work": 0.0781, "other": 0.0073}, "mjw_step_top_kernels_ms": [["forward kernel _update_gradient_JTCJ_dense_f52c2ac2", 147.5231], ["forward kernel _linesearch_iterative_kernel__locals__kernel_cbb38e10", 47.343], ["forward kernel _update_gradient_JTDAJ_dense_tiled__locals__kernel_c9db1ef1", 46.714], ["forward kernel _update_gradient_cholesky__locals__kernel_412d88a6", 37.8759], ["forward kernel _primitive_narrowphase__locals__primitive_narrowphase_fa70a895", 34.4548], ["forward kernel _update_constraint_efc__locals__kernel_9c16a648", 20.3354], ["forward kernel _efc_contact_jac_dense__locals__kernel_506f0133", 15.0818], ["forward kernel _update_constraint_init_qfrc_constraint_dense__locals__kernel_4d31aa3f", 14.7315], ["forward kernel _geom_local_to_global_e28b714c", 12.8492], ["forward kernel _tile_cholesky_factorize_solve_block__locals__kernel_6146bb5a", 12.4011], ["forward kernel _qderiv_tendon_damping_ec990995", 10.8425], ["forward kernel mul_m_kernel__locals___mul_m_ff3bc617", 9.5546]]}
+
+16384 worlds on NVIDIA A40: graph 552.76 ms per policy step; summed GPU time 584.98 ms; gaps/launch -32.21 ms
+  bare physics, same model, as a graph: 527.00 ms (1.55M physics steps/s); the whole env takes x1.05
+  physics (MJWarp step)             567.931 ms   97.1 %  (x1.00 of physics)
+  reset path (every step)            11.286 ms    1.9 %  (x0.02 of physics)
+  our hooks, per substep              3.502 ms    0.6 %  (x0.01 of physics)
+  policy net                          2.051 ms    0.4 %  (x0.00 of physics)
+  our sense tick (100 Hz)             0.120 ms    0.0 %  (x0.00 of physics)
+  our per-policy-step work            0.078 ms    0.0 %  (x0.00 of physics)
+  other                               0.007 ms    0.0 %  (x0.00 of physics)
+  sections:
+    mjw.step               567.9313 ms   97.1 %  x50
+    mjw.forward             10.7406 ms    1.8 %  x1
+    drivetrain.pre_step      2.3020 ms    0.4 %  x50
+    mlp                      2.0515 ms    0.4 %  x1
+    gearbox.pre_step         1.1995 ms    0.2 %  x50
+    guard.restore            0.3644 ms    0.1 %  x1
+    guard.save               0.1615 ms    0.0 %  x1
+    ahrs.sample              0.0459 ms    0.0 %  x3
+    ahrs.draw_z              0.0403 ms    0.0 %  x3
+    odometry.advance         0.0335 ms    0.0 %  x2
+    obs_reward               0.0251 ms    0.0 %  x1
+    rebase                   0.0150 ms    0.0 %  x1
+    copy                     0.0148 ms    0.0 %  x1
+    reset_worlds             0.0129 ms    0.0 %  x1
+    after_step               0.0092 ms    0.0 %  x1
+    action.apply             0.0088 ms    0.0 %  x1
+    launch:_episode_stats    0.0073 ms    0.0 %  x1
+    reset_obs                0.0068 ms    0.0 %  x1
+    _done                    0.0053 ms    0.0 %  x1
+  inside mjw.step, top kernels:
+    forward kernel _update_gradient_JTCJ_dense_f52c2ac2          147.5231 ms
+    forward kernel _linesearch_iterative_kernel__locals__kernel_  47.3430 ms
+    forward kernel _update_gradient_JTDAJ_dense_tiled__locals__k  46.7140 ms
+    forward kernel _update_gradient_cholesky__locals__kernel_412  37.8759 ms
+    forward kernel _primitive_narrowphase__locals__primitive_nar  34.4548 ms
+    forward kernel _update_constraint_efc__locals__kernel_9c16a6  20.3354 ms
+    forward kernel _efc_contact_jac_dense__locals__kernel_506f01  15.0818 ms
+    forward kernel _update_constraint_init_qfrc_constraint_dense  14.7315 ms
+    forward kernel _geom_local_to_global_e28b714c                 12.8492 ms
+    forward kernel _tile_cholesky_factorize_solve_block__locals_  12.4011 ms
+    forward kernel _qderiv_tendon_damping_ec990995                10.8425 ms
+    forward kernel mul_m_kernel__locals___mul_m_ff3bc617           9.5546 ms
+{"nworld": 32768, "device": "NVIDIA A40", "policy": "moves/general_rl_v3_s0.npz", "steps_profiled": 5, "falls_during": 0, "graph_ms_per_policy_step": 1075.556, "gpu_ms_per_policy_step": 1101.212, "graph_overhead_ms": -25.655, "physics_only_graph_ms": 1022.047, "physics_only_steps_per_s": 1603057, "eager_wall_ms_per_policy_step": 1593.0, "sections_ms": {"mjw.step": 1068.3825, "mjw.forward": 20.2072, "drivetrain.pre_step": 4.7142, "mlp": 4.063, "gearbox.pre_step": 1.8422, "guard.restore": 1.4172, "guard.save": 0.2676, "ahrs.sample": 0.0634, "ahrs.draw_z": 0.0591, "odometry.advance": 0.0584, "obs_reward": 0.0436, "rebase": 0.0188, "copy": 0.0162, "reset_worlds": 0.0157, "after_step": 0.0111, "action.apply": 0.0091, "reset_obs": 0.0078, "launch:_episode_stats": 0.0078, "_done": 0.0069}, "calls_per_step": {"mlp": 1, "copy": 1, "action.apply": 1, "drivetrain.pre_step": 50, "gearbox.pre_step": 50, "mjw.step": 50, "ahrs.draw_z": 3, "ahrs.sample": 3, "odometry.advance": 2, "rebase": 1, "obs_reward": 1, "after_step": 1, "_done": 1, "launch:_episode_stats": 1, "reset_worlds": 1, "guard.save": 1, "mjw.forward": 1, "guard.restore": 1, "reset_obs": 1}, "groups_ms": {"physics (MJWarp step)": 1068.3825, "reset path (every step)": 21.9155, "our hooks, per substep": 6.5565, "policy net": 4.063, "our sense tick (100 Hz)": 0.1809, "our per-policy-step work": 0.1056, "other": 0.0078}, "mjw_step_top_kernels_ms": [["forward kernel _update_gradient_JTCJ_dense_f52c2ac2", 295.8094], ["forward kernel _update_gradient_JTDAJ_dense_tiled__locals__kernel_c9db1ef1", 90.3557], ["forward kernel _linesearch_iterative_kernel__locals__kernel_cbb38e10", 81.5387], ["forward kernel _update_gradient_cholesky__locals__kernel_412d88a6", 72.5069], ["forward kernel _primitive_narrowphase__locals__primitive_narrowphase_fa70a895", 65.1885], ["forward kernel _update_constraint_efc__locals__kernel_9c16a648", 37.5434], ["forward kernel _efc_contact_jac_dense__locals__kernel_506f0133", 28.9923], ["forward kernel _update_constraint_init_qfrc_constraint_dense__locals__kernel_4d31aa3f", 25.939], ["forward kernel _geom_local_to_global_e28b714c", 25.3433], ["forward kernel _tile_cholesky_factorize_solve_block__locals__kernel_6146bb5a", 23.5659], ["forward kernel _equality_tendon__locals__kernel_38c6d237", 21.4263], ["forward kernel _qderiv_tendon_damping_ec990995", 21.2328]]}
+
+32768 worlds on NVIDIA A40: graph 1075.56 ms per policy step; summed GPU time 1101.21 ms; gaps/launch -25.66 ms
+  bare physics, same model, as a graph: 1022.05 ms (1.60M physics steps/s); the whole env takes x1.05
+  physics (MJWarp step)            1068.382 ms   97.0 %  (x1.00 of physics)
+  reset path (every step)            21.916 ms    2.0 %  (x0.02 of physics)
+  our hooks, per substep              6.556 ms    0.6 %  (x0.01 of physics)
+  policy net                          4.063 ms    0.4 %  (x0.00 of physics)
+  our sense tick (100 Hz)             0.181 ms    0.0 %  (x0.00 of physics)
+  our per-policy-step work            0.106 ms    0.0 %  (x0.00 of physics)
+  other                               0.008 ms    0.0 %  (x0.00 of physics)
+  sections:
+    mjw.step               1068.3825 ms   97.0 %  x50
+    mjw.forward             20.2072 ms    1.8 %  x1
+    drivetrain.pre_step      4.7142 ms    0.4 %  x50
+    mlp                      4.0630 ms    0.4 %  x1
+    gearbox.pre_step         1.8422 ms    0.2 %  x50
+    guard.restore            1.4172 ms    0.1 %  x1
+    guard.save               0.2676 ms    0.0 %  x1
+    ahrs.sample              0.0634 ms    0.0 %  x3
+    ahrs.draw_z              0.0591 ms    0.0 %  x3
+    odometry.advance         0.0584 ms    0.0 %  x2
+    obs_reward               0.0436 ms    0.0 %  x1
+    rebase                   0.0188 ms    0.0 %  x1
+    copy                     0.0162 ms    0.0 %  x1
+    reset_worlds             0.0157 ms    0.0 %  x1
+    after_step               0.0111 ms    0.0 %  x1
+    action.apply             0.0091 ms    0.0 %  x1
+    reset_obs                0.0078 ms    0.0 %  x1
+    launch:_episode_stats    0.0078 ms    0.0 %  x1
+    _done                    0.0069 ms    0.0 %  x1
+  inside mjw.step, top kernels:
+    forward kernel _update_gradient_JTCJ_dense_f52c2ac2          295.8094 ms
+    forward kernel _update_gradient_JTDAJ_dense_tiled__locals__k  90.3557 ms
+    forward kernel _linesearch_iterative_kernel__locals__kernel_  81.5387 ms
+    forward kernel _update_gradient_cholesky__locals__kernel_412  72.5069 ms
+    forward kernel _primitive_narrowphase__locals__primitive_nar  65.1885 ms
+    forward kernel _update_constraint_efc__locals__kernel_9c16a6  37.5434 ms
+    forward kernel _efc_contact_jac_dense__locals__kernel_506f01  28.9923 ms
+    forward kernel _update_constraint_init_qfrc_constraint_dense  25.9390 ms
+    forward kernel _geom_local_to_global_e28b714c                 25.3433 ms
+    forward kernel _tile_cholesky_factorize_solve_block__locals_  23.5659 ms
+    forward kernel _equality_tendon__locals__kernel_38c6d237      21.4263 ms
+    forward kernel _qderiv_tendon_damping_ec990995                21.2328 ms

@@ -1,0 +1,10 @@
+{"step":"pip_phase2","rc":0,"wall_s":1.37064}
+{"step":"eval_grid","rc":0,"wall_s":43.151}
+    (0.6, -0.396, 180)      0/32 False | 136.08 vs 132.14 [124.08,137.68] |   0.34 vs   0.43 [ 0.32, 0.52] |   5.00 vs   5.00 [ 4.06, 5.00] |   2.18 vs   1.78 [ 1.12, 2.23]
+GeneralEnv's value inside the GPU seeds' range (* = outside):
+  head_err_med 17/20, vel_err_med 18/20, head_err_tail 19/20, vel_err_tail 18/20, t_head_s 18/20, drift_m 14/20, v_ach 18/20
+{"step":"profile","rc":0,"wall_s":232.954}
+    forward kernel _tile_cholesky_factorize_solve_block__locals_  23.5659 ms
+    forward kernel _equality_tendon__locals__kernel_38c6d237      21.4263 ms
+    forward kernel _qderiv_tendon_damping_ec990995                21.2328 ms
+{"step":"warp_cache","rc":0,"wall_s":0.700981}
