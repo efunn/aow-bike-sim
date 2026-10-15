@@ -1,0 +1,40 @@
+#!/bin/bash
+# Put the AoW bike env into a PufferLib 5.0 checkout and build the trainer.
+#
+#   bash src/aow_sim/gpu/puffer/install.sh <puffer_dir> <graph_stem> [--float]
+#
+# Run inside the Python env that exported the graph (it asks Warp where its
+# warp.so is, and which version it is). Clones PufferLib (public, no token)
+# at ea7f989 -- the commit docs/plans/gpu-training.md read and phase 1 built
+# -- if <puffer_dir> is absent. Copies aow_bike.cu to ocean/aow_bike/ and
+# writes config/aow_bike.ini with the graph and Warp paths filled in. The
+# graph's world count must equal vec.total_agents there (4096 as shipped).
+# Then: cd <puffer_dir> && ./puffer train --headless
+set -euo pipefail
+PUF=$1
+STEM=$(realpath "$2")
+FLOAT=${3:-}
+HERE=$(cd "$(dirname "$0")" && pwd)
+export PATH=/usr/local/cuda/bin:$PATH        # runpod/pytorch: toolkit not on PATH
+
+[ -f "$STEM.wrp" ] || { echo "no graph at $STEM.wrp (python -m aow_sim.gpu.export_graph)"; exit 1; }
+WARP_LIB=$(python -c "import warp, os; print(os.path.join(os.path.dirname(warp.__file__), 'bin', 'warp.so'))")
+WARP_VER=$(python -c "import warp; print(warp.__version__)")
+[ -f "$WARP_LIB" ] || { echo "no $WARP_LIB"; exit 1; }
+NW=$(python -c "import json; print(json.load(open('$STEM.json'))['nworld'])")
+
+[ -d "$PUF" ] || git clone -q https://github.com/PufferAI/PufferLib.git "$PUF"
+cd "$PUF"
+git checkout -q ea7f989
+# libomp: build.sh links -lomp5 on Linux (phase 1)
+if ! ldconfig -p | grep -q 'libomp5\.so '; then
+    so=$(ldconfig -p | awk '/libomp\.so[ .]/{print $NF; exit}')
+    [ -n "$so" ] && ln -sf "$so" /usr/lib/x86_64-linux-gnu/libomp5.so
+fi
+mkdir -p ocean/aow_bike
+cp "$HERE/aow_bike.cu" ocean/aow_bike/aow_bike.cu
+sed -e "s#GRAPH_STEM#$STEM#" -e "s#WARP_LIB#$WARP_LIB#" -e "s#WARP_VERSION#$WARP_VER#" \
+    -e "s#^total_agents = .*#total_agents = $NW#" \
+    "$HERE/aow_bike.ini" > config/aow_bike.ini
+./build.sh aow_bike --cu $FLOAT
+[ -x ./puffer ] && echo "built $PUF/puffer for aow_bike ($NW worlds, graph $STEM)"

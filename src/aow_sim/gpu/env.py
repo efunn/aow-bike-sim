@@ -99,6 +99,18 @@ class GpuGeneralEnv:
         self.done = z(n, dt=int)
         self.action = z(n, 3)
         self.shifts = z(n, 2, dt=int)
+        # Episode summaries, written at the step an episode ends (before the
+        # reset inside the step wipes the sums), for a trainer's logs:
+        # ep_end 1 on that step only; last_* the finished episode's return,
+        # length in policy steps, tracking score (GeneralEnv's `track`),
+        # fall, and the world's curriculum difficulty.
+        self.ep_ret = z(n)
+        self.ep_end = z(n, dt=int)
+        self.last_ret = z(n)
+        self.last_len = z(n, dt=int)
+        self.last_track = z(n)
+        self.last_fell = z(n, dt=int)
+        self.last_diff = z(n)
         self.guard = grst.ForwardGuard(self.d)
         # Called after the reset kernel, before the forward and the AHRS
         # prime: a test harness overwrites draws here (analysis/gpu_phase2/
@@ -181,8 +193,34 @@ class GpuGeneralEnv:
             self.psi_cmd, self.rng], device=self.device)
         wp.launch(_done, self.nworld, [self.terminated, self.truncated, self.done],
                   device=self.device)
+        wp.launch(_episode_stats, self.nworld, [
+            self.done, self.terminated, self.reward, self.step_i, self.track_sum,
+            self.track_n, self.diff, self.ep_ret, self.ep_end, self.last_ret,
+            self.last_len, self.last_track, self.last_fell, self.last_diff],
+            device=self.device)
         self._reset_done()
         return self.obs, self.reward, self.terminated, self.truncated
+
+
+@wp.kernel
+def _episode_stats(done: wp.array(dtype=int), term: wp.array(dtype=int),
+                   reward: wp.array(dtype=float), step: wp.array(dtype=int),
+                   track_sum: wp.array(dtype=float), track_n: wp.array(dtype=int),
+                   diff: wp.array(dtype=float), ep_ret: wp.array(dtype=float),
+                   ep_end: wp.array(dtype=int), last_ret: wp.array(dtype=float),
+                   last_len: wp.array(dtype=int), last_track: wp.array(dtype=float),
+                   last_fell: wp.array(dtype=int), last_diff: wp.array(dtype=float)):
+    w = wp.tid()
+    r = ep_ret[w] + reward[w]
+    ep_end[w] = done[w]
+    if done[w] == 1:
+        last_ret[w] = r
+        last_len[w] = step[w]
+        last_track[w] = track_sum[w] / float(wp.max(1, track_n[w]))
+        last_fell[w] = term[w]
+        last_diff[w] = diff[w]
+        r = 0.0
+    ep_ret[w] = r
 
 
 @wp.kernel

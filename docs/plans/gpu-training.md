@@ -5,7 +5,9 @@
 > launches per step -- see phase 1's run). **Phase 2: the env runs on
 > CUDA as one captured graph per policy step, 30k policy steps/s at 16-32k
 > worlds with v3_s0 driving (0 falls) -- ~14x the box.** Left in phase 2:
-> the per-command grid against GeneralEnv. Phases 3-5 not started.
+> the per-command grid against GeneralEnv and a profile of where the step's
+> time goes (both built, to run). **Phase 3: the PufferLib env is built,
+> Mac-checked, not yet compiled or run.** Phases 4-5 not started.
 > Goal (user): the whole
 > physics + RL stack on one NVIDIA GPU -- MuJoCo Warp for the bike,
 > PufferLib 5.0's PPO for the learner. Phases are gated: each one ends in a
@@ -419,7 +421,7 @@ hook objects (`const_from`), never from the yaml separately.
 | drivetrain angle rebase (once per policy step) | `rebase.rebase` | a consistent upward shift (~270 rad) then rebase vs untouched: obs diff 0.0014 / 0.0005 / 0.0014 / 0.086 after 1 / 2 / 5 / 10 steps, as a 1e-6 rad nudge (0 / 0.0005 / 0.0012 / 0.016); input a alone (broken): 5 from step 1 |
 | hybrid end to end (user's suggestion) | `analysis/gpu_phase2/hybrid.py` | below |
 | CUDA, the whole step (policy + env + auto-reset) as one graph | `analysis/gpu_phase2/bench_env.py` | A40, below |
-| eval grid in both envs | -- | not started |
+| eval grid in both envs | `analysis/gpu_phase2/eval_grid.py` | built, Mac smoke only |
 
 **The hybrid** -- GeneralEnv's own Python hooks, obs and reward on MJWarp
 physics (one world) against GpuGeneralEnv, so one engine and only the port
@@ -478,11 +480,31 @@ logs in `analysis/gpu_phase2/results_a40/`. [measured]
    Warp kernel compile ~1 min (cold vs warm `fly_policy`). The tarball's
    scp: seconds.
 
-**Left in phase 2:** `per_command.py`'s grid in GpuGeneralEnv vs
-GeneralEnv -- an adapter that sets each world's fixed command
-(`v_cmd_w` / `psi_cmd` / `next_resample`, as `hybrid.make_warp`'s
-`on_reset` does) and rebuilds `train_general_rl._eval_episodes`' metrics
-from device state. Written and debugged on the Mac; run on the next pod.
+**Left in phase 2: the eval grid, built, not yet run on a GPU.**
+`analysis/gpu_phase2/eval_grid.py` flies the 20-command grid both ways:
+GeneralEnv through `eval_general._eval_episodes` itself (the eval
+config, one episode a command, seeds 10_000 + k), and the GPU env with
+every command x 32 seeds as worlds at once, each holding its command
+(the reset options' `v_cmd` / `psi_cmd_rel`, set through `on_reset`), the
+metrics rebuilt from device state under the same names. Per command:
+GeneralEnv's value against the GPU seeds' median and range. Smoke-tested
+on the Mac (2 seeds, 0.4 s each side): plumbing right, heading and speed
+errors within ~1 deg / 0.01 m/s that early. Next pod:
+`bash analysis/gpu_phase2/run_pod.sh eval` (a few minutes). The metrics
+come from `aow_sim.eval_general`, torch-free since 2026-10-14.
+
+**Also to run: where the time goes.** The whole env is ~35 % below phase
+1's bare 2.36M physics steps/s, but phase 1 timed a different (rigid
+export) model, and the Mac's CPU puts MJWarp at 98 % of a step with every
+hook under 2 %. `analysis/gpu_phase2/profile_env.py` times each call of a
+real step on the GPU (Warp's activity timing: kernels, memcpy, memset, per
+section: MJWarp step, each hook, sense ticks, the reset path, the policy
+net), the same step as a graph (graph minus summed GPU time = launch gaps),
+and bare physics on THIS model as a graph -- the like-for-like baseline.
+`run_pod.sh profile` also takes an Nsight Systems trace if `nsys` exists.
+Optimise nothing before it has run: candidates were the per-step reset
+(~1/50 of the physics by arithmetic, `wp.capture_if` could skip it) and
+fusing the per-substep hooks (100 launches a policy step into 50).
 
 Found on the way:
 - **MJWarp's constraint rows have no fixed order** (`_friction_dof` takes
@@ -534,6 +556,40 @@ Found on the way:
 `ocean/aow_bike/` in a PufferLib fork: the embedding `.cu` (section 1), an
 `aow_bike.ini`. Smoke: a random policy for 1M steps, rewards and resets
 sane. Measure end-to-end steps/s.
+
+**Built 2026-10-14, not yet run on a GPU.** No embedded Python after all:
+phase 1's APIC route (T1-T4) carries the whole env. [built; Mac CPU checks
+only, the `.cu` has not been compiled]
+
+| piece | what |
+|---|---|
+| `src/aow_sim/gpu/export_graph.py` | builds GpuGeneralEnv for N worlds (training randomization), resets, captures ONE `step` with `apic=True`, `capture_save`s it with named buffers: `act_in` in; `obs`, `reward`, `terminated`, `truncated`, `ep_end`, `last_ret/len/track/fell/diff` out; plus `<stem>.json` (shapes, config hash, versions). Run on the training GPU: the modules are compiled for its arch |
+| `env.py` `_episode_stats` | new kernel before the in-step reset: the finished episode's return, length, track, fall, difficulty (the reset would wipe them), for the trainer's logs |
+| `analysis/gpu_phase3/check_graph.py` | reloads the `.wrp` as C will (`capture_load`, buffers by name through their pointers) and flies v3_s0 or random actions through it |
+| `src/aow_sim/gpu/puffer/aow_bike.cu` | the PufferLib env: `dlopen`s Warp's `warp.so`, `wp_apic_load_graph`, binds the buffers by name (sizes checked against `vec.total_agents`); `puf_step` = actions D2D -> `cudaGraphLaunch` -> one kernel writing obs (bf16 or float), reward, terminal, and finished episodes into each world's `Log` |
+| `src/aow_sim/gpu/puffer/aow_bike.ini` | `cudagraphs = -1` (phase 1: our graph cannot launch inside PufferLib's capture); v3's PPO numbers where PufferLib has the knob |
+| `src/aow_sim/gpu/puffer/install.sh` | clones PufferLib at ea7f989 if absent, copies the env in, fills the ini's paths, `./build.sh aow_bike --cu` |
+| `analysis/gpu_phase3/run_pod.sh` | export -> check (v3_s0 300 steps, random 100) -> build -> `./puffer train --headless` for 10 min -> warp cache |
+
+Mac checks (CPU device, 8 worlds): the reloaded graph flies v3_s0 20
+steps, 0 falls, 2.61 reward/step; random actions, 60 steps: 15 falls, each
+reported once through `ep_end` with length 23.6, return -1.95 (the 50
+penalty), track 0.76, and the world back at a fresh episode. [measured]
+
+**Differences from the CPU stack in this smoke** (phase 4's list, all
+deliberate here): PufferLib's MinGRU net (1 layer) not our MLP; Muon, its
+only optimizer; bf16 unless built `--float`; **no observation
+normalization** (SB3 ran VecNormalize; our obs are O(1) by construction,
+but rates and velocities are not unit-scaled); **time limits are
+terminals** (PufferLib 5.0 has no truncation signal, SB3 bootstraps them);
+no smoothness terms; `puf_reset` only re-emits the saved reset state (fine
+at startup, wrong if PufferLib resets mid-run).
+
+**On the pod:** `pod_setup.sh`, then `bash analysis/gpu_phase3/run_pod.sh`
+(and `bash analysis/gpu_phase2/run_pod.sh eval profile` for phase 2's
+leftovers on the same rental). What decides it: the trainer starts and
+loads the graph, `env/episode_length` and `env/fall_rate` move off their
+random-policy values, and SPS end to end against the box's ~2.1k.
 
 **Choice B (not a stop gate):** past gate A the env is on the GPU either
 way, so the only question here is which learner sits on it -- PufferLib
