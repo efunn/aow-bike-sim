@@ -157,6 +157,41 @@ Below ~0.5M, stop: the CPU stack stays. (The hook and learner share on GPU
 is a guess until phase 3; on the box they are ~37 % of an env step plus
 ~25 % of an update.) [reasoned]
 
+**Starting phase 1 from a fresh session** (written 2026-10-14):
+
+- **The model, not the repo.** Phase 1 needs only the compiled model.
+  Export it here and upload the file; nothing from `aow_sim` has to run
+  on the pod:
+
+  ```python
+  import mujoco
+  from aow_sim.build_model import load_params
+  from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+  from aow_sim.drivetrain_model import from_env_config
+  cfg = _load_rl_config("config/rl_general_v3.yaml")
+  env = GeneralEnv(from_env_config(load_params(), cfg["env"]), cfg)
+  mujoco.mj_saveModel(env.model, "v3_rigid.mjb")
+  ```
+
+  4.5 MB; nq 21, nv 20, nu 5, 127 geoms, 74 meshes, timestep 4e-4,
+  elliptic cones, Newton. Reloading the .mjb and stepping 500 steps gives
+  0.0 qpos difference against the original. [measured, 2026-10-14]
+  A `.mjb` is tied to its MuJoCo version: pin 3.10.0 on the pod too. The
+  drivetrain, odometry and AHRS models are Python hooks, not in the file:
+  with or without the drivetrain overlay the compiled model has the same
+  actuators, gains, damping, armature and friction loss. [measured] The
+  hooks are phase 2's problem, not phase 1's.
+- **Code onto the pod:** copy files (`runpodctl send`, or scp to the pod's
+  SSH address). Never put a GitHub token or key on a rented machine.
+- **Spending.** Confirm with the user before creating a pod (GPU type and
+  $/h from the catalog read). TERMINATE it at the end of the session.
+  Stopping leaves its disk billing. Write the measured numbers back into
+  this section with `[measured]` tags before ending.
+- **RunPod access** (2026-10-14): the plugin is installed at user scope.
+  Signing in through the desktop app's `/mcp` failed (`redirect_uri is not
+  allowed`); signing in from the terminal `claude` CLI worked. If a session
+  still shows it `needs_auth`, that is where to sign in.
+
 ### Phase 2 -- the env in Warp kernels (most of the work)
 
 Each Python piece of `GeneralEnv` becomes a kernel over worlds. Develop and
