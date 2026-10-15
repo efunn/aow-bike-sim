@@ -25,7 +25,7 @@ from train_curve import KEYS
 
 
 def field(panel, key):
-    m = re.search(re.escape(key) + r"\s+(-?[\d.e+]+[KM]?|nan|-?inf)", panel)
+    m = re.search(re.escape(key) + r"\s+(-?[\d.]+(?:e[+-]?\d+)?[KM]?|nan|-?inf)", panel)
     return m.group(1) if m else None
 
 

@@ -40,7 +40,8 @@ BATCHED = ("body_mass", "geom_friction", "actuator_forcerange",
 class GpuGeneralEnv:
     def __init__(self, config: str, nworld: int, seed: int = 0, device=None,
                  nconmax: int = 32, njmax: int = 128, cfg_override=None,
-                 rebase: bool = True, shared_curriculum_envs: int = 0):
+                 rebase: bool = True, shared_curriculum_envs: int = 0,
+                 curriculum_lead: float = 0.0):
         from ..control.general_env import GeneralEnv, _load_rl_config
         cfg = _load_rl_config(config)
         if cfg_override:
@@ -102,8 +103,24 @@ class GpuGeneralEnv:
         # world picks the shared value up at its next reset, as a GeneralEnv
         # picks up its own at episode end. (2026-10-15, A40 run 2: per world
         # at 4096, difficulty ~0.013 after 20M steps; v3_s0 was at 1.0 by 5M.)
+        #
+        # curriculum_lead = L > 0 (shared only) counts a good episode only if
+        # it was PLAYED within L of the current shared value. An episode is
+        # credited at its end, 15 s after its world took the difficulty -- at
+        # 4096 worlds ~3M steps of lag, against ~24k for SB3's 32 envs -- so
+        # without it the value runs ahead of what any bike has shown: the
+        # 2026-10-15 next run went 0.14 -> 1.0 in 6.5M steps (~3200 gradient
+        # steps), and its 13M checkpoint held still while every one after the
+        # jump floored the hub. With L the value can rise at most ~L per
+        # episode length of training. 0 = off (the 10-15 runs' rule).
         self.shared_k = int(shared_curriculum_envs)
+        self.cur_lead = float(curriculum_lead)
+        if self.cur_lead > 0 and self.shared_k <= 0:
+            raise ValueError("curriculum_lead needs the shared curriculum")
         self.diff_shared = wp.full(1, float(env._diff), dtype=float, device=device)
+        # the value as of the last step's end: the lead's cutoff, fixed for a
+        # whole launch (shared[0] itself moves under the atomic adds)
+        self.diff_snap = wp.full(1, float(env._diff), dtype=float, device=device)
         self.c_cmd_step = self.c_cmd
         if self.shared_k > 0:
             if not env.cur_on:
@@ -215,7 +232,8 @@ class GpuGeneralEnv:
             wp.launch(_advance_shared, self.nworld, [
                 self.terminated, self.truncated, self.track_sum, self.track_n,
                 float(self.c_cmd.diff_thresh), float(self.c_cmd.diff_step) / self.shared_k,
-                self.diff_shared], device=self.device)
+                self.diff, self.cur_lead, self.diff_snap, self.diff_shared],
+                device=self.device)
         wp.launch(_done, self.nworld, [self.terminated, self.truncated, self.done],
                   device=self.device)
         wp.launch(_episode_stats, self.nworld, [
@@ -224,7 +242,8 @@ class GpuGeneralEnv:
             self.last_len, self.last_track, self.last_fell, self.last_diff],
             device=self.device)
         if self.shared_k > 0:   # after the stats: last_diff is the ENDED episode's
-            wp.launch(_take_shared, self.nworld, [self.done, self.diff_shared, self.diff],
+            wp.launch(_take_shared, self.nworld, [self.done, self.diff_shared, self.diff,
+                                                  self.diff_snap],
                       device=self.device)
         self._reset_done()
         return self.obs, self.reward, self.terminated, self.truncated
@@ -254,18 +273,22 @@ def _episode_stats(done: wp.array(dtype=int), term: wp.array(dtype=int),
 @wp.kernel
 def _advance_shared(term: wp.array(dtype=int), trunc: wp.array(dtype=int),
                     track_sum: wp.array(dtype=float), track_n: wp.array(dtype=int),
-                    thresh: float, inc: float, shared: wp.array(dtype=float)):
+                    thresh: float, inc: float, diff: wp.array(dtype=float),
+                    lead: float, snap: wp.array(dtype=float), shared: wp.array(dtype=float)):
     """commands.after_step's advance rule (a truncated episode whose mean
-    tracking clears the threshold), adding to the ONE shared difficulty."""
+    tracking clears the threshold), adding to the ONE shared difficulty --
+    with lead > 0, only from an episode played (diff[w], the difficulty its
+    world took at reset) within `lead` of the value at the last step's end."""
     w = wp.tid()
     if trunc[w] == 1 and term[w] == 0:
         if track_sum[w] / float(wp.max(1, track_n[w])) > thresh:
-            wp.atomic_add(shared, 0, inc)
+            if lead <= 0.0 or diff[w] >= snap[0] - lead:
+                wp.atomic_add(shared, 0, inc)
 
 
 @wp.kernel
 def _take_shared(done: wp.array(dtype=int), shared: wp.array(dtype=float),
-                 diff: wp.array(dtype=float)):
+                 diff: wp.array(dtype=float), snap: wp.array(dtype=float)):
     """Worlds about to reset take the shared difficulty, capped at 1. Every
     thread computes the same min, so world 0's write-back of the cap races
     with nobody's result."""
@@ -273,6 +296,7 @@ def _take_shared(done: wp.array(dtype=int), shared: wp.array(dtype=float),
     d = wp.min(1.0, shared[0])
     if w == 0:
         shared[0] = d
+        snap[0] = d
     if done[w] == 1:
         diff[w] = d
 

@@ -6,7 +6,8 @@
 # Run inside the Python env that exported the graph (it asks Warp where its
 # warp.so is, and which version it is). Clones PufferLib (public, no token)
 # at ea7f989 -- the commit docs/plans/gpu-training.md read and phase 1 built
-# -- if <puffer_dir> is absent. Copies aow_bike.cu to ocean/aow_bike/ and
+# -- if <puffer_dir> is absent, and patches its trainer (puffer_aow.patch).
+# Copies aow_bike.cu to ocean/aow_bike/ and
 # writes config/aow_bike.ini with the graph and Warp paths filled in. The
 # graph's world count must equal vec.total_agents there (4096 as shipped).
 # Then: cd <puffer_dir> && ./puffer train --headless
@@ -26,6 +27,12 @@ NW=$(python -c "import json; print(json.load(open('$STEM.json'))['nworld'])")
 [ -d "$PUF" ] || git clone -q https://github.com/PufferAI/PufferLib.git "$PUF"
 cd "$PUF"
 git checkout -q ea7f989
+# the temporal smoothness term, advantage normalisation and the gradient log
+# (each on only when aow_bike.cu defines its AOW_* switch). Reset first: a
+# rerun must not patch twice.
+git checkout -q -- src/algo.cu src/pufferl.cu
+git apply "$HERE/puffer_aow.patch"
+cp "$HERE/smooth_temporal.h" src/smooth_temporal.h
 # libomp: build.sh links -lomp5 on Linux (phase 1)
 if ! ldconfig -p | grep -q 'libomp5\.so '; then
     so=$(ldconfig -p | awk '/libomp\.so[ .]/{print $NF; exit}')

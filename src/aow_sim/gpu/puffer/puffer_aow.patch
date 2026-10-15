@@ -1,0 +1,166 @@
+diff --git a/src/algo.cu b/src/algo.cu
+index 7d667ea6..3293b8e1 100644
+--- a/src/algo.cu
++++ b/src/algo.cu
+@@ -1284,6 +1284,60 @@ enum LossIdx {
+ 
+ constexpr int PPO_THREADS = 256;
+ 
++// AoW bike: SmoothPPO's temporal term on the policy mean, switched on by the
++// env file (aow_bike.cu: #define AOW_SMOOTH_TEMPORAL <lambda>). Continuous only.
++#ifdef AOW_SMOOTH_TEMPORAL
++#include "smooth_temporal.h"
++#endif
++
++#ifdef AOW_NORM_ADV
++// SB3's normalize_advantage: per minibatch, (A - mean) / (std + 1e-8), in
++// place, after puff_advantage (returns are already written). One block.
++constexpr int AOW_NORM_THREADS = 1024;
++__global__ void aow_norm_adv(precision_t* adv, int n) {
++    __shared__ float s1[AOW_NORM_THREADS], s2[AOW_NORM_THREADS];
++    int tid = threadIdx.x;
++    float a = 0.0f, b = 0.0f;
++    for (int i = tid; i < n; i += AOW_NORM_THREADS) {
++        float v = to_float(adv[i]);
++        a += v;
++        b += v * v;
++    }
++    s1[tid] = a;
++    s2[tid] = b;
++    __syncthreads();
++    for (int s = AOW_NORM_THREADS / 2; s > 0; s >>= 1) {
++        if (tid < s) {
++            s1[tid] += s1[tid + s];
++            s2[tid] += s2[tid + s];
++        }
++        __syncthreads();
++    }
++    float mean = s1[0] / float(n);
++    float var = fmaxf(s2[0] / float(n) - mean * mean, 0.0f);
++    float inv = 1.0f / (sqrtf(var) + 1e-8f);
++    for (int i = tid; i < n; i += AOW_NORM_THREADS) {
++        adv[i] = from_float((to_float(adv[i]) - mean) * inv);
++    }
++}
++#endif
++
++#ifdef AOW_GRAD_LOG
++// Gradient norms on the policy MEAN (d loss / d mu, summed over an epoch's
++// minibatches): [0] PPO's clipped surrogate, [1] the temporal term. One
++// line per epoch: "AOW_GRAD pg <rms> smooth <rms> ratio <smooth/pg>".
++// SmoothPPO's weights were chosen in PARAMETER space (policy-smoothness-
++// losses.md §4: the term at ~1/4 of PPO's actor gradient), so this ratio
++// is the same idea measured at the network's output, not the same number.
++__device__ float aow_gn[2];
++__global__ void aow_grad_report() {
++    float pg = sqrtf(aow_gn[0]), sm = sqrtf(aow_gn[1]);
++    printf("AOW_GRAD pg %.4e smooth %.4e ratio %.4f\n", pg, sm, pg > 0.0f ? sm / pg : 0.0f);
++    aow_gn[0] = 0.0f;
++    aow_gn[1] = 0.0f;
++}
++#endif
++
+ // Per-env from ENV_HEADER (ocean/<env>/<env>.h).
+ #ifndef NUM_ATNS
+ #error "ENV_HEADER must #define NUM_ATNS (number of action heads)"
+@@ -1314,6 +1368,7 @@ struct PPOGraphArgs {
+     const precision_t* advantages;
+     const precision_t* values;
+     const precision_t* returns;
++    const precision_t* terminals;   // (N, T): AOW_SMOOTH_TEMPORAL's episode cuts
+ };
+ 
+ struct PPOKernelArgs {
+@@ -1542,6 +1597,8 @@ __global__ void ppo_loss_compute(
+         }
+         float d_new_logp = d_ratio * ratio;
+         float total_entropy = 0.0f;
++        float smooth_loss = 0.0f;
++        float pg_sq = 0.0f, sm_sq = 0.0f;
+ 
+         if (a.is_continuous) {
+             for (int h = 0; h < a.num_atns; ++h) {
+@@ -1556,9 +1613,41 @@ __global__ void ppo_loss_compute(
+                 float var = std * std;
+                 float diff = c_action - mean;
+                 a.grad_logits[at_base + h] = d_new_logp * diff / var;
++#ifdef AOW_GRAD_LOG
++                pg_sq += (d_new_logp * diff / var) * (d_new_logp * diff / var);
++#endif
+                 a.grad_logstd[nt * a.num_atns + h] =
+                     d_new_logp * (diff * diff / var - 1.0f) + d_entropy_term;
+             }
++#ifdef AOW_SMOOTH_TEMPORAL
++            {
++                int t = nt % a.T_seq;
++                int stride = a.A_total + 1;
++                bool term_here = to_float(g.terminals[nt]) != 0.0f;
++                int has_prev = t > 0 && !term_here
++                    && to_float(g.terminals[nt - 1]) == 0.0f;
++                int has_next = t + 1 < a.T_seq && !term_here
++                    && to_float(g.terminals[nt + 1]) == 0.0f;
++                float mu[NUM_ATNS], mu_p[NUM_ATNS], mu_n[NUM_ATNS], gs[NUM_ATNS];
++                for (int h = 0; h < a.num_atns; ++h) {
++                    mu[h] = safe_continuous_mean(a.logits, logits_base + h);
++                    mu_p[h] = has_prev
++                        ? safe_continuous_mean(a.logits, logits_base - stride + h) : 0.0f;
++                    mu_n[h] = has_next
++                        ? safe_continuous_mean(a.logits, logits_base + stride + h) : 0.0f;
++                }
++                smooth_loss = aow_smooth_temporal(mu_p, mu, mu_n, has_prev, has_next,
++                    a.num_atns, AOW_SMOOTH_TEMPORAL, inv_NT, gs);
++                for (int h = 0; h < a.num_atns; ++h) {
++                    a.grad_logits[at_base + h] += gs[h];
++                    sm_sq += gs[h] * gs[h];
++                }
++            }
++#endif
++#ifdef AOW_GRAD_LOG
++            atomicAdd(&aow_gn[0], pg_sq);
++            atomicAdd(&aow_gn[1], sm_sq);
++#endif
+         } else {
+ #ifdef PUFFER_NETHACK
+             int verb = (int)g.actions[nt * a.num_atns];
+@@ -1607,7 +1696,7 @@ __global__ void ppo_loss_compute(
+         }
+ 
+         float thread_loss = (pg_loss + a.vf_coef * v_loss
+-            - ent_coef * total_entropy) * inv_NT;
++            - ent_coef * total_entropy) * inv_NT + smooth_loss;
+ 
+         block_losses[LOSS_PG][tid] = pg_loss * inv_NT;
+         block_losses[LOSS_VF][tid] = v_loss * inv_NT;
+@@ -1660,6 +1749,7 @@ void ppo_loss_fwd_bwd(
+         .advantages = graph.mb_advantages.data,
+         .values = graph.mb_values.data,
+         .returns = graph.mb_returns.data,
++        .terminals = graph.mb_terminals.data,
+     };
+ 
+     PPOKernelArgs args = {
+diff --git a/src/pufferl.cu b/src/pufferl.cu
+index 14be4eb2..d5f519b5 100644
+--- a/src/pufferl.cu
++++ b/src/pufferl.cu
+@@ -1537,6 +1537,10 @@ static void train_epoch_gpu(PuffeRL* pufferl, RolloutBuf src, int slot,
+             hypers->gamma, hypers->gae_lambda,
+             hypers->vtrace_rho_clip, hypers->vtrace_c_clip, Nmb, Tmb);
+         graph.mb_returns = graph.mb_gae_v;
++#ifdef AOW_NORM_ADV
++        aow_norm_adv<<<1, AOW_NORM_THREADS, 0, stream>>>(
++            graph.mb_advantages.data, Nmb * Tmb);
++#endif
+ 
+         ppo_loss_fwd_bwd(dec, p_logstd, graph,
+             pufferl->act_sizes, pufferl->losses,
+@@ -1564,6 +1568,9 @@ static void train_epoch_gpu(PuffeRL* pufferl, RolloutBuf src, int slot,
+                 primary->param.data, primary->master_weights.data, n);
+         }
+     }
++#ifdef AOW_GRAD_LOG
++    aow_grad_report<<<1, 1, 0, stream>>>();
++#endif
+     puf_stamp<<<1, 1, 0, stream>>>(st + TE_E);
+ }
+ 

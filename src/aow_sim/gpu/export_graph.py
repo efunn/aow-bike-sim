@@ -44,7 +44,7 @@ OUTPUTS = ("obs", "reward", "terminated", "truncated", "ep_end", "last_ret",
 
 
 def export(config: str, nworld: int, out: str, seed: int = 0, device=None,
-           curriculum_envs: int = 32) -> dict:
+           curriculum_envs: int = 32, curriculum_lead: float = 0.1) -> dict:
     import mujoco
     import mujoco_warp
 
@@ -52,8 +52,10 @@ def export(config: str, nworld: int, out: str, seed: int = 0, device=None,
 
     # Training graphs share one curriculum difficulty, paced as v3's 32 SB3
     # envs (env.py, shared_curriculum_envs); 0 = GeneralEnv's per-world rule.
+    # Credit only from episodes played within curriculum_lead of it (env.py).
     env = GpuGeneralEnv(config, nworld=nworld, seed=seed, device=device,
-                        shared_curriculum_envs=curriculum_envs)
+                        shared_curriculum_envs=curriculum_envs,
+                        curriculum_lead=curriculum_lead if curriculum_envs > 0 else 0.0)
     act_in = wp.zeros((nworld, 3), dtype=float, device=device)
     env.reset()
     env.step(act_in)            # compile every kernel and module before the capture
@@ -72,7 +74,8 @@ def export(config: str, nworld: int, out: str, seed: int = 0, device=None,
         "seed": seed, "device": str(wp.get_device(device)),
         "substeps": env.substeps, "ctrl_dt": env.cpu.ctrl_dt,
         "max_steps": int(env.cpu.max_steps), "buffers": bufs,
-        "curriculum": ({"shared": True, "envs": curriculum_envs} if curriculum_envs > 0
+        "curriculum": ({"shared": True, "envs": curriculum_envs, "lead": env.cur_lead}
+                       if curriculum_envs > 0
                        else {"shared": False}),
         "versions": {"warp": wp.__version__, "mujoco": mujoco.__version__,
                      "mujoco_warp": getattr(mujoco_warp, "__version__", "?")},
@@ -89,10 +92,13 @@ if __name__ == "__main__":
     ap.add_argument("--out", default="graphs/aow_bike")
     ap.add_argument("--curriculum-envs", type=int, default=32,
                     help="shared difficulty paced as this many per-env curricula; 0 = per world")
+    ap.add_argument("--curriculum-lead", type=float, default=0.1,
+                    help="credit only episodes played within this of the shared value; 0 = off")
     a = ap.parse_args()
     wp.config.quiet = True
     wp.init()
-    meta = export(a.config, a.nworld, a.out, a.seed, curriculum_envs=a.curriculum_envs)
+    meta = export(a.config, a.nworld, a.out, a.seed, curriculum_envs=a.curriculum_envs,
+                  curriculum_lead=a.curriculum_lead)
     size = sum(f.stat().st_size for f in Path(a.out).parent.rglob("*")
                if f.is_file() and f.name.startswith(Path(a.out).name))
     print(json.dumps({"saved": a.out, "nworld": meta["nworld"], "device": meta["device"],

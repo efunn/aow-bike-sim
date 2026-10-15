@@ -8,7 +8,9 @@ training -- read the rows before them. What to watch: kl and clipfrac
 (PPO is usually comfortable at kl ~0.01-0.05; the 2026-10-15 run sat at
 0.7-2.5 before it went to NaN), entropy (collapse below ~0.2 is a warning),
 episode_length / fall_rate, and difficulty (shared curriculum: it should
-climb once episodes reach 750 steps).
+climb once episodes reach 750 steps). pg_grad and s/pg come from the
+patched trainer's "AOW_GRAD" line (puffer_aow.patch): PPO's gradient on the
+policy mean, and the temporal term's as a fraction of it ("-" before it).
 """
 import argparse
 import re
@@ -16,7 +18,8 @@ import re
 KEYS = [("Epoch", "epoch"), ("Steps", "steps"), ("SPS", "sps"),
         ("episode_length", "len"), ("episode_return", "ret"), ("fall_rate", "fall"),
         ("track", "track"), ("difficulty", "diff"), ("entropy", "ent"),
-        (" kl", "kl"), ("clipfrac", "clip")]
+        (" kl", "kl"), ("clipfrac", "clip"), ("AOW_GRAD pg", "pg_grad"),
+        ("ratio", "s/pg")]
 
 
 def main():
@@ -33,7 +36,7 @@ def main():
             continue
         row = []
         for k, _ in KEYS:
-            m = re.search(re.escape(k) + r"\s+(-?[\d.e+]+[KM]?)", p)
+            m = re.search(re.escape(k) + r"\s+(-?[\d.]+(?:e[+-]?\d+)?[KM]?)", p)
             row.append(m.group(1) if m else "-")
         print("  ".join(f"{v:>8}" for v in row))
 

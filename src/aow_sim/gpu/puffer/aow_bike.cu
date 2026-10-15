@@ -38,6 +38,33 @@
 
 #define PUF_BACKEND PUF_GPU
 
+// Three changes to PufferLib's trainer, made by puffer_aow.patch (install.sh
+// applies it) and switched on here, so they reach this env's build only:
+//
+// AOW_SMOOTH_TEMPORAL: SmoothPPO's temporal term on the policy mean
+// (smooth_temporal.h), in PPO's loss. The CPU stack's weight (config/rl_general_v3.yaml, algo.smooth.temporal),
+// CHOSEN, not swept: one gradient-ratio point on SB3's trained MLP actor put
+// the term at ~1/4 of PPO's policy gradient (policy-smoothness-losses.md §4).
+// Not re-measured on this net. Remove the line to train without it.
+#define AOW_SMOOTH_TEMPORAL 0.04f
+// AOW_NORM_ADV: advantages normalised per minibatch, as SB3 does. PufferLib
+// uses them raw, so ent_coef and the temporal weight above would mean
+// whatever the reward's scale made them.
+#define AOW_NORM_ADV
+// AOW_GRAD_LOG: one "AOW_GRAD pg .. smooth .. ratio .." line per epoch in
+// train.log -- the temporal term's gradient against PPO's, at the policy
+// mean (watch.py shows the ratio).
+#define AOW_GRAD_LOG
+// The reward PufferLib TRAINS on, scaled: it clamps every training reward to
+// [-1, 1] (pufferl.cu:1487 @ ea7f989). Unscaled, a step reaches 3.0 (w_vel
+// 1.5 + w_head 1.0 + w_alive 0.5), so once the heading error is under ~21 deg
+// heading + alive alone hit the clamp and VELOCITY TRACKING EARNED NOTHING;
+// a fall's -50 was -1. Every PufferLib run to 2026-10-15 trained that way --
+// and the next run's checkpoints tracked heading and ignored speed. x 0.02
+// puts a fall at ~-1 and keeps every ratio. The dashboard's episode_return
+// is the env's own (last_ret), unscaled.
+#define AOW_REWARD_SCALE 0.02f
+
 #include <cuda.h>
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
@@ -153,7 +180,7 @@ __global__ void ab_out(int n, const float* obs, const float* reward, const int* 
     for (int j = 0; j < OBS_SIZE; j++) {
         observations[i * OBS_SIZE + j] = AB_OBS(obs[i * OBS_SIZE + j]);
     }
-    rewards[i] = reward[i];
+    rewards[i] = AOW_REWARD_SCALE * reward[i];
     terminals[i] = (terminated[i] | truncated[i]) ? 1.0f : 0.0f;
     if (ep_end[i]) {
         Log* log = &envs[i].log;

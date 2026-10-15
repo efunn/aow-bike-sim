@@ -722,8 +722,73 @@ steer samples clip to +-1, so widening it costs little while `ent_coef
 difficulty 1 was earned by moving -- the training panels' track ~0.43
 said the same. Not established which of phase 4's differences causes it
 (no `bound` / `temporal` loss terms, so the mean is free past the clip;
-no obs normalization; time limits as terminals); the bound term is the
-cheapest to test.
+no obs normalization; time limits as terminals).
+
+The 13.1M checkpoint (difficulty 0.14 then) DID hold still: standstill
+max |v| 0.09-0.14 m/s, mean |hub| 0.01-0.03, as v3_s0; eval survive 0.40.
+So hold was learned, then lost when the curriculum jumped to 1.0 (hold
+share ~30% -> 10%, speeds to 1.2 m/s, moving turns open) [measured]. The
+command sampler is not it: reverse is 50.1% of moving commands at every
+difficulty, Warp and numpy alike (the phase 2 parity check compared |v|,
+never the sign; checked now). The bound term is NOT the lever: on the CPU
+stack it moved the saturation and nothing else
+(`policy-smoothness-losses.md` §5.1); temporal was.
+
+**PufferLib clamps the reward it trains on to [-1, 1]** [read:
+`src/pufferl.cu:1487` @ ea7f989, unconditional, before the advantages].
+Our step reward reaches 3.0 (w_vel 1.5 + w_head 1.0 + w_alive 0.5), so
+once the heading error is under ~21 deg (r_head >= 0.5) heading + alive
+alone hit the clamp and **velocity tracking earned nothing**; a fall's -50
+was -1. Every PufferLib run to date trained that way, and the next run's
+checkpoints did exactly what that rewards: heading to 10 deg, speed
+ignored [reasoned -- it fits, it is not isolated]. SB3 never saw it
+(VecNormalize scales the reward, `norm_reward=True`). Nor does PufferLib
+normalise advantages (`puff_advantage`, `ppo_loss_compute` use them raw),
+so `ent_coef` and any loss weight meant whatever the reward scale made
+them; SB3 normalises per minibatch.
+
+**The run after (written 2026-10-15; not run).** Same runbook, four
+changes, all on by default -- one run cannot separate them. Three are in
+PufferLib's trainer, via `src/aow_sim/gpu/puffer/puffer_aow.patch`
+(`install.sh` resets `src/algo.cu` and `src/pufferl.cu` and applies it),
+each behind an `AOW_*` switch that `aow_bike.cu` defines -- so only this
+env's build gets them. The patched trainer has NOT been compiled (no CUDA
+here): the pod's build step is its first nvcc.
+
+- **Reward scale** (`AOW_REWARD_SCALE 0.02`, `ab_out`): the reward
+  PufferLib trains on x 0.02, a fall ~-1, nothing clamped, every ratio
+  kept. The dashboard's `episode_return` is the env's own `last_ret`,
+  unscaled, so it stays comparable with the runs above.
+- **Advantages normalised per minibatch** (`AOW_NORM_ADV`, kernel
+  `aow_norm_adv` after `puff_advantage`): (A - mean) / (std + 1e-8), as SB3.
+- **SmoothPPO's temporal term** (`AOW_SMOOTH_TEMPORAL 0.04`):
+  `smooth_temporal.h`, lam (mu_{t+1} - mu_t)^2 per pair inside one episode,
+  on the mean before the clip, called from `ppo_loss_compute`. 0.04 is the
+  CPU weight -- chosen, not swept: one gradient-ratio point on the CPU
+  stack's trained MLP actor put the term at ~1/4 of PPO's policy gradient
+  (`policy-smoothness-losses.md` §4); not re-measured on PufferLib's MinGRU
+  or from scratch. `analysis/gpu/phase3/check_smooth.py`: loss against a
+  numpy reference 1.6e-7, gradient against finite differences 5e-10, with
+  terminals.
+- **Its gradient, logged** (`AOW_GRAD_LOG`): one `AOW_GRAD pg .. smooth ..
+  ratio ..` line per epoch -- the two terms' gradient norms on the policy
+  mean; `train_curve.py` / `watch.py` show them as `pg_grad`, `s/pg`. The
+  CPU's quarter was in PARAMETER space, so the ratio here is the same idea
+  at the network's output, not the same number.
+- **A paced curriculum**: `export_graph --curriculum-lead 0.1` (the
+  default; 0 = the rule above). A good episode counts only if it was
+  played within 0.1 of the shared value as of the last step, so the value
+  rises at most ~0.1 per episode length of training (~3M steps at 4096
+  worlds): 0 -> 1 in >= ~30M steps rather than 0.14 -> 1 in 6.5M
+  [reasoned]. Checked on the Mac (Warp CPU): the cutoff credits 0.40 and
+  refuses 0.399 at a shared 0.50; a 16-world smoke run is identical with
+  and without it while it does not bind.
+
+Judge it as above, plus: does difficulty climb steadily instead of
+jumping; do checkpoints past difficulty ~0.5 still hold still and reverse
+(`standstill.py`; the eval yaml's `speed_ratio_rev`); `s/pg` in the first
+epochs (if far from ~0.25, the weight is the next thing to move). If the
+build fails, the patch is the suspect: `results/build.log`.
 
 **The pod run, 2026-10-14** (A40 secure EU-SE-1, $0.59/h, ~21 min,
 ~$0.21; results in `analysis/gpu/phase3/results_a40/`) [measured]:
