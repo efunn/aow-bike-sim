@@ -13,7 +13,8 @@
 > see phase 3). A 1 h run collapsed to NaN at ~33M (unclipped actions in
 > the penalties + lr too hot, both fixed, untested); its policies survive
 > by never standing still. Checkpoints now convert to moves
-> (`gpu/export_policy.py`). Phases 4-5 not started.
+> (`gpu/export_policy.py`). **Next: phase 3's "The next run" -- a
+> step-by-step runbook.** Phases 4-5 not started. (Updated 2026-10-15.)
 > Goal (user): the whole
 > physics + RL stack on one NVIDIA GPU -- MuJoCo Warp for the bike,
 > PufferLib 5.0's PPO for the learner. Phases are gated: each one ends in a
@@ -623,11 +624,62 @@ terminals** (PufferLib 5.0 has no truncation signal, SB3 bootstraps them);
 no smoothness terms; `puf_reset` only re-emits the saved reset state (fine
 at startup, wrong if PufferLib resets mid-run).
 
-**On the pod:** `pod_setup.sh`, then `bash analysis/gpu/phase3/run_pod.sh`
-(and `bash analysis/gpu/phase2/run_pod.sh eval profile` for phase 2's
-leftovers on the same rental). What decides it: the trainer starts and
-loads the graph, `env/episode_length` and `env/fall_rate` move off their
-random-policy values, and SPS end to end against the box's ~2.1k.
+**The next run (written 2026-10-15; nothing below has run yet).** The 1 h
+run's setup with both collapse fixes: actions clipped in `aow_bike.cu`
+(`ab_in`; syntax-checked, never compiled), `learning_rate 0.005` cosine to
+0.001 over `total_timesteps 80M`, minibatch 8192 x replay 4 (128 gradient
+steps an epoch), horizon 64, checkpoints every 25 epochs (~6.5M steps),
+the shared curriculum (K 32, `export_graph`'s default), 4096 worlds. The
+question it answers: with the collapse fixed, does it keep improving past
+~30M, does difficulty climb, and do its checkpoints STAND STILL?
+A40 secure, EU-SE-1, $0.59/h; ~65 min for 1 h of training, ~$0.65.
+
+1. **Confirm with the user** GPU type and $/h. Then `create-pod`: image
+   `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`, cloud SECURE, gpu
+   `NVIDIA A40` x1, `dataCenterIds ["EU-SE-1"]` (CA-MTL-1 gave a dead
+   CUDA driver once), disk 40, ports `["22/tcp"]`, env `PUBLIC_KEY` = the
+   contents of `~/.ssh/id_ed25519.pub`.
+2. **Bundle** (meanwhile): `bash analysis/gpu/bundle.sh <scratch>/bundle.tgz`.
+   Newest Warp cache (sm_86; only the env module recompiles, ~8 s):
+   `analysis/gpu/phase3/results_a40_run2/warp-cache.tgz` (git-ignored).
+3. **Wait for SSH:** `get-pod` until `runtime.ports` has the 22/tcp
+   mapping, then in the BACKGROUND: `bash analysis/gpu/phase1/wait_ssh.sh
+   <ip> <port> <createdAt epoch>` (~75 s from create). Then check the GPU
+   works before copying anything: `ssh ... 'python3 -c "import torch;
+   torch.zeros(1).cuda()"'` (setup also asserts it, but this costs nothing).
+4. **Copy and launch** (`-o BatchMode=yes -p <port> root@<ip>`):
+   `scp bundle.tgz warp-cache.tgz root@ip:/root/`, then
+   `ssh ... 'mkdir -p ~/aow && cd ~/aow && tar xzf ~/bundle.tgz &&
+   (TRAIN_S=3600 nohup bash analysis/gpu/phase3/pod_launch.sh > launch.log
+   2>&1 < /dev/null &)'`.
+5. **Watch,** all in the background:
+   - ~5 min: `results/timings.jsonl` (export compiled 1 / cached 42) and
+     the last training panel -- SPS ~24k, kl small.
+   - halfway (user's habit): `scp` `results/train.log`, then
+     `python analysis/gpu/phase3/train_curve.py train.log`; list
+     `~/puffer/checkpoints/aow_bike/*/` and pull them. **If kl stays
+     >> 0.1 or entropy falls under ~0.2, say so; if the return goes
+     astronomic or kl/clipfrac drop to 0 with entropy pinned at 4.257,
+     it is NaN -- stop and report** (2026-10-15's run spent 25 min dead).
+   - the end: ONE ssh blocking on `results/ALL_DONE` (not `DONE`: run_pod.sh
+     writes that earlier).
+6. **Pull** `rsync -a -e "ssh -p <port>" root@ip:aow/results/
+   analysis/gpu/phase3/results_<tag>/` plus `aow/graphs/aow_bike_4096.json`
+   and `puffer/config/aow_bike.ini` into its `checkpoints/`. Then
+   **TERMINATE** (`delete-pod`) and confirm with `list-pods`.
+7. **Judge it here:** `python analysis/gpu/phase3/train_curve.py
+   .../train.log`; convert two or three checkpoints (`python -m
+   aow_sim.gpu.export_policy CKPT.bin --graph-meta .../aow_bike_4096.json
+   --ini .../aow_bike.ini --name general_puffer_<tag>_<steps>`, which also
+   runs the 20-command eval into the yaml); `python
+   analysis/gpu/phase3/standstill.py general_rl_v3_s0 <those names>`. Then
+   teleop. Write the numbers into this section, `[measured]`.
+
+What would say it worked: no NaN; kl mostly < ~0.1; fall_rate well under
+0.3 by 30-40M and still falling; difficulty clearly above 0.03; a
+checkpoint whose standstill max |v| is near v3_s0's 0.10-0.17 m/s. If it
+learns but never stands still, the next levers are reward-side (phase 4),
+not the optimizer.
 
 **The pod run, 2026-10-14** (A40 secure EU-SE-1, $0.59/h, ~21 min,
 ~$0.21; results in `analysis/gpu/phase3/results_a40/`) [measured]:
