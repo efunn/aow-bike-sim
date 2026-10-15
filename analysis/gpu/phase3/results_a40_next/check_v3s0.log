@@ -1,0 +1,9 @@
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.18.0
+Module bench_env 3d29957 load on device 'cuda:0' took 0.83 ms  (cached)
+{"stem": "graphs/aow_bike_4096", "actions": "moves/general_rl_v3_s0.npz", "nworld": 4096, "steps": 300, "device": "NVIDIA A40", "falls": 0, "episode_ends": 0, "reward_per_step": 2.8853, "ended_len_mean": null, "ended_return_mean": null, "ended_track_mean": null, "ended_difficulty_mean": null, "max_steps": 750}

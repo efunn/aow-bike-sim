@@ -1,0 +1,97 @@
+{
+ "nworld": 4096,
+ "obs_dim": 17,
+ "act_dim": 3,
+ "config": "config/rl_general_v3.yaml",
+ "config_sha256": "45312bdc896ca0082ad844751de4bc76971e3a505b99431b1934f90f902ed9ec",
+ "seed": 0,
+ "device": "cuda:0",
+ "substeps": 50,
+ "ctrl_dt": 0.02,
+ "max_steps": 750,
+ "buffers": {
+  "act_in": {
+   "dtype": "float32",
+   "shape": [
+    4096,
+    3
+   ]
+  },
+  "obs": {
+   "dtype": "float32",
+   "shape": [
+    4096,
+    17
+   ]
+  },
+  "reward": {
+   "dtype": "float32",
+   "shape": [
+    4096
+   ]
+  },
+  "terminated": {
+   "dtype": "int32",
+   "shape": [
+    4096
+   ]
+  },
+  "truncated": {
+   "dtype": "int32",
+   "shape": [
+    4096
+   ]
+  },
+  "ep_end": {
+   "dtype": "int32",
+   "shape": [
+    4096
+   ]
+  },
+  "last_ret": {
+   "dtype": "float32",
+   "shape": [
+    4096
+   ]
+  },
+  "last_len": {
+   "dtype": "int32",
+   "shape": [
+    4096
+   ]
+  },
+  "last_track": {
+   "dtype": "float32",
+   "shape": [
+    4096
+   ]
+  },
+  "last_fell": {
+   "dtype": "int32",
+   "shape": [
+    4096
+   ]
+  },
+  "last_diff": {
+   "dtype": "float32",
+   "shape": [
+    4096
+   ]
+  },
+  "diff_shared": {
+   "dtype": "float32",
+   "shape": [
+    1
+   ]
+  }
+ },
+ "curriculum": {
+  "shared": true,
+  "envs": 32
+ },
+ "versions": {
+  "warp": "1.18.0",
+  "mujoco": "3.10.0",
+  "mujoco_warp": "3.10.0.3"
+ }
+}

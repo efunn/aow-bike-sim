@@ -681,6 +681,50 @@ checkpoint whose standstill max |v| is near v3_s0's 0.10-0.17 m/s. If it
 learns but never stands still, the next levers are reward-side (phase 4),
 not the optimizer.
 
+**It ran, 2026-10-15** (A40 EU-SE-1, ~70 min, ~$0.69;
+`analysis/gpu/phase3/results_a40_next/`, rows from
+`analysis/gpu/phase3/watch.py`, which now runs on the pod and prints one
+row per checkpoint) [measured]:
+
+| epoch | steps | len | fall | difficulty | entropy | kl | clipfrac |
+|---|---|---|---|---|---|---|---|
+| 25 | 6.6M | 63 | 1.000 | 0.000 | 2.67 | 0.056 | 0.34 |
+| 50 | 13.1M | 609 | 0.290 | 0.138 | 1.46 | 0.173 | 0.42 |
+| 75 | 19.7M | 523 | 0.621 | 1.000 | 1.57 | 0.475 | 0.64 |
+| 125 | 32.8M | 663 | 0.273 | 1.000 | 2.82 | 0.352 | 0.60 |
+| 200 | 52.4M | 649 | 0.289 | 1.000 | 3.58 | 0.273 | 0.59 |
+| 287 | 75.2M | 694 | 0.194 | 1.000 | 4.34 | 0.303 | 0.61 |
+
+**No NaN** past the 1 h run's 34.6M: the action clip held. The shared
+curriculum went 0.14 -> 1.0 in ~6.5M steps (25 epochs, ~3200 gradient
+steps; SB3 takes ~24k gradient steps over v3's ramp), and its credit is
+~3M steps stale at 4096 worlds -- a good episode counts at its end, at
+the difficulty taken 15 s earlier [reasoned]. kl never came under 0.1.
+Entropy rose from epoch 75 on, all of it the STEER channel's logstd
+(std 0.72 at 26M -> 1.66 at 46M; hub and diff ~0.5): past std 1 most
+steer samples clip to +-1, so widening it costs little while `ent_coef
+0.005` pays for it [reasoned].
+
+**And it does not stand still -- it floors the hub.** Converted 32.8M,
+45.9M, 72.1M (`general_puffer_next_<N>M`):
+
+| policy | eval survive | track | vel_err | hold drift | standstill max \|v\| | mean \|hub\| |
+|---|---|---|---|---|---|---|
+| general_rl_v3_s0 | 1.00 | 0.72 | 0.09 | 0.08 m | 0.10-0.16 m/s | 0.02-0.03 |
+| next_32M | 1.00 | 0.29 | 0.96 | 6.0 m | 1.37-1.43 | 0.96-0.97 |
+| next_45M | 0.85 | 0.35 | 1.02 | 5.2 m | 1.20-1.30 | 0.94-0.96 |
+| next_72M | 1.00 | 0.40 | 0.89 | 5.4 m | 1.28-1.31 | 0.96-0.99 |
+
+(Eval columns: each yaml's 20-command grid, same code as v3_s0's; standstill:
+`standstill.py`, 4 seeds, zero command.) Every checkpoint drives at
+~1.3 m/s from 0.1 s after reset, whatever the command; it tracks HEADING
+(72M head_err 10 deg) and ignores SPEED. So "survives 15 s" at
+difficulty 1 was earned by moving -- the training panels' track ~0.43
+said the same. Not established which of phase 4's differences causes it
+(no `bound` / `temporal` loss terms, so the mean is free past the clip;
+no obs normalization; time limits as terminals); the bound term is the
+cheapest to test.
+
 **The pod run, 2026-10-14** (A40 secure EU-SE-1, $0.59/h, ~21 min,
 ~$0.21; results in `analysis/gpu/phase3/results_a40/`) [measured]:
 

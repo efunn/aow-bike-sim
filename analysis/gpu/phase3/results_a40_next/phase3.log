@@ -1,0 +1,61 @@
+{"step":"pip_phase3","rc":0,"wall_s":2.31129}
+{"step":"export","rc":0,"wall_s":7.894}
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.65 ms  (cached)
+Module aow_sim.gpu.env c939032 load on device 'cuda:0' took 863.78 ms  (compiled)
+{"saved": "graphs/aow_bike_4096", "nworld": 4096, "device": "cuda:0", "mb": 196.6}
+188M	graphs/aow_bike_4096.wrp
+9.2M	graphs/aow_bike_4096_modules
+{"step":"check_v3s0","rc":0,"wall_s":55.2842}
+     /root/.cache/warp/1.18.0
+Module bench_env 3d29957 load on device 'cuda:0' took 0.83 ms  (cached)
+{"stem": "graphs/aow_bike_4096", "actions": "moves/general_rl_v3_s0.npz", "nworld": 4096, "steps": 300, "device": "NVIDIA A40", "falls": 0, "episode_ends": 0, "reward_per_step": 2.8853, "ended_len_mean": null, "ended_return_mean": null, "ended_track_mean": null, "ended_difficulty_mean": null, "max_steps": 750}
+{"step":"check_random","rc":0,"wall_s":19.7159}
+   Kernel cache:
+     /root/.cache/warp/1.18.0
+{"stem": "graphs/aow_bike_4096", "actions": "random", "nworld": 4096, "steps": 100, "device": "NVIDIA A40", "falls": 16921, "episode_ends": 16921, "reward_per_step": -0.045, "ended_len_mean": 21.4, "ended_return_mean": -6.58, "ended_track_mean": 0.771, "ended_difficulty_mean": 0.0, "max_steps": 750}
+{"step":"build","rc":0,"wall_s":59.9689}
+Compiling ocean/aow_bike/aow_bike.cu -> puffer...
+Built: ./puffer
+built /root/puffer/puffer for aow_bike (4096 worlds, graph /root/aow/graphs/aow_bike_4096)
+{"step":"train","rc":124,"wall_s":3600.2}
+│ Uptime    59m 29s 364ms      Model       236ms   1%    kl           0.290    │
+│ To go      4m 10s 180ms      Misc          0ms   0%    clipfrac     0.590    │
+│                                                                              │
+│ score                         0.436   perf                          0.436    │
+│ episode_return              847.724   episode_length              678.095    │
+│ fall_rate                     0.202   track                         0.436    │
+│ difficulty                    1.000                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ PufferLib 5.0  🐡              GPU: 100%   VRAM:   3.7/44G    RAM:  0.8G     │
+│                                                                              │
+│ Env            aow_bike    Evaluate     13s 17  98%    Losses      23.838    │
+│ Params            51.8K      Model         4ms   0%    policy       0.349    │
+│ Steps             75.0M      Env        13s 17  98%    value       47.023    │
+│ SPS               19.9K      Copy          0ms   0%    entropy      4.362    │
+│ Epoch               286    Train         240ms   1%    old_kl       0.243    │
+│ Uptime    59m 42s 540ms      Model       240ms   1%    kl           0.239    │
+│ To go      4m 10s 355ms      Misc          0ms   0%    clipfrac     0.561    │
+│                                                                              │
+│ score                         0.424   perf                          0.424    │
+│ episode_return              854.775   episode_length              702.125    │
+│ fall_rate                     0.157   track                         0.424    │
+│ difficulty                    1.000                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ PufferLib 5.0 🐡               GPU: 100%   VRAM:   3.7/44G    RAM:  0.8G     │
+│                                                                              │
+│ Env            aow_bike    Evaluate     12s 54  98%    Losses      17.703    │
+│ Params            51.8K      Model         4ms   0%    policy       0.477    │
+│ Steps             75.2M      Env        12s 53  98%    value       34.496    │
+│ SPS               20.9K      Copy          0ms   0%    entropy      4.335    │
+│ Epoch               287    Train         239ms   1%    old_kl       0.305    │
+│ Uptime    59m 55s 082ms      Model       239ms   1%    kl           0.303    │
+│ To go      3m 45s 760ms      Misc          0ms   0%    clipfrac     0.607    │
+│                                                                              │
+│ score                         0.430   perf                          0.430    │
+│ episode_return              851.263   episode_length              693.936    │
+│ fall_rate                     0.194   track                         0.430    │
+│ difficulty                    1.000                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+{"step":"warp_cache","rc":0,"wall_s":0.719088}
