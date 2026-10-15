@@ -9,8 +9,8 @@ reads `obs`, writes `act_in`, the graph launches. Reports falls, reward per
 step, and the episode summaries the C side turns into PufferLib's logs
 (ep_end, last_*), so a wrong buffer or a stale reset shows here first.
 
-  python analysis/gpu_phase3/check_graph.py graphs/aow_bike_4096 --steps 300
-  python analysis/gpu_phase3/check_graph.py graphs/aow_bike_4096 --steps 100 --random
+  python analysis/gpu/phase3/check_graph.py graphs/aow_bike_4096 --steps 300
+  python analysis/gpu/phase3/check_graph.py graphs/aow_bike_4096 --steps 100 --random
 """
 import argparse
 import json
@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import warp as wp
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gpu_phase2"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "phase2"))
 from bench_env import WarpMLP                                   # noqa: E402
 
 DT = {"float32": wp.float32, "int32": wp.int32}

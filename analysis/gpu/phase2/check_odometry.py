@@ -3,7 +3,7 @@ front), on the recorded reference: each episode a world, every 100 Hz tick
 fed the sensors and the AHRS reading that tick produced, the estimate
 compared with the one the Python estimator held after that tick.
 
-  python analysis/gpu_phase2/check_odometry.py
+  python analysis/gpu/phase2/check_odometry.py
 """
 import argparse
 

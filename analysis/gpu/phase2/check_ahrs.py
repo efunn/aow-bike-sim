@@ -2,7 +2,7 @@
 recorded reference: each episode a world, every 100 Hz tick fed the sensor
 reading and the 12 normal draws numpy used, outputs compared.
 
-  python analysis/gpu_phase2/check_ahrs.py
+  python analysis/gpu/phase2/check_ahrs.py
 """
 import argparse
 

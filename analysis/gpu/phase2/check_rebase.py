@@ -12,7 +12,7 @@ rebase switched on, then both run on:
   broken      input a alone by 6*pi, the hub not following: the control
               that shows the check can fail
 
-  python analysis/gpu_phase2/check_rebase.py
+  python analysis/gpu/phase2/check_rebase.py
 """
 import argparse
 

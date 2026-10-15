@@ -17,7 +17,7 @@ scalars (command, heading, steer target, difficulty), and the hooks' internal
 state right after each reset. The v3 recipe only (config/rl_general_v3.yaml),
 driven by the v3_s0 policy so the bike does what a trained bike does.
 
-  python analysis/gpu_phase2/record_reference.py --episodes 2 --steps 250
+  python analysis/gpu/phase2/record_reference.py --episodes 2 --steps 250
 """
 import argparse
 import copy

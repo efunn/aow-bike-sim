@@ -6,7 +6,7 @@ GeneralEnv.reset.
   2. randomization ON: the drawn quantities' ranges and means over many
      worlds against the config's.
 
-  python analysis/gpu_phase2/check_reset.py
+  python analysis/gpu/phase2/check_reset.py
 """
 import argparse
 

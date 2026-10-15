@@ -5,7 +5,7 @@ resample schedule (`_schedule_resample`), and the curriculum
 vectorised training run carries its own.
 
 Random draws come from Warp's per-world generator, so they cannot reproduce
-numpy's stream; analysis/gpu_phase2/check_commands.py compares the
+numpy's stream; analysis/gpu/phase2/check_commands.py compares the
 distributions instead.
 """
 from __future__ import annotations

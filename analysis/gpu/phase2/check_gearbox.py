@@ -4,7 +4,7 @@ are rebuilt in MJWarp's form (type, id per row) from C MuJoCo's fixed layout
 -- rows ne.. are the dof-friction rows, one per dof with frictionloss > 0, in
 dof order -- and then SHUFFLED per substep, since MJWarp's order is not fixed.
 
-  python analysis/gpu_phase2/check_gearbox.py
+  python analysis/gpu/phase2/check_gearbox.py
 """
 import argparse
 

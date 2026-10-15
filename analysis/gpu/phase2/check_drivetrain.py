@@ -3,7 +3,7 @@ DrivetrainSim, on the recorded reference: each episode is one world, fed the
 recorded `pre` qpos/qvel/ctrl every substep, carrying its own state; its
 motor torques and applied forces are compared with the recorded `hooked` ones.
 
-  python analysis/gpu_phase2/check_drivetrain.py [--ref traces/gpu_phase2/reference.npz]
+  python analysis/gpu/phase2/check_drivetrain.py [--ref traces/gpu_phase2/reference.npz]
 """
 import argparse
 

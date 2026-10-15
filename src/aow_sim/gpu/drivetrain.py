@@ -3,7 +3,7 @@ world: the XC430 velocity loop (command and measurement delays, the velocity
 filter, PI with back-calculation anti-windup), the sticking Coulomb friction
 on each input shaft, and the differential's detent.
 
-The Python class is the reference (analysis/gpu_phase2 checks this against a
+The Python class is the reference (analysis/gpu/phase2 checks this against a
 recorded GeneralEnv run); this mirrors it line for line, in float32.
 Supports `update_every = 1` only, which is what every config sets.
 

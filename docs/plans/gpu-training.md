@@ -185,7 +185,7 @@ is a guess until phase 3; on the box they are ~37 % of an env step plus
   cfg = _load_rl_config("config/rl_general_v3.yaml")
   env = GeneralEnv(from_env_config(load_params(), cfg["env"]), cfg)
   mujoco.mj_saveModel(env.model, "v3_rigid.mjb")
-  # the probes' start state (analysis/gpu_phase1/): one reset, seed 0
+  # the probes' start state (analysis/gpu/phase1/): one reset, seed 0
   import numpy as np
   env.reset(seed=0)
   np.savez("v3_init_state.npz", qpos=env.data.qpos, qvel=env.data.qvel,
@@ -204,7 +204,7 @@ is a guess until phase 3; on the box they are ~37 % of an env step plus
   SSH address). Never put a GitHub token or key on a rented machine.
 - **Waiting for a pod** (lesson of 2026-10-14): `get-pod` right after
   create, again until `runtime.ports` shows the 22/tcp mapping; then start
-  `analysis/gpu_phase1/wait_ssh.sh <ip> <port> <createdAt epoch>` IN THE
+  `analysis/gpu/phase1/wait_ssh.sh <ip> <port> <createdAt epoch>` IN THE
   BACKGROUND and work on while it waits. It logs TCP-open and ssh-ok times
   from createdAt. Never a foreground loop, and never the `ssh.runpod.io`
   proxy (needs a pty; the first run's loop over it blocked the session
@@ -222,9 +222,9 @@ is a guess until phase 3; on the box they are ~37 % of an env step plus
   or with memory latency is untested: a 4090 (~2x the A40's FP32, $0.89/h
   secure, $0.34 community) on the same `run_all.sh` would show it.
 - **Warp's kernel cache comes back with results/** (`warp-cache.tgz`) for
-  the tentative `analysis/gpu_phase1/Dockerfile` (not built; where it would
+  the tentative `analysis/gpu/phase1/Dockerfile` (not built; where it would
   live and what is open is in its header). Phase 2's, with the env's
-  kernels compiled for sm_86: `analysis/gpu_phase2/results_a40/
+  kernels compiled for sm_86: `analysis/gpu/phase2/results_a40/
   warp-cache.tgz` (8.8 MB; cold vs warm `fly_policy` 174 vs 117 s, so
   ~1 min of compile it would save).
 - **Spending.** Confirm with the user before creating a pod (GPU type and
@@ -241,7 +241,7 @@ is a guess until phase 3; on the box they are ~37 % of an env step plus
   `~/.ssh/id_ed25519.pub`) in the pod's env instead of changing account
   settings.
 
-**Mac dry run, 2026-10-14** (`analysis/gpu_phase1/`: `probe_physics.py`,
+**Mac dry run, 2026-10-14** (`analysis/gpu/phase1/`: `probe_physics.py`,
 `pod_setup.sh`, the exported `v3_rigid.mjb` + `v3_init_state.npz`;
 `mujoco-warp 3.10.0.3`, Warp 1.18.0, CPU device):
 
@@ -294,7 +294,7 @@ is a guess until phase 3; on the box they are ~37 % of an env step plus
 **Phase 1 run, 2026-10-14, RunPod A40 48 GB** (secure, CA-MTL-1, $0.59/h;
 `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`, driver 580 / CUDA 13.0,
 toolkit 12.8; pod up 23 min, ~$0.23, terminated). Raw output:
-`analysis/gpu_phase1/results_a40/`. All [measured], one run each.
+`analysis/gpu/phase1/results_a40/`. All [measured], one run each.
 
 | | result |
 |---|---|
@@ -392,7 +392,7 @@ episode by episode, compare obs and rewards to tolerance~~ -- cannot work
 against C MuJoCo: phase 1 put MJWarp's contacts 0.7 mm / 0.24 deg off C in
 100 ms, and a balancing bike amplifies it. Instead (2026-10-14):
 
-1. **Per piece, exact.** `analysis/gpu_phase2/record_reference.py` runs
+1. **Per piece, exact.** `analysis/gpu/phase2/record_reference.py` runs
    GeneralEnv (v3 config, v3_s0 driving) and snapshots MjData around every
    hook on every substep (`traces/gpu_phase2/reference.npz`). Each kernel
    gets the recorded inputs, carries its own state, and must reproduce the
@@ -411,7 +411,7 @@ still stands: every kernel's constants are built FROM a live GeneralEnv's
 hook objects (`const_from`), never from the yaml separately.
 
 **Progress** (2026-10-14; code in `src/aow_sim/gpu/`, checks in
-`analysis/gpu_phase2/`; reference 2 episodes x 5 s, 25,000 substeps):
+`analysis/gpu/phase2/`; reference 2 episodes x 5 s, 25,000 substeps):
 
 | piece | kernel | vs reference [measured] |
 |---|---|---|
@@ -425,9 +425,9 @@ hook objects (`const_from`), never from the yaml separately.
 | reset: randomization, pose, actuator state, every hook, first command, AHRS prime, first obs | `reset.reset_worlds` + `ForwardGuard` + `obs_reward.reset_obs` | randomization off: qpos 1.8e-8, delay line / qvel / act exact, drive buffers 1e-9, deterministic obs entries exact; on: ranges, means, one friction and one supply draw per world |
 | assembly | `env.GpuGeneralEnv` | v3_s0, 8 worlds x 5 s, training randomization: 0 falls, 2.846 reward/step (GeneralEnv: 0, 2.852). Past 750 steps: all worlds truncate, reset, curriculum 0 -> 0.02, fly on |
 | drivetrain angle rebase (once per policy step) | `rebase.rebase` | a consistent upward shift (~270 rad) then rebase vs untouched: obs diff 0.0014 / 0.0005 / 0.0014 / 0.086 after 1 / 2 / 5 / 10 steps, as a 1e-6 rad nudge (0 / 0.0005 / 0.0012 / 0.016); input a alone (broken): 5 from step 1 |
-| hybrid end to end (user's suggestion) | `analysis/gpu_phase2/hybrid.py` | below |
-| CUDA, the whole step (policy + env + auto-reset) as one graph | `analysis/gpu_phase2/bench_env.py` | A40, below |
-| eval grid in both envs | `analysis/gpu_phase2/eval_grid.py` | built, Mac smoke only |
+| hybrid end to end (user's suggestion) | `analysis/gpu/phase2/hybrid.py` | below |
+| CUDA, the whole step (policy + env + auto-reset) as one graph | `analysis/gpu/phase2/bench_env.py` | A40, below |
+| eval grid in both envs | `analysis/gpu/phase2/eval_grid.py` | built, Mac smoke only |
 
 **The hybrid** -- GeneralEnv's own Python hooks, obs and reward on MJWarp
 physics (one world) against GpuGeneralEnv, so one engine and only the port
@@ -455,10 +455,10 @@ misalignment, drift sign and command.
 
 **The pod run** (2026-10-14, A40 secure EU-SE-1, $0.59/h, ~23 min, ~$0.23).
 Everything above ran on the Mac's CPU; this is CUDA. Copied (no git, no
-token): `src/`, `config/`, `moves/general_rl_v3_s0.*`, `analysis/gpu_phase2/`,
+token): `src/`, `config/`, `moves/general_rl_v3_s0.*`, `analysis/gpu/phase2/`,
 the two phase 1 pod scripts, `pyproject.toml`. Then
-`analysis/gpu_phase1/pod_setup.sh` and `analysis/gpu_phase2/run_pod.sh`;
-logs in `analysis/gpu_phase2/results_a40/`. [measured]
+`analysis/gpu/phase1/pod_setup.sh` and `analysis/gpu/phase2/run_pod.sh`;
+logs in `analysis/gpu/phase2/results_a40/`. [measured]
 
 1. **It flies on CUDA.** `fly_policy.py`, v3_s0, 8 worlds x 250 steps:
    0 falls, 2.864 reward/step (GeneralEnv 2.861); warm rerun 0, 2.859.
@@ -487,7 +487,7 @@ logs in `analysis/gpu_phase2/results_a40/`. [measured]
    scp: seconds.
 
 **The eval grid on CUDA, 2026-10-14** (A40 EU-SE-1, the phase 3 rental;
-`analysis/gpu_phase3/results_a40/eval_grid.{log,json}`) [measured]: 640
+`analysis/gpu/phase3/results_a40/eval_grid.{log,json}`) [measured]: 640
 worlds x 250 steps in 22.8 s (GeneralEnv's 20 episodes: 15.2 s). Falls
 1/640 (one seed of `(0, -0.396, 0)`) vs 0/20. GeneralEnv's value lies
 inside the 32 GPU seeds' [min, max] for 122 of 140 (command, metric)
@@ -498,7 +498,7 @@ were expected and there are 18 -- the engines agree closely, not exactly;
 drift (CPU 2-5 % above the GPU's range on four commands) is the one to
 watch. [reasoned on the p; the cause untested]
 
-How it is built: `analysis/gpu_phase2/eval_grid.py` flies the 20-command grid both ways:
+How it is built: `analysis/gpu/phase2/eval_grid.py` flies the 20-command grid both ways:
 GeneralEnv through `eval_general._eval_episodes` itself (the eval
 config, one episode a command, seeds 10_000 + k), and the GPU env with
 every command x 32 seeds as worlds at once, each holding its command
@@ -507,7 +507,7 @@ metrics rebuilt from device state under the same names. Per command:
 GeneralEnv's value against the GPU seeds' median and range. Smoke-tested
 on the Mac (2 seeds, 0.4 s each side): plumbing right, heading and speed
 errors within ~1 deg / 0.01 m/s that early. Run:
-`bash analysis/gpu_phase2/run_pod.sh eval`. The metrics
+`bash analysis/gpu/phase2/run_pod.sh eval`. The metrics
 come from `aow_sim.eval_general`, torch-free since 2026-10-14.
 
 **Where the time goes, measured 2026-10-14** (same rental,
@@ -534,7 +534,7 @@ wall: timing each call adds overhead, so "gaps" print negative.)
 The plan before the measurement: the whole env is ~35 % below phase
 1's bare 2.36M physics steps/s, but phase 1 timed a different (rigid
 export) model, and the Mac's CPU puts MJWarp at 98 % of a step with every
-hook under 2 %. `analysis/gpu_phase2/profile_env.py` times each call of a
+hook under 2 %. `analysis/gpu/phase2/profile_env.py` times each call of a
 real step on the GPU (Warp's activity timing: kernels, memcpy, memset, per
 section: MJWarp step, each hook, sense ticks, the reset path, the policy
 net), the same step as a graph (graph minus summed GPU time = launch gaps),
@@ -603,11 +603,11 @@ env.
 |---|---|
 | `src/aow_sim/gpu/export_graph.py` | builds GpuGeneralEnv for N worlds (training randomization), resets, captures ONE `step` with `apic=True`, `capture_save`s it with named buffers: `act_in` in; `obs`, `reward`, `terminated`, `truncated`, `ep_end`, `last_ret/len/track/fell/diff` out; plus `<stem>.json` (shapes, config hash, versions). Run on the training GPU: the modules are compiled for its arch |
 | `env.py` `_episode_stats` | new kernel before the in-step reset: the finished episode's return, length, track, fall, difficulty (the reset would wipe them), for the trainer's logs |
-| `analysis/gpu_phase3/check_graph.py` | reloads the `.wrp` as C will (`capture_load`, buffers by name through their pointers) and flies v3_s0 or random actions through it |
+| `analysis/gpu/phase3/check_graph.py` | reloads the `.wrp` as C will (`capture_load`, buffers by name through their pointers) and flies v3_s0 or random actions through it |
 | `src/aow_sim/gpu/puffer/aow_bike.cu` | the PufferLib env: `dlopen`s Warp's `warp.so`, `wp_apic_load_graph`, binds the buffers by name (sizes checked against `vec.total_agents`); `puf_step` = actions D2D -> `cudaGraphLaunch` -> one kernel writing obs (bf16 or float), reward, terminal, and finished episodes into each world's `Log` |
 | `src/aow_sim/gpu/puffer/aow_bike.ini` | `cudagraphs = -1` (phase 1: our graph cannot launch inside PufferLib's capture); v3's PPO numbers where PufferLib has the knob |
 | `src/aow_sim/gpu/puffer/install.sh` | clones PufferLib at ea7f989 if absent, copies the env in, fills the ini's paths, `./build.sh aow_bike --cu` |
-| `analysis/gpu_phase3/run_pod.sh` | export -> check (v3_s0 300 steps, random 100) -> build -> `./puffer train --headless` for 10 min -> warp cache |
+| `analysis/gpu/phase3/run_pod.sh` | export -> check (v3_s0 300 steps, random 100) -> build -> `./puffer train --headless` for 10 min -> warp cache |
 
 Mac checks (CPU device, 8 worlds): the reloaded graph flies v3_s0 20
 steps, 0 falls, 2.61 reward/step; random actions, 60 steps: 15 falls, each
@@ -623,14 +623,14 @@ terminals** (PufferLib 5.0 has no truncation signal, SB3 bootstraps them);
 no smoothness terms; `puf_reset` only re-emits the saved reset state (fine
 at startup, wrong if PufferLib resets mid-run).
 
-**On the pod:** `pod_setup.sh`, then `bash analysis/gpu_phase3/run_pod.sh`
-(and `bash analysis/gpu_phase2/run_pod.sh eval profile` for phase 2's
+**On the pod:** `pod_setup.sh`, then `bash analysis/gpu/phase3/run_pod.sh`
+(and `bash analysis/gpu/phase2/run_pod.sh eval profile` for phase 2's
 leftovers on the same rental). What decides it: the trainer starts and
 loads the graph, `env/episode_length` and `env/fall_rate` move off their
 random-policy values, and SPS end to end against the box's ~2.1k.
 
 **The pod run, 2026-10-14** (A40 secure EU-SE-1, $0.59/h, ~21 min,
-~$0.21; results in `analysis/gpu_phase3/results_a40/`) [measured]:
+~$0.21; results in `analysis/gpu/phase3/results_a40/`) [measured]:
 
 | step | result | wall |
 |---|---|---|
@@ -652,7 +652,7 @@ Adam value; PufferLib's default for Muon is 0.015 (`config/default.ini`;
 its envs' inis use 0.001-0.015).
 
 **Second run, same day: it learns** (A40 EU-SE-1, ~22 min, ~$0.21;
-`analysis/gpu_phase3/results_a40_run2/`) [measured]. `aow_bike.ini` now
+`analysis/gpu/phase3/results_a40_run2/`) [measured]. `aow_bike.ini` now
 has `learning_rate = 0.015`, `minibatch_size = 8192`, `replay_ratio =
 4.0` (128 gradient steps an epoch, 230 ms of each ~11 s epoch); 15 min of
 training so the 20M budget (and the lr anneal) completes:
@@ -699,7 +699,7 @@ envs (its difficulty_min/max); drawing each world's difficulty below the
 shared one at reset would restore some, not built.
 
 **The 1 h run, 2026-10-15: collapsed at ~33M** (A40 EU-SE-1, ~39 min,
-~$0.38, stopped early; `analysis/gpu_phase3/results_a40_1h/`: the log to
+~$0.38, stopped early; `analysis/gpu/phase3/results_a40_1h/`: the log to
 44M and checkpoints at 13M, 26M, 39M) [measured]. Run 2's update settings,
 the shared curriculum (K 32), lr 0.015 cosine to a 0.2 floor over 80M.
 

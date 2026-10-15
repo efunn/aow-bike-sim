@@ -1,7 +1,7 @@
 """The general policy's eval: the command grid, the per-episode metrics and
 their aggregates, and the eval config. Moved out of `train_general_rl` on
 2026-10-14 so the metrics can be imported without torch or SB3 -- the GPU
-env's eval (`analysis/gpu_phase2/eval_grid.py`), the analysis scripts and
+env's eval (`analysis/gpu/phase2/eval_grid.py`), the analysis scripts and
 the tests need the definitions, not the trainer. `train_general_rl`
 re-exports every name, so `from aow_sim.train_general_rl import
 _eval_episodes` still works; new code imports from here.

@@ -2,7 +2,7 @@
 path, on the recorded reference: each episode a world, the recorded action
 and measured steer in, the drive and steer commands the first substep saw out.
 
-  python analysis/gpu_phase2/check_action.py
+  python analysis/gpu/phase2/check_action.py
 """
 import argparse
 

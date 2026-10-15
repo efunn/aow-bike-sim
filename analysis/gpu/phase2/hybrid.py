@@ -21,8 +21,8 @@ so the two sides are driven alike, none in what they compute:
 Randomization off (the reset's draws are then only those above); the Warp
 env's rebase off (the hybrid has none).
 
-  python analysis/gpu_phase2/hybrid.py --steps 150 --v 0.5           # open loop
-  python analysis/gpu_phase2/hybrid.py --steps 250 --v 0.5 --closed  # each its own
+  python analysis/gpu/phase2/hybrid.py --steps 150 --v 0.5           # open loop
+  python analysis/gpu/phase2/hybrid.py --steps 250 --v 0.5 --closed  # each its own
 """
 import argparse
 import time

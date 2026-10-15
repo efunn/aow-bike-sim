@@ -2,7 +2,7 @@
 second half, on the recorded reference. Every policy step is one world (the
 kernel's state comes in recorded), so the whole run is one launch.
 
-  python analysis/gpu_phase2/check_obs_reward.py
+  python analysis/gpu/phase2/check_obs_reward.py
 """
 import argparse
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Phase 2 on a pod (docs/plans/gpu-training.md, "The pod run"). Run from
-# the copied tree's root AFTER analysis/gpu_phase1/pod_setup.sh, inside its
+# the copied tree's root AFTER analysis/gpu/phase1/pod_setup.sh, inside its
 # venv. No git, no tokens. Every step is timed into results/timings.jsonl;
 # results go to results/phase2.jsonl and results/eval_grid.json.
 #
@@ -18,7 +18,7 @@ step() {  # step <name> <cmd...>; keeps going on failure, records the status
     echo "{\"step\":\"$name\",\"rc\":$rc,\"wall_s\":$(awk "BEGIN{print $(date +%s.%N) - $t0}")}" | tee -a results/timings.jsonl
     tail -3 "results/$name.log"
 }
-P=analysis/gpu_phase2
+P=analysis/gpu/phase2
 WHAT=${*:-fly check bench eval profile}
 want() { [[ " $WHAT " == *" $1 "* ]]; }
 step pip_phase2 pip install -q gymnasium==1.3.0 scipy pyyaml

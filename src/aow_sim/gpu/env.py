@@ -133,7 +133,7 @@ class GpuGeneralEnv:
         self.last_diff = z(n)
         self.guard = grst.ForwardGuard(self.d)
         # Called after the reset kernel, before the forward and the AHRS
-        # prime: a test harness overwrites draws here (analysis/gpu_phase2/
+        # prime: a test harness overwrites draws here (analysis/gpu/phase2/
         # hybrid.py). None in training.
         self.on_reset = None
 

@@ -2,7 +2,7 @@
 for comparison, in GeneralEnv: falls, return, tracking. A smoke test of the
 whole port, not a parity check -- the engines' contacts differ (phase 1).
 
-  python analysis/gpu_phase2/fly_policy.py --nworld 8 --steps 250
+  python analysis/gpu/phase2/fly_policy.py --nworld 8 --steps 250
 """
 import argparse
 import time

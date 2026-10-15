@@ -12,8 +12,8 @@ the GPU gives a spread per command and the question is whether GeneralEnv's
 one episode sits inside it. Different engines (phase 1: contacts differ),
 so agreement is behavioural, not numerical.
 
-  python analysis/gpu_phase2/eval_grid.py --seeds 8           # on a GPU
-  python analysis/gpu_phase2/eval_grid.py --seeds 1 --steps 20 --no-cpu   # Mac smoke
+  python analysis/gpu/phase2/eval_grid.py --seeds 8           # on a GPU
+  python analysis/gpu/phase2/eval_grid.py --seeds 1 --steps 20 --no-cpu   # Mac smoke
 
 Metrics as `_eval_episodes` defines them (same names): fell, head_err_med,
 vel_err_med (medians over the episode), head_err_tail / vel_err_tail (worst

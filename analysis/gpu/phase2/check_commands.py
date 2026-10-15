@@ -4,7 +4,7 @@ At each difficulty, N draws each side: family shares, |v| and |step|
 quantiles, the resample interval. A difference well under the sampling noise
 (~1/sqrt(N) on a share) is a pass.
 
-  python analysis/gpu_phase2/check_commands.py
+  python analysis/gpu/phase2/check_commands.py
 """
 import argparse
 

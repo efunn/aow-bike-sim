@@ -7,9 +7,9 @@ policy and the env capture into the SAME graph: one launch per policy step,
 no host round trip. Falls and reward are summed on the device inside the
 graph, so the timed loop never syncs.
 
-  python analysis/gpu_phase2/bench_env.py --check            # capture == eager?
-  python analysis/gpu_phase2/bench_env.py --nworld 1024 4096 16384 32768
-  python analysis/gpu_phase2/bench_env.py --nworld 4096 --policy moves/general_rl_v3_s0.npz
+  python analysis/gpu/phase2/bench_env.py --check            # capture == eager?
+  python analysis/gpu/phase2/bench_env.py --nworld 1024 4096 16384 32768
+  python analysis/gpu/phase2/bench_env.py --nworld 4096 --policy moves/general_rl_v3_s0.npz
 
 Each result is one JSON line on stdout and appended to --out.
 """

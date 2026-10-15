@@ -11,8 +11,8 @@ v3_s0 after a warm-up as a graph. The same steps' wall time AS A GRAPH is
 measured too: graph wall minus summed GPU time is what the graph's gaps and
 launches cost.
 
-  python analysis/gpu_phase2/profile_env.py --nworld 4096 32768
-  python analysis/gpu_phase2/profile_env.py --nworld 16 --steps 2   # Mac: CPU wall clock
+  python analysis/gpu/phase2/profile_env.py --nworld 4096 32768
+  python analysis/gpu/phase2/profile_env.py --nworld 16 --steps 2   # Mac: CPU wall clock
 
 On the CPU device the per-call time is the wall clock of a synchronous
 launch (a smoke test of the wrapping; the split means little there).
