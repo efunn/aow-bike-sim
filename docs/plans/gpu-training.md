@@ -10,11 +10,14 @@
 > to ride: 20M steps in 14 min (21-25k SPS, ~10x the box), episodes from
 > 0.4 s to 13.4 s of 15, ~72 % ending without a fall** (training-time
 > numbers, not v3's eval grid; the first run's settings learned nothing --
-> see phase 3). A 1 h run collapsed to NaN at ~33M (unclipped actions in
-> the penalties + lr too hot, both fixed, untested); its policies survive
-> by never standing still. Checkpoints now convert to moves
-> (`gpu/export_policy.py`). **Next: phase 3's "The next run" -- a
-> step-by-step runbook.** Phases 4-5 not started. (Updated 2026-10-15.)
+> see phase 3). **2026-10-15: a 1 h A40 run (~$0.71) trains a policy
+> that matches v3's CPU seeds on the common grid** -- 0/20 falls, both
+> straight commands forward, 7/9 turns forward (v3 seeds 4-8/9), holds
+> still -- after fixing PufferLib's [-1, 1] reward clamp (velocity
+> tracking earned nothing), raw advantages, the curriculum's pace, and
+> adding SmoothPPO's temporal term (phase 3, "It worked"). Checkpoints
+> convert to moves (`gpu/export_policy.py`). Phases 4-5 not started.
+> (Updated 2026-10-15.)
 > Goal (user): the whole
 > physics + RL stack on one NVIDIA GPU -- MuJoCo Warp for the bike,
 > PufferLib 5.0's PPO for the learner. Phases are gated: each one ends in a
@@ -747,7 +750,7 @@ normalise advantages (`puff_advantage`, `ppo_loss_compute` use them raw),
 so `ent_coef` and any loss weight meant whatever the reward scale made
 them; SB3 normalises per minibatch.
 
-**The run after (written 2026-10-15; not run).** Same runbook, four
+**The run after (written 2026-10-15; it ran -- below).** Same runbook, four
 changes, all on by default -- one run cannot separate them. Three are in
 PufferLib's trainer, via `src/aow_sim/gpu/puffer/puffer_aow.patch`
 (`install.sh` resets `src/algo.cu` and `src/pufferl.cu` and applies it),
@@ -789,6 +792,113 @@ jumping; do checkpoints past difficulty ~0.5 still hold still and reverse
 (`standstill.py`; the eval yaml's `speed_ratio_rev`); `s/pg` in the first
 epochs (if far from ~0.25, the weight is the next thing to move). If the
 build fails, the patch is the suspect: `results/build.log`.
+
+**It worked, 2026-10-15** (A40 EU-SE-1, ~72 min, ~$0.71;
+`analysis/gpu/phase3/results_a40_fixes/`) [measured]. The patched trainer
+built on its first nvcc (45 s); 72.6M steps in the hour, 19-25k SPS.
+
+| epoch | steps | len | fall | track | difficulty | entropy | kl | s/pg |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 0.26M | 21 | 1.000 | 0.73 | 0.000 | 4.24 | 0.008 | 0.016 |
+| 25 | 6.6M | 375 | 0.867 | 0.76 | 0.000 | 3.31 | 0.112 | 0.024 |
+| 50 | 13.1M | 734 | 0.048 | 0.87 | 0.175 | 2.74 | 0.032 | 0.013 |
+| 75 | 19.7M | 705 | 0.162 | 0.83 | 0.404 | 2.34 | 0.045 | 0.010 |
+| 100 | 26.2M | 684 | 0.227 | 0.79 | 0.608 | 2.01 | 0.043 | 0.008 |
+| 125 | 32.8M | 646 | 0.295 | 0.76 | 0.818 | 1.85 | 0.068 | 0.007 |
+| 150 | 39.3M | 694 | 0.212 | 0.74 | 1.000 | 1.63 | 0.034 | 0.007 |
+| 200 | 52.4M | 744 | 0.030 | 0.77 | 1.000 | 1.42 | 0.029 | 0.006 |
+| 277 | 72.6M | 743 | 0.030 | 0.80 | 1.000 | 1.13 | 0.031 | -- |
+
+Difficulty climbed ~0.2 per 6.5M steps as the lead allows, reached 1.0
+at ~39M, and the fall rate turned DOWN there (the previous run's jump
+sent it to 0.62). kl under 0.1 from epoch 50 on; entropy fell all run.
+**The temporal term stayed small: s/pg 1.6 % at the start, ~0.5 % by the
+end** -- at the policy mean, not the CPU's parameter-space quarter, so
+not the same number, but whatever smoothing this run has is mostly not
+from it. Raising the weight is the open lever.
+
+Converted checkpoints: every one from 13.1M on holds still (standstill
+max |v| 0.09-0.18 m/s, end 0.02-0.12 m; v3_s0 0.10-0.16, 0.05-0.10).
+Each yaml's eval (same code, same grid as v3_s0's):
+
+| policy | survive | track | vel_err | head_err | fwd | rev | turn_big survive / tail |
+|---|---|---|---|---|---|---|---|
+| general_rl_v3_s0 | 1.00 | 0.723 | 0.091 | 47.7 | 1.05 | 0.94 | 1.0 / 164 deg |
+| fixes_19M | 0.70 | 0.599 | 0.246 | 43.1 | 0.96 | 1.02 | 0.0 / 180 deg |
+| fixes_39M | 0.95 | 0.728 | 0.115 | 13.2 | 0.96 | 1.02 | 0.83 / 14 deg |
+| fixes_52M | 1.00 | 0.784 | 0.080 | 5.6 | 1.00 | 1.07 | 1.0 / 4 deg |
+| fixes_72M | 1.00 | 0.813 | 0.093 | 5.6 | 0.99 | 1.14 | 1.0 / 6 deg |
+
+The common grid (`per_command.py --summary`, one process, identical
+seeds), at the training sensor (`--ahrs tm151_filter --ahrs-tau 2.0`):
+
+| policy | turns fwd | straight fwd | hold v | fell |
+|---|---|---|---|---|
+| general_rl_v3_s0 | 5/9 | 2/2 | -0.01 | 0 |
+| general_rl_v3_s1 | 8/9 | 2/2 | -0.00 | 0 |
+| general_rl_v3_s2 | 4/9 | 2/2 | -0.06 | 0 |
+| general_puffer_fixes_52M | 7/9 | 2/2 | -0.01 | 0 |
+| general_puffer_fixes_72M | 7/9 | 2/2 | -0.03 | 0 |
+
+At `per_command.py`'s default `--ahrs tm151` (not what either stack
+trains on): v3_s0 1 fall, v3_s1 2, both GPU checkpoints 0.
+
+So ~55 min of A40 training to 52M reaches what a v3 seed reaches in
+~3 h on the box (20M steps), on this grid. ONE GPU seed against three CPU
+seeds; four changes at once, so which of them mattered is not separable
+from this run.
+
+**Chatter** (`analysis/chatter.py`, one grid, identical seeds) [measured]:
+
+| | v3_s0 | v3_s1 | fixes_52M | fixes_72M |
+|---|---|---|---|---|
+| score | 0.728 | 0.818 | 0.851 | 0.863 |
+| per-step action change, total | 0.035 | 0.048 | 0.008 | 0.008 |
+| steer sign flips /s | 14.9 | 12.2 | 9.7 | 8.1 |
+| steps pinned to a bound | 1.0 % | 4.5 % | 0.4 % | 0.3 % |
+| tread jitter 2-8 Hz, mm/s | 43.9 | 52.2 | 29.6 | 33.3 |
+| hold drift (one episode) | 0.18 m | 0.07 m | 0.20 m | 0.39 m |
+| crab left / right | 0.96 / 0.51 | 0.71 / 0.56 | 0.41 / 0.59 | 0.45 / 0.63 |
+
+4-6x less per-step action change; the mean never past the clip. NOT
+attributable to the temporal term (~0.5 % of PPO's gradient): the MinGRU,
+Muon, the batch size and the advantage normalisation are all candidates.
+Crab was never trained (`v_lat_frac 0`). Teleop (user, 2026-10-15): "looks
+pretty smooth". Not yet run: the standing-endurance `prospective` test.
+
+**What the MinGRU memory does** (`analysis/mingru_memory.py`, the eval
+grid, 5000 steps) [measured], beside the CPU arm's first seed
+(`general_rl_v3_mingru_s0`, `config/rl_general_v3_mingru.yaml`):
+
+| | CPU mingru_s0 | GPU fixes_52M |
+|---|---|---|
+| time constant at each unit's mean gate | median 35 ms, max 80 ms | median 35 ms, max 0.37 s |
+| units slower than 0.5 s in their slowest 5 % of steps | 86 of 128 (up to 23 s) | 9 (one ~558 s: latched) |
+| head input coming through h | 76 % | 56 % |
+| grid as trained: surv / track / head_err | 1.00 / 0.701 / 23.6 | 1.00 / 0.784 / 5.6 |
+| NO GATE (h = h~, memory cut): same | 1.00 / 0.664 / 22.3 | 0.85 / 0.622 / 27.3 |
+
+Mostly a ~2-step low-pass (dt 20 ms) -- not the slow estimation (mass,
+friction) the arm was set up to look for -- but with gates that CLOSE in
+some states and then hold for seconds. Which states (the script's LATCHING
+block, plus a per-command table of the latching units):
+
+- **GPU 52M: registers set at reset.** 7 of its 9 latching units are
+  latched 60-100 % of EVERY episode, hold included: their h is written in
+  the first steps after the reset and then held (unit 20: +1.1 -> +1.3
+  over the hold episode). They open mainly on the 170-180 deg commands
+  (latched ~60-80 % there). Unit 102 latches ~100 % on the forward commands
+  and stays open on hold, spin and reverse: a driving-forward flag. A
+  bogus first observation after a reset is therefore written into units
+  that keep it for the episode -- the teleop reset report's likely path
+  [reasoned].
+- **CPU mingru_s0: direction modes.** 5 units latch 80-100 % on the
+  forward commands at any heading and stay open on hold and reverse; unit
+  48 latches ~100 % on reverse, including `0.8 m/s, 180 deg`, which it
+  drives backwards. Latching rises with motion: 0.2 units on the hold, 12
+  at speed, 18.6 at yaw rate > 1 rad/s, 23 at |roll| > 0.1 rad.
+Cutting it costs the GPU policy its heading and a fifth of its survival,
+the CPU seed little (drift 0.06 -> 0.30 m on the hold). One seed each.
 
 **The pod run, 2026-10-14** (A40 secure EU-SE-1, $0.59/h, ~21 min,
 ~$0.21; results in `analysis/gpu/phase3/results_a40/`) [measured]:
