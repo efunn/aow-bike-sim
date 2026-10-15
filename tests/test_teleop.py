@@ -470,6 +470,49 @@ def test_a_respawn_does_not_inherit_the_fallen_bikes_ahrs(monkeypatch, model,
     assert abs(roll) < 15, f"fell straight after the respawn: roll {roll:.0f} deg"
 
 
+def test_a_respawn_does_not_inherit_the_fallen_bikes_odometry(monkeypatch, model,
+                                                             params, eq_qpos):
+    """BACKSPACE after a fall: the odometry still held the PRE-reset encoder
+    counts, so its first tick differenced the fallen bike's shaft angles
+    against the reset pose and reported a fake speed -- ~22 m/s of v_lon for
+    shafts 13 / -7 rad apart -- right after engage() emptied a MinGRU's
+    memory (the user's report, 2026-10-15: "if I knock the bike over then
+    reset it goes wonky"; resets from standstill moved the wheels ~0 and were
+    fine). The respawn now resets the odometry, as GeneralEnv.reset does."""
+    _needs_general()
+    import aow_sim.sim_odometry as so
+    made = []
+
+    class Recording(so.SimOdometry):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            made.append(self)
+    monkeypatch.setattr(so, "SimOdometry", Recording)
+    g = _capture(monkeypatch, model, params, eq_qpos, odometry="front",
+                 odometry_encoder="counts")
+    assert made, "teleop built no odometry"
+    odo = made[-1]
+    m, d = g["model"], g["data"]
+    _idle(g, 0.3)
+    # what a knock-over leaves behind: the drive shafts far from where the
+    # reset will put them, and the encoders settled there
+    d.qpos[m.joint("input_a_spin").qposadr[0]] += 13.0
+    d.qpos[m.joint("input_b_spin").qposadr[0]] -= 7.0
+    mujoco.mj_forward(m, d)
+    _idle(g, 0.2)
+
+    mujoco.mj_resetData(m, d)               # what the viewer's reset does
+    d.qpos[:] = eq_qpos
+    mujoco.mj_forward(m, d)
+    worst = 0.0
+    t_end = d.time + 0.05                   # five 100 Hz odometry ticks
+    while d.time < t_end:
+        g["step"](m, d)
+        _mj_step(g)
+        worst = max(worst, float(np.max(np.abs(odo._last))))
+    assert worst < 0.2, f"odometry reported {worst:.2f} m/s just after the respawn"
+
+
 @pytest.mark.lqr
 def test_engaging_general_zeroes_a_stale_command(monkeypatch, model, params,
                                                  eq_qpos):

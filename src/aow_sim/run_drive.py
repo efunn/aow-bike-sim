@@ -3211,6 +3211,15 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             c.reset(m, d)           # re-read _psi from the REWOUND data
             if ahrs_model is not None:
                 ahrs_model.restart()    # tm151_filter keeps a fallen attitude
+            # AND THE ODOMETRY, as GeneralEnv.reset does every episode. Its last
+            # encoder counts are the PRE-reset shaft angles: the first tick
+            # after a knock-over differenced them against the reset pose and
+            # reported up to ~22 m/s of v_lon (wheels 13/-7 rad apart),
+            # 0.35 m/s for half a radian -- one bogus observation landing just
+            # after engage() emptied the MinGRU's memory. A reset from
+            # standstill moved the wheels ~0 and hid it.
+            if odo is not None:
+                odo.reset(m, params)
         if state["want_general"] and c.mode != "general":
             engage(d, quiet=True)
         if rewound:
