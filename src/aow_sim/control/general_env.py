@@ -816,6 +816,20 @@ class GeneralEnv(gym.Env):
         # reward-hacking channel, not a control problem.
         # Orientation follows the same rule as velocity: the OBSERVATION gets
         # the sensor, the reward keeps `s`. Entries 0, 1 and 2.
+        #
+        # SAMPLE BEFORE READING. The odometry's call primes the AHRS on an
+        # episode's first read (a held value otherwise: no dt, no tick). It
+        # came AFTER the AHRS block until 2026-10-14, so the obs `reset`
+        # returned found the cache empty and read MuJoCo TRUTH for roll, the
+        # rates and pitch -- one truth observation per episode, which the
+        # bike never gets. Found porting the env to Warp.
+        o_lon, o_lat = s.v_lon, s.v_lat
+        if self._odo is not None:
+            # Already advanced inside the substep loop; read the value on hold,
+            # which is what the controller sees between sense ticks on the bike.
+            o_lon, o_lat = self._odo.update(self.data, 0.0)
+        elif self._ahrs is not None and self._ahrs._cache is None:
+            self._ahrs.tick(self.data, 0.0)
         o_roll, o_roll_rate, o_yaw_rate = s.roll, s.roll_rate, self.data.qvel[5]
         o_pitch, o_pitch_rate = s.pitch, s.pitch_rate
         if self._ahrs is not None and self._ahrs._cache is not None:
@@ -845,11 +859,6 @@ class GeneralEnv(gym.Env):
             # (balance.py:91), body +Y pointing LEFT, so the raw gyro's middle
             # axis is also inverted relative to the observation's convention.
             o_pitch_rate = -float(g[1])
-        o_lon, o_lat = s.v_lon, s.v_lat
-        if self._odo is not None:
-            # Already advanced inside the substep loop; read the value on hold,
-            # which is what the controller sees between sense ticks on the bike.
-            o_lon, o_lat = self._odo.update(self.data, 0.0)
         v_cl, v_ct, psi_err = command_to_body(self._v_cmd_w, self._psi_cmd,
                                               self._psi)
         vb = None
@@ -1095,6 +1104,15 @@ class GeneralEnv(gym.Env):
         self._step += 1
 
         self._advance_vel_filter()
+        # The action just applied becomes prev_action BEFORE the observation
+        # is built, so the obs that picks the next action carries THIS one --
+        # what drive._general_compute feeds on the bike. Until 2026-10-14 the
+        # obs was built first and carried the action before this one: every
+        # general policy trained one step staler than it replays (recorded on
+        # v3_s0: obs[12:15] after step k == action k-1 exactly). `da` is
+        # taken first so the smoothness term still prices a_k - a_{k-1}.
+        da = action - self._prev_a
+        self._prev_a = action
         obs, s, v_cl, v_ct, psi_err, vb_lon, vb_lat = self._obs()
         rw = self.rw
         # Tracked against the WINDOWED velocity, so an oscillatory gait is
@@ -1120,7 +1138,6 @@ class GeneralEnv(gym.Env):
         # meaning must not change with a training flag -- otherwise a nolat
         # policy would look better than a crabbing one purely by measuring less.
         v_err2_full = (v_cl - s.v_lon) ** 2 + (v_ct - s.v_lat) ** 2
-        da = action - self._prev_a
         copper = self._cu_sum / self.substeps    # 0.0 whenever w_copper is
         r_vel = np.exp(-v_err2 / self.sigma_v ** 2)
         r_head = np.exp(-(psi_err / self.sigma_psi) ** 2)
@@ -1172,7 +1189,6 @@ class GeneralEnv(gym.Env):
                   # Per-channel: w_smooth may be one number (broadcast, the
                   # historical behaviour) or one per action channel.
                   - float(da @ (self.w_smooth * da)))
-        self._prev_a = action
         # Curriculum score, NOT the reward. After a command step change the
         # filter takes ~vel_window_s to flush, so r_vel is depressed for that
         # long no matter what the policy does. `track` gates

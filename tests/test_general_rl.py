@@ -141,6 +141,59 @@ def test_env_reset_step():
     assert np.allclose(o1, o2)
 
 
+def test_obs_carries_the_action_just_applied():
+    """prev_action in the obs returned by step(a) is `a` -- what
+    drive._general_compute feeds on the bike. Until 2026-10-14 it was the
+    action before `a` (the obs was built before _prev_a was updated)."""
+    env = _env()
+    obs, _ = env.reset(seed=0)
+    assert np.array_equal(obs[12:15], np.zeros(3))
+    rng = np.random.default_rng(2)
+    for _ in range(5):
+        a = rng.uniform(-1, 1, 3).astype(np.float32)
+        obs, *_ = env.step(a)
+        assert np.allclose(obs[12:15], a, atol=1e-7)
+
+
+def test_reset_obs_reads_the_ahrs_not_truth():
+    """The obs `reset` returns carries the AHRS's attitude and rates, as
+    every later one does. Until 2026-10-14 its cache was still empty when
+    the obs read it, and entries 0-2 / 15-16 were MuJoCo truth."""
+    from aow_sim.sim_ahrs import rpy_from_quat
+    env = _env(ahrs_level="tm151_filter", obs_odometry=True,
+               odometry_encoder="counts", obs_pitch=True)
+    obs, _ = env.reset(seed=0)
+    c = env._ahrs._cache
+    assert c is not None
+    roll, pitch, _ = rpy_from_quat(c["quat"])
+    assert obs[0] == pytest.approx(roll, abs=1e-6)
+    assert obs[1] == pytest.approx(c["gyro"][0], abs=1e-6)
+    assert obs[2] == pytest.approx(c["gyro"][2], abs=1e-6)
+    assert obs[-2] == pytest.approx(-pitch, abs=1e-6)
+    assert obs[-1] == pytest.approx(-c["gyro"][1], abs=1e-6)
+    # and it is not truth: the gyro's noise alone moves the rates
+    assert obs[2] != env.data.qvel[5]
+
+
+def test_smoothness_prices_the_step_between_successive_actions():
+    """Moving the prev_action update must not move the w_smooth term: it
+    still charges a_k - a_{k-1}."""
+    rng = np.random.default_rng(3)
+    acts = rng.uniform(-1, 1, (4, 3)).astype(np.float32)
+    rewards = {}
+    for w in (0.0, 1.0):
+        env = _env()
+        env.rw = {**env.rw, "w_smooth": w}
+        env.w_smooth = np.full(3, w)
+        env.reset(seed=0)
+        rewards[w] = [env.step(a)[1] for a in acts]
+    prev = np.zeros(3)
+    for k, a in enumerate(acts):
+        charged = rewards[0.0][k] - rewards[1.0][k]
+        assert charged == pytest.approx(float(np.sum((a - prev) ** 2)), rel=1e-5)
+        prev = a
+
+
 def test_terminates_only_on_fall():
     """An always-on controller has no success state to stop at — the only
     early exit is falling over."""
