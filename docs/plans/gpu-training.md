@@ -367,9 +367,133 @@ reference, float32 tolerance:
 | command families + curriculum, resample | policy step | the curriculum is a global scalar today |
 | domain randomization + reset | episode | auto-reset inside the graph |
 
-**Verification:** replay a recorded action sequence through both envs,
-episode by episode, compare obs and rewards to tolerance. A digest-style
-check that the GPU env reads the same params as `GeneralEnv`.
+**Verification:** ~~replay a recorded action sequence through both envs,
+episode by episode, compare obs and rewards to tolerance~~ -- cannot work
+against C MuJoCo: phase 1 put MJWarp's contacts 0.7 mm / 0.24 deg off C in
+100 ms, and a balancing bike amplifies it. Instead (2026-10-14):
+
+1. **Per piece, exact.** `analysis/gpu_phase2/record_reference.py` runs
+   GeneralEnv (v3 config, v3_s0 driving) and snapshots MjData around every
+   hook on every substep (`traces/gpu_phase2/reference.npz`). Each kernel
+   gets the recorded inputs, carries its own state, and must reproduce the
+   recorded outputs (`check_<piece>.py`). No physics in the loop.
+2. **End to end, same engine** (user's suggestion): a hybrid reference --
+   GeneralEnv's Python hooks, obs and reward on MJWarp physics (one world,
+   MjData copied across each substep) -- against the all-Warp env. One
+   engine, so only the port differs. Chaos still grows float32-vs-float64
+   hook rounding; measure the horizon over which they agree.
+3. **Behaviour.** v3_s0 flown in both on the per_command grid: fall rate,
+   tracking. Random draws (randomization, commands, AHRS noise) compared as
+   distributions, since Warp's RNG cannot reproduce numpy's stream.
+
+A digest-style check that the GPU env reads the same params as `GeneralEnv`
+still stands: every kernel's constants are built FROM a live GeneralEnv's
+hook objects (`const_from`), never from the yaml separately.
+
+**Progress** (2026-10-14; code in `src/aow_sim/gpu/`, checks in
+`analysis/gpu_phase2/`; reference 2 episodes x 5 s, 25,000 substeps):
+
+| piece | kernel | vs reference [measured] |
+|---|---|---|
+| drivetrain servo, delays, stick friction, detent | `drivetrain.pre_step` | motor torque 0.15 % rel; applied force 3 % (float32, below) |
+| steer gearbox + headset friction | `gearbox.pre_step` | 1e-6 rel, rows shuffled each substep; rest branch 9.2 % of substeps |
+| action scale, steer target, mix | `action.apply_action` | 3e-6 / 3e-8 |
+| AHRS tm151_filter (fed numpy's own draws) | `ahrs.sample` | quat 1.3e-7, gyro 3e-7, accel 6e-6; no growth over 5 s |
+| odometry counts / front | `odometry.advance` | v_lon 2.6e-7, v_lat 1e-7 m/s; 0 of 998 ticks off by > 1 mm/s |
+| heading, obs (17), reward, fall, truncation | `obs_reward.obs_reward` | obs <= 1.2e-7, reward 6e-7, flags identical over 500 steps |
+| command families, resample schedule, curriculum (per world) | `commands.after_step` | 100k draws a side at d 0/0.3/0.6/1: family shares within sampling noise of each other and of `_family_weights`; |v|, |step|, interval quantiles agree |
+| reset: randomization, pose, actuator state, every hook, first command, AHRS prime, first obs | `reset.reset_worlds` + `ForwardGuard` + `obs_reward.reset_obs` | randomization off: qpos 1.8e-8, delay line / qvel / act exact, drive buffers 1e-9, deterministic obs entries exact; on: ranges, means, one friction and one supply draw per world |
+| assembly | `env.GpuGeneralEnv` | v3_s0, 8 worlds x 5 s, training randomization: 0 falls, 2.846 reward/step (GeneralEnv: 0, 2.852). Past 750 steps: all worlds truncate, reset, curriculum 0 -> 0.02, fly on |
+| drivetrain angle rebase (once per policy step) | `rebase.rebase` | a consistent upward shift (~270 rad) then rebase vs untouched: obs diff 0.0014 / 0.0005 / 0.0014 / 0.086 after 1 / 2 / 5 / 10 steps, as a 1e-6 rad nudge (0 / 0.0005 / 0.0012 / 0.016); input a alone (broken): 5 from step 1 |
+| hybrid end to end (user's suggestion) | `analysis/gpu_phase2/hybrid.py` | below |
+| eval grid in both envs, CUDA capture of the whole step | -- | not started |
+
+**The hybrid** -- GeneralEnv's own Python hooks, obs and reward on MJWarp
+physics (one world) against GpuGeneralEnv, so one engine and only the port
+differs. v3_s0, 0.5 m/s, randomization off, the Warp env fed the hybrid's
+numpy draws [measured, 2026-10-14]:
+
+| after | obs diff, open loop | 1e-6 rad nudge (Warp vs itself) |
+|---|---|---|
+| reset | 2.3e-10 | 0 |
+| 1 step | 7e-9 | 4.5e-7 |
+| 5 steps | 4.3e-4 | 0.033 |
+| 0.5 s | 0.0029 | 0.033 |
+| 1 s | 0.11 | 0.4 |
+
+The port differs from the Python by less than a 1e-6 rad nudge's growth.
+Open loop (the Warp env replaying the hybrid's actions) it fell at 1.6 s:
+a balancing bike fed corrections chosen for a state chaos has moved away
+from does. Closed loop (each env flown by the policy on its own obs), 5 s:
+neither falls, mean reward/step 2.876 (hybrid) vs 2.888 (Warp).
+
+Three departures in the hybrid, each so the two are driven alike: the
+gearbox row found by (type, id); the odometry ticking every 25th substep by
+count; the Warp env given the hybrid's AHRS draws, detent phase,
+misalignment, drift sign and command.
+
+**Next: the pod run** (handoff, 2026-10-14). Everything above ran on the
+Mac's CPU (Warp's CPU device). On CUDA, in order:
+1. Copy, no git, no token: `src/`, `config/`, `moves/general_rl_v3_s0.npz`
+   (+ `.yaml`), `analysis/gpu_phase2/`, `pyproject.toml`. Env as
+   `analysis/gpu_phase1/pod_setup.sh` plus `gymnasium==1.3.0 scipy pyyaml`;
+   run with `PYTHONPATH=src`. Time every step (`wait_ssh.sh` for boot).
+2. `fly_policy.py` on `cuda:0`: v3_s0 still flies (0 falls, ~2.85
+   reward/step), i.e. nothing CPU-specific.
+3. Capture `GpuGeneralEnv.step` whole (`wp.ScopedCapture`): the auto-reset's
+   `if` paths are kernels, but `ForwardGuard`, `mjw.forward` and the
+   per-step `_reset_done` run unconditionally, so the graph is static.
+   Untested; the first thing that can break.
+4. The number gate A was a proxy for: policy steps/s of the WHOLE env (hooks,
+   reset, obs) at 1k-32k worlds, random actions; then with v3_s0's MLP on
+   the GPU. Against the box's ~2.1k policy steps/s end to end.
+5. `per_command.py`'s grid in GpuGeneralEnv vs GeneralEnv (needs a small
+   adapter: the grid's fixed commands set `v_cmd_w` / `psi_cmd` /
+   `next_resample` as `hybrid.make_warp`'s `on_reset` does).
+
+Found on the way:
+- **MJWarp's constraint rows have no fixed order** (`_friction_dof` takes
+  its row from `wp.atomic_add`). The Python gearbox hook reads the
+  friction sign at a fixed row; the kernel finds the row by (type, id).
+- **GeneralEnv's prev_action is one step stale, drive.py's is not.**
+  `step()` builds the obs (line ~1098) before `self._prev_a = action`
+  (~1175), so the obs that picks a_{k+1} carries a_{k-1} (recorded: exactly
+  a_{k-1}, never a_k); `drive.py` feeds a_k. A train/replay mismatch on
+  obs[12:15] for every general policy. Flagged as its own task; the port
+  copies the env, for parity.
+- **MJWarp's `forward` cannot be masked to some worlds.** The reset needs
+  one (sensors for the AHRS prime and first obs); on a world that did not
+  reset it would overwrite what the next substep's hooks read, which the
+  Python env never does mid-episode. `ForwardGuard` saves and restores
+  sensordata, qfrc_actuator, actuator_force, the efc rows and counts, and
+  the warm start for those worlds. [built; the hybrid check will test it]
+- **The first accelerometer reading after a reset differs by engine:** z
+  12.0 (MJWarp) vs 10.4 m/s^2 (C) at the settled start pose, x -0.47 vs
+  -1.31; the headset force by 0.2 N. MJWarp's extra contact points push
+  differently in the first forward. Every kinematic sensor matches to 1e-9.
+- **GeneralEnv's reset obs read MuJoCo truth** for roll, the rates and pitch:
+  `_obs` read the AHRS before the odometry's call primed it, so the cache
+  was empty on an episode's first read. One truth observation per episode.
+  Fixed in GeneralEnv (prime first); found as the hybrid's one reset-obs
+  difference (0.0027 rad/s on yaw rate).
+- **Float32 encoder counts flip at half-count boundaries** now and then:
+  6 of 998 ticks in one recording (0 in another) off by one count, 7.9 mm/s
+  of v_lon through the 2-tap filter. The kind of error a real encoder makes.
+- **The odometry's tick drifts in the Python env.** `SimOdometry` counts
+  time in float (`_acc += 0.0004`), so 5 s gave 499 ticks, not 500. The
+  port ticks every 25 substeps by integer count. [measured; effect not]
+- **Float32 shaft angles vs the stick springs.** The input shafts reach
+  ~106 rad in 5 s of v3_s0 (~1000 rad at 1.2 m/s for 15 s). float32's
+  spacing there times k_in 250 / k_stick 1000 N m/rad is the 3 % above,
+  and ~0.015-0.06 N m at 1000 rad against a 0.05 N m stick friction and a
+  0.096 N m detent. MJWarp's own qpos has the same resolution, so no hook
+  fix exists. Planned: a rebase kernel once per policy step shifting each
+  input shaft by a multiple of 10*pi -- ring +da, rollers +2.4 x ring,
+  hub +(da+db)/2 (needs na+nb even), detent phi by whole 7.5 deg periods --
+  with the servo buffers, stick anchors and the odometry's last count
+  shifted alike. The encoder counts add one more condition: a whole servo
+  revolution behind the 3:1 belt (6*pi of input), so the step is 30*pi.
+  [reasoned; not built]
 
 ### Phase 3 -- the PufferLib bridge
 
