@@ -1,0 +1,14 @@
+{"step":"apt_update","wall_s":2.36394}
+{"step":"apt_install","wall_s":14.4206}
+{"step":"venv","wall_s":2.74164}
+{"step":"pip_mujoco_warp","wall_s":10.6488}
+{"step":"pip_mjx_jax","wall_s":21.4832}
+{"step":"pip_nccl","wall_s":1.2583}
+{"step":"warp_init","wall_s":1.02628}
+{"step":"pip_phase2","rc":0,"wall_s":1.84404}
+{"step":"fly_cold","rc":0,"wall_s":174.08}
+{"step":"fly_warm","rc":0,"wall_s":117.286}
+{"step":"check","rc":0,"wall_s":132.164}
+{"step":"bench_rand","rc":0,"wall_s":381.088}
+{"step":"bench_mlp","rc":0,"wall_s":408.361}
+{"step":"warp_cache","rc":0,"wall_s":0.59967}

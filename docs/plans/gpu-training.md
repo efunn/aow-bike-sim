@@ -2,7 +2,10 @@
 
 > **Status, 2026-10-14: phase 1 done, gate A passed** (2.36M physics
 > steps/s on an A40; the bridge cannot nest graphs, so phase 3 uses two
-> launches per step -- see phase 1's run). Phases 2-5 not started.
+> launches per step -- see phase 1's run). **Phase 2: the env runs on
+> CUDA as one captured graph per policy step, 30k policy steps/s at 16-32k
+> worlds with v3_s0 driving (0 falls) -- ~14x the box.** Left in phase 2:
+> the per-command grid against GeneralEnv. Phases 3-5 not started.
 > Goal (user): the whole
 > physics + RL stack on one NVIDIA GPU -- MuJoCo Warp for the bike,
 > PufferLib 5.0's PPO for the learner. Phases are gated: each one ends in a
@@ -198,6 +201,12 @@ is a guess until phase 3; on the box they are ~37 % of an env step plus
   from createdAt. Never a foreground loop, and never the `ssh.runpod.io`
   proxy (needs a pty; the first run's loop over it blocked the session
   until the user's message pushed it aside).
+- **Waiting for a pod job:** launch it detached (`nohup ... &`, with
+  `< /dev/null` too, or the launching ssh stays open until the job ends),
+  writing `results/DONE` last. Then ONE background ssh that blocks on the
+  pod -- `while [ ! -f results/DONE ]; do sleep 5; done; <print results>` --
+  so its exit is the notification. Not timed sleeps: on 2026-10-14 those
+  under-guessed a 14 min run twice.
 - **Choosing the GPU** [reasoned from the A40 run]: memory is not the
   limit (~2 GB at 32k worlds); compute is (throughput flattens past ~16k
   worlds). So rank cards by compute per dollar, 16-24 GB is plenty for
@@ -206,7 +215,10 @@ is a guess until phase 3; on the box they are ~37 % of an env step plus
   secure, $0.34 community) on the same `run_all.sh` would show it.
 - **Warp's kernel cache comes back with results/** (`warp-cache.tgz`) for
   the tentative `analysis/gpu_phase1/Dockerfile` (not built; where it would
-  live and what is open is in its header).
+  live and what is open is in its header). Phase 2's, with the env's
+  kernels compiled for sm_86: `analysis/gpu_phase2/results_a40/
+  warp-cache.tgz` (8.8 MB; cold vs warm `fly_policy` 174 vs 117 s, so
+  ~1 min of compile it would save).
 - **Spending.** Confirm with the user before creating a pod (GPU type and
   $/h from the catalog read). TERMINATE it at the end of the session.
   Stopping leaves its disk billing. Write the measured numbers back into
@@ -406,7 +418,8 @@ hook objects (`const_from`), never from the yaml separately.
 | assembly | `env.GpuGeneralEnv` | v3_s0, 8 worlds x 5 s, training randomization: 0 falls, 2.846 reward/step (GeneralEnv: 0, 2.852). Past 750 steps: all worlds truncate, reset, curriculum 0 -> 0.02, fly on |
 | drivetrain angle rebase (once per policy step) | `rebase.rebase` | a consistent upward shift (~270 rad) then rebase vs untouched: obs diff 0.0014 / 0.0005 / 0.0014 / 0.086 after 1 / 2 / 5 / 10 steps, as a 1e-6 rad nudge (0 / 0.0005 / 0.0012 / 0.016); input a alone (broken): 5 from step 1 |
 | hybrid end to end (user's suggestion) | `analysis/gpu_phase2/hybrid.py` | below |
-| eval grid in both envs, CUDA capture of the whole step | -- | not started |
+| CUDA, the whole step (policy + env + auto-reset) as one graph | `analysis/gpu_phase2/bench_env.py` | A40, below |
+| eval grid in both envs | -- | not started |
 
 **The hybrid** -- GeneralEnv's own Python hooks, obs and reward on MJWarp
 physics (one world) against GpuGeneralEnv, so one engine and only the port
@@ -432,24 +445,44 @@ gearbox row found by (type, id); the odometry ticking every 25th substep by
 count; the Warp env given the hybrid's AHRS draws, detent phase,
 misalignment, drift sign and command.
 
-**Next: the pod run** (handoff, 2026-10-14). Everything above ran on the
-Mac's CPU (Warp's CPU device). On CUDA, in order:
-1. Copy, no git, no token: `src/`, `config/`, `moves/general_rl_v3_s0.npz`
-   (+ `.yaml`), `analysis/gpu_phase2/`, `pyproject.toml`. Env as
-   `analysis/gpu_phase1/pod_setup.sh` plus `gymnasium==1.3.0 scipy pyyaml`;
-   run with `PYTHONPATH=src`. Time every step (`wait_ssh.sh` for boot).
-2. `fly_policy.py` on `cuda:0`: v3_s0 still flies (0 falls, ~2.85
-   reward/step), i.e. nothing CPU-specific.
-3. Capture `GpuGeneralEnv.step` whole (`wp.ScopedCapture`): the auto-reset's
-   `if` paths are kernels, but `ForwardGuard`, `mjw.forward` and the
-   per-step `_reset_done` run unconditionally, so the graph is static.
-   Untested; the first thing that can break.
-4. The number gate A was a proxy for: policy steps/s of the WHOLE env (hooks,
-   reset, obs) at 1k-32k worlds, random actions; then with v3_s0's MLP on
-   the GPU. Against the box's ~2.1k policy steps/s end to end.
-5. `per_command.py`'s grid in GpuGeneralEnv vs GeneralEnv (needs a small
-   adapter: the grid's fixed commands set `v_cmd_w` / `psi_cmd` /
-   `next_resample` as `hybrid.make_warp`'s `on_reset` does).
+**The pod run** (2026-10-14, A40 secure EU-SE-1, $0.59/h, ~23 min, ~$0.23).
+Everything above ran on the Mac's CPU; this is CUDA. Copied (no git, no
+token): `src/`, `config/`, `moves/general_rl_v3_s0.*`, `analysis/gpu_phase2/`,
+the two phase 1 pod scripts, `pyproject.toml`. Then
+`analysis/gpu_phase1/pod_setup.sh` and `analysis/gpu_phase2/run_pod.sh`;
+logs in `analysis/gpu_phase2/results_a40/`. [measured]
+
+1. **It flies on CUDA.** `fly_policy.py`, v3_s0, 8 worlds x 250 steps:
+   0 falls, 2.864 reward/step (GeneralEnv 2.861); warm rerun 0, 2.859.
+2. **The whole step captures** -- policy, env and auto-reset in one CUDA
+   graph, one launch per policy step. The MLP is Warp kernels
+   (`bench_env.WarpMLP`, 2.4e-7 from numpy), so nothing leaves the GPU.
+   `bench_env.py --check`, 64 worlds x 250 steps: eager 0 falls 2.872,
+   graph 0 falls 2.870 reward/step.
+3. **Speed** -- the whole env, 200 graph launches per row; random actions
+   fall every ~22 steps, so their rows reset constantly:
+
+| worlds | random: policy steps/s | v3_s0: policy steps/s | v3_s0 physics steps/s | eager (no graph), v3_s0 | GPU mem |
+|---|---|---|---|---|---|
+| 1,024 | 12.3k | 12.2k | 0.61M | 2.1k | 455 MB |
+| 4,096 | 24.7k | 23.6k | 1.18M | 7.4k | 615 MB |
+| 16,384 | 31.6k | 29.5k | 1.47M | 22.5k | 1.3 GB |
+| 32,768 | 33.1k | 30.4k | 1.52M | 29.4k | 2.2 GB |
+
+   Against the box's ~2.1k policy steps/s end to end: **~14x at 16k
+   worlds**, before any learner. The hooks, reset and obs cost ~35 % of
+   bare MJWarp (2.36M physics steps/s at 32k, phase 1); the policy net
+   5-7 %. v3_s0 fell 0 times in every row. Without the graph the Python
+   launch loop (~0.4 s a policy step) dominates below ~16k worlds.
+4. **Setup times:** boot to ssh 75 s (phase 1 156 s), apt 17 s, pip 36 s,
+   Warp kernel compile ~1 min (cold vs warm `fly_policy`). The tarball's
+   scp: seconds.
+
+**Left in phase 2:** `per_command.py`'s grid in GpuGeneralEnv vs
+GeneralEnv -- an adapter that sets each world's fixed command
+(`v_cmd_w` / `psi_cmd` / `next_resample`, as `hybrid.make_warp`'s
+`on_reset` does) and rebuilds `train_general_rl._eval_episodes`' metrics
+from device state. Written and debugged on the Mac; run on the next pod.
 
 Found on the way:
 - **MJWarp's constraint rows have no fixed order** (`_friction_dof` takes
@@ -493,7 +526,8 @@ Found on the way:
   with the servo buffers, stick anchors and the odometry's last count
   shifted alike. The encoder counts add one more condition: a whole servo
   revolution behind the 3:1 belt (6*pi of input), so the step is 30*pi.
-  [reasoned; not built]
+  Built as `rebase.py` (6*pi common, 60*pi differential; checked in the
+  progress table).
 
 ### Phase 3 -- the PufferLib bridge
 

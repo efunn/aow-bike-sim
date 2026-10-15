@@ -1,0 +1,55 @@
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.18.0
+Module aow_sim.gpu.commands 73418d1 load on device 'cuda:0' took 0.52 ms  (cached)
+Module aow_sim.gpu.reset 27b6353 load on device 'cuda:0' took 0.55 ms  (cached)
+Module mujoco_warp._src.smooth b9cc505 load on device 'cuda:0' took 5.34 ms  (cached)
+Module _nxn_broadphase__locals__kernel_5ea22428 5ea2242 load on device 'cuda:0' took 0.35 ms  (cached)
+Module _primitive_narrowphase__locals__primitive_narrowphase_1280ba14 1280ba1 load on device 'cuda:0' took 0.78 ms  (cached)
+Module mujoco_warp._src.constraint 9435a53 load on device 'cuda:0' took 0.38 ms  (cached)
+Module _equality_joint__locals__kernel_66ba6c83 66ba6c8 load on device 'cuda:0' took 0.58 ms  (cached)
+Module _equality_tendon__locals__kernel_d03f3a93 d03f3a9 load on device 'cuda:0' took 0.37 ms  (cached)
+Module _friction_dof__locals__kernel_eadd710f eadd710 load on device 'cuda:0' took 0.34 ms  (cached)
+Module _friction_tendon__locals__kernel_8ac2823e 8ac2823 load on device 'cuda:0' took 0.35 ms  (cached)
+Module _limit_tendon__locals__kernel_36d520cc 36d520c load on device 'cuda:0' took 0.36 ms  (cached)
+Module _efc_contact_init__locals__kernel_48b1da0a 48b1da0 load on device 'cuda:0' took 0.34 ms  (cached)
+Module _efc_contact_jac_dense__locals__kernel_cde1aa89 037dfea load on device 'cuda:0' took 0.42 ms  (cached)
+Module _efc_contact_update__locals__kernel_cf1f607c cf1f607 load on device 'cuda:0' took 0.33 ms  (cached)
+Module mujoco_warp._src.sensor 764597f load on device 'cuda:0' took 1.13 ms  (cached)
+Module mujoco_warp._src.history 5cd4baa load on device 'cuda:0' took 0.66 ms  (cached)
+Module mujoco_warp._src.forward f44d3e1 load on device 'cuda:0' took 0.66 ms  (cached)
+Module mujoco_warp._src.forward 0a75030 load on device 'cuda:0' took 0.91 ms  (cached)
+Module mujoco_warp._src.passive 80f3681 load on device 'cuda:0' took 0.64 ms  (cached)
+Module _qfrc_smooth__locals__kernel_8b823980 8b82398 load on device 'cuda:0' took 0.35 ms  (cached)
+Module mujoco_warp._src.support f39c2de load on device 'cuda:0' took 0.38 ms  (cached)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_dcb711f9 176c226 load on device 'cuda:0' took 32.63 ms  (cached)
+Module _solve_init_dof__locals__kernel_1d7ecfa4 1d7ecfa load on device 'cuda:0' took 0.36 ms  (cached)
+Module mujoco_warp._src.solver c97221b load on device 'cuda:0' took 0.63 ms  (cached)
+Module _solve_init_jaref_kernel__locals__kernel_b9a13353 b9a1335 load on device 'cuda:0' took 0.34 ms  (cached)
+Module mul_m_kernel__locals___mul_m_d74bd8d9 d74bd8d load on device 'cuda:0' took 0.34 ms  (cached)
+Module _update_constraint_efc__locals__kernel_4b172e8b 4b172e8 load on device 'cuda:0' took 0.35 ms  (cached)
+Module _update_constraint_init_qfrc_constraint_dense__locals__kernel_c29c2cfc c29c2cf load on device 'cuda:0' took 0.35 ms  (cached)
+Module _update_gradient_zero_grad_dot__locals__kernel_93442399 9344239 load on device 'cuda:0' took 0.37 ms  (cached)
+Module _update_gradient_grad__locals__kernel_378e7517 378e751 load on device 'cuda:0' took 0.36 ms  (cached)
+Module _update_gradient_JTDAJ_dense_tiled__locals__kernel_a2b3407d e5623df load on device 'cuda:0' took 0.86 ms  (cached)
+Module _update_gradient_cholesky__locals__kernel_571f0b08 c80663a load on device 'cuda:0' took 46.91 ms  (cached)
+Module _linesearch_iterative_kernel__locals__kernel_d8c09560 2a5cf42 load on device 'cuda:0' took 0.50 ms  (cached)
+Module aow_sim.gpu.ahrs 7ed1d2b load on device 'cuda:0' took 1.89 ms  (cached)
+Module aow_sim.gpu.obs_reward d38f452 load on device 'cuda:0' took 0.41 ms  (cached)
+Module __main__ 3d29957 load on device 'cuda:0' took 0.40 ms  (cached)
+Module aow_sim.gpu.action ea87bd8 load on device 'cuda:0' took 0.37 ms  (cached)
+Module aow_sim.gpu.drivetrain 00c52bc load on device 'cuda:0' took 0.49 ms  (cached)
+Module aow_sim.gpu.gearbox 52747b8 load on device 'cuda:0' took 0.40 ms  (cached)
+Module mujoco_warp._src.derivative 1d93a53 load on device 'cuda:0' took 0.84 ms  (cached)
+Module _next_time_builder__locals___next_time_f604e0b3 f604e0b load on device 'cuda:0' took 0.53 ms  (cached)
+Module aow_sim.gpu.odometry 3d8a02e load on device 'cuda:0' took 0.58 ms  (cached)
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.58 ms  (cached)
+Module aow_sim.gpu.env ed64ce9 load on device 'cuda:0' took 0.43 ms  (cached)
+{"nworld": 1024, "policy": "moves/general_rl_v3_s0.npz", "build_s": 1.14, "reset_s": 0.5, "first_step_s": 0.55, "eager_policy_sps": 2113, "capture_s": 0.41, "graph_policy_sps": 12190, "graph_physics_sps": 609499, "steps": 200, "wall_s": 16.8, "falls": 0, "episode_ends": 0, "reward_per_step": 2.8841, "gpu_mem_mb": 455, "device": "NVIDIA A40"}
+{"nworld": 4096, "policy": "moves/general_rl_v3_s0.npz", "build_s": 0.78, "reset_s": 0.02, "first_step_s": 0.52, "eager_policy_sps": 7358, "capture_s": 0.41, "graph_policy_sps": 23562, "graph_physics_sps": 1178089, "steps": 200, "wall_s": 34.77, "falls": 0, "episode_ends": 0, "reward_per_step": 2.8906, "gpu_mem_mb": 615, "device": "NVIDIA A40"}
+{"nworld": 16384, "policy": "moves/general_rl_v3_s0.npz", "build_s": 0.84, "reset_s": 0.02, "first_step_s": 0.67, "eager_policy_sps": 22486, "capture_s": 0.39, "graph_policy_sps": 29451, "graph_physics_sps": 1472557, "steps": 200, "wall_s": 111.26, "falls": 0, "episode_ends": 0, "reward_per_step": 2.9172, "gpu_mem_mb": 1287, "device": "NVIDIA A40"}
+{"nworld": 32768, "policy": "moves/general_rl_v3_s0.npz", "build_s": 0.93, "reset_s": 0.03, "first_step_s": 1.06, "eager_policy_sps": 29444, "capture_s": 0.38, "graph_policy_sps": 30365, "graph_physics_sps": 1518242, "steps": 200, "wall_s": 215.83, "falls": 0, "episode_ends": 0, "reward_per_step": 2.8096, "gpu_mem_mb": 2183, "device": "NVIDIA A40"}
