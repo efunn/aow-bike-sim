@@ -96,8 +96,11 @@ envs -- runs exactly as before, and the hooked ones (RL envs, teleop,
 `balance.run`, `record`) get the detailed drive.
 `drivetrain_model.attach_hooks` is the one call a physics loop needs.
 
-**Tests, 2026-10-09**: `1 failed, 812 passed, 52 skipped`, red set
-unchanged (1 accepted: `test_sensor_modes[0.19]`). The LQR's 15 accepted reds
+**Tests, 2026-10-14**: `878 passed, 52 skipped`, **no accepted reds**.
+`test_sensor_modes[0.19]` (the sensor-mode policy at tau 0.19, red since the
+new front wheel) went green with the GeneralEnv observation fixes (fresh
+prev_action, AHRS at reset): red at their parent commit, green at it.
+Before that, **2026-10-09**: `1 failed, 812 passed, 52 skipped`. The LQR's 15 accepted reds
 are skipped with the deprecated `lqr` marker and still judged under
 `pytest -m lqr` (15 failed, 20 passed, unchanged). The teleop tests now run the
 viewer's `pre_step` (the detailed drive's XC430 loop): without it the new

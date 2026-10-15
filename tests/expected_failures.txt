@@ -233,6 +233,6 @@ tests/test_pivot.py::test_pivot_with_wound_steer           # 2026-10-05 new fron
 # is to be run on each new export. The reasoning that stood here is in
 # `git log -p -- tests/expected_failures.txt`.
 #
-# THE NEW FRONT WHEEL, one case, 2026-10-05, pending sign-off: the policy
-# trained on the old wheel; at tau 0.19 it survives 3 of the 4 commands.
-tests/test_sensor_modes.py::test_sensor_mode_survives_on_the_policy_that_trained_for_it[0.19]  # 2026-10-05 new front wheel: survive 0.75 of the 4-command subset
+# THE NEW FRONT WHEEL case (2026-10-05, sensor mode at tau 0.19, 3 of 4
+# commands) went GREEN with the GeneralEnv observation fixes of 2026-10-14
+# (fresh prev_action, AHRS at reset): red at their parent, green at them.
