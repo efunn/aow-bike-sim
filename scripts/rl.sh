@@ -9,9 +9,10 @@
 #   ./scripts/rl.sh queue general <file>    # (config, seed, name) jobs, serial
 #   ./scripts/rl.sh board general           # dashboard only (outlives training)
 #   ./scripts/rl.sh train general --resume  # extra args go straight to the trainer
-#   ./scripts/rl.sh status                  # what is up, and on which port
+#   ./scripts/rl.sh status                  # what is up, and on which port (every RUN_TAG)
 #   ./scripts/rl.sh eta general             # cpu/gpu, fps, % done, time left
 #   ./scripts/rl.sh logs general            # tail -f the live training log
+#     (eta/logs with no RUN_TAG follow whichever run is training, queues included)
 #   ./scripts/rl.sh stop general            # cancel training, leave the board up
 #   ./scripts/rl.sh stop-board general      # kill the board, leave training up
 #   ./scripts/rl.sh sync                    # fast-forward to origin, keeping artifacts
@@ -122,6 +123,39 @@ running() {
 }
 
 pid_of() { running "$1" "$2" | awk '{print $2}'; }
+
+# Every RUN_TAG with a pidfile for <move>, the untagged one first (printed as
+# "-"). `seeds` and `queue` launch under their own tag, so a bare `status` or
+# `eta` that only looked at the untagged dir called a box idle while a queue
+# trained (2026-10-14), and `eta` reported the last PLAIN run's 100 % as if it
+# were the live one.
+tags_with_pids() {
+  local move=$1 d
+  echo "-"
+  for d in "$REPO/runs/${move}_rl_"*/; do
+    [[ -f "$d.train.pid" || -f "$d.board.pid" ]] || continue
+    d="${d%/}"; echo "${d#"$REPO/runs/${move}_rl_"}"
+  done
+}
+
+# With no RUN_TAG given, point eta/logs at the run that is actually training:
+# the untagged one if it is, else the ONE tagged run that is; several -> say
+# which and stop. Nothing training anywhere -> leave it untagged (last run).
+resolve_tag() {
+  local move=$1 tag live=()
+  [[ -z "${RUN_TAG+x}" ]] || return 0
+  running "$move" train >/dev/null && return 0
+  while IFS= read -r tag; do
+    [[ $tag == - ]] && continue
+    RUN_TAG="$tag" running "$move" train >/dev/null && live+=("$tag")
+  done < <(tags_with_pids "$move")
+  case ${#live[@]} in
+    0) echo "note         nothing training for '$move' -- this is the LAST untagged run" ;;
+    1) RUN_TAG="${live[0]}"
+       echo "note         no untagged run; reporting RUN_TAG=$RUN_TAG (the one training)" ;;
+    *) die "several '$move' runs training (RUN_TAG: ${live[*]}) -- pick one: RUN_TAG=<tag> $0 $SUB $move" ;;
+  esac
+}
 
 signal_tree() {   # signal_tree <sig> <pid> -- children first, then the parent
   local sig=$1 pid=$2 child
@@ -653,21 +687,26 @@ cmd_eta() {
   fi
 }
 
+# Every tag, unless RUN_TAG is given -- then only that one, as before.
 cmd_status() {
-  local move kind job pid detail any=0
-  printf '%-9s %-6s %-8s %s\n' MOVE WHAT PID DETAIL
+  local move kind job pid detail tag tags any=0
+  printf '%-9s %-6s %-8s %-20s %s\n' MOVE WHAT PID RUN_TAG DETAIL
   for move in $MOVES; do
-    for kind in train board; do
-      if job="$(running "$move" "$kind")"; then
-        any=1
-        pid="$(echo "$job" | awk '{print $2}')"
-        if [[ $kind == board ]]; then
-          detail="$(board_url "$(port_for "$move")")"
-        else
-          detail="$(run_dir "$move")/logs/train-latest.log"
+    if [[ -n "${RUN_TAG+x}" ]]; then tags="${RUN_TAG:--}"; else tags="$(tags_with_pids "$move")"; fi
+    for tag in $tags; do
+      [[ $tag == - ]] && tag=""
+      for kind in train board; do
+        if job="$(RUN_TAG="$tag" running "$move" "$kind")"; then
+          any=1
+          pid="$(echo "$job" | awk '{print $2}')"
+          if [[ $kind == board ]]; then
+            detail="$(board_url "$(port_for "$move")")"
+          else
+            detail="$(RUN_TAG="$tag" run_dir "$move")/logs/train-latest.log"
+          fi
+          printf '%-9s %-6s %-8s %-20s %s\n' "$move" "$kind" "$pid" "${tag:--}" "$detail"
         fi
-        printf '%-9s %-6s %-8s %s\n' "$move" "$kind" "$pid" "$detail"
-      fi
+      done
     done
   done
   [[ $any == 1 ]] || echo "(nothing running)"
@@ -741,8 +780,8 @@ case "$SUB" in
   board)      check_move "${1:-}"; cmd_board "$1" ;;
   stop)       check_move "${1:-}"; stop "$1" train ;;
   stop-board) check_move "${1:-}"; stop "$1" board ;;
-  eta)        check_move "${1:-}"; cmd_eta "$1" ;;
-  logs)       check_move "${1:-}"; tail -f "$(run_dir "$1")/logs/train-latest.log" ;;
+  eta)        check_move "${1:-}"; resolve_tag "$1"; cmd_eta "$1" ;;
+  logs)       check_move "${1:-}"; resolve_tag "$1"; tail -f "$(run_dir "$1")/logs/train-latest.log" ;;
   status)     cmd_status ;;
   sync)       cmd_sync ;;
   *)          awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0" >&2; exit 1 ;;
