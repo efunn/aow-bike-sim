@@ -1,0 +1,2 @@
+puffer: ./ocean/robot_arm/robot_arm.cu:103: void puf_step(Env*): Assertion `cudaGetLastError() == cudaSuccess' failed.
+timeout: the monitored command dumped core

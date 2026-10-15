@@ -1,0 +1,29 @@
+{"step":"apt_update","wall_s":3.93248}
+{"step":"apt_install","wall_s":19.3638}
+{"step":"venv","wall_s":3.20891}
+{"step":"pip_mujoco_warp","wall_s":12.1955}
+{"step":"pip_mjx_jax","wall_s":24.7534}
+{"step":"pip_nccl","wall_s":1.44313}
+{"step":"warp_init","wall_s":1.02859}
+{"step":"python probe_physics.py compile --nworld 1024","wall_s":48.3717}
+{"step":"python probe_physics.py track --steps 1250 --every 250","wall_s":13.4097}
+{"step":"python probe_physics.py perworld --steps 250","wall_s":15.0674}
+{"step":"python probe_physics.py sweep --nworld 1024 4096 16384 32768 --steps 1000 --chunk 50","wall_s":33.501}
+{"step":"python probe_physics.py sweep_mjx --nworld 1024 4096 --steps 200 --chunk 50","wall_s":233.688}
+{"step":"nvcc -O2 -std=c++17 bridge_probe.cu -o bridge_probe -lcuda -ldl","wall_s":1.451}
+{"step":"python save_graph.py --nworld 1024 --steps 50 --out wrp/bike1024","wall_s":5.53569}
+{"step":"./bridge_probe /root/venv/lib/python3.12/site-packages/warp/bin/libwarp.so wrp/bike1024 1.18.0 1024 50 100","wall_s":0.373938}
+{"step":"python save_graph.py --nworld 4096 --steps 50 --out wrp/bike4096","wall_s":7.72154}
+{"step":"./bridge_probe /root/venv/lib/python3.12/site-packages/warp/bin/libwarp.so wrp/bike4096 1.18.0 4096 50 100","wall_s":0.347885}
+{"step":"puffer_clone","wall_s":26}
+{"probe":"puffer_build","ok":false,"wall_s":1}
+# cache 19M	/root/.cache/warp
+# cache 797M	/root/.cache/pip
+{"step":"puffer_clone","wall_s":0}
+{"probe":"puffer_build","ok":false,"wall_s":128}
+{"step":"apt_libgl","wall_s":2}
+{"step":"puffer_clone","wall_s":0}
+{"probe":"puffer_build","ok":true,"wall_s":125}
+# cache 19M	/root/.cache/warp
+# cache 797M	/root/.cache/pip
+# cache 8.0K	/root/.ccache

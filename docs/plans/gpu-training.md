@@ -1,6 +1,9 @@
 # GPU training: MuJoCo Warp + PufferLib 5.0
 
-> **Status: PLAN, 2026-10-14. Nothing built.** Goal (user): the whole
+> **Status, 2026-10-14: phase 1 done, gate A passed** (2.36M physics
+> steps/s on an A40; the bridge cannot nest graphs, so phase 3 uses two
+> launches per step -- see phase 1's run). Phases 2-5 not started.
+> Goal (user): the whole
 > physics + RL stack on one NVIDIA GPU -- MuJoCo Warp for the bike,
 > PufferLib 5.0's PPO for the learner. Phases are gated: each one ends in a
 > number that decides whether the next is worth starting.
@@ -171,6 +174,11 @@ is a guess until phase 3; on the box they are ~37 % of an env step plus
   cfg = _load_rl_config("config/rl_general_v3.yaml")
   env = GeneralEnv(from_env_config(load_params(), cfg["env"]), cfg)
   mujoco.mj_saveModel(env.model, "v3_rigid.mjb")
+  # the probes' start state (analysis/gpu_phase1/): one reset, seed 0
+  import numpy as np
+  env.reset(seed=0)
+  np.savez("v3_init_state.npz", qpos=env.data.qpos, qvel=env.data.qvel,
+           ctrl=env.data.ctrl)
   ```
 
   4.5 MB; nq 21, nv 20, nu 5, 127 geoms, 74 meshes, timestep 4e-4,
@@ -183,14 +191,163 @@ is a guess until phase 3; on the box they are ~37 % of an env step plus
   hooks are phase 2's problem, not phase 1's.
 - **Code onto the pod:** copy files (`runpodctl send`, or scp to the pod's
   SSH address). Never put a GitHub token or key on a rented machine.
+- **Waiting for a pod** (lesson of 2026-10-14): `get-pod` right after
+  create, again until `runtime.ports` shows the 22/tcp mapping; then start
+  `analysis/gpu_phase1/wait_ssh.sh <ip> <port> <createdAt epoch>` IN THE
+  BACKGROUND and work on while it waits. It logs TCP-open and ssh-ok times
+  from createdAt. Never a foreground loop, and never the `ssh.runpod.io`
+  proxy (needs a pty; the first run's loop over it blocked the session
+  until the user's message pushed it aside).
+- **Choosing the GPU** [reasoned from the A40 run]: memory is not the
+  limit (~2 GB at 32k worlds); compute is (throughput flattens past ~16k
+  worlds). So rank cards by compute per dollar, 16-24 GB is plenty for
+  physics plus a small net. Whether MJWarp's step scales with FP32 compute
+  or with memory latency is untested: a 4090 (~2x the A40's FP32, $0.89/h
+  secure, $0.34 community) on the same `run_all.sh` would show it.
+- **Warp's kernel cache comes back with results/** (`warp-cache.tgz`) for
+  the tentative `analysis/gpu_phase1/Dockerfile` (not built; where it would
+  live and what is open is in its header).
 - **Spending.** Confirm with the user before creating a pod (GPU type and
   $/h from the catalog read). TERMINATE it at the end of the session.
   Stopping leaves its disk billing. Write the measured numbers back into
   this section with `[measured]` tags before ending.
 - **RunPod access** (2026-10-14): the plugin is installed at user scope.
   Signing in through the desktop app's `/mcp` failed (`redirect_uri is not
-  allowed`); signing in from the terminal `claude` CLI worked. If a session
-  still shows it `needs_auth`, that is where to sign in.
+  allowed`), and the terminal CLI's sign-in did not reach the desktop
+  session either. What worked (user): desktop app Settings > Connectors,
+  delete the RunPod server, re-add it by hand, then the browser sign-in
+  link; the connector came up in the SAME session, no restart. The account
+  has no SSH keys registered: pass `PUBLIC_KEY` (contents of
+  `~/.ssh/id_ed25519.pub`) in the pod's env instead of changing account
+  settings.
+
+**Mac dry run, 2026-10-14** (`analysis/gpu_phase1/`: `probe_physics.py`,
+`pod_setup.sh`, the exported `v3_rigid.mjb` + `v3_init_state.npz`;
+`mujoco-warp 3.10.0.3`, Warp 1.18.0, CPU device):
+
+- **Loads unmodified.** `put_model` refuses nothing: elliptic cones,
+  Newton, the joint/tendon equalities, tendon limits and the meshes all
+  compile and step. [measured]
+- **Per-world parameters: yes, in the API.** `put_model(mjm,
+  batch_sizes={field: n})` gives a field a per-world leading dimension;
+  kernels index it `worldid % n`. `body_mass`, `body_inertia`,
+  `geom_friction`, `geom_solref`, `actuator_gainprm/biasprm/forcerange`,
+  `dof_frictionloss/damping/armature` are all batchable [read, io.py and
+  types.py]. Four worlds at scales 1/0.8/1.2/1.5 of mass, friction, gains,
+  friction loss and damping: world 0 equals the unbatched run, the others
+  move away from it, all finite. [measured] Gate A's first half is met;
+  rewriting `dof_frictionloss` each substep (the gearbox) is an array write
+  and is phase 2's.
+- **Tracking vs C differs, and MJX differs the same way.** Open loop,
+  smooth random steer and motor commands, 100 ms: chassis 0.73-1.0 mm and
+  0.26-0.31 deg roll off C. MJX on the same run: 0.92 mm, 0.10 deg roll, and
+  float32 = float64 to 0.001 deg, so precision is not the cause. Both GPU
+  engines lay up to 4 contact points on a mesh resting on the plane where C
+  lays 1 here (Warp: 6-7 contacts, C: 2), and the floor-touching roller's
+  spin is the largest joint difference (0.1 rad by 100 ms). A C run nudged
+  1e-7 m stays within 0.001 mm over the same 100 ms. [measured] The earlier
+  "MJX ~0.1 mm over 100 ms" was a gentler case; this is the harder one.
+  Consequence: a GPU-trained policy needs a sim-to-sim check in C before
+  anything else (phase 5), not only a replay match in phase 2.
+- **A Python-free bridge may already exist: Warp's APIC.** Warp 1.18
+  saves a captured graph to a `.wrp` file (`ScopedCapture(apic=True)`,
+  `capture_save`) and libwarp exports a C API to load and run it:
+  `wp_apic_load_graph`, `wp_apic_get_param_ptr` (device pointer of a bound
+  array), `wp_apic_get_cuda_graph(_exec)` (a plain `cudaGraph_t` /
+  `cudaGraphExec_t`), header comment "standalone, no Python needed" for
+  CUDA [read, `warp/native/apic.h`]. On the Mac CPU: 50 `mjw.step`s x 8
+  worlds captured, saved, reloaded in a fresh process: 0.0 difference
+  from the live graph; restoring qpos/qvel/act/ctrl/qacc_warmstart/time
+  through the bound params and relaunching: 0.0 again. [measured] (Bind
+  `history` too: the steer delay line, this morning's reset bug.) A CPU
+  load still needs Python to link the kernels, so the C-only test is
+  CUDA-only: `bridge_probe.cu` (T1-T5: load from C, replay on a C stream,
+  restore from C, rate, then the graph inside a C stream capture two ways --
+  `cudaGraphLaunch` while capturing, and a child-graph node). If T5 passes,
+  phase 3's core is mostly done; probes 2-4 of the table above are folded
+  into it. Cost: the `.wrp` snapshots every buffer, ~0.7 MB per world
+  (15.9 MB at 8, 55.5 MB at 64) [measured], so the probe runs 1k and 4k.
+- **Run order on the pod:** `pod_setup.sh`, then `run_all.sh` (physics
+  probes, graph export + C probe, then `puffer_probe.sh`: PufferLib at
+  ea7f989, robot_arm 5 min, `num_layers=0` 2 min). All of it writes JSON
+  lines to `results/results.jsonl`.
+**Phase 1 run, 2026-10-14, RunPod A40 48 GB** (secure, CA-MTL-1, $0.59/h;
+`runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`, driver 580 / CUDA 13.0,
+toolkit 12.8; pod up 23 min, ~$0.23, terminated). Raw output:
+`analysis/gpu_phase1/results_a40/`. All [measured], one run each.
+
+| | result |
+|---|---|
+| per-world params on GPU | all 5 fields: world 0 = unbatched, others diverge, finite |
+| C tracking on GPU | same as the CPU dry run (0.67 mm, 0.24 deg roll at 100 ms) |
+| MJWarp, CUDA graph of 50 steps | 1.10M / 1.99M / 2.30M / **2.36M** physics steps/s at 1k / 4k / 16k / 32k worlds |
+| memory | ~2 GB used at 32k worlds (free 42.3 of 44.4 GB) |
+| MJX, same GPU | 15.6k / 14.8k steps/s at 1k / 4k: ~150x slower, as the dense contact pairs predicted |
+| graph launched from C (T4) | 1.23M at 1k, **2.20M at 4k** (Python launch 1.18M / 2.03M) |
+| C load / replay / restore (T1-T3) | ok; qpos 7-9e-9 off the Python reference |
+| graph nested in a stream capture (T5a, T5b) | **fails**: `cudaGraphLaunch` while capturing is not permitted; child-graph node "operation not supported" |
+| child node with no capture (T6) | also "not supported": this graph cannot be a child at all. Nodes: 5350 kernel, 250 memcpy (all D2D), 1000 memset. Cause unknown |
+| PufferLib ea7f989 build | ok after two fixes (below), 125 s |
+| robot_arm, 5 min | 75M steps; 475k SPS early, 184k by the end (rollout 90 -> 97 %) |
+| `policy.num_layers = 0` | crashes: CUDA assert in robot_arm's `puf_step`. Phase 4 option 1 is out; option 2 (edit `algo.cu`) |
+
+**Gate A: passed.** Per-world parameters work, and physics alone is 2.36M
+steps/s, above the >= ~2M line, ~22x the box's whole-pipeline 105k.
+Caveat: the probe runs open loop, so the bikes have fallen within ~0.3 s
+and lie on their side (~71 deg roll), still in contact with the floor.
+The step cost hardly depends on it: same run, one world, MJWarp on the
+Mac CPU, Newton iterations per step 2.8 upright (0-0.1 s, 3.7 contacts)
+vs 2.4 lying (0.3-0.5 s, 2.7 contacts) [measured]. So the sweep is at
+most ~10-20 % optimistic [reasoned]. Throughput is flattening by 16k-32k
+(2.30M -> 2.36M) with memory to spare: past ~16k worlds the GPU is busy,
+more worlds add little. Nothing above 32k was tried.
+
+In policy steps: one 20 ms control step is 50 substeps, so 4k worlds at
+2.2M physics steps/s is ~93 ms per control step, ~44k policy steps/s,
+against the box's ~2.1k. [reasoned from the measured rates; no hooks,
+obs or learner yet]
+
+**Gate B's open question, answered no:** the Warp graph does not nest in
+PufferLib's capture. Phase 3 instead launches two graphs per control step
+on one stream (PufferLib's, then the Warp exec loaded from C), which T2-T4
+show works with no Python. **The seam** [read, `src/pufferl.cu`
+`rollout_start`, ea7f989]: for a GPU env PufferLib captures the WHOLE
+horizon (`horizon` = 64-128 steps of `pufferl_forward_step` + `puf_step`)
+as one graph on its first rollout, and our `puf_step` would run inside
+that capture, which is exactly what fails. Two ways out, both small:
+`base.cudagraphs = -1` runs the same loop eagerly (our `puf_step` then
+launches the Warp exec itself; the forward pass loses its graph), or an
+edit of ~20 lines there to capture the forward pass per step and launch
+it and the Warp graph back to back. Cost of the extra launches: a graph
+launch is microseconds; a control step at 4k worlds is ~93 ms of physics,
+so even 2 launches x 128 steps a horizon is ~0.01 % [reasoned; launch
+overhead not measured here]. PufferLib's one-graph-per-horizon design
+pays off for its own envs, whose steps take microseconds; ours does not
+need it.
+
+**Setup timings** (for a Docker image; user asked): pod create -> SSH
+~156 s is MY polling, not RunPod's boot: the API said RUNNING at create,
+the container's uptime was 136 s at the read where the SSH port first
+showed, and my wait loop sampled every 10+ s. The real boot was not
+measured; time it with a tight loop next rental. apt 23 s (+ libGL 2 s); pip 38 s (797 MB pip cache); Warp's
+first-step kernel compile **45 s** (19 MB cache in `~/.cache/warp`); MJX
+JIT inside its 234 s sweep; PufferLib clone 26 s, compile 125 s (ccache
+did not hit: 8 KB). Baking the pip installs, the Warp kernel cache and
+the PufferLib binary into an image would save ~4 min a rental.
+
+**Fixes found on the pod** (in the scripts now): the image has CUDA 12.8 at
+`/usr/local/cuda/bin` but not on PATH; Warp's Linux library is `warp.so`
+(`libwarp.dylib` on macOS); PufferLib's `build.sh robot_arm` greps
+`robot_arm.cu` for the `obs_t` typedef that lives in `robot_arm.h`, so it
+refuses before compiling (worked around with a sed); raylib links `-lGL`
+(`libgl-dev`). `save_graph.py --no-mempool` fails: a Warp capture needs
+the mempool. The `.wrp` on GPU is ~45 KB per world (61 MB at 1k, 190 MB
+at 4k), not the CPU run's 0.7 MB.
+
+- **The probe's controls.** `drive_a`/`drive_b` are zero-gain integrators
+  the drivetrain hook feeds; `steer` and `drive_*_motor` have no
+  ctrlrange, so a ctrlrange-based generator commands them 0. The probe
+  drives the unlimited ones at +-0.3 (rad, N m).
 
 ### Phase 2 -- the env in Warp kernels (most of the work)
 

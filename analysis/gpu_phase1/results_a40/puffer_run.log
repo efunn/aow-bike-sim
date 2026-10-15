@@ -1,0 +1,10 @@
+{"step":"puffer_clone","wall_s":0}
+ea7f9893 Merge pull request #693 from FinlaySanders/cublas
+243:# Dashboard / cache / trailer: compile SRC_FILE only (not puffercpu / CUDA / obs_t).
+288:            if ! cat "$ENV_HEADER" "${ENV_HEADER%.cu}.h" 2>/dev/null | grep -q 'typedef[[:space:]].*obs_t' 2>/dev/null; then
+289:                echo "Error: $ENV_HEADER must typedef obs_t for standalone eval"
+{"probe":"puffer_build","ok":true,"wall_s":125}
+{"probe":"puffer_robot_arm","exit":124}
+puffer_probe.sh: line 36:  7268 Aborted                 timeout 120 ./puffer train --headless --policy.num_layers=0 > "$OUT/puffer_layers0.log" 2>&1
+{"probe":"puffer_layers0","exit":134}
+tail: option used in invalid context -- 5
