@@ -4,10 +4,16 @@
 > steps/s on an A40; the bridge cannot nest graphs, so phase 3 uses two
 > launches per step -- see phase 1's run). **Phase 2: the env runs on
 > CUDA as one captured graph per policy step, 30k policy steps/s at 16-32k
-> worlds with v3_s0 driving (0 falls) -- ~14x the box.** Left in phase 2:
-> the per-command grid against GeneralEnv and a profile of where the step's
-> time goes (both built, to run). **Phase 3: the PufferLib env is built,
-> Mac-checked, not yet compiled or run.** Phases 4-5 not started.
+> worlds with v3_s0 driving (0 falls) -- ~14x the box.** The eval grid
+> matches GeneralEnv, and the env costs x1.05 of bare MJWarp on the same
+> model. **Phase 3: PufferLib trains on it end to end on an A40 and learns
+> to ride: 20M steps in 14 min (21-25k SPS, ~10x the box), episodes from
+> 0.4 s to 13.4 s of 15, ~72 % ending without a fall** (training-time
+> numbers, not v3's eval grid; the first run's settings learned nothing --
+> see phase 3). A 1 h run collapsed to NaN at ~33M (unclipped actions in
+> the penalties + lr too hot, both fixed, untested); its policies survive
+> by never standing still. Checkpoints now convert to moves
+> (`gpu/export_policy.py`). Phases 4-5 not started.
 > Goal (user): the whole
 > physics + RL stack on one NVIDIA GPU -- MuJoCo Warp for the bike,
 > PufferLib 5.0's PPO for the learner. Phases are gated: each one ends in a
@@ -480,8 +486,19 @@ logs in `analysis/gpu_phase2/results_a40/`. [measured]
    Warp kernel compile ~1 min (cold vs warm `fly_policy`). The tarball's
    scp: seconds.
 
-**Left in phase 2: the eval grid, built, not yet run on a GPU.**
-`analysis/gpu_phase2/eval_grid.py` flies the 20-command grid both ways:
+**The eval grid on CUDA, 2026-10-14** (A40 EU-SE-1, the phase 3 rental;
+`analysis/gpu_phase3/results_a40/eval_grid.{log,json}`) [measured]: 640
+worlds x 250 steps in 22.8 s (GeneralEnv's 20 episodes: 15.2 s). Falls
+1/640 (one seed of `(0, -0.396, 0)`) vs 0/20. GeneralEnv's value lies
+inside the 32 GPU seeds' [min, max] for 122 of 140 (command, metric)
+pairs: head_err_med 17/20, vel_err_med 18, head_err_tail 19, vel_err_tail
+18, t_head_s 18, v_ach 18, **drift_m 14**. One draw from the same
+distribution lands outside 32 others' range with p = 2/33, so ~8.5 misses
+were expected and there are 18 -- the engines agree closely, not exactly;
+drift (CPU 2-5 % above the GPU's range on four commands) is the one to
+watch. [reasoned on the p; the cause untested]
+
+How it is built: `analysis/gpu_phase2/eval_grid.py` flies the 20-command grid both ways:
 GeneralEnv through `eval_general._eval_episodes` itself (the eval
 config, one episode a command, seeds 10_000 + k), and the GPU env with
 every command x 32 seeds as worlds at once, each holding its command
@@ -489,11 +506,32 @@ every command x 32 seeds as worlds at once, each holding its command
 metrics rebuilt from device state under the same names. Per command:
 GeneralEnv's value against the GPU seeds' median and range. Smoke-tested
 on the Mac (2 seeds, 0.4 s each side): plumbing right, heading and speed
-errors within ~1 deg / 0.01 m/s that early. Next pod:
-`bash analysis/gpu_phase2/run_pod.sh eval` (a few minutes). The metrics
+errors within ~1 deg / 0.01 m/s that early. Run:
+`bash analysis/gpu_phase2/run_pod.sh eval`. The metrics
 come from `aow_sim.eval_general`, torch-free since 2026-10-14.
 
-**Also to run: where the time goes.** The whole env is ~35 % below phase
+**Where the time goes, measured 2026-10-14** (same rental,
+`results_a40/profile.{log,jsonl}`) [measured]:
+
+| worlds | env graph ms / policy step | bare MJWarp, this model, graph | env / bare | bare physics steps/s |
+|---|---|---|---|---|
+| 1024 | 83.4 | 80.4 | x1.04 | 0.64M |
+| 4096 | 173.0 | 165.2 | x1.05 | 1.24M |
+| 16384 | 552.8 | 527.0 | x1.05 | 1.55M |
+| 32768 | 1075.6 | 1022.1 | x1.05 | 1.60M |
+
+Of summed GPU time: MJWarp's step 96-97 %, the reset path ~2 %, our
+per-substep hooks 0.6-1.2 %, the policy MLP <= 0.4 %. **So the ~35 % gap
+was the model, not our code:** phase 1's rigid export runs 2.36M physics
+steps/s, this model 1.60M. Our hooks and resets cost ~5 %, and fusing or
+skipping them (below) is worth at most that. Inside `mjw.step` the top
+kernels are the constraint solver's dense paths (`_update_gradient_JTCJ_dense`
+39 ms of 202 at 4096, the linesearch, the Cholesky) and the primitive
+narrowphase -- where any real speedup would be (solver options, contact
+count), not in the env. (Summed per-call GPU time exceeds the graph's
+wall: timing each call adds overhead, so "gaps" print negative.)
+
+The plan before the measurement: the whole env is ~35 % below phase
 1's bare 2.36M physics steps/s, but phase 1 timed a different (rigid
 export) model, and the Mac's CPU puts MJWarp at 98 % of a step with every
 hook under 2 %. `analysis/gpu_phase2/profile_env.py` times each call of a
@@ -557,9 +595,9 @@ Found on the way:
 `aow_bike.ini`. Smoke: a random policy for 1M steps, rewards and resets
 sane. Measure end-to-end steps/s.
 
-**Built 2026-10-14, not yet run on a GPU.** No embedded Python after all:
-phase 1's APIC route (T1-T4) carries the whole env. [built; Mac CPU checks
-only, the `.cu` has not been compiled]
+**Built 2026-10-14, run the same day (results below the table).** No
+embedded Python after all: phase 1's APIC route (T1-T4) carries the whole
+env.
 
 | piece | what |
 |---|---|
@@ -590,6 +628,153 @@ at startup, wrong if PufferLib resets mid-run).
 leftovers on the same rental). What decides it: the trainer starts and
 loads the graph, `env/episode_length` and `env/fall_rate` move off their
 random-policy values, and SPS end to end against the box's ~2.1k.
+
+**The pod run, 2026-10-14** (A40 secure EU-SE-1, $0.59/h, ~21 min,
+~$0.21; results in `analysis/gpu_phase3/results_a40/`) [measured]:
+
+| step | result | wall |
+|---|---|---|
+| export, 4096 worlds, on `cuda:0` | `.wrp` 188 MB (~46 KB/world, as phase 1), modules 9.2 MB | 60 s |
+| check_graph, v3_s0, 300 steps | 0 falls, 0 episode ends, 2.886 reward/step | 56 s |
+| check_graph, random, 100 steps | 16910 falls, each reported once; length 21.4, return -6.57, track 0.77 | 19 s |
+| `install.sh` (nvcc build of `aow_bike.cu`) | built first try, `.wrp` loaded, 4096 worlds | 70 s |
+| `./puffer train --headless` | **24.7-24.8k SPS** steady, env 99 % of the time; 14.4M steps, 55 epochs | 600 s (timeout) |
+
+**It runs; it did not learn.** Over 55 epochs episode length 20.6 ->
+21.9 (random: 21.4), return -20.4 -> -15.4, fall_rate 1.000 throughout,
+entropy 4.256 -> 4.145 (std ~1 on all three actions: 3 x 1.42),
+`kl` and `clipfrac` 0.000, train 26 ms an epoch. Why [read, `src/pufferl.cu`
+@ ea7f989 :1504]: `total_minibatches = replay_ratio * batch /
+minibatch_size` = 1.0 x 262144 / 32768 = **8 gradient steps an epoch**,
+440 in the run, where SB3 (10 epochs x 16 minibatches per 16384) takes
+~140k over the same 14.4M samples. And `learning_rate = 0.0003` is v3's
+Adam value; PufferLib's default for Muon is 0.015 (`config/default.ini`;
+its envs' inis use 0.001-0.015).
+
+**Second run, same day: it learns** (A40 EU-SE-1, ~22 min, ~$0.21;
+`analysis/gpu_phase3/results_a40_run2/`) [measured]. `aow_bike.ini` now
+has `learning_rate = 0.015`, `minibatch_size = 8192`, `replay_ratio =
+4.0` (128 gradient steps an epoch, 230 ms of each ~11 s epoch); 15 min of
+training so the 20M budget (and the lr anneal) completes:
+
+| epoch | steps | SPS | ep. length | return | fall_rate | entropy |
+|---|---|---|---|---|---|---|
+| 1 | 0.26M | 12.2k | 20.6 | -20 | 1.000 | 4.10 |
+| 17 | 4.5M | 24.1k | 31.7 | 11 | 1.000 | 3.02 |
+| 33 | 8.7M | 23.5k | 105 | 126 | 1.000 | 2.06 |
+| 49 | 12.8M | 22.7k | 402 | 622 | 0.893 | 1.22 |
+| 57 | 14.9M | 22.1k | 565 | 972 | 0.547 | 0.96 |
+| 75 | 19.7M | 21.2k | 668 | 1094 | 0.284 | 0.59 |
+
+Max length is 750 (15 s). These are training-time episodes under the
+training randomization, with curriculum difficulty ~0.013 throughout --
+NOT comparable to v3's eval grid yet (phase 4: export the policy and run
+`per_command.py`). SPS falls 24.6k -> 21.2k as episodes lengthen [cause
+not looked at]. The log's last panels ("To go 0ms", difficulty 0.000) read
+length ~50 and fall_rate 1.000: PufferLib's end-of-run evaluation, which
+by its look averages only episodes that ended inside a short window -- so
+falls only [reasoned, not checked in the source]. Read the training panels.
+
+Against v3_s0's own curve (the box's tensorboard) [measured]: ep_len_mean
+583 at 0.7M, 666 at 5M, 698 at 20M; difficulty 0.17 at 0.7M, 1.0 by 5M.
+So run 2 at 20M is about where SB3 was at 0.4-0.7M: ~28x the samples,
+~2.5x the wall clock (6 vs 14 min), at a difficulty SB3 passed at ~0.3M.
+Gradient steps per wall-second are about equal (SB3 ~20, this ~12): the
+11x of data goes into bigger minibatches, not more updates [reasoned].
+
+**The curriculum was per world, so it could not move.** GeneralEnv's rule
+(+0.02 per good episode, in that env) needs nworld x 50 good episodes to
+reach 1.0: 1600 for 32 envs (~1.2M steps at best), ~205k at 4096 worlds
+(>= 154M steps). At 20M steps no world could pass ~0.13. Fixed
+2026-10-15: `GpuGeneralEnv(shared_curriculum_envs=K)` keeps ONE difficulty,
++0.02/K per good episode in any world, taken by each world at its reset --
+the mean moves per good episode as K per-env curricula's mean does, at any
+world count; `export_graph` uses K = 32 (v3's SB3 run; `--curriculum-envs
+0` = per world, the default of the env itself so the parity checks keep
+GeneralEnv's rule). Mac check, 16 worlds of 0.6 s episodes under v3_s0:
+per world unchanged (each = good x 0.02); shared, 31 good -> 0.01937 =
+31 x 0.02/32 exactly, every resetting world on it, `last_diff` the value
+the episode ran at. [measured, CPU device] Lost: SB3's spread between
+envs (its difficulty_min/max); drawing each world's difficulty below the
+shared one at reset would restore some, not built.
+
+**The 1 h run, 2026-10-15: collapsed at ~33M** (A40 EU-SE-1, ~39 min,
+~$0.38, stopped early; `analysis/gpu_phase3/results_a40_1h/`: the log to
+44M and checkpoints at 13M, 26M, 39M) [measured]. Run 2's update settings,
+the shared curriculum (K 32), lr 0.015 cosine to a 0.2 floor over 80M.
+
+| epoch | steps | ep. length | fall_rate | difficulty | entropy | kl | clipfrac |
+|---|---|---|---|---|---|---|---|
+| 31 | 8.1M | 82 | 1.000 | 0.000 | 2.24 | 0.10 | 0.36 |
+| 61 | 16.0M | 347 | 0.922 | 0.001 | 0.75 | 0.95 | 0.62 |
+| 101 | 26.5M | 608 | 0.390 | 0.020 | 0.16 | 1.04 | 0.75 |
+| 121 | 31.7M | 606 | 0.398 | 0.032 | 0.51 | 0.70 | 0.69 |
+| 131 | 34.3M | 20 | 1.000 | 0.032 | 4.55 | 1.1e6 | 1.00 |
+
+Return -91M at epoch 131; the 39M checkpoint is all NaN; after it the net
+emits nothing (kl 0, entropy fixed, random-action episode lengths) while
+the GPU stays busy. Two causes:
+- **Unclipped actions (a port bug).** PufferLib passes the raw Gaussian
+  sample (clamped at +-1e6); SB3 clips to [-1, 1] before `env.step`, and
+  GeneralEnv relies on it: the physics clips again, but the effort and
+  smoothness penalties and obs[12:15] read the action as given. Fixed in
+  `aow_bike.cu` (`ab_in`: clip, then into the graph). The smoothness term
+  on raw sampled noise also rewards a small std, which may be why entropy
+  fell to 0.12 [reasoned].
+- **lr too hot**: kl 0.7-2.5, clipfrac 0.6-0.75 from ~10M steps on. Now
+  `learning_rate = 0.005` (cosine to 0.001), checkpoints every 25 epochs.
+  Untested.
+
+**Standing still** (user, teleop: `general_puffer_1h_13M` "launches off
+from standstill"). Reproduced without teleop, zero command from reset, 6
+seeds, 5 s [measured]: v3_s0 max |v| 0.10-0.17 m/s, never above 0.3;
+puffer 13M 0.30-0.58 m/s, moving off at 1.1-1.8 s, up to 1.3 m; puffer 26M
+0.64-0.70 m/s from 0.1 s, rocking (0.2-0.6 m net). The same in the GPU env
+it trained in (zero-command worlds 0.38-0.45 m/s; bf16-rounded obs change
+nothing), so it is the policy, not teleop, reset or the conversion. Rolling
+is easier to balance than standing; these policies bought survival with
+motion [reasoned]. Their eval: 45 % survive, 1 of 9 cruises.
+(`rl_general_v3.yaml`'s "difficulty 0 is a PURE HOLD stage" is stale:
+GeneralEnv commands 0 in 39 % of resets there, the rest straight at median
+0.16, max 0.30 m/s -- both stacks alike.)
+
+**Replaying a PufferLib policy:** `python -m aow_sim.gpu.export_policy
+CKPT.bin --graph-meta G.json --ini aow_bike.ini --name NAME` writes a move
+that replays as `MinGRUPolicy` -- eval, per_command.py, teleop, the Pi --
+with the trainer's yaml (`train_general_rl.move_doc`) and metrics block.
+The `.bin` layout, read from ea7f989's source: flat fp32, tensors on
+16-byte boundaries (8 elements in bf16): encoder (H, obs), decoder (A+1,
+H; row A is the value), logstd, MinGRU (3H, H) [c|g|p]; no biases. The
+dump covers `total_elems`, which excludes the padding, so the last tensor
+loses as many trailing weights as were padded (5 of 49152 here; written as
+0, counted in the yaml). Checked: a synthetic round trip against
+PufferLib's forward written out (5e-8), and every real checkpoint is
+exactly 51843 floats = 207372 bytes.
+
+**For a Docker image, both caches tested on that rental** [measured]:
+- Warp's kernel cache from the first run (`warp-cache.tgz`, sm_86),
+  untarred to `~/.cache` before anything compiled: 0 modules compiled,
+  43 cached (first run: 43 / 0); export 60 s -> 6.5 s. The cache saved
+  after the run was byte-identical, so check_v3s0's ~55 s is flight, not
+  compile.
+- The built `puffer` binary (1.7 MB) copied into a FRESH unbuilt
+  checkout at ea7f989 with only `config/aow_bike.ini`, the built tree
+  moved aside: loads the graph, trains at 24.7k SPS. It reads the ini
+  (`src/ini.h:510`, `config/<env>.ini` from the cwd) and the graph path at
+  run time and links CUDA's shared libraries from the image, so one build
+  serves any world count, graph or hyperparameters. Rebuild only for a new
+  `aow_bike.cu` or PufferLib commit. `build.sh` compiles with
+  `-arch=${NVCC_ARCH:-native}`: set NVCC_ARCH for an image meant for
+  other cards (an sm_86 binary on another arch: untested).
+- Left per rental after both: apt + pip ~51 s, the PufferLib build ~1 min
+  (now avoidable), boot ~75 s.
+
+**A faulty host first** (CA-MTL-1, same day): `nvidia-smi` listed the A40,
+but `cuInit` returned 999 (Warp and torch both), and Warp fell back to the
+CPU WITHOUT an error -- the export ran there (a 2.8 GB graph) for 6 min at
+0 % GPU before it was noticed. Terminated after ~9 min (~$0.09).
+`pod_setup.sh`'s `warp_init` now asserts `wp.is_cuda_available()`, so
+such a pod fails in its first minute.
 
 **Choice B (not a stop gate):** past gate A the env is on the GPU either
 way, so the only question here is which learner sits on it -- PufferLib

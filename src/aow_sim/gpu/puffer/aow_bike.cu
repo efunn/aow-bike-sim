@@ -7,7 +7,7 @@
 // (`.wrp` + `_modules/`). This file loads it through libwarp's C API -- no
 // Python in the trainer, at startup or per step -- and each step:
 //
-//   copy PufferLib's actions -> the graph's act_in      (cudaMemcpyAsync D2D)
+//   ab_in kernel: PufferLib's actions, CLIPPED to [-1, 1] -> the graph's act_in
 //   cudaGraphLaunch(the Warp graph's exec)              (one launch, 50 substeps)
 //   ab_out kernel: obs -> obs_t, reward, terminal = fall OR time limit,
 //                  finished episodes -> this world's Log
@@ -21,6 +21,15 @@
 // [env] keys (config/aow_bike.ini): graph = stem of the exported graph,
 // warp_lib = path to Warp's warp.so (python -c "import warp,os;
 // print(os.path.dirname(warp.__file__))")/bin/warp.so, warp_version.
+//
+// THE CLIP IS SB3's CONTRACT, not a safety net. PufferLib hands over the raw
+// Gaussian sample (mean + std * noise, clamped only at +-1e6). SB3 clips to the
+// action box before env.step, and GeneralEnv relies on that: the physics clips
+// again, but the effort and smoothness penalties and obs[12:15] (the action
+// just applied) read the action as given. Unclipped, a wandering mean made
+// rewards of -1e8 and inputs of the same size, and the 2026-10-15 1 h run went
+// to NaN at ~33M steps (return -91M, kl 1.1e6). PPO's log-prob still uses the
+// unclipped sample, as SB3's does. A NaN action clips to -1 (fmaxf).
 //
 // Time limits are TERMINALS here: PufferLib 5.0 has no truncation signal, so
 // a timed-out episode is not bootstrapped (SB3, the CPU stack, does). Phase 4.
@@ -158,6 +167,14 @@ __global__ void ab_out(int n, const float* obs, const float* reward, const int* 
     }
 }
 
+__global__ void ab_in(int n, const float* actions, float* act_in) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n * NUM_ATNS) {
+        return;
+    }
+    act_in[i] = fminf(fmaxf(actions[i], -1.0f), 1.0f);
+}
+
 // The reset observation: the graph was saved right after a reset, so its obs
 // buffer already holds every world's first observation.
 __global__ void ab_first_obs(int n, const float* obs, obs_t* observations, float* rewards,
@@ -268,8 +285,8 @@ void puf_reset(Env*) {
 
 void puf_step(Env*) {
     int b = 256;
-    AB_CK(cudaMemcpyAsync(g_ab.act_in, g_ab.actions, (size_t)g_ab.n * NUM_ATNS * sizeof(float),
-                          cudaMemcpyDeviceToDevice, g_ab.stream));
+    ab_in<<<(g_ab.n * NUM_ATNS + b - 1) / b, b, 0, g_ab.stream>>>(
+        g_ab.n, g_ab.actions, g_ab.act_in);
     AB_CK(cudaGraphLaunch(g_ab.exec, g_ab.stream));
     ab_out<<<(g_ab.n + b - 1) / b, b, 0, g_ab.stream>>>(
         g_ab.n, g_ab.obs, g_ab.reward, g_ab.terminated, g_ab.truncated, g_ab.ep_end,

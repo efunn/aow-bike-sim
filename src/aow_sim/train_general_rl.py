@@ -273,38 +273,11 @@ def _eval(params, cfg, npz_path):
     return m
 
 
-def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
-    """Export -> verify -> eval -> write the move file."""
-    # Never clobber an existing export. See reserve_move_name.
-    chosen = reserve_move_name(name)
-    if chosen != name:
-        print(f"moves/{name} already exists — exporting as {chosen} "
-              "instead (nothing was overwritten)")
-        name = chosen
-    a = cfg["algo"]
-    npz = MOVES_DIR / f"{name}.npz"
-    _export(model, vecnorm, cfg, npz)
-    err = _verify_export(model, vecnorm, npz)
-    print(f"numpy-export vs trained net: max action diff {err:.2e} "
-          f"({'OK' if err < 1e-4 else 'WARNING — export mismatch'})")
-    metrics = _eval(params, cfg, npz)
-    print("deterministic eval:", metrics)
-
-    trained = {"algo": a["algorithm"], "timesteps": int(total),
-               "net_arch": list(a["net_arch"]),
-               "export_max_diff": float(err), "metrics": metrics}
-    smooth = parse_smooth(a.get("smooth"))
-    if any(smooth.values()):
-        # The loss it trained under; nothing in the weights records it.
-        trained["smooth"] = smooth
-    memory = parse_memory(a.get("memory"))
-    if memory:
-        # The .npz says it is recurrent (arch: mingru); this records how it
-        # was trained (state width, truncated-backprop length).
-        trained["memory"] = memory
-    if source:
-        trained["exported_from"] = source
-    doc = {"name": name, "type": "rl", "kind": "general",
+def move_doc(name: str, params, cfg, trained: dict) -> dict:
+    """The move yaml for a general policy: what replay needs to rebuild its
+    plant, sensors and observation, plus `trained`. Shared by `_finish`
+    (SB3) and gpu/puffer/export_policy.py (PufferLib checkpoints)."""
+    return {"name": name, "type": "rl", "kind": "general",
            "policy_file": f"{name}.npz",
            # The parameter set this policy was TRAINED against.
            # Replay warns on a mismatch (control/flick.py::
@@ -404,6 +377,40 @@ def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
                cfg["env"].get("obs_swing", False))),
            "action_space": cfg["env"]["action_space"],
            "trained": trained}
+
+
+def _finish(model, vecnorm, params, cfg, total, source=None, name="general_rl"):
+    """Export -> verify -> eval -> write the move file."""
+    # Never clobber an existing export. See reserve_move_name.
+    chosen = reserve_move_name(name)
+    if chosen != name:
+        print(f"moves/{name} already exists — exporting as {chosen} "
+              "instead (nothing was overwritten)")
+        name = chosen
+    a = cfg["algo"]
+    npz = MOVES_DIR / f"{name}.npz"
+    _export(model, vecnorm, cfg, npz)
+    err = _verify_export(model, vecnorm, npz)
+    print(f"numpy-export vs trained net: max action diff {err:.2e} "
+          f"({'OK' if err < 1e-4 else 'WARNING — export mismatch'})")
+    metrics = _eval(params, cfg, npz)
+    print("deterministic eval:", metrics)
+
+    trained = {"algo": a["algorithm"], "timesteps": int(total),
+               "net_arch": list(a["net_arch"]),
+               "export_max_diff": float(err), "metrics": metrics}
+    smooth = parse_smooth(a.get("smooth"))
+    if any(smooth.values()):
+        # The loss it trained under; nothing in the weights records it.
+        trained["smooth"] = smooth
+    memory = parse_memory(a.get("memory"))
+    if memory:
+        # The .npz says it is recurrent (arch: mingru); this records how it
+        # was trained (state width, truncated-backprop length).
+        trained["memory"] = memory
+    if source:
+        trained["exported_from"] = source
+    doc = move_doc(name, params, cfg, trained)
     with open(MOVES_DIR / f"{name}.yaml", "w") as f:
         yaml.safe_dump(doc, f, sort_keys=False)
     print(f"wrote {MOVES_DIR / f'{name}.yaml'} and {npz}")
