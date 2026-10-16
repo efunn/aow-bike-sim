@@ -740,10 +740,9 @@ def main() -> None:
         # with the tip masses it trained with: build that bike here, since
         # engage_general refuses any other (drive.py, the swing guard).
         import yaml
-        from .control.flick import MOVES_DIR
+        from .control.flick import move_path
         try:
-            _mv = yaml.safe_load(
-                (Path(MOVES_DIR) / f"{startup}.yaml").read_text()) or {}
+            _mv = yaml.safe_load(move_path(startup).read_text()) or {}
         except FileNotFoundError:
             _mv = {}
         if _mv.get("swing_linkage"):

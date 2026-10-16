@@ -564,7 +564,13 @@ control:
   # e1ec36bfa670217e, design_digest 2db6c647ff3a2d59. Only the legacy
   # whole-file params_digest moves (e1c0d88 -> 76e36770), and deploy/bundle.npz
   # is judged on the two above -- hw.state.load_bundle accepts it unchanged.
-  general_move: general_rl_smooth_temporal    # which always-on policy teleop drives with, as
+  #
+  # 2026-10-16: REPOINTED to general_puffer_fixes_72M, the GPU-trained MinGRU
+  # policy, and the first default trained on today's plant (plant_digest
+  # bc66ca20; general_rl_smooth_temporal was 9953690d). Sensor-trained
+  # (tm151_filter, odometry counts) on the detailed drivetrain. Retired moves
+  # live in moves/archive/ and still load by bare name.
+  general_move: general_puffer_fixes_72M    # which always-on policy teleop drives with, as
                         #   moves/<name>.{yaml,npz}. Point it at a second
                         #   export (e.g. general_rl_prev) to A/B two trained
                         #   policies without renaming files; `run_drive

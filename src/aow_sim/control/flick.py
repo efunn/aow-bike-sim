@@ -33,6 +33,27 @@ from .balance import extract_state, mix
 
 GRAVITY = 9.81
 MOVES_DIR = Path(__file__).resolve().parents[3] / "moves"  # repo-root/moves
+# Retired moves: tracked, still loadable by bare name (move_path falls back
+# here), but out of the teleop menu and out of the way. Moving a move between
+# the two is a `mv`, never a rename -- its name is cited in commits and docs.
+ARCHIVE = "archive"
+MOVES_ARCHIVE = MOVES_DIR / ARCHIVE
+
+
+def move_path(name: str, moves_dir: Path | str | None = None,
+              suffix: str = ".yaml") -> Path:
+    """`moves/NAME.yaml`, else `moves/archive/NAME.yaml` if only that exists.
+
+    Returns the top-level path when neither does, so a caller's
+    FileNotFoundError still names the place a new export would go.
+    """
+    d = Path(moves_dir or MOVES_DIR)
+    p = d / f"{name}{suffix}"
+    if not p.exists():
+        a = d / ARCHIVE / f"{name}{suffix}"
+        if a.exists():
+            return a
+    return p
 
 # Parameter vector layout (7): [T, s1, s2, s3, v1, v2, v3]
 #   steer knots at fractions 1/4,2/4,3/4 of T, endpoints 0 and pi (sorted).
@@ -197,7 +218,9 @@ def reserve_move_name(name: str, moves_dir: Path | str | None = None) -> str:
     half-existing name is exactly the state worth stepping over.
     """
     d = Path(moves_dir or MOVES_DIR)
-    free = lambda n: not ((d / f"{n}.yaml").exists() or (d / f"{n}.npz").exists())
+    # Taken in the archive counts too: an archived name still loads by bare name.
+    free = lambda n: not any((dd / f"{n}{x}").exists() for dd in (d, d / ARCHIVE)
+                             for x in (".yaml", ".npz"))
     if free(name):
         return name
     i = 2
@@ -262,7 +285,7 @@ def load_move(name: str, moves_dir: Path | str | None = None):
     FlickTrajectory (scipy optimizer output); `type: rl` -> an MLPPolicy (RL
     output, replayed with numpy). Both carry `.kind` so DriveController can
     tell them apart."""
-    path = Path(moves_dir or MOVES_DIR) / f"{name}.yaml"
+    path = move_path(name, moves_dir)
     with open(path) as f:
         d = yaml.safe_load(f)
     if d.get("type", "trajectory") == "rl":

@@ -1154,9 +1154,10 @@ def test_shipped_general_policy_matches_its_declared_width():
     """Fails rather than skips. Every other general-policy test skips on an
     obs-dim mismatch, so after a spec change the whole suite would go green by
     absence -- this is the one that goes red instead."""
-    from aow_sim.control.flick import MOVES_DIR, load_move
+    from aow_sim.control.flick import MOVES_ARCHIVE, MOVES_DIR, load_move
     from aow_sim.control.general_spec import obs_layout_for
-    names = sorted(p.stem for p in MOVES_DIR.glob("general_*.yaml"))
+    names = sorted(p.stem for d in (MOVES_DIR, MOVES_ARCHIVE)
+                   for p in d.glob("general_*.yaml"))
     if not names:
         pytest.skip("no general policies exported yet")
     for name in names:
@@ -1221,12 +1222,13 @@ def test_an_ahrs_move_declares_it_and_rebuilds_an_env_that_has_it():
     notice a future export dropping the field again.
     """
     pytest.importorskip("gymnasium")
-    from aow_sim.control.flick import MOVES_DIR, load_move
+    from aow_sim.control.flick import MOVES_ARCHIVE, MOVES_DIR, load_move
     from aow_sim.control.general_env import GeneralEnv, _load_rl_config
     from aow_sim.control.general_spec import policy_env_overrides
 
     import yaml
-    names = sorted(p.stem for p in MOVES_DIR.glob("*.yaml")
+    names = sorted(p.stem for d in (MOVES_DIR, MOVES_ARCHIVE)
+                   for p in d.glob("*.yaml")
                    if str(yaml.safe_load(p.read_text()).get("ahrs_level",
                                                             "none")) != "none")
     if not names:

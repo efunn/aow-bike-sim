@@ -1,0 +1,154 @@
+name: general_puffer_next_13M
+type: rl
+kind: general
+policy_file: general_puffer_next_13M.npz
+params_digest: 458e4310c76db23a
+plant_digest: bc66ca20e1af66d5
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.0
+vel_window_s: 0.0
+obs_zero_lat: false
+obs_odometry: true
+odometry_encoder: counts
+ahrs_level: tm151_filter
+ahrs_tau_s: 2.0
+ahrs_channels: both
+drivetrain_model:
+  update_every: 1
+  servo:
+    enabled: true
+    velocity_p_gain: 100
+    velocity_i_gain: 1920
+    kp_per_unit: 0.0004
+    ki_per_unit: 0.00145
+    command_delay_s: 0.004
+    measurement_delay_s: 0.004
+    velocity_filter_s: 0.012
+    velocity_limit_rad_s: 11.03
+    rotor_inertia: 0.0022
+    coulomb_friction: 0.15
+    friction_stick_stiffness: 250.0
+    friction_stick_damping: 0.2
+  detent:
+    enabled: true
+    period_deg: 7.5
+    width_deg: 2.5
+    friction: 0.096
+    phase_deg: 0.0
+    stick_stiffness: 1000.0
+    stick_damping: 1.0
+  roller_slop:
+    enabled: true
+    half_play_deg: 7.8
+    centring_stiffness: 0.001
+    damping: 2.9e-05
+    wall_timeconst_s: 0.001
+obs_pitch: true
+obs_wings: false
+act_wings: false
+obs_swing: false
+act_swing: false
+wing_max_deg: 90.0
+swing_linkage: false
+righting_module: v2
+righting_rigid: true
+ball_prob: 0.0
+swing_tip_mass_kg: 0.0
+wing_touch_fails: false
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- pitch
+- pitch_rate
+action_space: full
+trained:
+  algo: PufferLib 5.0 PPO (ea7f989), Muon
+  timesteps: 13107200
+  arch: Linear(17,128) -> MinGRU(128) -> Linear(128,3), no biases
+  precision: bf16 (fp32 master weights)
+  logstd:
+  - -0.664
+  - -0.7987
+  - -1.4296
+  unsaved_weights: 5
+  graph:
+    nworld: 4096
+    config: config/rl_general_v3.yaml
+    config_sha256: 45312bdc896ca0082ad844751de4bc76971e3a505b99431b1934f90f902ed9ec
+    seed: 0
+    curriculum:
+      shared: true
+      envs: 32
+  exported_from: analysis/gpu/phase3/results_a40_next/checkpoints/1792089001607/0000000013107200.bin
+  metrics:
+    survive_rate: 0.4
+    wing_touch_rate: 0.0
+    track: 0.256
+    track_geo: 0.144
+    vel_err: 0.609
+    head_err_deg: 77.7
+    n_eval: 20
+    drift_m: 0.832
+    drift_lon: 0.831
+    drift_lat: 0.038
+    drift_bearing_deg: 2.6
+    drift_max: 0.832
+    drift_sd: 0.279
+    steer_rest_deg: 17.6
+    speed_ratio_fwd: 0.639
+    speed_ratio_rev: 0.035
+    crab_ratio_left: 0.215
+    crab_ratio_right: 0.84
+    crab_head_err: 88.4
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.338
+    by_family:
+      hold:
+        n: 1
+        survive_rate: 1.0
+        head_err_tail: 23.8
+        vel_err_med: 0.197
+        drift_m: 0.832
+        drift_overshoot: 0.0
+      spin:
+        n: 2
+        survive_rate: 1.0
+        t_head_s: 3.72
+        t_head_n: 2
+        head_err_tail: 75.7
+        vel_err_med: 0.313
+      cruise:
+        n: 9
+        survive_rate: 0.333
+        t_head_s: 1.04
+        t_head_n: 6
+        head_err_tail: 60.8
+        vel_err_med: 0.496
+      crab:
+        n: 2
+        survive_rate: 1.0
+        head_err_tail: 49.0
+        vel_err_med: 0.418
+      turn_big:
+        n: 6
+        survive_rate: 0.0
+        t_head_s: 0.57
+        t_head_n: 6
+        head_err_tail: 179.9
+        vel_err_med: 0.729

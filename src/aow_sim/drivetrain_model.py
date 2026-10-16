@@ -198,9 +198,9 @@ GAIN_KEYS = ("velocity_p_gain", "velocity_i_gain")
 def policy_record(name: str, moves_dir=None):
     """The overlay `moves/NAME.yaml` was trained on, or None (ideal, or no
     such move -- the engage path reports that one)."""
-    from .control.flick import MOVES_DIR
+    from .control.flick import move_path
     try:
-        with open(Path(moves_dir or MOVES_DIR) / f"{name}.yaml") as f:
+        with open(move_path(name, moves_dir)) as f:
             return (yaml.safe_load(f) or {}).get(KEY) or None
     except FileNotFoundError:
         return None

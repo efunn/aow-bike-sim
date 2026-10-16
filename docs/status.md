@@ -60,7 +60,7 @@ rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
 | workstream | state | blocker | doc |
 |---|---|---|---|
 | **Simulation & model** | Working; 21 `GUESS`es in bike_params. **The default bike carries the V2 righting module (10-09):** the diamond four-bar with its blades and toe stop, from the CAD's own files, 1.016 -> 1.228 kg (+167 g module, +45 g roof); `swing_linkage=False` is the old wingless bike. Opt-in detailed drivetrain (fitted XC430 loop, detent, slop). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30 | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
-| **Control — RL** | Primary. Pointer `general_rl_smooth_temporal` (10-09, was `cmd_curriculum2b`); teleop flies it on `tm151_filter` by default; the current config lineage (`smooth_*`, `nodiff`) TRAINS on it from 10-09. No-diff arm `general_rl_nodiff_2` trained (V1 four-bar, see below). Every export trained on the old front wheel AND wingless (nodiff_2: V1): provisional; teleop and the endurance test now fly them on the V2 bike (pointer: 0/18 falls). **Next:** `queue_general_v3` (5 seeds, V3 rigid, +-10 deg roll; on the box from 10-14), then its MEMORY arm `queue_general_v3_mingru` (a MinGRU in the actor, `recurrent_ppo.py`; built 10-14, not trained; update ~2x on the M4). **Eval rows before 10-14 carried a steer kick from the row before** (the reset kept the steer delay line; fixed 10-14, `reset_actuator_state`): re-run `per_command.py` rather than compare across that date. **And the obs's prev_action was one step stale in training** (GeneralEnv built the obs before storing the action; `drive.py` feeds the fresh one): fixed 10-14, so `queue_general_v3` (old code) and the memory arm (after a sync) differ in this too. v3_s0 flown both ways: 0/30 falls each, tracking mixed (`analysis/prev_action_stale.py`). **Also fixed 10-14: the obs `reset` returned read MuJoCo truth** for roll, rates and pitch (the AHRS was primed after the obs read it): one truth observation per episode, now the sensor's | Crab one-sided (`v_lat_frac` 0 in this export); `turn_asym` ~0.2; one seed | `general-rl-improvements.md`, `policy-smoothness-losses.md` |
+| **Control — RL** | Primary. Pointer `general_puffer_fixes_72M` (10-16, GPU MinGRU, today's plant; was `smooth_temporal` from 10-09); teleop flies it on `tm151_filter` by default; the current config lineage (`smooth_*`, `nodiff`) TRAINS on it from 10-09. No-diff arm `general_rl_nodiff_2` trained (V1 four-bar, see below). Every export trained on the old front wheel AND wingless (nodiff_2: V1): provisional; teleop and the endurance test now fly them on the V2 bike (pointer: 0/18 falls). **Next:** `queue_general_v3` (5 seeds, V3 rigid, +-10 deg roll; on the box from 10-14), then its MEMORY arm `queue_general_v3_mingru` (a MinGRU in the actor, `recurrent_ppo.py`; built 10-14, not trained; update ~2x on the M4). **Eval rows before 10-14 carried a steer kick from the row before** (the reset kept the steer delay line; fixed 10-14, `reset_actuator_state`): re-run `per_command.py` rather than compare across that date. **And the obs's prev_action was one step stale in training** (GeneralEnv built the obs before storing the action; `drive.py` feeds the fresh one): fixed 10-14, so `queue_general_v3` (old code) and the memory arm (after a sync) differ in this too. v3_s0 flown both ways: 0/30 falls each, tracking mixed (`analysis/prev_action_stale.py`). **Also fixed 10-14: the obs `reset` returned read MuJoCo truth** for roll, rates and pitch (the AHRS was primed after the obs read it): one truth observation per episode, now the sensor's | Crab one-sided (`v_lat_frac` 0 in this export); `turn_asym` ~0.2; one seed | `general-rl-improvements.md`, `policy-smoothness-losses.md` |
 | **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` model exists; with the accelerometer weighting from the drop rig (10-07) it falls 1/20 on the eval grid (19/20 before; `tm151` 2/20), still unproven on sustained acceleration. The training level from 10-09, provisional: more physical tests to come | The bike's own AHRS log; the wave cams (sustained acceleration) | `sensor-workstream.md`, `ahrs-fixture.md` |
 | **Control — LQR** | **Deprecated 10-09.** `lqr` tests skipped unless named (`pytest -m lqr`: 15 accepted reds, unchanged). The code stays: the RL envs' crawl fallback and the bundle's gain schedule are built on it. Last state (10-05): stands on truth and `tm151_filter`, falls turning at 0.8 m/s | none: not being tuned | `lqr-baseline.md` |
 | **Hardware / onboard** | Pi 3 bench proven: tick jitter p99 < 1 ms with four servos energised. 2.4 GHz house wifi (decided: a router, no AP). The SBC that ships: open | Chassis, pack | `pi-bench-bringup.md`, `untethered-setup.md` |
@@ -166,13 +166,24 @@ before the wheel. History: `params-digest-split.md`.
 
 ## What drives the bike
 
-`control.general_move` = **`general_rl_smooth_temporal`** (10-09; was
-`general_rl_cmd_curriculum2b` from 09-14): sensor-trained (odometry estimate
-+ TM151 at 0.19), detailed drivetrain at P 100, the temporal smoothness loss.
-~19x less steer chatter than the old pointer, score 0.820 vs 0.572, stands
-the endurance minute (the old pointer fell 10 of 18). One seed. Teleop flies
-it on `tm151_filter` by default (`run_drive --ahrs`), which it did not train
-on. Trained-on-sensors beats trained-on-truth, 1.00 to 0.20 survival. Standings and pointer history: `sensor-workstream.md`,
+`control.general_move` = **`general_puffer_fixes_72M`** (10-16; was
+`general_rl_smooth_temporal` from 10-09): the GPU-trained MinGRU policy, the
+first pointer trained on today's plant (plant_digest bc66ca20). Sensor-trained
+(`tm151_filter`, odometry counts) on the detailed drivetrain. The full suite
+is unchanged by the move (907 passed); the endurance minute (`prospective`)
+was not re-run on it.
+
+**`moves/` was cleaned up on 10-16.** The top level holds the pointer, today's
+GPU finals (`fixes_52M`, `seed1_72M`, `next_72M`), `v3_s1`, the previous
+pointer, and the moves teleop's keys and the tests name (`flick*`, `ball_rl`,
+`pivot_rl`, `general_rl`). The other 80 are in `moves/archive/`, tracked, and
+still load by bare name (`control.flick.move_path`). They are out of the
+teleop `,` menu. `docs/plans/moves-layout.md` has the reasoning.
+
+The previous pointer, `smooth_temporal`: odometry estimate + TM151 at 0.19,
+detailed drivetrain at P 100, the temporal smoothness loss, ~19x less steer
+chatter than `cmd_curriculum2b`, score 0.820 vs 0.572, stood the endurance
+minute. Trained-on-sensors beats trained-on-truth, 1.00 to 0.20 survival. Standings and pointer history: `sensor-workstream.md`,
 `drivetrain-model.md`.
 
 **No-diff probe, `general_rl_nodiff_2` (10-09, one seed, not the pointer).** A one-off test of how a plain bike could use the swing linkage with tip masses to balance; NOT a line of work -- no further no-diff runs are planned (user, 10-09).

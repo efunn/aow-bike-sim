@@ -85,8 +85,13 @@ def policy_servo_gains(name: str, moves_dir="moves") -> dict | None:
     Reads the yaml directly: no weights needed, and `drivetrain_model` cannot
     be imported here."""
     import yaml
+    # control.flick.move_path's fallback, inline: nothing here may pull in
+    # control/ (mujoco, transitively).
+    path = Path(moves_dir) / f"{name}.yaml"
+    if not path.exists() and (Path(moves_dir) / "archive" / path.name).exists():
+        path = Path(moves_dir) / "archive" / path.name
     try:
-        with open(Path(moves_dir) / f"{name}.yaml") as f:
+        with open(path) as f:
             rec = (yaml.safe_load(f) or {}).get(DRIVETRAIN_KEY) or {}
     except FileNotFoundError:
         return None

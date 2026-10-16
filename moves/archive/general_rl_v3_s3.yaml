@@ -1,0 +1,147 @@
+name: general_rl_v3_s3
+type: rl
+kind: general
+policy_file: general_rl_v3_s3.npz
+params_digest: 458e4310c76db23a
+plant_digest: bc66ca20e1af66d5
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.0
+vel_window_s: 0.0
+obs_zero_lat: false
+obs_odometry: true
+odometry_encoder: counts
+ahrs_level: tm151_filter
+ahrs_tau_s: 2.0
+ahrs_channels: both
+drivetrain_model:
+  update_every: 1
+  servo:
+    enabled: true
+    velocity_p_gain: 100
+    velocity_i_gain: 1920
+    kp_per_unit: 0.0004
+    ki_per_unit: 0.00145
+    command_delay_s: 0.004
+    measurement_delay_s: 0.004
+    velocity_filter_s: 0.012
+    velocity_limit_rad_s: 11.03
+    rotor_inertia: 0.0022
+    coulomb_friction: 0.15
+    friction_stick_stiffness: 250.0
+    friction_stick_damping: 0.2
+  detent:
+    enabled: true
+    period_deg: 7.5
+    width_deg: 2.5
+    friction: 0.096
+    phase_deg: 0.0
+    stick_stiffness: 1000.0
+    stick_damping: 1.0
+  roller_slop:
+    enabled: true
+    half_play_deg: 7.8
+    centring_stiffness: 0.001
+    damping: 2.9e-05
+    wall_timeconst_s: 0.001
+obs_pitch: true
+obs_wings: false
+act_wings: false
+obs_swing: false
+act_swing: false
+wing_max_deg: 90.0
+swing_linkage: false
+righting_module: v2
+righting_rigid: true
+ball_prob: 0.0
+swing_tip_mass_kg: 0.0
+wing_touch_fails: false
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- pitch
+- pitch_rate
+action_space: full
+trained:
+  algo: PPO
+  timesteps: 10000000
+  net_arch:
+  - 128
+  - 128
+  export_max_diff: 2.700306991343382e-07
+  metrics:
+    survive_rate: 1.0
+    wing_touch_rate: 0.0
+    track: 0.71
+    track_geo: 0.678
+    vel_err: 0.089
+    head_err_deg: 52.7
+    n_eval: 20
+    drift_m: 0.011
+    drift_lon: -0.006
+    drift_lat: -0.009
+    drift_bearing_deg: -124.3
+    drift_max: 0.018
+    drift_sd: 0.003
+    steer_rest_deg: 1.9
+    speed_ratio_fwd: 0.967
+    speed_ratio_rev: 0.928
+    crab_ratio_left: 0.578
+    crab_ratio_right: 0.528
+    crab_head_err: 80.0
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.094
+    by_family:
+      hold:
+        n: 1
+        survive_rate: 1.0
+        head_err_tail: 4.6
+        vel_err_med: 0.02
+        drift_m: 0.011
+        drift_overshoot: 0.007
+      spin:
+        n: 2
+        survive_rate: 1.0
+        t_head_s: 3.34
+        t_head_n: 2
+        head_err_tail: 13.6
+        vel_err_med: 0.076
+      cruise:
+        n: 9
+        survive_rate: 1.0
+        t_head_s: 0.86
+        t_head_n: 6
+        head_err_tail: 3.7
+        vel_err_med: 0.068
+      crab:
+        n: 2
+        survive_rate: 1.0
+        head_err_tail: 13.5
+        vel_err_med: 0.433
+      turn_big:
+        n: 6
+        survive_rate: 1.0
+        t_head_s: 5.0
+        t_head_n: 6
+        head_err_tail: 173.9
+        vel_err_med: 0.031
+  smooth:
+    bound: 0.1
+    temporal: 0.04
+    second: 0.0
+  exported_from: best_model.zip

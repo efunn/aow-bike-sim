@@ -501,6 +501,7 @@ cmd_queue() {
     [[ "${seed:-}" =~ ^[0-9]+$ ]] || die "$file:$lineno: seed must be an integer, got '${seed:-}'"
     [[ -n "${name:-}" ]] || die "$file:$lineno: missing export name"
     [[ ! -e "moves/$name.yaml" ]] || die "$file:$lineno: moves/$name.yaml already exists -- pick a new export name"
+    [[ ! -e "moves/archive/$name.yaml" ]] || die "$file:$lineno: moves/archive/$name.yaml already exists -- pick a new export name"
     first_cfg="${first_cfg:-$cfg}"
     n=$((n + 1))
     printf -v q_cfg '%q' "$cfg"; printf -v q_name '%q' "$name"
@@ -731,10 +732,17 @@ cmd_sync() {
   local target="origin/main" removed=0 kept=0
   git rev-parse --verify -q "$target" >/dev/null || die "no $target"
 
+  # A move retired to moves/archive/ on the laptop arrives at a different path
+  # from the untracked copy here; compare against that one instead.
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
-    git cat-file -e "$target:$f" 2>/dev/null || continue   # not incoming; ignore
-    if [[ "$(git hash-object "$f")" == "$(git rev-parse "$target:$f")" ]]; then
+    local inc="$f"
+    if [[ "$f" == moves/* && "$f" != moves/archive/* ]] \
+        && ! git cat-file -e "$target:$f" 2>/dev/null; then
+      inc="moves/archive/${f#moves/}"
+    fi
+    git cat-file -e "$target:$inc" 2>/dev/null || continue   # not incoming; ignore
+    if [[ "$(git hash-object "$f")" == "$(git rev-parse "$target:$inc")" ]]; then
       rm -f "$f"; removed=$((removed + 1))
       echo "  identical to incoming, removed   $f"
     else

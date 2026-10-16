@@ -54,7 +54,7 @@ from .control.righting import (RightingSequencer, roll_pitch,
                                settle_fallen, settle_inverted)
 import yaml
 
-from .control.flick import MOVES_DIR
+from .control.flick import move_path
 from .run_drive import (_LEAD_MAX, _TRAIL, _TURN_RATE, _command_ref,
                         _fresh, _overlay)
 
@@ -678,7 +678,7 @@ def record(script: str, general: str | None, analytic: bool, out: Path,
         # exist yet, so the move yaml is read directly.
         spec = {}
         if sensors != "truth":
-            mp = MOVES_DIR / f"{name}.yaml"
+            mp = move_path(name)
             if mp.exists():
                 spec = yaml.safe_load(mp.read_text()) or {}
         want_ahrs = str(spec.get("ahrs_level") or "none")
