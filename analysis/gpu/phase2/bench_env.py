@@ -10,6 +10,13 @@ graph, so the timed loop never syncs.
   python analysis/gpu/phase2/bench_env.py --check            # capture == eager?
   python analysis/gpu/phase2/bench_env.py --nworld 1024 4096 16384 32768
   python analysis/gpu/phase2/bench_env.py --nworld 4096 --policy moves/general_rl_v3_s0.npz
+  python analysis/gpu/phase2/bench_env.py --check --policy moves/general_puffer_fixes_52M.npz
+
+The policy is an MLP or a MinGRU (WarpMinGRU: PufferLib's and the CPU
+arm's memory policies). Its compute is <= 0.4 % of a step either way; it
+is here for the LOAD it puts on the physics -- contacts, falls, resets --
+which follows the plant and the policy, so bench the CURRENT policy on the
+current plant.
 
 Each result is one JSON line on stdout and appended to --out.
 """
@@ -21,7 +28,7 @@ import time
 import numpy as np
 import warp as wp
 
-from aow_sim.control.policy import load_policy_npz
+from aow_sim.control.policy import MinGRUPolicy, load_policy_npz
 from aow_sim.gpu.env import GpuGeneralEnv
 
 CONFIG = "config/rl_general_v3.yaml"
@@ -58,6 +65,38 @@ def _dense(x: wp.array2d(dtype=float), W: wp.array2d(dtype=float), b: wp.array(d
     y[w, j] = s
 
 
+@wp.func
+def _sig(v: float):
+    return 0.5 * (1.0 + wp.tanh(0.5 * v))      # policy._sigmoid
+
+
+@wp.kernel
+def _mingru(m: wp.array2d(dtype=float), x: wp.array2d(dtype=float),
+            h: wp.array2d(dtype=float), y: wp.array2d(dtype=float)):
+    # MinGRUPolicy.mean (control/policy.py), one unit of one world; m = the
+    # mem layer's [c | g | p], x = the encoder output
+    w, j = wp.tid()
+    H = h.shape[1]
+    c = m[w, j]
+    z = _sig(m[w, H + j])
+    ht = c + 0.5
+    if c < 0.0:
+        ht = _sig(c)
+    hn = (1.0 - z) * h[w, j] + z * ht
+    h[w, j] = hn
+    s = _sig(m[w, 2 * H + j])
+    y[w, j] = s * hn + (1.0 - s) * x[w, j]
+
+
+@wp.kernel
+def _forget(term: wp.array(dtype=int), trunc: wp.array(dtype=int), h: wp.array2d(dtype=float)):
+    # a world the env just auto-reset starts its next episode with no memory,
+    # as MinGRUPolicy.reset() at every episode start
+    w, j = wp.tid()
+    if term[w] != 0 or trunc[w] != 0:
+        h[w, j] = 0.0
+
+
 @wp.kernel
 def _clip_act(y: wp.array2d(dtype=float), act: wp.array2d(dtype=float)):
     w, j = wp.tid()
@@ -75,7 +114,9 @@ def _tally(term: wp.array(dtype=int), trunc: wp.array(dtype=int), rew: wp.array(
 
 class WarpMLP:
     """The exported policy's deterministic mean, clipped to [-1, 1]: what
-    fly_policy.py feeds the env (`np.clip(pol.mean(o), -1, 1)`)."""
+    fly_policy.py feeds the env (`np.clip(pol.mean(o), -1, 1)`). An MLP, or a
+    MinGRU (encoder -> mem layer -> _mingru -> the same head), whose memory
+    `after_step` clears in every world the env just reset."""
 
     def __init__(self, path, n, device):
         pol = load_policy_npz(path)
@@ -85,25 +126,41 @@ class WarpMLP:
         self.inv_std = f(1.0 / np.sqrt(pol.obs_var + 1e-8))
         self.clip = float(pol.obs_clip)
         d = np.load(path)
-        if "arch" in d:
-            raise NotImplementedError("memory policies (MinGRU)")
         self.act = ACT[str(d["act"]) if "act" in d else "tanh"]     # as load_policy_npz
-        self.layers = [(wp.array2d(np.asarray(W, np.float32), dtype=float, device=device), f(b))
-                       for W, b in pol.layers]
+        W2 = lambda W: wp.array2d(np.asarray(W, np.float32), dtype=float, device=device)
+        self.layers = [(W2(W), f(b)) for W, b in pol.layers]
         self.x = wp.zeros((n, pol.obs_dim), dtype=float, device=device)
         self.h = [wp.zeros((n, W.shape[0]), dtype=float, device=device) for W, _ in self.layers]
         self.n, self.device = n, device
+        self.memory = isinstance(pol, MinGRUPolicy)
+        if self.memory:
+            H = pol.hidden
+            self.enc = (W2(pol.enc[0]), f(pol.enc[1]))
+            self.mem = (W2(pol.mem[0]), f(pol.mem[1]))
+            self.e = wp.zeros((n, H), dtype=float, device=device)       # encoder out
+            self.m = wp.zeros((n, 3 * H), dtype=float, device=device)   # [c | g | p]
+            self.state = wp.zeros((n, H), dtype=float, device=device)   # h, per world
+            self.y = wp.zeros((n, H), dtype=float, device=device)       # the head's input
 
     def __call__(self, obs, out):
         n, dev = self.n, self.device
         wp.launch(_normalize, (n, self.x.shape[1]), [obs, self.mean, self.inv_std, self.clip, self.x],
                   device=dev)
         x = self.x
+        if self.memory:
+            wp.launch(_dense, (n, self.e.shape[1]), [x, *self.enc, 0, self.e], device=dev)
+            wp.launch(_dense, (n, self.m.shape[1]), [self.e, *self.mem, 0, self.m], device=dev)
+            wp.launch(_mingru, (n, self.e.shape[1]), [self.m, self.e, self.state, self.y], device=dev)
+            x = self.y
         for i, ((W, b), y) in enumerate(zip(self.layers, self.h)):
             last = i == len(self.layers) - 1
             wp.launch(_dense, (n, W.shape[0]), [x, W, b, 0 if last else self.act, y], device=dev)
             x = y
         wp.launch(_clip_act, (n, 3), [x, out], device=dev)
+
+    def after_step(self, term, trunc):
+        if self.memory:
+            wp.launch(_forget, self.state.shape, [term, trunc, self.state], device=self.device)
 
 
 def _gpu_mem_mb():
@@ -141,6 +198,8 @@ class Runner:
         else:
             wp.launch(_rand_act, self.n, [self.rng, self.act], device=self.device)
         _, r, term, trunc = e.step(self.act)
+        if self.mlp is not None:
+            self.mlp.after_step(term, trunc)
         wp.launch(_tally, self.n, [term, trunc, r, self.falls, self.ends, self.rsum], device=self.device)
 
     def capture(self):
@@ -173,7 +232,7 @@ def timed(run, k):
     return time.perf_counter() - t
 
 
-def bench(n, policy, steps, eager_steps, seed, device):
+def bench(n, policy, steps, eager_steps, seed, device, seconds=0.0):
     r = Runner(n, policy, seed, device)
     rec = {"nworld": n, "policy": policy or "random", "build_s": round(r.build_s, 2),
            "reset_s": round(r.reset_s, 2)}
@@ -183,7 +242,15 @@ def bench(n, policy, steps, eager_steps, seed, device):
     rec["capture_s"] = round(r.capture(), 2)
     timed(r, 2)                                               # first graph launches
     r.tally()
-    dt = timed(r, steps)
+    if seconds:
+        # launches in chunks until `seconds` have passed: the same precision
+        # at every world count (a fixed 200 took 388 s at 64k on the A40)
+        dt, steps, chunk = 0.0, 0, 10
+        while dt < seconds:
+            dt += timed(r, chunk)
+            steps += chunk
+    else:
+        dt = timed(r, steps)
     t = r.tally()
     rec.update(graph_policy_sps=round(n * steps / dt), graph_physics_sps=round(n * steps * r.env.substeps / dt),
                steps=steps, wall_s=round(dt, 2), falls=t["falls"], episode_ends=t["ends"],
@@ -210,12 +277,25 @@ def check(policy, n, steps, seed, device):
                      "reward_per_step": round(t["rsum"] / (n * steps), 4),
                      "obs_mean_abs": float(np.abs(r.env.obs.numpy()).mean())}
     # the Warp MLP against the numpy policy on the final observations
+    # (a MinGRU from each world's own memory after the whole flight, and the
+    # memory it leaves, as well as the action)
     if policy:
         pol = load_policy_npz(policy)
+        mem = r.mlp.memory
+        h0 = r.mlp.state.numpy().copy() if mem else None
         r.mlp(r.env.obs, r.act)
         a_w = r.act.numpy()
-        a_np = np.stack([np.clip(pol.mean(o), -1, 1) for o in r.env.obs.numpy()])
-        out["mlp_max_err"] = float(np.abs(a_w - a_np).max())
+        a_np, h_np = [], []
+        for w, o in enumerate(r.env.obs.numpy()):
+            if mem:
+                pol.h = h0[w].astype(np.float64)
+            a_np.append(np.clip(pol.mean(o), -1, 1))
+            if mem:
+                h_np.append(pol.h)
+        out["mlp_max_err"] = float(np.abs(a_w - np.stack(a_np)).max())
+        if mem:
+            out["memory_max_err"] = float(np.abs(r.mlp.state.numpy() - np.stack(h_np)).max())
+            out["memory_mean_abs"] = float(np.abs(h0).mean())
     return {"check": True, "nworld": n, "steps": steps, **out}
 
 
@@ -223,10 +303,15 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--nworld", type=int, nargs="+", default=[1024, 4096, 16384, 32768])
     ap.add_argument("--policy", default=None, help="an exported .npz; random actions if omitted")
-    ap.add_argument("--steps", type=int, default=200, help="timed graph launches")
+    ap.add_argument("--steps", type=int, default=200, help="timed graph launches (if --seconds is 0)")
+    ap.add_argument("--seconds", type=float, default=15.0,
+                    help="time graph launches for this long instead of a fixed --steps; 0 = --steps")
     ap.add_argument("--eager-steps", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--check", action="store_true", help="eager vs captured, v3_s0, 64 worlds")
+    ap.add_argument("--check", action="store_true", help="eager vs captured, 64 worlds (--policy, default v3_s0)")
+    # 50: the eager half is Python launch bound (~0.5 s a policy step), so
+    # 250 took ~127 s on the A40 for the same verdict
+    ap.add_argument("--check-steps", type=int, default=50)
     ap.add_argument("--out", default="results/phase2.jsonl")
     a = ap.parse_args()
     wp.config.quiet = True
@@ -244,7 +329,7 @@ if __name__ == "__main__":
             pass
 
     if a.check:
-        emit(check(a.policy or "moves/general_rl_v3_s0.npz", 64, 250, a.seed, dev))
+        emit(check(a.policy or "moves/general_rl_v3_s0.npz", 64, a.check_steps, a.seed, dev))
     else:
         for n in a.nworld:
-            emit(bench(n, a.policy, a.steps, a.eager_steps, a.seed, dev))
+            emit(bench(n, a.policy, a.steps, a.eager_steps, a.seed, dev, a.seconds))

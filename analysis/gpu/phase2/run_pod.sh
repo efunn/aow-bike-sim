@@ -30,8 +30,17 @@ if want check; then # the whole step as one graph changes nothing
     step check      python $P/bench_env.py --check
 fi
 if want bench; then # speed, random actions then v3_s0's MLP (both inside the graph)
-    step bench_rand python $P/bench_env.py --nworld 1024 4096 16384 32768
-    step bench_mlp  python $P/bench_env.py --nworld 1024 4096 16384 32768 --policy moves/general_rl_v3_s0.npz
+    # BENCH_POLICIES: the drivers whose LOAD is timed (an MLP or a MinGRU,
+    # moves/<name>.npz; must be in the bundle). The load follows the plant,
+    # so keep the current best policy in the list when the physics changes.
+    BENCH_NW=${BENCH_NW:-1024 4096 16384 32768}
+    BENCH_POLICIES=${BENCH_POLICIES:-general_rl_v3_s0 general_puffer_fixes_52M}
+    step bench_rand python $P/bench_env.py --nworld $BENCH_NW
+    for pol in $BENCH_POLICIES; do
+        [ -f moves/$pol.npz ] || { echo "no moves/$pol.npz in the bundle"; continue; }
+        step check_$pol python $P/bench_env.py --check --policy moves/$pol.npz
+        step bench_$pol python $P/bench_env.py --nworld $BENCH_NW --policy moves/$pol.npz
+    done
 fi
 if want eval; then  # the eval grid, GPU (32 seeds a command) against GeneralEnv's _eval_episodes
     step eval_grid  python $P/eval_grid.py --seeds 32
