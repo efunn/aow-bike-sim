@@ -17,13 +17,28 @@ step() {  # step <name> <cmd...>
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
 nvcc --version | tail -2
 # PufferLib's build: clang + OpenMP, ccache (build.sh calls it), git, libGL (raylib links -lGL)
-step apt_update apt-get update -qq
-step apt_install sh -c "apt-get install -y -qq clang libomp-dev ccache git libgl-dev > /dev/null"
+# apt, then the PufferLib fetch (it needs git), IN THE BACKGROUND while pip
+# runs: all three are network waits. Joined before warp_init.
+(
+  set -e
+  step apt_update apt-get update -qq
+  step apt_install sh -c "apt-get install -y -qq clang libomp-dev ccache git libgl-dev > /dev/null"
+  if [ -f src/aow_sim/gpu/puffer/fetch.sh ]; then
+    step puffer_fetch bash src/aow_sim/gpu/puffer/fetch.sh ~/puffer
+  fi
+) > results/apt.log 2>&1 &
+APT_PID=$!
 step venv python -m venv --system-site-packages ~/venv
 . ~/venv/bin/activate
 step pip_mujoco_warp pip install -q "mujoco==3.10.0" "mujoco-warp==3.10.0.3"
+# MJX + JAX: phase 1's physics comparison only -- nothing in src/ or
+# analysis/gpu imports them, and they were 28-38 s of every pod's setup.
+# WITH_MJX=1 for that comparison.
+if [ -n "${WITH_MJX:-}" ]; then
 step pip_mjx_jax pip install -q "mujoco-mjx==3.10.0" "jax[cuda12]"
+fi
 step pip_nccl pip install -q nvidia-nccl-cu12
+wait $APT_PID || { echo "apt / PufferLib fetch failed:"; cat results/apt.log; exit 1; }
 # FAIL here if CUDA is unusable: Warp otherwise falls back to the CPU without
 # an error. 2026-10-14, a CA-MTL-1 A40: nvidia-smi listed the card, but cuInit
 # gave error 999 (torch too), and the export ran on the CPU (2.8 GB graph)

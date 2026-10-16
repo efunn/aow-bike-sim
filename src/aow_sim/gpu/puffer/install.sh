@@ -4,9 +4,10 @@
 #   bash src/aow_sim/gpu/puffer/install.sh <puffer_dir> <graph_stem> [--float]
 #
 # Run inside the Python env that exported the graph (it asks Warp where its
-# warp.so is, and which version it is). Clones PufferLib (public, no token)
+# warp.so is, and which version it is). Fetches PufferLib (public, no token)
 # at ea7f989 -- the commit docs/plans/gpu-training.md read and phase 1 built
-# -- if <puffer_dir> is absent, and patches its trainer (puffer_aow.patch).
+# -- shallow, through fetch.sh, if <puffer_dir> is not a checkout yet, and
+# patches its trainer (puffer_aow.patch).
 # Copies aow_bike.cu to ocean/aow_bike/ and
 # writes config/aow_bike.ini with the graph and Warp paths filled in. The
 # graph's world count must equal vec.total_agents there (4096 as shipped).
@@ -24,9 +25,8 @@ WARP_VER=$(python -c "import warp; print(warp.__version__)")
 [ -f "$WARP_LIB" ] || { echo "no $WARP_LIB"; exit 1; }
 NW=$(python -c "import json; print(json.load(open('$STEM.json'))['nworld'])")
 
-[ -d "$PUF" ] || git clone -q https://github.com/PufferAI/PufferLib.git "$PUF"
+bash "$HERE/fetch.sh" "$PUF"          # the pinned commit, shallow
 cd "$PUF"
-git checkout -q ea7f989
 # the temporal smoothness term, advantage normalisation and the gradient log
 # (each on only when aow_bike.cu defines its AOW_* switch). Reset first: a
 # rerun must not patch twice.
