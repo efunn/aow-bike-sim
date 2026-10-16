@@ -1,0 +1,20 @@
+# Stand beside the ball and swing the front wheel through it: a 120 deg
+# right spin from rest, the ball just right of the front wheel. It goes
+# off sideways (~75 deg right).
+#
+#   mjpython -m aow_sim.run_drive --teleop --hockey --play config/plays/wheel_swing.yaml
+#   End (fn+right): ball parked 0.30 m ahead, 16 cm right; spin
+#
+# Sim, 2026-10-16 (a sweep over ball x 0.22-0.38, y -0.08..-0.16, turn
+# -60/-90/-120 deg, from rest or rolling at 0.5 m/s; seed1_72M, truth,
+# ideal drive): this is the best, 0.88 m/s, upright; most others 0.6-0.8.
+# Weaker than the ram (1.27) or the wing edge (1.37): a swing, not a power
+# shot. At 0.6 m a heading step only turns into a ram.
+#
+# Keys: [t s, v m/s, v_lat m/s, psi deg relative (+ left)]; ball: [x fwd,
+# y left] m. control/command_play.py.
+interp: step
+ball: [0.30, -0.16]
+keys:
+  - [0.0, 0.0, 0.0, -120]
+  - [1.5, 0.0, 0.0, -120]

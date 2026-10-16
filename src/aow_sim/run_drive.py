@@ -46,7 +46,7 @@ from .build_model import (FLOOR_CONAFF, FLOOR_CONTYPE, SWING_LINKAGE_CFG, _FLOOR
                           build_model, load_params, tune_lighting)
 from .wheel_overlay import STRIPE_RADIUS_TELEOP, add_stripes
 from .control import DriveController, run
-from .control.balance import extract_state
+from .control.balance import extract_state, mix
 from .control.linearize import settle_upright
 from .hw.ground import CURRENT_STEP as _CURRENT_STEP
 from . import geometry
@@ -610,6 +610,13 @@ def main() -> None:
     ap.add_argument("--no-righting", action="store_true",
                     help="the wingless bike: no righting module (what every "
                          "export before 2026-10-09 trained on)")
+    ap.add_argument("--play", action="append", default=[], metavar="YAML",
+                    help="teleop: a timed command sequence (control/command_play.py, "
+                         "config/plays/); End plays the next one, any driving key "
+                         "aborts. Repeatable")
+    ap.add_argument("--no-auto-up", action="store_true",
+                    help="teleop: do NOT stand the bike back up by itself after "
+                         "a fall (control/swing_sit.py; PageUp still does)")
     ap.add_argument("--righting-ideal", action="store_true",
                     help="under --swing-linkage, drive the crank with the "
                          "bare PD + torque clip instead of the current-based "
@@ -853,7 +860,7 @@ def main() -> None:
                 drivetrain_base=drivetrain_base, servo_gains=servo_gains,
                 drivetrain_source=drivetrain_source, start_lqr=args.lqr,
                 crab_max_override=args.crab_max, verbose=args.verbose,
-                rig=rig_cfg)
+                rig=rig_cfg, auto_up=not args.no_auto_up, plays=args.play)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1915,6 +1922,14 @@ _PELT_MAX = 8.0        # m/s; well past the topple threshold, which is ~4.5
 # camera mode apply_camera returns early, so there a press will also nudge the
 # viewer's camera -- switch to a tracked mode if that gets annoying.
 _KEY_PELT_DOWN, _KEY_PELT_UP = ord("["), ord("]")
+# GLFW PageDown / PageUp: fn+down / fn+up on a Mac keyboard. Every digit and
+# letter is taken (by teleop or the viewer); these two are free and read as
+# "go down" / "get up".
+_KEY_LIE_DOWN, _KEY_GET_UP = 267, 266
+# GLFW End (fn+right on a Mac): play the next --play. The driving keys --
+# arrows, crab 1/3, stop 5, re-zero / -- take the command back mid-play.
+_KEY_PLAY = 269
+_PLAY_ABORT_KEYS = (265, 264, 263, 262, ord("1"), ord("3"), ord("5"), ord("/"))
 # The same two keys step the righting servo's Goal Current under
 # --swing-linkage, in counts, by the ground station's step (_CURRENT_STEP).
 # --hockey wins if both are on.
@@ -1967,16 +1982,17 @@ def _pelt_ball(model, data, params, speed=_PELT_SPEED, side=1.0, rng=None):
     return float(params["hockey"]["ball"]["mass"] * speed)
 
 
-def _reset_ball(model, data, params):
+def _reset_ball(model, data, params, xy=None):
     """Re-park the ball at its bike-frame start pose (hockey model only), so a
-    fresh shot can be attempted. No-op if the model has no ball."""
+    fresh shot can be attempted -- or at world `xy` (a play's own ball). No-op
+    if the model has no ball."""
     try:
         jid = int(model.body("ball").jntadr[0])
     except Exception:
         return
     q, v = int(model.jnt_qposadr[jid]), int(model.jnt_dofadr[jid])
     ball = params["hockey"]["ball"]
-    data.qpos[q:q + 2] = ball["start"]
+    data.qpos[q:q + 2] = ball["start"] if xy is None else xy
     data.qpos[q + 2] = ball["radius"]
     data.qpos[q + 3:q + 7] = [1, 0, 0, 0]
     data.qvel[v:v + 6] = 0.0
@@ -2062,7 +2078,7 @@ _REC_KEY_LABELS = {
     ord("4"): "wing retract / step left",
     ord("."): "shove", ord("/"): "re-zero", ord(","): "policy menu",
     265: "throttle up", 264: "brake/reverse", 263: "turn left", 262: "turn right",
-    259: "reset",
+    259: "reset", 267: "lie down", 266: "get up", 269: "play",
 }
 
 
@@ -2614,7 +2630,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             ahrs="none", ahrs_tau=None, design=None, drivetrain_base=None,
             servo_gains=None, drivetrain_source="", frame_stats=None,
             start_lqr=False, rig=None, crab_max_override=None,
-            verbose=False):
+            verbose=False, auto_up=True, plays=()):
     from .interactive import FrameStats, teleop_loop
 
     from . import policy_menu
@@ -2968,6 +2984,151 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                   f"[ / ] +-{_CURRENT_STEP} counts"
                   f"   (the bike's righting_current is "
                   f"{params['control']['onboard']['righting_current']})")
+
+    # LIE DOWN / GET UP on the swing module (control/swing_sit.py). Only with
+    # the servo model: the sequence leans on its Goal Current (limp at the end
+    # of the lie-down) and was tuned against it (analysis/swing_sit.py).
+    # PageDown lies down, PageUp gets up; after a fall it gets up by itself
+    # unless --no-auto-up. A deliberate lie-down stays down until PageUp.
+    sit = None
+    sit_ctx = {"gc": None, "steer": None, "off": False, "said": "riding"}
+    if crank_servo is not None:
+        from .control.swing_sit import SwingSit
+        sit = SwingSit(wing["deploy"])
+        print("lie down / get up: PageDown / PageUp (fn+down / fn+up on a Mac)"
+              + ("; gets up by itself after a fall" if auto_up else
+                 "; auto-up OFF (--no-auto-up)"))
+
+    # TIMED COMMAND PLAYS (control/command_play.py): End plays the next one,
+    # general mode only; any driving key hands the command back.
+    from .control.command_play import load_play
+    play = {"list": [load_play(f) for f in plays], "i": 0, "cur": None,
+            "t0": 0.0, "psi0": 0.0}
+    m_play = [model]
+    for pl in play["list"]:
+        top = float(np.max(np.abs(pl.cmd[:, 0])))
+        print(f"play {pl.name}: {pl.duration:.2f} s, {len(pl.t)} keys"
+              + (f"  (peak {top:.2f} m/s, CLIPPED to v_max {v_max:.2f})"
+                 if top > v_max + 1e-9 else ""))
+    if play["list"]:
+        print("  End (fn+right on a Mac) plays the next; a driving key aborts")
+
+    def play_start(d):
+        if c.mode != "general":
+            print("plays drive the general policy; engage it first")
+            return
+        pl = play["list"][play["i"] % len(play["list"])]
+        play["i"] += 1
+        play.update(cur=pl, t0=float(d.time), psi0=float(c._psi))
+        ax_v.clear()
+        ax_psi.clear()
+        ax_lat.clear()
+        msg = f"PLAY {pl.name}"
+        if pl.ball is not None and hockey:
+            _reset_ball(m_play[0], d, params,
+                        xy=pl.ball_world(d.qpos[:2], c._psi))
+            msg += f" (ball parked {pl.ball[0]:+.2f} ahead, {pl.ball[1]:+.2f} left)"
+        elif pl.ball is not None:
+            msg += " (it has a ball; run with --hockey to get one)"
+        if pl.crank is not None and wing is None:
+            msg += " (it drives the crank; this bike has no righting module)"
+        print(msg)
+
+    def play_step(d):
+        """Overwrite the command state from the running play, if any."""
+        pl = play["cur"]
+        if pl is None:
+            return
+        t = float(d.time) - play["t0"]
+        v, vl, dpsi = pl.at(t)
+        crank = pl.crank_at(t)
+        if crank is not None and wing is not None:
+            wing["manual"] = True       # the play owns the crank now
+            wing["cmd"] = wing["target"] = float(np.clip(
+                crank, -wing["deploy"], wing["deploy"]))
+        state["v"] = float(np.clip(v, -v_max, v_max))
+        state["v_lat"] = float(np.clip(vl, -crab_max[0], crab_max[0]))
+        state["psi"] = play["psi0"] + dpsi
+        if t >= pl.duration:
+            play["cur"] = None
+            print(f"  {pl.name} done (its last command stands)")
+
+    def sit_reset():
+        """Back to riding with the operator's Goal Current: any reset."""
+        if sit is None:
+            return
+        if sit_ctx["gc"] is not None:
+            crank_servo.set_goal_current(sit_ctx["gc"])
+        sit.phase = "riding"
+        sit._down_since = None
+        if sit_ctx["gc"] is not None:
+            wing["manual"] = False      # a wing-driving policy gets them back
+        sit_ctx.update(gc=None, steer=None, off=False, said="riding")
+
+    def sit_start(d, what):
+        """Begin lying down or getting up, from the controller's own view of
+        roll (the estimate under --ahrs/--odometry, as on the bike)."""
+        if sit is None or c.rl_view is None:
+            return
+        roll = float(c.rl_view[0])
+        if sit_ctx["gc"] is None:
+            sit_ctx["gc"] = crank_servo.goal_current
+        wing["manual"] = True           # the sequence owns the crank now
+        if what == "down":
+            zero_command(d)
+            sit.lie_down(d.time, roll)
+        else:
+            sit.get_up(d.time, roll)
+
+    def sit_command(m, d):
+        """This step's Command while the sequence owns the bike, else None.
+        Runs BEFORE c.step; `sit_override` applies the policy-off half after."""
+        if sit is None or c.rl_view is None:
+            return None
+        roll, rate = float(c.rl_view[0]), float(c.rl_view[1])
+        crank = float(d.qpos[wing["jadr"]])
+        if (auto_up and c.mode == "general" and sit.phase == "riding"
+                and sit.fallen(d.time, roll, rate)):
+            print("fallen -> getting up")
+            sit_start(d, "up")
+        if not (sit.active or sit.phase == "lying"):
+            if sit_ctx["gc"] is not None:           # just finished
+                sit_reset()
+            return None
+        speed = float(np.hypot(c.rl_view[6], c.rl_view[7]))   # v_lon, v_lat
+        cmd = sit.step(d.time, roll, rate, crank, speed)
+        if sit.phase != sit_ctx["said"]:
+            sit_ctx["said"] = sit.phase
+            print(f"  {sit.phase}" + ("  (lie-down ABORTED: it went over "
+                                      "the other way; try again)"
+                                      if sit.phase == "retract" and sit.aborted
+                                      else ""))
+        if cmd.policy and sit_ctx["off"]:
+            # Policy back on: re-engage from a clean slate. While it was off
+            # it kept stepping on a bike lying on its side, so its memory and
+            # its command are both garbage.
+            import contextlib
+            import io
+            with contextlib.redirect_stdout(io.StringIO()):
+                engage(d, quiet=True)   # its NOTEs were said at startup
+            wing["manual"] = True       # engage() hands the wings back
+        sit_ctx["off"] = not cmd.policy
+        wing["cmd"] = wing["target"] = cmd.crank
+        crank_servo.set_goal_current(round(sit_ctx["gc"] * cmd.current))
+        return cmd
+
+    def sit_override(m, d, cmd):
+        """Policy off: drives held at zero speed plus the sequence's diff, the
+        steer held where it was when the policy let go. After c.step, which
+        writes the whole ctrl vector."""
+        if cmd is None or cmd.policy:
+            sit_ctx["steer"] = None
+            return
+        if sit_ctx["steer"] is None:
+            sit_ctx["steer"] = float(d.ctrl[c.aid["steer"]])
+        a, b = mix(0.0, cmd.diff)
+        d.ctrl[c.aid["drive_a"]], d.ctrl[c.aid["drive_b"]] = a, b
+        d.ctrl[c.aid["steer"]] = sit_ctx["steer"]
 
     def policy_owns_wings() -> bool:
         """True when the engaged general policy is DRIVING the wings itself.
@@ -3323,6 +3484,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         if ramp_psi:
             turn(ramp_psi * _TURN_RATE * dt)
 
+        play_step(d)
         if c.mode == "general":
             # Clamp to the envelope the loaded policy declares (yaml
             # v_lat_frac), now that it is definitely loaded -- unless
@@ -3461,6 +3623,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         if wing is not None:
             wing["cmd"] = wing["target"] = float(d.qpos[wing["jadr"]])
             wing["pos"] = 0
+        sit_reset()
         mujoco.mj_forward(m, d)
 
     def apply_pending_respawn(m, d):
@@ -3517,6 +3680,9 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 _rec_key(rec, k, d.time,
                          _REC_KEY_LABELS.get(k, chr(k) if 32 <= k < 127 else f"key{k}"))
             general = c.mode == "general"
+            if play["cur"] is not None and k in _PLAY_ABORT_KEYS:
+                print(f"  {play['cur'].name} aborted")
+                play["cur"] = None
             # -- the spawn dial owns the keyboard while it is open ----------
             # Same argument as the policy menu below, and checked FIRST so a
             # heading keystroke can never leak into the throttle.
@@ -3748,6 +3914,19 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                     _CURRENT_STEP if k == _KEY_PELT_UP else -_CURRENT_STEP))
                 print(f"righting Goal Current: {crank_servo.goal_current} counts "
                       f"({crank_servo.cap_nm:.2f} N.m at the crank)")
+            elif k == _KEY_PLAY and play["list"]:
+                play_start(d)
+            elif sit is not None and k in (_KEY_LIE_DOWN, _KEY_GET_UP):
+                if sit.active:
+                    print(f"  busy ({sit.phase})")
+                elif k == _KEY_LIE_DOWN and sit.phase == "riding":
+                    print("lying down")
+                    sit_start(d, "down")
+                elif k == _KEY_GET_UP and (
+                        sit.phase == "lying" or (c.rl_view is not None and abs(
+                            float(c.rl_view[0])) > np.deg2rad(45))):
+                    print("getting up")
+                    sit_start(d, "up")
             elif wing is not None and k == ord("."):
                 # Shove it over, alternating sides so both get tested -- the
                 # policy is measurably worse to the left (see
@@ -3847,6 +4026,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                     except ValueError as e:
                         print(e)
         apply(m, d)
+        sit_cmd = sit_command(m, d)
         if odo is None and ahrs_model is not None:
             # Orientation path only. SimOdometry would normally own the AHRS
             # clock; without it the sensor keeps its own.
@@ -3861,6 +4041,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             # -- it reads `d` and writes `d.ctrl`. See sim_odometry.
             with odo.estimated(d, m.opt.timestep):
                 c.step(m, d)
+        sit_override(m, d, sit_cmd)
         wing_step(m, d)         # after c.step: it rewrites the whole ctrl vector
         if rig is not None:     # likewise: the rig motors' setpoints
             from .floor_rig import motor_step

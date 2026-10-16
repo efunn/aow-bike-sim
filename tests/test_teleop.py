@@ -1211,3 +1211,55 @@ def test_rl_view_is_what_the_policy_was_fed(model, params, eq_qpos):
             np.testing.assert_allclose(view[-2:], obs[-2:], atol=1e-6)
     lqr = [i for i, n in enumerate(cols) if n.startswith("lqr_")]
     assert np.all(np.isnan(rows[:, lqr]))
+
+
+@pytest.mark.parametrize("policy", [None, "general_puffer_fixes_52M"],
+                         ids=["configured", "fixes_52M_detailed_drive"])
+def test_swing_lie_down_get_up_and_auto_up(monkeypatch, params, policy):
+    """PageDown lies the bike down onto a blade and leaves it lying, limp;
+    PageUp stands it up and hands back to the policy; a fall gets up by
+    itself. control/swing_sit.py through the real teleop closures.
+
+    The second case flies a GPU policy on ITS OWN detailed drivetrain, as
+    teleop compiles it, and starts the lie-down while driving: that is the
+    setup in which the first version fell the wrong way and dropped the bike
+    after the hand-off, while the configured (ideal-drive) case passed.
+
+    Its OWN model: the crank servo model rewrites the swing actuator in
+    place (righting_servo.attach), and the module's shared `model` must keep
+    the crank the other teleop tests were written against."""
+    _needs_general()
+    from aow_sim.control.righting import roll_pitch
+    from aow_sim.run_drive import _KEY_GET_UP, _KEY_LIE_DOWN
+    kw = {}
+    if policy is not None:
+        from aow_sim.control.flick import MOVES_DIR
+        from aow_sim.drivetrain_model import policy_params
+        if not (MOVES_DIR / f"{policy}.yaml").exists():
+            pytest.skip(f"moves/{policy} is not here (untracked)")
+        params = policy_params(load_params(), policy)
+        kw["general"] = policy
+    m = build_model(params, variant="full")
+    eq = settle_upright(m).qpos.copy()
+    g = _capture(monkeypatch, m, params, eq, swing=True, **kw)
+    c, d = g["c"], g["data"]
+    roll = lambda: roll_pitch(d.qpos[3:7])[0]      # noqa: E731
+
+    _idle(g, 0.5)
+    if policy is not None:
+        _tap(g, UP, settle=0.15)
+        _tap(g, UP, settle=1.0)         # moving when the key goes down
+    _tap(g, _KEY_LIE_DOWN, settle=11.0)
+    assert abs(roll()) > 70, f"did not lie down: roll {roll():+.1f}"
+    assert abs(np.degrees(d.qvel[3])) < 5, "lying, but still rolling"
+
+    _tap(g, _KEY_GET_UP, settle=4.0)
+    assert abs(roll()) < 5 and c.mode == "general", (
+        f"did not get up: roll {roll():+.1f}, mode {c.mode}")
+
+    d.qvel[3] = -8.0                    # knocked over, hard
+    _idle(g, 2.0)
+    assert abs(roll()) > 60, "the shove was caught; it tests nothing"
+    _idle(g, 7.0)
+    assert abs(roll()) < 5 and c.mode == "general", (
+        f"no auto-up: roll {roll():+.1f}, mode {c.mode}")

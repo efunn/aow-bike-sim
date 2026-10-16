@@ -1,0 +1,21 @@
+# The user's idea: right blade partway down, ram the ball with its front
+# edge. The only thing beyond ordinary driving is the crank command (5th
+# column); the shot is the bike's own speed into the blade.
+#
+#   mjpython -m aow_sim.run_drive --teleop --hockey --play config/plays/wing_edge.yaml
+#   End (fn+right): ball parked 0.6 m ahead, 10 cm right; blade to 105 deg,
+#   ram, fold, stop
+#
+# Sim, 2026-10-16 (analysis/ball_play.py --ball-x 0.6 --angle 0 --lead 0
+# --crank 105 --offset ...): ball 10 cm right -> 1.37 m/s, 12 cm -> 1.27,
+# 14 cm -> the bike FELL. Faster than the ram, with a wider aim window. At
+# 3 m out: 1.37-1.45 m/s for 12-14 cm at crank 90-105; crank 45 fell twice.
+#
+# Keys: [t s, v m/s, v_lat m/s, psi deg relative, crank deg (+ right blade
+# down, 116.9 full)]; ball: [x fwd, y left] m. control/command_play.py.
+interp: step
+ball: [0.6, -0.10]
+keys:
+  - [0.0, 1.2, 0.0, 0, 105]
+  - [0.8, 0.0, 0.0, 0, 105]
+  - [1.4, 0.0, 0.0, 0, 0]
