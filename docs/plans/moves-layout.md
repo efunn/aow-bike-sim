@@ -139,6 +139,14 @@ payload changed. What changed is what the top level and the teleop menu show.
   `general_rl_v3_s1`, the previous pointer `general_rl_smooth_temporal`, and
   the names teleop's keys and the tests load by path: `flick`, `flick_fwd`,
   `flick_rl`, `ball_rl`, `pivot_rl`, `general_rl`.
+- **Then the CPU MinGRU arm (10-16, 13 on top).** `queue_general_v3_mingru`
+  finished on the box: `general_rl_v3_mingru_s0` on top as the arm's
+  representative, `s1..s4` in the archive. Picked on its own export metrics,
+  which are comparable within the arm (same queue, code and grid): s0 is the
+  only seed with low drift (0.07 m), head error 25 deg AND crab both ways.
+  s4 tracks best (0.708, 12.6 deg) but barely crabs (right 0.014). On one
+  common `per_command.py --summary` grid (tm151_filter, counts) all five and
+  `v3_s1` fell 0/20; turns resolved forward 5-7/9 vs `v3_s1` 8/9.
 - **Archive, the other 80** (161 files, plus the orphan
   `general_rl_hold_nohub.npz`). `moves/stale/` is untouched.
 - **Names still work everywhere.** `control.flick.move_path` falls back to
