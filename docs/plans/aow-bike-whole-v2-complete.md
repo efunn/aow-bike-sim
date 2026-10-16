@@ -302,3 +302,146 @@ and would not slide past them.
 - The U2D2's envelope sat there and is PARKED (not drawn) until the
   Pi + U2D2 carrier: user, "the u2d2 won't be there anymore".
 
+
+## The battery + power carrier, first pass (2026-10-16 night)
+
+Pushed: drive, the bike. The drive's `--check` and the bike's are clean: no
+interference at rest, steered 30/90/180/270 or at any righting pose, no
+stray bodies, nothing in a keep-out. Calls 47 -> 54. Three of the seven were
+waste: one drive check re-run by a careless command, and two bike checks on
+Claude's own build bugs (cutters interleaved with the adds under one parent
+Id, which Onshape refuses; standoffs started 0.5 outside the plate instead
+of inside it). Layout `aow_sim.cad_power`, numbers `bike_v2_cad.yaml
+power:`, drawn by `cad_bike_v2`. ONE printed part, `power carrier`,
+16.3 cm^3 (17.5 g if solid ASA; printed, less).
+
+**The joint, one 6-32 a side, on the rails' rear arms** (user: "off the rear
+rollcage arms, but as close to the drive case as possible"; the screw
+"should enter fully clear from the side view").
+- **Where:** bike (12.9, 75.3). That is ym 7.0, zm 76.0 in the rear post's
+  mirrored frame, the cage screws' height.
+- **Why there:** nearer the case, the head is behind belt R's upper run in
+  side view; at ym 7.0 it clears that run's outer face by 0.8 past the head.
+  Further back, it runs into the room the cage's socket needs ahead of the
+  post.
+- **Turned round from the house joint:**
+  - the flat head is in the rail's outer face (|x| 20.6);
+  - the nut is in a lug on the carrier, between the battery and the rail (|x| 11.3..16);
+  - the nut sits 1.0 past the joint plane and 1.0 short of the battery, not
+    the house 2.0, because the lug is only 4.7 thick;
+  - the screw is cut down to 8 (user: "I can shorten the 6-32 screws"), so
+    its tip is at the nut's far face, 1.6 off the battery's side.
+- **Locating:**
+  - the lug's ridge runs up its face, into a groove in the rail's inner face that opens UP through the arm's top edge, so the carrier drops in from above;
+  - the nut slot runs up out of the lug's top;
+  - drive `rail.carrier_*`. `cad_power` refuses a joint off the rail's.
+
+**The tray** (drive frame, on the case sides' top edges):
+- **The pack:** 2.5 forward and 3 up from where it was, so the strap's tunnel fits under the floor ahead of the wire gap.
+- **Floor:** 4.0, |x| 15.7, sitting on the skirts.
+- **Side walls:** 20 of the pack's 30.
+- **Rear wall:** the full 30. The pack sits against it down the 45 deg slope.
+- **Front lip:** 5.
+- **Removal:** with the strap off, the pack lifts out along the drive's +z.
+
+**One strap slot** (3/4" One-Wrap, user):
+- **The slot:** a tunnel under the floor, across, drive y 98.6..118.45. The strap runs round the pack's front third and the floor.
+- **The wire gap:** the left case side's servo B wires come up through its top edge at drive y 86.9..97.5. The floor and the plate are notched there, and the tunnel starts ahead of the notch.
+- **Not further back:** further back, the strap would run up the rear arms.
+- **GUESS:** the strap's thickness, 2.0.
+
+**The left plate (3.0) is the bracket.** The tray's left wall runs up and forward over the left drive pulley.
+- **The board** sits on 2.0 standoffs, solder side in (user: ~2 needed), components out to |x| 28.9, inside the pulley's 34.2.
+  - Its rear-bottom corner is at bike (66, 105), 2.7 over the pulley's flange.
+  - The 4-40s are on its grid: (2, 2) and 6 pitches up.
+  - The XT30 sits on the middle three top pins, half a pitch aft, 5.5 thick and flush with the back face, its top at bike z 141.
+- **The switch** (v1's: 13 x 19.4 cut-out, 18.5 deep) sits in a level panel aft of the board, its bezel's top flush with the XT30's.
+- **The plate's bottom** is 0.5 over the case side's front-top corner (the skirt's front wall is under it).
+- **Over the strap:** where the strap crosses the pack, nothing of the plate stands above the pack.
+
+**Parked: the Pi.** Its box (drive y 151..171) ran through the board, and it
+moves to the Pi + U2D2 carrier (user: Pi on top).
+
+**GUESS:**
+- the XT30's length along the board's edge (10.2);
+- the front headers' height (8.5);
+- the plug keep-outs (14 forward, 16 over the XT30);
+- the 4-40 board holes (2.9) and pilots (2.3, self-tapping);
+- the switch's bezel.
+
+**Open:**
+- the carrier's print orientation: the standoffs and the switch panel stand off the plate's outer face, so it cannot print on that face;
+- the hole teardrops;
+- the cage socket must keep forward of bike y ~8 inboard, where the lug's rear edge is;
+- where the battery's and the servo wires run.
+
+## The carriers, second pass (2026-10-16 night, user's review)
+
+Pushed: the bike. `--check` clean, first time: 74 bodies, no interference
+at rest, steered or at any righting pose. Calls 54 -> 56.
+
+**The power board and switch move to the battery's side**, over the
+drive's back-top (user: "on the side of the battery ... instead of the
+front-top"). The front-top is the Pi + U2D2's.
+- **Board:** outboard of the left rail. Its solder face is 0.5 off the rail's outer face, on 6.8 standoffs from the plate. Its rear-bottom corner is at bike (6.9, 81).
+- **Three bounds set where it goes:**
+  - its front stays behind drive y 98.6, where the strap rises beside the plate (it reaches 98.57);
+  - its front-bottom corner is 5.5 over the case side's top edge, the servo cable's room (user: it routes "under the battery case -> forward", the board "not fully slammed against the drive case");
+  - the rail screw's head stays clear of everything in side view, 2.0 round it.
+- **Switch:** aft of the board, centred across on the XT30, its bezel flush with the XT30's top (bike z 117).
+- **Open:** the switch's panel spans the rail's x over the rear cage post (bike y -15..6.5, z 112..114). The cage's rear upright cannot rise straight up out of that post's socket.
+
+**The Pi + U2D2 carrier, an outline** (`cad_pi_carrier`, `bike_v2_cad.yaml pi_carrier:`). It is self-contained and attached to nothing yet (user).
+- **Plate:** 2.0, parallel to the drive's front face at drive y 151, 7.4 past the pulleys' rims.
+- **Pi:** on 2.6 standoffs (M2.5 pilots, GUESS) on the plate's outer side, its box 2 further out than before (drive y 163).
+- **U2D2:** under the plate, between the drive pulleys, 1.1 off the AHRS's housing, in a short cradle at mid-length. Its ends and connectors are left open, since which long side has the connectors is not recorded.
+- **Next:** the user expects a third power-carrier side screw near the left drive pulley, sharing a mounting arm with this carrier.
+
+## The carriers, third pass (2026-10-16 night, user's review)
+
+Pushed: the bike. `--check` clean, first time: 76 bodies, no interference,
+no keep-out reached. Calls 56 -> 58.
+
+**The power board and switch are square to the drive** (user: "aligned with
+the drive case/battery ... xt30 pointing up and back, other plugs point up
+and forward"). The second pass had them square to the BIKE, which put the
+board behind the pack and the switch behind the axle.
+- **Board:** still in the bike's side plane, outboard of the left rail on 6.8 standoffs, its edges along the drive's y and z. Its rear-bottom corner is at drive (88, 33.75), 4.0 off the case sides' top edge for the servo cable (it runs under the tray, forward), 10.8 off the left pulley's flange.
+- **Switch:** aft of the board (drive -y), its panel parallel to the drive's back face, its bezel flush with the XT30's top. It sits at drive y 67..86.5, which clears the rail screw's head in side view (0.9 past the head's 1 mm margin): that is what sets the board's y.
+- **No strap for now** (user: "just remove the strap for now"). The tray is back where the pack was: floor 2.0, pack at drive (0, 87, 46.75), 1 up from its first place. The wire notch stays.
+
+**The U2D2's plugs** (ROBOTIS drawing, user): the USB-C in one end, the JST
+connectors (RS485, TTL, UART) in the other, plugging in along its length.
+Mounted with the USB up the face as the AHRS's, the JSTs down, behind the
+AHRS. Keep-outs: the USB plug as the AHRS's (GUESS), the JSTs 14 (GUESS).
+
+## The holder (2026-10-16 night, user's review): a panel, not a case
+
+Pushed: drive, the bike. Each `--check` clean (bike: 76 bodies, no
+interference at rest, steered or at any righting pose). Calls 58 -> 64. One
+of them was waste: a bike check whose finding point sat on a slit cutter's
+edge, so `partAt` returned the cutter with the part (BOOLEAN_SAME_INPUT).
+The layout now refuses a finding point inside any cutter.
+
+**The power holder** (`cad_power`) is ONE printed panel on the left, between
+the battery and the left rail (user: "instead of a case, it's just a panel
+(printed -X)").
+- **Size:** |x| 11.3..16, drive y 68.6..133.4, 9.8 cm^3.
+- **Print:** its battery-side +X face is flat, on the bed. The ridges, the standoffs and the shelf stand off the -X face. Every hole and slit runs along x, upright as printed.
+- **The shelf** sits over the board's top edge, round the XT30 (0.3 clear). The switch is panel-mounted in it, aft of the board, its bezel flush with the XT30's top.
+- **Two strap slits**, drive y 99.2..119.2: the lower in the cable gap under the board, the upper behind the board. A strap runs between the panel and the board there. Placeholders: the straps are the user's call.
+- **The wire notch:** the panel sits on the case sides' top edge and is notched over the left wire gap.
+- **No tray:** the battery is back where it was, drive (0, 87, 45.75).
+
+**Two 6-32 into the LEFT rail, fore and aft of the board** (user).
+- **The rail grows two ears, both on the case side** (drive `rail.back_ear`, `rail.front_ear`; mirrored, so the right rail has them too, unused).
+  - **Aft:** on the case side's top edge under the switch, the head at drive (80, 35.5). The rear arm made the part "unnecessarily long", user.
+  - **Fore:** off the case side's front edge at its top, over the AHRS tab and board (9.8 clear), near the left drive pulley. The head at drive (125, 27).
+- **The joint:** the head is in the ear's outer face. The nut sits in the panel a wall past the joint plane and a wall short of the battery, and the screw is cut to 8. The ridge goes vertical on the panel, into a groove open up through each ear's top: the panel drops in from above. The nut slots run out the panel's aft and front edges.
+- **Side view:** both heads are clear, 1 mm round each: of the board, standoffs, switch and shelf (3.3 to spare), and of the left pulley's belt (1.7).
+- **The rear-arm joint is gone.** The arm only carries the cage post now.
+
+**The U2D2** (the ROBOTIS drawing): its JSTs are in its face near the end
+away from the USB, facing the drive (down and back in the bike). It slides up
+the face (`pi_carrier.u2d2_z` 27.1) until they are 0.5 past the AHRS
+housing's upper end. The JSTs' keep-out is small (14 x 17 x 6, GUESS).
