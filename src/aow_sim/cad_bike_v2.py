@@ -36,6 +36,8 @@ import yaml
 from . import cad_ahrs_fixture as af
 from . import cad_bike as cb
 from . import cad_drive as cd
+from . import cad_pi_carrier as cpc
+from . import cad_power as cpw
 from . import cad_righting as cr
 from . import cad_servo_mount as sm
 from . import cad_steering as cs
@@ -48,11 +50,12 @@ TAB = "bike_v2_features"
 PART_STUDIO = "bike_v2"
 POSES = cb.POSES
 STEER_SWEEP = cb.STEER_SWEEP
-COMPONENTS = ("battery", "ahrs", "pi", "u2d2", "power")
+COMPONENTS = ("battery", "ahrs", "pi", "u2d2")      # + the power board and switch, from cad_power
 # the USB-C plug's overmold, a typical one (ahrs_fixture_cad.yaml
 # usb_plug_keepout, GUESS): length past the receptacle, width, height, m
 USB_KEEPOUT = (0.030, 0.0124, 0.0065)
-NAMES = {"battery": "battery", "ahrs": "AHRS", "pi": "Pi 3B+", "u2d2": "U2D2", "power": "power board"}
+NAMES = {"battery": "battery", "ahrs": "AHRS", "pi": "Pi 3B+", "u2d2": "U2D2", "power": "power board",
+         "switch": "switch"}
 COLORS = {"battery": (0.85, 0.75, 0.2), "ahrs": (0.55, 0.15, 0.15), "pi": (0.1, 0.5, 0.2),
           "u2d2": (0.2, 0.2, 0.25), "power": (0.15, 0.4, 0.15)}
 
@@ -70,8 +73,27 @@ def load(path: str = PARAMS) -> dict:
     rd = cr.load()
     sd, dd = cs.load(snug=True), cd.load()
     D = cd.full_layout(dd)
+    RA = cd.rail_layout(dd, D)
     return {"s": raw, "params": load_params(sm.CAD_PARAMS), "steer": cs.layout(sd), "steerData": sd,
-            "drive": D, "driveData": dd, "rail": cd.rail_layout(dd, D), "rd": rd, "rL": cr.layout(rd)}
+            "drive": D, "driveData": dd, "rail": RA, "rd": rd, "rL": cr.layout(rd),
+            "power": cpw.layout(raw["power"], D, RA, dd, raw["components"]["battery"]),
+            "piCarrier": cpc.layout(raw["pi_carrier"], D, raw["pi"], raw["components"],
+                                    _ahrs_top(raw["components"]["ahrs"]), _ahrs_housing_end(raw, dd))}
+
+
+def _ahrs_housing_end(raw: dict, dd: dict) -> float:
+    """The drive z of the AHRS housing's upper end (the U2D2's JSTs face the
+    drive past it)."""
+    c = raw["components"]["ahrs"]
+    h = [v / 2 for v in c["size"]]
+    hb = next(b for b in tm151_boxes(dd["tm151"], h, int(dd["s"]["ahrs"]["tm151_x_up_n"]))
+              if b["name"] == "AHRS housing")
+    return c["at"][2] + hb["hi"][2]
+
+
+def _ahrs_top(c: dict) -> float:
+    """The drive y of the AHRS envelope's outer face (its housing's top)."""
+    return c["at"][1] + c["size"][1] / 2
 
 
 def layout(data: dict) -> dict:
@@ -120,12 +142,32 @@ def layout(data: dict) -> dict:
         tm = data["driveData"]["tm151"]
         sx = int(data["driveData"]["s"]["ahrs"]["tm151_x_up_n"])
         boxes = (pi_boxes(s["pi"], h) if k == "pi" else tm151_boxes(tm, h, sx) if k == "ahrs"
+                 else u2d2_boxes(h) if k == "u2d2"
                  else [{"name": NAMES[k], "lo": [-v for v in h], "hi": h, "color": list(COLORS[k])}])
         holes = pi_holes(s["pi"], h) if k == "pi" else tm151_holes(tm, h, sx) if k == "ahrs" else None
         comps.append({"key": k, "name": NAMES[k], "frame": c["frame"], "size": list(c["size"]),
                       "at": list(c["at"]), "rx": float(c.get("rx") or 0.0), "mass": c.get("mass"),
                       "boxes": boxes, "holes": holes})
+    # the power board and the switch, on the carrier (cad_power), drive frame
+    P = data["power"]
+    for k, src, holes in (("power", P["board"]["boxes"], P["board"]["holes"]), ("switch", P["switch"]["boxes"], None)):
+        lo = [min(b["lo"][i] for b in src) for i in range(3)]
+        hi = [max(b["hi"][i] for b in src) for i in range(3)]
+        at = [(lo[i] + hi[i]) / 2 for i in range(3)]
+        rel = [{**b, "lo": [b["lo"][i] - at[i] for i in range(3)], "hi": [b["hi"][i] - at[i] for i in range(3)]}
+               for b in src]
+        hr = None if holes is None else {"ax": "x", "r": holes["r"], "y": [v - at[0] for v in holes["x"]],
+                                         "at": [[y - at[1], z - at[2]] for y, z in holes["at"]]}
+        comps.append({"key": k, "name": NAMES[k], "frame": "drive", "size": [hi[i] - lo[i] for i in range(3)],
+                      "at": at, "rx": 0.0, "mass": None, "boxes": rel, "holes": hr})
     L["comps"] = comps
+    keys = ("adds", "cuts", "cyls", "joints", "pt")
+    L["carriers"] = [{"name": "power holder", "color": [0.93, 0.56, 0.20],
+                      "note": "Printed -X (its battery-side face on the bed). The power board, the switch in the "
+                              "shelf, strap slits; two 6-32 into the left rail.", **{k: P[k] for k in keys}},
+                     {"name": "Pi carrier (outline)", "color": [0.30, 0.55, 0.85],
+                      "note": "Printed. The Pi 3B+ over the U2D2; NOT attached yet (cad_pi_carrier).",
+                      **{k: data["piCarrier"][k] for k in keys}}]
     return L
 
 
@@ -268,6 +310,26 @@ def tm151_boxes(tm: dict, h: list, sx: int) -> list[dict]:
     return out
 
 
+U2D2_JST = (14.0, 17.0, 6.0)   # the JST row's keep-out: across, along from the end, out of the face (GUESS)
+
+
+def u2d2_boxes(h: list) -> list[dict]:
+    """The U2D2 in its box's frame (x its 18, y its 14.9, z its 48), from the
+    ROBOTIS drawing the user sent (2026-10-16): the USB-C in the +z end; the
+    JST connectors (RS485, TTL, UART) in its -y face near the -z end, the
+    plugs going in square to that face. Mounted with the USB the AHRS's way
+    (up the face, +z) and the JSTs facing the drive (-y: down and back in the
+    bike), past the AHRS housing's top end (user). KEEP-OUTs: the USB-C's as
+    the AHRS's (USB_KEEPOUT, a GUESS); the JSTs' small (U2D2_JST, GUESS)."""
+    kl, kw, kh = (v * 1000 for v in USB_KEEPOUT)
+    jw, jl, jd = U2D2_JST
+    return [{"name": "U2D2", "lo": [-v for v in h], "hi": list(h), "color": list(COLORS["u2d2"])},
+            {"name": "U2D2 USB plug (keep-out)", "lo": [-kw / 2, -kh / 2, h[2]], "hi": [kw / 2, kh / 2, h[2] + kl],
+             "color": [0.85, 0.85, 0.9]},
+            {"name": "U2D2 JST plugs (keep-out)", "lo": [-jw / 2, -h[1] - jd, -h[2]], "hi": [jw / 2, -h[1], -h[2] + jl],
+             "color": [0.85, 0.85, 0.9]}]
+
+
 def tm151_holes(tm: dict, h: list, sx: int) -> dict:
     """The four M2 holes through the board, 31 along its length (0.45 off
     centre toward its +x, which is sx * z) by 30 across: (x, z) in the box
@@ -329,6 +391,64 @@ export const BK2 = %BK2%;
 export function bk2V(a is array) returns Vector
 {
     return vector(a[0], a[1], a[2]) * millimeter;
+}
+
+/**
+ * The battery + power carrier (cad_power): prisms on the bike's (y, z) over
+ * x ranges, united, cut; then one 6-32 a side, the head in the rail (cut by
+ * the drive), the nut and its slot here, and the ridge on the lug's face.
+ * Printed; found again by a point in its floor.
+ */
+export function bk2Carrier(context is Context, id is Id, C is map) returns Query
+{
+    const mm = millimeter;
+    const X  = vector(1, 0, 0);
+    const Y  = vector(0, 1, 0);
+    const Z  = vector(0, 0, 1);
+    const A  = id + "a";
+    const K  = id + "k";
+    const prism = function(scope is Id, p is map)
+    {
+        var pts = [];
+        for (var q in p.pts)
+            pts = append(pts, vector(q[0], q[1]) * mm);
+        polyPrism(context, scope, p.tag, vector(p.x[0], 0, 0) * mm, X, Y, pts, (p.x[1] - p.x[0]) * mm);
+    };
+    // everything under A first, then everything under K: an Id's children
+    // must be contiguous in the feature history
+    for (var a in C.adds)
+        prism(A, a);
+    for (var c in C.cyls)
+        if (c.op == "add")
+            cylW(context, A + c.tag, bk2V(c.p0), bk2V(c.p1), c.r * mm);
+    opBoolean(context, id + "u", { "tools" : qBodyType(qCreatedBy(A, EntityType.BODY), BodyType.SOLID),
+            "operationType" : BooleanOperationType.UNION });
+    for (var c in C.cuts)
+        prism(K, c);
+    for (var c in C.cyls)
+        if (c.op != "add")
+            cylW(context, K + c.tag, bk2V(c.p0), bk2V(c.p1), c.r * mm);
+    const pt = bk2V(C.pt);
+    if (size(C.cuts) > 0 || size(C.cyls) > 0)
+        cutFrom(context, id + "cut", partAt(context, id, pt), [qBodyType(qCreatedBy(K, EntityType.BODY), BodyType.SOLID)]);
+    for (var j in C.joints)
+    {
+        const J = id + ("j" ~ j.side);
+        const cs = coordSystem(bk2V(j.head), vector(j.slot[0], j.slot[1], j.slot[2]), vector(j.zIn[0], j.zIn[1], j.zIn[2]));
+        screwJointGeometry(context, J, cs, mergeMaps(SCREW_OPT, {
+                "nutDepth" : j.nutDepth * mm, "headPocket" : 0 * mm, "bothWays" : false,
+                "nutSlotLength" : j.slotLen * mm, "holeDepth" : j.holeDepth * mm }));
+        cutFrom(context, J + "cut", partAt(context, id, pt), [qCreatedBy(J + "screwRev", EntityType.BODY),
+                                                             qCreatedBy(J + "slotExt", EntityType.BODY)]);
+        const r = ridgeSolid(context, J + "ridge", bk2V(j.ridgeAt), Z, vector(j.ridgeUp[0], j.ridgeUp[1], j.ridgeUp[2]),
+                             FIXTURE.ridge_height, 0 * mm, j.ridgeHalf * mm);
+        opBoolean(context, J + "rU", { "tools" : qUnion([partAt(context, id, pt), r]),
+                "operationType" : BooleanOperationType.UNION });
+    }
+    const q = partAt(context, id, pt);
+    dress(context, q, C.name, color(C.color[0], C.color[1], C.color[2]), C.note);
+    setAttribute(context, { "entities" : q, "name" : "bk_mod", "attribute" : "bike" });
+    return q;
 }
 
 /**
@@ -399,10 +519,14 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
                     for (var j = 0; j < size(c.holes.at); j += 1)
                     {
                         const a = c.holes.at[j];
+                        // along the box's y (the Pi, the AHRS), or its x (the
+                        // power board, which faces the side)
+                        const ax = c.holes.ax == "x";
                         // NOT under C: boxIn's query is everything created under
                         // C, so a cutter there is its own target (BOOLEAN_INVALID)
-                        hs = append(hs, cylW(context, id + ("compH" ~ k ~ "_" ~ j), bk2V([a[0], c.holes.y[0], a[1]]),
-                                             bk2V([a[0], c.holes.y[1], a[1]]), c.holes.r * mm));
+                        hs = append(hs, cylW(context, id + ("compH" ~ k ~ "_" ~ j),
+                                             bk2V(ax ? [c.holes.y[0], a[0], a[1]] : [a[0], c.holes.y[0], a[1]]),
+                                             bk2V(ax ? [c.holes.y[1], a[0], a[1]] : [a[0], c.holes.y[1], a[1]]), c.holes.r * mm));
                     }
                     opBoolean(context, id + ("compHc" ~ k), { "tools" : qUnion(hs), "targets" : q,
                             "operationType" : BooleanOperationType.SUBTRACTION });
@@ -414,6 +538,9 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
                 setAttribute(context, { "entities" : q, "name" : "bk_mod", "attribute" : "bike" });
             }
         }
+    step("carriers");
+    for (var k = 0; k < size(BK2.carriers); k += 1)
+        bk2Carrier(context, id + ("pc" ~ k), BK2.carriers[k]);
     return { "steer" : rs, "righting" : rr, "rXf" : rXf,
              "sAxis" : line(bk2V(BK2.sOrigin), vector(BK2.sAxis[0], BK2.sAxis[1], BK2.sAxis[2])) };
 }
@@ -457,7 +584,7 @@ export const aowBikeV2 = defineFeature(function(context is Context, id is Id, de
 
 
 def build_fs(L: dict, fs_version: str = "3044") -> str:
-    keep = ("wb", "yr", "zr", "tilt", "rake", "sOrigin", "sAxis", "rgDrop", "comps")
+    keep = ("wb", "yr", "zr", "tilt", "rake", "sOrigin", "sAxis", "rgDrop", "comps", "carriers")
     bk = {k: L[k] for k in keep}
     bk["comps"] = [{k: c[k] for k in ("name", "frame", "at", "rx", "boxes", "holes") if c[k] is not None}
                    for c in L["comps"]]

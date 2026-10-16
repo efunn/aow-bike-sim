@@ -47,18 +47,18 @@ placement:
 #            easily" (user)
 #   AHRS     flat on the drive's front face, between the servos (user:
 #            "looks good"), slid to the face's lower part to make room for
-#   power    beside it on the face (user: "can go along with the AHRS on the
-#            drive case"), overhanging the face's upper edge toward the
-#            battery's side -- forward of the battery, not over it
-#   Pi       parallel to the face, past the pulleys' rims (143.6)
-#   U2D2     "tentatively put it in parallel with the steering" (user): its
-#            long side along the steering axis, centred just aft of the
-#            steering cases. Its connectors are on one end and a long side.
+#   power    (2026-10-16 night) on the power carrier beside the battery,
+#            outboard of the left rail: `power:` below
+#   Pi       parallel to the face, past the pulleys' rims, on the Pi
+#            carrier's plate (`pi_carrier:`)
+#   U2D2     under the Pi, between the drive pulleys (user, 2026-10-16)
 components:
   battery:
     size: {value: [22.0, 58.0, 30.0], source: measured (58 x 30 x 22)}
     frame: {value: drive, source: design}
-    at: {value: [0.0, 87.0, 45.75], source: design}      # on the case sides (Zp 29.75) + 1
+    # where it was (2026-10-11), on the case sides + 1; no tray (user: "just
+    # a panel"), the straps through the holder's slits hold it
+    at: {value: [0.0, 87.0, 45.75], source: design}
     mass: {value: 76.0, source: measured}
   ahrs:
     size: {value: [34.0, 12.6, 40.0], source: datasheet}
@@ -68,26 +68,26 @@ components:
     # (-29.75); cad_bike_v2 refuses it anywhere else
     at: {value: [0.0, 128.6953, -9.75], source: design (= the drive's AHRS tabs)}
     mass: {value: null, source: GUESS (not weighed)}
-  power:
-    # the user: "the envelope of this may change but ok to keep it a bit
-    # big/oversize for now"
-    size: {value: [30.0, 25.0, 30.0], source: GUESS (oversize on purpose)}
-    frame: {value: drive, source: design}
-    at: {value: [0.0, 131.9, 26.25], source: design}     # on the face beside the AHRS (0.5 apart along z)
-    mass: {value: null, source: GUESS}
+  # power: the power board and the switch are drawn from `power:` below
+  # (cad_power), in the bike frame, no longer as an envelope here
   pi:
     size: {value: [56.0, 20.0, 89.0], source: datasheet (the box the detail sits in; the ports 2 proud of the board's end)}
     frame: {value: drive, source: design}
-    at: {value: [0.0, 161.0, 0.0], source: design}       # the box: drive y 151..171, past the pulley rims
+    # ON THE PI CARRIER (2026-10-16 night; cad_pi_carrier refuses it
+    # anywhere else): parallel to the front face as before, 2 further out
+    # (was (0, 161, 0)) for the carrier's plate under it
+    at: {value: [0.0, 163.0, 0.0], source: design (= pi_carrier)}
     mass: {value: 50.0, source: datasheet (approx.)}
   u2d2:
     size: {value: [18.0, 14.9, 48.0], source: measured (18 x 48 x 14.9)}
-    frame: {value: steer, source: design}
-    # PARKED (2026-10-16): not drawn. It sat behind the steering cases, where
-    # the steering's one rear upper <-> lower screw now goes (user: "the u2d2
-    # won't be there anymore"); it moves under the Pi in the Pi + U2D2
-    # carrier (aow-bike-whole-v2-complete.md). Was steer frame (0, -22, 100).
-    at: {value: null, source: design}
+    frame: {value: drive, source: design}
+    # UNDER THE PI, on its carrier (user: "the U2D2 underneath (skinnier,
+    # fits between the drive pulleys)"): drive frame, its 48 along the
+    # face (USB up, JSTs facing the drive at its lower end), its 14.9 out
+    # of it, between the plate and the AHRS's housing.
+    # Was steer frame (0, -22, 100), then parked behind the steering's rear
+    # screw.
+    at: {value: [0.0, 143.55, 27.1], source: design (= pi_carrier)}
     mass: {value: null, source: GUESS (not weighed)}
 
 # The Pi 3B+ in detail, in its box's frame (x across, y the board's normal,
@@ -104,3 +104,112 @@ pi:
   hole_dia: {value: 2.75, source: datasheet}
   usb_block: {value: [53.0, 17.5, 16.0], source: datasheet}  # x, along z, height; ports 2 proud of the board's end
   gpio: {value: [5.0, 51.0, 8.5], source: datasheet}         # x, along z, height; 1 in from the +x edge, 7 from the hole end
+
+# THE BATTERY / ELECTRONICS / SWITCH HOLDER (aow-bike-whole-v2-complete.md,
+# "Electronics/battery/switch"; user, 2026-10-16 night: "instead of a case,
+# it's just a panel (printed -X) with an overhang panel that goes around
+# the XT30 connector and allows the power switch to be panel installed").
+# ONE printed part on the LEFT, between the battery and the left rail, its
+# +X face on the bed: the board on standoffs outboard of it, the shelf over
+# the board's top edge (round the XT30, the switch in it), two 6-32 into the
+# left rail fore and aft of the board, two strap slits. Read by
+# aow_sim.cad_power, drawn by cad_bike_v2. DRIVE frame (x across, y along
+# the belt, z off the case sides' top edges), mm.
+power:
+  # ---- the joints, house 6-32 turned round: the flat head in the rail's
+  # outer face (|x| 20.6), the nut in the panel, the panel's ridge in the
+  # rail's groove (open up: the holder drops in from above). AFT on the case
+  # side's back ear under the switch (drive rail.carrier_joint; user: not
+  # the rear arm, "it can fit tighter down"), FORE on its front ear
+  # (rail.carrier_front_joint); bike (y, z), cad_power refuses them off the
+  # rail's.
+  joints: {value: [[31.4663, 81.6708], [69.2965, 107.4802]], source: design (user; = rail.carrier_joint, carrier_front_joint)}
+  # The panel is only battery to rail (|x| 11.3..16), so each nut sits a
+  # wall past the joint plane and a wall short of the battery side. The
+  # screws CUT to length (user: "I can shorten the 6-32 screws"), the tip at
+  # the nut's far face.
+  nut_wall: {value: 1.0, source: design}
+  screw_length: {value: 8.0, source: design (6-32 flat head cut down; user)}
+  lug_wall: {value: 1.0, source: design}       # round the nuts' corners
+  ridge: {value: [3.0, 7.0], source: design}   # below, above each head (bike vertical)
+  clearance: {value: 0.3, source: design}      # the panel's face off the battery's side
+  # the panel's top over the board's front (the shelf's front end) drops
+  # to front_top ahead of it, over the fore joint
+  front_top: {value: 36.0, source: design}
+  # TWO STRAP SLITS (user: "2 simple strip cutouts (upper and lower) for the
+  # velcro or whatever straps"), drive y start, length, width; lower and
+  # upper z. Ahead of the wire notch and the board's standoffs: the lower in
+  # the cable gap under the board, the upper behind the board, where a strap
+  # runs between the panel and the board (placeholders: the straps are open)
+  slits: {value: [99.2, 20.0, 3.0], source: design (3/4 in strap + 1)}
+  slit_z: {value: [30.75, 43.0], source: design}
+  # the servo B wires come up through the left case side's top edge (drive
+  # y 86.9..97.5) under the panel's bottom, and run forward under the
+  # battery (user): a notch, past the gap's ends, up from the case's top
+  wire_notch: {value: [0.5, 5.0], source: design}
+  # ---- the power breakout board (user's build, 2026-10-16): perfboard on a
+  # 0.1" grid, seen from the LEFT, front to the left in the drawing; the
+  # components outboard (-x), the solder side in on standoffs.
+  # BESIDE THE BATTERY, over the drive's back-top, SQUARE TO THE DRIVE (user:
+  # "xt30 pointing up and back, other plugs point up and forward"): its top
+  # edge the drive's +z, its front edge +y.
+  board:
+    size: {value: [26.5, 25.0, 1.6], source: measured (w along y, h, standard 1.6)}
+    # the rear-bottom corner, DRIVE (y, z): its bottom cable_gap off the case
+    # sides' top edge (user: "not fully slammed against the drive case"; the
+    # servo cable goes under the battery, forward); far enough forward that
+    # the switch aft of it clears the aft screw's head in side view
+    corner: {value: [91.0, 33.75], source: design}
+    cable_gap: {value: 4.0, source: design}
+    # the solder face 0.5 outboard of the rail's outer face (20.6)
+    solder_x: {value: 21.1, source: design}
+    standoff_dia: {value: 6.0, source: design}
+    pitch: {value: 2.54, source: datasheet (0.1 in)}
+    # from the rear-bottom corner (cut on the grid), in pitches: the screws
+    # over grid point (2, 2) and 6 up
+    holes: {value: [[2, 2], [2, 8]], source: measured (user; ~5 in, next 15.24 up)}
+    hole_dia: {value: 2.9, source: GUESS (4-40 clearance)}
+    pilot_dia: {value: 2.3, source: GUESS (4-40 self-tapping into the print)}
+    components: {value: 11.0, source: measured (user; the regulator, tallest)}
+    # XT30 out the top: on the three middle top pins of nine, half a pitch to
+    # the rear; flush with the board's back face, 5.5 thick, 11 over the
+    # board's top edge
+    xt30: {value: [10.2, 5.5, 11.0, 3.0], source: measured (user; length along the edge GUESS, datasheet ~10)}  # along y, thick, above, below the top edge
+    xt30_pin: {value: 4.5, source: measured (user; pin 5 of 9 less half a pitch)}  # centre, pitches from the rear edge
+    xt30_clearance: {value: 0.3, source: design}   # round it, through the shelf
+    # out the front: 5 V on the bottom two pins, the 3-pin JST on the 4th-6th
+    front_rows: {value: [[1, 2], [4, 6]], source: measured (user)}
+    header: {value: [5.0, 8.5], source: GUESS}    # along y from the front edge, height off the board
+    plug_keepout: {value: [14.0, 16.0], source: GUESS (the front plugs' length, the XT30 plug's above)}
+  # The power switch (v1's, bike_cad.yaml electronics.switch, user
+  # 2026-09-30): 13 x 19.2-19.6 cutout, panel 0.75-3, 18.5 behind it. AFT of
+  # the board (drive -y), panel-mounted in the shelf, its bezel's top flush
+  # with the XT30's (user); the cutout's 13 across (x), 19.4 along y.
+  switch:
+    cutout: {value: [13.0, 19.4], source: measured}
+    panel: {value: 2.0, source: design}
+    depth: {value: 18.5, source: measured}
+    bezel: {value: [15.0, 21.5, 2.0], source: GUESS}   # across, along y, proud
+    gap: {value: 1.5, source: design}     # cutout to the board's rear edge (across, it is centred on the XT30)
+    margin: {value: 1.5, source: design}  # shelf round the cutouts
+
+# THE PI + U2D2 CARRIER, an OUTLINE (aow-bike-whole-v2-complete.md, "Pi +
+# U2D2 carrier"): self-contained, not attached yet (user: undecided; likely
+# a mounting arm shared with one more power-carrier side screw near the left
+# drive pulley). Read by aow_sim.cad_pi_carrier. DRIVE frame, mm.
+pi_carrier:
+  plate_y0: {value: 151.0, source: design}     # its inner face, drive y: past the pulleys' rims (143.6)
+  plate: {value: 2.0, source: design}
+  margin: {value: 1.0, source: design}         # round the Pi's board and its standoffs
+  pi_z: {value: 0.0, source: design}           # the Pi's box centre along the face
+  pi_standoff: {value: [2.6, 5.5], source: GUESS (height under the board, dia)}
+  pi_pilot_dia: {value: 2.2, source: GUESS (M2.5 self-tapping into the print)}
+  # slid up the face (user: "the u2d2 slides backwards") until its JSTs,
+  # facing the drive near its lower end, are past the AHRS housing's end
+  u2d2_z: {value: 27.1, source: design}
+  # the U2D2's cradle: two cheeks at mid-length (wall, depth, length); its
+  # ends and the connectors there left open (which long side has its
+  # connectors is not in this config yet)
+  cradle: {value: [1.6, 5.0, 16.0], source: design}
+  cradle_clearance: {value: 0.3, source: design}
+

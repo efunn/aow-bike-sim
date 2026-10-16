@@ -1951,7 +1951,7 @@ export const BELT = [
     [[-3.11653, -8.34517], [-8.82928, 1.18254], [-0.810672, 8.87116]]
 ];
 
-export const RAIL = { "innerX" : 16, "plate" : 4.6, "outlineBike" : [[82.555, 41.896], [86, 38.6], [150, 38.6], [160.619, 60.022], [171.727, 62.998], [207.515005, 72.5872642], [204.215062, 84.9028185], [201.765572, 86.3170321], [194.231351, 84.2982435], [192.675716, 81.6038048], [168.479, 75.12], [105.11, 63.04], [104.404, 63.746]], "rearBike" : [[29.2388654, 62.8730689], [-7.01500503, 72.5872642], [-3.71506221, 84.9028185], [-1.26557247, 86.3170321], [6.26864898, 84.2982435], [7.8242839, 81.6038048], [32.8305441, 74.9033976], [29.2388654, 71.3117189]], "pieces" : [[[88.000146, -28.7502546], [88.1055049, -33.5168614], [133.360339, -78.7716954], [156.016747, -71.1328209], [165.975639, -76.8830132], [198.062214, -95.4083205], [204.437214, -84.3664966], [203.705163, -81.6344458], [196.950165, -77.7344458], [193.944909, -78.5397017], [172.250505, -66.014782], [118.900005, -29.7479823], [118.900005, -28.7495475]], [[65.1329734, 23.7829734], [46.3665891, 56.2873044], [57.408413, 62.6623044], [60.1404639, 61.9302536], [64.0404639, 55.1752554], [63.235208, 52.1699996], [76.1794007, 29.75], [71.1, 29.75]]], "casePoly" : [[54.2, -12.85], [71.1, -29.75], [118.895294, -29.75], [118.895294, 29.75], [71.1, 29.75], [54.2, 12.85]], "joints" : [{ "tag" : "steer", "head" : [179.585323, -76.3109638], "dir" : [0.5, 0.866025404], "half" : 3.5, "room" : 1.49948508, "gMid" : -2.65, "gHalf" : 7.15 }, { "tag" : "bridge", "head" : [116.018899, -54.3938356], "dir" : [0.707106781, 0.707106781], "half" : 3, "room" : 1.2255, "gMid" : -1.738, "gHalf" : 5.738 }], "anchor" : [123.743687, -60.1040764], "ahY1" : 122.395294, "ahN0" : 119.895294, "ahN1" : 121.495294, "ahTip" : 119.995294, "ahHoleR" : 1.2, "ahHoleY0" : 118.295294, "ahX" : 15, "ahZ" : [-25.7, 5.3], "ahNutHalf" : 2.05, "ahNutOut" : 17.4094011, "ahTabHalf" : 3.05, "ahTabIn" : 12, "ahBoard" : { "x" : 17, "y0" : 122.395294, "y1" : 123.995294, "z0" : -29.75, "z1" : 10.25 }, "ahRailGap" : 1.96333968, "ahScrewPast" : 0, "cageWall" : 0.95, "cageNd" : 5.55, "cage" : [{ "head" : [56.078286, 54.966152], "slot" : [-0.5, 0.866025404], "slotLen" : 7, "bike" : [0.786397524, 78.5202751, 75] }, { "head" : [196.741062, -85.6966236], "slot" : [0.866025404, -0.5], "slotLen" : 7, "bike" : [199.713602, 78.5202751, 105] }] };
+export const RAIL = { "innerX" : 16, "plate" : 4.6, "outlineBike" : [[82.555, 41.896], [86, 38.6], [150, 38.6], [160.619, 60.022], [171.727, 62.998], [207.515005, 72.5872642], [204.215062, 84.9028185], [201.765572, 86.3170321], [194.231351, 84.2982435], [192.675716, 81.6038048], [168.479, 75.12], [105.11, 63.04], [104.404, 63.746]], "rearBike" : [[29.2388654, 62.8730689], [-7.01500503, 72.5872642], [-3.71506221, 84.9028185], [-1.26557247, 86.3170321], [6.26864898, 84.2982435], [7.8242839, 81.6038048], [32.8305441, 74.9033976], [29.2388654, 71.3117189]], "pieces" : [[[88.000146, -28.7502546], [88.1055049, -33.5168614], [133.360339, -78.7716954], [156.016747, -71.1328209], [165.975639, -76.8830132], [198.062214, -95.4083205], [204.437214, -84.3664966], [203.705163, -81.6344458], [196.950165, -77.7344458], [193.944909, -78.5397017], [172.250505, -66.014782], [118.900005, -29.7479823], [118.900005, -28.7495475]], [[65.1329734, 23.7829734], [46.3665891, 56.2873044], [57.408413, 62.6623044], [60.1404639, 61.9302536], [64.0404639, 55.1752554], [63.235208, 52.1699996], [76.1794007, 29.75], [71.1, 29.75]], [[118.895294, 20], [130.395294, 20], [130.395294, 33.5], [118.895294, 33.5]], [[74.25, 29.75], [85.75, 29.75], [85.75, 41.25], [74.25, 41.25]]], "casePoly" : [[54.2, -12.85], [71.1, -29.75], [118.895294, -29.75], [118.895294, 29.75], [71.1, 29.75], [54.2, 12.85]], "joints" : [{ "tag" : "steer", "head" : [179.585323, -76.3109638], "dir" : [0.5, 0.866025404], "half" : 3.5, "room" : 1.49948508, "gMid" : -2.65, "gHalf" : 7.15 }, { "tag" : "bridge", "head" : [116.018899, -54.3938356], "dir" : [0.707106781, 0.707106781], "half" : 3, "room" : 1.2255, "gMid" : -1.738, "gHalf" : 5.738 }, { "tag" : "carrier", "head" : [80.0000106, 35.4999424], "dir" : [-0.707106781, -0.707106781], "half" : 3, "room" : 1.9999424, "gMid" : -3.5, "gHalf" : 7.5 }, { "tag" : "carrier_front", "head" : [125.000003, 26.9999532], "dir" : [-0.707106781, -0.707106781], "half" : 3, "room" : 1.64529074, "gMid" : -3.5, "gHalf" : 7.5 }], "anchor" : [123.743687, -60.1040764], "ahY1" : 122.395294, "ahN0" : 119.895294, "ahN1" : 121.495294, "ahTip" : 119.995294, "ahHoleR" : 1.2, "ahHoleY0" : 118.295294, "ahX" : 15, "ahZ" : [-25.7, 5.3], "ahNutHalf" : 2.05, "ahNutOut" : 17.4094011, "ahTabHalf" : 3.05, "ahTabIn" : 12, "ahBoard" : { "x" : 17, "y0" : 122.395294, "y1" : 123.995294, "z0" : -29.75, "z1" : 10.25 }, "ahRailGap" : 1.96333968, "ahScrewPast" : 0, "earGap" : 9.75, "cageWall" : 0.95, "cageNd" : 5.55, "cage" : [{ "head" : [56.078286, 54.966152], "slot" : [-0.5, 0.866025404], "slotLen" : 7, "bike" : [0.786397524, 78.5202751, 75] }, { "head" : [196.741062, -85.6966236], "slot" : [0.866025404, -0.5], "slotLen" : 7, "bike" : [199.713602, 78.5202751, 105] }] };
 
 export function segPrism(context is Context, id is Id, tag is string, origin is Vector,
                          normal is Vector, xDir is Vector, segs is array, depth is ValueWithUnits,
@@ -2736,12 +2736,70 @@ export function rgPose(context is Context, id is Id, groups is map, key is strin
     }
 }
 
-export const BK2 = { "wb" : 200.5, "yr" : 120.5, "zr" : -10, "tilt" : 45, "rake" : 15, "sOrigin" : [0, 200.5, 0.05], "sAxis" : [0, -0.2588190451, 0.9659258263], "rgDrop" : [[18.3, 6.5, 58.5755186068], [-18.3, 6.5, 58.5755186068], [100, 0, -42.2]], "comps" : [{ "name" : "battery", "frame" : "drive", "at" : [0, 87, 45.75], "rx" : 0, "boxes" : [{ "name" : "battery", "lo" : [-11, -29, -15], "hi" : [11, 29, 15], "color" : [0.85, 0.75, 0.2] }] }, { "name" : "AHRS", "frame" : "drive", "at" : [0, 128.6953, -9.75], "rx" : 0, "boxes" : [{ "name" : "AHRS", "lo" : [-17, -6.3, -20], "hi" : [17, -4.7, 20], "color" : [0.15, 0.35, 0.2] }, { "name" : "AHRS housing", "lo" : [-15, -4.7, -13.66], "hi" : [15, 6.3, 12.34], "color" : [0.55, 0.15, 0.15] }, { "name" : "AHRS USB-C", "lo" : [1.65, -4.7, 12.4], "hi" : [10.75, -1.3, 20], "color" : [0.75, 0.75, 0.78] }, { "name" : "AHRS USB plug (keep-out)", "lo" : [0, -6.25, 20], "hi" : [12.4, 0.25, 50], "color" : [0.85, 0.85, 0.9] }], "holes" : { "at" : [[15, -15.95], [-15, -15.95], [15, 15.05], [-15, 15.05]], "r" : 1.05, "y" : [-7.3, -3.7] } }, { "name" : "Pi 3B+", "frame" : "drive", "at" : [0, 161, 0], "rx" : 0, "boxes" : [{ "name" : "Pi 3B+", "lo" : [-28, -7.4, -44.5], "hi" : [28, -6, 40.5], "color" : [0.1, 0.5, 0.2] }, { "name" : "Pi USB + Ethernet", "lo" : [-26.5, -6, 25], "hi" : [26.5, 10, 42.5], "color" : [0.75, 0.75, 0.78] }, { "name" : "Pi GPIO header", "lo" : [22, -6, -37.5], "hi" : [27, 2.5, 13.5], "color" : [0.15, 0.15, 0.15] }], "holes" : { "at" : [[24.5, -41], [-24.5, -41], [24.5, 17], [-24.5, 17]], "r" : 1.375, "y" : [-8.7, -4.7] } }, { "name" : "power board", "frame" : "drive", "at" : [0, 131.9, 26.25], "rx" : 0, "boxes" : [{ "name" : "power board", "lo" : [-15, -12.5, -15], "hi" : [15, 12.5, 15], "color" : [0.15, 0.4, 0.15] }] }] };
+export const BK2 = { "wb" : 200.5, "yr" : 120.5, "zr" : -10, "tilt" : 45, "rake" : 15, "sOrigin" : [0, 200.5, 0.05], "sAxis" : [0, -0.2588190451, 0.9659258263], "rgDrop" : [[18.3, 6.5, 58.5755186068], [-18.3, 6.5, 58.5755186068], [100, 0, -42.2]], "comps" : [{ "name" : "battery", "frame" : "drive", "at" : [0, 87, 45.75], "rx" : 0, "boxes" : [{ "name" : "battery", "lo" : [-11, -29, -15], "hi" : [11, 29, 15], "color" : [0.85, 0.75, 0.2] }] }, { "name" : "AHRS", "frame" : "drive", "at" : [0, 128.6953, -9.75], "rx" : 0, "boxes" : [{ "name" : "AHRS", "lo" : [-17, -6.3, -20], "hi" : [17, -4.7, 20], "color" : [0.15, 0.35, 0.2] }, { "name" : "AHRS housing", "lo" : [-15, -4.7, -13.66], "hi" : [15, 6.3, 12.34], "color" : [0.55, 0.15, 0.15] }, { "name" : "AHRS USB-C", "lo" : [1.65, -4.7, 12.4], "hi" : [10.75, -1.3, 20], "color" : [0.75, 0.75, 0.78] }, { "name" : "AHRS USB plug (keep-out)", "lo" : [0, -6.25, 20], "hi" : [12.4, 0.25, 50], "color" : [0.85, 0.85, 0.9] }], "holes" : { "at" : [[15, -15.95], [-15, -15.95], [15, 15.05], [-15, 15.05]], "r" : 1.05, "y" : [-7.3, -3.7] } }, { "name" : "Pi 3B+", "frame" : "drive", "at" : [0, 163, 0], "rx" : 0, "boxes" : [{ "name" : "Pi 3B+", "lo" : [-28, -7.4, -44.5], "hi" : [28, -6, 40.5], "color" : [0.1, 0.5, 0.2] }, { "name" : "Pi USB + Ethernet", "lo" : [-26.5, -6, 25], "hi" : [26.5, 10, 42.5], "color" : [0.75, 0.75, 0.78] }, { "name" : "Pi GPIO header", "lo" : [22, -6, -37.5], "hi" : [27, 2.5, 13.5], "color" : [0.15, 0.15, 0.15] }], "holes" : { "at" : [[24.5, -41], [-24.5, -41], [24.5, 17], [-24.5, 17]], "r" : 1.375, "y" : [-8.7, -4.7] } }, { "name" : "U2D2", "frame" : "drive", "at" : [0, 143.55, 27.1], "rx" : 0, "boxes" : [{ "name" : "U2D2", "lo" : [-9, -7.45, -24], "hi" : [9, 7.45, 24], "color" : [0.2, 0.2, 0.25] }, { "name" : "U2D2 USB plug (keep-out)", "lo" : [-6.2, -3.25, 24], "hi" : [6.2, 3.25, 54], "color" : [0.85, 0.85, 0.9] }, { "name" : "U2D2 JST plugs (keep-out)", "lo" : [-7, -13.45, -24], "hi" : [7, -7.45, -7], "color" : [0.85, 0.85, 0.9] }] }, { "name" : "power board", "frame" : "drive", "at" : [-27.4, 111.25, 59.75], "rx" : 0, "boxes" : [{ "name" : "power board", "lo" : [4.7, -20.25, -26], "hi" : [6.3, 6.25, -1], "color" : [0.15, 0.4, 0.15] }, { "name" : "power board components", "lo" : [-6.3, -20.25, -26], "hi" : [4.7, 6.25, -1], "color" : [0.3, 0.3, 0.3] }, { "name" : "XT30", "lo" : [0.8, -13.92, -1], "hi" : [6.3, -3.72, 10], "color" : [0.9, 0.75, 0.1] }, { "name" : "XT30 plug (keep-out)", "lo" : [0.8, -13.92, 10], "hi" : [6.3, -3.72, 26], "color" : [0.85, 0.85, 0.9] }, { "name" : "5 V plug (keep-out)", "lo" : [-3.8, 6.25, -24.73], "hi" : [4.7, 20.25, -19.65], "color" : [0.85, 0.85, 0.9] }, { "name" : "JST plug (keep-out)", "lo" : [-3.8, 6.25, -17.11], "hi" : [4.7, 20.25, -9.49], "color" : [0.85, 0.85, 0.9] }], "holes" : { "ax" : "x", "r" : 1.45, "y" : [3.7, 7.3], "at" : [[-15.17, -20.92], [-15.17, -5.68]] } }, { "name" : "switch", "frame" : "drive", "at" : [-23.85, 79.8, 58.5], "rx" : 0, "boxes" : [{ "name" : "switch", "lo" : [-6.5, -9.7, -11.25], "hi" : [6.5, 9.7, 7.25], "color" : [0.12, 0.12, 0.12] }, { "name" : "switch (through the shelf)", "lo" : [-6.5, -9.7, 7.25], "hi" : [6.5, 9.7, 9.25], "color" : [0.12, 0.12, 0.12] }, { "name" : "switch bezel", "lo" : [-7.5, -10.75, 9.25], "hi" : [7.5, 10.75, 11.25], "color" : [0.8, 0.1, 0.1] }] }], "carriers" : [{ "name" : "power holder", "color" : [0.93, 0.56, 0.2], "note" : "Printed -X (its battery-side face on the bed). The power board, the switch in the shelf, strap slits; two 6-32 into the left rail.", "adds" : [{ "tag" : "panel", "x" : [-16, -11.3], "pts" : [[27.4710984491, 69.5439519297], [63.388795336, 105.4616488166], [68.673680331, 100.1767638216], [78.5939150359, 110.0969985265], [68.8896126585, 119.8013009039], [59.5383909759, 110.4500792213], [37.0877506732, 132.900719524], [0.601040764, 96.4140096148]] }, { "tag" : "shelf", "x" : [-31.85, -12.3], "pts" : [[2.0152543264, 94.9997960524], [30.8157135241, 123.8002552501], [29.4014999617, 125.2144688125], [0.601040764, 96.4140096148]] }], "cuts" : [{ "tag" : "cutout", "x" : [-30.35, -17.35], "pts" : [[3.7830212793, 95.353349443], [17.5008928344, 109.071220998], [14.6724657096, 111.8996481228], [0.9545941546, 98.1817765678]] }, { "tag" : "xt30", "x" : [-26.9, -20.8], "pts" : [[22.8254068967, 114.3957350604], [30.4621601335, 122.0324882972], [27.6337330088, 124.8609154219], [19.996979772, 117.2241621851]] }, { "tag" : "wires", "x" : [-17, -10.3], "pts" : [[40.7613783381, 81.4200182563], [48.9638169998, 89.622456918], [44.7211763127, 93.8650976052], [36.5187376509, 85.6626589434]] }, { "tag" : "slit0", "x" : [-17, -10.3], "pts" : [[48.4014591722, 91.8885262152], [62.543594796, 106.0306618389], [60.4222744524, 108.1519821825], [46.2801388287, 94.0098465588]] }, { "tag" : "slit1", "x" : [-17, -10.3], "pts" : [[39.7394011027, 100.5505842847], [53.8815367264, 114.6927199085], [51.7602163829, 116.814040252], [37.6180807591, 102.6719046283]] }], "cyls" : [{ "tag" : "so0", "op" : "add", "p0" : [-15.5, 40.4818632229, 95.3957758499], "p1" : [-21.1, 40.4818632229, 95.3957758499], "r" : 3 }, { "tag" : "pl0", "op" : "cut", "p0" : [-10.8, 40.4818632229, 95.3957758499], "p1" : [-21.6, 40.4818632229, 95.3957758499], "r" : 1.15 }, { "tag" : "so1", "op" : "add", "p0" : [-15.5, 29.7055558776, 106.1720831952], "p1" : [-21.1, 29.7055558776, 106.1720831952], "r" : 3 }, { "tag" : "pl1", "op" : "cut", "p0" : [-10.8, 29.7055558776, 106.1720831952], "p1" : [-21.6, 29.7055558776, 106.1720831952], "r" : 1.15 }], "joints" : [{ "side" : "A", "head" : [-20.6, 31.4663, 81.6708], "zIn" : [1, 0, 0], "slot" : [0, -0.7071067812, -0.7071067812], "nutDepth" : 5.6, "slotLen" : 12.4000106138, "holeDepth" : 8.3, "ridgeAt" : [-16, 31.4663, 83.6708], "ridgeHalf" : 5, "ridgeUp" : [-1, 0, 0] }, { "side" : "F", "head" : [-20.6, 69.2965, 107.4802], "zIn" : [1, 0, 0], "slot" : [0, 0.7071067812, 0.7071067812], "nutDepth" : 5.6, "slotLen" : 9.4246212025, "holeDepth" : 8.3, "ridgeAt" : [-16, 69.2965, 109.4802], "ridgeHalf" : 5, "ridgeUp" : [-1, 0, 0] }], "pt" : [-13.65, 37.7064691068, 116.7256519044] }, { "name" : "Pi carrier (outline)", "color" : [0.3, 0.55, 0.85], "note" : "Printed. The Pi 3B+ over the U2D2; NOT attached yet (cad_pi_carrier).", "adds" : [{ "tag" : "plate", "x" : [-29, 29], "pts" : [[138.9464825032, 74.5997654152], [140.3606960655, 76.0139789776], [78.8424061023, 137.5322689408], [77.4281925399, 136.1180553784]] }, { "tag" : "cheekR", "x" : [9.3, 10.9], "pts" : [[89.7318505326, 116.7433295739], [93.6209378291, 120.6324168704], [82.3072293301, 131.9461253694], [78.4181420336, 128.0570380729]] }, { "tag" : "cheekL", "x" : [-10.9, -9.3], "pts" : [[89.7318505326, 116.7433295739], [93.6209378291, 120.6324168704], [82.3072293301, 131.9461253694], [78.4181420336, 128.0570380729]] }], "cuts" : [], "cyls" : [{ "tag" : "so0", "op" : "add", "p0" : [24.5, 136.8251621596, 78.8424061023], "p1" : [24.5, 139.0171931813, 81.034437124], "r" : 2.75 }, { "tag" : "pl0", "op" : "cut", "p0" : [24.5, 135.4109485972, 77.4281925399], "p1" : [24.5, 139.3707465719, 81.3879905146], "r" : 1.1 }, { "tag" : "so1", "op" : "add", "p0" : [-24.5, 136.8251621596, 78.8424061023], "p1" : [-24.5, 139.0171931813, 81.034437124], "r" : 2.75 }, { "tag" : "pl1", "op" : "cut", "p0" : [-24.5, 135.4109485972, 77.4281925399], "p1" : [-24.5, 139.3707465719, 81.3879905146], "r" : 1.1 }, { "tag" : "so2", "op" : "add", "p0" : [24.5, 95.8129688508, 119.8545994111], "p1" : [24.5, 98.0049998725, 122.0466304328], "r" : 2.75 }, { "tag" : "pl2", "op" : "cut", "p0" : [24.5, 94.3987552884, 118.4403858487], "p1" : [24.5, 98.358553263, 122.4001838234], "r" : 1.1 }, { "tag" : "so3", "op" : "add", "p0" : [-24.5, 95.8129688508, 119.8545994111], "p1" : [-24.5, 98.0049998725, 122.0466304328], "r" : 2.75 }, { "tag" : "pl3", "op" : "cut", "p0" : [-24.5, 94.3987552884, 118.4403858487], "p1" : [-24.5, 98.358553263, 122.4001838234], "r" : 1.1 }], "joints" : [], "pt" : [0, 108.8944443027, 106.066017178] }] };
 
 /** A bike-frame vector from a plain [x, y, z] in mm. */
 export function bk2V(a is array) returns Vector
 {
     return vector(a[0], a[1], a[2]) * millimeter;
+}
+
+/**
+ * The battery + power carrier (cad_power): prisms on the bike's (y, z) over
+ * x ranges, united, cut; then one 6-32 a side, the head in the rail (cut by
+ * the drive), the nut and its slot here, and the ridge on the lug's face.
+ * Printed; found again by a point in its floor.
+ */
+export function bk2Carrier(context is Context, id is Id, C is map) returns Query
+{
+    const mm = millimeter;
+    const X  = vector(1, 0, 0);
+    const Y  = vector(0, 1, 0);
+    const Z  = vector(0, 0, 1);
+    const A  = id + "a";
+    const K  = id + "k";
+    const prism = function(scope is Id, p is map)
+    {
+        var pts = [];
+        for (var q in p.pts)
+            pts = append(pts, vector(q[0], q[1]) * mm);
+        polyPrism(context, scope, p.tag, vector(p.x[0], 0, 0) * mm, X, Y, pts, (p.x[1] - p.x[0]) * mm);
+    };
+    // everything under A first, then everything under K: an Id's children
+    // must be contiguous in the feature history
+    for (var a in C.adds)
+        prism(A, a);
+    for (var c in C.cyls)
+        if (c.op == "add")
+            cylW(context, A + c.tag, bk2V(c.p0), bk2V(c.p1), c.r * mm);
+    opBoolean(context, id + "u", { "tools" : qBodyType(qCreatedBy(A, EntityType.BODY), BodyType.SOLID),
+            "operationType" : BooleanOperationType.UNION });
+    for (var c in C.cuts)
+        prism(K, c);
+    for (var c in C.cyls)
+        if (c.op != "add")
+            cylW(context, K + c.tag, bk2V(c.p0), bk2V(c.p1), c.r * mm);
+    const pt = bk2V(C.pt);
+    if (size(C.cuts) > 0 || size(C.cyls) > 0)
+        cutFrom(context, id + "cut", partAt(context, id, pt), [qBodyType(qCreatedBy(K, EntityType.BODY), BodyType.SOLID)]);
+    for (var j in C.joints)
+    {
+        const J = id + ("j" ~ j.side);
+        const cs = coordSystem(bk2V(j.head), vector(j.slot[0], j.slot[1], j.slot[2]), vector(j.zIn[0], j.zIn[1], j.zIn[2]));
+        screwJointGeometry(context, J, cs, mergeMaps(SCREW_OPT, {
+                "nutDepth" : j.nutDepth * mm, "headPocket" : 0 * mm, "bothWays" : false,
+                "nutSlotLength" : j.slotLen * mm, "holeDepth" : j.holeDepth * mm }));
+        cutFrom(context, J + "cut", partAt(context, id, pt), [qCreatedBy(J + "screwRev", EntityType.BODY),
+                                                             qCreatedBy(J + "slotExt", EntityType.BODY)]);
+        const r = ridgeSolid(context, J + "ridge", bk2V(j.ridgeAt), Z, vector(j.ridgeUp[0], j.ridgeUp[1], j.ridgeUp[2]),
+                             FIXTURE.ridge_height, 0 * mm, j.ridgeHalf * mm);
+        opBoolean(context, J + "rU", { "tools" : qUnion([partAt(context, id, pt), r]),
+                "operationType" : BooleanOperationType.UNION });
+    }
+    const q = partAt(context, id, pt);
+    dress(context, q, C.name, color(C.color[0], C.color[1], C.color[2]), C.note);
+    setAttribute(context, { "entities" : q, "name" : "bk_mod", "attribute" : "bike" });
+    return q;
 }
 
 /**
@@ -2812,10 +2870,14 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
                     for (var j = 0; j < size(c.holes.at); j += 1)
                     {
                         const a = c.holes.at[j];
+                        // along the box's y (the Pi, the AHRS), or its x (the
+                        // power board, which faces the side)
+                        const ax = c.holes.ax == "x";
                         // NOT under C: boxIn's query is everything created under
                         // C, so a cutter there is its own target (BOOLEAN_INVALID)
-                        hs = append(hs, cylW(context, id + ("compH" ~ k ~ "_" ~ j), bk2V([a[0], c.holes.y[0], a[1]]),
-                                             bk2V([a[0], c.holes.y[1], a[1]]), c.holes.r * mm));
+                        hs = append(hs, cylW(context, id + ("compH" ~ k ~ "_" ~ j),
+                                             bk2V(ax ? [c.holes.y[0], a[0], a[1]] : [a[0], c.holes.y[0], a[1]]),
+                                             bk2V(ax ? [c.holes.y[1], a[0], a[1]] : [a[0], c.holes.y[1], a[1]]), c.holes.r * mm));
                     }
                     opBoolean(context, id + ("compHc" ~ k), { "tools" : qUnion(hs), "targets" : q,
                             "operationType" : BooleanOperationType.SUBTRACTION });
@@ -2827,6 +2889,9 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
                 setAttribute(context, { "entities" : q, "name" : "bk_mod", "attribute" : "bike" });
             }
         }
+    step("carriers");
+    for (var k = 0; k < size(BK2.carriers); k += 1)
+        bk2Carrier(context, id + ("pc" ~ k), BK2.carriers[k]);
     return { "steer" : rs, "righting" : rr, "rXf" : rXf,
              "sAxis" : line(bk2V(BK2.sOrigin), vector(BK2.sAxis[0], BK2.sAxis[1], BK2.sAxis[2])) };
 }

@@ -54,8 +54,11 @@ def test_each_envelope_is_its_size_where_its_config_puts_it(L):
 
 
 def test_no_chassis_and_the_rightings_placeholders_dropped(L):
+    """No chassis, deck or cage of the bike's own: the rails are the drive's,
+    and the printed parts v2 adds are the two carriers (cad_power, cad_pi_carrier)."""
     body = b2.build_fs(L).split("export function bikeV2Build")[1].split(b2.SPLIT_MARK)[0]
-    assert not any(w in body for w in ("deck", "tray", "carrier", "cage"))
+    assert not any(w in body for w in ("deck", "tray", "cage"))
+    assert body.count("bk2Carrier(") == 1 and len(L["carriers"]) == 2
     # the floor and the two rail placeholders (with the rails the righting
     # draws no chassis plate)
     assert len(L["rgDrop"]) == 3
