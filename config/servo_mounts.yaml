@@ -281,3 +281,11 @@ fasteners:
     nut_slot_thickness: {value: 0.003, source: design (as-built; 3/32" + 0.6)}
     nut_depth: {value: 0.0066, source: design (as-built)}
     nut_slot_length: {value: 0.012, source: design}
+    # SNUG nut slots, so the nut stays put while the part is assembled (user,
+    # 2026-10-16: the as-built slots above "are pretty free and can fall
+    # through"). Used by the v2 bike's modules (drive, steering --v2,
+    # righting); the as-built values stay for everything already printed.
+    # 0.1 over the flats, 0.3 over the thickness: a print-fit GUESS, to be
+    # tried and moved.
+    nut_slot_width_snug: {value: 0.00645, source: GUESS (1/4" AF + 0.1; print fit)}
+    nut_slot_thickness_snug: {value: 0.0027, source: GUESS (3/32" + 0.3; print fit)}

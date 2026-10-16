@@ -395,11 +395,15 @@ def idler_env(table: dict[str, dict], servo: str = "XC330") -> dict[str, float]:
     }
 
 
-def screw_table(mounts: dict | None = None) -> dict[str, float]:
-    """Dialog defaults for the screw feature, mm (and the csk angle, deg)."""
+def screw_table(mounts: dict | None = None, snug: bool = False) -> dict[str, float]:
+    """Dialog defaults for the screw feature, mm (and the csk angle, deg).
+    `snug`: the tighter nut slots (`*_snug`) the v2 bike's modules use."""
     mounts = load_mounts() if mounts is None else mounts
     f = mounts["fasteners"][SCREW]
     out = {fs: f[k] * 1000 for k, fs in SCREW_FIELDS.items()}
+    if snug:
+        out["nutSlotWidth"] = f["nut_slot_width_snug"] * 1000
+        out["nutSlotThickness"] = f["nut_slot_thickness_snug"] * 1000
     out["cskAngle"] = f["csk_angle_deg"]
     return out
 
