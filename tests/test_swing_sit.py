@@ -145,3 +145,25 @@ def test_fall_detector_needs_down_and_still_for_its_dwell():
     assert not seq.fallen(seq.fallen_s * 1.5, down, 0.0)
     assert seq.fallen(seq.fallen_s * 2.6, down, 0.0)
     assert not seq.fallen(10.0, np.deg2rad(20), 0.0)
+
+
+@pytest.mark.parametrize("lands", [+1, -1], ids=["same_side", "other_side"])
+def test_a_fall_after_the_hand_off_folds_and_rearms_the_auto_up(lands):
+    """The policy can lose the bike after it takes over. The sequence must
+    let go and fold, not hold a lying bike in balance for balance_max_s or
+    wait in retract on a crank pinned under it -- and the next auto-up must
+    wait its own dwell, not fire on the first one's stale timer."""
+    seq = SwingSit(DEPLOY)
+    assert seq.fallen(0.0, np.deg2rad(85), 0.0) is False
+    assert seq.fallen(seq.fallen_s, np.deg2rad(85), 0.0)
+    seq.get_up(seq.fallen_s, roll=np.deg2rad(85))
+    t, phases, _ = run(seq, 0.01, seq.fallen_s, roll=np.deg2rad(RECOVER_DEG - 2))
+    assert phases[-1] == "balance"
+    down = lands * np.deg2rad(80)
+    pinned = seq.side * DEPLOY if lands > 0 else 0.0   # under the bike, or free
+    t, phases, cmds = run(seq, 0.01, t, roll=down, crank=pinned)
+    assert phases[0] == "retract"      # (a folded crank finishes it at once)
+    t, phases, _ = run(seq, 2.0, t, roll=down, crank=pinned)
+    assert phases[-1] == "riding" and not seq.active
+    assert not seq.fallen(t, down, 0.0), "fired on the first trigger's timer"
+    assert seq.fallen(t + seq.fallen_s, down, 0.0)

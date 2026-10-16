@@ -117,6 +117,7 @@ class SwingSit:
         self._lift_from = None
         self._hold = 0.0
         self.aborted = False
+        self._fell = False
         self.phase = "riding"
         self.side = 1.0
         self._t0 = 0.0
@@ -128,6 +129,8 @@ class SwingSit:
         return self.phase in self.ACTIVE
 
     def _go(self, phase, t):
+        if phase in ("lift", "stop"):
+            self._fell = False          # a fresh attempt
         self.phase, self._t0 = phase, t
 
     def lie_down(self, t: float, roll: float = 0.0, side: float | None = None) -> None:
@@ -141,6 +144,7 @@ class SwingSit:
         """Start getting up from lying on the side `roll` says."""
         self.side = float(np.sign(roll) or 1.0)
         self._lift_from = None
+        self._down_since = None     # the next auto-up waits its own fallen_s
         self._go("lift", t)
 
     def _abort(self, t, crank):
@@ -224,6 +228,18 @@ class SwingSit:
                 # next auto-up) tries again.
                 self._go("limp", t)
             return Command(goal, policy=self.lift_policy)
+        if self.phase in ("balance", "retract") and abs(roll) > self.fallen_rad \
+                and not self._fell:
+            # The policy lost it after the hand-off and the bike is down again
+            # (either side). Fold the blade and go back to riding, so the
+            # auto-up's own detector tries again from the side it landed on.
+            # Without this, balance held a lying bike for balance_max_s and
+            # retract waited on a crank pinned under it (fixes_72M, base
+            # drivetrain, 2026-10-16: down at 19.8 s, still lying at 24.5).
+            self._fell = True
+            self._retract_from = crank
+            self._go("retract", t)
+            return Command(crank)
         if self.phase == "balance":
             # Ease the blade off the floor before folding it. Right after the
             # hand-off the policy leans a few degrees ONTO the planted blade
@@ -241,7 +257,7 @@ class SwingSit:
         if self.phase == "retract":
             goal = self._retract_from - np.sign(self._retract_from) * min(
                 abs(self._retract_from), self.retract_rate * dt)
-            if abs(goal) < 1e-9 and abs(crank) < np.deg2rad(5.0):
+            if abs(goal) < 1e-9 and (abs(crank) < np.deg2rad(5.0) or self._fell):
                 self._go("riding", t)
             return Command(goal)
         return Command(0.0)                       # riding: centre, full current
