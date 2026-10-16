@@ -76,8 +76,9 @@ SWEEP = (30, 90, 180, 270)      # steer angles the clash sweep visits
 
 
 def load(steer_path: str = STEER_PARAMS, cad_path: str = sm.CAD_PARAMS,
-         mount_path: str = sm.MOUNT_PARAMS) -> dict:
-    """Everything the module reads, in MILLIMETRES."""
+         mount_path: str = sm.MOUNT_PARAMS, snug: bool = False) -> dict:
+    """Everything the module reads, in MILLIMETRES. `snug`: the v2 bike's
+    tighter nut slots (v2 only; v1 is printed with the as-built ones)."""
     raw = _normalize(yaml.safe_load(Path(steer_path).read_text()))
     params = load_params(cad_path)
     mounts = sm.load_mounts(mount_path)
@@ -103,7 +104,7 @@ def load(steer_path: str = STEER_PARAMS, cad_path: str = sm.CAD_PARAMS,
             "servo_clearance": mm(params["bike"]["steering"]["servo_clearance"]),
             "rake_deg": params["bike"]["rake_deg"],
             "table": sm.servo_table(params, mounts),
-            "screw": sm.screw_table(mounts)}
+            "screw": sm.screw_table(mounts, snug=snug)}
 
 
 def layout(data: dict) -> dict:
@@ -270,35 +271,43 @@ def layout(data: dict) -> dict:
     v2 = s["v2"]
     hr = sc["headDia"] / 2
     nut_c = sc["nutSlotWidth"] / math.sqrt(3)                        # the nut's corner
-    # upper -> lower, two a side: lugs off the upper case's sides, their
-    # front faces on the connector window's aft edge; heads jp above the
-    # joint plane (the upper case's underside)
+    # upper -> lower: ONE 6-32 at the REAR on the centreline (user,
+    # 2026-10-16: the two side screws' lugs and blocks stood over the rails, and
+    # the U2D2 that sat behind the steering has gone). Built before the case
+    # group's turn, so the bike's rear is +y here. The head in a lug off the
+    # upper case's rear face (its pocket ul_pocket_gap off the face), jp above
+    # the joint plane (the upper case's underside); the nut in a block the
+    # lower case grows from its rear walls, its slot out the block's back
     L["v2HeadZ"] = L["upBot"] + jp
-    L["v2UlX"] = L["botOuter"] + hr + v2["ul_pocket_gap"]            # the screws' x: the pocket off the case
-    L["v2UlY0"] = L["winNear"]                                       # the lugs' front faces
-    L["v2UlHalfY"] = max(hr, sc["nutSlotWidth"] / 2) + v2["lug_side_wall"]
-    L["v2UlY"] = L["v2UlY0"] + L["v2UlHalfY"]
-    L["v2UlOut"] = L["v2UlX"] + max(hr, nut_c) + v2["lug_side_wall"]  # the lugs' and blocks' outer faces
-    need(L["v2UlY"] + L["v2UlHalfY"] <= L["yUpNear"], "the side lugs run off the upper case's aft end")
-    # short lugs: the outer face up to the head, then 45 deg back to the case
-    L["v2LugTop"] = L["v2HeadZ"] + (L["v2UlOut"] - L["botOuter"])
-    need(L["v2LugTop"] <= L["upTopZ"], "the lugs' 45 deg tops run past the cap")
-    L["v2UlPocket"] = L["v2UlOut"] - (L["v2UlX"] - hr) + 1.0           # up through the 45 deg top
-    # the blocks: the cup's side straight up, 45 deg out, under_nut_wall under the nut
+    L["v2RrY"] = L["yUpNear"] + hr + v2["ul_pocket_gap"]
+    L["v2RrHalfX"] = max(hr, sc["nutSlotWidth"] / 2) + v2["lug_side_wall"]
+    L["v2RrOut"] = L["v2RrY"] + max(hr, nut_c) + v2["lug_side_wall"]   # the lug's and block's back faces
+    # the lug: its back face up to the head, then 45 deg forward to the case
+    L["v2LugTop"] = L["v2HeadZ"] + (L["v2RrOut"] - L["yUpNear"])
+    need(L["v2LugTop"] <= L["upTopZ"], "the rear lug's 45 deg top runs past the cap")
+    L["v2RrPocket"] = L["v2RrOut"] - (L["v2RrY"] - hr) + 1.0           # up through the 45 deg top
+    # the block: the walls' back face straight down, 45 deg out to the block,
+    # under_nut_wall under the nut
     L["v2BlkTop"] = L["v2HeadZ"] - (jp + 2.0) - sc["nutSlotThickness"] - v2["under_nut_wall"]
-    L["v2BlkBot"] = L["v2BlkTop"] - (L["v2UlOut"] - L["cupHalf"])
-    need(L["v2UlX"] - nut_c >= L["topOuter"] + 0.5 * wall, "the upper case's nuts reach the lower case's walls")
+    L["v2BlkBot"] = L["v2BlkTop"] - (L["v2RrOut"] - L["yWallNear"])
+    need(L["v2RrY"] - nut_c >= L["yWallNear"] + 0.5 * wall, "the rear nut reaches the lower case's walls")
+    need(L["v2BlkBot"] > L["caseBot"] + wall, "the rear block's 45 deg underside runs out of the case's bottom")
     # lower -> the bike: one a side on the axis at the bushing's mid-height,
     # the interface on a full-length pad; the hole stops a wall short of the bore
     L["v2SideZ"] = (L["caseBot"] + L["sleeveTop"]) / 2
     L["v2SideRidge"] = cs["ridge_half"]
+    # the ridge up the axis from the pad's bottom to this, its taper inside the pad
+    L["v2SideRidgeTop"] = L["v2SideZ"] + v2["side_ridge_above"]
     L["v2SideX"] = L["cupHalf"] + v2["side_pad"]
     L["v2SideBoreWall"] = L["v2SideX"] + jp - sc["holeDepth"] - L["boreR"]
     need(L["v2SideBoreWall"] >= wall, f"a side screw's hole comes {L['v2SideBoreWall']:.2f} from the bushing bore")
+    # the nut slot (2 past the joint plane, inward) keeps a wall to the turning cavity
+    L["v2SideNutWall"] = L["v2SideX"] - 2.0 - sc["nutSlotThickness"] - L["cavR"]
+    need(L["v2SideNutWall"] >= wall, f"a side nut slot comes {L['v2SideNutWall']:.2f} from the turning cavity")
     need(L["v2SideZ"] - sc["nutSlotWidth"] / 2 >= L["caseBot"] + wall, "a side nut slot runs out of the bed")
     L["v2PadTop"] = L["v2SideZ"] + max(sc["nutSlotWidth"] / 2, hr) + 1.5
     need(L["v2PadTop"] <= L["zCF"], "the side pads run up past the cup")
-    need(L["v2BlkBot"] >= L["v2PadTop"], "the nut blocks' 45 deg undersides start below the side pads' tops")
+    need(L["v2SideRidgeTop"] + 1.0 <= L["v2PadTop"], "the side ridges run off the pads' tops")
     # the front: the foot, straight up, then 45 deg forward to the walls'
     # face, meeting it at the underside of the servo shell's cap (zCF less
     # the cap): any higher and the cap's last 3 mm hang level (a 74 mm2
@@ -754,16 +763,18 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
             lcAdd = append(lcAdd, boxW(context, P + ("pad" ~ tg),
                     at(sg > 0 ? L.cupHalf - 0.5 * mm : -L.v2SideX, L.yWallFar, L.caseBot),
                     at(sg > 0 ? L.v2SideX : -L.cupHalf + 0.5 * mm, L.cupNear, L.v2PadTop)));
-            // the upper case's nut block: off the cup's side at 45 deg, out
-            // to the block under its nut; profile (|x|, z) on a plane normal
-            // +Y, whose second axis is cross(Y, sg X) = -sg Z
-            const pz = function(x, z) returns Vector { return vector(x, -sg * z); };
-            polyPrism(context, P, "ulBlk" ~ tg, at(0 * mm, L.v2UlY0, 0 * mm), Y, sg * X,
-                      [pz(L.cupHalf - 0.5 * mm, L.v2BlkBot - 0.5 * mm), pz(L.cupHalf, L.v2BlkBot),
-                       pz(L.v2UlOut, L.v2BlkTop), pz(L.v2UlOut, L.upBot), pz(L.cupHalf - 0.5 * mm, L.upBot)],
-                      2 * L.v2UlHalfY);
-            lcAdd = append(lcAdd, qCreatedBy(P + ("ulBlk" ~ tg ~ "Ext"), EntityType.BODY));
         }
+    }
+    if (v2)
+    {
+        // the upper case's nut block, on the centreline off the rear walls:
+        // their back face straight down, 45 deg out to the block under its
+        // nut; a prism in (y, z) along X
+        polyPrism(context, P, "rrBlk", at(-L.v2RrHalfX, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.yWallNear - 0.5 * mm, L.v2BlkBot - 0.5 * mm), vector(L.yWallNear, L.v2BlkBot),
+                   vector(L.v2RrOut, L.v2BlkTop), vector(L.v2RrOut, L.upBot), vector(L.yWallNear - 0.5 * mm, L.upBot)],
+                  2 * L.v2RrHalfX);
+        lcAdd = append(lcAdd, qCreatedBy(P + "rrBlkExt", EntityType.BODY));
     }
     unite(context, P + "lcU", lcAdd);
     // v2: high in the cup, behind the turning cavity -- the front-bottom
@@ -784,10 +795,10 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
         // 45 deg forward to the walls' face (a prism in (y, z) along X).
         // AFTER the shell, so the shell's cap goes with it
         const run = L.v2Foot - L.yWallFar + 1 * mm;
-        polyPrism(context, P, "lcCh", at(-L.v2UlOut - 1 * mm, 0 * mm, 0 * mm), X, Y,
+        polyPrism(context, P, "lcCh", at(-L.v2SideX - 1 * mm, 0 * mm, 0 * mm), X, Y,
                   [vector(L.v2Foot, L.caseBot - 1 * mm), vector(L.v2Foot, L.v2Rise),
                    vector(L.yWallFar - 1 * mm, L.v2Rise + run), vector(L.yWallFar - 1 * mm, L.caseBot - 1 * mm)],
-                  2 * L.v2UlOut + 2 * mm);
+                  2 * L.v2SideX + 2 * mm);
         opBoolean(context, P + "lcChCut", { "tools" : qCreatedBy(P + "lcChExt", EntityType.BODY),
                 "targets" : partAt(context, P, lcPt), "operationType" : BooleanOperationType.SUBTRACTION });
     }
@@ -813,18 +824,12 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     var ucAdd = [partAt(context, P, ucPt), ucWrap];
     if (v2)
     {
-        // a lug a side, its front face on the connector window's aft edge:
-        // the outer face up to the head, then 45 deg back to the case's side
-        // (it prints cap-down); profile (|x|, z) as the lower case's blocks
-        for (var sg in [1, -1])
-        {
-            const tg = sg > 0 ? "P" : "N";
-            const pz = function(x, z) returns Vector { return vector(x, -sg * z); };
-            polyPrism(context, P, "ucLug" ~ tg, at(0 * mm, L.v2UlY0, 0 * mm), Y, sg * X,
-                      [pz(L.botOuter - 0.5 * mm, L.upBot), pz(L.v2UlOut, L.upBot), pz(L.v2UlOut, L.v2HeadZ),
-                       pz(L.botOuter - 0.5 * mm, L.v2LugTop + 0.5 * mm)], 2 * L.v2UlHalfY);
-            ucAdd = append(ucAdd, qCreatedBy(P + ("ucLug" ~ tg ~ "Ext"), EntityType.BODY));
-        }
+        // the rear lug on the centreline: its back face up to the head, then
+        // 45 deg forward to the case's rear face (it prints cap-down)
+        polyPrism(context, P, "ucLug", at(-L.v2RrHalfX, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.yUpNear - 0.5 * mm, L.upBot), vector(L.v2RrOut, L.upBot), vector(L.v2RrOut, L.v2HeadZ),
+                   vector(L.yUpNear - 0.5 * mm, L.v2LugTop + 0.5 * mm)], 2 * L.v2RrHalfX);
+        ucAdd = append(ucAdd, qCreatedBy(P + "ucLugExt", EntityType.BODY));
     }
     else
         ucAdd = append(ucAdd, boxW(context, P + "ucPad", at(-L.padHalf, L.yP, L.padBot), at(L.padHalf, L.yUpFar + 1 * mm, L.upTopZ)));
@@ -897,22 +902,33 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     }
     else
     {
-        // upper -> lower, one a side: head in the lug (its pocket up
+        // upper -> lower, ONE at the rear: head in the lug (its pocket up
         // through the lug's top), down into the nut block, the slot out of
-        // the block's side
-        for (var sg in [1, -1])
-            blindScrewJoint(context, P + ("jUL" ~ (sg > 0 ? "P" : "N")), at(sg * L.v2UlX, L.v2UlY, L.v2HeadZ), -Z, sg * X,
-                            L.v2UlOut - L.v2UlX + 1 * mm, L.v2UlPocket,
-                            partAt(context, P, ucPt), partAt(context, P, lcPt), false, X, 0 * mm, -Z, Z);
+        // the block's back
+        blindScrewJoint(context, P + "jUL", at(0 * mm, L.v2RrY, L.v2HeadZ), -Z, Y,
+                        L.v2RrOut - L.v2RrY + 1 * mm, L.v2RrPocket,
+                        partAt(context, P, ucPt), partAt(context, P, lcPt), false, X, 0 * mm, -Z, Z);
         // lower -> the bike, one a side on the axis at the bushing's
         // mid-height: heads in parts not drawn yet, the ridge along Y on the
         // pad, the nut slot forward (build -Y) out of the case's front
+        // The ridge runs UP THE AXIS, from the pad's bottom (the case's bed)
+        // to v2SideRidgeTop: the module slides out of the bike's rails
+        // downward, as the righting's bridge does (user, 2026-10-16), the
+        // rails' grooves open at their lower edge. The nut slot stays
+        // perpendicular to it, forward.
         var k = 0;
         for (var sg in [1, -1])
         {
-            blindScrewJoint(context, P + ("jS" ~ k), at(sg * (L.v2SideX + FIXTURE.joint_plate), 0 * mm, L.v2SideZ),
-                            -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
-                            partAt(context, P, lcPt), true, Y, L.v2SideRidge, Z, Z);
+            const hd = at(sg * (L.v2SideX + FIXTURE.joint_plate), 0 * mm, L.v2SideZ);
+            blindScrewJoint(context, P + ("jS" ~ k), hd, -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
+                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z);
+            const r0 = L.caseBot - 1.5 * mm;
+            const rr = ridgeSolid(context, P + ("jSr" ~ k), at(sg * L.v2SideX, 0 * mm, (r0 + L.v2SideRidgeTop) / 2), Z, sg * X,
+                                  FIXTURE.ridge_height, 0 * mm, (L.v2SideRidgeTop - r0) / 2);
+            opBoolean(context, P + ("jSc" ~ k), { "tools" : boxW(context, P + ("jSb" ~ k), at(-50 * mm, -50 * mm, L.caseBot - 10 * mm),
+                    at(50 * mm, 50 * mm, L.caseBot)), "targets" : rr, "operationType" : BooleanOperationType.SUBTRACTION });
+            opBoolean(context, P + ("jSu" ~ k), { "tools" : qUnion([partAt(context, P, lcPt), rr]),
+                    "operationType" : BooleanOperationType.UNION });
             k += 1;
         }
         // the servo's body out the front: the case group turned about the axis
@@ -1238,7 +1254,7 @@ def main() -> None:
                     help="print the check script instead of spending a call")
     args = ap.parse_args()
 
-    data = load(args.steer, args.params)
+    data = load(args.steer, args.params, snug=args.v2)
     text = build_fs(data, args.fs_version, args.v2)
     sm.lint_fs(text)
     if args.v2 and args.output == OUT_FS:

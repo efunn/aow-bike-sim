@@ -109,15 +109,22 @@ export const ST = {
     "zUS" : 120.25 * millimeter,
     "padBot" : 114.25 * millimeter,
     "v2HeadZ" : 108.55 * millimeter,
-    "v2Ys" : -33.3 * millimeter,
-    "v2Y0" : -38.55 * millimeter,
-    "v2LugHalf" : 5.25 * millimeter,
-    "v2LugTop" : 108.55 * millimeter,
-    "v2NutEnd" : -29.5184 * millimeter,
-    "v2SideZ" : 83.75 * millimeter,
+    "v2RrY" : 17.8 * millimeter,
+    "v2RrHalfX" : 5.25 * millimeter,
+    "v2RrOut" : 23.0816 * millimeter,
+    "v2LugTop" : 118.082 * millimeter,
+    "v2RrPocket" : 10.0316 * millimeter,
+    "v2BlkTop" : 97.95 * millimeter,
+    "v2BlkBot" : 86.7184 * millimeter,
+    "v2SideZ" : 75.55 * millimeter,
     "v2SideRidge" : 6 * millimeter,
-    "v2SideY1" : -13.775 * millimeter,
-    "v2SideY0" : -31.55 * millimeter,
+    "v2SideRidgeTop" : 79.05 * millimeter,
+    "v2SideX" : 16 * millimeter,
+    "v2SideBoreWall" : 1.5 * millimeter,
+    "v2SideNutWall" : 1.5 * millimeter,
+    "v2PadTop" : 80.8 * millimeter,
+    "v2Foot" : -12.55 * millimeter,
+    "v2Rise" : 85.25 * millimeter,
     "tireOD" : 102.5 * millimeter,
     "tireW" : 24 * millimeter,
     "tireFlat" : 10 * millimeter,
@@ -1313,7 +1320,8 @@ export function blindScrewJoint(context is Context, id is Id, head is Vector, zI
     const rB = SCREW_OPT.holeDia / 2;
     for (var pu in [[cskPart, cskUp, "tdC"], [nutPart, nutUp, "tdN"]])
     {
-        if (abs(dot(pu[1], zIn)) > 0.5)
+        // no teardrop in a part that is not drawn (a boolean needs a target)
+        if (abs(dot(pu[1], zIn)) > 0.5 || isQueryEmpty(context, pu[0]))
             continue;
         const upP = normalize(pu[1] - dot(pu[1], zIn) * zIn);
         polyPrism(context, id, pu[2], head - 1 * mm * zIn, zIn, cross(upP, zIn),
@@ -1530,15 +1538,37 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     step("lower case");
     // the cup runs back to the mount plane (v1), or to the lug's far face
     // (v2), where it carries the side joints and the upper case's nut block
-    const yCup = v2 ? L.v2Y0 : L.yP;
+    const yCup = v2 ? L.yWallFar : L.yP;
     const cup = boxW(context, P + "cup", at(-L.cupHalf, yCup, L.caseBot), at(L.cupHalf, L.cupNear, L.zCF));
     const walls = boxW(context, P + "walls", at(-L.topOuter, L.yWallFar, L.zCF - 1 * mm), at(L.topOuter, L.yWallNear, L.wallTop));
     var lcAdd = [cup, walls];
     if (v2)
-        lcAdd = append(lcAdd, boxW(context, P + "nutBlock", at(-L.v2LugHalf, L.v2Y0, L.zCF - 1 * mm),
-                                   at(L.v2LugHalf, L.yWallFar + 0.5 * mm, L.upBot)));
+    {
+        for (var sg in [1, -1])
+        {
+            const tg = sg > 0 ? "P" : "N";
+            // the side pad, the cup's whole length
+            lcAdd = append(lcAdd, boxW(context, P + ("pad" ~ tg),
+                    at(sg > 0 ? L.cupHalf - 0.5 * mm : -L.v2SideX, L.yWallFar, L.caseBot),
+                    at(sg > 0 ? L.v2SideX : -L.cupHalf + 0.5 * mm, L.cupNear, L.v2PadTop)));
+        }
+    }
+    if (v2)
+    {
+        // the upper case's nut block, on the centreline off the rear walls:
+        // their back face straight down, 45 deg out to the block under its
+        // nut; a prism in (y, z) along X
+        polyPrism(context, P, "rrBlk", at(-L.v2RrHalfX, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.yWallNear - 0.5 * mm, L.v2BlkBot - 0.5 * mm), vector(L.yWallNear, L.v2BlkBot),
+                   vector(L.v2RrOut, L.v2BlkTop), vector(L.v2RrOut, L.upBot), vector(L.yWallNear - 0.5 * mm, L.upBot)],
+                  2 * L.v2RrHalfX);
+        lcAdd = append(lcAdd, qCreatedBy(P + "rrBlkExt", EntityType.BODY));
+    }
     unite(context, P + "lcU", lcAdd);
-    var lcPt = at(L.cupHalf - 0.5 * mm, yCup + 1 * mm, L.caseBot + 1 * mm);
+    // v2: high in the cup, behind the turning cavity -- the front-bottom
+    // corner the old point sat in is chamfered away
+    var lcPt = v2 ? at(L.cupHalf - 0.5 * mm, -L.cavR - 2.5 * mm, L.zCF - 2 * mm)
+                  : at(L.cupHalf - 0.5 * mm, yCup + 1 * mm, L.caseBot + 1 * mm);
     opBoolean(context, P + "lcCut", { "tools" : qUnion([
             boxW(context, P + "lcPocket", at(-L.inner, L.yServoFar, L.zCF), at(L.inner, L.yServoNear, L.zBack + 1 * mm)),
             cylW(context, P + "lcCav", at(0 * mm, 0 * mm, L.sleeveTop), at(0 * mm, 0 * mm, L.zCF + 0.5 * mm), L.cavR),
@@ -1547,6 +1577,19 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     caseShellBuild(context, P + "lcShell", cs, mergeMaps(CASE_OPT, { "part" : "TOP" }), partAt(context, P, lcPt));
     if (L.lowerNearPins > 0.5 * mm)
         nearRowPins(context, P + "lcNear", cs, "TOP", partAt(context, P, lcPt));
+    if (v2)
+    {
+        // the front: off forward of the foot, straight up to v2Rise, then
+        // 45 deg forward to the walls' face (a prism in (y, z) along X).
+        // AFTER the shell, so the shell's cap goes with it
+        const run = L.v2Foot - L.yWallFar + 1 * mm;
+        polyPrism(context, P, "lcCh", at(-L.v2SideX - 1 * mm, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.v2Foot, L.caseBot - 1 * mm), vector(L.v2Foot, L.v2Rise),
+                   vector(L.yWallFar - 1 * mm, L.v2Rise + run), vector(L.yWallFar - 1 * mm, L.caseBot - 1 * mm)],
+                  2 * L.v2SideX + 2 * mm);
+        opBoolean(context, P + "lcChCut", { "tools" : qCreatedBy(P + "lcChExt", EntityType.BODY),
+                "targets" : partAt(context, P, lcPt), "operationType" : BooleanOperationType.SUBTRACTION });
+    }
 
     // ---- upper case: the X330 back-half shell, then the cap and the walls
     // carried round the whole servo, nesting over the lower's; the side walls
@@ -1569,10 +1612,11 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     var ucAdd = [partAt(context, P, ucPt), ucWrap];
     if (v2)
     {
-        const lugRise = L.v2LugTop + (L.yUpFar - L.v2Y0);
-        polyPrism(context, P, "ucLug", at(-L.v2LugHalf, 0 * mm, 0 * mm), X, Y,
-                  [vector(L.yUpFar + 0.5 * mm, L.upBot), vector(L.v2Y0, L.upBot), vector(L.v2Y0, L.v2LugTop),
-                   vector(L.yUpFar, lugRise), vector(L.yUpFar + 0.5 * mm, lugRise)], 2 * L.v2LugHalf);
+        // the rear lug on the centreline: its back face up to the head, then
+        // 45 deg forward to the case's rear face (it prints cap-down)
+        polyPrism(context, P, "ucLug", at(-L.v2RrHalfX, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.yUpNear - 0.5 * mm, L.upBot), vector(L.v2RrOut, L.upBot), vector(L.v2RrOut, L.v2HeadZ),
+                   vector(L.yUpNear - 0.5 * mm, L.v2LugTop + 0.5 * mm)], 2 * L.v2RrHalfX);
         ucAdd = append(ucAdd, qCreatedBy(P + "ucLugExt", EntityType.BODY));
     }
     else
@@ -1646,23 +1690,34 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     }
     else
     {
-        // upper -> lower: head in the lug (pocket up through its 45 deg
-        // top), down into the nut block, the slot out of the block's far face
-        blindScrewJoint(context, P + "jUL", at(0 * mm, L.v2Ys, L.v2HeadZ), -Z, -Y, L.v2Ys - L.v2Y0 + 1 * mm,
-                        L.upTopZ - L.v2HeadZ + 1 * mm, partAt(context, P, ucPt), partAt(context, P, lcPt),
-                        false, X, 0 * mm, -Z, Z);
-        // lower -> the bike, two a side: heads in parts not drawn yet, the
-        // ridge along Y on the case, the slots down out of the bed
+        // upper -> lower, ONE at the rear: head in the lug (its pocket up
+        // through the lug's top), down into the nut block, the slot out of
+        // the block's back
+        blindScrewJoint(context, P + "jUL", at(0 * mm, L.v2RrY, L.v2HeadZ), -Z, Y,
+                        L.v2RrOut - L.v2RrY + 1 * mm, L.v2RrPocket,
+                        partAt(context, P, ucPt), partAt(context, P, lcPt), false, X, 0 * mm, -Z, Z);
+        // lower -> the bike, one a side on the axis at the bushing's
+        // mid-height: heads in parts not drawn yet, the ridge along Y on the
+        // pad, the nut slot forward (build -Y) out of the case's front
+        // The ridge runs UP THE AXIS, from the pad's bottom (the case's bed)
+        // to v2SideRidgeTop: the module slides out of the bike's rails
+        // downward, as the righting's bridge does (user, 2026-10-16), the
+        // rails' grooves open at their lower edge. The nut slot stays
+        // perpendicular to it, forward.
         var k = 0;
         for (var sg in [1, -1])
         {
-            for (var y in [L.v2SideY0, L.v2SideY1])
-            {
-                blindScrewJoint(context, P + ("jS" ~ k), at(sg * (L.cupHalf + FIXTURE.joint_plate), y, L.v2SideZ),
-                                -sg * X, -Z, L.v2SideZ - L.caseBot + 1 * mm, 0 * mm, qNothing(),
-                                partAt(context, P, lcPt), true, Y, L.v2SideRidge, Z, Z);
-                k += 1;
-            }
+            const hd = at(sg * (L.v2SideX + FIXTURE.joint_plate), 0 * mm, L.v2SideZ);
+            blindScrewJoint(context, P + ("jS" ~ k), hd, -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
+                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z);
+            const r0 = L.caseBot - 1.5 * mm;
+            const rr = ridgeSolid(context, P + ("jSr" ~ k), at(sg * L.v2SideX, 0 * mm, (r0 + L.v2SideRidgeTop) / 2), Z, sg * X,
+                                  FIXTURE.ridge_height, 0 * mm, (L.v2SideRidgeTop - r0) / 2);
+            opBoolean(context, P + ("jSc" ~ k), { "tools" : boxW(context, P + ("jSb" ~ k), at(-50 * mm, -50 * mm, L.caseBot - 10 * mm),
+                    at(50 * mm, 50 * mm, L.caseBot)), "targets" : rr, "operationType" : BooleanOperationType.SUBTRACTION });
+            opBoolean(context, P + ("jSu" ~ k), { "tools" : qUnion([partAt(context, P, lcPt), rr]),
+                    "operationType" : BooleanOperationType.UNION });
+            k += 1;
         }
         // the servo's body out the front: the case group turned about the axis
         const rz = function(p is Vector) returns Vector { return vector(-p[0], -p[1], p[2]); };

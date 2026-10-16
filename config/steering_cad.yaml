@@ -266,9 +266,18 @@ v2:
   # Nuts in the lower case, the heads in whatever the bike becomes (nothing
   # drawn); the ridge along Y on the case (the house joint, cases.ridge_half).
   # Each side grows a PAD side_pad thick, the whole length of the cup (user:
-  # "the pad can extend all the way to the back"): 5.0 (user, was 3.5) puts
-  # the nut slot's inner face on the cup's original side face.
-  side_pad: {value: 0.005, source: design (user)}
+  # "the pad can extend all the way to the back"). 3.65 (2026-10-16, was 5.0):
+  # the bike's side RAIL bolts on here, and its boss is the house joint plate
+  # (4.6), so the pad's face (|x| 16.0) plus the plate puts the head on the
+  # rail's outer face (|x| 20.6, the drive case sides' bed). The nut slot
+  # moves 1.35 into the case with it (user: "the nut slots do have some space
+  # to go in here"), 1.8 off the turning cavity.
+  side_pad: {value: 0.00365, source: design (user; the rail's 4.6 boss)}
+  # The bike joint's ridge runs UP THE STEERING AXIS on the pad, from the
+  # pad's bottom to this over the screw (user, 2026-10-16: the steering slides
+  # out of the rails downward, like the righting's bridge; the rail's groove
+  # is open at its lower edge). It was along Y, which locked the module in.
+  side_ridge_above: {value: 0.0035, source: design (its taper 1.0 under the pad's top)}
   # THE FRONT (user, 2026-10-11 pm): the bottom (what bears on the headset)
   # runs foot_front ahead of the axis; from there the face goes STRAIGHT UP,
   # then undercuts at 45 deg forward to the case's front edge. The vertical

@@ -178,20 +178,27 @@ def test_v2_turns_the_servo_out_the_front_and_drops_the_plate(data):
     no mount plate in the parts or the extents; the studio lints."""
     L = st.full_layout(data)
     wall = data["s"]["print"]["min_wall"]
-    # upper -> lower, a screw a side: the lugs' front faces on the connector
-    # window's aft edge, the head's pocket clear of the upper case's side
-    assert L["v2UlY0"] == pytest.approx(L["winNear"])
-    assert L["v2UlX"] - data["screw"]["headDia"] / 2 > L["botOuter"]
-    # short lugs and blocks: 45 deg each, the block's under its nut
-    assert L["v2LugTop"] < L["upTopZ"] and L["v2BlkBot"] >= L["v2PadTop"]
+    # upper -> lower, ONE screw at the rear on the centreline (2026-10-16):
+    # the head's pocket off the upper case's rear face, the nut clear of the
+    # lower case's walls, nothing out at the sides over the rails
+    assert L["v2RrY"] - data["screw"]["headDia"] / 2 > L["yUpNear"]
+    assert L["v2RrY"] - data["screw"]["nutSlotWidth"] / 3 ** 0.5 > L["yWallNear"]
+    assert L["v2RrHalfX"] < L["cupHalf"]
+    # a short lug and block: 45 deg each, the block's under its nut
+    assert L["v2LugTop"] < L["upTopZ"] and L["v2BlkBot"] > L["caseBot"]
     assert L["v2BlkTop"] < L["v2HeadZ"] - 6.6 - data["screw"]["nutSlotThickness"]
     # lower -> bike: on the axis at the bushing's mid-height, the hole a
     # wall short of the bore; the pad puts the nut slot's inner face on the
     # cup's original side (side_pad 5 = jp + 2 + nut 3 - jp... the user's 1.5 more)
     assert L["caseBot"] < L["v2SideZ"] < L["sleeveTop"]
     assert L["v2SideBoreWall"] >= wall
-    nut_in = L["v2SideX"] + 4.6 - 6.6 - data["screw"]["nutSlotThickness"]
-    assert nut_in == pytest.approx(L["cupHalf"])
+    # the head on the side rail's outer face (the drive case sides' bed,
+    # |x| 20.6), the nut slot moved into the case, a wall off the cavity
+    assert L["v2SideX"] + 4.6 == pytest.approx(20.6)
+    # the bike joint's ridge runs up the axis from the pad's bottom, so the
+    # module slides out of the rails downward; its top inside the pad
+    assert L["caseBot"] < L["v2SideZ"] < L["v2SideRidgeTop"] <= L["v2PadTop"] - 1.0
+    assert L["v2SideNutWall"] >= wall
     # the front: the foot, straight up, 45 deg forward; under_floor left
     # beneath the servo's front end
     assert L["v2Rise"] + (L["v2Foot"] - L["yServoFar"]) == pytest.approx(
