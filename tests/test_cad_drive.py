@@ -186,11 +186,12 @@ def test_the_side_rails_fit(data, L):
     """The v2 bike's side rails (rail:): joint_plate thick, the joints'
     countersinks and grooves inside the outline with a wall, every piece
     overlapping the case side but clear of its M2.5 counterbores, and the
-    rail wholly under the TM151's board."""
+    rail wholly under the TM151's board. Three joints a side: the steering,
+    the righting's bridge, and the power holder's two (rear arm, front ear)."""
     R = cd.rail_layout(data, L)
     wall = data["s"]["print"]["min_wall"]
     assert R["plate"] == pytest.approx(data["s"]["joint"]["joint_plate"])
-    assert {j["tag"] for j in R["joints"]} == {"steer", "bridge"}
+    assert {j["tag"] for j in R["joints"]} == {"steer", "bridge", "carrier", "carrier_front"}
     assert all(j["room"] >= wall for j in R["joints"])
     assert R["ahRailGap"] >= 1.0
     cbs = [(L["Yhc"] + sy * L["holeHH"], zc + sz * L["holeHW"])

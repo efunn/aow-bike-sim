@@ -552,6 +552,21 @@ def rail_layout(data: dict, L: dict) -> dict:
     out = [to_drive(q) for q in RO["outline"]]
     rear = [to_drive(q) for q in RO["rear"]]
     R["pieces"] = [[list(q) for q in out], [list(q) for q in rear]]
+    # the front ear (the power carrier's fore joint): off the case side's
+    # front edge at its top, over the AHRS tab; it ends ON the front edge
+    ear = []
+    if "front_ear" in rl:
+        el, ez0, ez1 = rl["front_ear"]
+        ear = [(L["Ytab0"], ez0), (L["Ytab0"] + el, ez0), (L["Ytab0"] + el, ez1), (L["Ytab0"], ez1)]
+        R["pieces"].append([list(q) for q in ear])
+    # the back ear (the holder's aft joint): up off the case side's top
+    # edge under the switch; it stands ON the top edge
+    bear = []
+    if "back_ear" in rl:
+        by0, by1, bz1 = rl["back_ear"]
+        need(L["Yc0"] + L["rcLeg"] <= by0 and by1 <= L["Ytab0"], "the back ear runs off the case side's top edge")
+        bear = [(by0, L["Zp"]), (by1, L["Zp"]), (by1, bz1), (by0, bz1)]
+        R["pieces"].append([list(q) for q in bear])
     # the case side's outline (its rear corners chamfered): inside it the
     # rail stays the plate's thickness, the servos being there
     rc = L["rcLeg"]
@@ -562,7 +577,9 @@ def rail_layout(data: dict, L: dict) -> dict:
     # ends ON its chamfer face and top edge, so it unites across them
     cbs = [(L["Yhc"] + sy * L["holeHH"], zc + sz * L["holeHW"])
            for zc in (-L["zs"], L["zs"]) for sy in (1, -1) for sz in (1, -1)]
-    for nm, pc in (("outline", out), ("rear arm", rear)):
+    for nm, pc in (("outline", out), ("rear arm", rear), ("front ear", ear), ("back ear", bear)):
+        if not pc:
+            continue
         for c in cbs:
             need(not _inside(c, pc) and _edge_dist(c, pc) >= L["m25CbR"] + wall - 1e-3,
                  f"the rail's {nm} comes over an M2.5 counterbore at ({c[0]:.1f}, {c[1]:.1f})")
@@ -573,27 +590,37 @@ def rail_layout(data: dict, L: dict) -> dict:
     R["joints"] = []
     hr = sc["headDia"] / 2
     gw = jn["ridge_flat"] / 2 + jn["ridge_height"] + jn["ridge_clearance"] * math.sqrt(2)
-    for tag in ("steer", "bridge"):
+    case_poly = [tuple(q) for q in R["casePoly"]]
+    for tag in ("steer", "bridge", "carrier", "carrier_front"):
+        if f"{tag}_joint" not in rl:
+            continue
         h = to_drive(rl[f"{tag}_joint"])
+        # the piece it is in: the main outline, or the rear arm (the carrier's)
+        pc = next((q for q in (out, rear, ear, bear) if q and _inside(h, q)), None)
+        need(pc is not None, f"the rail's {tag} joint is not on the rail")
         a = math.radians(rl[f"{tag}_ridge_deg"] - DRIVE_TILT)
         d = (math.cos(a), math.sin(a))
         half = rl[f"{tag}_ridge_half"]
         n = (-d[1], d[0])
-        # the groove's extent along d from the head; open below, it runs out
-        # through the rail's lower edge (bike z `*_groove_open_below`), so the
-        # other part's ridge slides up into it
+        # the groove's extent along d from the head; open toward -d, it runs
+        # out through the rail's edge (`*_groove_open` past the head), so the
+        # other part's ridge slides into it -- up from below for the steering
+        # and the bridge, down from above for the carrier (d down)
         hi = half + 1.0
         lo = -rl[f"{tag}_groove_open"]
         pts = [h] + [(h[0] + u * d[0] + v * n[0], h[1] + u * d[1] + v * n[1]) for u in (0.0, hi) for v in (-gw, gw)]
         for q in pts:
-            need(_inside(q, out), f"the rail's {tag} joint runs off its outline")
+            need(_inside(q, pc), f"the rail's {tag} joint runs off its outline")
         # the groove must run out through the rail's edge, its 45 deg end taper
         # (ridge_height + clearance long) wholly outside the rail
         tl = jn["ridge_height"] + jn["ridge_clearance"] + 0.5
-        need(not _inside((h[0] + (lo + tl) * d[0], h[1] + (lo + tl) * d[1]), out),
+        need(not _inside((h[0] + (lo + tl) * d[0], h[1] + (lo + tl) * d[1]), pc),
              f"the rail's {tag} groove's end taper is inside the rail: open it further (rail.{tag}_groove_open)")
-        room = _edge_dist(h, out) - hr
-        need(room >= wall, f"the rail's {tag} joint's countersink is {room:.2f} from its edge")
+        # a wall round the countersink, off the piece's edge and off the case
+        # side's outline (inside it the rail is only the plate's 3.6)
+        room = min(_edge_dist(h, pc), _edge_dist(h, case_poly)) - hr
+        need(not _inside(h, case_poly) and room >= wall,
+             f"the rail's {tag} joint's countersink is {room:.2f} from its edge")
         R["joints"].append({"tag": tag, "head": list(h), "dir": list(d), "half": half, "room": room,
                             "gMid": (lo + hi) / 2, "gHalf": (hi - lo) / 2})
     # a point inside the rail and outside the case side (to find it by)
@@ -639,6 +666,12 @@ def rail_layout(data: dict, L: dict) -> dict:
     R["ahRailGap"] = min(_edge_dist(q, out) for q in corners)
     need(R["ahRailGap"] >= 1.0, f"the rail's top edge is {R['ahRailGap']:.2f} under the TM151's board")
     R["ahScrewPast"] = (R["ahN1"] - ah["nut_thickness"]) - R["ahTip"]   # past the pulled-up nut's far face
+    # the front ear stands over the AHRS tabs and the TM151's board (which
+    # reaches |x| 17, inside the ear's 16..20.6)
+    if ear:
+        ez0 = rl["front_ear"][1]
+        R["earGap"] = ez0 - max(R["ahZ"][-1] + R["ahTabHalf"], R["ahBoard"]["z1"])
+        need(R["earGap"] >= 1.0, f"the rail's front ear is {R['earGap']:.2f} over the AHRS tab / board")
     # ---- the cage posts: each the male feature the cage's socket slides
     # down over (drawn in the outlines above), one 6-32 in from the side, the
     # nut slot from the screw out through the post's free edge

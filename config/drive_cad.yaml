@@ -292,6 +292,33 @@ rail:
   bridge_ridge_deg: {value: 90.0, source: design (user; slides in from below)}
   bridge_ridge_half: {value: 0.003, source: design (= righting rail.ridge_half)}
   bridge_groove_open: {value: 0.007476, source: design (2.5 past the rail's edge at bike z 38.6, its taper outside)}
+  # THE POWER HOLDER's AFT joint (user, 2026-10-16 night: the rear arm made
+  # the part "unnecessarily long, it can fit tighter down (like basically
+  # below the switch)"): a BACK EAR standing on the case side's top edge
+  # (drive frame: back_ear = y0, y1, z1), under the switch, the head at
+  # drive (80, 35.5): 5.75 off the top edge for the countersink, high
+  # enough that the groove's closed end stays in the ear. The holder drops
+  # in from above: the groove is closed below the head and open up through
+  # the ear's top (ridge_deg 270). cad_bike_v2 refuses it off the holder's
+  # (bike_v2_cad.yaml power.joints). Mirrored on the right, unused there.
+  back_ear: {value: [0.07425, 0.08575, 0.04125], source: design}
+  carrier_joint: {value: [0.0314663, 0.0816708], source: design (bike frame, = drive (80, 35.5))}
+  carrier_ridge_deg: {value: 270.0, source: design (the holder drops in from above)}
+  carrier_ridge_half: {value: 0.003, source: design}
+  carrier_groove_open: {value: 0.011, source: design (out through the ear's top, its taper outside)}
+  # The carrier's FORE joint (user, 2026-10-16 night: the holder's "2 6-32
+  # installation screws are fore and aft of the electronics PCB"): an EAR
+  # off the case side's front edge at its top (drive frame: front_ear =
+  # length forward, z0, z1), over the AHRS tab and board, near the left
+  # drive pulley. The head at drive (125, 27): the head and 1 mm round it
+  # clear of the left pulley's belt in side view by 1.7, and under the
+  # board's front plugs by 2.6. Mirrored on the right
+  # like all of the rail, where it is behind the right pulley (unused).
+  front_ear: {value: [0.0115, 0.020, 0.0335], source: design}
+  carrier_front_joint: {value: [0.0692965, 0.1074802], source: design (bike frame, = drive (125, 27))}
+  carrier_front_ridge_deg: {value: 270.0, source: design (the holder drops in from above)}
+  carrier_front_ridge_half: {value: 0.003, source: design}
+  carrier_front_groove_open: {value: 0.011, source: design (out through the ear's front-top, its taper outside)}
 
   cage_post_ym: {value: [0.01355, 0.02555], source: design (1.0 ahead of the steering's foot at 12.55; 12 wide)}
   cage_post_top_zm: {value: 0.083, source: design}
