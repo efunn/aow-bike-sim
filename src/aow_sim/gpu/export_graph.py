@@ -25,6 +25,11 @@ ep_end is set (auto-reset inside the step), as PufferLib expects.
 
   python -m aow_sim.gpu.export_graph --nworld 4096 --out graphs/aow_bike_4096
 
+GPU memory: every MJWarp call in the step shares one set of working memory
+(scratch.py; --no-reuse-scratch turns it off). Without it the APIC graph
+keeps each of the ~50 calls' own: 0.72 MB a world, 12.3 GB at 16k worlds.
+analysis/gpu/phase3/check_scratch.py compares the two.
+
 Writes <out>.wrp, <out>_modules/ (the compiled kernels) and <out>.json (the
 buffers, the config and its hash, versions). On the CPU device a capture
 executes as it records, so the saved state is one step past the reset;
@@ -35,6 +40,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from contextlib import nullcontext
 from pathlib import Path
 
 import warp as wp
@@ -44,11 +50,13 @@ OUTPUTS = ("obs", "reward", "terminated", "truncated", "ep_end", "last_ret",
 
 
 def export(config: str, nworld: int, out: str, seed: int = 0, device=None,
-           curriculum_envs: int = 32, curriculum_lead: float = 0.1) -> dict:
+           curriculum_envs: int = 32, curriculum_lead: float = 0.1,
+           reuse_scratch: bool = True) -> dict:
     import mujoco
     import mujoco_warp
 
     from .env import GpuGeneralEnv
+    from .scratch import MjwScratch
 
     # Training graphs share one curriculum difficulty, paced as v3's 32 SB3
     # envs (env.py, shared_curriculum_envs); 0 = GeneralEnv's per-world rule.
@@ -57,12 +65,23 @@ def export(config: str, nworld: int, out: str, seed: int = 0, device=None,
                         shared_curriculum_envs=curriculum_envs,
                         curriculum_lead=curriculum_lead if curriculum_envs > 0 else 0.0)
     act_in = wp.zeros((nworld, 3), dtype=float, device=device)
-    env.reset()
-    env.step(act_in)            # compile every kernel and module before the capture
-    env.reset()                 # back to fresh episodes everywhere
-    wp.synchronize_device(device)
-    with wp.ScopedCapture(device=device, apic=True) as cap:
-        env.step(act_in)
+    # reuse_scratch: every MJWarp call in the step shares ONE set of working
+    # memory (scratch.py) -- the APIC capture otherwise keeps all ~50 calls'
+    # own, 0.72 MB a world (12.3 GB at 16k worlds, measured on an A40). The
+    # warm-up step below sizes the slots, outside the capture; freeze() makes
+    # a captured allocation they cannot serve an error, not a leak.
+    dev = wp.get_device(device)
+    scratch = MjwScratch(dev) if reuse_scratch and dev.is_cuda else None
+    env.scratch = scratch
+    with wp.ScopedAllocator(dev, scratch) if scratch is not None else nullcontext():
+        env.reset()
+        env.step(act_in)            # compile every kernel and module before the capture
+        env.reset()                 # back to fresh episodes everywhere
+        wp.synchronize_device(device)
+        if scratch is not None:
+            scratch.freeze()
+        with wp.ScopedCapture(device=device, apic=True) as cap:
+            env.step(act_in)
     outs = {k: getattr(env, k) for k in OUTPUTS}
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     wp.capture_save(cap.graph, out, inputs={"act_in": act_in}, outputs=outs)
@@ -74,6 +93,8 @@ def export(config: str, nworld: int, out: str, seed: int = 0, device=None,
         "seed": seed, "device": str(wp.get_device(device)),
         "substeps": env.substeps, "ctrl_dt": env.cpu.ctrl_dt,
         "max_steps": int(env.cpu.max_steps), "buffers": bufs,
+        "scratch_reuse": ({"slots": len(scratch.slots), "mb": round(scratch.nbytes / 1e6, 1)}
+                          if scratch is not None else None),
         "curriculum": ({"shared": True, "envs": curriculum_envs, "lead": env.cur_lead}
                        if curriculum_envs > 0
                        else {"shared": False}),
@@ -94,11 +115,14 @@ if __name__ == "__main__":
                     help="shared difficulty paced as this many per-env curricula; 0 = per world")
     ap.add_argument("--curriculum-lead", type=float, default=0.1,
                     help="credit only episodes played within this of the shared value; 0 = off")
+    ap.add_argument("--no-reuse-scratch", action="store_true",
+                    help="give every MJWarp call its own working memory, as before "
+                         "2026-10-16 (~12x the GPU memory; for the A/B check)")
     a = ap.parse_args()
     wp.config.quiet = True
     wp.init()
     meta = export(a.config, a.nworld, a.out, a.seed, curriculum_envs=a.curriculum_envs,
-                  curriculum_lead=a.curriculum_lead)
+                  curriculum_lead=a.curriculum_lead, reuse_scratch=not a.no_reuse_scratch)
     size = sum(f.stat().st_size for f in Path(a.out).parent.rglob("*")
                if f.is_file() and f.name.startswith(Path(a.out).name))
     print(json.dumps({"saved": a.out, "nworld": meta["nworld"], "device": meta["device"],

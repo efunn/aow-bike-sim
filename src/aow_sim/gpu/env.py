@@ -19,6 +19,8 @@ digest note). One policy step:
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import numpy as np
 import warp as wp
 import mujoco_warp as mjw
@@ -153,6 +155,10 @@ class GpuGeneralEnv:
         # prime: a test harness overwrites draws here (analysis/gpu/phase2/
         # hybrid.py). None in training.
         self.on_reset = None
+        # an MjwScratch (scratch.py) shares one set of MJWarp working memory
+        # between all MJWarp calls -- export_graph sets it for the APIC
+        # capture, which would otherwise keep every call's own (12 GB at 16k)
+        self.scratch = None
 
     # -- pieces ------------------------------------------------------------
 
@@ -188,12 +194,16 @@ class GpuGeneralEnv:
         if self.on_reset is not None:
             self.on_reset()
         self.guard.save()
-        mjw.forward(self.m, self.d)
+        with self._mjw_call():
+            mjw.forward(self.m, self.d)
         self.guard.restore(self.done)
         self._tick(active=self.done)                  # the reset's priming sample
         wp.launch(gobs.reset_obs, self.nworld, [
             self.c_obs, self.done, d.qpos, d.qvel, a.quat, a.gyro, o.v_lon, o.v_lat,
             self.v_cmd_w, self.psi_cmd, self.psi, self.obs], device=self.device)
+
+    def _mjw_call(self):
+        return self.scratch.call() if self.scratch is not None else nullcontext()
 
     # -- API ---------------------------------------------------------------
 
@@ -212,7 +222,8 @@ class GpuGeneralEnv:
             ggb.launch_pre_step(self.c_gb, d.qvel, d.qfrc_actuator, d.sensordata,
                                 d.efc.type, d.efc.id, d.efc.force, d.nefc,
                                 m.dof_frictionloss)
-            mjw.step(m, d)
+            with self._mjw_call():
+                mjw.step(m, d)
             if (k + 1) % self.tick_every == 0:
                 self._tick()
         if self.rebase:
