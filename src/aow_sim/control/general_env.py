@@ -255,6 +255,26 @@ class GeneralEnv(gym.Env):
         self.resample_s = tuple(env["resample_s"])
         self.ball_prob = float(env.get("ball_prob", 0.0))
         self.ball_radius = float(env.get("ball_place_radius", 0.5))
+        # FLOOR TILT, per episode (docs/plans/wishlist.md, "ramps"). OFF by
+        # default (0): no draw is made, so the rng stream -- and every run
+        # before this existed -- is unchanged. Tilt uniform in [0, max] (x the
+        # difficulty when `floor_tilt_curriculum`), downhill bearing uniform.
+        # The FLOOR geom turns, not gravity, so world Z stays vertical and the
+        # AHRS reads the standing roll a real cross-slope gives (see
+        # build_model's floor block); the bike spawns rotated onto the plane.
+        self.tilt_max = np.deg2rad(float(env.get("floor_tilt_max_deg", 0.0)))
+        self.tilt_cur = bool(env.get("floor_tilt_curriculum", True))
+        self.floor_tilt_deg = 0.0
+        self._floor_g = self.model.geom("floor").id
+        if self.tilt_max > 0:
+            # The level floor compiles with geom_sameframe = 1 ("its frame IS
+            # its body's"), and MuJoCo then poses it from the BODY and ignores
+            # geom_quat entirely: measured, a turned geom_quat left the
+            # floor's xmat level through mj_forward and mj_step, and the bike
+            # spawned 28.9 mm into it at 9.7 deg. Clearing the flag makes
+            # mj_kinematics use geom_quat. (MJWarp differs: it never re-poses
+            # world-body geoms after make_data at all.)
+            self.model.geom_sameframe[self._floor_g] = 0
         self.rw = self.cfg["reward"]
         self.rand = self.cfg["randomization"]
         self._rand = DomainRandomizer(self.model, self.rand)
@@ -715,6 +735,38 @@ class GeneralEnv(gym.Env):
             1, round(float(rng.uniform(*self.resample_s)) / self.ctrl_dt))
         self._resample_step = self._step
 
+    def _tilt_floor(self, rng):
+        """Draw this episode's floor tilt, turn the floor, and put the bike on
+        it LEVEL TO THE GROUND, as teleop's `place_bike` does: the plane passes
+        through the origin, where the rear contact sits at spawn, so rotating
+        the spawn pose about the origin by the floor's own rotation lands both
+        contacts on it. On a cross-slope that is not upright to gravity, and
+        the difference is a disturbance the policy has to reject -- the same
+        one teleop gives it."""
+        frac = self._diff if self.tilt_cur else 1.0
+        tilt = rng.uniform(0.0, 1.0) * self.tilt_max * frac
+        bearing = rng.uniform(-np.pi, np.pi)
+        axis = np.array([-np.sin(bearing), np.cos(bearing), 0.0])  # as build_model
+        q = np.array([np.cos(tilt / 2), *(np.sin(tilt / 2) * axis)])
+        self.model.geom_quat[self._floor_g] = q
+        self.floor_tilt_deg = float(np.degrees(tilt))
+        R = np.zeros(9)
+        mujoco.mju_quat2Mat(R, q)
+        d = self.data
+        R = R.reshape(3, 3)
+        d.qpos[0:3] = R @ d.qpos[0:3]
+        out = np.zeros(4)
+        mujoco.mju_mulQuat(out, q, d.qpos[3:7].copy())
+        d.qpos[3:7] = out
+        d.qvel[0:3] = R @ d.qvel[0:3]     # world-frame linear velocity
+
+    def _floor_z(self, xy) -> float:
+        """Height of the (possibly tilted) floor plane at world `xy`."""
+        n = np.zeros(9)
+        mujoco.mju_quat2Mat(n, self.model.geom_quat[self._floor_g])
+        nx, ny, nz = n.reshape(3, 3)[:, 2]
+        return float(-(nx * xy[0] + ny * xy[1]) / nz)
+
     def _place_ball(self, rng):
         if not self.hockey:
             return
@@ -726,7 +778,8 @@ class GeneralEnv(gym.Env):
         else:
             xy = _PARKED
         self.data.qpos[q:q + 2] = xy
-        self.data.qpos[q + 2] = self._ball_r
+        self.data.qpos[q + 2] = self._ball_r + (
+            self._floor_z(xy) if self.tilt_max > 0 else 0.0)
         self.data.qpos[q + 3:q + 7] = [1.0, 0.0, 0.0, 0.0]
         self.data.qvel[self._ball_v:self._ball_v + 6] = 0.0
 
@@ -894,6 +947,11 @@ class GeneralEnv(gym.Env):
         if seed is not None:
             self._np_random, _ = gym.utils.seeding.np_random(seed)
         rng = self._np_random
+        opts = options or {}
+        if "difficulty" in opts:
+            # Before anything difficulty-scaled is drawn (the floor tilt).
+            # Draws nothing, so the rng stream is unchanged.
+            self.set_difficulty(opts["difficulty"])
         self._apply_randomization()
         self.data.qpos[:] = self._eq
         self.data.qvel[:] = 0.0
@@ -936,6 +994,8 @@ class GeneralEnv(gym.Env):
         else:
             a = np.deg2rad(0.5)
             self.data.qpos[3:7] = [np.cos(a / 2), np.sin(a / 2), 0, 0]
+        if self.tilt_max > 0:
+            self._tilt_floor(rng)
         mujoco.mj_forward(self.model, self.data)
         self._p0 = self.data.qpos[:2].copy()
         self._psi = extract_state(self.data, self._p0).yaw
@@ -962,9 +1022,6 @@ class GeneralEnv(gym.Env):
         # replay (engage_general) can seed itself the same way.
         self._wing = (float(self.data.qpos[self._wj])
                       if (self.wings or self.swing) else 0.0)
-        opts = options or {}
-        if "difficulty" in opts:
-            self.set_difficulty(opts["difficulty"])
         self._sample_command(rng, first=True)
         # Deterministic-eval override: a fixed command held for the episode.
         if "v_cmd" in opts or "psi_cmd_rel" in opts:

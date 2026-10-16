@@ -38,6 +38,10 @@ class ResetConst:
     init_pos: float
     init_vel: float
     fixed_roll: float         # the randomization-off start lean, 0.5 deg
+    # floor tilt (GeneralEnv._tilt_floor); tilt_max 0 = off, no draw
+    tilt_max: float           # [rad]
+    tilt_cur: int             # 1: x the world's difficulty
+    floor_g: int              # the floor's geom id
     steer_q: int
     # drivetrain
     belt: float
@@ -78,6 +82,9 @@ def const_from(env) -> ResetConst:
     c.init_pos = float(r["init_pos_m"])
     c.init_vel = float(r["init_vel"])
     c.fixed_roll = math.radians(0.5)
+    c.tilt_max = float(env.tilt_max)
+    c.tilt_cur = int(env.tilt_cur)
+    c.floor_g = int(env._floor_g)
     c.steer_q = int(env._sj)
     dr = env._drive
     c.belt, c.period, c.ga, c.gb = float(dr.belt), float(dr.period), float(dr.ga), float(dr.gb)
@@ -133,6 +140,7 @@ def reset_worlds(c: ResetConst, cc: gcmd.CmdConst, done: wp.array(dtype=int),
                  qacc_warmstart: wp.array2d(dtype=float), time: wp.array(dtype=float),
                  ctrl: wp.array2d(dtype=float), qfrc_applied: wp.array2d(dtype=float),
                  xfrc_applied: wp.array2d(dtype=wp.spatial_vector),
+                 geom_xmat: wp.array2d(dtype=wp.mat33),
                  # env scalars
                  steer_target: wp.array(dtype=float), prev_a: wp.array2d(dtype=float),
                  step: wp.array(dtype=int), track_sum: wp.array(dtype=float),
@@ -212,6 +220,50 @@ def reset_worlds(c: ResetConst, cc: gcmd.CmdConst, done: wp.array(dtype=int),
     qpos[world, 4] = cy * sr
     qpos[world, 5] = sy * sr
     qpos[world, 6] = sy * cr
+
+    # -- the floor tilt (GeneralEnv._tilt_floor): OFF unless tilt_max > 0, and
+    # then the draws come after every other start-pose draw, as on the CPU.
+    # The floor is a world-body geom, which MJWarp poses ONCE in make_data
+    # and never again (smooth._geom_local_to_global returns early for it), so
+    # its world pose is written here directly; geom_xpos stays at the origin,
+    # which the plane passes through. The bike goes on level-to-the-ground,
+    # rotated about the origin with the floor, as teleop's place_bike does.
+    if c.tilt_max > 0.0:
+        frac = float(1.0)
+        if c.tilt_cur == 1:
+            frac = diff[world]
+        t1 = float(0.0)
+        t1, s = _uniform(s, 0.0, 1.0)
+        th = t1 * c.tilt_max * frac
+        br = float(0.0)
+        br, s = _uniform(s, -3.14159265358979, 3.14159265358979)
+        # unit axis (-sin br, cos br, 0); rotation th about it (wxyz)
+        ax = -wp.sin(br)
+        ay = wp.cos(br)
+        fw = wp.cos(0.5 * th)
+        fx = wp.sin(0.5 * th) * ax
+        fy = wp.sin(0.5 * th) * ay
+        R = wp.quat_to_matrix(wp.quat(fx, fy, 0.0, fw))      # warp: xyzw
+        geom_xmat[world, c.floor_g] = R
+        tp0 = wp.vec3(qpos[world, 0], qpos[world, 1], qpos[world, 2])
+        tp1 = R * tp0
+        qpos[world, 0] = tp1[0]
+        qpos[world, 1] = tp1[1]
+        qpos[world, 2] = tp1[2]
+        tv0 = wp.vec3(qvel[world, 0], qvel[world, 1], qvel[world, 2])
+        tv1 = R * tv0
+        qvel[world, 0] = tv1[0]
+        qvel[world, 1] = tv1[1]
+        qvel[world, 2] = tv1[2]
+        # q_floor * q_bike, wxyz
+        bw = qpos[world, 3]
+        bx = qpos[world, 4]
+        by = qpos[world, 5]
+        bz = qpos[world, 6]
+        qpos[world, 3] = fw * bw - fx * bx - fy * by
+        qpos[world, 4] = fw * bx + fx * bw + fy * bz
+        qpos[world, 5] = fw * by - fx * bz + fy * bw
+        qpos[world, 6] = fw * bz + fx * by - fy * bx
 
     # -- actuator state, clock, applied forces --
     for i in range(act.shape[1]):

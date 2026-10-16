@@ -181,7 +181,7 @@ class GpuGeneralEnv:
             m.body_mass, m.geom_friction, m.actuator_forcerange, m.actuator_ctrlrange,
             m.dof_frictionloss,
             d.qpos, d.qvel, d.act, d.history, d.qacc_warmstart, d.time, d.ctrl,
-            d.qfrc_applied, d.xfrc_applied,
+            d.qfrc_applied, d.xfrc_applied, d.geom_xmat,
             self.steer_target, self.prev_a, self.step_i, self.track_sum, self.track_n,
             self.psi, self.raw_prev, self.next_resample, self.diff, self.v_cmd_w,
             self.psi_cmd,
