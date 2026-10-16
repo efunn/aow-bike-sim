@@ -1,13 +1,13 @@
-# Project status — 2026-09-09
+# Project status — 2026-10-16
 
 **How to read this.** The navigation layer: what is true now, what to do next,
 and where the detail lives. Rewritten, not appended to. **For the reasoning,
 follow the link — it is not repeated here.**
 
-Rewritten 2026-10-02 (1798 lines -> ~300). Every dated block that was here
-moved VERBATIM into the plan doc that owns it, under a heading saying so; the
-old file is `git show d0dffeb:docs/status.md`. Where each went: "Where
-everything is written down", below.
+Rewritten 2026-10-02 (1798 lines -> ~300; the old file is `git show
+d0dffeb:docs/status.md`) and again 2026-10-16, when solved problems still
+listed as open were moved out: the GPU stack, the retrains on today's plant,
+and the 10-14 env fixes had all landed without this file catching up.
 
 ---
 
@@ -15,20 +15,23 @@ everything is written down", below.
 
 1. **The simulator is trusted for control design**: parametric MuJoCo, an
    omni-wheel contact, the bike's own sensors in the loop and in training,
-   measured XC330 laws and headset friction. The contact is the least-measured
-   part; bench pre-tests started 2026-10-01.
-2. **RL drives.** `general_rl*` policies balance and drive from a live
-   (velocity, heading) command. The analytic LQR is DEPRECATED (10-09).
+   measured XC330 laws, headset friction, the detailed drivetrain and the
+   righting module. The contact is the least-measured part; bench pre-tests
+   started 2026-10-01.
+2. **RL drives, and it trains on a rented GPU.** The pointer is a
+   GPU-trained MinGRU policy (`general_puffer_fixes_72M`, 10-16); MuJoCo
+   Warp + PufferLib train 72M steps in ~12 min on an RTX 5090 (~$0.23). The
+   box's CPU stack stays as the reference. The analytic LQR is DEPRECATED
+   (10-09).
 3. **The onboard path runs on the Pi bench** (09-15 to 09-18): 100 Hz loop,
    TM151 pushing from flash, mirror, telemetry, recorder, fall/cut/re-arm,
    low-voltage cut. Torque on only with the bike held. No pack yet.
 4. **Hardware is printed module by module.** Built: servo bench, rear
-   drivetrain station, the righting four-bar (09-17), the front steer
-   (printed 09-30), the printed righting module (by 10-16, user; blades not
-   yet fitted). Designed, not printed: the rear drive. The whole bike is
-   assembled in CAD (09-30).
+   drivetrain station, the front steer (09-30), the printed righting module
+   (by 10-16; blades not yet fitted). Designed, not printed: the rear drive.
+   CAD v2 (10-11) lays out the whole bike without a chassis.
 5. **The goal is a functioning bike with sample videos, in weeks.** Ranked
-   against that.
+   against that; the showcase moves are in `wishlist.md`.
 
 ---
 
@@ -36,10 +39,10 @@ everything is written down", below.
 
 | # | do | why now | doc |
 |---|---|---|---|
-| 1 | **Contact calibration**: stiffen the force sensor's mount (resolder or glue) and check it with a rigid-block drop; then the drop rig with added mass at the wheel (front, then rear), a joint `solref` + `solimp` fit with the dial (P0) data, and the P0b pull test and tread print (friction) | First rig run (10-03, front, 65 drops): the rig's load path reads ~7-30x softer than the dial says the wheel alone is, and the base rings at ~170-180 Hz -- probably the sensor mount, so fits so far describe the rig, not the tire. MuJoCo's contact is per unit mass (same bounce at any mass), so a fit reaches the bike only through each wheel's effective mass | `drop-release-rig.md`, `contact-protocol.md`, `analysis/drop_rig_sim.py` |
-| 2 | **Print the rear drive**, then the chassis (the righting module is built, 10-16; blades not yet on) | Held until the steer print settled the shared fits; the bushing and end-play results are in (09-30) | `drive-design.md`, `righting-design.md`, `bike-assembly-design.md` |
+| 1 | **Contact calibration**: stiffen the force sensor's mount (resolder or glue) and check it with a rigid-block drop; then the drop rig with added mass at the wheel (front, then rear), a joint `solref` + `solimp` fit with the dial (P0) data, and the P0b pull test and tread print (friction) | First rig run (10-03, front, 65 drops): the rig's load path reads ~7-30x softer than the dial says the wheel alone is, and the base rings at ~170-180 Hz -- probably the sensor mount, so fits so far describe the rig, not the tire. MuJoCo's contact is per unit mass (same bounce at any mass), so a fit reaches the bike only through each wheel's effective mass | `drop-release-rig.md`, `measurements/contact-protocol.md`, `analysis/drop_rig_sim.py` |
+| 2 | **Print the rear drive**, then fit the blades to the righting module | The bushing and end-play results are in (09-30); the module is built (10-16) | `drive-design.md`, `righting-design.md`, `aow-bike-whole-v2.md` |
 | 3 | **Finish the drivetrain station**: firmware Velocity P and I, the D5 torque-scale check, fit the five drivetrain `GUESS`es | The sim cannot pick the gain (policies tie at P 100 / P 400; P 400 buzzes ~3x harder). Decide on the bike | `drivetrain-model.md`, `drivetrain-measurements.yaml` |
-| 4 | **Sim: the eval score's directional gate** | `_score` is still `survive_rate x track_geo`; a policy that abandons a direction outranks good ones. Risk #2 | `eval-score-rewrite.md` |
+| 4 | **Sim: the eval score's directional gate** | `_score` is still `survive_rate x track_geo`; a policy that abandons a direction outranks good ones. Every export since v3 drives both straight commands forward, so this is insurance for future runs. Risk #2 | `eval-score-rewrite.md` |
 
 Weighing waits for the as-built parts: the mass entries will be re-cut by
 module (the Pi 3 is a stand-in, the printed modules are new), so weigh once
@@ -49,9 +52,9 @@ they exist. One printed part weighed sooner would calibrate the CAD estimates
 Bench loose ends: the second XC330 is still id 103 and must become 104 before
 the two share a bus.
 
-Not next, deliberately: the ball shot, the privileged critic, the odometry
-rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
-(parked 09-27; 625 counts rights the built one in teleop, 300 cannot).
+Not next, deliberately: a trained (RL) ball shot (close-range scripted plays
+exist in teleop), the privileged critic, the odometry rewrite, the AHRS
+fixture (parked 09-24), the self-righting linkage choice (parked 09-27).
 
 ---
 
@@ -59,101 +62,61 @@ rewrite, the AHRS fixture (parked 09-24), the self-righting linkage choice
 
 | workstream | state | blocker | doc |
 |---|---|---|---|
-| **Simulation & model** | Working; 21 `GUESS`es in bike_params. **The default bike carries the V2 righting module (10-09):** the diamond four-bar with its blades and toe stop, from the CAD's own files, 1.016 -> 1.228 kg (+167 g module, +45 g roof); `swing_linkage=False` is the old wingless bike. Opt-in detailed drivetrain (fitted XC430 loop, detent, slop). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30 | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
-| **Control — RL** | Primary. Pointer `general_puffer_fixes_72M` (10-16, GPU MinGRU, today's plant; was `smooth_temporal` from 10-09); teleop flies it on `tm151_filter` by default; the current config lineage (`smooth_*`, `nodiff`) TRAINS on it from 10-09. No-diff arm `general_rl_nodiff_2` trained (V1 four-bar, see below). Every export trained on the old front wheel AND wingless (nodiff_2: V1): provisional; teleop and the endurance test now fly them on the V2 bike (pointer: 0/18 falls). **Next:** `queue_general_v3` (5 seeds, V3 rigid, +-10 deg roll; on the box from 10-14), then its MEMORY arm `queue_general_v3_mingru` (a MinGRU in the actor, `recurrent_ppo.py`): both FINISHED, 5 seeds each; `v3_s1` and `v3_mingru_s0` on top of `moves/`, the rest archived. On one `per_command.py --summary` grid (10-16, tm151_filter) all fell 0/20; turns resolved forward: MinGRU seeds 5-7/9, `v3_s1` 8/9, `fixes_72M` 7/9. The CPU memory arm did not beat its feed-forward sibling on that summary; no tracking comparison across arms yet (their export metrics come from different code). **Eval rows before 10-14 carried a steer kick from the row before** (the reset kept the steer delay line; fixed 10-14, `reset_actuator_state`): re-run `per_command.py` rather than compare across that date. **And the obs's prev_action was one step stale in training** (GeneralEnv built the obs before storing the action; `drive.py` feeds the fresh one): fixed 10-14, so `queue_general_v3` (old code) and the memory arm (after a sync) differ in this too. v3_s0 flown both ways: 0/30 falls each, tracking mixed (`analysis/prev_action_stale.py`). **Also fixed 10-14: the obs `reset` returned read MuJoCo truth** for roll, rates and pitch (the AHRS was primed after the obs read it): one truth observation per episode, now the sensor's | Crab one-sided (`v_lat_frac` 0 in this export); `turn_asym` ~0.2; one seed | `general-rl-improvements.md`, `policy-smoothness-losses.md` |
-| **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` model exists; with the accelerometer weighting from the drop rig (10-07) it falls 1/20 on the eval grid (19/20 before; `tm151` 2/20), still unproven on sustained acceleration. The training level from 10-09, provisional: more physical tests to come | The bike's own AHRS log; the wave cams (sustained acceleration) | `sensor-workstream.md`, `ahrs-fixture.md` |
-| **Control — LQR** | **Deprecated 10-09.** `lqr` tests skipped unless named (`pytest -m lqr`: 15 accepted reds, unchanged). The code stays: the RL envs' crawl fallback and the bundle's gain schedule are built on it. Last state (10-05): stands on truth and `tm151_filter`, falls turning at 0.8 m/s | none: not being tuned | `lqr-baseline.md` |
+| **Simulation & model** | Working; 21 `GUESS`es in bike_params. Plant digest **bc66ca20** (10-14): the measured front wheel (10-05), the detailed drivetrain as the default plant (10-02), the V2 righting module (10-09) with the V3 blade (10-14). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30. Optional per-episode floor tilt for training, CPU and GPU, off by default (10-16) | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
+| **Control — RL** | Primary. Pointer `general_puffer_fixes_72M` (10-16): GPU, MinGRU (stateful), `tm151_filter` + odometry counts, detailed drivetrain, today's plant. On one `per_command.py --summary` grid (`--ahrs tm151_filter`): 0/20 falls, 7/9 turns resolved forward, 2/2 straight forward; chatter score 0.863, per-step action change 0.008 (v3 seeds 0.035-0.048); endurance minute **0/18 falls** (10-16). Two GPU seeds pick the same direction on all 20 grid commands. CPU arms on today's plant, finished on the box: `queue_general_v3` (5 seeds, MLP) and `queue_general_v3_mingru` (5 seeds, MinGRU actor); turns forward 4-8/9 (s0-s2 measured) and 5-7/9 (all five), 0 falls. `v3_s1` and `v3_mingru_s0` are on top of `moves/` | Crab never trained (`v_lat_frac` 0; crab L/R ~0.45/0.63 on the pointer); not flown on the bike | `gpu-training.md`, `general-rl-improvements.md`, `policy-smoothness-losses.md` |
+| **GPU training** | Phases 1-3 done (10-14 to 10-16): MuJoCo Warp env as one CUDA graph per policy step, bridged into PufferLib 5.0's CUDA trainer, patched for reward scale, advantage normalisation, the temporal smoothness term and a paced shared curriculum. Checkpoints convert to moves (`gpu/export_policy.py`). Cards: 5090 12 min / $0.23 per 72M steps, 4090 17 min, A40 38 min. Runs are not bit-repeatable (float atomics) | Phase 4 (MLP / loss parity) and 5 (five GPU seeds vs v3's five on one grid) not started; no sim-to-sim check of a GPU policy in C beyond the eval grid | `gpu-training.md` |
+| **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` with the accelerometer weighting from the drop rig (10-07) is the training level since 10-09, provisional; unproven on sustained acceleration | The bike's own AHRS log; the wave cams (sustained acceleration) | `sensor-workstream.md`, `ahrs-fixture.md` |
+| **Control — LQR** | **Deprecated 10-09.** `lqr` tests skipped unless named (`pytest -m lqr`: the 15 registered reds). The code stays: the RL envs' crawl fallback and the bundle's gain schedule are built on it. Last state (10-05): stands on truth and `tm151_filter`, falls turning at 0.8 m/s | none: not being tuned | `lqr-baseline.md` |
 | **Hardware / onboard** | Pi 3 bench proven: tick jitter p99 < 1 ms with four servos energised. 2.4 GHz house wifi (decided: a router, no AP). The SBC that ships: open | Chassis, pack | `pi-bench-bringup.md`, `untethered-setup.md` |
-| **CAD** | Steer printed and print-checked; nothing else printed. **v2 started (10-11, `aow-bike-whole-v2.md`): a fresh layout, no chassis.** Drive: fixture mock off (the case sides end at the skirt), the user's chainstay chamfers, gusset and fillets folded into the generator, both sides. Steering v2 (new tabs; v1's printed design untouched): the servo out the FRONT, two 6-32 upper -> lower (lugs a side, on the connector window's aft edge), one 6-32 a side for the bike on the axis at the bushing's height (nut slots from the front, 5.0 full-length side pads), the front a vertical rise then a 45 deg undercut, no mount plate (lower case ~13 g printed ASA). Righting: the wing as two printed stubs (the tab blocks only) and the V3 blade as a dummy, the real spline (skBezier), both blades centred on the wheelbase (`wing.blade_y`, the left one mirrored), the poses to V3's stroke 116.9. The v2 bike (`cad_bike_v2`, new tabs): the modules plus the electronics free-floating (battery on the drive's back, nothing on it; AHRS and power board on the drive's front face; the Pi in detail, parallel to it; U2D2 along the steering axis, aft of the steering); wheelbase 200.5 (rod 120.5 + 80, the blades centred on it); `--check` clean at rest, steered and every pose. v1 (`cad_bike`, wheelbase 200.5, chassis/tray/carrier) is frozen on the `ends` blade and still builds | Delete the drive's four hand features; settle the U2D2 and power board (user: open) and the rest of the layout (CoM not computed: AHRS/U2D2 unweighed, power board a guess); then cases/routing round it; wing-to-blade attachment (not yet, user) | `aow-bike-whole-v2.md`, `bike-assembly-design.md` (v1), `cad-onshape-workflow.md` |
-| **Self-righting** | V2, the diamond with blades, is the bike's module and the sim's default (10-09): rights at 547 counts at 9.9 V (V1: 643), commanded stroke 129.3 (10-09, user: where the bike reaches level on the blade -- was 128.4, the synthesis's panel-line "flat"). The blades' toes stop the crank at ~130 (toe lengthened 2.2 mm, user), BEFORE each knuckle reaches the other coupler (they would collide past ~130; ~1.7 mm left at the stop). More travel later: a dogleg coupler (optional). With the bike standing on its wheels the blade clears the floor by 0.63 mm at crank 129 (the stepthrough). The ground station strokes the module's 129.3 (it read V1's 136.6). Masses and the crank armature are CAD `GUESS`es. **V3 IS THE DEFAULT BLADE (10-14, user; plant_digest bc66ca20, deploy bundle re-exported):** V2's linkage with a new blade, `config/swing_explore/blade_v3.yaml`: the outer face vertical at stow, curving into the toe (a cubic). On the stepthrough page beside V1/V2; V2's blade is `--blade config/righting_blade.yaml`. Level (and its commanded stroke) 116.98 / 116.9, lying on its side at 85° (V2 75°), 566 counts in the sim (V2 547), toe stop unchanged at 130. Blade files now take straight runs at an angle and curves, and the sim cuts any outline into convex pieces. A blade file may carry its own `mass` and `crank_travel_deg` (V3 pins 116.9; the stepthrough flags a pin > 0.25° off its level point); fly one in teleop with `--blade <file>` (in memory, a different plant digest). **Lie down / get up / auto-up (10-16):** `control/swing_sit.py`, teleop PageDown / PageUp, and by itself after a fall (`--no-auto-up`); sim only, tuned in `analysis/swing_sit.py` on each policy's own (detailed) drivetrain (down 5.8 s at <= 102 deg/s, up 3.3 s; 24/24 in teleop). The `righting` tests read the blade from params, so a new blade passes them unless it breaks something (checked with V3 as the default: only the digest tripwire and the deploy bundle go red, as they must) | Weigh the printed parts; a crank coast-down for the XC330's reflected inertia; fly lie-down / get-up on the bike | `righting-linkage-margin.md`, `righting-servo-model.md`, `wishlist.md` |
-| **Contact bench** | Drop rig built and run (10-03): the cam fires every drop and records each, release-to-impact timed; analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/drop_rig_sim.py`, with `--fit`. AHRS mode drawn (10-06): a jam-on follower tip and an 11-cam wave kit, nothing printed. `force_drop.py --ahrs` (10-07) logs the TM151 and the servo whole, beside the drops, one clock. AHRS on the Pi (10-07, no force sensor -- three USB devices reboot-loop the Pi): on the bar at 115 mm, steps within ~0.07 deg of the cam's, settled by 0.5 s; +0.32 / +0.19 / -0.03 / -0.11 deg over the cam at 25 / 70 / 115 / 190 mm (190 on the fork), roll growing toward the wheel; repeats within ~0.02 deg (70 untouched, 115 after re-mounts): the arm's angle changes unevenly along it, so stations do not share a rotation | Print the 4x2.4 and 8x0.6 wave cams + the tip, then `bench/wave_run.py` with the TM151 on a riser (sustained acceleration); power for the force sensor on the Pi (a powered hub?); a local truth per station (the arm is not rigid); the ~0.09 deg run-up rise before each release; the sensor epoxied down; the arm's parts weighed | `drop-release-rig.md`, `contact-measurements.yaml` |
+| **CAD** | Steer printed and print-checked; the righting module printed (blades not on). **v2 (10-11, `aow-bike-whole-v2.md`): a fresh layout, no chassis.** Drive: fixture mock off, the user's chainstay chamfers, gusset and fillets folded into the generator. Steering v2: servo out the FRONT, 6-32s a side, no mount plate (lower case ~13 g ASA). Righting: the wing as printed stubs, the V3 blade as a real spline, both blades centred on the wheelbase. The v2 bike: the modules plus free-floating electronics; wheelbase 200.5; `--check` clean at rest, steered and every pose. v1 (`cad_bike`) is frozen and still builds | Delete the drive's four hand features; settle the U2D2 and power board (user: open) and the rest of the layout (CoM not computed); then cases/routing; wing-to-blade attachment (not yet, user) | `aow-bike-whole-v2.md`, `bike-assembly-design.md` (v1), `cad-onshape-workflow.md` |
+| **Self-righting** | V2 linkage with the **V3 blade** is the default (10-14, user): level at 116.98 deg (commanded 116.9), lying at 85 deg, 566 counts in the sim, toe stop at ~130. V2's blade is `--blade config/righting_blade.yaml`; a blade file may carry its own `mass` and `crank_travel_deg`. **Lie down / get up / auto-up** (10-16): `control/swing_sit.py`, teleop PageDown / PageUp, and by itself after a fall (`--no-auto-up`); a fall after the hand-off folds the blade and re-arms the auto-up. Sim only: down 5.8 s at <= 102 deg/s, up 3.3 s; 24/24 in teleop | Weigh the printed parts; a crank coast-down for the XC330's reflected inertia; fly lie-down / get-up on the bike | `righting-linkage-margin.md`, `righting-servo-model.md`, `wishlist.md` |
+| **Contact bench** | Drop rig built and run (10-03): release-to-impact timed, analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/drop_rig_sim.py --fit`. AHRS mode drawn (10-06): a jam-on follower tip and an 11-cam wave kit, nothing printed. `force_drop.py --ahrs` (10-07) logs the TM151 and the servo with the drops, one clock. On the bar the TM151 steps within ~0.07 deg of the cam's; the arm is not rigid, so stations do not share a rotation | Print the wave cams + the tip, then `bench/wave_run.py` (sustained acceleration); power for the force sensor on the Pi (three USB devices reboot-loop it); a local truth per station; the sensor epoxied down; the arm's parts weighed | `drop-release-rig.md`, `contact-measurements.yaml` |
 
 ---
 
 ## Health
 
-**NEW FRONT WHEEL (2026-10-05).** The original bike's wheel, measured
-(102.5 x 24 mm, 7 mm shoulders), its 10 mm flat tread modelled as an 80 mm
-crown (`GUESS`; why: `mujoco-modeling-decisions.md`). Costs: the LQR needed
-`q_steer_standstill` to stand and still falls turning at speed
-(`lqr-baseline.md`); the then pointer's (`cmd_curriculum2b`) eval score fell 0.572 -> 0.454, mostly big
-turns (4 of 6 survive, was 6 of 6). **Outstanding:** every policy is
-provisional until retrained on this wheel.
+**Tests, 2026-10-16**: `907 passed, 52 skipped`, red set unchanged, **no
+accepted reds** in the default run (`pytest -n 10 --dist loadgroup`, 52 s).
+The 15 registered reds are all the deprecated LQR and are only judged under
+`pytest -m lqr`. `prospective` (the endurance minute, skipped unless named)
+passes on the pointer: 0/18 falls.
 
-**THE DETAILED DRIVETRAIN IS THE DEFAULT PLANT (2026-10-02).** The overlay
-moved, unchanged, from `config/drivetrain_model.yaml` into `bike_params.yaml`'s
-`drivetrain_model:` block, which put `plant_digest` at 9953690d, exactly the
-stamp of the four smoothness-loss exports; removing `min_pinion_radius` the
-same day moved it on to **95630b212f03ffc4** with no physics change. `drivetrain_model.base_params` is the IDEAL drive: the LQR is
-designed on it (`linearize.design_plant`, an ideal twin of whatever model it
-is handed) and flown on the detailed one; the flick/pivot/ball envs and every
-export without a `drivetrain_model:` record (`cmd_curriculum2b` included) run on it;
-teleop compiles its startup policy's own plant. **A model built with the
-block IS the ideal plant until `DrivetrainSim.attach` switches it** (native
-drive zeroed, measured rotor inertia, rigid roller couplings off, slop tendons
-on; `release` switches back, both pinned bit-exact by tests): so every loop
-that never attaches the hook -- contact studies, settles, the other moves'
-envs -- runs exactly as before, and the hooked ones (RL envs, teleop,
-`balance.run`, `record`) get the detailed drive.
-`drivetrain_model.attach_hooks` is the one call a physics loop needs.
+**Digests, 2026-10-16**: `plant_digest` bc66ca20e1af66d5, `design_digest`
+5fe8c19379988031; `deploy/bundle.npz` (re-exported 10-14) matches both.
+**Copy it to the Pi by hand**: `deploy/` is gitignored. History:
+`params-digest-split.md`.
 
-**Tests, 2026-10-14**: `878 passed, 52 skipped`, **no accepted reds**.
-`test_sensor_modes[0.19]` (the sensor-mode policy at tau 0.19, red since the
-new front wheel) went green with the GeneralEnv observation fixes (fresh
-prev_action, AHRS at reset): red at their parent commit, green at it.
-Before that, **2026-10-09**: `1 failed, 812 passed, 52 skipped`. The LQR's 15 accepted reds
-are skipped with the deprecated `lqr` marker and still judged under
-`pytest -m lqr` (15 failed, 20 passed, unchanged). The teleop tests now run the
-viewer's `pre_step` (the detailed drive's XC430 loop): without it the new
-pointer had no drive torque and four went red.
+**Which exports carry today's plant (bc66ca20):** 23 -- every
+`general_puffer_*` checkpoint, `general_rl_v3_s0..s4`,
+`general_rl_v3_mingru_s0..s4`. Everything else in `moves/` trained on an
+older plant (old front wheel, wingless or V1 module) and is provisional.
+Read a move's own `plant_digest`, never its name.
 
-**Tests, 2026-10-05**, after the new front wheel: `16 failed, 790 passed,
-17 skipped`, red set unchanged (16 accepted). 8 registered 2026-10-05,
-pending the user's sign-off: seven LQR cases at speed or under a push, and
-the sensor-mode policy at tau 0.19. Two 2026-10-02 entries went green and
-left. `test_hw_telemetry`'s gearbox check now runs the drive airborne: on the
-floor the bike fell over and the check measured how it landed.
-
-The 2026-10-02 entries: **7 registered 2026-10-02** (user: "fine for now"). All seven
-are the analytic LQR (`PivotController` is `LQRBalance` plus a pivot
-reference) flown closed-loop on the detailed drive: `test_tilt_recovery[lqr]`,
-`test_command_heading[0.0-90]`, `test_stop_from_circle`,
-`test_straight_sprint[-0.5]`, `test_pivot_completes_upright[+-90, 180]`.
-Bisected by switching the drivetrain's parts (an earlier harness, 5 reds):
-detent alone and slop alone pass all of them; the servo part fails them.
-Within it, **the input-shaft Coulomb friction (0.15 N m at the servo, ~10%
-of stall) is most of it**: off, 2 stay red; off and latency zeroed, 1.
-Latency alone fixes nothing. Which tests are red shifts with how each test
-steps between its `run()` segments (11 if the drive is never released), so
-read the family, not the list. Before the change: 3 failed, 748 passed.
-
-All three are the analytic LQR in reverse: `command_heading[-0.5-90]`,
-`command_heading[-1.2-90]` (since the headset friction, 09-30) and
-`reverse_circle`. The standing-endurance test is registered red and
-`prospective` (skipped unless named): `cmd_curriculum2b` fell 10 of 18.
-Its entry left 10-09 with the pointer move: `smooth_temporal` passes.
-
-**Digests, checked 2026-10-05**: `plant_digest` 12d9639e3ce90f36,
-`design_digest` 5fe8c19379988031; `deploy/bundle.npz` re-exported and
-matches both (worst schedule fit R^2 0.962). **Copy it to the Pi by hand**:
-`deploy/` is gitignored. No export carries this plant: the four
-smoothness-loss exports are at 9953690d, `cmd_curriculum2b` at e1ec36bf -- both
-before the wheel. History: `params-digest-split.md`.
+**Env fixes of 10-14 that split the history** (re-run `per_command.py`
+rather than compare across the date): eval rows carried a steer kick from
+the row before (`reset_actuator_state`); the obs's prev_action was one step
+stale in training; the reset obs read MuJoCo truth for roll, rates and pitch.
+`queue_general_v3` trained before them, the MinGRU arm and every GPU run
+after.
 
 **Open, known:**
 
 - **AHRS error costs far more without the velocity estimate**, for the LQR
   and RL alike; mechanism untested (`lqr-baseline.md`).
-- **`tm151_filter` is now what training uses (10-09), provisionally.** The
-  unweighted filter read contact bounce as ~8 deg of tilt; the accelerometer
-  weighting fitted on the drop rig and fixture (c6d37b3; `FILTER_ACC_D0_G`
-  0.12, `FILTER_ACC_HOLD_S` 0.1) took `cmd_curriculum2b` from 19/20 falls to
-  1/20 on the eval grid (`tm151` 2/20). On the endurance minute (18 seeds)
-  `smooth_temporal` falls 0/18 on it, 1/18 on the `tm151` it trained on.
-  Unmeasured: sustained acceleration (turns, crab -- 5.4-5.8 deg there), the
-  next physical tests (`drop-release-rig.md`). Its `ahrs_tau_s` only times
-  the 0.1 deg residual wander (2.0 s); the filter's own 0.19 / 1.0 s is
-  built in. Every export before 10-09 trained on `tm151` at 0.19.
+- **`tm151_filter` is provisional.** The unweighted filter read contact
+  bounce as ~8 deg of tilt; the accelerometer weighting fitted on the drop
+  rig and fixture (`FILTER_ACC_D0_G` 0.12, `FILTER_ACC_HOLD_S` 0.1) fixed
+  that. Unmeasured: sustained acceleration (turns, crab -- 5.4-5.8 deg
+  there). Its `ahrs_tau_s` only times the 0.1 deg residual wander (2.0 s);
+  the filter's own 0.19 / 1.0 s is built in.
+- **A MinGRU policy latches state at reset.** On `fixes_52M`, 7 of 9
+  slow units are written in the first steps after a reset and held for the
+  episode, so a bogus first observation can persist (`analysis/mingru_memory.py`,
+  `gpu-training.md`). Replay must reset the hidden state per engage.
+- **Why `fixes_72M` drops a swing-sit hand-off on the base params** that
+  `fixes_52M` catches: one trace, not chased (it recovered on its own
+  drivetrain; the sequencer now retries).
 - **The mirror's wifi stalls** (100-550 ms gaps, 09-17) did not repeat;
   cause unknown. Probe when it chugs again (`pi-bench-bringup.md`).
 - **Not yet checked on hardware**: the rear wheel's sent angle against a
@@ -167,39 +130,38 @@ before the wheel. History: `params-digest-split.md`.
 ## What drives the bike
 
 `control.general_move` = **`general_puffer_fixes_72M`** (10-16; was
-`general_rl_smooth_temporal` from 10-09): the GPU-trained MinGRU policy, the
-first pointer trained on today's plant (plant_digest bc66ca20). Sensor-trained
-(`tm151_filter`, odometry counts) on the detailed drivetrain. The full suite
-is unchanged by the move (907 passed); the endurance minute (`prospective`)
-was not re-run on it.
+`general_rl_smooth_temporal` from 10-09). Numbers in the RL row above.
+Teleop flies it on `tm151_filter` by default (`--general NAME` for another);
+the scripted plays (`--play config/plays/*.yaml`, End) were tuned on
+`seed1_72M`.
 
-**`moves/` was cleaned up on 10-16.** The top level holds the pointer, today's
-GPU finals (`fixes_52M`, `seed1_72M`, `next_72M`), `v3_s1`, the CPU MinGRU
-arm's `v3_mingru_s0`, the previous pointer, and the moves teleop's keys and
-the tests name (`flick*`, `ball_rl`, `pivot_rl`, `general_rl`). The other 84
-(80 + `v3_mingru_s1..s4`) are in `moves/archive/`, tracked, and
-still load by bare name (`control.flick.move_path`). They are out of the
-teleop `,` menu. `docs/plans/moves-layout.md` has the reasoning.
+**`moves/` layout (10-16).** The top level holds the pointer, today's GPU
+finals (`fixes_52M`, `seed1_72M`, `next_72M`), `v3_s1`, `v3_mingru_s0`, the
+previous pointer, and the moves teleop's keys and the tests name (`flick*`,
+`ball_rl`, `pivot_rl`, `general_rl`). The other 84 are in `moves/archive/`,
+tracked, and still load by bare name (`control.flick.move_path`); they are
+out of the teleop `,` menu. Retiring a move is a `mv`. `moves-layout.md`.
 
 The previous pointer, `smooth_temporal`: odometry estimate + TM151 at 0.19,
-detailed drivetrain at P 100, the temporal smoothness loss, ~19x less steer
-chatter than `cmd_curriculum2b`, score 0.820 vs 0.572, stood the endurance
-minute. Trained-on-sensors beats trained-on-truth, 1.00 to 0.20 survival. Standings and pointer history: `sensor-workstream.md`,
-`drivetrain-model.md`.
+detailed drivetrain at P 100, the temporal smoothness loss, stood the
+endurance minute; trained on an older plant. Pointer history:
+`sensor-workstream.md`, `drivetrain-model.md`.
 
-**No-diff probe, `general_rl_nodiff_2` (10-09, one seed, not the pointer).** A one-off test of how a plain bike could use the swing linkage with tip masses to balance; NOT a line of work -- no further no-diff runs are planned (user, 10-09).
-common-mode drive + steer + the four-bar swing wings with 100 g tips, the
-differential faded out by the curriculum (zero by ~10M of 18M steps), a wing
-on the floor a fall. On its own sensors it stands the endurance minute 0/18
-falls (`tm151` and `tm151_filter` both) -- but CREEPS forward ~7 cm/s on a
-zero command (4.4-5.7 m in 60 s). The wing is BALLAST: the crank sits near
--95 deg, the bike leans ~3.8 deg, the low wing hovers 4-6 mm off the floor at
-its closest and ~11 mm median, never touching. Frozen at that angle it
-still stands 0/18 (roll spread 0.8 deg vs 1.25 live); frozen at stow 18/18
-fall (MTBF ~11 s). The 5 s training eval cannot see the creep. Trained on
-the V1 linkage (`swing_linkage_smaller`), NOT V2, the bike's module; it
-does not transfer. `rl_general_nodiff.yaml` was moved to V2 with the rest
-of the configs, for consistency only.
+**No-diff probe, `general_rl_nodiff_2` (10-09, one seed, not the pointer).**
+A one-off test of how a plain bike could use the swing linkage with tip
+masses to balance; NOT a line of work -- no further no-diff runs are planned
+(user, 10-09). Common-mode drive + steer + the four-bar swing wings with
+100 g tips, the differential faded out by the curriculum (zero by ~10M of
+18M steps), a wing on the floor a fall. On its own sensors it stands the
+endurance minute 0/18 falls (`tm151` and `tm151_filter` both) -- but CREEPS
+forward ~7 cm/s on a zero command (4.4-5.7 m in 60 s). The wing is BALLAST:
+the crank sits near -95 deg, the bike leans ~3.8 deg, the low wing hovers
+4-6 mm off the floor at its closest and ~11 mm median, never touching.
+Frozen at that angle it still stands 0/18 (roll spread 0.8 deg vs 1.25
+live); frozen at stow 18/18 fall (MTBF ~11 s). The 5 s training eval cannot
+see the creep. Trained on the V1 linkage (`swing_linkage_smaller`), NOT V2,
+the bike's module; it does not transfer. `rl_general_nodiff.yaml` was moved
+to V2 with the rest of the configs, for consistency only.
 
 **Do not compare `metrics:` blocks across `moves/*.yaml`**; re-run
 `analysis/per_command.py` (`CLAUDE.md`).
@@ -208,16 +170,16 @@ of the configs, for consistency only.
 
 ## The guesses
 
-**21 `source: GUESS` in `config/bike_params.yaml`** (2026-10-09: the righting module's five masses and its crank armature; 2026-10-05: the front wheel's `crown_radius`, a stand-in for the flat tread). 2026-10-02: the drivetrain block brought in the roller slop's `centring_stiffness` and `damping`; `righting.wings.min_pinion_radius` left (a constant of the retired geared wings, now `build_model.MIN_PINION_RADIUS`); `input_armature` and the hub/roller joint damping and frictionloss became `design` -- the IDEAL plant's own inertia and only drive losses, kept at their values (the measured inertia is the overlay's `rotor_inertia`), and ZEROED by `DrivetrainSim` on the detailed plant, where the measured coast friction already contains them (`drivetrain_fit.py coast`, the whole wheel in the air) and the slop tendon alone damps a roller in its play. That zeroing changed the detailed plant in code, which no digest sees: the drivetrain-trained exports are now ~1% off their training plant in drive friction (estimated), each with a note there
-on how to identify it. Never promote one quietly: promoting is a physical
-parameter change (the `CLAUDE.md` checklist).
+**21 `source: GUESS` in `config/bike_params.yaml`.** Never promote one
+quietly: promoting is a physical parameter change (the `CLAUDE.md`
+checklist).
 
 | parameter | value | what is known | dies at |
 |---|---|---|---|
-| `chassis.mass` | 0.45 kg, **37% of the bike** (44% before the righting module, 10-09) | CAD printed-mass estimates per part, uncalibrated (the chassis's new parts ~80 g printed) | the frame; weigh one printed part first |
-| `righting.module` masses (crank, coupler, wing_hub, blade, fixed) | 11.2 / 2.3 / 14.9 / 28.6 / 64.1 g, **167 g** with both sides | CAD check volumes (10-07), 2 perimeters / 15 % infill, steel pins; the blade from its outline (`righting-design.md`) | weigh the printed parts |
-| `righting.module.crank_armature` | 1e-3 kg m2 | the XC330's reflected rotor inertia, unmodelled anywhere before; >= 1e-5 stops the bare actuator ringing; 1e-4 -> 1e-3 slows the full stroke 6 % | a crank coast-down, as `drivetrain_fit.py coast` |
-| `fork_mass` + `front_wheel.mass` | 0.025 + 0.060 kg | **86 g together** (fork halves + wheel + axle, 09-30), not split | a scale |
+| `chassis.mass` | 0.45 kg, **37% of the bike** | CAD printed-mass estimates per part, uncalibrated | the frame; weigh one printed part first |
+| `righting.module` masses (crank, coupler, wing_hub, blade, fixed) | 11.2 / 2.3 / 14.9 / 28.6 / 64.1 g, **167 g** with both sides | CAD check volumes (10-07), 2 perimeters / 15 % infill, steel pins | weigh the printed parts |
+| `righting.module.crank_armature` | 1e-3 kg m2 | the XC330's reflected rotor inertia; >= 1e-5 stops the bare actuator ringing; 1e-4 -> 1e-3 slows the full stroke 6 % | a crank coast-down, as `drivetrain_fit.py coast` |
+| `fork_mass` + `front_wheel.mass` | 0.025 + 0.060 kg | **86 g together** (09-30), not split | a scale |
 | `front_wheel.crown_radius` | 80 mm | the real tread is a 10 mm flat; the crown stands in for the tire flattening under load | the dial test repeated with the wheel tilted 1-2 deg |
 | `ahrs.mass` | 0.012 kg | the TM151 is on the bench | a scale |
 | `payload.electronics.mass` | 0.076 kg | written for a Zero 2 W stack; the bench runs a Pi 3 | a scale |
@@ -225,22 +187,28 @@ parameter change (the `CLAUDE.md` checklist).
 | `contact_solimp` | MuJoCo stock | hand drops: the real contact is softer at first touch and stiffer at peak than any `solref` gives | the drop rig + bench fit |
 | `friction_sliding` | 0.9 | nothing | P0b pull test |
 | `friction_torsional` | 0.005 | deferred; the risk is setting it high | later |
-| `drivetrain_model.roller_slop.centring_stiffness` / `.damping` | 1e-3 / 2.9e-5 | the only damping of a roller inside its +-7.8 deg play; set near critical (zeta 0.95). **Sensitivity, 2026-10-02** (`analysis/slop_sensitivity.py`, eval grid): stiffness x0.1, or the slop removed, moves `smooth_temporal` by <= 0.005 (noise floor 0.000); **stiffness x10 drops it 0.818 -> 0.598**, 2 falls. Damping x0.1 / x10 does nothing to it, but `drivetrain_p100_1` (a chaotic grid: x1.01 changes which commands fall) loses 0.21 at damping x10. The hand note "springs back, not every time" points SOFT, the harmless side | qualitative first: does a released roller snap back (stiff) or drift / stick (soft)? A slow-mo release only if stiff |
+| `drivetrain_model.roller_slop.centring_stiffness` / `.damping` | 1e-3 / 2.9e-5 | the only damping of a roller inside its +-7.8 deg play (zeta 0.95). Sensitivity (10-02, `analysis/slop_sensitivity.py`): stiffness x0.1 or no slop moves `smooth_temporal` <= 0.005; **x10 drops it 0.818 -> 0.598**. The hand note "springs back, not every time" points SOFT, the harmless side | qualitative first: does a released roller snap back (stiff) or drift / stick (soft)? |
 | `righting_sign` | +1 | a build decision; the render only | mounting the motor |
-| `hockey.ball.radius` / `.mass` | 33.5 mm / 60 g | the ball shot is parked | the ball |
+| `hockey.ball.radius` / `.mass` | 33.5 mm / 60 g | used by teleop's `--hockey` and the plays | the ball |
 
 So: six die on a scale once the as-built parts exist; three with the
 contact work, plus the front crown with a tilted dial test; the roller
 slop's spring and damping with a measured in-play flick; three are parked
-(`righting_sign`, the hockey ball).
+(`righting_sign`, the hockey ball). The remaining drivetrain `GUESS`es wait
+on the station (next, #3).
 
-**How the drivetrain is carried.** `bike_params.yaml` is the IDEAL drive.
-The detailed one is the overlay `config/drivetrain_model.yaml`, and a policy
-trained on it records its own copy in its `moves/*.yaml` (`drivetrain_model:`
-block, gains included); teleop, the eval env and the endurance test rebuild
-that policy's plant from its record. `cmd_curriculum2b` trained on the ideal drive;
-`smooth_temporal` and the `drivetrain_p*` policies on the overlay at P 100 /
-P 400.
+**How the drivetrain is carried.** The detailed drive is the
+`drivetrain_model:` block in `bike_params.yaml` (since 10-02);
+`drivetrain_model.base_params` gives the IDEAL drive, which the LQR is
+designed on and the flick/pivot/ball envs run on. **A model built with the
+block IS the ideal plant until `DrivetrainSim.attach` switches it** (native
+drive zeroed, measured rotor inertia, slop tendons on; `release` switches
+back, both pinned bit-exact by tests), so loops that never attach the hook
+-- contact studies, settles -- run on the ideal drive, and the hooked ones
+(RL envs, teleop, `balance.run`, `record`) on the detailed one;
+`drivetrain_model.attach_hooks` is the one call a physics loop needs. A
+policy records its own copy in its `moves/*.yaml`, and teleop, the eval env
+and the endurance test rebuild that policy's plant from it.
 
 **The contact as it ships:**
 
@@ -251,11 +219,9 @@ P 400.
   its own 5.8 N, 0.57 mm at 44 N; front 0.049 mm at 4.2 N.
 - **Critically damped, so it cannot bounce.** The real front wheel does.
 - **Not a stiffness in N/m**: the sink scales with the masses compiled around
-  the contact, so fit on the bike's own model after the weighing (it is why
-  front and rear differ at the same settings: MuJoCo sees the rear rollers on
-  a free hub, ignoring the belts, so the rear acts like a 134 g body and the
-  front like 215 g; one point at 11 N, rear 0.25 mm, front 0.14). `dampratio`
-  enters only the stiffness, as 1/dampratio^2; label any table by sink in mm.
+  the contact, so fit on the bike's own model after the weighing (the rear
+  acts like a 134 g body, the front like 215 g). `dampratio` enters only the
+  stiffness, as 1/dampratio^2; label any table by sink in mm.
 - Plan: measure, then the negative `solref` form. `dmin` 0.9 -> 0.5 moves the
   rear rest sink 3.6x.
 
@@ -283,74 +249,85 @@ Outstanding with the bench fit: the `contact_solimp` comment in
 
 ## Risks, ranked
 
-1. **No policy has trained over contact-stiffness variation.** The axis sits
-   commented out in `config/rl_general.yaml`. Soft is safe (survival 1.00
-   from 1.8 mm of sink down to the shipped 0.15 mm); the cliff is at the
-   stiff end, where the drop test points. The most likely single cause of a
-   policy that works in sim and not on the floor
-   (`floors-and-the-contact-model.md`).
-2. **A third of training runs drive backwards when told forward**, and the
-   score cannot see it (12 seeds, 09-10). Item 4 above
-   (`seed-sweep-and-personalities.md`).
-3. **The front tire and the wings still have a rubber roller's compliance.** A
+1. **No policy has trained over contact-stiffness variation**, CPU or GPU
+   (`randomization:` varies mass, friction and actuator strength, not
+   `solref`). Soft is safe (survival 1.00 from 1.8 mm of sink down to the
+   shipped 0.15 mm); the cliff is at the stiff end, where the drop test
+   points. The most likely single cause of a policy that works in sim and
+   not on the floor (`floors-and-the-contact-model.md`).
+2. **A policy can trade away a direction and the score cannot see it.** A
+   third of the 09-10 sweep's runs drove backwards when told forward (12
+   seeds). Every export since v3 drives both straight commands forward, but
+   nothing gates it (next, #4; `seed-sweep-and-personalities.md`).
+3. **A GPU-trained policy is checked against C MuJoCo only on the eval
+   grid.** MJWarp lays more contact points than C (0.7 mm / 0.24 deg apart
+   in 100 ms open loop); the pointer flies fine in C on every test so far,
+   but phase 5's sim-to-sim comparison has not been done (`gpu-training.md`).
+4. **The front tire and the wings still have a rubber roller's compliance.** A
    one-line `sim.contact_parts` edit now, not a refactor.
-4. **Authority derating.** The torque scale is still the datasheet's
-   1.6 N m; D5 or servo-strength randomisation covers it.
-5. **Left/right asymmetry and crab**, flipping sign between policies.
-6. **Steer homing at power-up is undesigned**: the turn count is RAM.
-7. **Front-wheel liftoff is invisible to the estimator** (79 mm in one arm).
+5. **Authority.** The torque scale is still the datasheet's 1.6 N m;
+   training randomises actuator strength +-15 % (`actuator_frac`), the
+   station's D5 check measures it.
+6. **Left/right asymmetry and crab**, flipping sign between policies; crab
+   is not trained.
+7. **Steer homing at power-up is undesigned**: the turn count is RAM.
+8. **Front-wheel liftoff is invisible to the estimator** (79 mm in one arm).
 
 ---
 
 ## Where everything is written down
 
-Every plan doc opens with a status banner; read that first. **Bold** marks
-what moved there from this file on 2026-10-02.
+Every plan doc opens with a status banner; read that first.
 
 | doc | owns |
 |---|---|
 | `first-physical-test.md` | the build order |
+| `wishlist.md` | the showcase moves: ramps, ball shots, lie-down / get-up, wheelie |
 | `untethered-setup.md` | the physical bike: power, wiring, wifi, onboard software |
-| `pi-bench-bringup.md` | the Pi bench, **and the 09-15 to 09-18 bring-up log** (loop, AHRS push, mirror, telemetry, recorder, cuts, wifi, the mirrored drive servos) |
+| `pi-bench-bringup.md` | the Pi bench and the 09-15 to 09-18 bring-up log |
 | `pre-assembly-bench-checklist.md` | DRAFT floor-rig ideas and experiments |
-| `sensor-workstream.md` | the odometry/AHRS arc and policy standings, **the standing-fall analysis and pointer history** |
-| `ahrs-fixture.md` | **NEW: the TM151 fixture, its findings and CAD** (parked) |
-| `lqr-baseline.md` | **NEW: the LQR's dated health log, `MIN_FIT_R2`** |
-| `odometry-rewrite.md` | the estimator, **and the 09-21 test rewrite** |
+| `gpu-training.md` | MuJoCo Warp + PufferLib: phases, pod runbook, card choice, results |
+| `moves-layout.md` | `moves/` and `moves/archive/` |
+| `sensor-workstream.md` | the odometry/AHRS arc, policy standings and pointer history |
+| `ahrs-fixture.md` | the TM151 fixture, its findings and CAD (parked) |
+| `lqr-baseline.md` | the LQR's dated health log, `MIN_FIT_R2` |
+| `odometry-rewrite.md` | the estimator and the 09-21 test rewrite |
 | `eval-score-rewrite.md` | how policies are scored; the open directional gate |
 | `seed-sweep-and-personalities.md` | the 12-seed sweep and failure taxonomy |
 | `policy-smoothness-losses.md` | CAPS-style losses and the 10-01 results |
 | `general-rl-improvements.md` | collected RL findings, reference |
 | `mujoco-modeling-decisions.md` | why the model is built as it is |
-| `floors-and-the-contact-model.md` | solref/solimp, **the floor sweep (risk #1) and the contact split** |
+| `floors-and-the-contact-model.md` | solref/solimp, the floor sweep (risk #1) and the contact split |
 | `aow-contact-approximations.md` | contact surrogates, timestep/mesh |
 | `drop-release-rig.md` | the drop rig, built and run (10-03) |
 | `drivetrain-model.md` | the detailed drivetrain, the P 100 / P 400 question |
-| `steering-design.md` | the steer in CAD and its first print, **and the 09-21 to 09-30 status log** |
+| `steering-design.md` | the steer in CAD and its first print, and the 09-21 to 09-30 log |
 | `drive-design.md` | the rear drive in CAD |
 | `righting-design.md` / `righting-linkage-margin.md` | the printed righting module / the linkage search |
-| `righting-servo-model.md` | the XC330 model from the bench, **and its status log** |
+| `righting-servo-model.md` | the XC330 model from the bench, and its status log |
 | `bam-current-position.md` | BAM-style identification for mode 5 |
 | `wing-linkage-design-and-optimization.md` | the righting mechanism; `wing-linkage-metal.md` superseded |
 | `bike-assembly-design.md` | the whole bike in CAD, v1 (frozen 10-11) |
-| `aow-bike-whole-v2.md` | **NEW: the v2 bike and module updates (10-11):** fresh layout, free-floating electronics, no chassis |
+| `aow-bike-whole-v2.md` | the v2 bike and module updates (10-11) |
 | `cad-onshape-workflow.md` | the Onshape round trip and its quota |
 | `self-righting.md` | where recovery stops being possible |
-| `params-digest-split.md` | the two digests, **and their history** |
+| `params-digest-split.md` | the two digests and their history |
 | `asymmetric-actor-critic.md` | a parked option |
-| `ball-shot-move.md` | the ball shot, parked |
+| `ball-shot-move.md` | the trained ball shot, parked |
 | `plans/old/` | retired docs |
 
 `docs/measurements/` holds the protocol/data pairs (contact, drivetrain,
 servo, floor, omni wheel) and `servo-logging.md`. `docs/cad/` is generated:
 regenerate, never hand-edit. `bench/` holds the force-sensor and drop-rig
-tools, `bench/logs/` their captures.
+tools, `bench/logs/` their captures. `analysis/gpu/` holds the GPU study's
+pod scripts and results by phase.
 
 ---
 
 ## Explicitly not being worked on
 
-The PD cascade (legacy). The analytic LQR (deprecated 10-09). The trajopt moves `flick` / `flick_fwd` / `flip`
-(deprecated and skipped; `flick_rl` is not), re-authored once the as-built
-mass is known. A live gamepad front-end. The ball shot. The disturbance curriculum, parked until the
-params files are reconciled.
+The PD cascade (legacy). The analytic LQR (deprecated 10-09). The trajopt
+moves `flick` / `flick_fwd` / `flip` (deprecated and skipped; `flick_rl` is
+not), re-authored once the as-built mass is known. A live gamepad front-end.
+A trained ball shot. The disturbance curriculum, parked until the params
+files are reconciled. More no-diff runs.

@@ -175,3 +175,79 @@ So in teleop the LQR falls on its default sensors with either wheel (as
 2026-10-01 found for the old one), sooner on the new one; to see what the
 tests see, `--ahrs none --no-odometry`; `--ahrs tm151_filter`, the closer
 model of the part, holds.
+
+
+---
+
+## Moved from `docs/status.md`, 2026-10-16 (verbatim)
+
+The health log as status.md carried it before its 10-16 rewrite; current
+state is in status.md.
+
+**NEW FRONT WHEEL (2026-10-05).** The original bike's wheel, measured
+(102.5 x 24 mm, 7 mm shoulders), its 10 mm flat tread modelled as an 80 mm
+crown (`GUESS`; why: `mujoco-modeling-decisions.md`). Costs: the LQR needed
+`q_steer_standstill` to stand and still falls turning at speed
+(`lqr-baseline.md`); the then pointer's (`cmd_curriculum2b`) eval score fell 0.572 -> 0.454, mostly big
+turns (4 of 6 survive, was 6 of 6). **Outstanding:** every policy is
+provisional until retrained on this wheel.
+
+**THE DETAILED DRIVETRAIN IS THE DEFAULT PLANT (2026-10-02).** The overlay
+moved, unchanged, from `config/drivetrain_model.yaml` into `bike_params.yaml`'s
+`drivetrain_model:` block, which put `plant_digest` at 9953690d, exactly the
+stamp of the four smoothness-loss exports; removing `min_pinion_radius` the
+same day moved it on to **95630b212f03ffc4** with no physics change. `drivetrain_model.base_params` is the IDEAL drive: the LQR is
+designed on it (`linearize.design_plant`, an ideal twin of whatever model it
+is handed) and flown on the detailed one; the flick/pivot/ball envs and every
+export without a `drivetrain_model:` record (`cmd_curriculum2b` included) run on it;
+teleop compiles its startup policy's own plant. **A model built with the
+block IS the ideal plant until `DrivetrainSim.attach` switches it** (native
+drive zeroed, measured rotor inertia, rigid roller couplings off, slop tendons
+on; `release` switches back, both pinned bit-exact by tests): so every loop
+that never attaches the hook -- contact studies, settles, the other moves'
+envs -- runs exactly as before, and the hooked ones (RL envs, teleop,
+`balance.run`, `record`) get the detailed drive.
+`drivetrain_model.attach_hooks` is the one call a physics loop needs.
+
+**Tests, 2026-10-14**: `878 passed, 52 skipped`, **no accepted reds**.
+`test_sensor_modes[0.19]` (the sensor-mode policy at tau 0.19, red since the
+new front wheel) went green with the GeneralEnv observation fixes (fresh
+prev_action, AHRS at reset): red at their parent commit, green at it.
+Before that, **2026-10-09**: `1 failed, 812 passed, 52 skipped`. The LQR's 15 accepted reds
+are skipped with the deprecated `lqr` marker and still judged under
+`pytest -m lqr` (15 failed, 20 passed, unchanged). The teleop tests now run the
+viewer's `pre_step` (the detailed drive's XC430 loop): without it the new
+pointer had no drive torque and four went red.
+
+**Tests, 2026-10-05**, after the new front wheel: `16 failed, 790 passed,
+17 skipped`, red set unchanged (16 accepted). 8 registered 2026-10-05,
+pending the user's sign-off: seven LQR cases at speed or under a push, and
+the sensor-mode policy at tau 0.19. Two 2026-10-02 entries went green and
+left. `test_hw_telemetry`'s gearbox check now runs the drive airborne: on the
+floor the bike fell over and the check measured how it landed.
+
+The 2026-10-02 entries: **7 registered 2026-10-02** (user: "fine for now"). All seven
+are the analytic LQR (`PivotController` is `LQRBalance` plus a pivot
+reference) flown closed-loop on the detailed drive: `test_tilt_recovery[lqr]`,
+`test_command_heading[0.0-90]`, `test_stop_from_circle`,
+`test_straight_sprint[-0.5]`, `test_pivot_completes_upright[+-90, 180]`.
+Bisected by switching the drivetrain's parts (an earlier harness, 5 reds):
+detent alone and slop alone pass all of them; the servo part fails them.
+Within it, **the input-shaft Coulomb friction (0.15 N m at the servo, ~10%
+of stall) is most of it**: off, 2 stay red; off and latency zeroed, 1.
+Latency alone fixes nothing. Which tests are red shifts with how each test
+steps between its `run()` segments (11 if the drive is never released), so
+read the family, not the list. Before the change: 3 failed, 748 passed.
+
+All three are the analytic LQR in reverse: `command_heading[-0.5-90]`,
+`command_heading[-1.2-90]` (since the headset friction, 09-30) and
+`reverse_circle`. The standing-endurance test is registered red and
+`prospective` (skipped unless named): `cmd_curriculum2b` fell 10 of 18.
+Its entry left 10-09 with the pointer move: `smooth_temporal` passes.
+
+**Digests, checked 2026-10-05**: `plant_digest` 12d9639e3ce90f36,
+`design_digest` 5fe8c19379988031; `deploy/bundle.npz` re-exported and
+matches both (worst schedule fit R^2 0.962). **Copy it to the Pi by hand**:
+`deploy/` is gitignored. No export carries this plant: the four
+smoothness-loss exports are at 9953690d, `cmd_curriculum2b` at e1ec36bf -- both
+before the wheel. History: `params-digest-split.md`.

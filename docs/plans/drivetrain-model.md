@@ -341,3 +341,15 @@ multi-seed check if training time ever makes it matter.
    shape and hysteresis.
 5. **The P 100 small-amplitude gap** above, before trusting factory-gain rows
    to better than the grid's noise.
+
+
+---
+
+## Moved from `docs/status.md`, 2026-10-16 (verbatim)
+
+The health log as status.md carried it before its 10-16 rewrite; current
+state is in status.md.
+
+**21 `source: GUESS` in `config/bike_params.yaml`** (2026-10-09: the righting module's five masses and its crank armature; 2026-10-05: the front wheel's `crown_radius`, a stand-in for the flat tread). 2026-10-02: the drivetrain block brought in the roller slop's `centring_stiffness` and `damping`; `righting.wings.min_pinion_radius` left (a constant of the retired geared wings, now `build_model.MIN_PINION_RADIUS`); `input_armature` and the hub/roller joint damping and frictionloss became `design` -- the IDEAL plant's own inertia and only drive losses, kept at their values (the measured inertia is the overlay's `rotor_inertia`), and ZEROED by `DrivetrainSim` on the detailed plant, where the measured coast friction already contains them (`drivetrain_fit.py coast`, the whole wheel in the air) and the slop tendon alone damps a roller in its play. That zeroing changed the detailed plant in code, which no digest sees: the drivetrain-trained exports are now ~1% off their training plant in drive friction (estimated), each with a note there
+on how to identify it. Never promote one quietly: promoting is a physical
+parameter change (the `CLAUDE.md` checklist).

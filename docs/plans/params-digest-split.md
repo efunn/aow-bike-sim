@@ -257,3 +257,35 @@ hardware run.
 `deploy/bundle.npz` matches both. A failing digest check is the mechanism
 working — fix it with `python -m aow_sim.export_deploy`, never by loosening the
 check. See `params-digest-split.md`.
+
+
+---
+
+## Moved from `docs/status.md`, 2026-10-16 (verbatim)
+
+The health log as status.md carried it before its 10-16 rewrite; current
+state is in status.md.
+
+**THE DETAILED DRIVETRAIN IS THE DEFAULT PLANT (2026-10-02).** The overlay
+moved, unchanged, from `config/drivetrain_model.yaml` into `bike_params.yaml`'s
+`drivetrain_model:` block, which put `plant_digest` at 9953690d, exactly the
+stamp of the four smoothness-loss exports; removing `min_pinion_radius` the
+same day moved it on to **95630b212f03ffc4** with no physics change. `drivetrain_model.base_params` is the IDEAL drive: the LQR is
+designed on it (`linearize.design_plant`, an ideal twin of whatever model it
+is handed) and flown on the detailed one; the flick/pivot/ball envs and every
+export without a `drivetrain_model:` record (`cmd_curriculum2b` included) run on it;
+teleop compiles its startup policy's own plant. **A model built with the
+block IS the ideal plant until `DrivetrainSim.attach` switches it** (native
+drive zeroed, measured rotor inertia, rigid roller couplings off, slop tendons
+on; `release` switches back, both pinned bit-exact by tests): so every loop
+that never attaches the hook -- contact studies, settles, the other moves'
+envs -- runs exactly as before, and the hooked ones (RL envs, teleop,
+`balance.run`, `record`) get the detailed drive.
+`drivetrain_model.attach_hooks` is the one call a physics loop needs.
+
+**Digests, checked 2026-10-05**: `plant_digest` 12d9639e3ce90f36,
+`design_digest` 5fe8c19379988031; `deploy/bundle.npz` re-exported and
+matches both (worst schedule fit R^2 0.962). **Copy it to the Pi by hand**:
+`deploy/` is gitignored. No export carries this plant: the four
+smoothness-loss exports are at 9953690d, `cmd_curriculum2b` at e1ec36bf -- both
+before the wheel. History: `params-digest-split.md`.
