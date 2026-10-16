@@ -1,0 +1,5 @@
+init                               ? MiB
+env built + reset                522 MiB
+one eager step                   522 MiB
+captured                         522 MiB
+3 graph launches                3232 MiB

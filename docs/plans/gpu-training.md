@@ -16,8 +16,13 @@
 > still -- after fixing PufferLib's [-1, 1] reward clamp (velocity
 > tracking earned nothing), raw advantages, the curriculum's pace, and
 > adding SmoothPPO's temporal term (phase 3, "It worked"). Checkpoints
-> convert to moves (`gpu/export_policy.py`). Phases 4-5 not started.
-> (Updated 2026-10-15.)
+> convert to moves (`gpu/export_policy.py`). **2026-10-16: a second seed
+> makes the same direction choice on all 20 grid commands, and turns
+> faster; on an RTX
+> 5090 a 72M-step run takes ~12 min (~$0.23) at 32-64k worlds, 4090 ~17
+> min, A40 38; the export's GPU memory went from 0.72 MB a world to
+> ~0.07** (phase 3, "Which card"). Phases 4-5 not started.
+> (Updated 2026-10-16.)
 > Goal (user): the whole
 > physics + RL stack on one NVIDIA GPU -- MuJoCo Warp for the bike,
 > PufferLib 5.0's PPO for the learner. Phases are gated: each one ends in a
@@ -641,7 +646,18 @@ A40 secure, EU-SE-1, $0.59/h; ~65 min for 1 h of training, ~$0.65.
    `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`, cloud SECURE, gpu
    `NVIDIA A40` x1, `dataCenterIds ["EU-SE-1"]` (CA-MTL-1 gave a dead
    CUDA driver once), disk 40, ports `["22/tcp"]`, env `PUBLIC_KEY` = the
-   contents of `~/.ssh/id_ed25519.pub`.
+   contents of `~/.ssh/id_ed25519.pub`. **Any other card: pass
+   `gpu.minCudaVersion "13.0"`** -- Warp 1.18's wheel is built against
+   CUDA 13 and falls back to the CPU on a 12.8 driver (a secure 5090,
+   driver 570, 2026-10-16; `pod_setup.sh`'s assert caught it). The same
+   day, two community 4090s on one host failed every CUDA call and one
+   secure 5090 had no internet (apt hung), so check `torch.zeros(1).cuda()`
+   AND `curl pypi.org` before copying anything. The 4090s' symptom --
+   `nvidia-smi` fine, every CUDA call "unknown error" (999) -- is most
+   often the host's `nvidia_uvm` module not loaded (JuliaGPU/CUDAdrv.jl#50),
+   and otherwise a suspend/resume or power fault (openmm/openmm#1962); all
+   need the host's owner. `ls /dev/nvidia*` in the failing pod tells the
+   first apart: no `nvidia-uvm`. Not checked on 2026-10-16.
 2. **Bundle** (meanwhile): `bash analysis/gpu/bundle.sh <scratch>/bundle.tgz`.
    Newest Warp cache (sm_86; only the env module recompiles, ~8 s):
    `analysis/gpu/phase3/results_a40_run2/warp-cache.tgz` (git-ignored).
@@ -1053,6 +1069,97 @@ through the bridge, or the torch fallback. User (2026-10-14): even ~10 %
 from PufferLib's trainer is worth having on a rented GPU. Take PufferLib if
 the bridge works; fall back to torch if it fights PufferLib's graphs or
 streams for long.
+
+**A second seed, 2026-10-16** (A40 EU-SE-1, ~70 min; env seed 1,
+PufferLib seed 43, everything else as "It worked";
+`analysis/gpu/phase3/results_a40_seed1/`) [measured]. The curve tracked
+seed 0's within a few hundredths at every checkpoint (difficulty 1.0 by
+~39M, fall rate 0.03 at 70M). On the common grid (`per_command.py
+--ahrs tm151_filter --ahrs-tau 2.0`) its 52M and 72M are 7/9 turns
+forward, 2/2 straight, 0 falls -- seed 0's numbers -- and `v_ach` has
+the SAME SIGN on all 20 commands (both reverse through `rev 0.5 +-90`,
+which v3_s1 resolves forward). Chatter: score 0.863 / 0.875 (72M is the
+best so far), per-step action change 0.008-0.009, big turns 1.1-1.2 s
+to heading. What two GPU seeds share is the DIRECTION choice on every
+command (three CPU seeds gave three); the details differ -- seed 1 turns
+1.5-2x faster than seed 0 (1.18 / 1.08 s against 2.08 / 1.53), more
+evenly (asymmetry 0.21 against 0.25 / 0.38), crab bias mirrored. Turn
+FOOTPRINT, read off per_command's drift plots (72M vs 72M vs v3_s1, by
+eye, not tabulated): in-place spins (+-170, +180) peak ~0.6-0.75 m from
+the start for seed 1, ~0.6 seed 0, ~0.2-0.35 v3_s1 -- all creep forward
+while rotating, and seeds 0 and 1 slide to opposite sides. On the moving
+`fwd 0.8 +180` the final lateral offset (~ U-turn width) is ~1.2 m seed
+0, ~0.8 seed 1, ~0.45 v3_s1, and its sign says seed 1 turned left (the
+commanded side) where the other two went right. That reading is the
+measure, not a stand-in: after a U-turn the bike runs back parallel,
+offset by the turn's diameter, and nothing pulls it back (the reward
+tracks velocity and heading, not position), so `drift_lat` on a moving
+180 IS the turn width, sign = side (- = left). Clean on `fwd 0.8 +180`
+only -- the crab+180 commands add their sideways motion -- and any
+sideways creep on the straight part adds to it. `drift_m`/`drift_max` on
+moving commands are mostly distance driven (18 m on `fwd 1.2`); read
+`drift_lat` there instead.
+Why is reasoned, not tested (each update averages 4096 worlds' commands
+instead of 32 envs'), and two seeds are evidence, not proof. Neither run
+is repeatable to the bit: the shared curriculum's float atomics and
+MJWarp's atomically numbered constraint rows vary with scheduling
+[reasoned from the code]; even two exports of one seed differ at step 1.
+
+**Which card, 2026-10-16** (`analysis/gpu/phase3/bench_card.sh`; results
+in `results_{a40,4090,5090}_bench/`) [measured]. Env only, the trained
+52M MinGRU driving (`bench_env.py`, now with a Warp MinGRU), policy
+steps/s:
+
+| card | 1k | 4k | 16k | 32k | 64k |
+|---|---|---|---|---|---|
+| A40 | 12.3k | 23.2k | 27.7k | 28.3k | 28.4k |
+| RTX 4090 | 21.5k | 49.4k | 66.1k | 62.9k | 61.8k |
+| RTX 5090 | 22.9k* | 57.2k* | 93.2k* | 93.5k* | 92.4k* |
+
+(* v3_s0 driving; 52M loads the physics within 3 % of it on every card.)
+At 1k worlds the 4090 and 5090 are equal -- both ~3.1 GHz, and there the
+step is the per-substep latency floor; at 16k+ the 5090's extra cores
+count. Real `puffer train`, median panel after warm-up, and its VRAM:
+
+| card ($/h secure) | 4k | 16k | 32k | 64k | 72M steps at the best |
+|---|---|---|---|---|---|
+| A40 (0.59) | 19.9k, 3.7 GB | 31.4k, 12.3 GB | 33.0k, 24.0 GB | no (memory) | 38 min, $0.38 (16k) |
+| 4090 (0.89) | 44.6k, 0.9 GB | 69.9k, 1.7 GB | 71.5k, 2.9 GB | 71.3k, 5.1 GB | 17 min, $0.25 (32k) |
+| 5090 (1.19) | 50.6k, 1.0 GB | 94.6k, 1.8 GB | 102.8k, 3.0 GB | 104.4k, 5.2 GB | 12 min, $0.23 (64k) |
+
+(A40 rows on the old export, before the memory fix below.) The 5090
+drew 395 W mean, 401 max, training at 16k (575 W limit;
+`results_5090_bench/power_16384.csv`): ~4 mJ a step. The 4090 was not
+measured. On secure cloud the 4090 and 5090 cost the same per run and
+the 5090 is ~30 % sooner; a working community 4090 ($0.34) would be
+~$0.10 a run. The learner is 1 % of a step at 4k, 5-6 % at 16k+
+(PufferLib's own timer), so a card is chosen for MJWarp: FP32 cores and
+clock, not tensor cores.
+
+**The export's GPU memory, fixed 2026-10-16** (`gpu/scratch.py`;
+`results_a40_bench/mem_probe_16384.txt`). Training used 0.72 MB a world
+-- 12.3 GB at 16k, and 64k did not load on the 44 GB A40. Not the env
+(1.25 GB at 16k) and not PufferLib: Warp's APIC capture, which keeps
+every MJWarp call's working memory for good where an ordinary capture
+reuses it (one step: 2341 allocations, 10.3 GB at 16k). MjwScratch
+serves the i-th allocation of every MJWarp call from slot i; 46 slots,
+218 MB at 16k. Loaded as PufferLib loads it, on the 4090: 1.44 / 2.41 /
+4.24 GB at 16k / 32k / 64k. Proof it changes nothing: NaN in every slot
+after every MJWarp call (`check_scratch.py --poison`, 200 random-action
+steps x 512 worlds, ~4450 falls) -- no non-finite value on the 4090 or
+the 5090. Comparing exports cannot show it; they differ at step 1 anyway.
+
+**Setup time** (fresh 5090, `timings.jsonl`): ~4 min before the first
+step -- boot ~30 s, apt 20-44, pip mujoco-warp 17, pip mjx+jax 38, the
+first Warp compile on a new architecture ~55, PufferLib clone + build
+43. Now: jax only with `WITH_MJX=1` (nothing imports it); PufferLib
+fetched as one commit (`puffer/fetch.sh`: 8.0 s against 46.7 for the
+928 MB clone, measured); apt and that fetch run during pip; the build
+during the graph checks; one Warp cache for sm_86/89/120,
+`analysis/gpu/warp-cache.tgz` (git-ignored, 25 MB; copy it up as
+`~/warp-cache.tgz`). Expected ~1.5 min -- not yet measured. A network
+volume was considered and dropped: it would tie every run to one data
+center's stock (EUR-IS-2, where both cards worked, has no volumes).
 
 ### Phase 4 -- algorithm parity
 

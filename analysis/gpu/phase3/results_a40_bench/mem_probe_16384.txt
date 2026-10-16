@@ -1,0 +1,22 @@
+# A40, 2026-10-16, mem_probe.py MODE 16384 (this process's GPU memory, MiB)
+build  (ScopedCapture):            env 1098 -> captured 1098 -> 3 launches 1248
+apic   (ScopedCapture(apic=True)): env 1098 -> captured 1098 -> 3 launches 11776
+load   (wp.capture_load of .wrp):  loaded 12208 -> 3 launches 12264
+
+# alloc_probe.py 16384: one env.step after a warm-up step
+one step, 16384 worlds: 2341 allocations, 10581 MiB total, 661 KiB per world
+     3346.9 MiB  x51    mujoco_warp/_src/sensor.py:2541 sensor_acc
+     1275.0 MiB  x51    mujoco_warp/_src/solver.py:104 _create_solver_context
+     1250.0 MiB  x50    mujoco_warp/_src/forward.py:605 implicit
+     1224.0 MiB  x51    mujoco_warp/_src/solver.py:94 _create_solver_context
+      439.9 MiB  x51    mujoco_warp/_src/smooth.py:4207 tendon
+      408.0 MiB  x51    mujoco_warp/_src/solver.py:84 _create_solver_context
+      408.0 MiB  x51    mujoco_warp/_src/solver.py:93 _create_solver_context
+      408.0 MiB  x51    mujoco_warp/_src/solver.py:106 _create_solver_context
+      403.1 MiB  x50    mujoco_warp/_src/forward.py:604 implicit
+      204.0 MiB  x51    mujoco_warp/_src/collision_core.py:581 create_collision_context
+      204.0 MiB  x51    mujoco_warp/_src/collision_core.py:582 create_collision_context
+      181.7 MiB  x153   mujoco_warp/_src/history.py:560 apply_sensor_delay
+      102.0 MiB  x51    mujoco_warp/_src/collision_core.py:583 create_collision_context
+       73.3 MiB  x51    mujoco_warp/_src/smooth.py:2128 tendon_bias
+       66.9 MiB  x51    mujoco_warp/_src/sensor.py:2540 sensor_acc

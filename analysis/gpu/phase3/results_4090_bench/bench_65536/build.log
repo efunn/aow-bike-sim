@@ -1,0 +1,4 @@
+Compiling ocean/aow_bike/aow_bike.cu -> puffer...
+Built: ./puffer
+built /root/puffer/puffer for aow_bike (65536 worlds, graph /root/aow/graphs/aow_bike_65536)
+15:seed = 42

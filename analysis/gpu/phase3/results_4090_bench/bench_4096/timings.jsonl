@@ -1,0 +1,5 @@
+{"step":"pip_phase3","rc":0,"wall_s":1.5419}
+{"step":"export","rc":0,"wall_s":7.13962}
+{"step":"build","rc":0,"wall_s":41.949}
+{"step":"train","rc":124,"wall_s":240.185}
+{"step":"warp_cache","rc":0,"wall_s":0.652812}

@@ -1,0 +1,29 @@
+name, driver_version, memory.total [MiB]
+NVIDIA A40, 580.159.04, 46068 MiB
+Cuda compilation tools, release 12.8, V12.8.93
+Build cuda_12.8.r12.8/compiler.35583870_0
+W: https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/InRelease: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.
+{"step":"apt_update","wall_s":1.55815}
+{"step":"apt_install","wall_s":1.34719}
+{"step":"venv","wall_s":2.20493}
+{"step":"pip_mujoco_warp","wall_s":1.76274}
+{"step":"pip_mjx_jax","wall_s":1.96455}
+{"step":"pip_nccl","wall_s":1.48136}
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.18.0
+1.18.0 cuda:0
+{"step":"warp_init","wall_s":0.916908}
+jax==0.11.2
+jax-cuda12-pjrt==0.11.2
+jax-cuda12-plugin==0.11.2
+jaxlib==0.11.2
+mujoco==3.10.0
+mujoco-mjx==3.10.0
+mujoco-warp==3.10.0.3
+nvidia-nccl-cu12==2.27.3
+warp-lang==1.18.0

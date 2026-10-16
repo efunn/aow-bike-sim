@@ -1,0 +1,22 @@
+{"step":"pip_phase2","rc":0,"wall_s":1.61938}
+{"step":"bench_rand","rc":0,"wall_s":136.019}
+{"nworld": 16384, "policy": "random", "build_s": 0.96, "reset_s": 0.02, "first_step_s": 0.76, "eager_policy_sps": 22381, "capture_s": 0.37, "graph_policy_sps": 31724, "graph_physics_sps": 1586209, "steps": 30, "wall_s": 15.49, "falls": 21204, "episode_ends": 21204, "reward_per_step": -0.1659, "gpu_mem_mb": 1255, "device": "NVIDIA A40"}
+{"nworld": 32768, "policy": "random", "build_s": 1.04, "reset_s": 0.03, "first_step_s": 1.14, "eager_policy_sps": 29196, "capture_s": 0.36, "graph_policy_sps": 33150, "graph_physics_sps": 1657520, "steps": 20, "wall_s": 19.77, "falls": 27916, "episode_ends": 27916, "reward_per_step": -0.1362, "gpu_mem_mb": 2151, "device": "NVIDIA A40"}
+{"nworld": 65536, "policy": "random", "build_s": 1.35, "reset_s": 0.06, "first_step_s": 2.16, "eager_policy_sps": 30993, "capture_s": 0.37, "graph_policy_sps": 34449, "graph_physics_sps": 1722454, "steps": 10, "wall_s": 19.02, "falls": 24984, "episode_ends": 24984, "reward_per_step": 0.0475, "gpu_mem_mb": 3847, "device": "NVIDIA A40"}
+{"step":"check_general_rl_v3_s0","rc":0,"wall_s":126.784}
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.60 ms  (cached)
+Module aow_sim.gpu.env 6463443 load on device 'cuda:0' took 0.60 ms  (cached)
+{"check": true, "nworld": 64, "steps": 250, "eager": {"falls": 0, "episode_ends": 0, "reward_per_step": 2.8775, "obs_mean_abs": 0.20583036541938782}, "graph": {"falls": 0, "episode_ends": 0, "reward_per_step": 2.875, "obs_mean_abs": 0.20838221907615662}, "mlp_max_err": 2.999371432887976e-07, "device": "NVIDIA A40"}
+{"step":"bench_general_rl_v3_s0","rc":0,"wall_s":142.171}
+{"nworld": 16384, "policy": "moves/general_rl_v3_s0.npz", "build_s": 0.9, "reset_s": 0.02, "first_step_s": 0.72, "eager_policy_sps": 22001, "capture_s": 0.37, "graph_policy_sps": 28431, "graph_physics_sps": 1421574, "steps": 30, "wall_s": 17.29, "falls": 0, "episode_ends": 0, "reward_per_step": 2.6804, "gpu_mem_mb": 1287, "device": "NVIDIA A40"}
+{"nworld": 32768, "policy": "moves/general_rl_v3_s0.npz", "build_s": 1.07, "reset_s": 0.03, "first_step_s": 1.09, "eager_policy_sps": 28883, "capture_s": 0.42, "graph_policy_sps": 29226, "graph_physics_sps": 1461306, "steps": 20, "wall_s": 22.42, "falls": 0, "episode_ends": 0, "reward_per_step": 2.6253, "gpu_mem_mb": 2183, "device": "NVIDIA A40"}
+{"nworld": 65536, "policy": "moves/general_rl_v3_s0.npz", "build_s": 1.36, "reset_s": 0.05, "first_step_s": 2.01, "eager_policy_sps": 31127, "capture_s": 0.4, "graph_policy_sps": 29301, "graph_physics_sps": 1465050, "steps": 10, "wall_s": 22.37, "falls": 0, "episode_ends": 0, "reward_per_step": 2.5375, "gpu_mem_mb": 3943, "device": "NVIDIA A40"}
+{"step":"check_general_puffer_fixes_52M","rc":0,"wall_s":128.598}
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.66 ms  (cached)
+Module aow_sim.gpu.env 6463443 load on device 'cuda:0' took 0.65 ms  (cached)
+{"check": true, "nworld": 64, "steps": 250, "eager": {"falls": 0, "episode_ends": 0, "reward_per_step": 2.9337, "obs_mean_abs": 0.18433113396167755}, "graph": {"falls": 0, "episode_ends": 0, "reward_per_step": 2.9339, "obs_mean_abs": 0.18952995538711548}, "mlp_max_err": 1.890196555248691e-07, "memory_max_err": 5.772993230124257e-07, "memory_mean_abs": 0.36293357610702515, "device": "NVIDIA A40"}
+{"step":"bench_general_puffer_fixes_52M","rc":0,"wall_s":146.114}
+{"nworld": 16384, "policy": "moves/general_puffer_fixes_52M.npz", "build_s": 0.98, "reset_s": 0.03, "first_step_s": 0.76, "eager_policy_sps": 20467, "capture_s": 0.46, "graph_policy_sps": 27650, "graph_physics_sps": 1382493, "steps": 30, "wall_s": 17.78, "falls": 0, "episode_ends": 0, "reward_per_step": 2.7952, "gpu_mem_mb": 1319, "device": "NVIDIA A40"}
+{"nworld": 32768, "policy": "moves/general_puffer_fixes_52M.npz", "build_s": 1.01, "reset_s": 0.03, "first_step_s": 1.08, "eager_policy_sps": 29141, "capture_s": 0.4, "graph_policy_sps": 28257, "graph_physics_sps": 1412839, "steps": 20, "wall_s": 23.19, "falls": 0, "episode_ends": 0, "reward_per_step": 2.7343, "gpu_mem_mb": 2247, "device": "NVIDIA A40"}
+{"nworld": 65536, "policy": "moves/general_puffer_fixes_52M.npz", "build_s": 1.36, "reset_s": 0.05, "first_step_s": 2.04, "eager_policy_sps": 30961, "capture_s": 0.47, "graph_policy_sps": 28449, "graph_physics_sps": 1422465, "steps": 10, "wall_s": 23.04, "falls": 0, "episode_ends": 0, "reward_per_step": 2.6402, "gpu_mem_mb": 4071, "device": "NVIDIA A40"}
+{"step":"warp_cache","rc":0,"wall_s":0.725093}

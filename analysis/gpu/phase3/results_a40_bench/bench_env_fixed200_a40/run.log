@@ -1,0 +1,5 @@
+{"step":"pip_phase2","rc":0,"wall_s":1.57072}
+{"step":"bench_rand","rc":0,"wall_s":790.891}
+{"nworld": 16384, "policy": "random", "build_s": 0.89, "reset_s": 0.02, "first_step_s": 0.77, "eager_policy_sps": 20890, "capture_s": 0.46, "graph_policy_sps": 31614, "graph_physics_sps": 1580716, "steps": 200, "wall_s": 103.65, "falls": 147858, "episode_ends": 147858, "reward_per_step": -0.2584, "gpu_mem_mb": 1255, "device": "NVIDIA A40"}
+{"nworld": 32768, "policy": "random", "build_s": 0.95, "reset_s": 0.03, "first_step_s": 1.12, "eager_policy_sps": 29347, "capture_s": 0.37, "graph_policy_sps": 33064, "graph_physics_sps": 1653200, "steps": 200, "wall_s": 198.21, "falls": 295740, "episode_ends": 295740, "reward_per_step": -0.2581, "gpu_mem_mb": 2151, "device": "NVIDIA A40"}
+{"nworld": 65536, "policy": "random", "build_s": 1.3, "reset_s": 0.05, "first_step_s": 2.15, "eager_policy_sps": 30915, "capture_s": 0.36, "graph_policy_sps": 33754, "graph_physics_sps": 1687678, "steps": 200, "wall_s": 388.32, "falls": 591494, "episode_ends": 591494, "reward_per_step": -0.2581, "gpu_mem_mb": 3847, "device": "NVIDIA A40"}

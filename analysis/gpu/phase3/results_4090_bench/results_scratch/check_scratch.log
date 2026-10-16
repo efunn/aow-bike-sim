@@ -1,0 +1,9 @@
+off_1  reuse=False gpu 944 MiB  scratch None
+off_2  reuse=False gpu 944 MiB  scratch None
+on     reuse=True  gpu 522 MiB  scratch {'slots': 46, 'mb': 6.8}
+noise floor (off vs off): {'obs': 17.67534637451172, 'rew': 53.243597984313965, 'step1_obs': 0.20372307300567627, 'ends': 2365, 'identical_steps': 0}
+reuse       (on  vs off): {'obs': 18.415946006774902, 'rew': 53.328848123550415, 'step1_obs': 0.20372331142425537, 'ends': 2234, 'identical_steps': 0}
+200 steps x 512 worlds, 4455 episode ends: CHECK BY HAND (reuse no further from off than off is from itself)
+ 16384 worlds, reuse on: 1442 MiB on load+3 launches, scratch {'slots': 46, 'mb': 218.3}, files 759 MB
+ 32768 worlds, reuse on: 2408 MiB on load+3 launches, scratch {'slots': 46, 'mb': 436.6}, files 1508 MB
+ 65536 worlds, reuse on: 4240 MiB on load+3 launches, scratch {'slots': 46, 'mb': 873.1}, files 3006 MB

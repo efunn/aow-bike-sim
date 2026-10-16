@@ -1,0 +1,7 @@
+{"step":"apt_update","wall_s":1.55815}
+{"step":"apt_install","wall_s":1.34719}
+{"step":"venv","wall_s":2.20493}
+{"step":"pip_mujoco_warp","wall_s":1.76274}
+{"step":"pip_mjx_jax","wall_s":1.96455}
+{"step":"pip_nccl","wall_s":1.48136}
+{"step":"warp_init","wall_s":0.916908}

@@ -1,0 +1,2 @@
+name, clocks.max.sm [MHz], memory.total [MiB], driver_version
+NVIDIA A40, 1740 MHz, 46068 MiB, 580.159.04

@@ -1,0 +1,56 @@
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA GeForce RTX 5090" (31 GiB, sm_120, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.18.0
+Module aow_sim.gpu.commands 73418d1 load on device 'cuda:0' took 1839.03 ms  (compiled)
+Module aow_sim.gpu.reset 27b6353 load on device 'cuda:0' took 3490.82 ms  (compiled)
+Module mujoco_warp._src.smooth b9cc505 load on device 'cuda:0' took 5111.19 ms  (compiled)
+Module _nxn_broadphase__locals__kernel_5ea22428 5ea2242 load on device 'cuda:0' took 527.67 ms  (compiled)
+Module _primitive_narrowphase__locals__primitive_narrowphase_1280ba14 1280ba1 load on device 'cuda:0' took 1942.80 ms  (compiled)
+Module mujoco_warp._src.constraint 9435a53 load on device 'cuda:0' took 142.47 ms  (compiled)
+Module _equality_joint__locals__kernel_66ba6c83 66ba6c8 load on device 'cuda:0' took 316.48 ms  (compiled)
+Module _equality_tendon__locals__kernel_d03f3a93 d03f3a9 load on device 'cuda:0' took 355.51 ms  (compiled)
+Module _friction_dof__locals__kernel_eadd710f eadd710 load on device 'cuda:0' took 267.31 ms  (compiled)
+Module _friction_tendon__locals__kernel_8ac2823e 8ac2823 load on device 'cuda:0' took 260.27 ms  (compiled)
+Module _limit_tendon__locals__kernel_36d520cc 36d520c load on device 'cuda:0' took 272.74 ms  (compiled)
+Module _efc_contact_init__locals__kernel_48b1da0a 48b1da0 load on device 'cuda:0' took 175.38 ms  (compiled)
+Module _efc_contact_jac_dense__locals__kernel_cde1aa89 037dfea load on device 'cuda:0' took 711.77 ms  (compiled)
+Module _efc_contact_update__locals__kernel_cf1f607c cf1f607 load on device 'cuda:0' took 266.80 ms  (compiled)
+Module mujoco_warp._src.sensor 764597f load on device 'cuda:0' took 4521.12 ms  (compiled)
+Module mujoco_warp._src.history 5cd4baa load on device 'cuda:0' took 1486.93 ms  (compiled)
+Module mujoco_warp._src.forward f44d3e1 load on device 'cuda:0' took 1440.84 ms  (compiled)
+Module mujoco_warp._src.forward 0a75030 load on device 'cuda:0' took 1343.03 ms  (compiled)
+Module mujoco_warp._src.passive 80f3681 load on device 'cuda:0' took 2259.46 ms  (compiled)
+Module _qfrc_smooth__locals__kernel_8b823980 8b82398 load on device 'cuda:0' took 170.39 ms  (compiled)
+Module mujoco_warp._src.support f39c2de load on device 'cuda:0' took 320.04 ms  (compiled)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_dcb711f9 176c226 load on device 'cuda:0' took 6608.36 ms  (compiled)
+Module _solve_init_dof__locals__kernel_1d7ecfa4 1d7ecfa load on device 'cuda:0' took 176.51 ms  (compiled)
+Module mujoco_warp._src.solver c97221b load on device 'cuda:0' took 1895.02 ms  (compiled)
+Module _solve_init_jaref_kernel__locals__kernel_b9a13353 b9a1335 load on device 'cuda:0' took 276.48 ms  (compiled)
+Module mul_m_kernel__locals___mul_m_d74bd8d9 d74bd8d load on device 'cuda:0' took 305.36 ms  (compiled)
+Module _update_constraint_efc__locals__kernel_4b172e8b 4b172e8 load on device 'cuda:0' took 208.99 ms  (compiled)
+Module _update_constraint_init_qfrc_constraint_dense__locals__kernel_c29c2cfc c29c2cf load on device 'cuda:0' took 246.68 ms  (compiled)
+Module _update_gradient_zero_grad_dot__locals__kernel_93442399 9344239 load on device 'cuda:0' took 202.92 ms  (compiled)
+Module _update_gradient_grad__locals__kernel_378e7517 378e751 load on device 'cuda:0' took 141.51 ms  (compiled)
+Module _update_gradient_JTDAJ_dense_tiled__locals__kernel_a2b3407d e5623df load on device 'cuda:0' took 871.81 ms  (compiled)
+Module _update_gradient_cholesky__locals__kernel_571f0b08 c80663a load on device 'cuda:0' took 5764.80 ms  (compiled)
+Module _linesearch_iterative_kernel__locals__kernel_d8c09560 2a5cf42 load on device 'cuda:0' took 981.76 ms  (compiled)
+Module aow_sim.gpu.ahrs 7ed1d2b load on device 'cuda:0' took 1874.34 ms  (compiled)
+Module aow_sim.gpu.obs_reward d38f452 load on device 'cuda:0' took 1725.73 ms  (compiled)
+Module __main__ 9175454 load on device 'cuda:0' took 959.10 ms  (compiled)
+Module aow_sim.gpu.action ea87bd8 load on device 'cuda:0' took 227.67 ms  (compiled)
+Module aow_sim.gpu.drivetrain 00c52bc load on device 'cuda:0' took 802.97 ms  (compiled)
+Module aow_sim.gpu.gearbox 52747b8 load on device 'cuda:0' took 382.35 ms  (compiled)
+Module mujoco_warp._src.derivative 1d93a53 load on device 'cuda:0' took 1844.10 ms  (compiled)
+Module _next_time_builder__locals___next_time_f604e0b3 f604e0b load on device 'cuda:0' took 220.59 ms  (compiled)
+Module aow_sim.gpu.odometry 3d8a02e load on device 'cuda:0' took 676.77 ms  (compiled)
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 644.21 ms  (compiled)
+Module aow_sim.gpu.env 6463443 load on device 'cuda:0' took 568.11 ms  (compiled)
+{"nworld": 1024, "policy": "random", "build_s": 6.11, "reset_s": 47.14, "first_step_s": 7.09, "eager_policy_sps": 1267, "capture_s": 0.58, "graph_policy_sps": 22795, "graph_physics_sps": 1139735, "steps": 340, "wall_s": 15.27, "falls": 15749, "episode_ends": 15749, "reward_per_step": -0.267, "gpu_mem_mb": 688, "device": "NVIDIA GeForce RTX 5090"}
+{"nworld": 4096, "policy": "random", "build_s": 3.78, "reset_s": 0.04, "first_step_s": 0.8, "eager_policy_sps": 4732, "capture_s": 0.63, "graph_policy_sps": 59264, "graph_physics_sps": 2963222, "steps": 220, "wall_s": 15.21, "falls": 40619, "episode_ends": 40619, "reward_per_step": -0.2568, "gpu_mem_mb": 848, "device": "NVIDIA GeForce RTX 5090"}
+{"nworld": 16384, "policy": "random", "build_s": 3.77, "reset_s": 0.02, "first_step_s": 0.8, "eager_policy_sps": 18498, "capture_s": 0.55, "graph_policy_sps": 103954, "graph_physics_sps": 5197697, "steps": 100, "wall_s": 15.76, "falls": 73259, "episode_ends": 73259, "reward_per_step": -0.2403, "gpu_mem_mb": 1488, "device": "NVIDIA GeForce RTX 5090"}
+{"nworld": 32768, "policy": "random", "build_s": 3.98, "reset_s": 0.02, "first_step_s": 0.91, "eager_policy_sps": 34325, "capture_s": 0.55, "graph_policy_sps": 109026, "graph_physics_sps": 5451310, "steps": 50, "wall_s": 15.03, "falls": 72337, "episode_ends": 72337, "reward_per_step": -0.213, "gpu_mem_mb": 2384, "device": "NVIDIA GeForce RTX 5090"}
+{"nworld": 65536, "policy": "random", "build_s": 3.93, "reset_s": 0.02, "first_step_s": 1.08, "eager_policy_sps": 57118, "capture_s": 0.55, "graph_policy_sps": 108280, "graph_physics_sps": 5413991, "steps": 30, "wall_s": 18.16, "falls": 85094, "episode_ends": 85094, "reward_per_step": -0.174, "gpu_mem_mb": 4080, "device": "NVIDIA GeForce RTX 5090"}

@@ -1,0 +1,16 @@
+{"step":"pip_phase3","rc":0,"wall_s":1.3047}
+{"step":"export","rc":0,"wall_s":24.3022}
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.85 ms  (cached)
+Module aow_sim.gpu.env 6463443 load on device 'cuda:0' took 0.84 ms  (cached)
+{"saved": "graphs/aow_bike_65536", "nworld": 65536, "device": "cuda:0", "mb": 2991.2}
+2.8G	graphs/aow_bike_65536.wrp
+9.3M	graphs/aow_bike_65536_modules
+{"step":"build","rc":0,"wall_s":8.78719}
+Compiling ocean/aow_bike/aow_bike.cu -> puffer...
+Built: ./puffer
+built /root/puffer/puffer for aow_bike (65536 worlds, graph /root/aow/graphs/aow_bike_65536)
+15:seed = 42
+{"step":"train","rc":1,"wall_s":4.47661}
+Warp APIC error: Failed to allocate 100663296 bytes: 2
+aow_bike: loading /root/aow/graphs/aow_bike_65536.wrp failed: Warp APIC error: Failed to allocate 100663296 bytes: 2
+{"step":"warp_cache","rc":0,"wall_s":0.716996}
