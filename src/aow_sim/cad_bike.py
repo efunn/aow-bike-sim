@@ -95,9 +95,10 @@ def righting_v1() -> dict:
     U blade. The module itself moved on to `outline` (the V3 blade, for
     aow-bike-whole-v2, 2026-10-11), whose toe reaches this layout's front
     tyre; v1 is frozen rather than re-fitted (docs/plans/aow-bike-whole-v2.md)."""
-    rd = cr.load()
+    rd = cr.load(snug=False)           # the as-built nut slots, as printed
     rd["s"]["wing"]["blade"] = "ends"
     rd["T"] = rd["T_linkage"]           # and the linkage's stroke, which `ends` ran to
+    rd["s"].setdefault("rail", {})["joints"] = False   # and no side-rail lugs (v2's rails)
     return rd
 
 
@@ -105,7 +106,7 @@ def module_texts() -> dict[str, str]:
     """Each module's whole Feature Studio, generated from local config now."""
     rd = righting_v1()
     return {"steering": cs.build_fs(cs.load()),
-            "drive": cd.build_fs(cd.load()),
+            "drive": cd.build_fs(cd.load(snug=False)),
             "righting": cr.build_fs(cr.layout(rd), rd)}
 
 
@@ -161,7 +162,7 @@ def load(path: str = PARAMS) -> dict:
     p = load_params(sm.CAD_PARAMS)
     rd = righting_v1()
     return {"s": raw, "params": p, "steer": cs.layout(cs.load()),
-            "drive": cd.full_layout(cd.load()), "rd": rd, "rL": cr.layout(rd)}
+            "drive": cd.full_layout(cd.load(snug=False)), "rd": rd, "rL": cr.layout(rd)}
 
 
 def righting_digest(rL: dict) -> str:

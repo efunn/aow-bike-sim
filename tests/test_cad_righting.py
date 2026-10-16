@@ -184,7 +184,7 @@ def test_the_bearing_nut_slots_are_blind_the_rest_run_through(L, tmp_path):
     # the wings' nuts in the rockers and knuckles: blind, out through the boss's top end
     for t in wing:
         assert not js[t]["through"] and js[t]["nut"][:-1] in ("rocker", "knuckle")
-    assert all(j["through"] for t, j in js.items() if t not in ("jF", "jR", "jU", "jUL") + wing)
+    assert all(j["through"] for t, j in js.items() if t not in ("jF", "jR", "jU", "jUL", "jS0", "jS1") + wing)
     # front bulkhead prints inner face up, so its slot leaves by the outer face
     # (+Y, its bed); the lower case prints inner face down (bed at +Y too)
     assert part(L, "bulkheadF")["up"] == [0.0, -1.0, 0.0]
@@ -467,3 +467,19 @@ def test_the_wing_is_a_stub_and_the_blade_an_inverted_u_over_it(tmp_path):
         assert len(flat) == 1
         f = flat.pop()
         assert min(abs(a - f) for a, b in q["pts"] if abs(abs(b) - half) < 1e-9) == pytest.approx(c)
+
+
+def test_the_bridge_takes_the_side_rails():
+    """One 6-32 a side in from each rail's outer face into a lug on the
+    bridge: the ridge on the lug, the nut slot up out of its top, the rails
+    drawn as placeholders (mocks); the v1 bike's righting has none."""
+    from aow_sim import cad_bike as cb
+    L = cr.layout(cr.load())
+    js = {j["tag"]: j for j in L["RG"]["joints"]}
+    for tag, sl, sx in (("jS0", "railR", 1), ("jS1", "railL", -1)):
+        j = js[tag]
+        assert (j["csk"], j["nut"]) == (sl, "bridge") and j["ridgeOnNut"]
+        assert j["zIn"] == [-sx, 0.0, 0.0] and j["slot"] == [0.0, 0.0, 1.0] and not j["through"]
+        assert part(L, sl)["mock"] and j["ridgeDir"] == [0.0, 0.0, 1.0]      # vertical: it slides out down
+    v1 = cr.layout(cb.righting_v1())
+    assert not {"jS0", "jS1"} & {j["tag"] for j in v1["RG"]["joints"]}

@@ -63,7 +63,10 @@ components:
   ahrs:
     size: {value: [34.0, 12.6, 40.0], source: datasheet}
     frame: {value: drive, source: design}
-    at: {value: [0.0, 125.7, -9.75], source: design}     # the face (118.9) + 0.5 + half; its lower edge on the face's (-29.75)
+    # ON ITS TABS (2026-10-16): the board's back face on the case sides' AHRS
+    # tabs (cad_drive `ahrs:`, drive y 122.0), its lower edge on the face's
+    # (-29.75); cad_bike_v2 refuses it anywhere else
+    at: {value: [0.0, 128.6953, -9.75], source: design (= the drive's AHRS tabs)}
     mass: {value: null, source: GUESS (not weighed)}
   power:
     # the user: "the envelope of this may change but ok to keep it a bit
@@ -80,7 +83,11 @@ components:
   u2d2:
     size: {value: [18.0, 14.9, 48.0], source: measured (18 x 48 x 14.9)}
     frame: {value: steer, source: design}
-    at: {value: [0.0, -22.0, 100.0], source: design}     # its front face 1 aft of the upper case's (-13.55); z 76..124
+    # PARKED (2026-10-16): not drawn. It sat behind the steering cases, where
+    # the steering's one rear upper <-> lower screw now goes (user: "the u2d2
+    # won't be there anymore"); it moves under the Pi in the Pi + U2D2
+    # carrier (aow-bike-whole-v2-complete.md). Was steer frame (0, -22, 100).
+    at: {value: null, source: design}
     mass: {value: null, source: GUESS (not weighed)}
 
 # The Pi 3B+ in detail, in its box's frame (x across, y the board's normal,

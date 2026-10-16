@@ -180,3 +180,61 @@ def test_the_featurescript_builds_and_lints(data):
     assert text.count(cd.SPLIT_MARK) == 1
     for part in cd.PARTS:
         assert f'"{part}' in text
+
+
+def test_the_side_rails_fit(data, L):
+    """The v2 bike's side rails (rail:): joint_plate thick, the joints'
+    countersinks and grooves inside the outline with a wall, every piece
+    overlapping the case side but clear of its M2.5 counterbores, and the
+    rail wholly under the TM151's board."""
+    R = cd.rail_layout(data, L)
+    wall = data["s"]["print"]["min_wall"]
+    assert R["plate"] == pytest.approx(data["s"]["joint"]["joint_plate"])
+    assert {j["tag"] for j in R["joints"]} == {"steer", "bridge"}
+    assert all(j["room"] >= wall for j in R["joints"])
+    assert R["ahRailGap"] >= 1.0
+    cbs = [(L["Yhc"] + sy * L["holeHH"], zc + sz * L["holeHW"])
+           for zc in (-L["zs"], L["zs"]) for sy in (1, -1) for sz in (1, -1)]
+    # the outline reaches into the case side; the rear arm ends ON it (its
+    # last point the rear chamfer's top corner, its first on the chamfer)
+    assert any(cd._inside(q, R["casePoly"]) for q in R["pieces"][0])
+    ch = cd.to_drive(R["rearBike"][-1])
+    assert ch == pytest.approx((L["Yc0"] + L["rcLeg"], L["Zp"]), abs=1e-6)
+    for pc in R["pieces"]:
+        for c in cbs:
+            assert not cd._inside(c, pc) and cd._edge_dist(c, pc) >= L["m25CbR"] + wall - 1e-3
+    # the cage posts: two, the rail's thickness, the nut slot's walls two lines
+    assert len(R["cage"]) == 2 and R["cageWall"] >= 0.9 - 1e-9
+
+
+def test_the_ahrs_tabs_take_the_tm151(data, L):
+    """Four M2s on the TM151's own pattern (31 along the face, 30 across),
+    through a thin web into a nut slot, the 4 mm screw past the nut and short
+    of the skirt; the board between the case sides."""
+    R = cd.rail_layout(data, L)
+    tm = data["tm151"]
+    assert R["ahZ"][1] - R["ahZ"][0] == pytest.approx(tm["hole_span_x"])
+    assert 2 * R["ahX"] == pytest.approx(tm["hole_span_y"])
+    # two line widths of web; the 4 mm screw ends flush with the nut once
+    # it is pulled up to the web
+    assert R["ahY1"] - R["ahN1"] == pytest.approx(0.9)
+    assert R["ahScrewPast"] >= -0.2 and R["ahTip"] > L["Ytab0"]
+    assert R["ahY1"] - R["ahN1"] == pytest.approx(data["s"]["ahrs"]["web"])
+    assert R["ahBoard"]["x"] <= L["caseHalf"] + 1e-9
+
+
+def test_the_v2_nut_slots_are_snug(data):
+    """The v2 modules' 6-32 nut slots are the snug ones; v1 keeps the as-built."""
+    assert data["screw"]["nutSlotWidth"] < cd.load(snug=False)["screw"]["nutSlotWidth"]
+
+
+def test_the_bridge_slides_in_from_below(data, L):
+    """The righting comes out with the rails left on the drive: the bridge
+    joint's groove runs vertical and out through the rail's lower edge."""
+    R = cd.rail_layout(data, L)
+    j = next(j for j in R["joints"] if j["tag"] == "bridge")
+    rl = data["s"]["rail"]
+    assert rl["bridge_ridge_deg"] == 90.0
+    # it runs down out through the rail's lower edge (the band's, bike z 38.6)
+    lo = j["gMid"] - j["gHalf"]
+    assert rl["bridge_joint"][1] + lo < min(z for y, z in R["outlineBike"])

@@ -89,7 +89,7 @@ MOCK_C = (0.85, 0.85, 0.85)
 
 # ------------------------------------------------------------------- inputs
 def load(path: str = PARAMS, steer_path: str = STEER_PARAMS,
-         cad_path: str = sm.CAD_PARAMS, mount_path: str = sm.MOUNT_PARAMS) -> dict:
+         cad_path: str = sm.CAD_PARAMS, mount_path: str = sm.MOUNT_PARAMS, snug: bool = True) -> dict:
     s = _normalize(yaml.safe_load(Path(path).read_text()))
     st = _normalize(yaml.safe_load(Path(steer_path).read_text()))
     mm = lambda v: v * 1000.0    # noqa: E731
@@ -129,7 +129,7 @@ def load(path: str = PARAMS, steer_path: str = STEER_PARAMS,
     return {"s": s, "hub": hub, "coupling": coupling, "lk": lk, "scale": k,
             "T": T, "T_linkage": T_lk, "pivot_z": pz,
             "wheel_r": ref["bike"]["wheel_radius"], "x330": x330,
-            "table": sm.servo_table(params, mounts), "screw": sm.screw_table(mounts)}
+            "table": sm.servo_table(params, mounts), "screw": sm.screw_table(mounts, snug=snug)}
 
 
 # ------------------------------------------------------------ primitives
@@ -299,6 +299,12 @@ def layout(data: dict) -> dict:
                                                      "frame", "chassis", "joint"))
     wall = s["print"]["min_wall"]
     jp = jn["joint_plate"]
+    # the v2 bike's side rails (`rail:`): the bridge fills the gap between
+    # them, its sides on the rails' inner faces, as tall as `bridge_height`
+    rl = s.get("rail") or {}
+    rail_on = bool(rl.get("joints"))
+    if rail_on:
+        fr = dict(fr, bridge_half=rl["outer_x"] - jp, bridge=rl["bridge_height"])
 
     def need(ok, what):
         if not ok:
@@ -977,16 +983,45 @@ def layout(data: dict) -> dict:
                   box([-rh_, y_back, Zb], [rh_, y_back + rl_ + 0.5, Zb + bt])]
     else:
         br_add = [box([-fr["bridge_half"], y_back, Zb], [fr["bridge_half"], Y["bh_out"], Zb + bt])]
+    # the side rails' joints (aow-bike-whole-v2), on the bridge's sides,
+    # which are the rails' inner faces (a lug only if the bridge stops short)
+    if rail_on:
+        rz = Zb + rl["joint_above_bridge"]
+        rx_face = rl["outer_x"] - jp
+        r_top = rz + rl["lug_above_joint"]
+        r_hy = rl["ridge_half"] + rl["lug_end_wall"]
+        ry = rl["joint_y"]
+        need(rx_face >= fr["bridge_half"] - 1e-9, "the bridge runs past the rails' inner faces")
+        need(r_top <= Zb + bt + 1e-9 or rx_face > fr["bridge_half"] + 0.01, "the rail joint's ridge runs off the bridge's top")
+        need(rz - sc["nutSlotWidth"] / math.sqrt(3) >= Zb + wall, "a rail nut's corner runs out of the bridge's underside")
+        need(r_top - rz >= jn["ridge_flat"] / 2 + jn["ridge_height"] + jn["ridge_clearance"] + 0.5,
+             "the rail lug's top cuts the ridge")
+        need(rx_face - 2.0 - sc["nutSlotThickness"] >= sc["holeDia"] / 2 + wall, "the rail nut slots meet in the middle")
+        need(r_hy >= sc["nutSlotWidth"] / 2 + wall, "the rail lug is narrower than its nut slot")
+        need(rz + rl["ridge_half"] + 1.0 <= Zb + fr["bridge"], "the rail joint's vertical ridge runs off the bridge's top")
+        for sx in (1, -1):
+            if rx_face - fr["bridge_half"] > 0.01:
+                lo, hi = sorted((sx * (fr["bridge_half"] - 0.5), sx * rx_face))
+                br_add.append(box([lo, ry - r_hy, Zb], [hi, ry + r_hy, r_top]))
     part("bridge", "bridge", "fixed", [0, 0, 1], br_add, br_cut,
          anchor=[fr["bridge_half"] - 3.0, 12.0, Zb + 2.0],
          note="Ties the front bulkhead, lower and upper cases. Top face: the chassis joints.")
     ph = ch["plate_half"]
     # ends 3 mm past the rear chassis joint's groove (ridge_half + 1 along Y)
     y_plate = max(y_back, min(ch["joints_y"]) - ch["ridge_half"] - 1.0 - 3.0)
-    part("chassis", "chassis plate (placeholder)", "fixed", [0, 0, 1],
-         [box([-ph, y_plate, Zb + bt], [ph, Y["bh_out"], Zb + bt + jp])],
-         anchor=[ph - 2.0, 12.0, Zb + bt + 1.0], mock=True, color=MOCK_C,
-         note="PLACEHOLDER for the chassis: where the bridge's two 6-32 and ridges land.")
+    if not rail_on:
+        # the old chassis' placeholder: the v2 bike's rails replace it
+        part("chassis", "chassis plate (placeholder)", "fixed", [0, 0, 1],
+             [box([-ph, y_plate, Zb + bt], [ph, Y["bh_out"], Zb + bt + jp])],
+             anchor=[ph - 2.0, 12.0, Zb + bt + 1.0], mock=True, color=MOCK_C,
+             note="PLACEHOLDER for the chassis: where the bridge's two 6-32 and ridges land.")
+    if rail_on:
+        for sx, sl in ((1, "railR"), (-1, "railL")):
+            lo, hi = sorted((sx * rx_face, sx * rl["outer_x"]))
+            part(sl, f"side rail {sl[-1]} (placeholder)", "fixed", [-sx, 0, 0],
+                 [box([lo, ry - r_hy - 3.0, Zb - 1.0], [hi, ry + r_hy + 3.0, r_top + 1.0])],
+                 anchor=[(lo + hi) / 2, ry + r_hy + 2.0, r_top], mock=True, color=MOCK_C,
+                 note="PLACEHOLDER for the bike's side rail (the drive case side grown forward).")
     fz = -(data["wheel_r"] + pz)
     part("floor", "floor (mock)", "fixed", None,
          [box([-130.0, min(y_back, yH + upTopZ) - 5, fz - 2.0], [130.0, max(Y["kn_out"], Y["bh_out"]) + 10, fz])],
@@ -996,8 +1031,9 @@ def layout(data: dict) -> dict:
     joints = []
 
     def joint(tag, head, zin, slot_dir, pocket, csk, nut, ridge_on_nut, ridge_dir, ridge_half,
-              csk_up, nut_up, ridge=True, slot_len=None):
-        joints.append({"tag": tag, "ridge": ridge, "through": slot_len is None,
+              csk_up, nut_up, ridge=True, slot_len=None, ridge_mid=None, ridge_clip_z=None):
+        extra = {k: float(v) for k, v in (("ridgeMid", ridge_mid), ("ridgeClipZ", ridge_clip_z)) if v is not None}
+        joints.append({**extra, "tag": tag, "ridge": ridge, "through": slot_len is None,
                        "slotLen": 0.0 if slot_len is None else float(slot_len),
                        "head": [float(v) for v in head], "zIn": [float(v) for v in zin],
                        "slot": [float(v) for v in slot_dir], "pocket": float(pocket),
@@ -1050,7 +1086,18 @@ def layout(data: dict) -> dict:
         for sx, tag in ((1, "jU0"), (-1, "jU1")):
             joint(tag, [sx * ear_x, yH + (upTopZ + ear_z1) / 2, Zb + jp], down, Y3, bt - jp, "bridge",
                   "uppercase", True, Y3, cs["ear_depth"] / 2 - 2.0, Z3, Y3)
-    for i, yj in enumerate(ch["joints_y"]):
+    if rail_on:
+        # in from each rail's outer face; the ridge VERTICAL on the bridge's
+        # side (it slides up into the rail's groove), the nut slot up out of
+        # the top
+        for sx, tag, sl in ((1, "jS0", "railR"), (-1, "jS1", "railL")):
+            # the ridge from rail.ridge_half over the screw ALL THE WAY DOWN
+            # (user): drawn 1.5 past the underside, cut flush with it there
+            r_lo, r_hi = Zb - 1.5, rz + rl["ridge_half"]
+            joint(tag, [sx * rl["outer_x"], ry, rz], [-sx, 0, 0], Z3, 0.0, sl, "bridge", True, Z3,
+                  (r_hi - r_lo) / 2, [-sx, 0, 0], Z3, slot_len=r_top - rz + 1.0,
+                  ridge_mid=(r_lo + r_hi) / 2 - rz, ridge_clip_z=Zb)
+    for i, yj in enumerate([] if rail_on else ch["joints_y"]):
         joint(f"jC{i}", [0, yj, Zb + bt + jp], down, X3, 0.0, "chassis", "bridge", True, Y3,
               ch["ridge_half"], Z3, Z3)
     # wing: head in the boss (countersunk from the far face), nut in the tab.
@@ -1291,11 +1338,18 @@ export function rgJoint(context is Context, id is Id, j is map, cskPart is Query
         const up = j.ridgeOnNut ? -zIn : zIn;
         const ridgePart = j.ridgeOnNut ? nutPart : cskPart;
         const other     = j.ridgeOnNut ? cskPart : nutPart;
-        const r = ridgeSolid(context, id + "ridge", jp, rgU(j.ridgeDir), up, f.ridge_height,
-                             0 * mm, j.ridgeHalf * mm);
+        // ridgeMid shifts the ridge along its direction; ridgeClipZ cuts it
+        // off flush with a level face it runs out through (its part's bed)
+        const rd = rgU(j.ridgeDir);
+        const jm = jp + (j.ridgeMid == undefined ? 0 : j.ridgeMid) * mm * rd;
+        const r = ridgeSolid(context, id + "ridge", jm, rd, up, f.ridge_height, 0 * mm, j.ridgeHalf * mm);
+        if (j.ridgeClipZ != undefined)
+            opBoolean(context, id + "rClip", { "tools" : boxW(context, id + "rClipB",
+                    vector(-500, -500, j.ridgeClipZ - 100) * mm, vector(500, 500, j.ridgeClipZ) * mm),
+                    "targets" : r, "operationType" : BooleanOperationType.SUBTRACTION });
         opBoolean(context, id + "rAdd", { "tools" : qUnion([ridgePart, r]),
                 "operationType" : BooleanOperationType.UNION });
-        const g = ridgeSolid(context, id + "groove", jp, rgU(j.ridgeDir), up, f.ridge_height,
+        const g = ridgeSolid(context, id + "groove", jm, rd, up, f.ridge_height,
                              f.ridge_clearance, j.ridgeHalf * mm + 1 * mm);
         opBoolean(context, id + "gCut", { "tools" : g, "targets" : other,
                 "operationType" : BooleanOperationType.SUBTRACTION });
@@ -1513,7 +1567,7 @@ export function rightingBuild(context is Context, id is Id, opt is map) returns 
     step("joints");
     for (var j in RG.joints)
     {
-        if (!opt.mocks && (j.csk == "chassis" || j.nut == "chassis"))
+        if (!opt.mocks && (j.csk == "chassis" || j.nut == "chassis" || j.csk == "railR" || j.csk == "railL"))
             continue;
         step("joint " ~ j.tag);
         rgJoint(context, id + j.tag, j, rgFind(context, id, j.csk), rgFind(context, id, j.nut));

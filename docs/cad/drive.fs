@@ -85,19 +85,19 @@ export const DR = {
     "xH" : 23.5 * millimeter,
     "cskWeb" : 0.95 * millimeter,
     "tip" : 13.975 * millimeter,
-    "nutSlotT" : 3 * millimeter,
+    "nutSlotT" : 2.8 * millimeter,
     "hN0" : 3.8 * millimeter,
-    "hN1" : 6.8 * millimeter,
-    "hT" : 7.4 * millimeter,
+    "hN1" : 6.6 * millimeter,
+    "hT" : 7.2 * millimeter,
     "hTip" : 6.625 * millimeter,
     "tipPast" : 0.445 * millimeter,
     "xN0" : 16.8 * millimeter,
     "web" : 1.4 * millimeter,
     "tipSlot" : 0.6 * millimeter,
-    "xRin" : 12.2 * millimeter,
+    "xRin" : 12.4 * millimeter,
     "travel" : 3 * millimeter,
-    "nutHalfY" : 3.275 * millimeter,
-    "nutCornerY" : 3.78164 * millimeter,
+    "nutHalfY" : 3.225 * millimeter,
+    "nutCornerY" : 3.72391 * millimeter,
     "Yscr" : 61.2339 * millimeter,
     "xTab" : 16 * millimeter,
     "yF0" : 124.895 * millimeter,
@@ -179,8 +179,8 @@ export const SCREW_OPT = {
     "holeDia" : 3.6 * millimeter,
     "headDia" : 7.5 * millimeter,
     "holeDepth" : 12 * millimeter,
-    "nutSlotWidth" : 6.55 * millimeter,
-    "nutSlotThickness" : 3 * millimeter,
+    "nutSlotWidth" : 6.45 * millimeter,
+    "nutSlotThickness" : 2.7 * millimeter,
     "nutDepth" : 6.6 * millimeter,
     "nutSlotLength" : 12 * millimeter,
     "cskAngle" : 90 * degree
@@ -585,6 +585,11 @@ export const BELT = [
     [[94.9266, -44.9597], [-3.11653, -8.34517]],
     [[-3.11653, -8.34517], [-8.82928, 1.18254], [-0.810672, 8.87116]]
 ];
+
+/* The side rails and the AHRS tabs (rail_layout), plain mm numbers: the
+ * outline pieces as (y, z) on the left rail's plane, the joints' heads (y, z)
+ * and ridge directions, the tabs. */
+export const RAIL = { "innerX" : 16, "plate" : 4.6, "outlineBike" : [[82.555, 41.896], [86, 38.6], [150, 38.6], [160.619, 60.022], [171.727, 62.998], [207.515005, 72.5872642], [204.215062, 84.9028185], [201.765572, 86.3170321], [194.231351, 84.2982435], [192.675716, 81.6038048], [168.479, 75.12], [105.11, 63.04], [104.404, 63.746]], "rearBike" : [[29.2388654, 62.8730689], [-7.01500503, 72.5872642], [-3.71506221, 84.9028185], [-1.26557247, 86.3170321], [6.26864898, 84.2982435], [7.8242839, 81.6038048], [32.8305441, 74.9033976], [29.2388654, 71.3117189]], "pieces" : [[[88.000146, -28.7502546], [88.1055049, -33.5168614], [133.360339, -78.7716954], [156.016747, -71.1328209], [165.975639, -76.8830132], [198.062214, -95.4083205], [204.437214, -84.3664966], [203.705163, -81.6344458], [196.950165, -77.7344458], [193.944909, -78.5397017], [172.250505, -66.014782], [118.900005, -29.7479823], [118.900005, -28.7495475]], [[65.1329734, 23.7829734], [46.3665891, 56.2873044], [57.408413, 62.6623044], [60.1404639, 61.9302536], [64.0404639, 55.1752554], [63.235208, 52.1699996], [76.1794007, 29.75], [71.1, 29.75]]], "casePoly" : [[54.2, -12.85], [71.1, -29.75], [118.895294, -29.75], [118.895294, 29.75], [71.1, 29.75], [54.2, 12.85]], "joints" : [{ "tag" : "steer", "head" : [179.585323, -76.3109638], "dir" : [0.5, 0.866025404], "half" : 3.5, "room" : 1.49948508, "gMid" : -2.65, "gHalf" : 7.15 }, { "tag" : "bridge", "head" : [116.018899, -54.3938356], "dir" : [0.707106781, 0.707106781], "half" : 3, "room" : 1.2255, "gMid" : -1.738, "gHalf" : 5.738 }], "anchor" : [123.743687, -60.1040764], "ahY1" : 122.395294, "ahN0" : 119.895294, "ahN1" : 121.495294, "ahTip" : 119.995294, "ahHoleR" : 1.2, "ahHoleY0" : 118.295294, "ahX" : 15, "ahZ" : [-25.7, 5.3], "ahNutHalf" : 2.05, "ahNutOut" : 17.4094011, "ahTabHalf" : 3.05, "ahTabIn" : 12, "ahBoard" : { "x" : 17, "y0" : 122.395294, "y1" : 123.995294, "z0" : -29.75, "z1" : 10.25 }, "ahRailGap" : 1.96333968, "ahScrewPast" : 0, "cageWall" : 0.95, "cageNd" : 5.55, "cage" : [{ "head" : [56.078286, 54.966152], "slot" : [-0.5, 0.866025404], "slotLen" : 7, "bike" : [0.786397524, 78.5202751, 75] }, { "head" : [196.741062, -85.6966236], "slot" : [0.866025404, -0.5], "slotLen" : 7, "bike" : [199.713602, 78.5202751, 105] }] };
 
 // ---- the servo-mount geometry, copied from the horn-mount-gen studio ----
 
@@ -2001,6 +2006,112 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
         lq = append(lq, partAt(context, P, p));
     opPattern(context, P + "rot", { "entities" : qUnion(lq), "transforms" : [rot], "instanceNames" : ["R"] });
 
+    // ---- the side rails (aow-bike-whole-v2) and the AHRS tabs. Built on the
+    // left and MIRRORED to the right -- a rail is not symmetric under the turn
+    // that makes the case sides one part -- then each united into its case
+    // side. The rail prints on the case side's outer face with it.
+    if (opt.rail == true)
+    {
+        step("rails");
+        const R  = RAIL;
+        const RL = id + "rail";
+        const RB = RL + "b";       // the rail's bodies (several: the tabs and the stub stand apart from the band)
+        const RC = RL + "c";       // its cutters
+        for (var k = 0; k < size(R.pieces); k += 1)
+        {
+            var pts = [];
+            for (var q in R.pieces[k])
+                pts = append(pts, vector(q[0], q[1]) * mm);
+            polyPrism(context, RB, "pc" ~ k, at(-L.xPo, z0, z0), X, Y, pts, L.xPo - R.innerX * mm);
+        }
+        // the AHRS tabs: the case side's plate and skirt run forward to the
+        // board's back face, inward to the tab's end
+        boxW(context, RB + "tab", at(-L.xPo, L.Ytab0 - 0.5 * mm, (R.ahZ[0] - R.ahTabHalf) * mm),
+             at(-R.ahTabIn * mm, R.ahY1 * mm, (R.ahZ[size(R.ahZ) - 1] + R.ahTabHalf) * mm));
+        const railL = qBodyType(qCreatedBy(RB, EntityType.BODY), BodyType.SOLID);
+        // inside the case side's outline (its rear corners chamfered) the
+        // rail stays the plate's 3.6
+        var cp = [];
+        for (var q in R.casePoly)
+            cp = append(cp, vector(q[0], q[1]) * mm);
+        polyPrism(context, RC, "fp", at(-L.caseHalf, z0, z0), X, Y, cp, L.caseHalf - R.innerX * mm + 0.1 * mm);
+        var rc = [qCreatedBy(RC + "fpExt", EntityType.BODY)];
+        // each M2: the hole through the tab (teardropped: it lies level as the
+        // case side prints, X+ up), the nut's slot down from the tab's end
+        const rT = R.ahHoleR * mm;
+        for (var k = 0; k < size(R.ahZ); k += 1)
+        {
+            step("rail ahrs " ~ k);
+            const z = R.ahZ[k] * mm;
+            const x = -R.ahX * mm;
+            rc = append(rc, cylW(context, RC + ("ahH" ~ k), at(x, R.ahHoleY0 * mm, z), at(x, R.ahY1 * mm + 0.1 * mm, z), rT));
+            polyPrism(context, RC, "ahT" ~ k, at(x, R.ahHoleY0 * mm, z), Y, Z,
+                      [vector(0 * mm, 0 * mm), vector(rT / sqrt(2), rT / sqrt(2)), vector(0 * mm, rT * sqrt(2)),
+                       vector(-rT / sqrt(2), rT / sqrt(2))], (R.ahY1 - R.ahHoleY0) * mm + 0.1 * mm);
+            rc = append(rc, qCreatedBy(RC + ("ahT" ~ k ~ "Ext"), EntityType.BODY));
+            rc = append(rc, boxW(context, RC + ("ahN" ~ k), at(-R.ahNutOut * mm, R.ahN0 * mm, z - R.ahNutHalf * mm),
+                                 at(-R.ahTabIn * mm + 1 * mm, R.ahN1 * mm, z + R.ahNutHalf * mm)));
+        }
+        // the joints: a countersink from the outer face and the groove for
+        // the other part's ridge on the inner face (the house joint, cut here
+        // half by half: the steering and the righting cut their own)
+        for (var k = 0; k < size(R.joints); k += 1)
+        {
+            step("rail joint " ~ k);
+            const j = R.joints[k];
+            const h = at(-L.xPo, j.head[0] * mm, j.head[1] * mm);
+            const J = RC + ("j" ~ k);
+            screwJointGeometry(context, J, coordSystem(h, vector(0, j.dir[0], j.dir[1]), X), mergeMaps(SCREW_OPT, {
+                    "nutDepth" : FIXTURE.joint_plate + 2 * mm, "headPocket" : 0 * mm, "bothWays" : false,
+                    "nutSlotLength" : 1 * mm }));
+            opDeleteBodies(context, RC + ("jd" ~ k), { "entities" : qCreatedBy(J + "slotExt", EntityType.BODY) });
+            rc = append(rc, qCreatedBy(J + "screwRev", EntityType.BODY));
+            // the groove drawn along Y and turned about X into the joint's
+            // direction: ridgeSolid's sketch will not extrude along an oblique
+            // direction (EXTRUDE_FAILED, 2026-10-16; the righting found the same)
+            const jp = h + FIXTURE.joint_plate * X;
+            const g = ridgeSolid(context, RC + ("g" ~ k), jp + j.gMid * mm * Y, Y, -X, FIXTURE.ridge_height,
+                                 FIXTURE.ridge_clearance, j.gHalf * mm);
+            opTransform(context, RC + ("gx" ~ k), { "bodies" : g,
+                    "transform" : rotationAround(line(jp, X), atan2(j.dir[1], j.dir[0])) });
+            rc = append(rc, g);
+        }
+        // the cage posts' joints: the head in the cage (not drawn) joint_plate
+        // outside the rail; the nut centred in the post's thickness, its slot
+        // out through the post's free edge (across its axis), its roof
+        // bridged in two layers as the rail prints
+        const bl = FIXTURE.bridge_layer;
+        const rH = SCREW_OPT.holeDia / 2;
+        const sw = SCREW_OPT.nutSlotWidth;
+        for (var k = 0; k < size(R.cage); k += 1)
+        {
+            step("rail cage " ~ k);
+            const c = R.cage[k];
+            const h = at(-L.xPo - FIXTURE.joint_plate, c.head[0] * mm, c.head[1] * mm);
+            const cs = coordSystem(h, vector(0, c.slot[0], c.slot[1]), X);
+            const J = RC + ("cgJ" ~ k);
+            screwJointGeometry(context, J, cs, mergeMaps(SCREW_OPT, {
+                    "nutDepth" : R.cageNd * mm, "headPocket" : 0 * mm, "bothWays" : false,
+                    "nutSlotLength" : c.slotLen * mm }));
+            rc = append(rc, qCreatedBy(J + "screwRev", EntityType.BODY));
+            rc = append(rc, qCreatedBy(J + "slotExt", EntityType.BODY));
+            const d0 = R.cageNd * mm + SCREW_OPT.nutSlotThickness;
+            rc = append(rc, boxIn(context, RC + ("cgB" ~ k), cs, vector(-rH, -sw / 2, d0), vector(rH, sw / 2, d0 + bl)));
+            rc = append(rc, boxIn(context, RC + ("cgC" ~ k), cs, vector(-rH, -rH, d0 + bl), vector(rH, rH, d0 + 2 * bl)));
+        }
+        step("rail cut");
+        cutFrom(context, RC + "cut", railL, rc);
+        step("rail mirror");
+        opPattern(context, RL + "mir", { "entities" : railL,
+                "transforms" : [mirrorAcross(plane(O, X))], "instanceNames" : ["R"] });
+        // the case side first: the united body keeps its identity
+        opBoolean(context, RL + "uL", { "tools" : qUnion([partAt(context, P, csPt), railL]),
+                "operationType" : BooleanOperationType.UNION });
+        opBoolean(context, RL + "uR", { "tools" : qUnion([partAt(context, P, flip(csPt)),
+                                                          qBodyType(qCreatedBy(RL + "mir", EntityType.BODY), BodyType.SOLID)]),
+                "operationType" : BooleanOperationType.UNION });
+    }
+
     // ---- fixture mock between the tabs; 2 x 6-32 a side, heads in the case
     // sides' outer faces, nuts in the block, a ridge along Y on each case
     const fxPt = at(z0, L.Yfront - 1 * mm, z0);
@@ -2078,9 +2189,12 @@ export const aowDrive = defineFeature(function(context is Context, id is Id, def
         isLength(definition.shift, { (millimeter) : [0, 0, 3] } as LengthBoundSpec);
         annotation { "Name" : "Fixture mock (and the case sides' tabs)", "Default" : false }
         definition.fixture is boolean;
+        annotation { "Name" : "Side rails, cage stubs and AHRS tabs (v2 bike)", "Default" : true }
+        definition.rail is boolean;
     }
     {
-        driveBuild(context, id + "build", { "shift" : definition.shift, "fixture" : definition.fixture });
+        driveBuild(context, id + "build", { "shift" : definition.shift, "fixture" : definition.fixture,
+                                            "rail" : definition.rail });
         reportFeatureInfo(context, id, "Belt centres " ~ toString(roundToPrecision(DR.C / millimeter, 2))
                 ~ " mm; tension travel " ~ toString(roundToPrecision(DR.travel / millimeter, 2)) ~ " mm");
     });

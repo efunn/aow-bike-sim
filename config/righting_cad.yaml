@@ -337,6 +337,36 @@ chassis:
   ridge_half: {value: 6.0, source: design}      # was 10, with the shorter plate
   plate_half: {value: 16.0, source: design}     # inside the drive pulleys (was 25): it is the bike's deck there
 
+rail:
+  # aow-bike-whole-v2's side RAILS (2026-10-16, user: "bridge should attach
+  # with one 6-32 from each side of the bike to the new rails (in between the
+  # rails I guess?)"). The rails are the drive case sides grown forward
+  # (cad_drive `rail:`); each comes down beside the bridge and one 6-32 runs
+  # in from its outer face. The bridge grows a LUG a side out to the joint
+  # plane (the rail's inner face) with the house ridge on it, the nut slot
+  # dropped in from the lug's top (no roof as the bridge prints). The rails
+  # are drawn here as PLACEHOLDERS (mocks, like the chassis plate) so the
+  # module shows the joint; the v2 bike drops them for the real rails.
+  # Module frame: y along the rod, z up from the rod. `joints: false` for
+  # the v1 bike (frozen).
+  joints: {value: true, source: design}
+  joint_y: {value: 0.0, source: design}                 # the bridge's middle
+  joint_above_bridge: {value: 5.0, source: design}      # above the bridge's underside: the nut's corner 1.3 clear of it
+  outer_x: {value: 20.6, source: design (= cad_drive case side outer face)}
+  # WITH THE RAILS the bridge fills the gap between them (user, 2026-10-16:
+  # "taller and e.g. 2.5mm wider so that the whole thing fits structurally
+  # between the rails"): its half-width becomes outer_x - joint_plate (16.0,
+  # the rails' inner faces; was frame.bridge_half 14.75) and its height this
+  # (was frame.bridge 8). The old chassis placeholder and its two joints on
+  # the bridge's top go. Without the rails (v1) frame: stands.
+  bridge_height: {value: 10.0, source: design}
+  lug_above_joint: {value: 5.0, source: design}         # only if the bridge stops short of the rails
+  # the ridge runs VERTICAL on the bridge's side (user, 2026-10-16: the
+  # righting slides in from below, the chassis sides staying on the drive):
+  # it goes up into the rail's groove, which is open at the rail's lower edge
+  ridge_half: {value: 3.0, source: design (inside the bridge's 10 with its tapers)}
+  lug_end_wall: {value: 1.5, source: design}            # lug past the ridge's ends, along Y
+
 joint:
   joint_plate: {value: 4.6, source: design (as-built)}
   ridge_height: {value: 1.2, source: design}

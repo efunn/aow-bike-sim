@@ -49,6 +49,9 @@ PART_STUDIO = "bike_v2"
 POSES = cb.POSES
 STEER_SWEEP = cb.STEER_SWEEP
 COMPONENTS = ("battery", "ahrs", "pi", "u2d2", "power")
+# the USB-C plug's overmold, a typical one (ahrs_fixture_cad.yaml
+# usb_plug_keepout, GUESS): length past the receptacle, width, height, m
+USB_KEEPOUT = (0.030, 0.0124, 0.0065)
 NAMES = {"battery": "battery", "ahrs": "AHRS", "pi": "Pi 3B+", "u2d2": "U2D2", "power": "power board"}
 COLORS = {"battery": (0.85, 0.75, 0.2), "ahrs": (0.55, 0.15, 0.15), "pi": (0.1, 0.5, 0.2),
           "u2d2": (0.2, 0.2, 0.25), "power": (0.15, 0.4, 0.15)}
@@ -57,7 +60,7 @@ COLORS = {"battery": (0.85, 0.75, 0.2), "ahrs": (0.55, 0.15, 0.15), "pi": (0.1, 
 def module_texts() -> dict[str, str]:
     """Each module's Feature Studio as v2 builds it, from local config now."""
     rd = cr.load()
-    return {"steering": cs.build_fs(cs.load(), v2=True),
+    return {"steering": cs.build_fs(cs.load(snug=True), v2=True),
             "drive": cd.build_fs(cd.load()),
             "righting": cr.build_fs(cr.layout(rd), rd)}
 
@@ -65,8 +68,10 @@ def module_texts() -> dict[str, str]:
 def load(path: str = PARAMS) -> dict:
     raw = _normalize(yaml.safe_load(Path(path).read_text()))
     rd = cr.load()
-    return {"s": raw, "params": load_params(sm.CAD_PARAMS), "steer": cs.layout(cs.load()),
-            "drive": cd.full_layout(cd.load()), "rd": rd, "rL": cr.layout(rd)}
+    sd, dd = cs.load(snug=True), cd.load()
+    D = cd.full_layout(dd)
+    return {"s": raw, "params": load_params(sm.CAD_PARAMS), "steer": cs.layout(sd), "steerData": sd,
+            "drive": D, "driveData": dd, "rail": cd.rail_layout(dd, D), "rd": rd, "rL": cr.layout(rd)}
 
 
 def layout(data: dict) -> dict:
@@ -99,21 +104,112 @@ def layout(data: dict) -> dict:
             raise ValueError(f"the blades are not centred on the wheelbase ({wb:g}, mid {wb / 2:g}): "
                              f"righting_cad.yaml wing.blade_y [{mid - half:g}, {mid + half:g}]")
         L["bladeY"] = [by[0] + yr, by[1] + yr]
-    # the righting's parts v2 leaves out, found by a point inside each
-    L["rgDrop"] = [next(q for q in rL["parts"] if q["slug"] == k)["anchor"] for k in ("floor", "chassis")]
+    # the righting's parts v2 leaves out, found by a point inside each: its
+    # floor, the old chassis plate and the side rails' placeholders (the
+    # drive's rails are the real ones)
+    L["rgDrop"] = [q["anchor"] for q in rL["parts"] if q["slug"] in ("floor", "chassis", "railR", "railL")]
+    L["railCheck"] = rail_joints(data, L)
     comps = []
     for k in COMPONENTS:
         c = s["components"][k]
+        if c.get("at") is None:
+            continue                     # parked: not drawn (bike_v2_cad.yaml says why)
         if c["frame"] not in ("bike", "drive", "steer"):
             raise ValueError(f"components.{k}.frame: bike, drive or steer, not {c['frame']!r}")
         h = [v / 2 for v in c["size"]]
-        boxes = (pi_boxes(s["pi"], h) if k == "pi"
+        tm = data["driveData"]["tm151"]
+        sx = int(data["driveData"]["s"]["ahrs"]["tm151_x_up_n"])
+        boxes = (pi_boxes(s["pi"], h) if k == "pi" else tm151_boxes(tm, h, sx) if k == "ahrs"
                  else [{"name": NAMES[k], "lo": [-v for v in h], "hi": h, "color": list(COLORS[k])}])
+        holes = pi_holes(s["pi"], h) if k == "pi" else tm151_holes(tm, h, sx) if k == "ahrs" else None
         comps.append({"key": k, "name": NAMES[k], "frame": c["frame"], "size": list(c["size"]),
                       "at": list(c["at"]), "rx": float(c.get("rx") or 0.0), "mass": c.get("mass"),
-                      "boxes": boxes, "holes": pi_holes(s["pi"], h) if k == "pi" else None})
+                      "boxes": boxes, "holes": holes})
     L["comps"] = comps
     return L
+
+
+def rail_joints(data: dict, L: dict) -> dict:
+    """The side rails (cad_drive `rail:`) against the parts they bolt to: the
+    head on the rail's outer face, at the steering's / the righting's own
+    joint, the ridges the length the rail's grooves are cut for. Refuses a
+    mismatch, with the value to use; returns the misses (all ~0)."""
+    D, RA, S = data["drive"], data["rail"], data["steer"]
+    rl = data["driveData"]["s"]["rail"]
+    rr = data["rd"]["s"]["rail"]
+    jp = data["steerData"]["s"]["joint"]["joint_plate"]
+    out = {}
+    # the steering's side joint: head jp outside its pad, on the axis at v2SideZ
+    if abs(S["v2SideX"] + jp - D["xPo"]) > 1e-6:
+        raise ValueError(f"the steering's side heads are at |x| {S['v2SideX'] + jp:g}, the rail's outer face at "
+                         f"{D['xPo']:g}: steering_cad.yaml v2.side_pad {D['xPo'] - jp - S['cupHalf']:g}")
+    h = cb._add(L["sOrigin"], cb.rx([0.0, 0.0, S["v2SideZ"]], L["rake"]))
+    miss = math.hypot(h[1] - rl["steer_joint"][0], h[2] - rl["steer_joint"][1])
+    if miss > 0.01:
+        raise ValueError(f"the rail's steering joint is {miss:.2f} off the steering's: drive_cad.yaml "
+                         f"rail.steer_joint [{h[1] / 1000:.6f}, {h[2] / 1000:.6f}]")
+    above = data["steerData"]["s"]["v2"]["side_ridge_above"]
+    if abs(rl["steer_ridge_deg"] - (90.0 + L["rake"])) > 1e-9 or abs(rl["steer_ridge_half"] - above) > 1e-9:
+        raise ValueError("the rail's steering groove is not along the steering's ridge, up its axis (rail.steer_ridge_*)")
+    # the ridge runs down to the pad's bottom: the groove must reach past it
+    if rl["steer_groove_open"] < S["v2SideZ"] - S["caseBot"]:
+        raise ValueError("the rail's steering groove stops short of the ridge's bottom (rail.steer_groove_open)")
+    out["steer"] = miss
+    # under the fork's top the rail stays out of the disc the fork sweeps
+    # round the steer axis (its legs out to xOut, its plate +-forkHalf): any
+    # steer angle, not only the check's samples
+    rf = math.hypot(S["xOut"], S["forkHalf"])
+    room = math.inf
+    pts = data["rail"]["outlineBike"]
+    for i in range(len(pts)):
+        a, b = pts[i], pts[(i + 1) % len(pts)]
+        for k in range(41):
+            y = a[0] + (b[0] - a[0]) * k / 40 - L["sOrigin"][1]
+            z = a[1] + (b[1] - a[1]) * k / 40 - L["sOrigin"][2]
+            ym, zm = cb.rx([0.0, y, z], -L["rake"])[1:]
+            if zm < S["blockTop"] + 0.5:
+                room = min(room, math.hypot(rl["inner_x"], ym) - rf)
+    if room < 1.0:
+        raise ValueError(f"the rail comes {room:.2f} from the fork's swept disc (r {rf:.1f}) under its top")
+    out["forkRoom"] = room
+    # the righting's bridge joints
+    rL = data["rL"]
+    if not rr.get("joints"):
+        raise ValueError("righting_cad.yaml rail.joints is off: the v2 bike's rails bolt to the bridge")
+    if abs(rr["outer_x"] - D["xPo"]) > 1e-6:
+        raise ValueError(f"righting_cad.yaml rail.outer_x {rr['outer_x']:g}: the rail's outer face is {D['xPo']:g}")
+    hy, hz = rr["joint_y"] + L["yr"], rL["Zb"] + rr["joint_above_bridge"] + L["zr"]
+    miss = math.hypot(hy - rl["bridge_joint"][0], hz - rl["bridge_joint"][1])
+    if miss > 0.01:
+        raise ValueError(f"the rail's bridge joint is {miss:.2f} off the righting's: drive_cad.yaml "
+                         f"rail.bridge_joint [{hy / 1000:.6f}, {hz / 1000:.7f}]")
+    if abs(rl["bridge_ridge_deg"] - 90.0) > 1e-9 or abs(rl["bridge_ridge_half"] - rr["ridge_half"]) > 1e-9:
+        raise ValueError("the rail's bridge groove is not along the bridge's ridge (rail.bridge_ridge_*)")
+    out["bridge"] = miss
+    # the cage posts are drawn in the steering's frame and mirrored about
+    # mid-wheelbase from it: that frame must be the bike's
+    ax_, az_ = rl["steer_axle"]
+    if abs(ax_ - L["wb"]) > 1e-6 or abs(az_ - L["sOrigin"][2]) > 1e-6 or abs(rl["steer_rake_deg"] - L["rake"]) > 1e-9:
+        raise ValueError(f"drive_cad.yaml rail.steer_axle / steer_rake_deg are not the bike's: "
+                         f"[{L['wb'] / 1000:g}, {L['sOrigin'][2] / 1000:g}], {L['rake']:g}")
+    zb = rl["steer_band_zm"]
+    if abs(zb[0] - S["caseBot"]) > 1e-6 or abs(zb[1] - S["v2PadTop"]) > 1e-6:
+        raise ValueError(f"rail.steer_band_zm is not the steering's lower case bottom and pad top: "
+                         f"[{S['caseBot'] / 1000:g}, {S['v2PadTop'] / 1000:g}]")
+    (yr_, zr_, _), (yf_, zf_, _) = sorted(c["bike"] for c in data["rail"]["cage"])
+    off = abs((yr_ + yf_) - L["wb"]) + abs(zr_ - zf_)
+    out["cageMirror"] = off
+    # the TM151 on its tabs: the envelope's back face on the tabs' fronts
+    tm = data["driveData"]["tm151"]
+    th = tm["board_thickness"] + tm["housing_height"]
+    want = [0.0, RA["ahY1"] + th / 2, data["driveData"]["s"]["ahrs"]["board_z"]]
+    c = data["s"]["components"]["ahrs"]
+    if c["frame"] != "drive" or max(abs(a - b) for a, b in zip(c["at"], want)) > 0.01:
+        raise ValueError(f"the AHRS is not on its tabs: bike_v2_cad.yaml components.ahrs frame drive, at "
+                         f"[{want[0]:g}, {want[1]:.3f}, {want[2]:g}]")
+    if [round(v, 6) for v in c["size"]] != [round(v, 6) for v in (tm["board_width"], th, tm["board_length"])]:
+        raise ValueError("components.ahrs.size is not the TM151's (ahrs_fixture_cad.yaml tm151)")
+    return out
 
 
 def pi_boxes(pi: dict, h: list) -> list[dict]:
@@ -136,6 +232,50 @@ def pi_boxes(pi: dict, h: list) -> list[dict]:
         if any(b["lo"][i] < -h[i] - 1e-9 or b["hi"][i] > h[i] + 1e-9 for i in range(3)):
             raise ValueError(f"{b['name']} sticks out of the Pi's box ({b['lo']}, {b['hi']} vs +-{h})")
     return out
+
+
+def tm151_boxes(tm: dict, h: list, sx: int) -> list[dict]:
+    """The TM151 in its box's frame (x across its 34, y out of the board
+    through the housing, z along its 40; its own +x, the pin-header edge, is
+    sx * z, so its USB-C edge is at -sx * z): the board, the housing
+    (off-centre along its x), the USB-C receptacle flush with its edge, and
+    a KEEP-OUT for the plug's overmold (ahrs_fixture_cad.yaml
+    usb_plug_keepout, a GUESS) out past that edge. The board is the first
+    box (the holes are cut from it)."""
+    y0 = -h[1]
+    y1 = y0 + tm["board_thickness"]
+    hz = sx * tm["housing_offset_x"]
+    L2 = tm["board_length"] / 2
+    ux, uz, uh = tm["usb_width"], tm["usb_length"], tm["usb_height"]
+    # its +y is the box's z x x... = sx * the box's +x (right-handed: z_tm = y)
+    uy = sx * tm["usb_offset_y"]
+    kl, kw, kh = (v * 1000 for v in USB_KEEPOUT)
+    ue = -sx * L2                                            # the USB edge, box z
+    span = lambda a, b: [min(a, b), max(a, b)]               # noqa: E731
+    uzr, kzr = span(ue, ue + sx * uz), span(ue, ue - sx * kl)
+    out = [{"name": "AHRS", "lo": [-tm["board_width"] / 2, y0, -L2], "hi": [tm["board_width"] / 2, y1, L2],
+            "color": [0.15, 0.35, 0.2]},
+           {"name": "AHRS housing", "lo": [-tm["housing_width"] / 2, y1, hz - tm["housing_length"] / 2],
+            "hi": [tm["housing_width"] / 2, y1 + tm["housing_height"], hz + tm["housing_length"] / 2],
+            "color": [0.55, 0.15, 0.15]},
+           {"name": "AHRS USB-C", "lo": [uy - ux / 2, y1, uzr[0]], "hi": [uy + ux / 2, y1 + uh, uzr[1]],
+            "color": [0.75, 0.75, 0.78]},
+           {"name": "AHRS USB plug (keep-out)", "lo": [uy - kw / 2, y1 + uh / 2 - kh / 2, kzr[0]],
+            "hi": [uy + kw / 2, y1 + uh / 2 + kh / 2, kzr[1]], "color": [0.85, 0.85, 0.9]}]
+    for b in out[:3]:
+        if any(b["lo"][i] < -h[i] - 1e-9 or b["hi"][i] > h[i] + 1e-9 for i in range(3)):
+            raise ValueError(f"{b['name']} sticks out of the AHRS's box ({b['lo']}, {b['hi']} vs +-{h})")
+    return out
+
+
+def tm151_holes(tm: dict, h: list, sx: int) -> dict:
+    """The four M2 holes through the board, 31 along its length (0.45 off
+    centre toward its +x, which is sx * z) by 30 across: (x, z) in the box
+    frame, the radius."""
+    hx, hz = tm["hole_span_y"] / 2, tm["hole_span_x"] / 2
+    zc = sx * tm["hole_offset_x"]
+    return {"at": [[sx * hx, zc + sz * hz] for sz in (-1, 1) for sx in (1, -1)], "r": tm["hole_dia"] / 2,
+            "y": [-h[1] - 1.0, -h[1] + tm["board_thickness"] + 1.0]}
 
 
 def pi_holes(pi: dict, h: list) -> dict:
@@ -211,7 +351,7 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
     const DRi = id + "dr";
     const RGi = id + "rg";
     const rs = steeringBuild(context, STi, { "attach" : "SCREWS", "key" : "CROSS", "v2" : true });
-    driveBuild(context, DRi, { "shift" : 0 * mm, "fixture" : false });
+    driveBuild(context, DRi, { "shift" : 0 * mm, "fixture" : false, "rail" : true });
     const rr = rightingBuild(context, RGi, { "mocks" : true });
     // the righting's floor mock and chassis placeholder: not in v2
     for (var k = 0; k < size(BK2.rgDrop); k += 1)
@@ -440,13 +580,17 @@ def judge(console: str, L: dict) -> bool:
             print(f"  {r[1]:18} x {lo[0]:6.1f}..{hi[0]:5.1f}  y {lo[1]:6.1f}..{hi[1]:5.1f}  "
                   f"z {lo[2]:6.1f}..{hi[2]:5.1f}  {'ok' if good else 'FAIL (placed off its config)'}")
     hits: dict[tuple, set] = {}
+    keep: dict[tuple, set] = {}
     for r in rows:
         if r[0] != "COLL" or r[4].startswith("ABUT"):
             continue
         a, b = sorted((r[2], r[3]))
         if _module(a) == _module(b) != "bike":
             continue
-        hits.setdefault((a, b), set()).add(r[1])
+        # a KEEP-OUT (room a cable's plug needs) is reported, not failed
+        (keep if "(keep-out)" in a + b else hits).setdefault((a, b), set()).add(r[1])
+    for (a, b), ps in sorted(keep.items()):
+        print(f"  KEEP-OUT reached: {a}  x  {b}   [{', '.join(sorted(ps))}]")
     if hits:
         ok = False
         print(f"  {len(hits)} interfering pairs:")

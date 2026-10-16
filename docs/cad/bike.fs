@@ -109,19 +109,19 @@ export const ST = {
     "zUS" : 120.25 * millimeter,
     "padBot" : 114.25 * millimeter,
     "v2HeadZ" : 108.55 * millimeter,
-    "v2UlX" : 18.3 * millimeter,
-    "v2UlY0" : -3 * millimeter,
-    "v2UlHalfY" : 5.25 * millimeter,
-    "v2UlY" : 2.25 * millimeter,
-    "v2UlOut" : 23.5816 * millimeter,
+    "v2RrY" : 17.8 * millimeter,
+    "v2RrHalfX" : 5.25 * millimeter,
+    "v2RrOut" : 23.0816 * millimeter,
     "v2LugTop" : 118.082 * millimeter,
-    "v2UlPocket" : 10.0316 * millimeter,
+    "v2RrPocket" : 10.0316 * millimeter,
     "v2BlkTop" : 97.95 * millimeter,
     "v2BlkBot" : 86.7184 * millimeter,
     "v2SideZ" : 75.55 * millimeter,
     "v2SideRidge" : 6 * millimeter,
-    "v2SideX" : 17.35 * millimeter,
-    "v2SideBoreWall" : 2.85 * millimeter,
+    "v2SideRidgeTop" : 79.05 * millimeter,
+    "v2SideX" : 16 * millimeter,
+    "v2SideBoreWall" : 1.5 * millimeter,
+    "v2SideNutWall" : 1.5 * millimeter,
     "v2PadTop" : 80.8 * millimeter,
     "v2Foot" : -12.55 * millimeter,
     "v2Rise" : 85.25 * millimeter,
@@ -1233,13 +1233,15 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
             lcAdd = append(lcAdd, boxW(context, P + ("pad" ~ tg),
                     at(sg > 0 ? L.cupHalf - 0.5 * mm : -L.v2SideX, L.yWallFar, L.caseBot),
                     at(sg > 0 ? L.v2SideX : -L.cupHalf + 0.5 * mm, L.cupNear, L.v2PadTop)));
-            const pz = function(x, z) returns Vector { return vector(x, -sg * z); };
-            polyPrism(context, P, "ulBlk" ~ tg, at(0 * mm, L.v2UlY0, 0 * mm), Y, sg * X,
-                      [pz(L.cupHalf - 0.5 * mm, L.v2BlkBot - 0.5 * mm), pz(L.cupHalf, L.v2BlkBot),
-                       pz(L.v2UlOut, L.v2BlkTop), pz(L.v2UlOut, L.upBot), pz(L.cupHalf - 0.5 * mm, L.upBot)],
-                      2 * L.v2UlHalfY);
-            lcAdd = append(lcAdd, qCreatedBy(P + ("ulBlk" ~ tg ~ "Ext"), EntityType.BODY));
         }
+    }
+    if (v2)
+    {
+        polyPrism(context, P, "rrBlk", at(-L.v2RrHalfX, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.yWallNear - 0.5 * mm, L.v2BlkBot - 0.5 * mm), vector(L.yWallNear, L.v2BlkBot),
+                   vector(L.v2RrOut, L.v2BlkTop), vector(L.v2RrOut, L.upBot), vector(L.yWallNear - 0.5 * mm, L.upBot)],
+                  2 * L.v2RrHalfX);
+        lcAdd = append(lcAdd, qCreatedBy(P + "rrBlkExt", EntityType.BODY));
     }
     unite(context, P + "lcU", lcAdd);
     var lcPt = v2 ? at(L.cupHalf - 0.5 * mm, -L.cavR - 2.5 * mm, L.zCF - 2 * mm)
@@ -1255,10 +1257,10 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     if (v2)
     {
         const run = L.v2Foot - L.yWallFar + 1 * mm;
-        polyPrism(context, P, "lcCh", at(-L.v2UlOut - 1 * mm, 0 * mm, 0 * mm), X, Y,
+        polyPrism(context, P, "lcCh", at(-L.v2SideX - 1 * mm, 0 * mm, 0 * mm), X, Y,
                   [vector(L.v2Foot, L.caseBot - 1 * mm), vector(L.v2Foot, L.v2Rise),
                    vector(L.yWallFar - 1 * mm, L.v2Rise + run), vector(L.yWallFar - 1 * mm, L.caseBot - 1 * mm)],
-                  2 * L.v2UlOut + 2 * mm);
+                  2 * L.v2SideX + 2 * mm);
         opBoolean(context, P + "lcChCut", { "tools" : qCreatedBy(P + "lcChExt", EntityType.BODY),
                 "targets" : partAt(context, P, lcPt), "operationType" : BooleanOperationType.SUBTRACTION });
     }
@@ -1273,15 +1275,10 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     var ucAdd = [partAt(context, P, ucPt), ucWrap];
     if (v2)
     {
-        for (var sg in [1, -1])
-        {
-            const tg = sg > 0 ? "P" : "N";
-            const pz = function(x, z) returns Vector { return vector(x, -sg * z); };
-            polyPrism(context, P, "ucLug" ~ tg, at(0 * mm, L.v2UlY0, 0 * mm), Y, sg * X,
-                      [pz(L.botOuter - 0.5 * mm, L.upBot), pz(L.v2UlOut, L.upBot), pz(L.v2UlOut, L.v2HeadZ),
-                       pz(L.botOuter - 0.5 * mm, L.v2LugTop + 0.5 * mm)], 2 * L.v2UlHalfY);
-            ucAdd = append(ucAdd, qCreatedBy(P + ("ucLug" ~ tg ~ "Ext"), EntityType.BODY));
-        }
+        polyPrism(context, P, "ucLug", at(-L.v2RrHalfX, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.yUpNear - 0.5 * mm, L.upBot), vector(L.v2RrOut, L.upBot), vector(L.v2RrOut, L.v2HeadZ),
+                   vector(L.yUpNear - 0.5 * mm, L.v2LugTop + 0.5 * mm)], 2 * L.v2RrHalfX);
+        ucAdd = append(ucAdd, qCreatedBy(P + "ucLugExt", EntityType.BODY));
     }
     else
         ucAdd = append(ucAdd, boxW(context, P + "ucPad", at(-L.padHalf, L.yP, L.padBot), at(L.padHalf, L.yUpFar + 1 * mm, L.upTopZ)));
@@ -1341,16 +1338,22 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     }
     else
     {
-        for (var sg in [1, -1])
-            blindScrewJoint(context, P + ("jUL" ~ (sg > 0 ? "P" : "N")), at(sg * L.v2UlX, L.v2UlY, L.v2HeadZ), -Z, sg * X,
-                            L.v2UlOut - L.v2UlX + 1 * mm, L.v2UlPocket,
-                            partAt(context, P, ucPt), partAt(context, P, lcPt), false, X, 0 * mm, -Z, Z);
+        blindScrewJoint(context, P + "jUL", at(0 * mm, L.v2RrY, L.v2HeadZ), -Z, Y,
+                        L.v2RrOut - L.v2RrY + 1 * mm, L.v2RrPocket,
+                        partAt(context, P, ucPt), partAt(context, P, lcPt), false, X, 0 * mm, -Z, Z);
         var k = 0;
         for (var sg in [1, -1])
         {
-            blindScrewJoint(context, P + ("jS" ~ k), at(sg * (L.v2SideX + FIXTURE.joint_plate), 0 * mm, L.v2SideZ),
-                            -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
-                            partAt(context, P, lcPt), true, Y, L.v2SideRidge, Z, Z);
+            const hd = at(sg * (L.v2SideX + FIXTURE.joint_plate), 0 * mm, L.v2SideZ);
+            blindScrewJoint(context, P + ("jS" ~ k), hd, -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
+                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z);
+            const r0 = L.caseBot - 1.5 * mm;
+            const rr = ridgeSolid(context, P + ("jSr" ~ k), at(sg * L.v2SideX, 0 * mm, (r0 + L.v2SideRidgeTop) / 2), Z, sg * X,
+                                  FIXTURE.ridge_height, 0 * mm, (L.v2SideRidgeTop - r0) / 2);
+            opBoolean(context, P + ("jSc" ~ k), { "tools" : boxW(context, P + ("jSb" ~ k), at(-50 * mm, -50 * mm, L.caseBot - 10 * mm),
+                    at(50 * mm, 50 * mm, L.caseBot)), "targets" : rr, "operationType" : BooleanOperationType.SUBTRACTION });
+            opBoolean(context, P + ("jSu" ~ k), { "tools" : qUnion([partAt(context, P, lcPt), rr]),
+                    "operationType" : BooleanOperationType.UNION });
             k += 1;
         }
         const rz = function(p is Vector) returns Vector { return vector(-p[0], -p[1], p[2]); };
@@ -1948,6 +1951,8 @@ export const BELT = [
     [[-3.11653, -8.34517], [-8.82928, 1.18254], [-0.810672, 8.87116]]
 ];
 
+export const RAIL = {};
+
 export function segPrism(context is Context, id is Id, tag is string, origin is Vector,
                          normal is Vector, xDir is Vector, segs is array, depth is ValueWithUnits,
                          outerOnly is boolean) returns Query
@@ -2299,6 +2304,90 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
     for (var p in lefts)
         lq = append(lq, partAt(context, P, p));
     opPattern(context, P + "rot", { "entities" : qUnion(lq), "transforms" : [rot], "instanceNames" : ["R"] });
+    if (opt.rail == true)
+    {
+        step("rails");
+        const R  = RAIL;
+        const RL = id + "rail";
+        const RB = RL + "b";       // the rail's bodies (several: the tabs and the stub stand apart from the band)
+        const RC = RL + "c";       // its cutters
+        for (var k = 0; k < size(R.pieces); k += 1)
+        {
+            var pts = [];
+            for (var q in R.pieces[k])
+                pts = append(pts, vector(q[0], q[1]) * mm);
+            polyPrism(context, RB, "pc" ~ k, at(-L.xPo, z0, z0), X, Y, pts, L.xPo - R.innerX * mm);
+        }
+        boxW(context, RB + "tab", at(-L.xPo, L.Ytab0 - 0.5 * mm, (R.ahZ[0] - R.ahTabHalf) * mm),
+             at(-R.ahTabIn * mm, R.ahY1 * mm, (R.ahZ[size(R.ahZ) - 1] + R.ahTabHalf) * mm));
+        const railL = qBodyType(qCreatedBy(RB, EntityType.BODY), BodyType.SOLID);
+        var cp = [];
+        for (var q in R.casePoly)
+            cp = append(cp, vector(q[0], q[1]) * mm);
+        polyPrism(context, RC, "fp", at(-L.caseHalf, z0, z0), X, Y, cp, L.caseHalf - R.innerX * mm + 0.1 * mm);
+        var rc = [qCreatedBy(RC + "fpExt", EntityType.BODY)];
+        const rT = R.ahHoleR * mm;
+        for (var k = 0; k < size(R.ahZ); k += 1)
+        {
+            step("rail ahrs " ~ k);
+            const z = R.ahZ[k] * mm;
+            const x = -R.ahX * mm;
+            rc = append(rc, cylW(context, RC + ("ahH" ~ k), at(x, R.ahHoleY0 * mm, z), at(x, R.ahY1 * mm + 0.1 * mm, z), rT));
+            polyPrism(context, RC, "ahT" ~ k, at(x, R.ahHoleY0 * mm, z), Y, Z,
+                      [vector(0 * mm, 0 * mm), vector(rT / sqrt(2), rT / sqrt(2)), vector(0 * mm, rT * sqrt(2)),
+                       vector(-rT / sqrt(2), rT / sqrt(2))], (R.ahY1 - R.ahHoleY0) * mm + 0.1 * mm);
+            rc = append(rc, qCreatedBy(RC + ("ahT" ~ k ~ "Ext"), EntityType.BODY));
+            rc = append(rc, boxW(context, RC + ("ahN" ~ k), at(-R.ahNutOut * mm, R.ahN0 * mm, z - R.ahNutHalf * mm),
+                                 at(-R.ahTabIn * mm + 1 * mm, R.ahN1 * mm, z + R.ahNutHalf * mm)));
+        }
+        for (var k = 0; k < size(R.joints); k += 1)
+        {
+            step("rail joint " ~ k);
+            const j = R.joints[k];
+            const h = at(-L.xPo, j.head[0] * mm, j.head[1] * mm);
+            const J = RC + ("j" ~ k);
+            screwJointGeometry(context, J, coordSystem(h, vector(0, j.dir[0], j.dir[1]), X), mergeMaps(SCREW_OPT, {
+                    "nutDepth" : FIXTURE.joint_plate + 2 * mm, "headPocket" : 0 * mm, "bothWays" : false,
+                    "nutSlotLength" : 1 * mm }));
+            opDeleteBodies(context, RC + ("jd" ~ k), { "entities" : qCreatedBy(J + "slotExt", EntityType.BODY) });
+            rc = append(rc, qCreatedBy(J + "screwRev", EntityType.BODY));
+            const jp = h + FIXTURE.joint_plate * X;
+            const g = ridgeSolid(context, RC + ("g" ~ k), jp + j.gMid * mm * Y, Y, -X, FIXTURE.ridge_height,
+                                 FIXTURE.ridge_clearance, j.gHalf * mm);
+            opTransform(context, RC + ("gx" ~ k), { "bodies" : g,
+                    "transform" : rotationAround(line(jp, X), atan2(j.dir[1], j.dir[0])) });
+            rc = append(rc, g);
+        }
+        const bl = FIXTURE.bridge_layer;
+        const rH = SCREW_OPT.holeDia / 2;
+        const sw = SCREW_OPT.nutSlotWidth;
+        for (var k = 0; k < size(R.cage); k += 1)
+        {
+            step("rail cage " ~ k);
+            const c = R.cage[k];
+            const h = at(-L.xPo - FIXTURE.joint_plate, c.head[0] * mm, c.head[1] * mm);
+            const cs = coordSystem(h, vector(0, c.slot[0], c.slot[1]), X);
+            const J = RC + ("cgJ" ~ k);
+            screwJointGeometry(context, J, cs, mergeMaps(SCREW_OPT, {
+                    "nutDepth" : R.cageNd * mm, "headPocket" : 0 * mm, "bothWays" : false,
+                    "nutSlotLength" : c.slotLen * mm }));
+            rc = append(rc, qCreatedBy(J + "screwRev", EntityType.BODY));
+            rc = append(rc, qCreatedBy(J + "slotExt", EntityType.BODY));
+            const d0 = R.cageNd * mm + SCREW_OPT.nutSlotThickness;
+            rc = append(rc, boxIn(context, RC + ("cgB" ~ k), cs, vector(-rH, -sw / 2, d0), vector(rH, sw / 2, d0 + bl)));
+            rc = append(rc, boxIn(context, RC + ("cgC" ~ k), cs, vector(-rH, -rH, d0 + bl), vector(rH, rH, d0 + 2 * bl)));
+        }
+        step("rail cut");
+        cutFrom(context, RC + "cut", railL, rc);
+        step("rail mirror");
+        opPattern(context, RL + "mir", { "entities" : railL,
+                "transforms" : [mirrorAcross(plane(O, X))], "instanceNames" : ["R"] });
+        opBoolean(context, RL + "uL", { "tools" : qUnion([partAt(context, P, csPt), railL]),
+                "operationType" : BooleanOperationType.UNION });
+        opBoolean(context, RL + "uR", { "tools" : qUnion([partAt(context, P, flip(csPt)),
+                                                          qBodyType(qCreatedBy(RL + "mir", EntityType.BODY), BodyType.SOLID)]),
+                "operationType" : BooleanOperationType.UNION });
+    }
     const fxPt = at(z0, L.Yfront - 1 * mm, z0);
     if (fix)
     {
@@ -2394,11 +2483,16 @@ export function rgJoint(context is Context, id is Id, j is map, cskPart is Query
         const up = j.ridgeOnNut ? -zIn : zIn;
         const ridgePart = j.ridgeOnNut ? nutPart : cskPart;
         const other     = j.ridgeOnNut ? cskPart : nutPart;
-        const r = ridgeSolid(context, id + "ridge", jp, rgU(j.ridgeDir), up, f.ridge_height,
-                             0 * mm, j.ridgeHalf * mm);
+        const rd = rgU(j.ridgeDir);
+        const jm = jp + (j.ridgeMid == undefined ? 0 : j.ridgeMid) * mm * rd;
+        const r = ridgeSolid(context, id + "ridge", jm, rd, up, f.ridge_height, 0 * mm, j.ridgeHalf * mm);
+        if (j.ridgeClipZ != undefined)
+            opBoolean(context, id + "rClip", { "tools" : boxW(context, id + "rClipB",
+                    vector(-500, -500, j.ridgeClipZ - 100) * mm, vector(500, 500, j.ridgeClipZ) * mm),
+                    "targets" : r, "operationType" : BooleanOperationType.SUBTRACTION });
         opBoolean(context, id + "rAdd", { "tools" : qUnion([ridgePart, r]),
                 "operationType" : BooleanOperationType.UNION });
-        const g = ridgeSolid(context, id + "groove", jp, rgU(j.ridgeDir), up, f.ridge_height,
+        const g = ridgeSolid(context, id + "groove", jm, rd, up, f.ridge_height,
                              f.ridge_clearance, j.ridgeHalf * mm + 1 * mm);
         opBoolean(context, id + "gCut", { "tools" : g, "targets" : other,
                 "operationType" : BooleanOperationType.SUBTRACTION });
@@ -2592,7 +2686,7 @@ export function rightingBuild(context is Context, id is Id, opt is map) returns 
     step("joints");
     for (var j in RG.joints)
     {
-        if (!opt.mocks && (j.csk == "chassis" || j.nut == "chassis"))
+        if (!opt.mocks && (j.csk == "chassis" || j.nut == "chassis" || j.csk == "railR" || j.csk == "railL"))
             continue;
         step("joint " ~ j.tag);
         rgJoint(context, id + j.tag, j, rgFind(context, id, j.csk), rgFind(context, id, j.nut));

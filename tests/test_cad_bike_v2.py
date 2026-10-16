@@ -56,10 +56,40 @@ def test_each_envelope_is_its_size_where_its_config_puts_it(L):
 def test_no_chassis_and_the_rightings_placeholders_dropped(L):
     body = b2.build_fs(L).split("export function bikeV2Build")[1].split(b2.SPLIT_MARK)[0]
     assert not any(w in body for w in ("deck", "tray", "carrier", "cage"))
-    assert len(L["rgDrop"]) == 2
+    # the floor and the two rail placeholders (with the rails the righting
+    # draws no chassis plate)
+    assert len(L["rgDrop"]) == 3
 
 
 def test_the_featurescript_builds_and_lints(L):
     text = b2.build_fs(L)
     sm.lint_fs(text)
     assert "getProperty" not in sm._strip_comments(text)
+
+
+def test_the_rails_meet_their_joints(data, L):
+    """The drive's side rails bolt to the steering's side pads and the
+    righting's bridge lugs where those modules put their own joints, the
+    rail's grooves along their ridges, clear of the fork's swept disc; the
+    righting's rail placeholders are dropped; the AHRS sits on its tabs."""
+    rc = L["railCheck"]
+    assert rc["steer"] < 0.01 and rc["bridge"] < 0.01
+    assert rc["forkRoom"] >= 1.0
+    assert len(L["rgDrop"]) == 3
+    fs = b2.build_fs(L).split("export function bikeV2Build")[1]
+    assert '"rail" : true' in fs
+
+
+def test_the_cage_posts_mirror_about_mid_wheelbase(data, L):
+    """The two cage posts: the same height, y mirrored about mid-wheelbase,
+    the front along the steering axis and the rear its mirror; each grooved
+    joint's groove runs out through the rail's edge the way its module
+    slides out (rail_layout refuses otherwise)."""
+    (yr, zr, ar), (yf, zf, af) = sorted(c["bike"] for c in data["rail"]["cage"])
+    assert yr + yf == pytest.approx(L["wb"]) and zr == pytest.approx(zf)
+    assert (ar, af) == pytest.approx((90 - L["rake"], 90 + L["rake"]))
+    # the rear arm ends on the case side (its last two points on its rear
+    # chamfer's top corner and the top edge), the rear post the front mirrored
+    rb, ob = data["rail"]["rearBike"], data["rail"]["outlineBike"]
+    assert sorted(round(L["wb"] - q[0], 6) for q in rb[1:6]) == \
+        sorted(round(q[0], 6) for q in ob[5:10])

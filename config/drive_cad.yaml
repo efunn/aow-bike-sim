@@ -220,6 +220,114 @@ fixture:
   head_clearance: {value: 0.0005, source: design}   # head edge to the pulley's flange
   gap: {value: 0.0005, source: design}       # block off the skirt's front wall
 
+rail:
+  # THE SIDE RAILS (aow-bike-whole-v2, user 2026-10-16: the drive "takes on
+  # the main 'chassis' component of the bike, in two halves"). Each case side
+  # grows forward as ONE part: a plate in the bike's side plane, printed on
+  # the case side's outer face (|x| 20.6) like the case side itself, to the
+  # steering's lower case and down to the righting's bridge, with the roll
+  # cage's stubs. joint_plate thick (4.6, the house joint), so the inner face
+  # is at |x| inner_x; inside the case side's own outline the extra 1.0 under
+  # 17.0 is cut back (the servos are there). The rails pass wholly UNDER the
+  # AHRS (user), which hangs on tabs off the case sides (ahrs: below).
+  #
+  # IN THE BIKE FRAME, metres: (y, z) in the side view, origin on the rear
+  # axle (the module turns them by the drive's 45 deg). cad_bike_v2 refuses a
+  # joint here that is not where the steering's / righting's own joint is.
+  #   outline   the left rail's side view (the right rail is its mirror):
+  #             in from the case side's lower-front corner (two points 1
+  #             inside the case, for the union: deeper and it fills the
+  #             M2.5 counterbores, which reach |z| 27.75 of the case's 29.75), along under the bridge's
+  #             underside (z 38.6), up over the fork's top (module z 68.75)
+  #             23 behind the steer axis -- the fork sweeps r 25.5 round it
+  #             below z 67.25 -- to the steering's side pad (module z
+  #             68.75..80.8, y -11.5..12: the pad's footprint), and on up
+  #             to the front cage post, which is part of its outline
+  #   THE CAGE POSTS (user, 2026-10-16): short posts at 15 deg. The FRONT
+  #   one is parallel to the steering axis just ahead of the steering's foot
+  #   (module y cage_post_ym, from the band's bottom to cage_post_top_zm);
+  #   the REAR one is its exact MIRROR about mid-wheelbase, carried by an arm
+  #   whose edges continue the post's bottom and the band's top (15 deg), and
+  #   end ON the case side's rear chamfer face and top edge (no overlap).
+  #   Each post is the rail's 4.6 thick (a boss inward blocked the front
+  #   fork's nut slots) and is itself the MALE locating feature: the cage's
+  #   socket slides DOWN over it along its axis, with lead-ins at its top. One
+  #   6-32 in from the side, the head in the cage part outside the rail, the
+  #   nut centred in the 4.6 (0.95 walls, two line widths) in a slot from the
+  #   screw out through the post's FREE edge (front post: forward; rear:
+  #   back). Through both edges it ran on into the rail.
+  inner_x: {value: 0.016, source: design (= case_half 17 - 1.0; plate = joint_plate 4.6)}
+  # the outline in two runs, the front cage post drawn between them (code:
+  # cad_drive.rail_layout): along the bottom to the steering's pad, then
+  # back along the top from it
+  outline_bottom:
+    value: [[0.082555, 0.041896], [0.0860, 0.0386], [0.1500, 0.0386], [0.160619, 0.060022], [0.171727, 0.062998]]
+    source: design
+  outline_top:
+    value: [[0.168479, 0.07512], [0.10511, 0.06304], [0.104404, 0.063746]]
+    source: design
+  # The steering's frame, to draw the front post in and mirror the rear one
+  # by (cad_bike_v2 refuses it if it is not the bike's): the front axle (y,
+  # z, bike) and the rake. The rear axle is the origin.
+  steer_axle: {value: [0.2005, 0.00005], source: design (= the bike's wheelbase, front axle height)}
+  steer_rake_deg: {value: 15.0, source: design (= bike.rake_deg)}
+  # The band the rail is beside the steering, module z: from the lower
+  # case's bottom (the user: flush with it; the fork's top is 1.0 under it)
+  # to the side pads' top.
+  steer_band_zm: {value: [0.06825, 0.0808], source: design (= steering caseBot, v2PadTop)}
+  # The joints: (y, z) of the head on the rail's outer face, the ridge's
+  # direction in the side view (deg up from +Y) and half-length. The ridge
+  # is on the OTHER part (steering pad, bridge lug); the rail has the groove.
+  steer_joint: {value: [0.180946, 0.073026], source: design (= cad_steering v2 side joint, in the bike)}
+  # Both joints' grooves run ALONG THE WAY THE MODULE SLIDES OUT and open
+  # through the rail's lower edge (user, 2026-10-16: the steering and the
+  # righting come out of the rails downward, the rails staying on the
+  # drive): `*_ridge_half` is how far the groove's ridge runs past the head
+  # (+1 for the groove), `*_groove_open` how far the groove runs back from
+  # the head, out past the edge.
+  steer_ridge_deg: {value: 105.0, source: design (up the steering axis, raked 15)}
+  steer_ridge_half: {value: 0.0035, source: design (= steering v2.side_ridge_above)}
+  steer_groove_open: {value: 0.0098, source: design (2.5 past the rail's edge at module z 68.25, its 45 deg end taper outside the rail)}
+  bridge_joint: {value: [0.1205, 0.0435755], source: design (= cad_righting rail joint, in the bike)}
+  bridge_ridge_deg: {value: 90.0, source: design (user; slides in from below)}
+  bridge_ridge_half: {value: 0.003, source: design (= righting rail.ridge_half)}
+  bridge_groove_open: {value: 0.007476, source: design (2.5 past the rail's edge at bike z 38.6, its taper outside)}
+
+  cage_post_ym: {value: [0.01355, 0.02555], source: design (1.0 ahead of the steering's foot at 12.55; 12 wide)}
+  cage_post_top_zm: {value: 0.083, source: design}
+  cage_post_lead: {value: 0.002, source: design}    # the free edge's lead-in; the rail's side runs 45 deg from the band's top
+  cage_screw_zm: {value: 0.076, source: design}     # module z of the screws (the rear's mirrored)
+
+ahrs:
+  # The TM151 on the case sides' front edges (user, 2026-10-16: "two
+  # attachment points on each drive case side, positioned roughly where it
+  # already is"), on its own four M2 holes (ahrs_fixture_cad.yaml tm151: 31
+  # along its length, drive Z, by 30 across, drive X). Each is a TAB off the
+  # case side, the board's back face on its front; the M2 (supplied, 4 long)
+  # goes in through the board, a thin web, into a tiny nut slot dropped in
+  # from the tab's inner end (open upward as the case side prints).
+  # ORIENTATION (user, 2026-10-16: "usb should be pointing up/back"): the
+  # USB-C edge (the TM151's -x) up the face, toward the battery; its +x, the
+  # pin-header edge, DOWN (tm151_x_up_n -1). Pointing down, the plug's
+  # overmold reached the righting's bridge.
+  board_z: {value: -0.00975, source: design (its lower edge on the case's lower face)}
+  tm151_x_up_n: {value: -1, source: design (user; USB up/back)}
+  # 0.9 = two line widths (user, 2026-10-16: 0.5 "is just gonna be one line
+  # width which is pretty sketchy"); the 4 mm screw then ends flush with the
+  # nut's far face once the nut is pulled up to the web
+  web: {value: 0.0009, source: design (user; two line widths)}
+  nut_af: {value: 0.004, source: measured (user; M2, 4 flats)}
+  nut_thickness: {value: 0.0015, source: measured (user)}
+  nut_clearance: {value: 0.0001, source: GUESS (snug, print fit)}
+  back_wall: {value: 0.001, source: design}
+  tab_wall: {value: 0.001, source: design}           # round the nut slot, along Z
+  # ONE tab a side, spanning both holes (user, 2026-10-16: "fully between the
+  # two support parts ... the full 8.6mm width of the underlying drive case
+  # in X"): |x| 12.0 to the outer face 20.6, the case side's own width there.
+  tab_inner_x: {value: 0.012, source: design (user; = the skirt's inner face)}
+  screw_length: {value: 0.004, source: measured (user)}
+  hole_dia: {value: 0.0024, source: GUESS (M2 free fit, printed)}
+
 print:
   min_wall: {value: 0.001, source: design (user; two perimeters)}
 

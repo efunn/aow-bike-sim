@@ -52,6 +52,7 @@ from . import cad_servo_mount as sm
 from .params import _normalize, load_params
 
 DRIVE_PARAMS = "config/drive_cad.yaml"
+AHRS_PARAMS = "config/ahrs_fixture_cad.yaml"     # the TM151's board and holes
 OUT_FS = "docs/cad/drive.fs"
 OUT_PNG = "docs/cad/drive{}.png"
 SPLIT_MARK = af.SPLIT_MARK
@@ -72,14 +73,17 @@ PAIRS = (("spline pulley L", "spline pulley R"), ("drive pulley L", "drive pulle
 
 
 def load(drive_path: str = DRIVE_PARAMS, cad_path: str = sm.CAD_PARAMS,
-         mount_path: str = sm.MOUNT_PARAMS) -> dict:
-    """Everything the module reads, in MILLIMETRES."""
+         mount_path: str = sm.MOUNT_PARAMS, snug: bool = True) -> dict:
+    """Everything the module reads, in MILLIMETRES. `snug`: the tighter nut
+    slots (False for the frozen v1 bike, printed with the as-built ones)."""
     raw = _normalize(yaml.safe_load(Path(drive_path).read_text()))
     params = load_params(cad_path)
     mounts = sm.load_mounts(mount_path)
-    mm = lambda v: v * 1000.0    # noqa: E731
+    mm = lambda v: [mm(x) for x in v] if isinstance(v, list) else v * 1000.0    # noqa: E731
     s = {sec: {k: (v if k.endswith(("_deg", "_n")) else mm(v)) for k, v in vals.items()}
          for sec, vals in raw.items()}
+    tm = _normalize(yaml.safe_load(Path(AHRS_PARAMS).read_text()))["tm151"]
+    tm151 = {k: mm(v) for k, v in tm.items() if isinstance(v, (int, float))}
     sv = params["servos"]["xc430_w150"]
     d, w, h = sv["box_size"]
     xc430 = {"caseDepth": mm(d), "caseWidth": mm(w), "caseHeight": mm(h),
@@ -97,10 +101,10 @@ def load(drive_path: str = DRIVE_PARAMS, cad_path: str = sm.CAD_PARAMS,
              "nAxles": int(ow["n_axles"]), "bigD": mm(ow["roller"]["big_diameter"]),
              "smallD": mm(ow["roller"]["small_diameter"]), "len": mm(ow["roller"]["length"]),
              "gap": mm(ow["roller"]["pair_gap"])}
-    return {"s": s, "xc430": xc430, "belt": belt, "wheel": wheel,
+    return {"s": s, "xc430": xc430, "belt": belt, "wheel": wheel, "tm151": tm151, "snug": snug,
             "servo_gap": mm(dt["drive_servo_gap"]),
             "tilt_deg": dt["drive_servo_angle_deg"],
-            "table": sm.servo_table(params, mounts), "screw": sm.screw_table(mounts)}
+            "table": sm.servo_table(params, mounts), "screw": sm.screw_table(mounts, snug=snug)}
 
 
 # ---------------------------------------------------------------- 2D geometry
@@ -443,6 +447,218 @@ def layout(data: dict) -> dict:
     return L
 
 
+def to_drive(p) -> tuple[float, float]:
+    """A bike-frame side-view point (y, z) in the module frame (the drive is
+    turned up 45 deg about X; DRIVE_TILT is checked against the config)."""
+    a = math.radians(DRIVE_TILT)
+    return (p[0] * math.cos(a) + p[1] * math.sin(a), -p[0] * math.sin(a) + p[1] * math.cos(a))
+
+
+DRIVE_TILT = 45.0
+
+
+def _inside(p, poly) -> bool:
+    n, ok = len(poly), False
+    for i in range(n):
+        (y0, z0), (y1, z1) = poly[i], poly[(i + 1) % n]
+        if (z0 > p[1]) != (z1 > p[1]) and p[0] < y0 + (p[1] - z0) * (y1 - y0) / (z1 - z0):
+            ok = not ok
+    return ok
+
+
+def _edge_dist(p, poly) -> float:
+    best = math.inf
+    for i in range(len(poly)):
+        a, b = poly[i], poly[(i + 1) % len(poly)]
+        d = (b[0] - a[0], b[1] - a[1])
+        u = max(0.0, min(1.0, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / (d[0] ** 2 + d[1] ** 2)))
+        best = min(best, math.hypot(p[0] - a[0] - u * d[0], p[1] - a[1] - u * d[1]))
+    return best
+
+
+def _cross_lines(p, d, q, e):
+    """Where the line p + t d meets the line q + u e (2D)."""
+    den = d[0] * e[1] - d[1] * e[0]
+    t = ((q[0] - p[0]) * e[1] - (q[1] - p[1]) * e[0]) / den
+    return (p[0] + t * d[0], p[1] + t * d[1])
+
+
+def rail_outlines(data: dict, L: dict) -> dict:
+    """The rails' side view in the BIKE frame: the main outline with the
+    front cage post drawn into it, and the rear arm and post -- the front
+    post mirrored about mid-wheelbase, the arm's edges continuing its bottom
+    and the band's top until they meet the case side's rear chamfer face and
+    top edge. Also the posts' screws and slot directions."""
+    rl = data["s"]["rail"]
+    ay, az = rl["steer_axle"]
+    r = math.radians(rl["steer_rake_deg"])
+    c, s = math.cos(r), math.sin(r)
+    st = lambda ym, zm: (ay + ym * c - zm * s, az + ym * s + zm * c)   # noqa: E731  steering module -> bike
+    mir = lambda q: (ay - q[0], q[1])                                   # noqa: E731  about mid-wheelbase
+    p0, p1 = rl["cage_post_ym"]
+    z0, zb = rl["steer_band_zm"]
+    zt, lead = rl["cage_post_top_zm"], rl["cage_post_lead"]
+    # the post, free edge (p1) first, the rail's side (p0) 45 deg down to the band's top
+    post_m = [(p1, z0), (p1, zt - lead), (p1 - lead, zt), (p0 + (zt - zb), zt), (p0, zb)]
+    if p0 + (zt - zb) > p1 - lead:
+        raise ValueError("the cage post's top is narrower than its lead-ins")
+    post = [st(*q) for q in post_m]
+    outline = [tuple(q) for q in rl["outline_bottom"]] + post + [tuple(q) for q in rl["outline_top"]]
+    # the rear: the mirrored post; its arm continues the post's bottom
+    # (module z z0) and the band's top (zb) forward to the case side
+    rpost = [mir(q) for q in post]
+    k = math.sqrt(0.5)
+    bike = lambda yd, zd: ((yd - zd) * k, (yd + zd) * k)               # noqa: E731  drive -> bike
+    ch0 = bike(L["Yc0"], L["Zp"] - L["rcLeg"])                          # the rear chamfer, bottom
+    ch1 = bike(L["Yc0"] + L["rcLeg"], L["Zp"])                          # its top = the top edge's rear end
+    top1 = bike(L["Ytab0"], L["Zp"])
+    up = (0.0, 1.0)
+    d_bot = (rpost[0][0] - mir(st(p0, z0))[0], rpost[0][1] - mir(st(p0, z0))[1])   # along the post's bottom
+    d_top = (rpost[-1][0] - mir(st(p0 - 10, zb))[0], rpost[-1][1] - mir(st(p0 - 10, zb))[1])
+    B = _cross_lines(rpost[0], d_bot, ch0, (ch1[0] - ch0[0], ch1[1] - ch0[1]))
+    T = _cross_lines(rpost[-1], d_top, ch1, (top1[0] - ch1[0], top1[1] - ch1[1]))
+    if not (ch0[1] < B[1] < ch1[1]):
+        raise ValueError(f"the rear arm's bottom misses the case side's rear chamfer (z {B[1]:.2f})")
+    if not (ch1[0] < T[0] < top1[0]):
+        raise ValueError("the rear arm's top misses the case side's top edge")
+    rear = [B] + rpost + [T, ch1]
+    scr_f = st((p0 + p1) / 2, rl["cage_screw_zm"])
+    posts = [{"screw": mir(scr_f), "axis": 90.0 - rl["steer_rake_deg"], "free": (-c, s)},
+             {"screw": scr_f, "axis": 90.0 + rl["steer_rake_deg"], "free": (c, s)}]
+    return {"outline": outline, "rear": rear, "posts": posts, "postHalf": (p1 - p0) / 2,
+            "screwAbove": zt - rl["cage_screw_zm"], "screwBelow": rl["cage_screw_zm"] - z0, "lead": lead}
+
+
+def rail_layout(data: dict, L: dict) -> dict:
+    """The side rails and the AHRS tabs, module frame, mm: the outline pieces
+    as (y, z) on the left rail's plane, the joints, the tabs. Raises if
+    something does not fit."""
+    s, sc = data["s"], data["screw"]
+    rl, ah, jn, tm = s["rail"], s["ahrs"], s["joint"], data["tm151"]
+    wall = s["print"]["min_wall"]
+
+    def need(ok: bool, what: str) -> None:
+        if not ok:
+            raise ValueError(what)
+
+    need(abs(data["tilt_deg"] - DRIVE_TILT) < 1e-9, "the drive's tilt is not the 45 deg the rail's outline is drawn for")
+    R: dict = {"innerX": rl["inner_x"]}
+    R["plate"] = L["xPo"] - rl["inner_x"]
+    need(abs(R["plate"] - jn["joint_plate"]) < 1e-6, f"the rail is {R['plate']:.2f} thick, not the joint plate")
+    need(rl["inner_x"] < L["caseHalf"], "the rail's inner face is outside the case side's")
+    RO = rail_outlines(data, L)
+    R["outlineBike"] = [list(q) for q in RO["outline"]]
+    R["rearBike"] = [list(q) for q in RO["rear"]]
+    out = [to_drive(q) for q in RO["outline"]]
+    rear = [to_drive(q) for q in RO["rear"]]
+    R["pieces"] = [[list(q) for q in out], [list(q) for q in rear]]
+    # the case side's outline (its rear corners chamfered): inside it the
+    # rail stays the plate's thickness, the servos being there
+    rc = L["rcLeg"]
+    R["casePoly"] = [[L["Yc0"], -(L["Zp"] - rc)], [L["Yc0"] + rc, -L["Zp"]], [L["Ytab0"], -L["Zp"]],
+                     [L["Ytab0"], L["Zp"]], [L["Yc0"] + rc, L["Zp"]], [L["Yc0"], L["Zp"] - rc]]
+    # each piece keeps a wall off the case side's M2.5 counterbores (the
+    # union would fill them). The outline overlaps the case; the rear arm
+    # ends ON its chamfer face and top edge, so it unites across them
+    cbs = [(L["Yhc"] + sy * L["holeHH"], zc + sz * L["holeHW"])
+           for zc in (-L["zs"], L["zs"]) for sy in (1, -1) for sz in (1, -1)]
+    for nm, pc in (("outline", out), ("rear arm", rear)):
+        for c in cbs:
+            need(not _inside(c, pc) and _edge_dist(c, pc) >= L["m25CbR"] + wall - 1e-3,
+                 f"the rail's {nm} comes over an M2.5 counterbore at ({c[0]:.1f}, {c[1]:.1f})")
+    need(any(L["Yc0"] < y < L["Ytab0"] and abs(z) < L["Zp"] for y, z in out),
+         "the rail's outline does not reach into the case side")
+    # the joints: the head's countersink and the groove inside the outline,
+    # a wall to spare
+    R["joints"] = []
+    hr = sc["headDia"] / 2
+    gw = jn["ridge_flat"] / 2 + jn["ridge_height"] + jn["ridge_clearance"] * math.sqrt(2)
+    for tag in ("steer", "bridge"):
+        h = to_drive(rl[f"{tag}_joint"])
+        a = math.radians(rl[f"{tag}_ridge_deg"] - DRIVE_TILT)
+        d = (math.cos(a), math.sin(a))
+        half = rl[f"{tag}_ridge_half"]
+        n = (-d[1], d[0])
+        # the groove's extent along d from the head; open below, it runs out
+        # through the rail's lower edge (bike z `*_groove_open_below`), so the
+        # other part's ridge slides up into it
+        hi = half + 1.0
+        lo = -rl[f"{tag}_groove_open"]
+        pts = [h] + [(h[0] + u * d[0] + v * n[0], h[1] + u * d[1] + v * n[1]) for u in (0.0, hi) for v in (-gw, gw)]
+        for q in pts:
+            need(_inside(q, out), f"the rail's {tag} joint runs off its outline")
+        # the groove must run out through the rail's edge, its 45 deg end taper
+        # (ridge_height + clearance long) wholly outside the rail
+        tl = jn["ridge_height"] + jn["ridge_clearance"] + 0.5
+        need(not _inside((h[0] + (lo + tl) * d[0], h[1] + (lo + tl) * d[1]), out),
+             f"the rail's {tag} groove's end taper is inside the rail: open it further (rail.{tag}_groove_open)")
+        room = _edge_dist(h, out) - hr
+        need(room >= wall, f"the rail's {tag} joint's countersink is {room:.2f} from its edge")
+        R["joints"].append({"tag": tag, "head": list(h), "dir": list(d), "half": half, "room": room,
+                            "gMid": (lo + hi) / 2, "gHalf": (hi - lo) / 2})
+    # a point inside the rail and outside the case side (to find it by)
+    yb, zb = to_drive((130.0, 45.0))
+    need(_inside((yb, zb), out) and not (L["Yc0"] < yb < L["Ytab0"] and abs(zb) < L["Zp"]),
+         "the rail's anchor is not in the rail")
+    R["anchor"] = [yb, zb]
+    # ---- the AHRS tabs: board back face on the tabs' fronts, the nut slot
+    # behind a web, a wall behind it; holes off the TM151's own pattern
+    nT = ah["nut_thickness"] + ah["nut_clearance"]
+    R["ahY1"] = L["Ytab0"] + ah["back_wall"] + nT + ah["web"]       # the tabs' fronts = the board's back face
+    R["ahN0"] = R["ahY1"] - ah["web"] - nT
+    R["ahN1"] = R["ahY1"] - ah["web"]
+    R["ahTip"] = R["ahY1"] + tm["board_thickness"] - ah["screw_length"]
+    # the nut pulled up to the web: the screw's end within 0.2 of its far face
+    need(R["ahTip"] - (R["ahN1"] - ah["nut_thickness"]) <= 0.2 + 1e-9, "the AHRS screws do not reach through the nut")
+    need(R["ahTip"] - L["Ytab0"] >= 0.3, "the AHRS screws reach the case side's skirt wall")
+    R["ahHoleR"] = ah["hole_dia"] / 2
+    R["ahHoleY0"] = L["Ytab0"] - 0.6
+    need(R["ahHoleY0"] > L["Yf"] + L["skClr"] + 0.3, "the AHRS holes run into the servo pocket")
+    hx = tm["hole_span_y"] / 2                                        # across the board: drive X
+    zc = ah["board_z"] + ah["tm151_x_up_n"] * tm["hole_offset_x"]       # its +x up (1) or down (-1) the face
+    R["ahX"] = hx
+    R["ahZ"] = [zc - tm["hole_span_x"] / 2, zc + tm["hole_span_x"] / 2]
+    R["ahNutHalf"] = ah["nut_af"] / 2 + ah["nut_clearance"] / 2
+    R["ahNutOut"] = hx + ah["nut_af"] / math.sqrt(3) + ah["nut_clearance"]   # the slot's floor, |x|
+    R["ahTabHalf"] = R["ahNutHalf"] + ah["tab_wall"]
+    R["ahTabIn"] = ah["tab_inner_x"]
+    need(R["ahTabIn"] < hx - R["ahHoleR"] - 0.3, "the AHRS tabs stop short of the holes")
+    need(L["xPo"] - R["ahNutOut"] >= 2 * wall, "the AHRS nut slots come through the case side's outer face")
+    for z in R["ahZ"]:
+        need(abs(z) + R["ahTabHalf"] <= L["Zp"], "an AHRS tab runs off the case side")
+    bw, bl = tm["board_width"] / 2, tm["board_length"] / 2
+    need(bw <= L["caseHalf"] + 1e-6, "the TM151's board is wider than between the case sides")
+    R["ahBoard"] = {"x": bw, "y0": R["ahY1"], "y1": R["ahY1"] + tm["board_thickness"],
+                    "z0": ah["board_z"] - bl, "z1": ah["board_z"] + bl}
+    need(R["ahBoard"]["z0"] >= -L["Zp"] - 1e-6, "the TM151 hangs under the case sides")
+    # the board (|x| to 17) over the rail's top edge (from |x| 16): they share
+    # x, so the board's lower corners must stay out of the outline
+    b = R["ahBoard"]
+    corners = [(b["y0"], b["z0"]), (b["y1"], b["z0"])]
+    need(not any(_inside(q, out) for q in corners), "the rail runs into the TM151's board")
+    R["ahRailGap"] = min(_edge_dist(q, out) for q in corners)
+    need(R["ahRailGap"] >= 1.0, f"the rail's top edge is {R['ahRailGap']:.2f} under the TM151's board")
+    R["ahScrewPast"] = (R["ahN1"] - ah["nut_thickness"]) - R["ahTip"]   # past the pulled-up nut's far face
+    # ---- the cage posts: each the male feature the cage's socket slides
+    # down over (drawn in the outlines above), one 6-32 in from the side, the
+    # nut slot from the screw out through the post's free edge
+    w, T = sc["nutSlotWidth"], sc["nutSlotThickness"]
+    jpl = jn["joint_plate"]
+    R["cageWall"] = (R["plate"] - T) / 2                          # each side of the nut, in x
+    need(R["cageWall"] >= 0.9 - 1e-9, f"the cage nut slots leave {R['cageWall']:.2f} walls (two lines: 0.9)")
+    R["cageNd"] = jpl + R["cageWall"]                              # head (cage, outside) to the nut
+    need(RO["screwAbove"] - RO["lead"] - w / 2 >= 1.0 and RO["screwBelow"] - w / 2 >= 1.5,
+         "a cage post is too short round its nut slot")
+    R["cage"] = []
+    for pq in RO["posts"]:
+        f = pq["free"]
+        fd = (f[0] * math.cos(math.radians(DRIVE_TILT)) + f[1] * math.sin(math.radians(DRIVE_TILT)),
+              -f[0] * math.sin(math.radians(DRIVE_TILT)) + f[1] * math.cos(math.radians(DRIVE_TILT)))
+        R["cage"].append({"head": list(to_drive(pq["screw"])), "slot": list(fd),
+                          "slotLen": RO["postHalf"] + 1.0, "bike": list(pq["screw"]) + [pq["axis"]]})
+    return R
+
+
 def full_layout(data: dict) -> dict:
     """layout() plus the few config values the FeatureScript reads directly."""
     s, sv, wh = data["s"], data["xc430"], data["wheel"]
@@ -510,6 +726,19 @@ def _fs_map(name: str, d: dict) -> str:
     return f"export const {name} = {{\n" + ",\n".join(rows) + "\n};"
 
 
+def _fs_val(v) -> str:
+    """A plain FeatureScript literal: numbers (mm, unitless), strings, lists, maps."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return f"{v:.9g}"
+    if isinstance(v, str):
+        return f'"{v}"'
+    if isinstance(v, dict):
+        return "{ " + ", ".join(f'"{k}" : {_fs_val(x)}' for k, x in v.items()) + " }"
+    return "[" + ", ".join(_fs_val(x) for x in v) + "]"
+
+
 def _fs_segs(name: str, segs: list) -> str:
     """Segments as [[x, y], ...] lists of plain numbers (mm): 2 points a line,
     3 an arc through its midpoint."""
@@ -539,6 +768,11 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 %SCREW_OPT%
 
 %SEGS%
+
+/* The side rails and the AHRS tabs (rail_layout), plain mm numbers: the
+ * outline pieces as (y, z) on the left rail's plane, the joints' heads (y, z)
+ * and ridge directions, the tabs. */
+export const RAIL = %RAIL%;
 
 // ---- the servo-mount geometry, copied from the horn-mount-gen studio ----
 %SERVO_MOUNT%
@@ -968,6 +1202,112 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
         lq = append(lq, partAt(context, P, p));
     opPattern(context, P + "rot", { "entities" : qUnion(lq), "transforms" : [rot], "instanceNames" : ["R"] });
 
+    // ---- the side rails (aow-bike-whole-v2) and the AHRS tabs. Built on the
+    // left and MIRRORED to the right -- a rail is not symmetric under the turn
+    // that makes the case sides one part -- then each united into its case
+    // side. The rail prints on the case side's outer face with it.
+    if (opt.rail == true)
+    {
+        step("rails");
+        const R  = RAIL;
+        const RL = id + "rail";
+        const RB = RL + "b";       // the rail's bodies (several: the tabs and the stub stand apart from the band)
+        const RC = RL + "c";       // its cutters
+        for (var k = 0; k < size(R.pieces); k += 1)
+        {
+            var pts = [];
+            for (var q in R.pieces[k])
+                pts = append(pts, vector(q[0], q[1]) * mm);
+            polyPrism(context, RB, "pc" ~ k, at(-L.xPo, z0, z0), X, Y, pts, L.xPo - R.innerX * mm);
+        }
+        // the AHRS tabs: the case side's plate and skirt run forward to the
+        // board's back face, inward to the tab's end
+        boxW(context, RB + "tab", at(-L.xPo, L.Ytab0 - 0.5 * mm, (R.ahZ[0] - R.ahTabHalf) * mm),
+             at(-R.ahTabIn * mm, R.ahY1 * mm, (R.ahZ[size(R.ahZ) - 1] + R.ahTabHalf) * mm));
+        const railL = qBodyType(qCreatedBy(RB, EntityType.BODY), BodyType.SOLID);
+        // inside the case side's outline (its rear corners chamfered) the
+        // rail stays the plate's 3.6
+        var cp = [];
+        for (var q in R.casePoly)
+            cp = append(cp, vector(q[0], q[1]) * mm);
+        polyPrism(context, RC, "fp", at(-L.caseHalf, z0, z0), X, Y, cp, L.caseHalf - R.innerX * mm + 0.1 * mm);
+        var rc = [qCreatedBy(RC + "fpExt", EntityType.BODY)];
+        // each M2: the hole through the tab (teardropped: it lies level as the
+        // case side prints, X+ up), the nut's slot down from the tab's end
+        const rT = R.ahHoleR * mm;
+        for (var k = 0; k < size(R.ahZ); k += 1)
+        {
+            step("rail ahrs " ~ k);
+            const z = R.ahZ[k] * mm;
+            const x = -R.ahX * mm;
+            rc = append(rc, cylW(context, RC + ("ahH" ~ k), at(x, R.ahHoleY0 * mm, z), at(x, R.ahY1 * mm + 0.1 * mm, z), rT));
+            polyPrism(context, RC, "ahT" ~ k, at(x, R.ahHoleY0 * mm, z), Y, Z,
+                      [vector(0 * mm, 0 * mm), vector(rT / sqrt(2), rT / sqrt(2)), vector(0 * mm, rT * sqrt(2)),
+                       vector(-rT / sqrt(2), rT / sqrt(2))], (R.ahY1 - R.ahHoleY0) * mm + 0.1 * mm);
+            rc = append(rc, qCreatedBy(RC + ("ahT" ~ k ~ "Ext"), EntityType.BODY));
+            rc = append(rc, boxW(context, RC + ("ahN" ~ k), at(-R.ahNutOut * mm, R.ahN0 * mm, z - R.ahNutHalf * mm),
+                                 at(-R.ahTabIn * mm + 1 * mm, R.ahN1 * mm, z + R.ahNutHalf * mm)));
+        }
+        // the joints: a countersink from the outer face and the groove for
+        // the other part's ridge on the inner face (the house joint, cut here
+        // half by half: the steering and the righting cut their own)
+        for (var k = 0; k < size(R.joints); k += 1)
+        {
+            step("rail joint " ~ k);
+            const j = R.joints[k];
+            const h = at(-L.xPo, j.head[0] * mm, j.head[1] * mm);
+            const J = RC + ("j" ~ k);
+            screwJointGeometry(context, J, coordSystem(h, vector(0, j.dir[0], j.dir[1]), X), mergeMaps(SCREW_OPT, {
+                    "nutDepth" : FIXTURE.joint_plate + 2 * mm, "headPocket" : 0 * mm, "bothWays" : false,
+                    "nutSlotLength" : 1 * mm }));
+            opDeleteBodies(context, RC + ("jd" ~ k), { "entities" : qCreatedBy(J + "slotExt", EntityType.BODY) });
+            rc = append(rc, qCreatedBy(J + "screwRev", EntityType.BODY));
+            // the groove drawn along Y and turned about X into the joint's
+            // direction: ridgeSolid's sketch will not extrude along an oblique
+            // direction (EXTRUDE_FAILED, 2026-10-16; the righting found the same)
+            const jp = h + FIXTURE.joint_plate * X;
+            const g = ridgeSolid(context, RC + ("g" ~ k), jp + j.gMid * mm * Y, Y, -X, FIXTURE.ridge_height,
+                                 FIXTURE.ridge_clearance, j.gHalf * mm);
+            opTransform(context, RC + ("gx" ~ k), { "bodies" : g,
+                    "transform" : rotationAround(line(jp, X), atan2(j.dir[1], j.dir[0])) });
+            rc = append(rc, g);
+        }
+        // the cage posts' joints: the head in the cage (not drawn) joint_plate
+        // outside the rail; the nut centred in the post's thickness, its slot
+        // out through the post's free edge (across its axis), its roof
+        // bridged in two layers as the rail prints
+        const bl = FIXTURE.bridge_layer;
+        const rH = SCREW_OPT.holeDia / 2;
+        const sw = SCREW_OPT.nutSlotWidth;
+        for (var k = 0; k < size(R.cage); k += 1)
+        {
+            step("rail cage " ~ k);
+            const c = R.cage[k];
+            const h = at(-L.xPo - FIXTURE.joint_plate, c.head[0] * mm, c.head[1] * mm);
+            const cs = coordSystem(h, vector(0, c.slot[0], c.slot[1]), X);
+            const J = RC + ("cgJ" ~ k);
+            screwJointGeometry(context, J, cs, mergeMaps(SCREW_OPT, {
+                    "nutDepth" : R.cageNd * mm, "headPocket" : 0 * mm, "bothWays" : false,
+                    "nutSlotLength" : c.slotLen * mm }));
+            rc = append(rc, qCreatedBy(J + "screwRev", EntityType.BODY));
+            rc = append(rc, qCreatedBy(J + "slotExt", EntityType.BODY));
+            const d0 = R.cageNd * mm + SCREW_OPT.nutSlotThickness;
+            rc = append(rc, boxIn(context, RC + ("cgB" ~ k), cs, vector(-rH, -sw / 2, d0), vector(rH, sw / 2, d0 + bl)));
+            rc = append(rc, boxIn(context, RC + ("cgC" ~ k), cs, vector(-rH, -rH, d0 + bl), vector(rH, rH, d0 + 2 * bl)));
+        }
+        step("rail cut");
+        cutFrom(context, RC + "cut", railL, rc);
+        step("rail mirror");
+        opPattern(context, RL + "mir", { "entities" : railL,
+                "transforms" : [mirrorAcross(plane(O, X))], "instanceNames" : ["R"] });
+        // the case side first: the united body keeps its identity
+        opBoolean(context, RL + "uL", { "tools" : qUnion([partAt(context, P, csPt), railL]),
+                "operationType" : BooleanOperationType.UNION });
+        opBoolean(context, RL + "uR", { "tools" : qUnion([partAt(context, P, flip(csPt)),
+                                                          qBodyType(qCreatedBy(RL + "mir", EntityType.BODY), BodyType.SOLID)]),
+                "operationType" : BooleanOperationType.UNION });
+    }
+
     // ---- fixture mock between the tabs; 2 x 6-32 a side, heads in the case
     // sides' outer faces, nuts in the block, a ridge along Y on each case
     const fxPt = at(z0, L.Yfront - 1 * mm, z0);
@@ -1045,9 +1385,12 @@ export const aowDrive = defineFeature(function(context is Context, id is Id, def
         isLength(definition.shift, { (millimeter) : [0, 0, %TRAVEL%] } as LengthBoundSpec);
         annotation { "Name" : "Fixture mock (and the case sides' tabs)", "Default" : false }
         definition.fixture is boolean;
+        annotation { "Name" : "Side rails, cage stubs and AHRS tabs (v2 bike)", "Default" : true }
+        definition.rail is boolean;
     }
     {
-        driveBuild(context, id + "build", { "shift" : definition.shift, "fixture" : definition.fixture });
+        driveBuild(context, id + "build", { "shift" : definition.shift, "fixture" : definition.fixture,
+                                            "rail" : definition.rail });
         reportFeatureInfo(context, id, "Belt centres " ~ toString(roundToPrecision(DR.C / millimeter, 2))
                 ~ " mm; tension travel " ~ toString(roundToPrecision(DR.travel / millimeter, 2)) ~ " mm");
     });
@@ -1067,6 +1410,9 @@ def build_fs(data: dict, fs_version: str = "3044") -> str:
         "%HELPERS%": af.FS_HELPERS.rstrip("\n") + "\n",
         "%SPLIT%": SPLIT_MARK,
         "%TRAVEL%": f"{L['travel']:g}",
+        # the rails are the v2 bike's, with its snug nut slots; the frozen v1
+        # (as-built slots) never builds them
+        "%RAIL%": _fs_val(rail_layout(data, L)) if data.get("snug", True) else "{}",
     }
     text = FS
     for k, v in subs.items():
@@ -1094,7 +1440,7 @@ def check_wrapper(fs: str) -> str:
                     ~ "|" ~ toString(c["type"]));
     }};
     const id = makeId("chk");
-    const r = driveBuild(context, id, {{ "debug" : true }});
+    const r = driveBuild(context, id, {{ "debug" : true, "rail" : true }});
     const all = evaluateQuery(context, qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID));
     for (var b in all)
     {{
@@ -1187,9 +1533,14 @@ def judge(console: str, data: dict) -> bool:
         print(f"    {r[1]:6} {r[2]}  x  {r[3]}  ({r[4]})")
     for a, b in PAIRS:
         va, vb = vols.get(a), vols.get(b)
-        same = None not in (va, vb) and abs(va - vb) < 1e-3
+        # with the side rails the case sides are MIRRORS (each rail is its
+        # side's mirror, the case under it the turned twin): equal volumes,
+        # to the kernel's rounding, not one part
+        mirror = a == "case side L"
+        same = None not in (va, vb) and abs(va - vb) < (1e-2 if mirror else 1e-3)
         ok &= same
-        print(f"  {a[:-2]:14} L/R the same part ({va}, {vb}): {'ok' if same else 'FAIL'}")
+        print(f"  {a[:-2]:14} L/R {'mirror images' if mirror else 'the same part'} ({va}, {vb}): "
+              f"{'ok' if same else 'FAIL'}")
     for r in rows:
         if r[0] == "BED":
             over = sorted((x for x in rows if x[0] == "OVER" and x[1] == r[1]),
