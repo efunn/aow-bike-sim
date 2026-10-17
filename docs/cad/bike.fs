@@ -1345,8 +1345,6 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
         for (var sg in [1, -1])
         {
             const hd = at(sg * (L.v2SideX + FIXTURE.joint_plate), 0 * mm, L.v2SideZ);
-            blindScrewJoint(context, P + ("jS" ~ k), hd, -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
-                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z);
             const r0 = L.caseBot - 1.5 * mm;
             const rr = ridgeSolid(context, P + ("jSr" ~ k), at(sg * L.v2SideX, 0 * mm, (r0 + L.v2SideRidgeTop) / 2), Z, sg * X,
                                   FIXTURE.ridge_height, 0 * mm, (L.v2SideRidgeTop - r0) / 2);
@@ -1354,6 +1352,8 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
                     at(50 * mm, 50 * mm, L.caseBot)), "targets" : rr, "operationType" : BooleanOperationType.SUBTRACTION });
             opBoolean(context, P + ("jSu" ~ k), { "tools" : qUnion([partAt(context, P, lcPt), rr]),
                     "operationType" : BooleanOperationType.UNION });
+            blindScrewJoint(context, P + ("jS" ~ k), hd, -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
+                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z);
             k += 1;
         }
         const rz = function(p is Vector) returns Vector { return vector(-p[0], -p[1], p[2]); };
@@ -2318,6 +2318,12 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
                 pts = append(pts, vector(q[0], q[1]) * mm);
             polyPrism(context, RB, "pc" ~ k, at(-L.xPo, z0, z0), X, Y, pts, L.xPo - R.innerX * mm);
         }
+        for (var k = 0; k < size(R.stops); k += 1)
+        {
+            const sb = R.stops[k];
+            boxW(context, RB + ("stop" ~ k), at(-sb.x[1] * mm, sb.y[0] * mm, sb.z[0] * mm),
+                 at(-sb.x[0] * mm, sb.y[1] * mm, sb.z[1] * mm));
+        }
         boxW(context, RB + "tab", at(-L.xPo, L.Ytab0 - 0.5 * mm, (R.ahZ[0] - R.ahTabHalf) * mm),
              at(-R.ahTabIn * mm, R.ahY1 * mm, (R.ahZ[size(R.ahZ) - 1] + R.ahTabHalf) * mm));
         const railL = qBodyType(qCreatedBy(RB, EntityType.BODY), BodyType.SOLID);
@@ -2340,23 +2346,25 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
             rc = append(rc, boxW(context, RC + ("ahN" ~ k), at(-R.ahNutOut * mm, R.ahN0 * mm, z - R.ahNutHalf * mm),
                                  at(-R.ahTabIn * mm + 1 * mm, R.ahN1 * mm, z + R.ahNutHalf * mm)));
         }
-        for (var k = 0; k < size(R.joints); k += 1)
+        const railJoint = function(S is Id, k is number, j is map) returns array
         {
-            step("rail joint " ~ k);
-            const j = R.joints[k];
             const h = at(-L.xPo, j.head[0] * mm, j.head[1] * mm);
-            const J = RC + ("j" ~ k);
+            const J = S + ("j" ~ k);
             screwJointGeometry(context, J, coordSystem(h, vector(0, j.dir[0], j.dir[1]), X), mergeMaps(SCREW_OPT, {
                     "nutDepth" : FIXTURE.joint_plate + 2 * mm, "headPocket" : 0 * mm, "bothWays" : false,
                     "nutSlotLength" : 1 * mm }));
-            opDeleteBodies(context, RC + ("jd" ~ k), { "entities" : qCreatedBy(J + "slotExt", EntityType.BODY) });
-            rc = append(rc, qCreatedBy(J + "screwRev", EntityType.BODY));
+            opDeleteBodies(context, S + ("jd" ~ k), { "entities" : qCreatedBy(J + "slotExt", EntityType.BODY) });
             const jp = h + FIXTURE.joint_plate * X;
-            const g = ridgeSolid(context, RC + ("g" ~ k), jp + j.gMid * mm * Y, Y, -X, FIXTURE.ridge_height,
+            const g = ridgeSolid(context, S + ("g" ~ k), jp + j.gMid * mm * Y, Y, -X, FIXTURE.ridge_height,
                                  FIXTURE.ridge_clearance, j.gHalf * mm);
-            opTransform(context, RC + ("gx" ~ k), { "bodies" : g,
+            opTransform(context, S + ("gx" ~ k), { "bodies" : g,
                     "transform" : rotationAround(line(jp, X), atan2(j.dir[1], j.dir[0])) });
-            rc = append(rc, g);
+            return [qCreatedBy(J + "screwRev", EntityType.BODY), g];
+        };
+        for (var k = 0; k < size(R.joints); k += 1)
+        {
+            step("rail joint " ~ k);
+            rc = concatenateArrays([rc, railJoint(RC, k, R.joints[k])]);
         }
         const bl = FIXTURE.bridge_layer;
         const rH = SCREW_OPT.holeDia / 2;
@@ -2387,6 +2395,27 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
         opBoolean(context, RL + "uR", { "tools" : qUnion([partAt(context, P, flip(csPt)),
                                                           qBodyType(qCreatedBy(RL + "mir", EntityType.BODY), BodyType.SOLID)]),
                 "operationType" : BooleanOperationType.UNION });
+        if (size(R.leftPieces) > 0 || size(R.leftJoints) > 0)
+        {
+            step("rail left");
+            const RE = RL + "e";
+            const RF = RL + "f";
+            for (var k = 0; k < size(R.leftPieces); k += 1)
+            {
+                var pts = [];
+                for (var q in R.leftPieces[k])
+                    pts = append(pts, vector(q[0], q[1]) * mm);
+                polyPrism(context, RE, "pc" ~ k, at(-L.xPo, z0, z0), X, Y, pts, L.xPo - R.innerX * mm);
+            }
+            opBoolean(context, RL + "eU", { "tools" : qUnion([partAt(context, P, csPt),
+                                                              qBodyType(qCreatedBy(RE, EntityType.BODY), BodyType.SOLID)]),
+                    "operationType" : BooleanOperationType.UNION });
+            var ec = [];
+            for (var k = 0; k < size(R.leftJoints); k += 1)
+                ec = concatenateArrays([ec, railJoint(RF, k, R.leftJoints[k])]);
+            if (size(ec) > 0)
+                cutFrom(context, RL + "fcut", partAt(context, P, csPt), ec);
+        }
     }
     const fxPt = at(z0, L.Yfront - 1 * mm, z0);
     if (fix)

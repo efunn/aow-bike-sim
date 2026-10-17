@@ -78,17 +78,14 @@ def load(path: str = PARAMS) -> dict:
             "drive": D, "driveData": dd, "rail": RA, "rd": rd, "rL": cr.layout(rd),
             "power": cpw.layout(raw["power"], D, RA, dd, raw["components"]["battery"]),
             "piCarrier": cpc.layout(raw["pi_carrier"], D, raw["pi"], raw["components"],
-                                    _ahrs_top(raw["components"]["ahrs"]), _ahrs_housing_end(raw, dd))}
+                                    _ahrs_top(raw["components"]["ahrs"]), _ahrs_low(raw["components"]["ahrs"]),
+                                    U2D2_JST[1])}
 
 
-def _ahrs_housing_end(raw: dict, dd: dict) -> float:
-    """The drive z of the AHRS housing's upper end (the U2D2's JSTs face the
-    drive past it)."""
-    c = raw["components"]["ahrs"]
-    h = [v / 2 for v in c["size"]]
-    hb = next(b for b in tm151_boxes(dd["tm151"], h, int(dd["s"]["ahrs"]["tm151_x_up_n"]))
-              if b["name"] == "AHRS housing")
-    return c["at"][2] + hb["hi"][2]
+def _ahrs_low(c: dict) -> float:
+    """The drive z of the AHRS envelope's lower end (the U2D2's JSTs face
+    the drive in front of it)."""
+    return c["at"][2] - c["size"][2] / 2
 
 
 def _ahrs_top(c: dict) -> float:
@@ -131,6 +128,9 @@ def layout(data: dict) -> dict:
     # drive's rails are the real ones)
     L["rgDrop"] = [q["anchor"] for q in rL["parts"] if q["slug"] in ("floor", "chassis", "railR", "railL")]
     L["railCheck"] = rail_joints(data, L)
+    # the rails' screw-hole probes (cad_drive.hole_probes), turned into the
+    # bike with the drive
+    L["holeProbes"] = [[t, sd, x, *cpw.bike(y, z), w] for t, sd, x, y, z, w in cd.hole_probes(data["driveData"], data["drive"])]
     comps = []
     for k in COMPONENTS:
         c = s["components"][k]
@@ -319,7 +319,7 @@ def u2d2_boxes(h: list) -> list[dict]:
     JST connectors (RS485, TTL, UART) in its -y face near the -z end, the
     plugs going in square to that face. Mounted with the USB the AHRS's way
     (up the face, +z) and the JSTs facing the drive (-y: down and back in the
-    bike), past the AHRS housing's top end (user). KEEP-OUTs: the USB-C's as
+    bike), in front of the AHRS's lower end (user). KEEP-OUTs: the USB-C's as
     the AHRS's (USB_KEEPOUT, a GUESS); the JSTs' small (U2D2_JST, GUESS)."""
     kl, kw, kh = (v * 1000 for v in USB_KEEPOUT)
     jw, jl, jd = U2D2_JST
@@ -417,7 +417,22 @@ export function bk2Carrier(context is Context, id is Id, C is map) returns Query
     // everything under A first, then everything under K: an Id's children
     // must be contiguous in the feature history
     for (var a in C.adds)
-        prism(A, a);
+    {
+        if (a.kind == "wedge")
+        {
+            // a profile in the DRIVE frame's (x, z), thick along its y: drawn
+            // on an axis-aligned plane (in-plane (x, -z)) and turned about X
+            // into the bike (an oblique sketch will not extrude reliably)
+            var pts = [];
+            for (var wq in a.pts)
+                pts = append(pts, vector(wq[0], -wq[1]) * mm);
+            polyPrism(context, A, a.tag, vector(0, a.y[0], 0) * mm, Y, X, pts, (a.y[1] - a.y[0]) * mm);
+            opTransform(context, A + (a.tag ~ "Rot"), { "bodies" : qCreatedBy(A + (a.tag ~ "Ext"), EntityType.BODY),
+                    "transform" : rotationAround(line(vector(0, 0, 0) * mm, X), a.rot * degree) });
+        }
+        else
+            prism(A, a);
+    }
     for (var c in C.cyls)
         if (c.op == "add")
             cylW(context, A + c.tag, bk2V(c.p0), bk2V(c.p1), c.r * mm);
@@ -434,16 +449,23 @@ export function bk2Carrier(context is Context, id is Id, C is map) returns Query
     for (var j in C.joints)
     {
         const J = id + ("j" ~ j.side);
+        // the ridge FIRST, then the hole and the nut slot through it (the
+        // other way round the ridge plugged the screw's way into the rail's
+        // groove, 2026-10-16)
+        const r = ridgeSolid(context, J + "ridge", bk2V(j.ridgeAt), Z, vector(j.ridgeUp[0], j.ridgeUp[1], j.ridgeUp[2]),
+                             FIXTURE.ridge_height, 0 * mm, j.ridgeHalf * mm);
+        // drawn along Z and turned about X onto the slide (the drive's Z)
+        if (j.ridgeRot != undefined && abs(j.ridgeRot) > 1e-9)
+            opTransform(context, J + "ridgeRot", { "bodies" : r,
+                    "transform" : rotationAround(line(bk2V(j.ridgeAt), X), j.ridgeRot * degree) });
+        opBoolean(context, J + "rU", { "tools" : qUnion([partAt(context, id, pt), r]),
+                "operationType" : BooleanOperationType.UNION });
         const cs = coordSystem(bk2V(j.head), vector(j.slot[0], j.slot[1], j.slot[2]), vector(j.zIn[0], j.zIn[1], j.zIn[2]));
         screwJointGeometry(context, J, cs, mergeMaps(SCREW_OPT, {
                 "nutDepth" : j.nutDepth * mm, "headPocket" : 0 * mm, "bothWays" : false,
                 "nutSlotLength" : j.slotLen * mm, "holeDepth" : j.holeDepth * mm }));
         cutFrom(context, J + "cut", partAt(context, id, pt), [qCreatedBy(J + "screwRev", EntityType.BODY),
                                                              qCreatedBy(J + "slotExt", EntityType.BODY)]);
-        const r = ridgeSolid(context, J + "ridge", bk2V(j.ridgeAt), Z, vector(j.ridgeUp[0], j.ridgeUp[1], j.ridgeUp[2]),
-                             FIXTURE.ridge_height, 0 * mm, j.ridgeHalf * mm);
-        opBoolean(context, J + "rU", { "tools" : qUnion([partAt(context, id, pt), r]),
-                "operationType" : BooleanOperationType.UNION });
     }
     const q = partAt(context, id, pt);
     dress(context, q, C.name, color(C.color[0], C.color[1], C.color[2]), C.note);
@@ -600,7 +622,7 @@ def build_fs(L: dict, fs_version: str = "3044") -> str:
     return text
 
 
-def check_wrapper(fs: str) -> str:
+def check_wrapper(fs: str, probes: list = ()) -> str:
     """Build once; print every body's box, then every clash between modules
     and envelopes at rest, steered, and at each righting pose. ONE call."""
     sweep = "[" + ", ".join(str(a) for a in STEER_SWEEP) + "]"
@@ -637,7 +659,7 @@ def check_wrapper(fs: str) -> str:
                 ~ toString(bb.maxCorner[1] / mm) ~ "|" ~ toString(bb.maxCorner[2] / mm) ~ "|"
                 ~ toString(evVolume(context, {{ "entities" : b }}) / (mm * mm * mm)));
     }}
-    for (var i = 0; i + 1 < size(all); i += 1)
+{cd.probe_fs(probes)}    for (var i = 0; i + 1 < size(all); i += 1)
         clashes("rest", all[i], qUnion(subArray(all, i + 1, size(all))));
     const tu = qHasAttribute("bk_steer");
     const tuL = evaluateQuery(context, tu);
@@ -692,6 +714,9 @@ def _module(name: str) -> str:
 def judge(console: str, L: dict) -> bool:
     rows = [l.split("|") for l in console.splitlines()]
     ok = True
+    pok, ptxt = cd.probe_verdict(rows)
+    ok &= pok
+    print(ptxt)
     bodies = [r for r in rows if r[0] == "BODY"]
     strays = [r for r in bodies if r[1].endswith("UNNAMED")]
     if strays:
@@ -732,7 +757,7 @@ def judge(console: str, L: dict) -> bool:
 def check(text: str, L: dict, target: str | None) -> bool:
     from . import onshape
     url = onshape.resolve(target, "check")
-    reply = onshape.eval_featurescript(check_wrapper(text), url)
+    reply = onshape.eval_featurescript(check_wrapper(text, L["holeProbes"]), url)
     for line in onshape.notice_lines(reply):
         print(f"  {line}")
     console = reply.get("console") or ""
@@ -785,7 +810,7 @@ def main() -> None:
     print(f"wrote {len(text)} chars -> {args.output}")
     print(report(L))
     if args.dry_run:
-        print(check_wrapper(text))
+        print(check_wrapper(text, L["holeProbes"]))
         return
     if args.check is not None:
         if not check(text, L, args.check or None):

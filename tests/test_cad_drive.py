@@ -186,13 +186,18 @@ def test_the_side_rails_fit(data, L):
     """The v2 bike's side rails (rail:): joint_plate thick, the joints'
     countersinks and grooves inside the outline with a wall, every piece
     overlapping the case side but clear of its M2.5 counterbores, and the
-    rail wholly under the TM151's board. Three joints a side: the steering,
-    the righting's bridge, and the power holder's two (rear arm, front ear)."""
+    rail wholly under the TM151's board. Joints on both rails: the steering
+    and the righting's bridge; on the LEFT only, the power holder's two on
+    its two ears (user: not mirrored to the right), grooves closed toward
+    the drive's -Z (it slides in from the back + top)."""
     R = cd.rail_layout(data, L)
     wall = data["s"]["print"]["min_wall"]
     assert R["plate"] == pytest.approx(data["s"]["joint"]["joint_plate"])
-    assert {j["tag"] for j in R["joints"]} == {"steer", "bridge", "carrier", "carrier_front"}
-    assert all(j["room"] >= wall for j in R["joints"])
+    assert {j["tag"] for j in R["joints"]} == {"steer", "bridge"}
+    assert {j["tag"] for j in R["leftJoints"]} == {"carrier", "carrier_front"}
+    assert len(R["leftPieces"]) == 2 and len(R["pieces"]) == 2
+    assert all(j["room"] >= wall for j in R["joints"] + R["leftJoints"])
+    assert all(j["dir"] == pytest.approx([0.0, -1.0]) for j in R["leftJoints"])
     assert R["ahRailGap"] >= 1.0
     cbs = [(L["Yhc"] + sy * L["holeHH"], zc + sz * L["holeHW"])
            for zc in (-L["zs"], L["zs"]) for sy in (1, -1) for sz in (1, -1)]
@@ -201,11 +206,19 @@ def test_the_side_rails_fit(data, L):
     assert any(cd._inside(q, R["casePoly"]) for q in R["pieces"][0])
     ch = cd.to_drive(R["rearBike"][-1])
     assert ch == pytest.approx((L["Yc0"] + L["rcLeg"], L["Zp"]), abs=1e-6)
-    for pc in R["pieces"]:
+    for pc in R["pieces"] + R["leftPieces"]:
         for c in cbs:
             assert not cd._inside(c, pc) and cd._edge_dist(c, pc) >= L["m25CbR"] + wall - 1e-3
     # the cage posts: two, the rail's thickness, the nut slot's walls two lines
     assert len(R["cage"]) == 2 and R["cageWall"] >= 0.9 - 1e-9
+    # the battery stop (both rails): a lip in off the rear arm's inner face,
+    # on the arm, off the cage post
+    assert [st["kind"] for st in R["stops"]] == ["back", "side"]
+    rear = [tuple(q) for q in R["pieces"][1]]
+    for st in R["stops"]:
+        assert st["x"][0] < data["s"]["rail"]["inner_x"] < st["x"][1]
+        for q in ((st["y"][0], st["z"][0]), (st["y"][1], st["z"][1])):
+            assert cd._inside(q, rear) and not cd._inside(q, [tuple(v) for v in R["postRear"]])
 
 
 def test_the_ahrs_tabs_take_the_tm151(data, L):

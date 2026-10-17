@@ -552,21 +552,50 @@ def rail_layout(data: dict, L: dict) -> dict:
     out = [to_drive(q) for q in RO["outline"]]
     rear = [to_drive(q) for q in RO["rear"]]
     R["pieces"] = [[list(q) for q in out], [list(q) for q in rear]]
-    # the front ear (the power carrier's fore joint): off the case side's
-    # front edge at its top, over the AHRS tab; it ends ON the front edge
+    # the power holder's two ears are on the LEFT rail only (user,
+    # 2026-10-16 night: its attachments "should only be on LHS case (the
+    # features are mirrored to RHS unnecessarily)"); the FeatureScript adds
+    # them, and their joints, after the mirror
+    R["leftPieces"] = []
+    # the front ear (the holder's fore joint): off the case side's front
+    # edge at its top, over the AHRS tab; it ends ON the front edge
     ear = []
     if "front_ear" in rl:
         el, ez0, ez1 = rl["front_ear"]
         ear = [(L["Ytab0"], ez0), (L["Ytab0"] + el, ez0), (L["Ytab0"] + el, ez1), (L["Ytab0"], ez1)]
-        R["pieces"].append([list(q) for q in ear])
+        R["leftPieces"].append([list(q) for q in ear])
     # the back ear (the holder's aft joint): up off the case side's top
-    # edge under the switch; it stands ON the top edge
+    # edge in the corner the rear arm makes with it, mostly inside the arm,
+    # and ahead of nothing but the strap's run; it stands ON the top edge
     bear = []
     if "back_ear" in rl:
         by0, by1, bz1 = rl["back_ear"]
-        need(L["Yc0"] + L["rcLeg"] <= by0 and by1 <= L["Ytab0"], "the back ear runs off the case side's top edge")
+        need((L["Yc0"] + L["rcLeg"] <= by0 or _inside((by0, L["Zp"]), rear)) and L["Yc0"] + L["rcLeg"] < by1 <= L["Ytab0"],
+             "the back ear runs off the case side's top edge and the rear arm")
         bear = [(by0, L["Zp"]), (by1, L["Zp"]), (by1, bz1), (by0, bz1)]
-        R["pieces"].append([list(q) for q in bear])
+        R["leftPieces"].append([list(q) for q in bear])
+    # the battery stops, on both arms (user, 2026-10-16 night: the arms to
+    # the rear roll cage "should have some hints (like 2mm lateral, going
+    # slightly behind the battery) so the battery couldn't slide backwards
+    # into the rear wheel"): a lip off each arm's inner face, in past the
+    # battery's side, its front face just behind the battery's rear face.
+    # Wholly on the arm, and off the cage post (the cage's socket goes over
+    # the post). cad_bike_v2 (cad_power) refuses it off the battery.
+    R["stops"] = []
+    R["postRear"] = [list(q) for q in rear[1:-2]]
+    if "battery_stop" in rl:
+        # behind the battery (`back`), and a short leg forward along its side
+        # (`side`, user: "a similar hint so the battery is also constrained
+        # laterally a bit"), its inner face side_x, leg long past the back one
+        sy1, st_, sz0, sz1, sxi, ssx, sleg = rl["battery_stop"]
+        need(sxi < ssx < rl["inner_x"], "the battery stop does not reach in off the rail's inner face")
+        for kind, x0, ya, yb in (("back", sxi, sy1 - st_, sy1), ("side", ssx, sy1 - st_, sy1 + sleg)):
+            for q in ((ya, sz0), (yb, sz0), (yb, sz1), (ya, sz1)):
+                need(_inside(q, rear) and _edge_dist(q, rear) >= 0.5 - 1e-6, "the battery stop runs off the rear arm")
+                need(not _inside(q, rear[1:-2]) and _edge_dist(q, rear[1:-2]) >= 1.0 - 1e-6,
+                     "the battery stop runs into the rear cage post")
+            R["stops"].append({"kind": kind, "x": [x0, rl["inner_x"] + 0.5], "y": [ya, yb], "z": [sz0, sz1],
+                               "face": sy1, "t": st_})
     # the case side's outline (its rear corners chamfered): inside it the
     # rail stays the plate's thickness, the servos being there
     rc = L["rcLeg"]
@@ -591,13 +620,15 @@ def rail_layout(data: dict, L: dict) -> dict:
     hr = sc["headDia"] / 2
     gw = jn["ridge_flat"] / 2 + jn["ridge_height"] + jn["ridge_clearance"] * math.sqrt(2)
     case_poly = [tuple(q) for q in R["casePoly"]]
+    R["leftJoints"] = []
     for tag in ("steer", "bridge", "carrier", "carrier_front"):
         if f"{tag}_joint" not in rl:
             continue
         h = to_drive(rl[f"{tag}_joint"])
-        # the piece it is in: the main outline, or the rear arm (the carrier's)
-        pc = next((q for q in (out, rear, ear, bear) if q and _inside(h, q)), None)
-        need(pc is not None, f"the rail's {tag} joint is not on the rail")
+        # the pieces it is in (they unite: the back ear overlaps the rear arm)
+        allp = [q for q in (out, rear, ear, bear) if q]
+        pcs = [q for q in allp if _inside(h, q)]
+        need(bool(pcs), f"the rail's {tag} joint is not on the rail")
         a = math.radians(rl[f"{tag}_ridge_deg"] - DRIVE_TILT)
         d = (math.cos(a), math.sin(a))
         half = rl[f"{tag}_ridge_half"]
@@ -610,19 +641,26 @@ def rail_layout(data: dict, L: dict) -> dict:
         lo = -rl[f"{tag}_groove_open"]
         pts = [h] + [(h[0] + u * d[0] + v * n[0], h[1] + u * d[1] + v * n[1]) for u in (0.0, hi) for v in (-gw, gw)]
         for q in pts:
-            need(_inside(q, pc), f"the rail's {tag} joint runs off its outline")
+            need(any(_inside(q, c) for c in allp), f"the rail's {tag} joint runs off its outline")
         # the groove must run out through the rail's edge, its 45 deg end taper
         # (ridge_height + clearance long) wholly outside the rail
+        # -- across its whole width, and clear of every piece of the rail
+        # (the ears unite with the arm)
         tl = jn["ridge_height"] + jn["ridge_clearance"] + 0.5
-        need(not _inside((h[0] + (lo + tl) * d[0], h[1] + (lo + tl) * d[1]), pc),
-             f"the rail's {tag} groove's end taper is inside the rail: open it further (rail.{tag}_groove_open)")
-        # a wall round the countersink, off the piece's edge and off the case
-        # side's outline (inside it the rail is only the plate's 3.6)
-        room = min(_edge_dist(h, pc), _edge_dist(h, case_poly)) - hr
+        for v in (-gw, 0.0, gw):
+            e = (h[0] + (lo + tl) * d[0] + v * n[0], h[1] + (lo + tl) * d[1] + v * n[1])
+            need(not any(_inside(e, q) for q in allp),
+                 f"the rail's {tag} groove's end taper is inside the rail: open it further (rail.{tag}_groove_open)")
+        # a wall round the countersink, off the pieces' edge (at least the
+        # farthest edge of one piece holding it) and off the case side's
+        # outline (inside it the rail is only the plate's 3.6)
+        room = min(max(_edge_dist(h, c) for c in pcs), _edge_dist(h, case_poly)) - hr
         need(not _inside(h, case_poly) and room >= wall,
              f"the rail's {tag} joint's countersink is {room:.2f} from its edge")
-        R["joints"].append({"tag": tag, "head": list(h), "dir": list(d), "half": half, "room": room,
-                            "gMid": (lo + hi) / 2, "gHalf": (hi - lo) / 2})
+        # the holder's (carrier*) on the left rail only, as its ears
+        R["leftJoints" if tag.startswith("carrier") else "joints"].append(
+            {"tag": tag, "head": list(h), "dir": list(d), "half": half, "room": room,
+             "gMid": (lo + hi) / 2, "gHalf": (hi - lo) / 2})
     # a point inside the rail and outside the case side (to find it by)
     yb, zb = to_drive((130.0, 45.0))
     need(_inside((yb, zb), out) and not (L["Yc0"] < yb < L["Ytab0"] and abs(zb) < L["Zp"]),
@@ -1253,6 +1291,13 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
                 pts = append(pts, vector(q[0], q[1]) * mm);
             polyPrism(context, RB, "pc" ~ k, at(-L.xPo, z0, z0), X, Y, pts, L.xPo - R.innerX * mm);
         }
+        // the battery stops: a lip off each arm's inner face (both rails)
+        for (var k = 0; k < size(R.stops); k += 1)
+        {
+            const sb = R.stops[k];
+            boxW(context, RB + ("stop" ~ k), at(-sb.x[1] * mm, sb.y[0] * mm, sb.z[0] * mm),
+                 at(-sb.x[0] * mm, sb.y[1] * mm, sb.z[1] * mm));
+        }
         // the AHRS tabs: the case side's plate and skirt run forward to the
         // board's back face, inward to the tab's end
         boxW(context, RB + "tab", at(-L.xPo, L.Ytab0 - 0.5 * mm, (R.ahZ[0] - R.ahTabHalf) * mm),
@@ -1284,26 +1329,28 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
         // the joints: a countersink from the outer face and the groove for
         // the other part's ridge on the inner face (the house joint, cut here
         // half by half: the steering and the righting cut their own)
-        for (var k = 0; k < size(R.joints); k += 1)
+        const railJoint = function(S is Id, k is number, j is map) returns array
         {
-            step("rail joint " ~ k);
-            const j = R.joints[k];
             const h = at(-L.xPo, j.head[0] * mm, j.head[1] * mm);
-            const J = RC + ("j" ~ k);
+            const J = S + ("j" ~ k);
             screwJointGeometry(context, J, coordSystem(h, vector(0, j.dir[0], j.dir[1]), X), mergeMaps(SCREW_OPT, {
                     "nutDepth" : FIXTURE.joint_plate + 2 * mm, "headPocket" : 0 * mm, "bothWays" : false,
                     "nutSlotLength" : 1 * mm }));
-            opDeleteBodies(context, RC + ("jd" ~ k), { "entities" : qCreatedBy(J + "slotExt", EntityType.BODY) });
-            rc = append(rc, qCreatedBy(J + "screwRev", EntityType.BODY));
+            opDeleteBodies(context, S + ("jd" ~ k), { "entities" : qCreatedBy(J + "slotExt", EntityType.BODY) });
             // the groove drawn along Y and turned about X into the joint's
             // direction: ridgeSolid's sketch will not extrude along an oblique
             // direction (EXTRUDE_FAILED, 2026-10-16; the righting found the same)
             const jp = h + FIXTURE.joint_plate * X;
-            const g = ridgeSolid(context, RC + ("g" ~ k), jp + j.gMid * mm * Y, Y, -X, FIXTURE.ridge_height,
+            const g = ridgeSolid(context, S + ("g" ~ k), jp + j.gMid * mm * Y, Y, -X, FIXTURE.ridge_height,
                                  FIXTURE.ridge_clearance, j.gHalf * mm);
-            opTransform(context, RC + ("gx" ~ k), { "bodies" : g,
+            opTransform(context, S + ("gx" ~ k), { "bodies" : g,
                     "transform" : rotationAround(line(jp, X), atan2(j.dir[1], j.dir[0])) });
-            rc = append(rc, g);
+            return [qCreatedBy(J + "screwRev", EntityType.BODY), g];
+        };
+        for (var k = 0; k < size(R.joints); k += 1)
+        {
+            step("rail joint " ~ k);
+            rc = concatenateArrays([rc, railJoint(RC, k, R.joints[k])]);
         }
         // the cage posts' joints: the head in the cage (not drawn) joint_plate
         // outside the rail; the nut centred in the post's thickness, its slot
@@ -1339,6 +1386,29 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
         opBoolean(context, RL + "uR", { "tools" : qUnion([partAt(context, P, flip(csPt)),
                                                           qBodyType(qCreatedBy(RL + "mir", EntityType.BODY), BodyType.SOLID)]),
                 "operationType" : BooleanOperationType.UNION });
+        // the power holder's ears and joints, on the LEFT rail only: added
+        // after the mirror, united into the left case side, then cut
+        if (size(R.leftPieces) > 0 || size(R.leftJoints) > 0)
+        {
+            step("rail left");
+            const RE = RL + "e";
+            const RF = RL + "f";
+            for (var k = 0; k < size(R.leftPieces); k += 1)
+            {
+                var pts = [];
+                for (var q in R.leftPieces[k])
+                    pts = append(pts, vector(q[0], q[1]) * mm);
+                polyPrism(context, RE, "pc" ~ k, at(-L.xPo, z0, z0), X, Y, pts, L.xPo - R.innerX * mm);
+            }
+            opBoolean(context, RL + "eU", { "tools" : qUnion([partAt(context, P, csPt),
+                                                              qBodyType(qCreatedBy(RE, EntityType.BODY), BodyType.SOLID)]),
+                    "operationType" : BooleanOperationType.UNION });
+            var ec = [];
+            for (var k = 0; k < size(R.leftJoints); k += 1)
+                ec = concatenateArrays([ec, railJoint(RF, k, R.leftJoints[k])]);
+            if (size(ec) > 0)
+                cutFrom(context, RL + "fcut", partAt(context, P, csPt), ec);
+        }
     }
 
     // ---- fixture mock between the tabs; 2 x 6-32 a side, heads in the case
@@ -1453,7 +1523,53 @@ def build_fs(data: dict, fs_version: str = "3044") -> str:
     return text
 
 
-def check_wrapper(fs: str) -> str:
+def hole_probes(data: dict, L: dict) -> list:
+    """Points to test the rails' screw holes by, MODULE frame (mm): three on
+    each joint's axis through the rail (want no body: the hole is open) and
+    one in the wall beside it (want a body: the rail is there, so an open
+    axis is not merely a missing rail). [tag, side, x, y, z, want]."""
+    R = rail_layout(data, L)
+    hr = data["screw"]["headDia"] / 2
+    pieces = [q for q in R["pieces"] + R["leftPieces"]]
+    out = []
+    for j, sides in [(j, (1, -1)) for j in R["joints"]] + [(j, (1,)) for j in R["leftJoints"]]:
+        y, z = j["head"]
+        ctl = next(((y + dy * (hr + 0.75), z + dz * (hr + 0.75)) for dy, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                    if any(_inside((y + dy * (hr + 0.75), z + dz * (hr + 0.75)), pc)
+                           and _edge_dist((y + dy * (hr + 0.75), z + dz * (hr + 0.75)), pc) >= 0.4 for pc in pieces)),
+                   None)
+        for sg in sides:
+            sd = "L" if sg > 0 else "R"
+            for dx in (0.6, 2.3, 4.0):
+                out.append([j["tag"], sd, -sg * (L["xPo"] - dx), y, z, 0])
+            if ctl is not None:
+                out.append([j["tag"], sd, -sg * (L["xPo"] - 1.0), ctl[0], ctl[1], 1])
+    return out
+
+
+def probe_fs(probes: list) -> str:
+    """The check's FeatureScript for hole_probes (in whatever frame they
+    were given): one HOLEP row each, the bodies found at the point."""
+    rows = ", ".join("[" + ", ".join(f'"{v}"' if isinstance(v, str) else f"{v:.6g}" for v in pr) + "]" for pr in probes)
+    return f"""    const probeSolids = qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID);
+    for (var pr in [{rows}])
+        println("HOLEP|" ~ pr[0] ~ "|" ~ pr[1] ~ "|" ~ toString(pr[5]) ~ "|"
+                ~ size(evaluateQuery(context, qContainsPoint(probeSolids, vector(pr[2], pr[3], pr[4]) * millimeter))));
+"""
+
+
+def probe_verdict(rows: list) -> tuple[bool, str]:
+    """Judge the HOLEP rows: want 0 = the hole open, 1 = the wall there."""
+    pr = [r for r in rows if r[0] == "HOLEP"]
+    bad = [r for r in pr if (int(r[4]) > 0) != (r[3] == "1")]
+    txt = (f"  rail screw holes: {sum(r[3] == '0' for r in pr)} axis probes open, "
+           f"{sum(r[3] == '1' for r in pr)} wall probes solid, {len(bad)} wrong"
+           + "".join(f"\n    {r[1]} {r[2]}: want {'wall' if r[3] == '1' else 'hole'}, found {r[4]} bodies  FAIL"
+                     for r in bad))
+    return (bool(pr) and not bad), txt
+
+
+def check_wrapper(fs: str, probes: list = ()) -> str:
     """Build once, then print: every body's X extent and volume, every
     collision at rest, the axle group moved back by the full travel against
     everything fixed (belts left out -- they are drawn at nominal), and the
@@ -1482,7 +1598,10 @@ def check_wrapper(fs: str) -> str:
                 ~ toString(bb.maxCorner[0] / millimeter) ~ "|"
                 ~ toString(evVolume(context, {{ "entities" : b }}) / (millimeter * millimeter * millimeter)));
     }}
-    for (var i = 0; i + 1 < size(all); i += 1)
+    // each rail joint's screw hole OPEN on its axis, and the wall beside it
+    // solid (hole_probes; the left-only ears' holes were reported missing,
+    // user 2026-10-16)
+{probe_fs(probes)}    for (var i = 0; i + 1 < size(all); i += 1)
         clashes("rest", all[i], qUnion(subArray(all, i + 1, size(all))));
     const mv = qUnion(r.stages["move"]);
     opTransform(context, id + "back", {{ "bodies" : mv, "transform" : transform(-DR.travel * vector(0, 1, 0)) }});
@@ -1516,7 +1635,8 @@ def check(text: str, data: dict, target: str | None) -> bool:
     from . import onshape
 
     url = onshape.resolve(target, "check")
-    reply = onshape.eval_featurescript(check_wrapper(text), url)
+    probes = hole_probes(data, full_layout(data)) if data.get("snug", True) else []
+    reply = onshape.eval_featurescript(check_wrapper(text, probes), url)
     for line in onshape.notice_lines(reply):
         print(f"  {line}")
     console = reply.get("console") or ""
@@ -1535,6 +1655,12 @@ def judge(console: str, data: dict) -> bool:
     rows = [l.split("|") for l in console.splitlines()]
     L = full_layout(data)
     want = extents(L)
+    R = rail_layout(data, L) if data.get("snug", True) else {}
+    # the rails' battery stops reach in past the skirt
+    if R.get("stops"):
+        xin = min(min(st["x"][0] for st in R["stops"]), -want["case side L"][1])
+        want["case side L"] = (want["case side L"][0], -xin)
+        want["case side R"] = (xin, want["case side R"][1])
     ok = True
     bodies = [r for r in rows if r[0] == "BODY"]
     strays = [r for r in bodies if r[1] == "UNNAMED"]
@@ -1557,6 +1683,10 @@ def judge(console: str, data: dict) -> bool:
         if c != 1:
             print(f"  part {n} is {c} bodies  FAIL")
     ok &= len(counts) == len(PARTS)
+    if R.get("joints"):
+        pok, ptxt = probe_verdict(rows)
+        ok &= pok
+        print(ptxt)
     colls = [r for r in rows if r[0] == "COLL" and "ABUT" not in r[4]]
     real = [r for r in colls if {canon(r[2]), canon(r[3])} not in INTENDED]
     ok &= not real
@@ -1564,12 +1694,20 @@ def judge(console: str, data: dict) -> bool:
           f"  (+{len(colls) - len(real)} intended: belts through the teeth, the M5 in the wheel, the cone preload)")
     for r in real[:40]:
         print(f"    {r[1]:6} {r[2]}  x  {r[3]}  ({r[4]})")
+    extra = bool(R.get("leftPieces") or R.get("leftJoints"))
     for a, b in PAIRS:
         va, vb = vols.get(a), vols.get(b)
         # with the side rails the case sides are MIRRORS (each rail is its
         # side's mirror, the case under it the turned twin): equal volumes,
-        # to the kernel's rounding, not one part
+        # to the kernel's rounding, not one part. The power holder's ears
+        # are on the left only, so there the left is the heavier
         mirror = a == "case side L"
+        if mirror and extra:
+            same = None not in (va, vb) and va - vb > 1.0
+            print(f"  {a[:-2]:14} L/R mirror images but for the left's ears ({va}, {vb}; +{(va or 0) - (vb or 0):.1f}): "
+                  f"{'ok' if same else 'FAIL'}")
+            ok &= same
+            continue
         same = None not in (va, vb) and abs(va - vb) < (1e-2 if mirror else 1e-3)
         ok &= same
         print(f"  {a[:-2]:14} L/R {'mirror images' if mirror else 'the same part'} ({va}, {vb}): "
@@ -1651,7 +1789,7 @@ def main() -> None:
     print(f"wrote {len(text)} chars -> {args.output}")
     print(report(data))
     if args.dry_run:
-        print(check_wrapper(text))
+        print(check_wrapper(text, hole_probes(data, full_layout(data))))
         return
     if args.check is not None:
         if not check(text, data, args.check or None):

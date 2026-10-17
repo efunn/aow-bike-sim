@@ -292,33 +292,52 @@ rail:
   bridge_ridge_deg: {value: 90.0, source: design (user; slides in from below)}
   bridge_ridge_half: {value: 0.003, source: design (= righting rail.ridge_half)}
   bridge_groove_open: {value: 0.007476, source: design (2.5 past the rail's edge at bike z 38.6, its taper outside)}
-  # THE POWER HOLDER's AFT joint (user, 2026-10-16 night: the rear arm made
-  # the part "unnecessarily long, it can fit tighter down (like basically
-  # below the switch)"): a BACK EAR standing on the case side's top edge
-  # (drive frame: back_ear = y0, y1, z1), under the switch, the head at
-  # drive (80, 35.5): 5.75 off the top edge for the countersink, high
-  # enough that the groove's closed end stays in the ear. The holder drops
-  # in from above: the groove is closed below the head and open up through
-  # the ear's top (ridge_deg 270). cad_bike_v2 refuses it off the holder's
-  # (bike_v2_cad.yaml power.joints). Mirrored on the right, unused there.
-  back_ear: {value: [0.07425, 0.08575, 0.04125], source: design}
-  carrier_joint: {value: [0.0314663, 0.0816708], source: design (bike frame, = drive (80, 35.5))}
-  carrier_ridge_deg: {value: 270.0, source: design (the holder drops in from above)}
+  # THE POWER HOLDER'S JOINTS, both on the LEFT rail only (user, 2026-10-16
+  # night: the attachments "should only be on LHS case (the features are
+  # mirrored to RHS unnecessarily)"): cad_drive adds the ears and cuts the
+  # joints after the mirror. The holder SLIDES IN FROM THE BACK + TOP, which
+  # is the drive's -Z (user: "rather than straight up and down, so it can be
+  # removed independently from the pi+u2d2 carrier"): each groove is closed
+  # toward drive -Z below the head and open along +Z (ridge_deg 315 in the
+  # bike), and the holder's bottom comes to rest on the case side's top
+  # edge. cad_bike_v2 refuses them off the holder's (bike_v2_cad.yaml
+  # power.joints).
+  # AFT: a BACK EAR in the corner the rear arm makes with the case side's
+  # top edge, mostly inside the arm (user: the "rear ear can move further
+  # back ... basically inside the arm to rear rollcage"), its front edge on
+  # the arm's edge at the top edge (drive y 76.2), so the battery strap runs
+  # just ahead of it (drive frame: back_ear = y0, y1, z1). Head at drive
+  # (70.45, 35.5), mid-ear. NOT in the arm proper: the arm runs 30 deg off
+  # the slide, and a groove along +Z there runs on into the cage post.
+  # groove_open: the groove's aft side runs out through the arm's edge
+  # (drive z 46.1 at y 66.7) and its taper past it.
+  back_ear: {value: [0.0647, 0.0762, 0.04125], source: design}
+  carrier_joint: {value: [0.0247134, 0.074918], source: design (bike frame, = drive (70.45, 35.5))}
+  carrier_ridge_deg: {value: 315.0, source: design (user; slides in along the drive's -Z)}
   carrier_ridge_half: {value: 0.003, source: design}
-  carrier_groove_open: {value: 0.011, source: design (out through the ear's top, its taper outside)}
-  # The carrier's FORE joint (user, 2026-10-16 night: the holder's "2 6-32
-  # installation screws are fore and aft of the electronics PCB"): an EAR
-  # off the case side's front edge at its top (drive frame: front_ear =
-  # length forward, z0, z1), over the AHRS tab and board, near the left
-  # drive pulley. The head at drive (125, 27): the head and 1 mm round it
-  # clear of the left pulley's belt in side view by 1.7, and under the
-  # board's front plugs by 2.6. Mirrored on the right
-  # like all of the rail, where it is behind the right pulley (unused).
+  carrier_groove_open: {value: 0.013, source: design (out through the arm's edge across the groove's width)}
+  # FORE: an EAR off the case side's front edge at its top (drive frame:
+  # front_ear = length forward, z0, z1), over the AHRS tab and board, near
+  # the left drive pulley. The head at drive (125, 27): the head and 1 mm
+  # round it clear of the left pulley's belt in side view, and under the
+  # board's front plugs. The groove out through the ear's top.
   front_ear: {value: [0.0115, 0.020, 0.0335], source: design}
   carrier_front_joint: {value: [0.0692965, 0.1074802], source: design (bike frame, = drive (125, 27))}
-  carrier_front_ridge_deg: {value: 270.0, source: design (the holder drops in from above)}
+  carrier_front_ridge_deg: {value: 315.0, source: design (user; slides in along the drive's -Z)}
   carrier_front_ridge_half: {value: 0.003, source: design}
-  carrier_front_groove_open: {value: 0.011, source: design (out through the ear's front-top, its taper outside)}
+  carrier_front_groove_open: {value: 0.011, source: design (out through the ear's top, its taper outside)}
+  # THE BATTERY STOPS, on BOTH rear arms (user, 2026-10-16 night: "some hints
+  # (like 2mm lateral, going slightly behind the battery) so the battery
+  # couldn't slide backwards into the rear wheel"): a lip off the arm's inner
+  # face, drive frame: its front face y1 (the battery's rear face - 0.3), 2
+  # thick along y, z0..z1 (on the arm, below the cage post), in to |x| x_in
+  # (3 past the battery's side, |x| 11: user, "can go an extra mm"); and a
+  # SIDE LEG (user: "a similar hint so the battery is also constrained
+  # laterally a bit"): from the lip forward along the battery's side, its
+  # face at |x| side_x (0.3 off it), leg long past the lip. cad_bike_v2
+  # refuses it off the battery (bike_v2_cad.yaml components.battery).
+  # y1, thick, z0, z1, x_in, side_x, leg
+  battery_stop: {value: [0.0577, 0.002, 0.0425, 0.050, 0.008, 0.0113, 0.003], source: design}
 
   cage_post_ym: {value: [0.01355, 0.02555], source: design (1.0 ahead of the steering's foot at 12.55; 12 wide)}
   cage_post_top_zm: {value: 0.083, source: design}

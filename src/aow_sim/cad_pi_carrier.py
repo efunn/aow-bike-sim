@@ -8,7 +8,7 @@ DRIVE frame, over the drive's front face (the front-top; the power board
 went to the back-top beside the battery): a plate parallel to the face,
 the Pi 3B+ on standoffs on its outer side ("Pi on top"), the U2D2 under it
 between the drive pulleys, in a short cradle, between the plate and the
-AHRS. Every piece is a drive-frame box, returned as bike-frame (y, z)
+AHRS, slid down the face until its JSTs are in front of the AHRS. Every piece is a drive-frame box, returned as bike-frame (y, z)
 polygons over an x range, as cad_power's. Mm.
 """
 
@@ -17,10 +17,12 @@ from __future__ import annotations
 from .cad_power import bike, drect
 
 
-def layout(p: dict, D: dict, pi: dict, comps: dict, ahrs_top: float, housing_end: float) -> dict:
+def layout(p: dict, D: dict, pi: dict, comps: dict, ahrs_top: float, ahrs_low: float, jst_len: float) -> dict:
     """p: bike_v2_cad.yaml `pi_carrier:`; D: cad_drive full_layout; pi: the
     `pi:` detail; comps: `components:`; ahrs_top: the drive y of the AHRS
-    housing's top face. Raises if something does not fit."""
+    housing's top face; ahrs_low: the drive z of the AHRS envelope's lower
+    end; jst_len: the U2D2's JST keep-out, along it from its lower end.
+    Raises if something does not fit."""
 
     def need(ok: bool, what: str) -> None:
         if not ok:
@@ -45,10 +47,11 @@ def layout(p: dict, D: dict, pi: dict, comps: dict, ahrs_top: float, housing_end
     gap = (p["plate_y0"] - uy) - ahrs_top
     need(gap >= 0.5, f"the U2D2 is {gap:.2f} off the AHRS's housing")
     # its JSTs face the drive (down and back in the bike) near its lower end:
-    # slid up the face until they are past the housing's upper end (user)
-    jst = (p["u2d2_z"] - uz / 2) - housing_end
-    need(jst >= 0.5, f"the U2D2's JSTs are {jst:.2f} past the AHRS housing's end: pi_carrier.u2d2_z "
-                     f"{p['u2d2_z'] - jst + 0.5:g}")
+    # slid DOWN the face until their keep-out is wholly past the AHRS
+    # envelope's lower end, in front of it (user, 2026-10-16 night)
+    jst = ahrs_low - (p["u2d2_z"] - uz / 2 + jst_len)
+    need(jst >= 0.5, f"the U2D2's JSTs' keep-out is {jst:.2f} past the AHRS's lower end: pi_carrier.u2d2_z "
+                     f"{p['u2d2_z'] + jst - 0.5:g}")
     # the Pi's board (and so the plate) past the pulleys' rims
     rim = D["Ys"] + D["rFl45"]
     need(p["plate_y0"] >= rim + 1.0, f"the Pi carrier's plate (|x| past the pulleys) is inside their rims ({rim:.1f})")
