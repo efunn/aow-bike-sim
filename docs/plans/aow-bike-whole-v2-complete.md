@@ -445,3 +445,85 @@ the battery and the left rail (user: "instead of a case, it's just a panel
 away from the USB, facing the drive (down and back in the bike). It slides up
 the face (`pi_carrier.u2d2_z` 27.1) until they are 0.5 past the AHRS
 housing's upper end. The JSTs' keep-out is small (14 x 17 x 6, GUESS).
+
+## The holder, second pass (2026-10-16 night, user's review)
+
+Pushed: drive, the bike. Each `--check` clean: the drive 0 interference,
+the bike 76 bodies, no interference at rest, steered or at any righting
+pose, no keep-out reached. Calls 64 -> 68, none wasted (two pushes refused
+locally for want of a tab name, free).
+
+**Left only.** The holder's two ears and joints are on the LEFT rail only
+(user: "the features are mirrored to RHS unnecessarily"). `rail_layout`
+returns them as `leftPieces` / `leftJoints`. The drive studio adds them
+after the mirror, unites them into the left case side and cuts their
+joints there. The case sides are no longer equal volumes: the drive check
+wants the left heavier (+604.9 mm^3), not equal.
+
+**Slides in from the back + top** (user: "rather than straight up and down,
+so it can be removed independently from the pi+u2d2 carrier"). Back + top
+in the bike is the drive's +Z, so both grooves are closed toward drive -Z
+and open along +Z (`ridge_deg` 315). The holder's ridges are drawn along Z
+and turned 45 deg about X onto the slide. It comes to rest on the case
+side's top edge, and nothing moves in drive y, so it never comes near the Pi
+carrier.
+
+| | was | now |
+|---|---|---|
+| aft joint | back ear under the switch, drive (80, 35.5) | back ear in the rear arm's corner with the top edge, drive (70.45, 35.5); ear y 64.7..76.2, z to 41.25 |
+| groove | open up (bike) | open along drive +Z; the aft one 13 open, so it runs out of the ARM across its whole width (a new check: both sides of every groove, against every piece) |
+| board | corner drive y 91 | 95.2: its aft standoff 0.5 ahead of the strap |
+| switch | centred on the XT30, 1.35 off the panel | its body 2.5 off the panel's outer face (`switch.strap_room`): the strap runs between them |
+| straps | two slits ahead of the board (placeholders) | ONE strap round the battery near the switch, drive y 76.7..96.7 |
+| shelf | cantilevered | two gussets (1.6 thick, 6.5 tall at the panel), just outside the strap |
+| U2D2 | `u2d2_z` 27.1, JSTs past the housing's upper end | -23.25: the JSTs' keep-out 0.5 in FRONT of the AHRS envelope's lower end |
+
+**Rejected: the aft screw in the arm proper.** The arm runs 30 deg off the
+slide. A groove along +Z from a head on the arm's mid-line runs about 19 up
+the arm before its aft side gets out, into the rear cage post. The
+back ear in the corner gets the head "basically inside the arm" (user) with
+a groove that runs out in 13.
+
+**The strap** (user: "near the power switch ... literally go above and
+below the battery directly"):
+- **Over the battery:** over its top, through a slit in the panel at the top's height (z 60.75..63.75).
+- **Under the battery:** in the 2.25 between it and servo B's face, inside the skirts, then out through a notch in the panel's bottom edge (the strap lies on the case side's top edge there).
+- **Between them:** up the panel's outer face, inside the switch's body.
+- Its start is set by the rear arm (its edge at the top edge, 76.18, + 0.5). It overlaps the wire gap's first 9.8: the servo B wires come up under it. The strap is still the user's call (placeholder: 3/4 in, 2 thick).
+
+**The battery stops** (user: "some hints (like 2mm lateral, going slightly
+behind the battery) so the battery couldn't slide backwards into the rear
+wheel"). On BOTH rear arms: a lip off the inner face in to |x| 9 (2 past the
+battery's side), 2 thick, drive y 55.7..57.7 (0.3 behind the battery), z
+42.5..50, on the arm and 1 off the cage post's base. Both case sides now
+reach |x| 9. `cad_power` refuses a stop off the battery.
+
+**Outstanding:**
+- **The cage socket:** the holder slides out inboard of the rear cage post (1.7 off it in side view at rest). If the cage's socket wraps the post's inner face, the cage has to come off first.
+- **Print-fit** the cut screws and the panel's nuts.
+- **The strap** over the servo wires' exit.
+- **The Pi carrier's attachment.**
+- **GUESSes:** strap thickness 2, the gussets, the stop's size; and, as before, the XT30's length, the headers, the keep-outs, the pilots, the Pi standoffs, the U2D2's JSTs.
+
+## The holder, third pass (2026-10-16 night, user's review)
+
+Pushed: drive, the bike, steering v2. Checks clean: the drive, 0
+interference; the bike, 76 bodies, no interference at rest, steered or at
+any pose. Calls 68 -> 75.
+
+**The screw holes into the ears were plugged** (user: "the two ears are
+completely missing screw holes"). The rails' holes were cut. But the
+holder's ridge, which sits in the rail's groove right over the hole, was
+added AFTER the holder's own hole was cut, so it plugged the screw's way for
+its 1.2 mm. The steering v2's side pads had the same order; the righting's
+bridge did not. Both now add the ridge first and drill through it.
+- **Why it got through:** the drive check builds the rails alone, where the hole is open. Only the assembled bike has the ridge in the groove.
+- **New check, in both the drive and the bike checks:** three points on each rail joint's screw axis must find no body, and one point in the wall beside it must find the rail (so a missing ear cannot pass for an open hole). The bike's first run found 4 of 24 wrong (the steering and the holder, at 4 in from the outer face), then 0.
+- One call went on a first version of the probe without the wall point: it read the ear holes open in the drive alone, which proved nothing.
+
+| | was | now |
+|---|---|---|
+| lower strap notch | 3 tall, a step into the 5 of the wire notch | 5, the wire notch's height (user) |
+| upper strap slit | 3 tall at the battery's top | from the battery's top to the shelf's underside (user: the battery may sit higher, cables under it) |
+| battery stop | lip to \|x\| 9 | to \|x\| 8 (user: "an extra mm"), and a SIDE LEG from it 3 forward along the battery's side, 0.3 off it, on both arms (user: "constrained laterally a bit") |
+| gussets | 2 | 3: the aft one 1 further back (1.5 off the switch's cutout, for its springy clips), the one ahead of the strap, and one past the XT30's hole (the shelf runs on to take it) |
