@@ -50,8 +50,32 @@ module (the Pi 3 is a stand-in, the printed modules are new), so weigh once
 they exist. One printed part weighed sooner would calibrate the CAD estimates
 (`cad_bike.printed_mass`).
 
-Bench loose ends: the second XC330 is still id 103 and must become 104 before
-the two share a bus.
+Bring-up (10-17): all four servos share one bus at 3 Mbps as configured,
+101/102 XC430 velocity, 103 XC330 extended position (steer), 104 XC330
+current-based position (righting). The Pi's tree was resynced from this
+checkout (no `--delete`, `bench/` left alone); the 100 Hz loop runs torque-off
+with the GPU MinGRU pointer (p99 jitter 0.56 ms).
+
+Righting module V2, first powered runs (10-17; stubs only, clamped free,
+horn now screwed; `analysis/righting_sweep.py`, captures in
+`traces/righting_sweep/`). Kinetic friction at 15 deg/s, as (I+ - I-)/2:
+~90 mA near stow, ~110-120 at +-15-75, ~140 at +-75-90, ~170-190 at
++-90-120 (bare XC330 ~22). Breakaway by goal creep: 110-130 near stow,
+~150-190 at +-75-100, up to ~250 at +120. With Position I 0 the crank parks
+~6 deg short of its goal (~111 for the V3 blade's commanded 116.9). Friction rose with temperature over
+the session (76 -> 93 mA near stow, 26 -> 32 C). The rise toward the ends
+tracks the linkage's joint rates per crank degree (crank-pin rate alone: rms
+12 vs 32 mA for a constant), but those curves are all correlated, so which
+joint it is remains unknown. `righting_sign` +1 measured (horn forward: right
+wing down = +). The wings share crankpin and rocker rod, so their transmission
+angles are equal (73 deg at stow, 30 at 129); each passes its folded toggle at
+~+-62, and only the RIGHT wing's (crank -60) shows a bump, ~+25 mA: a joint on
+that side, not the geometry. Friction is flat with speed (ramps at 15 to 240
+deg/s, peak current <= 243 mA). The bike's own command, a goal step at 300 mA
+(`--step`): ~610 deg/s, 90 % of a 120 deg step in 0.21 s, no overshoot,
+parks ~6 deg short; braking current peaks ~380 mA, ABOVE the 300 cap. A
+stepping test (`servo_breakaway.py`) threw the
+crank at 630 deg/s and is not for built mechanisms.
 
 Not next, deliberately: a trained (RL) ball shot (close-range scripted plays
 exist in teleop), the privileged critic, the odometry rewrite, the AHRS
@@ -63,34 +87,45 @@ fixture (parked 09-24), the self-righting linkage choice (parked 09-27).
 
 | workstream | state | blocker | doc |
 |---|---|---|---|
-| **Simulation & model** | Working; 21 `GUESS`es in bike_params. Plant digest **bc66ca20** (10-14): the measured front wheel (10-05), the detailed drivetrain as the default plant (10-02), the V2 righting module (10-09) with the V3 blade (10-14). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30. Optional per-episode floor tilt for training, CPU and GPU, off by default (10-16) | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
+| **Simulation & model** | Working; 21 `GUESS`es in bike_params. Plant digest **4b5355ed** (10-17): the measured front wheel (10-05), the detailed drivetrain as the default plant (10-02), the V2 righting module (10-09) with the V3 blade (10-14), its linkage's measured friction on the crank (10-17; righting needs 530 -> 600 counts at 12 V). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30. Optional per-episode floor tilt for training, CPU and GPU, off by default (10-16) | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
 | **Control — RL** | Primary. Pointer `general_puffer_fixes_72M` (10-16): GPU, MinGRU (stateful), `tm151_filter` + odometry counts, detailed drivetrain, today's plant. On one `per_command.py --summary` grid (`--ahrs tm151_filter`): 0/20 falls, 7/9 turns resolved forward, 2/2 straight forward; chatter score 0.863, per-step action change 0.008 (v3 seeds 0.035-0.048); endurance minute **0/18 falls** (10-16). Two GPU seeds pick the same direction on all 20 grid commands. CPU arms on today's plant, finished on the box: `queue_general_v3` (5 seeds, MLP) and `queue_general_v3_mingru` (5 seeds, MinGRU actor); turns forward 4-8/9 (s0-s2 measured) and 5-7/9 (all five), 0 falls. `v3_s1` and `v3_mingru_s0` are on top of `moves/` | Crab never trained (`v_lat_frac` 0; crab L/R ~0.45/0.63 on the pointer); not flown on the bike | `gpu-training.md`, `general-rl-improvements.md`, `policy-smoothness-losses.md` |
 | **GPU training** | Phases 1-3 done (10-14 to 10-16): MuJoCo Warp env as one CUDA graph per policy step, bridged into PufferLib 5.0's CUDA trainer, patched for reward scale, advantage normalisation, the temporal smoothness term and a paced shared curriculum. Checkpoints convert to moves (`gpu/export_policy.py`). Cards: 5090 12 min / $0.23 per 72M steps, 4090 17 min, A40 38 min. Runs are not bit-repeatable (float atomics) | Phase 4 (MLP / loss parity) and 5 (five GPU seeds vs v3's five on one grid) not started; no sim-to-sim check of a GPU policy in C beyond the eval grid | `gpu-training.md` |
 | **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` with the accelerometer weighting from the drop rig (10-07) is the training level since 10-09, provisional; unproven on sustained acceleration | The bike's own AHRS log; the wave cams (sustained acceleration) | `sensor-workstream.md`, `ahrs-fixture.md` |
 | **Control — LQR** | **Deprecated 10-09.** `lqr` tests skipped unless named (`pytest -m lqr`: the 15 registered reds). The code stays: the RL envs' crawl fallback and the bundle's gain schedule are built on it. Last state (10-05): stands on truth and `tm151_filter`, falls turning at 0.8 m/s | none: not being tuned | `lqr-baseline.md` |
 | **Hardware / onboard** | Pi 3 bench proven: tick jitter p99 < 1 ms with four servos energised. 2.4 GHz house wifi (decided: a router, no AP). The SBC that ships: open | Chassis, pack | `pi-bench-bringup.md`, `untethered-setup.md` |
 | **CAD** | Steer printed and print-checked; the righting module printed (blades not on). **v2 (`aow-bike-whole-v2.md`, then `aow-bike-whole-v2-complete.md` from 10-16).** Drive: fixture mock off, the user's chainstay finishing folded in; **its case sides are now the bike's SIDE RAILS** (10-16): each grows forward to the steering's side pad and down to the righting's bridge (now as wide as the gap between the rails), one 6-32 a side at each, with mirrored 15 deg cage posts (a side 6-32 each, the nut slot through fore-aft) and a full-width tab a side holding the TM151 on its own M2 holes, USB up. The steering and the righting slide out of the rails downward (ridges along the slide, grooves open at the rail's edge). Steering v2: servo out the FRONT, pads 3.65 to take the rail, ONE upper <-> lower screw at the rear (lower case ~12.2 g ASA). Righting: stubs and the V3 spline blade, centred; bridge lugs for the rails. Snug 6-32 nut slots (6.45 x 2.7, GUESS) in the v2 modules. **The power holder** (`cad_power`, 10-16): one printed panel on the left between the battery and the rail (printed -X), the power board on standoffs outboard of it square to the drive (XT30 up and back), the switch panel-mounted in a gusseted shelf round the XT30; one strap round the battery near the switch (over its top, under its bottom, up the panel's outer face inside the switch). Two 6-32 into the LEFT rail only, on two left-only case-side ears fore and aft of the board (nut in the panel, the aft screw cut to 8); it slides in from the back + top (the drive's -Z), clear of the Pi carrier. Both rear arms carry a battery stop (behind it and along its side). The checks now probe every rail screw hole open through the mating part's ridge (the holder's and steering v2's ridges had plugged theirs: fixed, 10-16). No tray: the battery is where it was. **The Pi + U2D2 carrier** (`cad_pi_carrier`, 10-16): a plate over the front face, the Pi's PCB's footprint exactly, 1 off the rails' top edges; the U2D2 under it between the drive pulleys on two M2 (its JSTs in front of the AHRS's housing; their generous keep-out still meets it 6 mm into the lift), the Pi over it on four separate printed spacers, 4-40 self-tapping into the plate. Its three screws and the holder's fore one go through; only the holder's aft is cut down (short of the battery). Three 6-32 into the rails: one on the LEFT front ear (run on forward), one a side low in the rails' lower arms above the righting's bridge; it lifts out straight up. The v2 bike: `--check` clean at rest, steered, every pose, and with the Pi carrier lifted 3..15 mm. v1 (`cad_bike`) is frozen (as-built nut slots, no rails) and still builds | Print-fit the snug nut slots and the M2 tabs; print-fit the holder's cut screws and nuts, and the Pi carrier's spacers, pilots and nuts; room for a screwdriver at the Pi carrier's low screws past the blades (unchecked); the strap (over the servo wires' exit) and the cage socket's room inboard of the rear post (the holder slides out there); the straps (`aow-bike-whole-v2-complete.md`); delete the drive's four hand features; CoM not computed; wing-to-blade (not yet, user) | `aow-bike-whole-v2-complete.md`, `aow-bike-whole-v2.md`, `cad-onshape-workflow.md` |
-| **Self-righting** | V2 linkage with the **V3 blade** is the default (10-14, user): level at 116.98 deg (commanded 116.9), lying at 85 deg, 566 counts in the sim, toe stop at ~130. V2's blade is `--blade config/righting_blade.yaml`; a blade file may carry its own `mass` and `crank_travel_deg`. **Lie down / get up / auto-up** (10-16): `control/swing_sit.py`, teleop PageDown / PageUp, and by itself after a fall (`--no-auto-up`); a fall after the hand-off folds the blade and re-arms the auto-up. Sim only: down 5.8 s at <= 102 deg/s, up 3.3 s; 24/24 in teleop | Weigh the printed parts; a crank coast-down for the XC330's reflected inertia; fly lie-down / get-up on the bike | `righting-linkage-margin.md`, `righting-servo-model.md`, `wishlist.md` |
+| **Self-righting** | V2 linkage with the **V3 blade** is the default (10-14, user): level at 116.98 deg (commanded 116.9), lying at 85 deg, 566 counts in the sim (10-14); `righting_current_sweep.py` at the real +-117 stroke (it read V1's 136.6 until 10-17): 530 counts frictionless, **600 with the linkage friction** (10-17), toe stop at ~130. V2's blade is `--blade config/righting_blade.yaml`; a blade file may carry its own `mass` and `crank_travel_deg`. **Lie down / get up / auto-up** (10-16): `control/swing_sit.py`, teleop PageDown / PageUp, and by itself after a fall (`--no-auto-up`); a fall after the hand-off folds the blade and re-arms the auto-up. Sim only: down 5.8 s at <= 102 deg/s, up 3.3 s; 24/24 in teleop | Weigh the printed parts; a crank coast-down for the XC330's reflected inertia; fly lie-down / get-up on the bike | `righting-linkage-margin.md`, `righting-servo-model.md`, `wishlist.md` |
 | **Contact bench** | Drop rig built and run (10-03): release-to-impact timed, analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/drop_rig_sim.py --fit`. AHRS mode drawn (10-06): a jam-on follower tip and an 11-cam wave kit, nothing printed. `force_drop.py --ahrs` (10-07) logs the TM151 and the servo with the drops, one clock. On the bar the TM151 steps within ~0.07 deg of the cam's; the arm is not rigid, so stations do not share a rotation | Print the wave cams + the tip, then `bench/wave_run.py` (sustained acceleration); power for the force sensor on the Pi (three USB devices reboot-loop it); a local truth per station; the sensor epoxied down; the arm's parts weighed | `drop-release-rig.md`, `contact-measurements.yaml` |
 
 ---
 
 ## Health
 
-**Tests, 2026-10-16**: `907 passed, 52 skipped`, red set unchanged, **no
-accepted reds** in the default run (`pytest -n 10 --dist loadgroup`, 52 s).
+**Tests, 2026-10-17**: `931 passed, 53 skipped` after the linkage-friction
+ledger row (the only red was `test_the_split_did_not_move_the_plant_digest`,
+the digest ledger, updated), red set unchanged, **no accepted reds** in the
+default run (`pytest -n 10 --dist loadgroup`, 50 s). The Warp parity test
+(`test_righting_linkage_friction.py`) skips here; it passed in `aow-sim-gpu`
+(Warp 1.18, CPU device), which has no pytest -- run its function directly.
 The 15 registered reds are all the deprecated LQR and are only judged under
 `pytest -m lqr`. `prospective` (the endurance minute, skipped unless named)
 passes on the pointer: 0/18 falls.
 
-**Digests, 2026-10-16**: `plant_digest` bc66ca20e1af66d5, `design_digest`
-5fe8c19379988031; `deploy/bundle.npz` (re-exported 10-14) matches both.
+**Digests, 2026-10-17**: `plant_digest` 4b5355ed44d6ca8c (was bc66ca20: the
+righting linkage's measured friction, `righting.module.linkage_friction_*`),
+`design_digest` 5fe8c19379988031 (unchanged); `deploy/bundle.npz` re-exported
+10-17, matches both (the previous one kept as `deploy/bundle_plant-bc66ca20.npz`).
+NOT yet on the Pi, whose params and bundle are both still bc66ca20 (consistent).
 **Copy it to the Pi by hand**: `deploy/` is gitignored. History:
 `params-digest-split.md`.
 
-**Which exports carry today's plant (bc66ca20):** 23 -- every
-`general_puffer_*` checkpoint, `general_rl_v3_s0..s4`,
-`general_rl_v3_mingru_s0..s4`. Everything else in `moves/` trained on an
+**Which exports carry today's plant:** none since 10-17. The 23 on bc66ca20 --
+every `general_puffer_*` checkpoint, `general_rl_v3_s0..s4`,
+`general_rl_v3_mingru_s0..s4` -- differ from it ONLY by the righting crank's
+linkage friction. ACCEPTED, not retrained: the policies never drive the crank
+(GeneralEnv holds it at stow, where the term is its 51 mN m constant, and the
+GPU port has no crank at all), so they are stale by digest, not by
+behaviour -- unmeasured; one `per_command.py` grid would settle it. Everything else in `moves/` trained on an
 older plant (old front wheel, wingless or V1 module) and is provisional.
 Read a move's own `plant_digest`, never its name.
 
