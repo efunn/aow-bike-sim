@@ -107,7 +107,7 @@ class CurrentBasedPositionServo:
 
     @classmethod
     def attach(cls, model, params: dict, torque_nm: float | None = None,
-               at_output: bool = False):
+               at_output: bool = False, linkage_friction: bool = True):
         """None when the model has no swing linkage.
 
         `torque_nm` is the starting Goal Current expressed as the MOTOR torque
@@ -116,12 +116,24 @@ class CurrentBasedPositionServo:
         linkage config's `limits.torque_nm` (the peak the stroke needs at the
         crank) with `at_output` so the model starts at a cap that can do the
         stroke. None starts from `control.onboard.righting_current`, the
-        bike's own (untuned) counts."""
+        bike's own (untuned) counts.
+
+        `linkage_friction` puts the V2 module's measured pin friction under
+        the gearbox's, growing with crank angle (bike_params
+        `righting.module.linkage_friction_*`, 2026-10-17). On by default; False
+        is the frictionless linkage every run before it had, kept so the two
+        can be compared (teleop's --no-linkage-friction)."""
         try:
             model.joint("swing_crank_joint")
         except KeyError:
             return None
-        srv = cls(model, params, torque_nm if not at_output else None)
+        base = q2 = 0.0
+        mod = (params.get("righting") or {}).get("module") or {}
+        if linkage_friction and "linkage_friction_nm" in mod:
+            base = float(mod["linkage_friction_nm"])
+            q2 = float(mod["linkage_friction_q2"])
+        srv = cls(model, params, torque_nm if not at_output else None,
+                  friction_base=base, friction_base_q2=q2)
         if torque_nm is not None and at_output:
             srv.set_goal_current(srv.counts_for_output(torque_nm))
         return srv
@@ -129,13 +141,15 @@ class CurrentBasedPositionServo:
     def __init__(self, model, params: dict, torque_nm: float | None = None,
                  joint: str = "swing_crank_joint",
                  actuator: str | None = "swing", gains: dict | None = None,
-                 goal_current: int | None = None, friction_base: float = 0.0):
+                 goal_current: int | None = None, friction_base: float = 0.0,
+                 friction_base_q2: float = 0.0):
         """Defaults are the swing crank's. Any other hinge works: `actuator`
         None takes the goal from `self.goal` [rad] instead of a ctrl slot,
         `gains` overrides the Position P/D Gain registers, and `goal_current`
         [counts] overrides `torque_nm`. The floor rig's servos use all four,
         and `friction_base` [N m], the axis's own bearing friction, which the
-        gearbox's adds to."""
+        gearbox's adds to; `friction_base_q2` [N m/rad^2] grows it with the
+        joint's angle (GearboxFriction's `base_q2`)."""
         srv = params["servos"]["xc330_t181"]
         self.ts = float(srv["stall_torque"])
         self.w0 = float(srv["no_load_rpm"]) * 2 * math.pi / 60
@@ -154,7 +168,8 @@ class CurrentBasedPositionServo:
             # meaning, the force is ours. Its ctrlrange still clamps the goal.
             model.actuator_gainprm[self.aid, 0] = 0.0
             model.actuator_biasprm[self.aid, :3] = 0.0
-        self.friction = GearboxFriction(model, params, joint, base=friction_base)
+        self.friction = GearboxFriction(model, params, joint, base=friction_base,
+                                        base_q2=friction_base_q2)
         self.set_goal_current(
             goal_current if goal_current is not None
             else self.counts_for(torque_nm) if torque_nm is not None

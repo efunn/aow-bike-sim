@@ -219,7 +219,7 @@ class GpuGeneralEnv:
         for k in range(self.substeps):
             gdrv.launch_pre_step(self.c_drv, self.s_drv, d.qpos, d.qvel, d.ctrl,
                                  d.qfrc_applied)
-            ggb.launch_pre_step(self.c_gb, d.qvel, d.qfrc_actuator, d.sensordata,
+            ggb.launch_pre_step(self.c_gb, d.qpos, d.qvel, d.qfrc_actuator, d.sensordata,
                                 d.efc.type, d.efc.id, d.efc.force, d.nefc,
                                 m.dof_frictionloss)
             with self._mjw_call():

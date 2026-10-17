@@ -1310,6 +1310,33 @@ righting:
     # 1e-4 0.183 s, 1e-3 0.194 s, 2e-3 0.210 s. Dies at: a crank coast-down,
     # as drivetrain_fit.py coast did the XC430.
     crank_armature: {value: 1.0e-3, source: GUESS}
+    # THE LINKAGE'S OWN FRICTION, referred to the crank, ON TOP OF the XC330's
+    # gearbox friction (servos.xc330_t181, which the crank already carries):
+    #     f(theta) = linkage_friction_nm + linkage_friction_q2 * theta^2  [N m]
+    # theta = crank travel from stow [rad]. RIGHTING ONLY -- the steer is a
+    # different joint with its own headset term and does not see this.
+    #
+    # Measured 2026-10-17, V2 as built: stubs only, no blades, unloaded,
+    # clamped so nothing touches, horn screwed (analysis/righting_sweep.py,
+    # traces/righting_sweep/). Present Current -> crank torque by this file's
+    # own laws: motor 0.83 x (I - 16.5 mA), less running gearbox friction
+    # 0.15 x load + 5.7 mN m; the half-difference of the two directions, so
+    # gravity and offsets cancel. Pooled over ramps of 15-120 deg/s at 28-37 C:
+    # rms 8 mN m against 19 for a constant; no trend with speed (one 240 deg/s
+    # run read +21 mN m, unexplained). Breakaway needs no separate curve: this
+    # plus the gearbox's STATIC law predicts 115 / 181 / 232 mA at 0 / 90 /
+    # 120 deg against 110-130 / 160-230 / 160-250 measured.
+    #
+    # The rise toward the ends is both wings' transmission angle falling
+    # together (73 deg at stow, 30 at 129: they share crankpin and rod, so the
+    # two are equal). NOT in the curve: a ~15 mN m bump at crank -60 (the right
+    # wing's folded toggle; the left's at +60 shows none -- a joint on that
+    # side), friction rising ~20 % with temperature over the session, and
+    # whatever the bike's weight adds to the pin loads (unloaded here).
+    # Re-measure after the full assembly; a cold repeat after a 5 min break-in
+    # read ~30 % HIGHER near stow (one run, after a re-assembly).
+    linkage_friction_nm: {value: 0.051, source: measured}
+    linkage_friction_q2: {value: 0.0147, source: measured}   # N m / rad^2
 
 hockey:
   # Ball-shot move extras (build_model(..., hockey=True)); see

@@ -622,6 +622,12 @@ def main() -> None:
                          "bare PD + torque clip instead of the current-based "
                          "position servo model (righting_servo.py): no duty ceiling, no "
                          "command delay, and the crank can outrun the motor")
+    ap.add_argument("--no-linkage-friction", action="store_true",
+                    help="teleop: leave the righting module's measured pin "
+                         "friction off the crank (bike_params "
+                         "righting.module.linkage_friction_*), i.e. the "
+                         "frictionless linkage of every run before 2026-10-17. "
+                         "For comparing the two at a low Goal Current ([ / ])")
     ap.add_argument("--swing", action="store_true",
                     help="co-rotating wing pair (config/swing_wings.yaml): one "
                          "side down, other side tucked. 3 teleop positions.")
@@ -852,6 +858,7 @@ def main() -> None:
                 wings=args.wings, linkage=args.linkage,
                 swing=bool(args.swing or args.swing_linkage or righting_module),
                 righting_ideal=args.righting_ideal,
+                linkage_friction=not args.no_linkage_friction,
                 record=args.record,
                 slowmo_x=args.slowmo, odometry=args.odometry,
                 odometry_encoder=args.odometry_encoder, ahrs=args.ahrs,
@@ -2624,7 +2631,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
 
 def _teleop(model, params, eq_qpos, hockey=False, general=None,
             show_ui=False, wings=False, linkage=False, swing=False,
-            righting_ideal=False, record=None,
+            righting_ideal=False, linkage_friction=True, record=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
             ahrs="none", ahrs_tau=None, design=None, drivetrain_base=None,
             servo_gains=None, drivetrain_source="", frame_stats=None,
@@ -2974,8 +2981,15 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         crank_servo = CurrentBasedPositionServo.attach(
             model, params,
             torque_nm=float(model.actuator_forcerange[wing["aid"], 1]),
-            at_output=True)
+            at_output=True, linkage_friction=linkage_friction)
         if crank_servo is not None:
+            fr = crank_servo.friction
+            print("linkage friction: " + (
+                f"ON, {fr.base * 1e3:.0f} + {fr.base_q2 * 1e3:.1f} theta^2 mN.m at the "
+                f"crank ({(fr.base + fr.base_q2 * np.radians(129.3) ** 2) * 1e3:.0f} "
+                f"at 129.3 deg), under the gearbox's"
+                if fr.base or fr.base_q2 else
+                "OFF (--no-linkage-friction): gearbox friction only"))
             print(f"righting servo: current-based position (mode 5), "
                   f"Goal Current {crank_servo.goal_current} "
                   f"counts ({crank_servo.cap_nm:.2f} N.m motor at stall, "

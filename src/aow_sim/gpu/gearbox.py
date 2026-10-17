@@ -8,6 +8,15 @@ the friction force's sign from `efc_force` at a FIXED row (MuJoCo orders its
 rows by type, then by dof). MJWarp numbers rows with atomic counters
 (`_friction_dof`: `wp.atomic_add(nefc_out, worldid, 1)`), so the order is not
 fixed; the kernel finds the row by (type, id) instead.
+
+THE RIGHTING CRANK (2026-10-17) uses the same kernel when it is ported: its
+`base` grows with the crank's angle, base + base_q2 q^2 (the linkage's pin
+friction, `righting.module.linkage_friction_*`), read from `qpos[qadr]`. Its
+dof has no damping and its torque is the servo model's `qfrc_applied`, not an
+actuator's, so pass that array as `qfrc_actuator`. The port of the crank
+servo itself does not exist yet (gpu/reset.py refuses a crank); this only
+keeps the friction from being the missing piece. `base_q2` 0 is the steer,
+bit for bit as before.
 """
 from __future__ import annotations
 
@@ -20,8 +29,10 @@ FRICTION_DOF = int(mujoco.mjtConstraint.mjCNSTR_FRICTION_DOF)
 @wp.struct
 class GearConst:
     dof: int
+    qadr: int
     damp: float
     base: float
+    base_q2: float
     s0: float
     sc: float
     r0: float
@@ -33,11 +44,13 @@ class GearConst:
 
 
 def const_from(g) -> GearConst:
-    """The constants of a live `GearboxFriction` (the steer's)."""
+    """The constants of a live `GearboxFriction` (the steer's, or the crank's)."""
     c = GearConst()
     c.dof = int(g.dof)
+    c.qadr = int(g.qadr)
     c.damp = float(g._damp)
     c.base = float(g.base)
+    c.base_q2 = float(getattr(g, "base_q2", 0.0))
     c.s0, c.sc, c.r0, c.rc = float(g.s0), float(g.sc), float(g.r0), float(g.rc)
     c.w_stick = float(g.w_stick)
     c.touch = -1 if g._touch is None else int(g._touch)
@@ -47,7 +60,8 @@ def const_from(g) -> GearConst:
 
 
 @wp.kernel
-def pre_step(c: GearConst, qvel: wp.array2d(dtype=float),
+def pre_step(c: GearConst, qpos: wp.array2d(dtype=float),
+             qvel: wp.array2d(dtype=float),
              qfrc_actuator: wp.array2d(dtype=float),
              sensordata: wp.array2d(dtype=float),
              efc_type: wp.array2d(dtype=int), efc_id: wp.array2d(dtype=int),
@@ -83,13 +97,14 @@ def pre_step(c: GearConst, qvel: wp.array2d(dtype=float),
     else:
         F = (f0 + cc * a) / (1.0 + cc)
     if c.touch < 0:
-        frictionloss[world, c.dof] = c.base + F
+        q = qpos[world, c.qadr]
+        frictionloss[world, c.dof] = c.base + c.base_q2 * q * q + F
     else:
         frictionloss[world, c.dof] = c.ha + c.hb * wp.abs(sensordata[world, c.touch]) + F
 
 
-def launch_pre_step(c: GearConst, qvel, qfrc_actuator, sensordata, efc_type,
+def launch_pre_step(c: GearConst, qpos, qvel, qfrc_actuator, sensordata, efc_type,
                     efc_id, efc_force, nefc, frictionloss):
     wp.launch(pre_step, dim=qvel.shape[0], inputs=[
-        c, qvel, qfrc_actuator, sensordata, efc_type, efc_id, efc_force, nefc,
+        c, qpos, qvel, qfrc_actuator, sensordata, efc_type, efc_id, efc_force, nefc,
         frictionloss], device=qvel.device)

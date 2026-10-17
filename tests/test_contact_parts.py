@@ -114,8 +114,12 @@ def test_the_split_did_not_move_the_plant_digest():
                           (outer face vertical at stow, curving into V2's
                           toe), 28.6 -> 38.8 g each, stroke 129.3 -> 116.9
                           (its own level point); the linkage unchanged
+        4b5355ed44d6ca8c  2026-10-17  righting.module.linkage_friction_nm /
+                          _q2: the V2 linkage's measured pin friction on the
+                          crank, 51 + 14.7 theta^2 mN m, under the gearbox's
+                          (analysis/righting_sweep.py, stubs only, unloaded)
     """
-    assert plant_digest(load_params()) == "bc66ca20e1af66d5"
+    assert plant_digest(load_params()) == "4b5355ed44d6ca8c"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

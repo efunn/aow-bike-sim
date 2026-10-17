@@ -105,18 +105,26 @@ class GearboxFriction:
     `efc_force` is read only at rest."""
 
     def __init__(self, model, params: dict, joint: str, ratio: float = 1.0,
-                 base: float = 0.0, holds_load: bool = True):
+                 base: float = 0.0, holds_load: bool = True,
+                 base_q2: float = 0.0):
         """`base` [N m] is the joint's OWN friction (a bearing), kept under
-        the gearbox's. `holds_load` stiffens the friction row (see SOLIMP);
-        False leaves MuJoCo's default softness (the steer)."""
+        the gearbox's. `base_q2` [N m/rad^2] makes it grow with the joint's
+        angle from zero, base + base_q2 q^2: the righting linkage's, whose pins
+        bind harder as its transmission angle closes (bike_params
+        `righting.module.linkage_friction_*`). The build-time value, and a loop
+        that never calls the hook, keep `base` alone. `holds_load` stiffens
+        the friction row (see SOLIMP); False leaves MuJoCo's default softness
+        (the steer)."""
         self.model = model
         self.base = float(base)
+        self.base_q2 = float(base_q2)
         c = constants(params, ratio)
         self.s0, self.sc = c["static_nm"], c["static_frac"]
         self.r0, self.rc = c["running_nm"], c["running_frac"]
         self.w_stick = c["stick_speed"]
         jid = model.joint(joint).id
         self.dof = int(model.jnt_dofadr[jid])
+        self.qadr = int(model.jnt_qposadr[jid])
         self._fl = model.dof_frictionloss
         self._damp = float(model.dof_damping[self.dof])
         self._fl[self.dof] = self.base + self.s0
@@ -144,6 +152,7 @@ class GearboxFriction:
         self.load = 0.0
         self._data = data
         self._qvel = data.qvel
+        self._qpos = data.qpos
         self._qfa = data.qfrc_actuator
         self._sd = data.sensordata
         self._t = data.time
@@ -184,7 +193,11 @@ class GearboxFriction:
             F = (f0 + c * a) / (1.0 + c)
             self.load = a - F
         if self._touch is None:
-            self._fl[self.dof] = self.base + F
+            b = self.base
+            if self.base_q2:
+                q = self._qpos[self.qadr]
+                b += self.base_q2 * q * q
+            self._fl[self.dof] = b + F
         else:
             T = self._sd[self._touch]
             self._fl[self.dof] = self._ha + self._hb * (T if T >= 0.0 else -T) + F
