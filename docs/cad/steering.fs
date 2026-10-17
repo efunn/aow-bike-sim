@@ -1708,8 +1708,8 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
         for (var sg in [1, -1])
         {
             const hd = at(sg * (L.v2SideX + FIXTURE.joint_plate), 0 * mm, L.v2SideZ);
-            blindScrewJoint(context, P + ("jS" ~ k), hd, -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
-                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z);
+            // the ridge first, the screw's hole through it after (the other
+            // way round the ridge plugged the hole, 2026-10-16)
             const r0 = L.caseBot - 1.5 * mm;
             const rr = ridgeSolid(context, P + ("jSr" ~ k), at(sg * L.v2SideX, 0 * mm, (r0 + L.v2SideRidgeTop) / 2), Z, sg * X,
                                   FIXTURE.ridge_height, 0 * mm, (L.v2SideRidgeTop - r0) / 2);
@@ -1717,6 +1717,8 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
                     at(50 * mm, 50 * mm, L.caseBot)), "targets" : rr, "operationType" : BooleanOperationType.SUBTRACTION });
             opBoolean(context, P + ("jSu" ~ k), { "tools" : qUnion([partAt(context, P, lcPt), rr]),
                     "operationType" : BooleanOperationType.UNION });
+            blindScrewJoint(context, P + ("jS" ~ k), hd, -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
+                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z);
             k += 1;
         }
         // the servo's body out the front: the case group turned about the axis
