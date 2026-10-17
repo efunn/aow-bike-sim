@@ -19,7 +19,8 @@ its station (its own floor mock and chassis-plate placeholder dropped).
     python -m aow_sim.cad_bike_v2 --push bike_v2_features
 
 The check: every body, interference between modules and the envelopes at
-rest, steered 30/90/180/270, and the righting at every pose (each module's
+rest, steered 30/90/180/270, the righting at every pose, and the Pi carrier
+lifted out of the rails 3..15 mm straight up (each module's
 own internal clashes are its own check's business), and the envelopes'
 bounding boxes. Moving a component is an edit to the config; or move it in
 the browser with a Transform after the feature, and say where it went.
@@ -50,6 +51,10 @@ TAB = "bike_v2_features"
 PART_STUDIO = "bike_v2"
 POSES = cb.POSES
 STEER_SWEEP = cb.STEER_SWEEP
+# the Pi carrier (and the Pi, the U2D2, the spacers) lifted straight up out
+# of its grooves, mm: its ridges are off the rails by 14 (the top one; the
+# low ones by 9.3)
+LIFT_SWEEP = (3, 6, 9, 12, 15)
 COMPONENTS = ("battery", "ahrs", "pi", "u2d2")      # + the power board and switch, from cad_power
 # the USB-C plug's overmold, a typical one (ahrs_fixture_cad.yaml
 # usb_plug_keepout, GUESS): length past the receptacle, width, height, m
@@ -74,18 +79,29 @@ def load(path: str = PARAMS) -> dict:
     sd, dd = cs.load(snug=True), cd.load()
     D = cd.full_layout(dd)
     RA = cd.rail_layout(dd, D)
-    return {"s": raw, "params": load_params(sm.CAD_PARAMS), "steer": cs.layout(sd), "steerData": sd,
-            "drive": D, "driveData": dd, "rail": RA, "rd": rd, "rL": cr.layout(rd),
-            "power": cpw.layout(raw["power"], D, RA, dd, raw["components"]["battery"]),
-            "piCarrier": cpc.layout(raw["pi_carrier"], D, raw["pi"], raw["components"],
-                                    _ahrs_top(raw["components"]["ahrs"]), _ahrs_low(raw["components"]["ahrs"]),
-                                    U2D2_JST[1])}
+    params, rL = load_params(sm.CAD_PARAMS), cr.layout(rd)
+    P = cpw.layout(raw["power"], D, RA, dd, raw["components"]["battery"])
+    return {"s": raw, "params": params, "steer": cs.layout(sd), "steerData": sd,
+            "drive": D, "driveData": dd, "rail": RA, "rd": rd, "rL": rL, "power": P,
+            "piCarrier": cpc.layout(raw["pi_carrier"], D, RA, dd, raw["pi"], raw["components"],
+                                    _ahrs_top(raw["components"]["ahrs"]), _ahrs_bump_low(raw["components"]["ahrs"], dd),
+                                    U2D2_JST[1], P, _bridge_top(rL, params))}
 
 
-def _ahrs_low(c: dict) -> float:
-    """The drive z of the AHRS envelope's lower end (the U2D2's JSTs face
-    the drive in front of it)."""
-    return c["at"][2] - c["size"][2] / 2
+def _bridge_top(rL: dict, params: dict) -> float:
+    """The bike z of the righting bridge's top face (the module placed as
+    layout() places it)."""
+    b = next(q for q in rL["parts"] if q["slug"] == "bridge")
+    return b["bbox"][1][2] - params["omni_wheel"]["outer_radius"] * 1000 - rL["floor_z"]
+
+
+def _ahrs_bump_low(c: dict, dd: dict) -> float:
+    """The drive z of the AHRS HOUSING's lower end (the bump on the board):
+    the U2D2's JSTs face the drive in front of it, behind them only the
+    board, which ends lower."""
+    h = [v / 2 for v in c["size"]]
+    hb = next(b for b in tm151_boxes(dd["tm151"], h, int(dd["s"]["ahrs"]["tm151_x_up_n"])) if b["name"] == "AHRS housing")
+    return c["at"][2] + hb["lo"][2]
 
 
 def _ahrs_top(c: dict) -> float:
@@ -147,7 +163,7 @@ def layout(data: dict) -> dict:
         holes = pi_holes(s["pi"], h) if k == "pi" else tm151_holes(tm, h, sx) if k == "ahrs" else None
         comps.append({"key": k, "name": NAMES[k], "frame": c["frame"], "size": list(c["size"]),
                       "at": list(c["at"]), "rx": float(c.get("rx") or 0.0), "mass": c.get("mass"),
-                      "boxes": boxes, "holes": holes})
+                      "boxes": boxes, "holes": holes, "lift": k in ("pi", "u2d2")})
     # the power board and the switch, on the carrier (cad_power), drive frame
     P = data["power"]
     for k, src, holes in (("power", P["board"]["boxes"], P["board"]["holes"]), ("switch", P["switch"]["boxes"], None)):
@@ -159,15 +175,20 @@ def layout(data: dict) -> dict:
         hr = None if holes is None else {"ax": "x", "r": holes["r"], "y": [v - at[0] for v in holes["x"]],
                                          "at": [[y - at[1], z - at[2]] for y, z in holes["at"]]}
         comps.append({"key": k, "name": NAMES[k], "frame": "drive", "size": [hi[i] - lo[i] for i in range(3)],
-                      "at": at, "rx": 0.0, "mass": None, "boxes": rel, "holes": hr})
+                      "at": at, "rx": 0.0, "mass": None, "boxes": rel, "holes": hr, "lift": False})
     L["comps"] = comps
     keys = ("adds", "cuts", "cyls", "joints", "pt")
     L["carriers"] = [{"name": "power holder", "color": [0.93, 0.56, 0.20],
                       "note": "Printed -X (its battery-side face on the bed). The power board, the switch in the "
                               "shelf, strap slits; two 6-32 into the left rail.", **{k: P[k] for k in keys}},
-                     {"name": "Pi carrier (outline)", "color": [0.30, 0.55, 0.85],
-                      "note": "Printed. The Pi 3B+ over the U2D2; NOT attached yet (cad_pi_carrier).",
+                     {"name": "Pi carrier", "color": [0.30, 0.55, 0.85], "lift": True,
+                      "note": "Printed. The U2D2 under the plate on two M2, the Pi over it on four spacers "
+                              "(4-40 self-tapping into the plate); three 6-32 into the rails, lifts out upward.",
                       **{k: data["piCarrier"][k] for k in keys}}]
+    for k, sp in enumerate(data["piCarrier"]["spacers"]):
+        L["carriers"].append({"name": f"Pi spacer {k + 1}", "color": [0.85, 0.85, 0.85], "lift": True,
+                              "note": "Printed, separate (4-40 clearance). Under the Pi's board.",
+                              **{q: sp[q] for q in keys}})
     return L
 
 
@@ -436,8 +457,10 @@ export function bk2Carrier(context is Context, id is Id, C is map) returns Query
     for (var c in C.cyls)
         if (c.op == "add")
             cylW(context, A + c.tag, bk2V(c.p0), bk2V(c.p1), c.r * mm);
-    opBoolean(context, id + "u", { "tools" : qBodyType(qCreatedBy(A, EntityType.BODY), BodyType.SOLID),
-            "operationType" : BooleanOperationType.UNION });
+    // a single body (a Pi spacer) has nothing to unite with
+    const tools = qBodyType(qCreatedBy(A, EntityType.BODY), BodyType.SOLID);
+    if (size(evaluateQuery(context, tools)) > 1)
+        opBoolean(context, id + "u", { "tools" : tools, "operationType" : BooleanOperationType.UNION });
     for (var c in C.cuts)
         prism(K, c);
     for (var c in C.cyls)
@@ -470,6 +493,8 @@ export function bk2Carrier(context is Context, id is Id, C is map) returns Query
     const q = partAt(context, id, pt);
     dress(context, q, C.name, color(C.color[0], C.color[1], C.color[2]), C.note);
     setAttribute(context, { "entities" : q, "name" : "bk_mod", "attribute" : "bike" });
+    if (C.lift == true)
+        setAttribute(context, { "entities" : q, "name" : "bk_lift", "attribute" : "pi" });
     return q;
 }
 
@@ -558,6 +583,9 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
                 dress(context, q, b.name, color(b.color[0], b.color[1], b.color[2]),
                       "Not a print. Free to move: config/bike_v2_cad.yaml.");
                 setAttribute(context, { "entities" : q, "name" : "bk_mod", "attribute" : "bike" });
+                // on the Pi carrier: the check lifts them out with it
+                if (c.lift == true)
+                    setAttribute(context, { "entities" : q, "name" : "bk_lift", "attribute" : "pi" });
             }
         }
     step("carriers");
@@ -608,7 +636,7 @@ export const aowBikeV2 = defineFeature(function(context is Context, id is Id, de
 def build_fs(L: dict, fs_version: str = "3044") -> str:
     keep = ("wb", "yr", "zr", "tilt", "rake", "sOrigin", "sAxis", "rgDrop", "comps", "carriers")
     bk = {k: L[k] for k in keep}
-    bk["comps"] = [{k: c[k] for k in ("name", "frame", "at", "rx", "boxes", "holes") if c[k] is not None}
+    bk["comps"] = [{k: c[k] for k in ("name", "frame", "at", "rx", "boxes", "holes", "lift") if c[k] is not None}
                    for c in L["comps"]]
     info = (f"Wheelbase {L['wb']:g} mm (CAD only); righting rod {L['yr']:g} mm ahead of the rear axle, "
             f"{L['zr'] - L['floor']:.1f} mm off the floor")
@@ -627,6 +655,7 @@ def check_wrapper(fs: str, probes: list = ()) -> str:
     and envelopes at rest, steered, and at each righting pose. ONE call."""
     sweep = "[" + ", ".join(str(a) for a in STEER_SWEEP) + "]"
     poses = "[" + ", ".join(f'"{k}"' for k in POSES if k != "+0.00") + "]"
+    lift = "[" + ", ".join(str(a) for a in LIFT_SWEEP) + "]"
     return f"""function(context is Context, queries)
 {{
 {sm.geometry_layer(fs, SPLIT_MARK)}
@@ -699,6 +728,24 @@ def check_wrapper(fs: str, probes: list = ()) -> str:
                     "transform" : r.rXf * inverse(rgXf(ps[g])) * inverse(r.rXf) }});
         k += 1;
     }}
+    // the Pi carrier lifted straight up out of the rails (it comes out
+    // that way, with the Pi and the U2D2 on it)
+    const lf = qHasAttribute("bk_lift");
+    const lfL = evaluateQuery(context, lf);
+    var still = [];
+    for (var b in all)
+        if (!isIn(b, lfL))
+            still = append(still, b);
+    var up = 0;
+    k = 0;
+    for (var dz in {lift})
+    {{
+        opTransform(context, id + ("lf" ~ k), {{ "bodies" : lf, "transform" : transform(vector(0, 0, dz - up) * mm) }});
+        up = dz;
+        clashes("lift " ~ dz, lf, qUnion(still));
+        k += 1;
+    }}
+    println("LIFTED|" ~ size(lfL));
     return "ran to completion";
 }}
 """
@@ -750,7 +797,15 @@ def judge(console: str, L: dict) -> bool:
             print(f"    {a}  x  {b}   [{', '.join(sorted(ps))}]")
     else:
         print("  no interference across modules and envelopes: at rest, steered "
-              f"{'/'.join(str(a) for a in STEER_SWEEP)}, the righting at every pose")
+              f"{'/'.join(str(a) for a in STEER_SWEEP)}, the righting at every pose, the Pi carrier lifted "
+              f"{'/'.join(str(a) for a in LIFT_SWEEP)}")
+    # what the lift moved: the carrier, its four spacers, the Pi's and the
+    # U2D2's boxes
+    want_lift = 5 + sum(len(c["boxes"]) for c in L["comps"] if c.get("lift"))
+    got = [int(r[1]) for r in rows if r[0] == "LIFTED"]
+    good = got == [want_lift]
+    ok &= good
+    print(f"  lifted {got[0] if got else '?'} bodies (want {want_lift})  {'ok' if good else 'FAIL'}")
     return ok
 
 

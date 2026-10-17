@@ -96,9 +96,15 @@ def layout(p: dict, D: dict, R: dict, dd: dict, battery: dict) -> dict:
     nT, nW = sc["nutSlotThickness"], sc["nutSlotWidth"]
     xn0, xn1 = xo - nd, xo - nd - nT                  # the nut slot, |x|
     need(xn1 - wi >= p["lug_wall"] - 1e-9, f"the panel's wall behind the nuts is {xn1 - wi:.2f}")
+    # the AFT screw is cut down so it stops short of the battery (it is
+    # behind the pack); the FORE one's hole goes THROUGH the panel, any
+    # screw long enough for the nut (user, 2026-10-16 night: "the forward
+    # screw on the electronics module can also be thru; the rear one is the
+    # only that should get cut down so it doesn't pierce thru to the
+    # battery")
     tip = xo - p["screw_length"]
-    need(tip <= xn0 - tn["nut_thickness"] + 0.05, "the holder's screws do not reach through their nuts")
-    need(tip >= wi, "the holder's screws reach the battery's side")
+    need(tip <= xn0 - tn["nut_thickness"] + 0.05, "the holder's aft screw does not reach through its nut")
+    need(tip >= wi, "the holder's aft screw reaches the battery's side")
     rl_ = nW / math.sqrt(3) + p["lug_wall"]            # nut corner + a wall
     heads = []
     for tag, (hy, hz) in zip(("carrier", "carrier_front"), p["joints"]):
@@ -269,7 +275,8 @@ def layout(p: dict, D: dict, R: dict, dd: dict, battery: dict) -> dict:
                 need(_inside((yy, zz), outline), f"the holder's {side} ridge runs off the panel")
         P["joints"].append({"side": side, "head": [-xo, hb[0], hb[1]], "zIn": [1, 0, 0],
                             "slot": [0, sl_dir * K, sl_dir * K], "nutDepth": nd,
-                            "slotLen": abs(edge - hy_) + 1.0, "holeDepth": nd + nT,
+                            "slotLen": abs(edge - hy_) + 1.0,
+                            "holeDepth": nd + nT if side == "A" else xo - wi + 1.0,
                             "ridgeAt": [-xi, *bike(hy_, (r0 + r1) / 2)], "ridgeHalf": (r1 - r0) / 2,
                             "ridgeUp": [-1, 0, 0], "ridgeRot": 45.0})
     P.update({"nut": [xn0, xn1], "tip": tip, "tipToPack": tip - battery["size"][0] / 2, "outline": outline})

@@ -321,11 +321,38 @@ rail:
   # the left drive pulley. The head at drive (125, 27): the head and 1 mm
   # round it clear of the left pulley's belt in side view, and under the
   # board's front plugs. The groove out through the ear's top.
-  front_ear: {value: [0.0115, 0.020, 0.0335], source: design}
+  # The ear runs on forward to 1 short of the Pi carrier's plate (drive y
+  # 150; was 11.5 long, to 130.4) for the Pi carrier's top joint (user,
+  # 2026-10-16 night: "another extra ear here from the drive case which
+  # attaches to the LHS Pi case"): pi_top_joint below.
+  front_ear: {value: [0.031105, 0.020, 0.0335], source: design}
   carrier_front_joint: {value: [0.0692965, 0.1074802], source: design (bike frame, = drive (125, 27))}
   carrier_front_ridge_deg: {value: 315.0, source: design (user; slides in along the drive's -Z)}
   carrier_front_ridge_half: {value: 0.003, source: design}
   carrier_front_groove_open: {value: 0.011, source: design (out through the ear's top, its taper outside)}
+  # THE PI + U2D2 CARRIER'S JOINTS (user, 2026-10-16 night: "three screws
+  # total holding it in (two at the bottom, one at the LHS top)"), the
+  # holder's house 6-32 turned round: the flat head in the rail's outer
+  # face, the nut in the carrier's lug inboard of the rail. The carrier
+  # LIFTS OUT STRAIGHT UP IN THE BIKE (the drive's +Y+Z: off the face and up
+  # it, away from the AHRS and the holder alike), so each groove is closed
+  # toward the bike's down (ridge_deg 270) and open upward. cad_bike_v2
+  # refuses them off the carrier's (bike_v2_cad.yaml pi_carrier.joints).
+  # TOP, LEFT only: on the front ear's run forward, drive (141, 27); the
+  # groove out through the ear's top-front corner.
+  pi_top_joint: {value: [0.0806102, 0.1187939], source: design (bike frame, = drive (141, 27))}
+  pi_top_ridge_deg: {value: 270.0, source: design (user; the carrier lifts out upward)}
+  pi_top_ridge_half: {value: 0.003, source: design}
+  pi_top_groove_open: {value: 0.0135, source: design (out past the ear's top-front corner across its whole width, its taper outside; 13.0 the least)}
+  # LOW, BOTH rails ("at the bottom, near the righting mechanism: a screw
+  # on each side"): in the rails' lower arms under the carrier's plate,
+  # 1.7 of wall round the countersink to the arm's top edge, drive
+  # (147, -55.5), bike z 64.7 (the righting's bridge top is 48.6). The
+  # groove out through the arm's top edge.
+  pi_low_joint: {value: [0.1431891, 0.0647003], source: design (bike frame, = drive (147, -55.5))}
+  pi_low_ridge_deg: {value: 270.0, source: design (user; the carrier lifts out upward)}
+  pi_low_ridge_half: {value: 0.003, source: design}
+  pi_low_groove_open: {value: 0.0085, source: design (out through the arm's top edge, its taper outside)}
   # THE BATTERY STOPS, on BOTH rear arms (user, 2026-10-16 night: "some hints
   # (like 2mm lateral, going slightly behind the battery) so the battery
   # couldn't slide backwards into the rear wheel"): a lip off the arm's inner

@@ -189,15 +189,27 @@ def test_the_side_rails_fit(data, L):
     rail wholly under the TM151's board. Joints on both rails: the steering
     and the righting's bridge; on the LEFT only, the power holder's two on
     its two ears (user: not mirrored to the right), grooves closed toward
-    the drive's -Z (it slides in from the back + top)."""
+    the drive's -Z (it slides in from the back + top). The Pi carrier's
+    three: low on both rails, top on the LEFT front ear's run forward, all
+    closed toward the bike's down (it lifts out straight up)."""
     R = cd.rail_layout(data, L)
     wall = data["s"]["print"]["min_wall"]
     assert R["plate"] == pytest.approx(data["s"]["joint"]["joint_plate"])
-    assert {j["tag"] for j in R["joints"]} == {"steer", "bridge"}
-    assert {j["tag"] for j in R["leftJoints"]} == {"carrier", "carrier_front"}
+    assert {j["tag"] for j in R["joints"]} == {"steer", "bridge", "pi_low"}
+    assert {j["tag"] for j in R["leftJoints"]} == {"carrier", "carrier_front", "pi_top"}
     assert len(R["leftPieces"]) == 2 and len(R["pieces"]) == 2
     assert all(j["room"] >= wall for j in R["joints"] + R["leftJoints"])
-    assert all(j["dir"] == pytest.approx([0.0, -1.0]) for j in R["leftJoints"])
+    k = math.sqrt(0.5)
+    for j in R["joints"] + R["leftJoints"]:
+        if j["tag"].startswith("carrier"):
+            assert j["dir"] == pytest.approx([0.0, -1.0])
+        elif j["tag"].startswith("pi_"):
+            assert j["dir"] == pytest.approx([-k, -k])
+    # the front ear runs on to 1 short of the Pi carrier's plate, round the
+    # Pi carrier's top joint
+    ear = R["leftPieces"][0]
+    top = next(j for j in R["leftJoints"] if j["tag"] == "pi_top")
+    assert max(q[0] for q in ear) == pytest.approx(150.0, abs=1e-3) and cd._inside(top["head"], ear)
     assert R["ahRailGap"] >= 1.0
     cbs = [(L["Yhc"] + sy * L["holeHH"], zc + sz * L["holeHW"])
            for zc in (-L["zs"], L["zs"]) for sy in (1, -1) for sz in (1, -1)]

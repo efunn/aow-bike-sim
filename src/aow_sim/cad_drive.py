@@ -529,6 +529,11 @@ def rail_outlines(data: dict, L: dict) -> dict:
             "screwAbove": zt - rl["cage_screw_zm"], "screwBelow": rl["cage_screw_zm"] - z0, "lead": lead}
 
 
+# the rail joints on the LEFT rail only (added after the mirror): the power
+# holder's two and the Pi carrier's top one (user, 2026-10-16 night)
+LEFT_JOINTS = ("carrier", "carrier_front", "pi_top")
+
+
 def rail_layout(data: dict, L: dict) -> dict:
     """The side rails and the AHRS tabs, module frame, mm: the outline pieces
     as (y, z) on the left rail's plane, the joints, the tabs. Raises if
@@ -621,7 +626,7 @@ def rail_layout(data: dict, L: dict) -> dict:
     gw = jn["ridge_flat"] / 2 + jn["ridge_height"] + jn["ridge_clearance"] * math.sqrt(2)
     case_poly = [tuple(q) for q in R["casePoly"]]
     R["leftJoints"] = []
-    for tag in ("steer", "bridge", "carrier", "carrier_front"):
+    for tag in ("steer", "bridge", "carrier", "carrier_front", "pi_low", "pi_top"):
         if f"{tag}_joint" not in rl:
             continue
         h = to_drive(rl[f"{tag}_joint"])
@@ -646,8 +651,10 @@ def rail_layout(data: dict, L: dict) -> dict:
         # (ridge_height + clearance long) wholly outside the rail
         # -- across its whole width, and clear of every piece of the rail
         # (the ears unite with the arm)
+        # (nine lines across it: three let a corner of the ear between them,
+        # and the Pi carrier's ridge hit it lifting out, 2026-10-16)
         tl = jn["ridge_height"] + jn["ridge_clearance"] + 0.5
-        for v in (-gw, 0.0, gw):
+        for v in [gw * (i / 4 - 1) for i in range(9)]:
             e = (h[0] + (lo + tl) * d[0] + v * n[0], h[1] + (lo + tl) * d[1] + v * n[1])
             need(not any(_inside(e, q) for q in allp),
                  f"the rail's {tag} groove's end taper is inside the rail: open it further (rail.{tag}_groove_open)")
@@ -657,8 +664,10 @@ def rail_layout(data: dict, L: dict) -> dict:
         room = min(max(_edge_dist(h, c) for c in pcs), _edge_dist(h, case_poly)) - hr
         need(not _inside(h, case_poly) and room >= wall,
              f"the rail's {tag} joint's countersink is {room:.2f} from its edge")
-        # the holder's (carrier*) on the left rail only, as its ears
-        R["leftJoints" if tag.startswith("carrier") else "joints"].append(
+        # the holder's (carrier*) and the Pi carrier's top one (pi_top) on
+        # the left rail only, as their ears; the Pi carrier's low ones
+        # (pi_low) on both
+        R["leftJoints" if tag in LEFT_JOINTS else "joints"].append(
             {"tag": tag, "head": list(h), "dir": list(d), "half": half, "room": room,
              "gMid": (lo + hi) / 2, "gHalf": (hi - lo) / 2})
     # a point inside the rail and outside the case side (to find it by)

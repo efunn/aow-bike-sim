@@ -1,5 +1,5 @@
 """The battery / electronics / switch holder's layout (cad_power) and the
-Pi + U2D2 carrier outline (cad_pi_carrier), checked without Onshape.
+Pi + U2D2 carrier (cad_pi_carrier), checked without Onshape.
 
 cad_bike_v2 --check builds them in the bike and sweeps them for clashes;
 these check the fits the layouts themselves promise: the two joints on the
@@ -7,10 +7,10 @@ rail's, the nuts and the cut screws between the rail and the battery, the
 heads clear in side view, the board square to the drive beside the battery,
 the switch flush with the XT30 in the shelf, the strap's path and the
 gussets round it, the wire notch, the battery stops, the U2D2 between the
-pulleys with its JSTs in front of the AHRS.
+pulleys with its JSTs in front of the AHRS, the Pi carrier's three joints.
 Invalidated by: config/bike_v2_cad.yaml `power:` / `pi_carrier:` /
-components, config/drive_cad.yaml rail.carrier_* / front_ear / back_ear /
-battery_stop / case / pulley, the 6-32 table.
+components, config/drive_cad.yaml rail.carrier_* / pi_* / front_ear /
+back_ear / battery_stop / case / pulley, the 6-32 table.
 """
 
 import math
@@ -57,6 +57,11 @@ def test_the_nuts_and_the_cut_screws_sit_between_the_rail_and_the_battery(data, 
     assert P["xi"] - n0 >= 1.0 - 1e-9 and n1 - P["wi"] >= 1.0 - 1e-9
     assert P["tip"] <= n0 - data["driveData"]["s"]["tension"]["nut_thickness"] + 0.05
     assert P["tipToPack"] >= 1.0
+    # the aft screw cut down short of the battery, the fore hole through the
+    # panel (user)
+    aft, fore = (next(j for j in P["joints"] if j["side"] == s) for s in "AF")
+    xo = data["drive"]["xPo"]
+    assert xo - aft["holeDepth"] > P["wi"] and xo - fore["holeDepth"] < P["wi"]
 
 
 def test_the_screws_enter_clear_in_side_view(P):
@@ -127,14 +132,55 @@ def test_no_case_round_the_battery(P):
 
 
 def test_the_pi_over_the_u2d2_between_the_pulleys(data):
-    """The Pi carrier's outline: the U2D2 between the drive pulleys, off the
-    AHRS's housing, its JSTs' keep-out in front of the AHRS's lower end
-    (user); under a plate past the pulleys' rims; the Pi on it; attached to
-    nothing yet (user)."""
+    """The U2D2 between the drive pulleys, off the AHRS's housing, its JSTs'
+    keep-out in front of the AHRS's lower end (user); under a plate past
+    the pulleys' rims, on two M2 through it 42 apart (user); the Pi over it
+    on four spacers clear of those screws' heads, its 4-40s self-tapping
+    into the plate and a boss behind it, the bosses off the belts."""
     Q = data["piCarrier"]
+    p = data["s"]["pi_carrier"]
     assert Q["u2d2Gap"] >= 0.5 and Q["jstPast"] >= 0.5 and Q["rimGap"] >= 1.0
     assert data["s"]["components"]["u2d2"]["size"][0] / 2 < data["drive"]["flangeIn"]
-    assert Q["joints"] == []
+    a, b = Q["u2d2Holes"]
+    assert b - a == pytest.approx(42.0) and (a + b) / 2 == pytest.approx(p["u2d2_z"])
+    assert p["pi_spacer"][0] >= p["u2d2_screws"][2] + 1.0
+    assert Q["bossGap"] >= 1.0
+    assert len(Q["spacers"]) == 4 and not any(a["tag"].startswith("so") for a in Q["adds"])
+    # the plate is the Pi's PCB's footprint, no more (user), a gap off the
+    # rails' top edge in side view
+    pi = data["s"]["pi"]
+    y0, y1, zl, zh, xh = Q["plate"]
+    assert xh == pytest.approx(pi["board"][0] / 2) and zh - zl == pytest.approx(pi["board"][1])
+    assert Q["railGap"] >= p["rail_gap"] - 1e-6
+    # the JSTs in front of the AHRS's housing (the bump), not its whole
+    # envelope (user)
+    ah = data["s"]["components"]["ahrs"]
+    assert b2._ahrs_bump_low(ah, data["driveData"]) > ah["at"][2] - ah["size"][2] / 2
+
+
+def test_the_pi_carrier_on_three_screws_lifting_out_upward(data):
+    """User: "three screws total holding it in (two at the bottom, one at
+    the LHS top)": the top one on the LEFT only, the low ones a side, each
+    head in the rail's outer face and its nut in a lug inboard of the rail;
+    the ridges along the bike's Z (it lifts out straight up); the top lug
+    off the power holder's front, the low ones over the righting's bridge;
+    the heads clear in side view."""
+    Q = data["piCarrier"]
+    xo, xi = data["drive"]["xPo"], data["rail"]["innerX"]
+    assert sorted(j["side"] for j in Q["joints"]) == ["LL", "LR", "T"]
+    for j in Q["joints"]:
+        assert abs(j["head"][0]) == pytest.approx(xo) and abs(j["ridgeAt"][0]) == pytest.approx(xi)
+        assert j["ridgeRot"] == 0.0 and j["zIn"][0] == -math.copysign(1, j["head"][0])
+    assert next(j for j in Q["joints"] if j["side"] == "T")["head"][0] < 0
+    n0, n1 = Q["nut"]
+    assert xi > n0 > n1 > Q["lugIn"]
+    # through holes (user): through the lug, past its inner face
+    assert all(j["holeDepth"] > abs(j["head"][0]) - Q["lugIn"] for j in Q["joints"])
+    assert Q["holderGap"] >= data["s"]["pi_carrier"]["holder_gap"] - 1e-9
+    assert Q["bridgeGap"] >= 1.0 and Q["headView"] >= 0 and Q["pulleyView"] >= 0
+    # nothing proud of the plate's outer face (user: the low lugs were 0.51)
+    y1 = Q["plate"][1]
+    assert all(max(cpw.drive(*q)[0] for q in a["pts"]) <= y1 + 1e-6 for a in Q["adds"] if "pts" in a)
 
 
 def test_the_frames_round_trip():

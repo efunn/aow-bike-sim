@@ -74,9 +74,9 @@ components:
     size: {value: [56.0, 20.0, 89.0], source: datasheet (the box the detail sits in; the ports 2 proud of the board's end)}
     frame: {value: drive, source: design}
     # ON THE PI CARRIER (2026-10-16 night; cad_pi_carrier refuses it
-    # anywhere else): parallel to the front face as before, 2 further out
-    # (was (0, 161, 0)) for the carrier's plate under it
-    at: {value: [0.0, 163.0, 0.0], source: design (= pi_carrier)}
+    # anywhere else): parallel to the front face, on its 4 spacers over the
+    # carrier's plate (was 163, on 2.6 printed-in standoffs)
+    at: {value: [0.0, 164.4, -5.8], source: design (= pi_carrier)}
     mass: {value: 50.0, source: datasheet (approx.)}
   u2d2:
     size: {value: [18.0, 14.9, 48.0], source: measured (18 x 48 x 14.9)}
@@ -87,7 +87,7 @@ components:
     # of it, between the plate and the AHRS's housing.
     # Was steer frame (0, -22, 100), then parked behind the steering's rear
     # screw.
-    at: {value: [0.0, 143.55, -23.25], source: design (= pi_carrier)}
+    at: {value: [0.0, 143.55, -19.0], source: design (= pi_carrier)}
     mass: {value: null, source: GUESS (not weighed)}
 
 # The Pi 3B+ in detail, in its box's frame (x across, y the board's normal,
@@ -128,10 +128,11 @@ power:
   joints: {value: [[24.7134, 74.918], [69.2965, 107.4802]], source: design (user; = rail.carrier_joint, carrier_front_joint)}
   # The panel is only battery to rail (|x| 11.3..16), so each nut sits a
   # wall past the joint plane and a wall short of the battery side. The
-  # screws CUT to length (user: "I can shorten the 6-32 screws"), the tip at
-  # the nut's far face.
+  # AFT screw CUT to length (user: "I can shorten the 6-32 screws"), the tip
+  # at the nut's far face, short of the battery; the FORE one's hole goes
+  # through the panel (user: "can also be thru"; nothing is inboard of it).
   nut_wall: {value: 1.0, source: design}
-  screw_length: {value: 8.0, source: design (6-32 flat head cut down; user)}
+  screw_length: {value: 8.0, source: design (the aft 6-32 flat head cut down; user)}
   lug_wall: {value: 1.0, source: design}       # round the nuts' corners
   ridge: {value: [3.0, 7.0], source: design}   # toward the drive's -Z (closed), +Z of each head
   clearance: {value: 0.3, source: design}      # the panel's face off the battery's side
@@ -208,26 +209,63 @@ power:
     # between them (across, it was centred on the XT30, 1.35 off the panel)
     strap_room: {value: 2.5, source: design (a 2 mm strap + 0.5)}
 
-# THE PI + U2D2 CARRIER, an OUTLINE (aow-bike-whole-v2-complete.md, "Pi +
-# U2D2 carrier"): self-contained, not attached yet (user: undecided; likely
-# a mounting arm shared with one more power-carrier side screw near the left
-# drive pulley). Read by aow_sim.cad_pi_carrier. DRIVE frame, mm.
+# THE PI + U2D2 CARRIER (aow-bike-whole-v2-complete.md, "Pi + U2D2
+# carrier"): a plate over the drive's front face, the U2D2 under it on two
+# M2, the Pi over it on separate spacers, three 6-32 into the rails (user,
+# 2026-10-16 night). Read by aow_sim.cad_pi_carrier. DRIVE frame, mm.
 pi_carrier:
   plate_y0: {value: 151.0, source: design}     # its inner face, drive y: past the pulleys' rims (143.6)
   plate: {value: 2.0, source: design}
-  margin: {value: 1.0, source: design}         # round the Pi's board and its standoffs
-  pi_z: {value: 0.0, source: design}           # the Pi's box centre along the face
-  pi_standoff: {value: [2.6, 5.5], source: GUESS (height under the board, dia)}
-  pi_pilot_dia: {value: 2.2, source: GUESS (M2.5 self-tapping into the print)}
-  # slid DOWN-FORWARD along the face (user, 2026-10-16 night: "over the
-  # AHRS; the JST plug will sit in front of the AHRS (fully cleared)") until
-  # its JSTs' keep-out, facing the drive at its lower end, is 0.5 past the
-  # AHRS envelope's lower end (-29.75). Was 27.1 (slid up-back: the wrong
-  # way). "If it seems too far, the AHRS could also move up-back" (user).
-  u2d2_z: {value: -23.25, source: design}
+  # the plate is the Pi's PCB's footprint (user: "no necessary reason to
+  # extend beyond" it); it and the Pi a gap off the rails' top edges in
+  # side view (they span the rails)
+  rail_gap: {value: 1.0, source: design}
+  # the Pi's box centre along the face: slid DOWN-FORWARD 5.8 (user,
+  # 2026-10-16 night: "like another 7mm"), until the plate's bottom-back
+  # corner is rail_gap off the rail arm's top edge (at 7 it would be 0.06)
+  pi_z: {value: -5.8, source: design}
+  # the Pi on four SEPARATE printed spacers (user: "so that the carrier can
+  # be more easily printed to hit the 3 attachment points"), 4-40 machine
+  # screws through the board (its holes opened up, user) and the spacers,
+  # self-tapping into the plate and a boss behind it (user: "ok to self tap
+  # here"). Spacer height, OD, bore (4-40 clearance); its height also clears
+  # the U2D2's screw heads under the board.
+  pi_spacer: {value: [4.0, 6.0, 3.3], source: GUESS (height, OD; bore 4-40 clearance)}
+  pi_boss: {value: [4.0, 6.0], source: design (behind the plate, dia: 6 of thread with the plate)}
+  pi_pilot_dia: {value: 2.3, source: GUESS (4-40 self-tapping into the print)}
+  # the U2D2's two M2 tapping screws, "located centrally and 42mm apart"
+  # on its face toward the Pi (user): span, the plate's clearance hole, the
+  # head's height (under the Pi)
+  u2d2_screws: {value: [42.0, 2.4, 1.6], source: measured (span, user); design (hole); GUESS (head)}
+  # its JSTs' keep-out, facing the drive at its lower end, past the lower
+  # end of the AHRS's HOUSING (-23.41), in front of it (user, 2026-10-16
+  # night: "only the bump actually needs to be cleared"), and then 2 back
+  # down for room (user: "you can lower the u2d2 back a little bit"):
+  # 2.6 past it. Was -23.25, past the whole envelope's end (-29.75). The
+  # keep-out is generous (user: the plugs sit flush with its face, only
+  # wires come out); its 17 along and 6 out are GUESSes (cad_bike_v2.U2D2_JST).
+  u2d2_z: {value: -19.0, source: design}
   # the U2D2's cradle: two cheeks at mid-length (wall, depth, length); its
   # ends and the connectors there left open (which long side has its
   # connectors is not in this config yet)
   cradle: {value: [1.6, 5.0, 16.0], source: design}
   cradle_clearance: {value: 0.3, source: design}
+  # ---- THE JOINTS (user, 2026-10-16 night: "three screws total holding it
+  # in (two at the bottom, one at the LHS top)"), the power holder's house
+  # 6-32 turned round: the flat head in the rail's outer face, the nut in a
+  # lug of the carrier's inboard of the rail, the lug's ridge in the rail's
+  # groove. It lifts out STRAIGHT UP in the bike (the drive's +Y+Z: off the
+  # face and up it), so it comes out clear of the AHRS and the holder, which
+  # slides out the other way. TOP: LEFT only, on the front ear's run forward
+  # (drive_cad.yaml rail.pi_top_joint; user: "another extra ear here from the
+  # drive case which attaches to the LHS Pi case"). LOW: one a side, in the
+  # rails' lower arms above the righting's bridge (rail.pi_low_joint; user:
+  # "at the bottom, near the righting mechanism: a screw on each side").
+  # The holes go THROUGH the lugs (user): no screw cut down.
+  # Bike (y, z); cad_pi_carrier refuses them off the rail's.
+  joints: {value: [[80.6102, 118.7939], [143.1891, 64.7003]], source: design (user; = rail.pi_top_joint, pi_low_joint)}
+  nut_wall: {value: 1.0, source: design}
+  lug_wall: {value: 1.0, source: design}       # round the nuts' corners, and behind them
+  ridge: {value: [3.0, 4.0], source: design}   # down (closed) and up (open) of each head, bike z
+  holder_gap: {value: 1.0, source: design}     # the top lug off the power holder's front
 
