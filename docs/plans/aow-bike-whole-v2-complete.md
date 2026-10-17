@@ -527,3 +527,68 @@ bridge did not. Both now add the ridge first and drill through it.
 | upper strap slit | 3 tall at the battery's top | from the battery's top to the shelf's underside (user: the battery may sit higher, cables under it) |
 | battery stop | lip to \|x\| 9 | to \|x\| 8 (user: "an extra mm"), and a SIDE LEG from it 3 forward along the battery's side, 0.3 off it, on both arms (user: "constrained laterally a bit") |
 | gussets | 2 | 3: the aft one 1 further back (1.5 off the switch's cutout, for its springy clips), the one ahead of the strap, and one past the XT30's hole (the shelf runs on to take it) |
+
+## The Pi + U2D2 carrier, attached (2026-10-16 night, user's spec)
+
+Pushed: drive, the bike. Checks clean: the drive, 0 interference, 36 hole
+probes right; the bike, 80 bodies, no interference at rest, steered, at any
+righting pose, or with the carrier lifted 3/6/9/12/15 mm straight up. Calls
+75 -> 81, one of them wasted (a re-run of an unchanged check, by a typo).
+
+**Assembly** (user): the U2D2 onto the plate on its two M2 tapping screws
+("located centrally and 42mm apart" on its Pi-side face), then the Pi on
+four spacers with 4-40 machine screws self-tapping into the plate, then the
+carrier into the bike on three 6-32.
+
+| | was | now |
+|---|---|---|
+| attachment | none (an outline) | three 6-32, the holder's joint turned round: head in the rail's outer face, nut in a lug of the carrier's inboard of the rail (lug \|x\| 11.3..16, screws cut to 8) |
+| top joint | | LEFT only, drive (141, 27), on the front ear run on forward to drive y 150 (1 short of the plate; was 130.4). Its lug 2.5 off the holder's front |
+| low joints | | one a side, drive (147, -55.5), in the rails' lower arms under the plate, 1.75 of wall to the arm's top edge. The lugs' bottoms 8.9 over the righting's bridge (bike z 48.6) |
+| way out | | STRAIGHT UP in the bike (the drive's +Y+Z): grooves open upward (`ridge_deg` 270), the ridges along the bike's Z. Away from the AHRS (behind the U2D2) and from the holder, which slides out back + top |
+| U2D2 | in the cradle | the same, plus two M2 through 2.4 holes in the plate, at drive z -44.25 and -2.25 |
+| Pi | on 2.6 standoffs printed on, M2.5 pilots | on four SEPARATE spacers (user), 4 tall, 6 OD, 3.3 bore (GUESS); 4-40 pilots 2.3 (GUESS) through the plate and a 4 boss behind it (6 of thread). The Pi's box out 1.4 to drive y 164.4 |
+
+- **The bosses** are 1.8 off the right belt (on the right pulley at the upper holes).
+- **The screw heads** are clear in side view: 4.9 past their 1 mm margin off the holder's board and switch, 10.3 off the belts.
+- **The lift check is new:** the carrier, its spacers, the Pi and the U2D2 are lifted together and swept against everything else in the same eval, to 15 (the ridges are off the rails by 14 for the top one, 9.3 for the low ones). Its first run caught the top ridge hitting the ear's top-front corner at 9 to 12 mm. The rail's groove run-out check sampled three lines across the groove, and the corner sat between them. It now samples nine, and the top groove is open 13.5 (13.0 is the least that passes).
+- **Rejected:** lifting off the face (the drive's +Y). It also clears the AHRS, but the low grooves would run 17.1 along the arm before getting out of the top edge, against 8.2 straight up, and the lugs would travel that much further toward the steering.
+
+**Outstanding:**
+- **Side access to the low screws:** the righting's blades are not checked for a screwdriver's room.
+- **Print-fit** the spacers, the 4-40 pilots and the lugs' nuts.
+- **GUESSes:** the spacers, the pilot, the M2 heads' 1.6 (the spacers leave 2.4 over them), the U2D2's JSTs.
+- **The Pi's holes** are drawn at the datasheet's 2.75; the user is opening them for the 4-40s.
+
+## The Pi carrier, second pass (2026-10-16 night, user's review)
+
+Pushed: the bike. `--check` clean: 80 bodies, no interference, probes
+right. Calls 81 -> 83.
+
+| | was | now |
+|---|---|---|
+| low lugs | 0.51 proud of the plate's outer face (user) | flush with it; the ridges 3 down / 4 up of each head (was 5 up) to stay inside |
+| plate | the Pi's PCB + 1 all round, down to the U2D2's screw | the PCB's footprint exactly, x +-28 (user: "no necessary reason to extend beyond" it) |
+| Pi | `pi_z` 0 | -5.8, down-forward (user: "like another 7mm"). The plate's bottom-back corner is then 1.05 off the rail arm's top edge in side view. At 7 it would be 0.06 off, so the limit is the arm |
+| U2D2 | `u2d2_z` -23.25, its JSTs' keep-out past the AHRS envelope's lower end (-29.75) | -17.0, up-back 6.25: the keep-out 0.59 past the HOUSING's lower end (-23.41), the bump (user). The board under it ends lower but is behind the keep-out |
+
+**The lift check now reaches a keep-out:** with the JSTs plugged in, lifting
+the carrier 3 to 6 mm sweeps their plugs into the AHRS housing's lower end.
+Straight up moves the U2D2 out from the face and up it equally, and the
+plugs have 4.9 to go out before they are past the housing, against 0.59 up.
+So either the JSTs come out before the carrier lifts out, or the U2D2 goes
+back to `u2d2_z` -21.4 at most, 1.85 up from -23.25 rather than 6.25 (the
+user's call). The keep-out's 17 along the U2D2 is still a GUESS.
+
+**Then** (user): the U2D2 back down 2 for room, to `u2d2_z` -19.0 (4.25 up
+from where it started), its JSTs' keep-out 2.59 past the housing; the user
+says the keep-out is generous (the plugs sit flush with its face, only
+wires come out). The lift check still reaches it, at 6 only. And THROUGH
+holes for all three of the carrier's screws and the holder's fore one (user:
+"the rear one is the only that should get cut down so it doesn't pierce
+thru to the battery"): no screw needs cutting but the holder's aft. The
+shortest that passes its nut is 8.0. The longest before the tip meets
+something inboard, against the electronics' boxes and the carrier (the
+screws are not modelled): the carrier's top 14.4 (the U2D2's USB plug
+keep-out), its low ones 31.9 (each other's lug), the holder's fore 20.6
+(the AHRS's USB plug keep-out). Pushed: the bike, check clean. Calls 83 -> 85.

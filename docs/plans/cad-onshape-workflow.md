@@ -305,6 +305,18 @@ generated geometry. A later `cad_bike --push` that changes a part's shape
 can orphan them, exactly as in a module tab. So that is a true final step;
 anything that should survive another design round goes through the module.
 
+**v2 (2026-10-16): fold hand edits from the whole bike too.** The user
+prefers to model the finishing in `bike_v2`, where everything is seen
+fitting together. The readback is the same (`cad_hand_edits bike_v2`, two
+calls). Its face boxes come back in the BIKE frame, so each is turned into
+its module's frame (the drive's 45 deg tilt, the steering's origin and
+rake, the righting's offset) and encoded in that module's generator. The
+carriers (`cad_power`, `cad_pi_carrier`) live only in `bike_v2` and take
+theirs directly. Then the hand features are deleted from `bike_v2`, and
+each module studio gets the edit on its next push. Not yet tried on
+`bike_v2`. An edit that spans two modules has no one generator to go in:
+say so, and it gets split.
+
 What the readback found in `aow-bike-steering` on 2026-09-30 (exploratory,
 NOT to encode as is, user):
 - 24 hand features: 14 chamfers, 5 fillets, 2 sketches, 3 extrudes;
