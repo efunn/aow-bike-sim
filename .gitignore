@@ -4,6 +4,8 @@ __pycache__/
 .DS_Store
 MUJOCO_LOG.TXT
 docs/robotis/
+# Loose reference material (datasheets, PDFs) dropped in while working.
+docs/scratch/
 runs/
 traces/
 bench/logs/archive/
