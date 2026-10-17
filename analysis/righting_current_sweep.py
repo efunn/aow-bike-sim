@@ -39,13 +39,13 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from aow_sim import gearbox_friction  # noqa: E402
-from aow_sim.build_model import SWING_LINKAGE_CFG, build_model, load_params  # noqa: E402
+from aow_sim.build_model import build_model, load_params  # noqa: E402
 from aow_sim.control.linearize import settle_upright  # noqa: E402
 from aow_sim.control.righting import roll_pitch  # noqa: E402
 from aow_sim.righting_servo import CURRENT_LIMIT, CurrentBasedPositionServo  # noqa: E402
 
 
-def fallen(params, side: float, settle_s: float, cfg=None):
+def fallen(params, side: float, settle_s: float, cfg=None, linkage_friction=True):
     """Model, data and servo with the bike settled on its side, crank at centre.
     `cfg`: a swing-linkage config path; None is the bike's righting module
     (V2, bike_params `righting.module`, blades and all -- since 2026-10-09;
@@ -57,7 +57,7 @@ def fallen(params, side: float, settle_s: float, cfg=None):
     d.qpos[3:7] = [np.cos(a), np.sin(a), 0.0, 0.0]
     d.qpos[2] += 0.02
     mujoco.mj_forward(m, d)
-    srv = CurrentBasedPositionServo.attach(m, params)
+    srv = CurrentBasedPositionServo.attach(m, params, linkage_friction=linkage_friction)
     srv.set_goal_current(CURRENT_LIMIT)
     hooks = [srv, gearbox_friction.attach_steer(m, params)]
     d.ctrl[m.actuator("swing").id] = 0.0
@@ -119,19 +119,32 @@ def main() -> int:
                          "threshold is the stroke's peak torque, with no swing "
                          "momentum carrying it over the hump (pair with a longer "
                          "--seconds)")
+    ap.add_argument("--no-linkage-friction", action="store_true",
+                    help="leave the module's measured pin friction off the crank "
+                         "(righting.module.linkage_friction_*, 2026-10-17)")
     args = ap.parse_args()
 
     params = load_params()
-    cfg_path = args.config or SWING_LINKAGE_CFG
-    dep = np.deg2rad(float(yaml.safe_load(cfg_path.read_text())
-                           ["stroke"]["crank_travel_deg"]))
+    # The STROKE of the mechanism being flown. With no --config that is the
+    # module's own (V3 blade: 116.9, its level point); until 2026-10-17 this
+    # read V1's file even then and commanded 136.6, past the module's toes.
+    if args.config is None:
+        cfg_name = "righting.module"
+        dep = np.deg2rad(float(params["righting"]["module"]["linkage"]
+                               ["stroke"]["crank_travel_deg"]))
+    else:
+        cfg_name = args.config.name
+        dep = np.deg2rad(float(yaml.safe_load(args.config.read_text())
+                               ["stroke"]["crank_travel_deg"]))
     counts = list(range(args.counts[0], args.counts[1] + 1, args.counts[2]))
     s = args.supply / 12.0
-    print(f"{cfg_path.name}, {args.supply:g} V, crank goal +-{np.degrees(dep):.0f} deg, "
+    print(f"{cfg_name}, linkage friction "
+          f"{'OFF' if args.no_linkage_friction else 'ON'}, {args.supply:g} V, crank goal +-{np.degrees(dep):.0f} deg, "
           f"{args.seconds:g} s per trial, wheels passive; righted = reached within "
           f"{args.level_deg:g} deg of upright\n")
     for side in (+1.0, -1.0):
-        start = fallen(params, side, args.settle_s, args.config)
+        start = fallen(params, side, args.settle_s, args.config,
+                       linkage_friction=not args.no_linkage_friction)
         r0 = roll_pitch(start[1].qpos[3:7])[0]
         # The goal that pushes the bike up: whichever sign reduces the roll
         # more at the Current Limit. The other one pushes into the floor.
