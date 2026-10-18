@@ -1,0 +1,160 @@
+name: general_puffer_style_52M
+type: rl
+kind: general
+policy_file: general_puffer_style_52M.npz
+params_digest: 3fa2a8e3d2a2ecce
+plant_digest: 7893a119b19f17d6
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.0
+vel_window_s: 0.0
+obs_zero_lat: false
+obs_odometry: true
+odometry_encoder: counts
+steer_rate_encoder: counts
+ahrs_level: tm151_filter
+ahrs_tau_s: 2.0
+ahrs_channels: both
+drivetrain_model:
+  update_every: 1
+  servo:
+    enabled: true
+    velocity_p_gain: 100
+    velocity_i_gain: 1920
+    kp_per_unit: 0.0004
+    ki_per_unit: 0.00145
+    command_delay_s: 0.004
+    measurement_delay_s: 0.004
+    velocity_filter_s: 0.012
+    velocity_limit_rad_s: 11.03
+    rotor_inertia: 0.0022
+    coulomb_friction: 0.15
+    friction_stick_stiffness: 250.0
+    friction_stick_damping: 0.2
+  detent:
+    enabled: true
+    period_deg: 7.5
+    width_deg: 2.5
+    friction: 0.096
+    phase_deg: 0.0
+    stick_stiffness: 1000.0
+    stick_damping: 1.0
+  roller_slop:
+    enabled: true
+    half_play_deg: 7.8
+    centring_stiffness: 0.001
+    damping: 2.9e-05
+    wall_timeconst_s: 0.001
+obs_pitch: true
+obs_wings: false
+act_wings: false
+obs_swing: false
+act_swing: false
+wing_max_deg: 90.0
+obs_style: true
+swing_linkage: false
+righting_module: v2
+righting_rigid: true
+ball_prob: 0.0
+swing_tip_mass_kg: 0.0
+wing_touch_fails: false
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- pitch
+- pitch_rate
+- style
+- sin_wheel_err
+- cos_wheel_err
+action_space: full
+trained:
+  algo: PufferLib 5.0 PPO (ea7f989), Muon
+  timesteps: 0
+  arch: Linear(20,128) -> MinGRU(128) -> Linear(128,3), no biases
+  precision: bf16 (fp32 master weights)
+  logstd:
+  - -0.5595
+  - -0.9413
+  - -1.2187
+  unsaved_weights: 5
+  graph:
+    nworld: 4096
+    config: config/rl_general_v3_style.yaml
+    config_sha256: ce356bf43e7848e30b39ff820ee33b62ec368e6f3e7d92d1327c08fc547505f2
+    seed: 0
+    curriculum:
+      shared: true
+      envs: 32
+      lead: 0.1
+  exported_from: analysis/gpu/phase3/results_5090_style/puffer_checkpoints/aow_bike/1792297794587/0000000052428800.bin
+  metrics:
+    survive_rate: 1.0
+    wing_touch_rate: 0.0
+    track: 0.83
+    track_geo: 0.821
+    vel_err: 0.095
+    head_err_deg: 3.6
+    n_eval: 20
+    drift_m: 0.016
+    drift_lon: -0.015
+    drift_lat: 0.006
+    drift_bearing_deg: 159.5
+    drift_max: 0.021
+    drift_sd: 0.005
+    steer_rest_deg: 2.7
+    speed_ratio_fwd: 1.018
+    speed_ratio_rev: 1.026
+    crab_ratio_left: 0.35
+    crab_ratio_right: 0.28
+    crab_head_err: 11.5
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.474
+    by_family:
+      hold:
+        n: 1
+        survive_rate: 1.0
+        head_err_tail: 3.6
+        vel_err_med: 0.018
+        drift_m: 0.016
+        drift_overshoot: 0.005
+      spin:
+        n: 2
+        survive_rate: 1.0
+        t_head_s: 1.53
+        t_head_n: 2
+        head_err_tail: 4.1
+        vel_err_med: 0.044
+      cruise:
+        n: 9
+        survive_rate: 1.0
+        t_head_s: 0.57
+        t_head_n: 6
+        head_err_tail: 3.3
+        vel_err_med: 0.057
+      crab:
+        n: 2
+        survive_rate: 1.0
+        head_err_tail: 8.7
+        vel_err_med: 0.385
+      turn_big:
+        n: 6
+        survive_rate: 1.0
+        t_head_s: 0.82
+        t_head_n: 6
+        head_err_tail: 5.3
+        vel_err_med: 0.041

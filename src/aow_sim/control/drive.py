@@ -457,8 +457,7 @@ class DriveController(LQRBalance):
             print(f"NOTE: {getattr(self._gen, 'name', '?')} was trained "
                   f"against a {getattr(self._gen, 'ahrs_level')} ATTITUDE "
                   "error model, and is\n  being replayed on MuJoCo truth. Add "
-                  f"--ahrs {getattr(self._gen, 'ahrs_level')} "
-                  f"--ahrs-tau {float(getattr(self._gen, 'ahrs_tau_s', 0.19)):g}"
+                  f"--ahrs {getattr(self._gen, 'ahrs_level')}"
                   " to match training.\n  On hardware this is automatic.")
         # THE INVERSE, and the one that actually bites in teleop. Turning the
         # sensors on while driving the CONFIG DEFAULT hands a truth-trained

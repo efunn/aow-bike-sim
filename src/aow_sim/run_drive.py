@@ -448,9 +448,11 @@ def main() -> None:
                          "deg of roll.")
     ap.add_argument("--ahrs-tau", type=_ahrs_tau, default=None, metavar="SECONDS",
                     help="orientation error correlation time [s] under --ahrs. "
-                         "Default is sim_ahrs.TAU_ORIENT_S, which is now "
-                         "the MEASURED 0.19 (it was 2.0, a guess, until "
-                         "2026-08-28). Changes the "
+                         "Default is the level's own (sim_ahrs."
+                         "level_tau_orient_s): the measured 0.19 for the "
+                         "noise levels; under tm151_filter, 2.0, the time "
+                         "of its 0.1 deg residual wander, as it trains. "
+                         "Changes the "
                          "error's TIMESCALE ONLY, never its size -- the "
                          "process is stationary at the level's RMS for every "
                          "tau. Do not expect to FEEL the difference: the "

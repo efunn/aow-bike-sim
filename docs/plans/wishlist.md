@@ -422,8 +422,38 @@ from the design below, mostly after your review:
   pivots. The front wheel turns 0.92-1.05 deg per deg of chassis yaw on all
   five in-place spins (+-90, +-170, 180), for fixes_72M, fixes_52M,
   seed1_72M, v3_s0 and v3_s1. A pivot reads ~0.
-- **Next:** one GPU run on it (4096 worlds; no plain v3 control, the user's
-  call), then the wheel/yaw table with the bit on and off.
+- **Trained, 2026-10-17 [measured]** (5090, 80M steps,
+  `general_puffer_style_{52,72,80}M`): **with the bit on it mostly does not
+  turn.** On the in-place spins the chassis yaws 0-17 deg against a 90-180
+  deg command and holds the wheel (head error 75-180 deg at the end) in
+  9 of 15 spin episodes across the three checkpoints, 72M and 80M on
+  every spin but +90. 52M still turned steered on three (wheel/yaw
+  0.8-1.07) and stopped at -33 on -90. 80M on +90 did pivot (yaw 149,
+  wheel -7) but overshot by 60 deg; 72M fell on +90. Bit off: steered
+  spins as before (wheel/yaw 0.91-1.04), 0/20 falls, stands still. So the
+  bit outbids the turn, the failure the weights were meant to rule out.
+  Not the reward clamp (scale 0.02, a step is ~0.08).
+  [reasoned] Per step, not turning pays w_style 0.75 at once; a finished
+  steered turn pays w_head 1.0. The margin, 0.25 a step, starts only after
+  the turn, so it is discounted, and the spin itself costs velocity,
+  upright and smoothness terms. The weight argument compared a pivot with a
+  steered spin and never with refusing.
+- **By hand, teleop (user, 10-17).** 72M is the most promising. A held
+  left key at zero speed (the command slews 1.2 rad/s and leads the bike
+  by at most 35 deg, `run_drive._LEAD_MAX`) pivots as wanted -- on 1 of the
+  3 checkpoints, one direction only. With `--style-ungated` the wheel stays
+  pointed while driving, visibly more than gated (where it frees the
+  moment a speed is commanded); untrained, and what it is doing is an open
+  question. Hold: bit off holds still; bit on creeps backwards with less
+  roll and steer. Headless, 15 s, 72M / 80M, 3 seeds [measured]: bit off
+  -0.1..+0.1 cm/s, roll sd 0.7-1.0 deg, steer sd 3.3-5.0 deg; bit on
+  -1.5..-2.3 cm/s, roll sd 0.46-0.61, steer sd 1.8-2.6.
+- **The 90 deg point (user).** Pivoting about a held wheel, steer passes
+  90 deg relative to the chassis at a 90 deg turn, an unstable point;
+  big turns need it to learn to go past that rather than stop short of it.
+- **Next (not decided):** a form in which refusing earns nothing, e.g. the
+  bit as a multiplier on the heading term, w_head x r_head x (1 + k x
+  r_style): pivot > steered > refuse at any discount.
 
 **The style bit: the design, as written before it was built. [reasoned]**
 - **Obs.** A new optional block `obs_style: ("style",)`, appended through

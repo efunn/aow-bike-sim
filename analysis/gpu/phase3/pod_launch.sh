@@ -14,6 +14,11 @@
 TRAIN_S=${TRAIN_S:-3600}
 cd ~/aow
 mkdir -p results
+# one row per checkpoint into results/watch.log (plain python3, no deps); it
+# waits for train.log to appear and exits on ALL_DONE. Read it from here:
+#   ssh ... 'tail -f ~/aow/results/watch.log'
+nohup python3 -u analysis/gpu/phase3/watch.py results/train.log --every 25 \
+    --until results/ALL_DONE > results/watch.log 2>&1 < /dev/null &
 {
   bash analysis/gpu/phase1/pod_setup.sh > results/setup.log 2>&1 && . ~/venv/bin/activate && {
     if [ -f ~/warp-cache.tgz ]; then

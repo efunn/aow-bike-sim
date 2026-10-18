@@ -671,7 +671,9 @@ A40 secure, EU-SE-1, $0.59/h; ~65 min for 1 h of training, ~$0.65.
    `ssh ... 'mkdir -p ~/aow && cd ~/aow && tar xzf ~/bundle.tgz &&
    (TRAIN_S=3600 nohup bash analysis/gpu/phase3/pod_launch.sh > launch.log
    2>&1 < /dev/null &)'`.
-5. **Watch,** all in the background:
+5. **Watch,** all in the background. Since 10-17 `pod_launch.sh` starts
+   `watch.py` itself: one row per checkpoint plus its alarms in
+   `results/watch.log` (`ssh ... 'tail -f ~/aow/results/watch.log'`).
    - ~5 min: `results/timings.jsonl` (export compiled 1 / cached 42) and
      the last training panel -- SPS ~24k, kl small.
    - halfway (user's habit): `scp` `results/train.log`, then
@@ -1187,6 +1189,19 @@ policies drove on the updated plant).
   path, so the bundle would have failed. They point there now. The bundle
   also swept in `analysis/gpu/warp-cache.tgz` (25 MB), which is copied up
   separately anyway. It is excluded now: 1.4 MB, not 26.
+
+**It ran, 2026-10-17** (secure 5090, driver 595 / CUDA 13.2, ~34 min pod,
+~$0.68; `analysis/gpu/phase3/results_5090_style/`) [measured]. Setup to
+training ~2 min with the sm_120 cache (export 19 s, checks 36 s, build in
+parallel); training 80M steps in 1754 s, 49-53k steps/s. The graph and
+the build both said obs 20. watch.py, every 25 epochs: no alarm; fall 0.99
+-> 0.21 by 13M, 0.03-0.05 from 59M; difficulty 1.0 from 39M; entropy 4.2
+-> 1.1; kl 0.02-0.06. Converted 52M, 72M, 80M (`general_puffer_style_*`):
+all 20/20 on the eval grid, standstill max |v| 0.11-0.19 m/s (fixes_72M
+0.15-0.17). With the bit on they mostly refuse in-place turns: see
+`wishlist.md`, "pivots". `standstill.py` needs `--config` for a 20-wide
+policy, and `per_command --style` refuses a policy without the bit, even
+at 0.
 
 ### Phase 4 -- algorithm parity
 
