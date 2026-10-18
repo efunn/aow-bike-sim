@@ -50,7 +50,7 @@ if want profile; then  # where a policy step's GPU time goes, and bare physics o
     # the whole-timeline view, if the image carries Nsight Systems
     if command -v nsys > /dev/null; then
         step nsys nsys profile -o results/nsys_env --force-overwrite true \
-            python $P/bench_env.py --nworld 4096 --steps 20 --policy moves/general_rl_v3_s0.npz --out /dev/null
+            python $P/bench_env.py --nworld 4096 --steps 20 --policy moves/archive/general_rl_v3_s0.npz --out /dev/null
     fi
 fi
 # for the Dockerfile: the compiled kernels

@@ -221,7 +221,7 @@ def show(rec):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--nworld", type=int, nargs="+", default=[4096, 32768])
-    ap.add_argument("--policy", default="moves/general_rl_v3_s0.npz",
+    ap.add_argument("--policy", default="moves/archive/general_rl_v3_s0.npz",
                     help="'' for random actions")
     ap.add_argument("--warm", type=int, default=50, help="graph steps before profiling")
     ap.add_argument("--steps", type=int, default=5, help="profiled policy steps")

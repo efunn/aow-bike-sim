@@ -61,7 +61,7 @@ def fly_cpu(policy, nworld, steps, seed):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", default="moves/general_rl_v3_s0.npz")
+    ap.add_argument("--policy", default="moves/archive/general_rl_v3_s0.npz")
     ap.add_argument("--nworld", type=int, default=8)
     ap.add_argument("--steps", type=int, default=250)
     ap.add_argument("--seed", type=int, default=0)

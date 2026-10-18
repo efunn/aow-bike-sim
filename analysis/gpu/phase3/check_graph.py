@@ -86,7 +86,7 @@ def main(a):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("stem")
-    ap.add_argument("--policy", default="moves/general_rl_v3_s0.npz")
+    ap.add_argument("--policy", default="moves/archive/general_rl_v3_s0.npz")
     ap.add_argument("--steps", type=int, default=300)
     ap.add_argument("--random", action="store_true", help="random actions, not the policy")
     main(ap.parse_args())

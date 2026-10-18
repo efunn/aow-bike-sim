@@ -1161,6 +1161,33 @@ during the graph checks; one Warp cache for sm_86/89/120,
 volume was considered and dropped: it would tie every run to one data
 center's stock (EUR-IS-2, where both cards worked, has no volumes).
 
+**The next run: the style bit (2026-10-17; scripts changed, nothing run).**
+`CONFIG=config/rl_general_v3_style.yaml`, 4096 worlds, like every policy trained
+so far: on a 5090 (50.6k steps/s at 4k) ~26 min for the ini's 80M steps
+plus ~4 min setup. No plain v3 control run (the user's call: the existing
+policies drove on the updated plant).
+- **`CONFIG=`** passes through `pod_launch.sh` -> `run_pod.sh` ->
+  `export_graph --config`. It was hard-wired to `rl_general_v3.yaml`.
+  One launch is one config. Both write `results/` and the same graph stem,
+  so a second launch on the same pod needs `results/` moved aside first;
+  that is not scripted.
+  Since 10-17 that config trains the Pi-style steer rate
+  (`steer_rate_encoder: counts`), whose Warp kernel has run only on Warp's
+  CPU device here. `config/rl_general_v3_style.yaml` adds the style bit
+  (`wishlist.md`, "pivots").
+- **Obs width.** The style config's graph is 20 wide. `install.sh` writes
+  `OBS_SIZE` into `aow_bike.cu` from the graph's json. `aow_bike.cu` now
+  refuses an exact mismatch: its buffer check only tested "at least", so a
+  20-wide graph under 17 would have trained without ever showing the bit.
+  `export_policy` already reads the width from the json. The weights the
+  `.bin` does not hold stay at 5 at obs 20.
+- **Checks.** `check_graph` flies v3_s0 (17 wide) on a 20-wide graph by
+  reading the first 17 columns. `general_rl_v3_s0` moved to
+  `moves/archive/` on 10-16, and `bundle.sh` plus nine scripts named it by
+  path, so the bundle would have failed. They point there now. The bundle
+  also swept in `analysis/gpu/warp-cache.tgz` (25 MB), which is copied up
+  separately anyway. It is excluded now: 1.4 MB, not 26.
+
 ### Phase 4 -- algorithm parity
 
 - **Network.** 5.0 has NO built-in MLP [read, `algo.cu` @ ea7f989]:

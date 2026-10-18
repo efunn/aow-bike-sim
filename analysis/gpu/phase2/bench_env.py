@@ -9,7 +9,7 @@ graph, so the timed loop never syncs.
 
   python analysis/gpu/phase2/bench_env.py --check            # capture == eager?
   python analysis/gpu/phase2/bench_env.py --nworld 1024 4096 16384 32768
-  python analysis/gpu/phase2/bench_env.py --nworld 4096 --policy moves/general_rl_v3_s0.npz
+  python analysis/gpu/phase2/bench_env.py --nworld 4096 --policy moves/archive/general_rl_v3_s0.npz
   python analysis/gpu/phase2/bench_env.py --check --policy moves/general_puffer_fixes_52M.npz
 
 The policy is an MLP or a MinGRU (WarpMinGRU: PufferLib's and the CPU
@@ -329,7 +329,7 @@ if __name__ == "__main__":
             pass
 
     if a.check:
-        emit(check(a.policy or "moves/general_rl_v3_s0.npz", 64, a.check_steps, a.seed, dev))
+        emit(check(a.policy or "moves/archive/general_rl_v3_s0.npz", 64, a.check_steps, a.seed, dev))
     else:
         for n in a.nworld:
             emit(bench(n, a.policy, a.steps, a.eager_steps, a.seed, dev, a.seconds))

@@ -105,7 +105,7 @@ def main(policy, warm, after, v):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", default="moves/general_rl_v3_s0.npz")
+    ap.add_argument("--policy", default="moves/archive/general_rl_v3_s0.npz")
     ap.add_argument("--warm", type=int, default=100)
     ap.add_argument("--after", type=int, default=25)
     ap.add_argument("--v", type=float, default=1.0)

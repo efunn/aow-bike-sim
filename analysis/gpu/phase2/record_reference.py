@@ -159,7 +159,7 @@ if __name__ == "__main__":
     ap.add_argument("--steps", type=int, default=250)       # 5 s at 50 Hz
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--difficulty", type=float, default=1.0)
-    ap.add_argument("--policy", default="moves/general_rl_v3_s0.npz")
+    ap.add_argument("--policy", default="moves/archive/general_rl_v3_s0.npz")
     ap.add_argument("--out", default="traces/gpu_phase2/reference.npz")
     a = ap.parse_args()
     t = time.time()

@@ -7,6 +7,8 @@
 #   bash analysis/gpu/phase3/run_pod.sh            # export, check, build, train
 #   NW=16384 bash analysis/gpu/phase3/run_pod.sh   # another world count
 #   ENV_SEED=1 PUFFER_SEED=43 bash ...              # another seed: BOTH halves
+#   CONFIG=config/rl_general_v3_style.yaml bash ... # another env config
+#                                                   # (default rl_general_v3.yaml)
 #
 # Two seeds: ENV_SEED is baked into the exported graph (commands, domain
 # draws; export_graph --seed, default 0) and PUFFER_SEED is aow_bike.ini's
@@ -34,9 +36,10 @@ step() {  # step <name> <cmd...>; keeps going on failure, records the status
 NW=${NW:-4096}
 TRAIN_S=${TRAIN_S:-600}
 ENV_SEED=${ENV_SEED:-0}
+CONFIG=${CONFIG:-config/rl_general_v3.yaml}
 G=graphs/aow_bike_$NW
 step pip_phase3 pip install -q gymnasium==1.3.0 scipy pyyaml
-step export     python -m aow_sim.gpu.export_graph --nworld $NW --out $G --seed $ENV_SEED || exit 1
+step export     python -m aow_sim.gpu.export_graph --config $CONFIG --nworld $NW --out $G --seed $ENV_SEED || exit 1
 du -sh $G.wrp ${G}_modules | tee -a results/export.log
 # SKIP_CHECKS=1 (the card benchmark, bench_card.sh): the checks fly every
 # world, ~75 s at 4096 and far longer at 64k, and judge the graph, not the card

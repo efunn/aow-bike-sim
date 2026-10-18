@@ -235,7 +235,7 @@ def nudge(policy, steps, v, psi_deg, seed, eps=1e-6):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", default="moves/general_rl_v3_s0.npz")
+    ap.add_argument("--policy", default="moves/archive/general_rl_v3_s0.npz")
     ap.add_argument("--steps", type=int, default=150)
     ap.add_argument("--v", type=float, default=0.5)
     ap.add_argument("--psi", type=float, default=0.0, help="heading step [deg]")

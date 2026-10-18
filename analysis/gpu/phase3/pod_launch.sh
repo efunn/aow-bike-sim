@@ -21,6 +21,7 @@ mkdir -p results
       mkdir -p ~/.cache && tar xzf ~/warp-cache.tgz -C ~/.cache
       echo "{\"step\":\"warp_cache_restore\",\"wall_s\":$(awk "BEGIN{print $(date +%s.%N) - $t0}"),\"files\":$(find ~/.cache/warp -type f | wc -l)}" >> results/timings.jsonl
     fi
+    # NW, CONFIG, ENV_SEED, PUFFER_SEED pass through from the launch line
     TRAIN_S=$TRAIN_S bash analysis/gpu/phase3/run_pod.sh > results/phase3.log 2>&1
     cp -r ~/puffer/checkpoints results/puffer_checkpoints 2>/dev/null
   }
