@@ -488,13 +488,50 @@ actuators:
   # derived value is stall_torque/no_load_speed = 0.80/11.833. This is the
   # same droop line drive_kv carries for the XC430s, and for the same reason.
   #
-  # kp LEFT AT 2.0. The derived value at the factory Position P Gain of 900 is
-  # 900 * 2.877e-3 * 0.80 = 2.07, which is 3.6% away -- inside the uncertainty
-  # of kt and of the measured-vs-documented P divisor, and not worth moving a
-  # digest for on its own. Move it when the servo is characterised on the
-  # bench, not before.
-  steer_kp: 2.0
+  # kp was LEFT AT 2.0 until the servo was characterised on the bench: the
+  # derived value at the factory Position P Gain of 900 is
+  # 900 * 2.877e-3 * 0.80 = 2.07. Characterised 2026-10-17, below.
+  # kp 2.3 AND steer_armature 5.5e-4, MEASURED 2026-10-17 as a pair: an
+  # open-loop sine sweep of the steer XC330 at P 900, steering column and
+  # headset installed (no fork or wheel, hanging), +-5 deg at 1-10 Hz
+  # (analysis/steer_response.py, traces/bench/steer_response_261017-175708.json),
+  # fitted in the sim by the same protocol (analysis/steer_pinned.py --sine
+  # --bare --steer-kp K --armature J): within ~0.03 gain / 3 deg of the bench
+  # at every frequency, where kp 2.0 with no armature gave 0.66 / -63 deg at
+  # 5 Hz (bench 0.81 / -69). The bench holds its gain longer and loses phase
+  # faster than the old model: a stiffer loop plus rotor inertia, which the
+  # steer never carried.
+  #
+  # kv IS HELD at the droop, NOT fitted. A first fit moved kv instead (0.055,
+  # kp 2.0, same quality) and failed test_steer_cannot_outrun_its_motor: a
+  # saturated steer then runs at stall/kv = 14.5 rad/s, against the 11.9
+  # measured by free spin. Small-signal sweeps fix only kp/kv (~36) and the
+  # inertia; the no-load speed fixes kv. kp 2.3 is 11 % above the derived
+  # 900 * 2.877e-3 * 0.80 = 2.07 -- inside the stall-torque and P-divisor
+  # uncertainty, unexplained.
+  #
+  # CONFIRMED on a second unit, bare (the righting XC330, id 104, off its
+  # module, swept in mode 4; traces/bench/steer_response_261017-190803.json):
+  # at +-5 deg within 0.02 of the steer-with-column run at every frequency, so
+  # the column adds nothing measurable and units agree. Same fit, kp 2.3 /
+  # 5.5e-4 (err 0.032; kp 2.0 best 0.102).
+  # CONFIRMED by constant-speed ramps on the same bare unit
+  # (traces/bench/steer_ramps_261017-192117.json): above 0.45 rad/s the steady
+  # lag is 2.50 mrad + 37.4 ms x w -- ~8 ms of read/write transport plus this
+  # kv/kp (29.4 ms), and kp x 2.50 mrad = 5.75 mN m, the running friction.
+  # BELOW ~0.25 rad/s THE SERVO IS NOT MODELLED, deliberately: there it holds
+  # its error within ~1 encoder count (1.53 mrad) with no droop and no
+  # friction offset, which by this arithmetic it should not be able to do,
+  # and +-1 deg sweeps show the same (0.99 / -4 deg at 1 Hz, model -26). It is
+  # a one-count effect on a bare servo; on the bike the wheel's scrub and the
+  # horn-to-wheel backlash will set small motions instead. A speed-scaled
+  # droop + friction reproduces it (steer_pinned.TwoRegime, a prototype);
+  # measure small motions on the assembled, loaded steering before using it.
+  steer_kp: {value: 2.3, source: measured}
   steer_kv: 0.0676
+  # The XC330's rotor + gearbox inertia at the steer joint [kg m2]: ~13x the
+  # whole fork + wheel about the axis (4.1e-5 in the model). Was 0 (absent).
+  steer_armature: {value: 5.5e-4, source: measured}
   # WHERE THE TORQUE LIMIT SITS, which the affine map above does not say. The
   # firmware clips the DUTY, then the motor subtracts its back-EMF:
   #   duty: tau = clip(kp*err, +-stall) - kv*w      (mode 4, the real servo)
@@ -1309,7 +1346,11 @@ righting:
     # Effect on the firmware model's full-rate stroke (0 -> 110 deg, bike held):
     # 1e-4 0.183 s, 1e-3 0.194 s, 2e-3 0.210 s. Dies at: a crank coast-down,
     # as drivetrain_fit.py coast did the XC430.
-    crank_armature: {value: 1.0e-3, source: GUESS}
+    # MEASURED 2026-10-17 (was 1e-3, GUESS): the bare righting XC330's own
+    # sine sweep in mode 4, fitted as actuators.steer_armature (same servo
+    # model, same value -- see the note there). The crank is on the horn, so
+    # the rotor inertia IS the crank's.
+    crank_armature: {value: 5.5e-4, source: measured}
     # THE LINKAGE'S OWN FRICTION, referred to the crank, ON TOP OF the XC330's
     # gearbox friction (servos.xc330_t181, which the crank already carries):
     #     f(theta) = linkage_friction_nm + linkage_friction_q2 * theta^2  [N m]

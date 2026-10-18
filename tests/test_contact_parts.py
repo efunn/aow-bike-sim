@@ -118,8 +118,13 @@ def test_the_split_did_not_move_the_plant_digest():
                           _q2: the V2 linkage's measured pin friction on the
                           crank, 51 + 14.7 theta^2 mN m, under the gearbox's
                           (analysis/righting_sweep.py, stubs only, unloaded)
+        7893a119b19f17d6  2026-10-17  actuators.steer_kp 2.0 -> 2.3, steer_armature
+                          0 -> 5.5e-4 kg m2 (kv held at the no-load droop) and
+                          righting.module.crank_armature 1e-3 GUESS -> 5.5e-4:
+                          open-loop sine sweeps of the steer XC330 (column on)
+                          and the bare righting XC330 (analysis/steer_response.py)
     """
-    assert plant_digest(load_params()) == "4b5355ed44d6ca8c"
+    assert plant_digest(load_params()) == "7893a119b19f17d6"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

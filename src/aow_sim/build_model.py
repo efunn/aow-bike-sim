@@ -2365,6 +2365,9 @@ def build_spec(
         axis=steer_axis,
         pos=-bike["fork_offset"] * offset_dir,  # axis line passes behind the axle
         damping=[steer_kv if steer_clip == "duty" else 0.0, 0, 0],
+        # The servo's reflected rotor inertia (actuators.steer_armature,
+        # measured 2026-10-17). Absent -> 0, the plant before it.
+        armature=float(p["actuators"].get("steer_armature", 0.0)),
         # The XC330's gearbox friction at its no-load static value, referred
         # through the steering gear. gearbox_friction.attach_steer makes it
         # load-proportional in loops that call its pre_step; the rest keep this.
