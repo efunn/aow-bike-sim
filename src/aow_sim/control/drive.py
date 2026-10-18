@@ -173,6 +173,14 @@ class DriveController(LQRBalance):
         self._odometry_active = False
         self._ahrs_active = False
         self._gen_obs_pitch = False     # does the policy observe pitch?
+        self._gen_obs_style = False     # ...take the style bit? (set_style)
+        self._gen_style = 0.0           # the operator's style bit (toggle)
+        self._gen_style_on = 0.0        # ...through the zero-speed gate
+        self._gen_style_latch = 0.0     # wheel heading at its rising edge
+        # OVERRIDE: let the bit through at a non-zero speed command too. No
+        # policy trains that way (style_active), so this is an experiment on
+        # an untrained input, not a mode: off by default.
+        self.style_ungated = False
         self._gen_obs_wings = False     # ...and the wings?
         self._gen_act_wings = False     # does it DRIVE the wings?
         self._gen_wing = 0.0            # integrated wing position target
@@ -478,6 +486,9 @@ class DriveController(LQRBalance):
                   f"--general {getattr(self._gen, 'name', 'NAME')} to match "
                   "training.")
         self._gen_obs_pitch = bool(getattr(self._gen, "obs_pitch", False))
+        # The style bit: does the policy take one? Its value is a COMMAND
+        # (set_style), and it survives an engage like the operator's stick.
+        self._gen_obs_style = bool(getattr(self._gen, "obs_style", False))
         self._gen_obs_wings = bool(getattr(self._gen, "obs_wings", False))
         self._gen_act_wings = bool(getattr(self._gen, "act_wings", False))
         # The co-rotating pair. Same single channel, same two observations --
@@ -562,6 +573,7 @@ class DriveController(LQRBalance):
         self._gen_u = None
         self._gen_steer = float(data.qpos[self._sj])
         self._gen_prev_a = np.zeros(3)
+        self._gen_style_on = 0.0        # re-latches at the first active tick
         # A policy with MEMORY (MinGRUPolicy) starts every engage empty, as
         # every training episode did; a no-op for the MLP.
         self._gen.reset()
@@ -591,6 +603,18 @@ class DriveController(LQRBalance):
         if dpsi:
             self._gen_psi_cmd += float(dpsi)
 
+    def set_style(self, on: bool) -> None:
+        """The style bit (general_spec.wheel_err): 1 asks a policy that takes
+        it to turn around a held front wheel. Active only while the speed
+        command is 0 (style_active), as in training; the wheel's heading is
+        latched when it becomes active. Ignored by a policy without it --
+        `style_supported` says which."""
+        self._gen_style = 1.0 if on else 0.0
+
+    @property
+    def style_supported(self) -> bool:
+        return bool(getattr(self, "_gen_obs_style", False)) and self.mode == "general"
+
     def set_command_polar(self, speed: float, course_rel: float = 0.0,
                           psi_cmd: float | None = None) -> None:
         """Convenience for teleop: drive at `speed` along `course_rel` radians
@@ -607,7 +631,8 @@ class DriveController(LQRBalance):
         Steer is passed raw (multi-turn) — sin/cos(2*delta) is already
         winding-invariant, so no pi-park rebasing is needed here."""
         from .general_spec import (build_obs, command_to_body, rotate_to_body,
-                                   vel_filter_step)
+                                   style_active, vel_filter_step, wheel_err,
+                                   wheel_world_heading)
         pol = self._gen
         # Advance the velocity low-pass every CONTROLLER tick, for the same
         # reason the steer integrator below runs at controller rate. alpha was
@@ -628,6 +653,19 @@ class DriveController(LQRBalance):
             wg = None
             if self._gen_obs_wings or self._gen_obs_swing:
                 wg = (float(data.qpos[self._wj]), float(data.qvel[self._wd]))
+            st = None
+            if self._gen_obs_style:
+                # GeneralEnv._set_style, at the policy's rate: the gate, and
+                # the latch on the rising edge, from the bike's own heading
+                steer = float(data.qpos[self._sj])
+                on = 1.0 if (style_active(self._gen_style, self._gen_v_cmd)
+                             or (self.style_ungated and self._gen_style)) else 0.0
+                if on and not self._gen_style_on:
+                    self._gen_style_latch = wheel_world_heading(self._psi, steer,
+                                                                self.rake)
+                self._gen_style_on = on
+                st = (on, wheel_err(self._psi, steer, self._gen_style_latch,
+                                    self.rake) if on else 0.0)
             obs = build_obs(s.roll, s.roll_rate, data.qvel[5],
                             float(data.qpos[self._sj]),
                             float(data.qvel[self._sd]),
@@ -636,7 +674,8 @@ class DriveController(LQRBalance):
                             zero_lat=self._gen_zero_lat, v_bar=vb,
                             pitch=((s.pitch, s.pitch_rate)
                                    if self._gen_obs_pitch else None),
-                            wings=wg)
+                            wings=wg,
+                            style=st)
             act = pol.action(obs)
             steer_rate, hub, diff = act[0], act[1], act[2]
             wing_rate = act[3] if len(act) > 3 else 0.0

@@ -20,7 +20,7 @@ change to the bike as designed:
   it is.
 - The blade is a swappable part anyway (user, 2026-10-16), so a move that
   wants a different edge or toe is a reprint, not a redesign.
-- The open items are sim work (the style bit, a tilt arm) or measurements
+- The open items are sim work (training the style bit, a tilt arm) or measurements
   only the built bike gives: roller mu for the wheelie, the real ramp, the
   lie-down on hardware.
 
@@ -28,7 +28,7 @@ change to the bike as designed:
 |---|---|---|---|
 | ramps | the ramp test (both GPU policies to 15 deg); floor tilt in training, CPU + GPU, off by default | the real ramp; a tilt arm if the bike disagrees | easy |
 | ball shots | close-range plays in teleop (End): ram 1.27, wing edge 1.37, wheel swing 0.88 m/s | wheel guard (CAD); the wing edge on the bike | easy-medium |
-| 180 past 90 deg steer | obs and action allow it; the style bit designed | building the bit, a GPU run | medium |
+| 180 past 90 deg steer | obs and action allow it; the style bit built (10-17), untrained | a GPU run | medium |
 | getting up and down | lie down / get up / auto-up in teleop (PageDown / PageUp), fixed on the detailed drive | the blades on the bike; a hardware run | medium, hardware-gated |
 | wheelie | launch: lifts above floor mu ~0.75; a blade can carry the roll | a pitch balance controller; the real roller mu | hard |
 
@@ -384,7 +384,48 @@ instead of 0/1).
   scale the bit ratio with difficulty+curriculum)
 - (you: add the style bit, not a pivot_rl retrain)
 
-**The style bit: a design, not built. [reasoned; the hooks are read]**
+**Built, 2026-10-17; not trained. [measured where marked]** What changed
+from the design below, mostly after your review:
+- **An angle, latched, observed.** While active, the reward is
+  `w_style x exp(-(e / sigma)^2)`, with e the front wheel's world heading
+  minus where it was when the bit came on, mod 360 (`general_spec.wheel_err`).
+  It is in the obs as sin/cos, beside the bit (17 -> 20 wide). The bike forms
+  it the same way: its own heading plus the steer angle (`drive.py`).
+  - A first version paid for a still wheel (zero RATE) instead. You caught
+    the flaw: its cost per step is bounded, so one fast steered flick paid
+    ~0.6 s of it and nothing after, and a slow drift paid almost nothing.
+  - Mod 360, not 180: mod 180, a steered 180 deg spin would come back to its
+    latch for free.
+- **Active only at a zero speed command** (a hold or an in-place turn), in
+  training and replay alike (`style_active`).
+  - The front wheel rolls only along its own heading, so a held wheel and
+    travel along any other line cannot both be met. 90 deg + forward is
+    impossible, not hard.
+  - On a straight the bit would only fight the course, so straight is out
+    too.
+  - On a hold it means "stop steering": balance from the differential alone.
+  - The latch is taken on the rising edge, so a chain of in-place turns holds
+    one wheel heading.
+- **Moving turns: the crab is the dual, not the bit.** While moving, the wheel
+  has to come round to the new course; what can stay held is the CHASSIS.
+  That is a crab, already a command (lateral velocity, heading kept), never
+  trained since `v_lat_frac: 0`. Its own experiment if wanted.
+- **Where:** `config/rl_general_v3_style.yaml` (v3 plus `obs_style`,
+  `style_p` 0.5, `w_style` 0.75, `sigma_style_deg` 25; the header says why);
+  GeneralEnv and the GPU kernels (Warp CPU device checked against the spec);
+  the move yaml; `drive.set_style`; teleop **Home** (fn+left); `per_command
+  --style 1` and a wheel/yaw table under `--summary`.
+- **Override, for after training:** teleop `--style-ungated`
+  (`DriveController.style_ungated`) lets the bit act at a speed command too.
+  It asks the policy something it never trained on, so it's an experiment.
+- **Baseline [measured, bit off, tm151_filter tau 2.0].** No current policy
+  pivots. The front wheel turns 0.92-1.05 deg per deg of chassis yaw on all
+  five in-place spins (+-90, +-170, 180), for fixes_72M, fixes_52M,
+  seed1_72M, v3_s0 and v3_s1. A pivot reads ~0.
+- **Next:** one GPU run on it (4096 worlds; no plain v3 control, the user's
+  call), then the wheel/yaw table with the bit on and off.
+
+**The style bit: the design, as written before it was built. [reasoned]**
 - **Obs.** A new optional block `obs_style: ("style",)`, appended through
   `general_spec._OPTIONAL_BLOCKS` like `obs_pitch`. Every existing policy
   keeps its layout. The value is 0/1 now, with the same slot for a knob

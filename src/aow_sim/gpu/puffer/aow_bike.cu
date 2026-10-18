@@ -84,7 +84,10 @@ typedef float obs_t;
 #endif
 #include "pufferenv.h"
 
-// general_spec's v3 layout; ACT: steer rate, hub, diff, continuous.
+// general_spec's v3 layout (20 with the style bit); ACT: steer rate, hub,
+// diff, continuous. install.sh rewrites OBS_SIZE from the graph's json
+// obs_dim: ab_param below only checks "at least", so a 20-wide graph under
+// a 17 here would load and silently never show the policy the bit.
 #define OBS_SIZE 17
 #define NUM_ATNS 3
 #define ACT_SIZES {1, 1, 1}
@@ -129,7 +132,7 @@ static struct {
     void* graph;                 // the loaded APIC graph
     cudaGraphExec_t exec;
     float* act_in;               // (n, 3)
-    float* obs;                  // (n, 17)
+    float* obs;                  // (n, OBS_SIZE)
     float* reward;
     int* terminated;
     int* truncated;
@@ -269,6 +272,11 @@ Env* puf_vec_create(int n, Dict* env_kwargs,
     g_ab.last_diff = (float*)ab_param(ptr, size, "last_diff", n * f);
     // an exact size match too: a graph for MORE worlds would load and run,
     // silently stepping worlds PufferLib never sees
+    if (size(g_ab.graph, "obs") != (size_t)n * OBS_SIZE * f) {
+        fprintf(stderr, "aow_bike: graph obs is %zu wide, OBS_SIZE is %d (install.sh "
+                "sets it from the graph's json)\n", size(g_ab.graph, "obs") / (n * f), OBS_SIZE);
+        exit(1);
+    }
     if (size(g_ab.graph, "reward") != n * f) {
         fprintf(stderr, "aow_bike: graph has %zu worlds, vec.total_agents is %d\n",
                 size(g_ab.graph, "reward") / f, n);

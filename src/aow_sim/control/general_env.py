@@ -38,7 +38,8 @@ from ..build_model import (SWING_LINKAGE_CFG, build_model, load_params,
 from .balance import extract_state, mix
 from .general_spec import (ACT_DIM, ActionBounds, act_dim_for, build_obs,
                            command_to_body, obs_dim_for, obs_layout,
-                           righting_module_for,
+                           righting_module_for, style_active,
+                           wheel_err, wheel_world_heading,
                            rotate_to_body, scale_action, vel_filter_alpha,
                            vel_filter_step, wrap_pi)
 from .linearize import design_crawl_fallback, settle_upright
@@ -436,6 +437,24 @@ class GeneralEnv(gym.Env):
         self._cu_inv_stall = 1.0 / self._rand._forcerange0[self._cu_ids, 1]
         self._cu_sum = 0.0
         self.obs_pitch = bool(env.get("obs_pitch", False))
+        # THE STYLE BIT (general_spec.wheel_err): one command entry, drawn
+        # with every command, on with probability style_p x difficulty so it
+        # arrives with the curriculum -- and only ACTIVE at a zero speed
+        # command (style_active). While on, w_style pays for the front wheel
+        # staying at the world heading it had when the bit came on. Off by
+        # default, and then nothing is drawn, so every config before it keeps
+        # its rng stream.
+        self.obs_style = bool(env.get("obs_style", False))
+        self.style_p = float(env.get("style_p", 0.0))
+        self.w_style = float(self.rw.get("w_style", 0.0))
+        self.sigma_style = np.deg2rad(float(self.rw.get("sigma_style_deg", 25.0)))
+        if (self.style_p or self.w_style) and not self.obs_style:
+            raise ValueError("style_p / w_style without obs_style: the policy "
+                             "would be paid on a bit it cannot see")
+        self._rake = np.deg2rad(float(self.p["bike"]["rake_deg"]))
+        self._style = 0.0          # the bit as the policy sees it (gated)
+        self._latch_obs = 0.0      # wheel heading at the bit's edge, the bike's psi
+        self._latch_true = 0.0     # ...and from truth, for the reward
         # Cap on the wing command. 90 deg keeps the deployed foot 11 mm clear
         # of the floor with the bike upright, while the full 105 deg stroke
         # puts it 15 mm BELOW and jacks the bike off its wheels -- that stroke
@@ -473,9 +492,9 @@ class GeneralEnv(gym.Env):
         act_dim = act_dim_for(self.act_wings, self.act_swing) if self.full else 2
         self.action_space = spaces.Box(-1.0, 1.0, (act_dim,), np.float32)
         self.obs_dim = obs_dim_for(self.vel_window_s, self.obs_pitch,
-                                   self.obs_wings, self.obs_swing)
+                                   self.obs_wings, self.obs_swing, self.obs_style)
         self.obs_layout = obs_layout(self.vel_window_s, self.obs_pitch,
-                                     self.obs_wings, self.obs_swing)
+                                     self.obs_wings, self.obs_swing, self.obs_style)
         self.observation_space = spaces.Box(-np.inf, np.inf, (self.obs_dim,),
                                             np.float32)
         self._aid = {n: self.model.actuator(n).id
@@ -699,6 +718,7 @@ class GeneralEnv(gym.Env):
         """
         if self.families is not None:
             self._sample_family_command(rng, first=first)
+            self._sample_style(rng)
             self._schedule_resample(rng)
             return
         d = self._diff
@@ -733,7 +753,29 @@ class GeneralEnv(gym.Env):
             self._v_cmd_w = np.array([c * v_lon_w - s * v_lat_w,
                                       s * v_lon_w + c * v_lat_w])
             self._psi_cmd = psi_cmd
+        self._sample_style(rng)
         self._schedule_resample(rng)
+
+    def _sample_style(self, rng) -> None:
+        """The style bit, redrawn with every command (after it, before the
+        resample time). Drawn whatever the family, so the stream does not
+        depend on it; ACTIVE only on a zero speed command (a hold or an
+        in-place turn), see `_set_style`."""
+        if self.obs_style:
+            self._set_style(rng.random() < self.style_p * self._diff)
+
+    def _set_style(self, bit) -> None:
+        """Apply the bit through the zero-speed gate; LATCH the front wheel's
+        world heading on its rising edge. on -> on keeps the latch, so a chain
+        of in-place turns holds one wheel heading -- as on the bike, where the
+        operator's toggle is the edge (drive.py)."""
+        on = 1.0 if (self.obs_style and style_active(bit, self._v_cmd_w)) else 0.0
+        if on and not self._style:
+            steer = float(self.data.qpos[self._sj])
+            self._latch_obs = wheel_world_heading(self._psi, steer, self._rake)
+            self._latch_true = wheel_world_heading(
+                extract_state(self.data, self._p0).yaw, steer, self._rake)
+        self._style = on
 
     def _schedule_resample(self, rng) -> None:
         """When the next step change lands, and the filter's flush marker.
@@ -944,7 +986,11 @@ class GeneralEnv(gym.Env):
                         pitch=(o_pitch, o_pitch_rate) if self.obs_pitch else None,
                         wings=((float(self.data.qpos[self._wj]),
                                 float(self.data.qvel[self._wd]))
-                               if (self.obs_wings or self.obs_swing) else None))
+                               if (self.obs_wings or self.obs_swing) else None),
+                        style=((self._style, wheel_err(
+                            self._psi, float(self.data.qpos[self._sj]),
+                            self._latch_obs, self._rake) if self._style else 0.0)
+                               if self.obs_style else None))
         return obs, s, v_cl, v_ct, psi_err, vb_lon, vb_lat
 
     # -- curriculum --------------------------------------------------------
@@ -1039,6 +1085,7 @@ class GeneralEnv(gym.Env):
         # replay (engage_general) can seed itself the same way.
         self._wing = (float(self.data.qpos[self._wj])
                       if (self.wings or self.swing) else 0.0)
+        self._style = 0.0                  # an episode starts with the bit off
         self._sample_command(rng, first=True)
         # Deterministic-eval override: a fixed command held for the episode.
         if "v_cmd" in opts or "psi_cmd_rel" in opts:
@@ -1048,6 +1095,12 @@ class GeneralEnv(gym.Env):
             self._v_cmd_w = np.array([c * v[0] - s * v[1],
                                       s * v[0] + c * v[1]])
             self._next_resample = 10 ** 9      # hold for the whole episode
+        if "style" in opts and not self.obs_style:
+            raise ValueError("options['style'] on an env without obs_style")
+        if self.obs_style:
+            # the eval's command replaced the drawn one: re-gate (and the
+            # forced bit, if any, latches here)
+            self._set_style(opts.get("style", self._style))
         for g in self._gearbox:
             g.reset(self.data)
         self._wing_touched = False
@@ -1217,7 +1270,15 @@ class GeneralEnv(gym.Env):
         copper = self._cu_sum / self.substeps    # 0.0 whenever w_copper is
         r_vel = np.exp(-v_err2 / self.sigma_v ** 2)
         r_head = np.exp(-(psi_err / self.sigma_psi) ** 2)
+        # The style term, on TRUTH like the rest (the truth yaw against the
+        # truth latch). Only while the bit is on; a bonus, so the bit costs
+        # nothing when it is 0 (a penalty-only form makes falling early
+        # rational -- rl_general_v3.yaml's header).
+        e_wheel = (wheel_err(s.yaw, float(self.data.qpos[self._sj]),
+                             self._latch_true, self._rake) if self._style else 0.0)
+        r_style = np.exp(-(e_wheel / self.sigma_style) ** 2)
         reward = (rw["w_vel"] * r_vel
+                  + self.w_style * self._style * r_style
                   + rw["w_head"] * r_head
                   + rw["w_alive"]
                   - rw["w_upright"] * s.roll ** 2
@@ -1311,6 +1372,8 @@ class GeneralEnv(gym.Env):
             "wing_deg": (float(np.degrees(self._wing))
                          if (self.wings or self.swing) else 0.0),
             "head_err_deg": float(np.degrees(abs(psi_err))),
+            "style": float(self._style),
+            "wheel_err_deg": float(np.degrees(e_wheel)),
             "difficulty": float(self._diff),
             "diff_scale": self.diff_scale(),
             # Mean sum (tau/tau_stall)^2 over this step's substeps; 0.0 unless

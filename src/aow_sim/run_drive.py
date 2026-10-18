@@ -515,6 +515,13 @@ def main() -> None:
                          "`steer_rate_encoder` -- the signal it trained with. "
                          "Force `counts` on an older policy to fly it as the "
                          "bike does (the bench's 5 Hz steer oscillation).")
+    ap.add_argument("--style-ungated", action="store_true",
+                    help="let the STYLE BIT (Home) act while a speed is "
+                         "commanded too. Training only ever sets it at zero "
+                         "speed (general_spec.style_active), so this asks a "
+                         "trained policy something it never saw -- an "
+                         "experiment. The latch is still taken on the bit's "
+                         "rising edge.")
     ap.add_argument("--lqr", action="store_true",
                     help="DEPRECATED (2026-10-09). --teleop starts on the "
                          "analytic LQR instead of the "
@@ -877,7 +884,8 @@ def main() -> None:
                 drivetrain_base=drivetrain_base, servo_gains=servo_gains,
                 drivetrain_source=drivetrain_source, start_lqr=args.lqr,
                 crab_max_override=args.crab_max, verbose=args.verbose,
-                rig=rig_cfg, auto_up=not args.no_auto_up, plays=args.play)
+                rig=rig_cfg, auto_up=not args.no_auto_up, plays=args.play,
+                style_ungated=args.style_ungated)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1946,6 +1954,10 @@ _KEY_LIE_DOWN, _KEY_GET_UP = 267, 266
 # GLFW End (fn+right on a Mac): play the next --play. The driving keys --
 # arrows, crab 1/3, stop 5, re-zero / -- take the command back mid-play.
 _KEY_PLAY = 269
+# GLFW Home (fn+left on a Mac): toggle the STYLE BIT for a policy that takes
+# one (general_spec.wheel_err) -- in-place turns go around a held front
+# wheel. Active only at a zero speed command, as in training.
+_KEY_STYLE = 268
 _PLAY_ABORT_KEYS = (265, 264, 263, 262, ord("1"), ord("3"), ord("5"), ord("/"))
 # The same two keys step the righting servo's Goal Current under
 # --swing-linkage, in counts, by the ground station's step (_CURRENT_STEP).
@@ -2648,7 +2660,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             drivetrain_base=None,
             servo_gains=None, drivetrain_source="", frame_stats=None,
             start_lqr=False, rig=None, crab_max_override=None,
-            verbose=False, auto_up=True, plays=()):
+            verbose=False, auto_up=True, plays=(), style_ungated=False):
     from .interactive import FrameStats, teleop_loop
 
     from . import policy_menu
@@ -2739,6 +2751,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     data = _fresh(model, eq_qpos)
     c = DriveController(params, model, design=design)
     c.reset(model, data)
+    c.style_ungated = bool(style_ungated)
     from .drivetrain_model import (KEY, DrivetrainSim, base_params, describe,
                                    teleop_overlay)
     # Lists because a menu swap REPLACES them: the model stays, the firmware
@@ -3325,6 +3338,12 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                           warn=None if verbose else (
                               lambda m: print("! " + m.split(" — ")[0])))
         zero_command(d)                  # never inherit a stale setpoint
+        if c.style_supported and not state.get("style_said"):
+            state["style_said"] = True
+            print("style bit: Home (fn+left on a Mac) toggles it "
+                  f"({'ON' if c._gen_style else 'OFF'} now; "
+                  + ("UNGATED: acts while moving too, untrained)"
+                     if c.style_ungated else "zero speed only)"))
         # Re-engaging hands the wings back to the policy, so the manual
         # override is a temporary grab (right the bike by hand, then re-engage)
         # rather than a one-way door.
@@ -3958,6 +3977,16 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                       f"({crank_servo.cap_nm:.2f} N.m at the crank)")
             elif k == _KEY_PLAY and play["list"]:
                 play_start(d)
+            elif k == _KEY_STYLE:
+                if not c.style_supported:
+                    print("style bit: this policy has none (obs_style)")
+                else:
+                    c.set_style(c._gen_style == 0.0)
+                    print("style bit " + (("ON: around a held front wheel"
+                                           + (", UNGATED (moving too)"
+                                              if c.style_ungated
+                                              else " (only at zero speed)"))
+                                          if c._gen_style else "OFF"))
             elif sit is not None and k in (_KEY_LIE_DOWN, _KEY_GET_UP):
                 if sit.active:
                     print(f"  busy ({sit.phase})")

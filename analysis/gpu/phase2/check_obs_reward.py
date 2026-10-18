@@ -45,13 +45,18 @@ def main(ref_path):
                          for k in range(N)]))
     step = i32(local)
     track_sum, track_n = f(np.zeros(N)), i32(np.zeros(N))
-    obs = wp.zeros((N, gor.OBS_DIM), dtype=float)
+    obs = wp.zeros((N, env.obs_dim), dtype=float)
     rew = wp.zeros(N, dtype=float)
     term, trunc = i32(np.zeros(N)), i32(np.zeros(N))
     gor.launch(c, f(r["sub_post_qpos"][last_sub]), f(r["sub_post_qvel"][last_sub]),
                f(r["sub_ahrs_quat"][last_sub]), f(r["sub_ahrs_gyro"][last_sub]),
                f(r["sub_odo_out"][last_sub, 0]), f(r["sub_odo_out"][last_sub, 1]),
+               # the reference predates the Pi-style steer rate and the style
+               # bit: zeros, read only if the config turns them on (then obs[5]
+               # / obs[17] and the style reward will not match the recording)
+               f(np.zeros(N)),
                f(before("v_cmd_w", "v_cmd_w")), f(before("psi_cmd", "psi_cmd")),
+               f(np.zeros(N)), f(np.zeros(N)), f(np.zeros(N)),
                psi, raw_prev, f(r["pol_action"]), prev_a, step, track_sum, track_n,
                obs, rew, term, trunc)
 

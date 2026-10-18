@@ -2,7 +2,7 @@
 step. The v3 recipe only (each piece's `const_from` refuses anything else).
 
     env = GpuGeneralEnv("config/rl_general_v3.yaml", nworld=4096, seed=0)
-    obs = env.reset()                       # (nworld, 17), wp.array
+    obs = env.reset()                       # (nworld, 17; 20 with obs_style), wp.array
     obs, reward, terminated, truncated = env.step(action)   # action (nworld, 3)
 
 Built FROM a CPU GeneralEnv of the same config, so every constant, nominal
@@ -131,7 +131,10 @@ class GpuGeneralEnv:
             self.c_cmd_step.cur_on = 0        # after_step must not advance per world
         self.v_cmd_w = z(n, 2)
         self.psi_cmd = z(n)
-        self.obs = z(n, gobs.OBS_DIM)
+        self.style = z(n)                 # the style bit; unread without obs_style
+        self.latch_obs = z(n)             # the wheel's heading at its edge (psi)
+        self.latch_true = z(n)            # ...and from truth, for the reward
+        self.obs = z(n, env.obs_dim)      # 17, or 20 with obs_style
         self.reward = z(n)
         self.terminated = z(n, dt=int)
         self.truncated = z(n, dt=int)
@@ -184,7 +187,7 @@ class GpuGeneralEnv:
             d.qfrc_applied, d.xfrc_applied, d.geom_xmat,
             self.steer_target, self.prev_a, self.step_i, self.track_sum, self.track_n,
             self.psi, self.raw_prev, self.next_resample, self.diff, self.v_cmd_w,
-            self.psi_cmd,
+            self.psi_cmd, self.style, self.latch_obs, self.latch_true,
             s.k_c, s.k_m, s.cmd, s.th, s.w, s.ref, s.wf, s.fa, s.duty, s.phase,
             s.anchor, s.detent_force,
             o.prev_ok, o.rcount, o.v_lon, o.v_lat,
@@ -200,7 +203,8 @@ class GpuGeneralEnv:
         self._tick(active=self.done)                  # the reset's priming sample
         wp.launch(gobs.reset_obs, self.nworld, [
             self.c_obs, self.done, d.qpos, d.qvel, a.quat, a.gyro, o.v_lon, o.v_lat,
-            self.v_cmd_w, self.psi_cmd, self.psi, self.obs], device=self.device)
+            self.v_cmd_w, self.psi_cmd, self.style, self.latch_obs, self.psi, self.obs],
+            device=self.device)
 
     def _mjw_call(self):
         return self.scratch.call() if self.scratch is not None else nullcontext()
@@ -232,14 +236,15 @@ class GpuGeneralEnv:
                 self.s_drv.anchor, self.s_odo.prev, self.shifts], device=self.device)
         gobs.launch(self.c_obs, d.qpos, d.qvel, self.s_ahrs.quat, self.s_ahrs.gyro,
                     self.s_odo.v_lon, self.s_odo.v_lat, self.s_odo.steer_rate,
-                    self.v_cmd_w, self.psi_cmd,
-                    self.psi, self.raw_prev, self.action, self.prev_a, self.step_i,
+                    self.v_cmd_w, self.psi_cmd, self.style, self.latch_obs,
+                    self.latch_true, self.psi, self.raw_prev, self.action, self.prev_a, self.step_i,
                     self.track_sum, self.track_n, self.obs, self.reward,
                     self.terminated, self.truncated)
         wp.launch(gcmd.after_step, self.nworld, [
             self.c_cmd_step, self.terminated, self.truncated, self.step_i, self.psi,
             self.track_sum, self.track_n, self.next_resample, self.diff, self.v_cmd_w,
-            self.psi_cmd, self.rng], device=self.device)
+            self.psi_cmd, d.qpos, self.style, self.latch_obs, self.latch_true, self.rng],
+            device=self.device)
         if self.shared_k > 0:
             wp.launch(_advance_shared, self.nworld, [
                 self.terminated, self.truncated, self.track_sum, self.track_n,

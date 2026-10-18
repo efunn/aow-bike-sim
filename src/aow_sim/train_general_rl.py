@@ -355,6 +355,10 @@ def move_doc(name: str, params, cfg, trained: dict) -> dict:
            "obs_swing": bool(cfg["env"].get("obs_swing", False)),
            "act_swing": bool(cfg["env"].get("act_swing", False)),
            "wing_max_deg": float(cfg["env"].get("wing_max_deg", 90.0)),
+           # The style bit (general_spec.wheel_err): three more obs
+           # entries, so it is in obs_layout too; written even when false, like
+           # obs_swing. style_p / w_style are training-only and not replayed.
+           "obs_style": bool(cfg["env"].get("obs_style", False)),
            # WHICH swing mechanism, and what is on it. The layout is the same
            # for the geared stand-in and the four-bar (one crank channel), so
            # obs_layout cannot tell them apart; these are the only record.
@@ -380,7 +384,8 @@ def move_doc(name: str, params, cfg, trained: dict) -> dict:
                cfg["env"].get("vel_window_s", 0.0),
                cfg["env"].get("obs_pitch", False),
                cfg["env"].get("obs_wings", False),
-               cfg["env"].get("obs_swing", False))),
+               cfg["env"].get("obs_swing", False),
+               cfg["env"].get("obs_style", False))),
            "action_space": cfg["env"]["action_space"],
            "trained": trained}
 
@@ -500,7 +505,8 @@ def _export_from(spec: str, params, cfg, name="general_rl"):
     want = obs_dim_for(vel_window_s=float(env_cfg.get("vel_window_s", 0.0)),
                        obs_pitch=bool(env_cfg.get("obs_pitch", False)),
                        obs_wings=bool(env_cfg.get("obs_wings", False)),
-                       obs_swing=bool(env_cfg.get("obs_swing", False)))
+                       obs_swing=bool(env_cfg.get("obs_swing", False)),
+                       obs_style=bool(env_cfg.get("obs_style", False)))
     got = int(model.observation_space.shape[0])
     if got != want:
         raise SystemExit(

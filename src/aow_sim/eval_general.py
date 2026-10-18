@@ -253,7 +253,7 @@ def _eval_cfg(cfg: dict) -> dict:
             "randomization": {**cfg["randomization"], "enabled": False}}
 
 
-def _eval_episodes(env, act_fn, cmds):
+def _eval_episodes(env, act_fn, cmds, style=None):
     """One episode per command point; per-command rows plus aggregates. The
     eval env has randomization disabled, so repeating a command adds nothing.
 
@@ -263,13 +263,20 @@ def _eval_episodes(env, act_fn, cmds):
     trained policy can be affected by it. Each eval episode holds ONE command
     for its whole duration (reset sets `_next_resample` to infinity), so
     per-episode aggregates are well defined.
+
+    `style` holds the STYLE BIT at that value for every episode (an env with
+    obs_style only); None leaves it to the env's own draw.
     """
+    from .control.steer import wheel_heading, wrap_pi as _wrap
+    rake = np.deg2rad(float(env.p["bike"]["rake_deg"]))
     n = len(cmds)
     tail = max(1, int(_TAIL_S / env.ctrl_dt))
     rows = []
     for k, (v_lon, v_lat, dpsi) in enumerate(cmds):
-        obs, _ = env.reset(seed=10_000 + k, options={
-            "v_cmd": (v_lon, v_lat), "psi_cmd_rel": dpsi, "difficulty": 1.0})
+        opts = {"v_cmd": (v_lon, v_lat), "psi_cmd_rel": dpsi, "difficulty": 1.0}
+        if style is not None:
+            opts["style"] = float(style)
+        obs, _ = env.reset(seed=10_000 + k, options=opts)
         # A policy with memory starts every episode empty. `act_fn.reset` is
         # set by sb3_actor and by the replay paths below; a plain lambda
         # around an MLP needs none.
@@ -288,6 +295,13 @@ def _eval_episodes(env, act_fn, cmds):
         # let the same rows report a median and a worst case instead. 15 s at
         # 50 Hz is 750 floats a series; the cost is nothing.
         heads, vels, drifts = [], [], []
+        # THE PIVOT MEASUREMENT: net chassis yaw and net FRONT WHEEL world
+        # heading over the episode, from truth, as summed per-step deltas (so
+        # a turn past 180 is not wrapped away). A steered spin turns both by
+        # the command; a pivot turns the chassis and leaves the wheel near 0.
+        yaw_prev = extract_state(env.data, env._p0).yaw
+        h_prev = wheel_heading(float(env.data.qpos[env._sj]), rake)
+        yaw_turn = wheel_turn = wheel_path = 0.0
         # Static cap, not the curriculum-scheduled one: `wing_duty` has to mean
         # the same thing at every difficulty or the trace is not comparable
         # across a run.
@@ -316,6 +330,13 @@ def _eval_episodes(env, act_fn, cmds):
             heads.append(float(info.get("head_err_deg", 180.0)))
             vels.append(float(info.get("vel_err", 9.9)))
             drifts.append(float(np.hypot(s.e_lon, s.e_lat)))
+            h = wheel_heading(float(env.data.qpos[env._sj]), rake)
+            d_yaw = _wrap(float(s.yaw) - yaw_prev)
+            d_wheel = d_yaw + _wrap(h - h_prev)
+            yaw_turn += d_yaw
+            wheel_turn += d_wheel
+            wheel_path += abs(d_wheel)
+            yaw_prev, h_prev = float(s.yaw), h
             del v_lons[:-tail], v_lats[:-tail], steers[:-tail]
             del xys[:-tail], oscs[:-tail], wings[:-tail]
         s = extract_state(env.data, env._p0)
@@ -353,6 +374,11 @@ def _eval_episodes(env, act_fn, cmds):
             # convention as `v_lat_net` above: +lon along the command,
             # +lat to its left.
             "drift_lon": float((env.data.qpos[:2] - env._p0) @ lon_axis),
+            # Net chassis yaw / net front-wheel world heading [deg], and the
+            # wheel's total swing either way: the pivot measurement (above).
+            "yaw_turn_deg": float(np.degrees(yaw_turn)),
+            "wheel_turn_deg": float(np.degrees(wheel_turn)),
+            "wheel_path_deg": float(np.degrees(wheel_path)),
             "drift_lat": float((env.data.qpos[:2] - env._p0) @ lat_axis),
             # The same three quantities over the WHOLE episode. The keys
             # above stay last-step so every metrics block already written

@@ -116,6 +116,7 @@ _OPTIONAL_BLOCKS = (
     ("obs_pitch", ("pitch", "pitch_rate")),
     ("obs_wings", ("wing_angle", "wing_rate")),
     ("obs_swing", ("swing_angle", "swing_rate")),
+    ("obs_style", ("style", "sin_wheel_err", "cos_wheel_err")),
 )
 
 
@@ -131,7 +132,8 @@ OBS_NAMES_BASE = (
 )
 OBS_NAMES = OBS_NAMES_BASE + ("v_bar_lon", "v_bar_lat", "pitch", "pitch_rate",
                               "wing_angle", "wing_rate",
-                              "swing_angle", "swing_rate")
+                              "swing_angle", "swing_rate",
+                              "style", "sin_wheel_err", "cos_wheel_err")
 # Sign under the sagittal mirror. A filter is linear and time-invariant, so a
 # filtered quantity mirrors exactly like its source: v_bar_lon follows v_lon
 # (+1), v_bar_lat follows v_lat (-1). Getting these wrong does not raise --
@@ -170,13 +172,17 @@ OBS_MIRROR_PARITY = np.array([
                        #   not raise; it would silently make every handedness
                        #   number in analysis/mirror_equivariance.py wrong, on
                        #   a mechanism whose whole job is to be side-dependent.
+    +1,                # style -- a mode bit (0/1, a knob later), not a
+                       #   direction: the mirrored bike is asked the same thing.
+    -1, +1,            # sin/cos wheel_err -- a yaw-like angle, like psi_err
 ], dtype=float)
 assert len(OBS_NAMES) == len(OBS_MIRROR_PARITY)
 assert len(OBS_NAMES_BASE) == OBS_DIM
 
 
 def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False,
-               obs_wings: bool = False, obs_swing: bool = False) -> tuple:
+               obs_wings: bool = False, obs_swing: bool = False,
+               obs_style: bool = False) -> tuple:
     """The exact entry names this feature combination produces.
 
     WIDTH ALONE IS AMBIGUOUS and must not be used as the contract. With two
@@ -189,7 +195,8 @@ def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False,
     on = {"vel_window": float(vel_window_s) > 0.0,
           "obs_pitch": bool(obs_pitch),
           "obs_wings": bool(obs_wings),
-          "obs_swing": bool(obs_swing)}
+          "obs_swing": bool(obs_swing),
+          "obs_style": bool(obs_style)}
     names = list(OBS_NAMES_BASE)
     for flag, block in _OPTIONAL_BLOCKS:
         if on[flag]:
@@ -230,7 +237,8 @@ def policy_flags(pol) -> dict:
     return {"vel_window_s": float(getattr(pol, "vel_window_s", 0.0)),
             "obs_pitch": bool(getattr(pol, "obs_pitch", False)),
             "obs_wings": bool(getattr(pol, "obs_wings", False)),
-            "obs_swing": bool(getattr(pol, "obs_swing", False))}
+            "obs_swing": bool(getattr(pol, "obs_swing", False)),
+            "obs_style": bool(getattr(pol, "obs_style", False))}
 
 
 def policy_env_overrides(pol) -> dict:
@@ -317,13 +325,15 @@ def obs_layout_for(pol) -> tuple:
 
 
 def obs_dim_for(vel_window_s: float = 0.0, obs_pitch: bool = False,
-                obs_wings: bool = False, obs_swing: bool = False) -> int:
+                obs_wings: bool = False, obs_swing: bool = False,
+                obs_style: bool = False) -> int:
     """Observation width implied by a policy's feature flags.
 
     Prefer `obs_layout()` for the CONTRACT -- width collides (see its
     docstring). This stays for sizing an array.
     """
-    return len(obs_layout(vel_window_s, obs_pitch, obs_wings, obs_swing))
+    return len(obs_layout(vel_window_s, obs_pitch, obs_wings, obs_swing,
+                          obs_style))
 
 
 def act_dim_for(act_wings: bool = False, act_swing: bool = False) -> int:
@@ -370,7 +380,7 @@ def vel_filter_step(v_bar_w, v_w, alpha: float) -> np.ndarray:
 def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
               v_cmd_lon, v_cmd_lat, psi_err, prev_action,
               v_bar=None, pitch=None, wings=None,
-              zero_lat=False) -> np.ndarray:
+              zero_lat=False, style=None) -> np.ndarray:
     """Assemble the observation vector (length OBS_DIM, or OBS_DIM_WINDOWED
     when `v_bar` is given).
 
@@ -423,6 +433,11 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
                      Position and velocity are what the servo measures;
                      current is deliberately NOT observed (a noisy, lagged
                      torque proxy with no sim counterpart).
+    style          : (bit, wheel_err) for a policy with the STYLE BIT, or
+                     None -- see `wheel_err`. The bit is a command (the
+                     operator's); wheel_err [rad] is the front wheel's world
+                     heading minus where it was when the bit came on, 0 while
+                     it is off. Appended as bit, sin, cos.
     """
     pa = np.asarray(prev_action, dtype=float).reshape(-1)
     if zero_lat:
@@ -444,7 +459,58 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
         obs.extend((float(pitch[0]), float(pitch[1])))
     if wings is not None:
         obs.extend((float(wings[0]), float(wings[1])))
+    if style is not None:
+        bit, err = style
+        obs.extend((float(bit), float(np.sin(err)), float(np.cos(err))))
     return np.array(obs, dtype=np.float32)
+
+
+def wheel_world_heading(psi, steer, rake: float) -> float:
+    """The front wheel's ground-trace heading in the world [rad, mod 2*pi]:
+    chassis yaw plus `steer.wheel_heading` (the raked axis)."""
+    return float(psi + np.arctan2(np.cos(rake) * np.sin(steer), np.cos(steer)))
+
+
+def wheel_err(psi, steer, latch, rake: float) -> float:
+    """The STYLE BIT's error: the front wheel's world heading minus `latch`,
+    the heading it had when the bit came on, wrapped to (-pi, pi].
+
+    THE STYLE BIT (`obs_style`, docs/plans/wishlist.md, "pivots"). A command
+    entry, 0/1. While it is 1 the reward pays w_style x exp(-(err/sigma)^2):
+    "a global brake for the front wheel" (the user's words). A heading
+    command still says where the chassis goes; the bit says HOW: around a
+    held wheel (the pivot) instead of a steered turn.
+
+    ONLY AT ZERO SPEED COMMAND (`style_active`). The front wheel rolls only
+    along its own heading, so sustained travel goes along it: a held wheel
+    and a velocity command along any other line cannot both be met. The bit
+    therefore reads 0 whenever the commanded velocity is non-zero, in
+    training and replay alike, and a hold or an in-place turn is all it asks.
+
+    AN ANGLE, NOT A RATE. A first version paid for a still wheel (zero
+    heading RATE). Its cost per step is bounded, so it grew with how LONG the
+    wheel moved, not how FAR: one fast steered flick cost ~0.6 s of reward
+    and nothing after, and a slow drift almost nothing. The angle charges a
+    steered turn for as long as the wheel stays turned.
+
+    MOD 2*pi, NOT pi. The wheel is front-back symmetric, so mod pi the
+    heading of a wheel steered round 180 deg is unchanged -- and a steered
+    180 deg spin would come back to its latch for free. A full 360 is free
+    here; accepted.
+
+    OBSERVABLE. `psi` is the bike's own heading (the AHRS yaw, as psi_err
+    uses), `steer` its servo angle, `latch` both taken at the bit's edge: the
+    Pi forms it the same way (drive.py). The reward forms it from truth.
+    """
+    d = wheel_world_heading(psi, steer, rake) - float(latch)
+    return float(np.arctan2(np.sin(d), np.cos(d)))
+
+
+def style_active(bit, v_cmd_world) -> bool:
+    """The bit as the policy sees it: on only while the speed command is 0
+    (see `wheel_err`). The tolerance is for replay; training's holds and
+    in-place turns are exact zeros."""
+    return bool(bit) and float(np.hypot(*np.asarray(v_cmd_world, float)[:2])) < 1e-6
 
 
 def rotate_to_body(vx, vy, psi) -> tuple[float, float]:

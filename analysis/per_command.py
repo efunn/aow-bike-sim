@@ -289,7 +289,7 @@ def _one_policy(job):
     re-seed every episode and produce numbers that do not match any other table
     in the project. Four policies is four cores, which is the whole win here.
     """
-    name, encoder, ahrs, tau = job
+    name, encoder, ahrs, tau, style = job
     params = load_params()
     cfg = _cfg_for(ahrs, tau)
     pol = load_general(name)
@@ -312,11 +312,14 @@ def _one_policy(job):
         return (np.asarray(pol.action(o), float) / scale)[:n_act]
 
     act.reset = pol.reset          # per episode, for a memory policy
-    _m, rows = _eval_episodes(env, act, eval_cmds(cfg["env"]["v_max"]))
+    if style is not None and not env.obs_style:
+        raise SystemExit(f"--style: {name} has no style bit (obs_style)")
+    _m, rows = _eval_episodes(env, act, eval_cmds(cfg["env"]["v_max"]),
+                              style=style)
     return name, rows
 
 
-def run(names, encoder, ahrs, tau):
+def run(names, encoder, ahrs, tau, style=None):
     """Eval every policy, in parallel, one process each.
 
     IMPORTING THIS: the pool uses spawn, so a caller must guard its own entry
@@ -325,7 +328,7 @@ def run(names, encoder, ahrs, tau):
     BrokenProcessPool rather than as anything resembling the actual mistake.
     """
     cmds = eval_cmds(_cfg_for(ahrs, tau)["env"]["v_max"])
-    jobs = [(n, encoder, ahrs, tau) for n in names]
+    jobs = [(n, encoder, ahrs, tau, style) for n in names]
     out = {}
     with ProcessPoolExecutor(max_workers=min(len(jobs), os.cpu_count() or 1)) as ex:
         for name, rows in ex.map(_one_policy, jobs):
@@ -496,6 +499,33 @@ def summary(out) -> None:
     print("  fell counts ALL 20; the two ratios exclude the commands it fell on.")
 
 
+def pivots(out) -> None:
+    """The in-place spins, one row per policy: how far the FRONT WHEEL'S world
+    heading turned per degree the chassis did (eval_general's wheel_turn_deg /
+    yaw_turn_deg, net over the episode). ~1 is a steered spin (the wheel goes
+    round with the bike); ~0 is a PIVOT (the wheel held, the chassis turned
+    about it) -- what the style bit asks for. A fall prints `fell`."""
+    spins = [(0.0, 0.0, d) for d in (90, -90, 170, -170, 180)]
+    print(f"\n  {'wheel/yaw, in place':<28}"
+          + "".join(f"{f'spin {d:+d}':>11}" for *_, d in spins))
+    print("  " + "-" * (28 + 11 * len(spins)))
+    for name, rows in out.items():
+        by = {tuple(r["cmd"]): r for r in rows}
+        cells = []
+        for c in spins:
+            r = by.get(c)
+            if r is None:
+                cells.append("--")
+            elif r["fell"]:
+                cells.append("fell")
+            else:
+                y = r["yaw_turn_deg"]
+                cells.append(f"{r['wheel_turn_deg'] / y:.2f}" if abs(y) > 20
+                             else f"yaw {y:.0f}")
+        print(f"  {name[:28]:<28}" + "".join(f"{x:>11}" for x in cells))
+    print("  ~1 = steered spin (wheel turns with the chassis), ~0 = pivot")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -523,6 +553,9 @@ def main():
                     help="correlation time [s]; the level's own measured value "
                          "by default (0.19; 2.0, the residual wander's, for "
                          "tm151_filter)")
+    ap.add_argument("--style", type=float, default=None, choices=(0.0, 1.0),
+                    help="hold the STYLE BIT at this value on every command "
+                         "(policies with obs_style only); default: none")
     ap.add_argument("--tag", default="",
                     help="suffix for the output filenames. REQUIRED in spirit "
                          "whenever --policies is not the default, or the new "
@@ -543,9 +576,11 @@ def main():
     metrics = args.metrics if args.metrics is not None \
         else ([] if args.summary else list(METRICS))
 
-    cmds, out = run(args.policies, args.encoder, args.ahrs, args.ahrs_tau)
+    cmds, out = run(args.policies, args.encoder, args.ahrs, args.ahrs_tau,
+                    args.style)
     if args.summary:
         summary(out)
+        pivots(out)
     if metrics:
         idx, labels, spans = order_and_labels(cmds)
         PLOTS.mkdir(exist_ok=True)

@@ -24,6 +24,7 @@ WARP_LIB=$(python -c "import warp, os; print(os.path.join(os.path.dirname(warp._
 WARP_VER=$(python -c "import warp; print(warp.__version__)")
 [ -f "$WARP_LIB" ] || { echo "no $WARP_LIB"; exit 1; }
 NW=$(python -c "import json; print(json.load(open('$STEM.json'))['nworld'])")
+OBS=$(python -c "import json; print(json.load(open('$STEM.json'))['obs_dim'])")
 
 bash "$HERE/fetch.sh" "$PUF"          # the pinned commit, shallow
 cd "$PUF"
@@ -39,9 +40,12 @@ if ! ldconfig -p | grep -q 'libomp5\.so '; then
     [ -n "$so" ] && ln -sf "$so" /usr/lib/x86_64-linux-gnu/libomp5.so
 fi
 mkdir -p ocean/aow_bike
-cp "$HERE/aow_bike.cu" ocean/aow_bike/aow_bike.cu
+# the obs width is the graph's (17, or 20 with the style bit)
+sed -e "s/^#define OBS_SIZE .*/#define OBS_SIZE $OBS/" "$HERE/aow_bike.cu" \
+    > ocean/aow_bike/aow_bike.cu
+grep -q "^#define OBS_SIZE $OBS\$" ocean/aow_bike/aow_bike.cu || { echo "OBS_SIZE not set"; exit 1; }
 sed -e "s#GRAPH_STEM#$STEM#" -e "s#WARP_LIB#$WARP_LIB#" -e "s#WARP_VERSION#$WARP_VER#" \
     -e "s#^total_agents = .*#total_agents = $NW#" \
     "$HERE/aow_bike.ini" > config/aow_bike.ini
 ./build.sh aow_bike --cu $FLOAT
-[ -x ./puffer ] && echo "built $PUF/puffer for aow_bike ($NW worlds, graph $STEM)"
+[ -x ./puffer ] && echo "built $PUF/puffer for aow_bike ($NW worlds, obs $OBS, graph $STEM)"

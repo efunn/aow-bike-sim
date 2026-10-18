@@ -359,6 +359,8 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         # 15-wide "flags give", and refuse a move that is actually fine.
         pol.obs_swing = bool(d.get("obs_swing", False))
         pol.act_swing = bool(d.get("act_swing", False))
+        # The style bit: a command entry the operator sets (drive.set_style).
+        pol.obs_style = bool(d.get("obs_style", False))
         pol.wing_max_deg = float(d.get("wing_max_deg", 90.0))
         # Which swing mechanism (the four-bar or the geared stand-in) and the
         # tip masses on it: the same layout either way, so only these say.

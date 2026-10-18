@@ -147,7 +147,8 @@ def reset_worlds(c: ResetConst, cc: gcmd.CmdConst, done: wp.array(dtype=int),
                  track_n: wp.array(dtype=int), psi: wp.array(dtype=float),
                  raw_prev: wp.array(dtype=float), next_resample: wp.array(dtype=int),
                  diff: wp.array(dtype=float), v_cmd_w: wp.array2d(dtype=float),
-                 psi_cmd: wp.array(dtype=float),
+                 psi_cmd: wp.array(dtype=float), style: wp.array(dtype=float),
+                 latch_obs: wp.array(dtype=float), latch_true: wp.array(dtype=float),
                  # drivetrain state
                  k_c: wp.array(dtype=int), k_m: wp.array(dtype=int),
                  s_cmd: wp.array3d(dtype=float), s_th: wp.array3d(dtype=float),
@@ -350,6 +351,9 @@ def reset_worlds(c: ResetConst, cc: gcmd.CmdConst, done: wp.array(dtype=int),
     track_sum[world] = 0.0
     track_n[world] = 0
     s = gcmd.sample_family(cc, diff[world], ps, 1, v_cmd_w, psi_cmd, world, s)
+    style[world] = 0.0                     # an episode starts with the bit off
+    s = gcmd.sample_style(cc, diff[world], v_cmd_w, ps, qpos, style, latch_obs,
+                          latch_true, world, s)
     nr = int(0)
     nr, s = gcmd.schedule(cc, 0, s)
     next_resample[world] = nr

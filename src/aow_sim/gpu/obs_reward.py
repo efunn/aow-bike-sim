@@ -9,13 +9,18 @@ v3's recipe only: no velocity window, no wings, no hub-idle or copper term
   0 roll  1 roll_rate  2 yaw_rate  3 sin 2 steer  4 cos 2 steer  5 steer_rate
   6 v_lon  7 v_lat  8 v_cmd_lon  9 v_cmd_lat  10 sin psi_err  11 cos psi_err
   12-14 prev action (the one just applied)  15 pitch  16 pitch_rate
+and with `obs_style` three more, the style bit (17) and sin/cos of the front
+wheel's world heading against its latch (18-19), whose reward term pays for
+the wheel staying where it was when the bit came on (general_spec.wheel_err).
 """
 from __future__ import annotations
 
 import numpy as np
 import warp as wp
 
-OBS_DIM = 17
+from . import commands as gcmd
+
+OBS_DIM = 17                  # v3; + 3 with obs_style (obs_dim_for)
 
 
 @wp.struct
@@ -37,11 +42,16 @@ class RewConst:
     steer_q: int
     steer_d: int
     steer_rate_on: int    # obs[5] from the odometry's Pi-style steer rate
+    style_on: int         # obs[17:20] the style bit and wheel error; w_style paid
+    w_style: float
+    sigma_style: float    # [rad]
+    cos_rake: float
 
 
 def const_from(env) -> RewConst:
     if (env.vel_window_s or env.zero_lat or env.wings or env.swing or env.w_hub_idle
-            or env.w_copper or not env.obs_pitch or env.obs_dim != OBS_DIM
+            or env.w_copper or not env.obs_pitch
+            or env.obs_dim != OBS_DIM + 3 * int(env.obs_style)
             or env.wing_touch_fails):
         raise NotImplementedError("the port covers v3's observation and reward")
     rw = env.rw
@@ -57,6 +67,9 @@ def const_from(env) -> RewConst:
     c.max_steps = int(env.max_steps)
     c.steer_q, c.steer_d = int(env._sj), int(env._sd)
     c.steer_rate_on = int(env._steer_rate is not None)
+    c.style_on = int(env.obs_style)
+    c.w_style, c.sigma_style = float(env.w_style), float(env.sigma_style)
+    c.cos_rake = float(np.cos(env._rake))
     return c
 
 
@@ -71,6 +84,8 @@ def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtyp
                odo_lon: wp.array(dtype=float), odo_lat: wp.array(dtype=float),
                steer_rate: wp.array(dtype=float),
                v_cmd_w: wp.array2d(dtype=float), psi_cmd: wp.array(dtype=float),
+               style: wp.array(dtype=float), latch_obs: wp.array(dtype=float),
+               latch_true: wp.array(dtype=float),
                psi: wp.array(dtype=float), raw_prev: wp.array(dtype=float),
                action: wp.array2d(dtype=float), prev_a: wp.array2d(dtype=float),
                step: wp.array(dtype=int), track_sum: wp.array(dtype=float),
@@ -143,6 +158,13 @@ def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtyp
     obs[world, 14] = action[world, 2]
     obs[world, 15] = -a_pitch               # nose-up positive (extract_state's sign)
     obs[world, 16] = -ahrs_gyro[world, 1]
+    if c.style_on == 1:
+        e_obs = float(0.0)
+        if style[world] == 1.0:
+            e_obs = wrap_pi(gcmd.wheel_world(ps, steer, c.cos_rake) - latch_obs[world])
+        obs[world, 17] = style[world]
+        obs[world, 18] = wp.sin(e_obs)
+        obs[world, 19] = wp.cos(e_obs)
 
     # reward
     v_err2 = (v_cl - v_lon) * (v_cl - v_lon) + (v_ct - v_lat) * (v_ct - v_lat)
@@ -158,6 +180,10 @@ def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtyp
          - c.w_upright * roll * roll - c.w_pitch * pitch * pitch
          - c.w_effort * (a0 * a0 + a1 * a1 + a2 * a2)
          - (d0 * c.ws0 * d0 + d1 * c.ws1 * d1 + d2 * c.ws2 * d2))
+    if c.style_on == 1 and style[world] == 1.0:
+        # general_spec.wheel_err on truth: the truth yaw, the truth latch
+        e = wrap_pi(gcmd.wheel_world(yaw, steer, c.cos_rake) - latch_true[world])
+        r = r + c.w_style * wp.exp(-(e / c.sigma_style) * (e / c.sigma_style))
     prev_a[world, 0] = a0
     prev_a[world, 1] = a1
     prev_a[world, 2] = a2
@@ -181,11 +207,12 @@ def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtyp
 
 
 def launch(c: RewConst, qpos, qvel, ahrs_quat, ahrs_gyro, odo_lon, odo_lat,
-           steer_rate, v_cmd_w, psi_cmd, psi, raw_prev, action, prev_a, step,
+           steer_rate, v_cmd_w, psi_cmd, style, latch_obs, latch_true, psi, raw_prev,
+           action, prev_a, step,
            track_sum, track_n, obs, reward, terminated, truncated):
     wp.launch(obs_reward, dim=qpos.shape[0], inputs=[
         c, qpos, qvel, ahrs_quat, ahrs_gyro, odo_lon, odo_lat, steer_rate, v_cmd_w, psi_cmd,
-        psi, raw_prev, action, prev_a, step, track_sum, track_n, obs, reward,
+        style, latch_obs, latch_true, psi, raw_prev, action, prev_a, step, track_sum, track_n, obs, reward,
         terminated, truncated], device=qpos.device)
 
 
@@ -194,8 +221,9 @@ def reset_obs(c: RewConst, done: wp.array(dtype=int), qpos: wp.array2d(dtype=flo
               qvel: wp.array2d(dtype=float), ahrs_quat: wp.array2d(dtype=float),
               ahrs_gyro: wp.array2d(dtype=float), odo_lon: wp.array(dtype=float),
               odo_lat: wp.array(dtype=float), v_cmd_w: wp.array2d(dtype=float),
-              psi_cmd: wp.array(dtype=float), psi: wp.array(dtype=float),
-              obs: wp.array2d(dtype=float)):
+              psi_cmd: wp.array(dtype=float), style: wp.array(dtype=float),
+              latch_obs: wp.array(dtype=float),
+              psi: wp.array(dtype=float), obs: wp.array2d(dtype=float)):
     """The observation `reset` returns (`GeneralEnv._obs` right after the
     reset): no heading update, no reward, prev_action zero. Reset worlds only."""
     world = wp.tid()
@@ -233,3 +261,10 @@ def reset_obs(c: RewConst, done: wp.array(dtype=int), qpos: wp.array2d(dtype=flo
     obs[world, 14] = 0.0
     obs[world, 15] = -wp.asin(wp.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0))
     obs[world, 16] = -ahrs_gyro[world, 1]
+    if c.style_on == 1:
+        e_obs = float(0.0)
+        if style[world] == 1.0:
+            e_obs = wrap_pi(gcmd.wheel_world(ps, steer, c.cos_rake) - latch_obs[world])
+        obs[world, 17] = style[world]
+        obs[world, 18] = wp.sin(e_obs)
+        obs[world, 19] = wp.cos(e_obs)

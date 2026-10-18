@@ -11,7 +11,8 @@ its exec steps all N worlds, the state living on in the loaded buffers.
 Bound buffers, reachable by name from C (`wp_apic_get_param_ptr`):
 
   act_in      (N, 3) float32  in: the action, normalized [-1, 1] (clipped inside)
-  obs         (N, 17) float32 out: the observation (general_spec, v3 layout)
+  obs         (N, 17) float32 out: the observation (general_spec, v3 layout;
+              20 wide with obs_style: the style bit, sin/cos wheel error)
   reward      (N,) float32
   terminated  (N,) int32      a fall
   truncated   (N,) int32      the episode's time limit

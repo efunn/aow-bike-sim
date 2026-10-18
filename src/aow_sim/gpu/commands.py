@@ -39,6 +39,10 @@ class CmdConst:
     cur_on: int
     diff_step: float
     diff_thresh: float
+    style_on: int         # draw the style bit with every command
+    style_p: float        # P(on) = style_p x difficulty
+    steer_q: int          # for the latch: the steer's qpos address
+    cos_rake: float
 
 
 def const_from(env) -> CmdConst:
@@ -56,6 +60,8 @@ def const_from(env) -> CmdConst:
     c.ctrl_dt = float(env.ctrl_dt)
     c.cur_on = int(env.cur_on)
     c.diff_step, c.diff_thresh = float(env.diff_step), float(env.diff_thresh)
+    c.style_on, c.style_p = int(env.obs_style), float(env.style_p)
+    c.steer_q, c.cos_rake = int(env._sj), float(np.cos(env._rake))
     return c
 
 
@@ -128,6 +134,43 @@ def sample_family(c: CmdConst, d: float, psi: float, first: int,
 
 
 @wp.func
+def wheel_world(psi: float, steer: float, cos_rake: float):
+    """general_spec.wheel_world_heading."""
+    return psi + wp.atan2(cos_rake * wp.sin(steer), wp.cos(steer))
+
+
+@wp.func
+def truth_yaw(qpos: wp.array2d(dtype=float), world: int):
+    """extract_state's yaw off the free joint's quaternion."""
+    tw = qpos[world, 3]
+    tx = qpos[world, 4]
+    ty = qpos[world, 5]
+    tz = qpos[world, 6]
+    return wp.atan2(2.0 * (tx * ty + tw * tz), 1.0 - 2.0 * (ty * ty + tz * tz))
+
+
+@wp.func
+def sample_style(c: CmdConst, d: float, v_cmd_w: wp.array2d(dtype=float),
+                 psi: float, qpos: wp.array2d(dtype=float), style: wp.array(dtype=float),
+                 latch_obs: wp.array(dtype=float), latch_true: wp.array(dtype=float),
+                 world: int, s: wp.uint32):
+    """`_sample_style` + `_set_style`: after the command, before the schedule;
+    no draw when off. Active only at a zero speed command; the wheel's world
+    heading latched on the rising edge (the bike's psi, and truth)."""
+    if c.style_on == 1:
+        drawn = wp.randf(s) < c.style_p * d
+        on = float(0.0)
+        if drawn and v_cmd_w[world, 0] == 0.0 and v_cmd_w[world, 1] == 0.0:
+            on = 1.0
+        if on == 1.0 and style[world] == 0.0:
+            steer = qpos[world, c.steer_q]
+            latch_obs[world] = wheel_world(psi, steer, c.cos_rake)
+            latch_true[world] = wheel_world(truth_yaw(qpos, world), steer, c.cos_rake)
+        style[world] = on
+    return s
+
+
+@wp.func
 def schedule(c: CmdConst, step: int, s: wp.uint32):
     """`_schedule_resample`: the step the next change lands on."""
     t = c.res_lo + wp.randf(s) * (c.res_hi - c.res_lo)
@@ -141,7 +184,9 @@ def after_step(c: CmdConst, terminated: wp.array(dtype=int),
                psi: wp.array(dtype=float), track_sum: wp.array(dtype=float),
                track_n: wp.array(dtype=int), next_resample: wp.array(dtype=int),
                diff: wp.array(dtype=float), v_cmd_w: wp.array2d(dtype=float),
-               psi_cmd: wp.array(dtype=float), rng: wp.array(dtype=wp.uint32)):
+               psi_cmd: wp.array(dtype=float), qpos: wp.array2d(dtype=float),
+               style: wp.array(dtype=float), latch_obs: wp.array(dtype=float),
+               latch_true: wp.array(dtype=float), rng: wp.array(dtype=wp.uint32)):
     """The end of GeneralEnv.step after the reward: a live resample, or at an
     episode end the curriculum's advance (the reset is a separate kernel)."""
     world = wp.tid()
@@ -149,6 +194,8 @@ def after_step(c: CmdConst, terminated: wp.array(dtype=int),
     done = terminated[world] == 1 or truncated[world] == 1
     if (not done) and step[world] >= next_resample[world]:
         s = sample_family(c, diff[world], psi[world], 0, v_cmd_w, psi_cmd, world, s)
+        s = sample_style(c, diff[world], v_cmd_w, psi[world], qpos, style, latch_obs,
+                         latch_true, world, s)
         nr = int(0)
         nr, s = schedule(c, step[world], s)
         next_resample[world] = nr
