@@ -677,6 +677,13 @@ def main() -> None:
                          "Moves plant_digest, so a policy loaded here warns "
                          "that it trained on a different bike, which it did; "
                          "the analytic LQR is re-designed for the new plant")
+    ap.add_argument("--rake", type=float, default=None, metavar="DEG",
+                    help="override bike.rake_deg in memory (bike_params.yaml "
+                         "untouched). The steer axis tilts about the front "
+                         "axle (fork_offset 0), so the contact stays at the "
+                         "wheelbase and the trail is r_front x tan(rake): "
+                         "13.7 mm at the stock 15 deg. Moves plant_digest, "
+                         "like --wheelbase")
     ap.add_argument("--solref", default=None, metavar="A,B",
                     help="override sim.contact_solref in memory (bike_params.yaml "
                          "untouched), floor and every wheel contact: (timeconst, "
@@ -719,6 +726,11 @@ def main() -> None:
               f"{args.wheelbase * 1000:.0f} mm (in memory; chassis CoM held)")
         params = {**params, "bike": {**params["bike"],
                                      "wheelbase": float(args.wheelbase)}}
+    if args.rake is not None:
+        r_f = params["bike"]["front_wheel"]["radius"]
+        print(f"RAKE {params['bike']['rake_deg']:g} -> {args.rake:g} deg (in memory; "
+              f"trail {r_f * np.tan(np.deg2rad(args.rake)) * 1000:.1f} mm)")
+        params = {**params, "bike": {**params["bike"], "rake_deg": float(args.rake)}}
     for key, flag, n in (("contact_solref", args.solref, 2),
                          ("contact_solimp", args.solimp, 5)):
         if flag is None:
