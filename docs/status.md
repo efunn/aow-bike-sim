@@ -77,6 +77,38 @@ parks ~6 deg short; braking current peaks ~380 mA, ABOVE the 300 cap. A
 stepping test (`servo_breakaway.py`) threw the
 crank at 630 deg/s and is not for built mechanisms.
 
+First policy runs on the bench (10-17; new 5 V 2 A TRACO board, no
+undervoltage flags; drive servos bare, steer and righting modules clamped,
+steer column installed, no fork/wheel; `run_bike --bench --torque --no-link --auto-rearm`,
+records in `traces/bike/261017-17*`). 100 Hz, no dropped frames; fall cut and
+auto re-arm work. With the AHRS held level the policy SAWS THE STEER: 5.2 Hz,
+growing 1 -> 8 deg rms over ~15 s, in its own command (the servo follows).
+Not roll; the velocity estimate carries it too. In the sim, pinned upright
+(`analysis/steer_pinned.py`), the same policy is quiet (0.02 deg) and only
+limit-cycles (0.43 deg, 4.9 Hz) once BOTH (a) the steer servo is given the
+bench's response and (b) the policy sees the steer rate as the Pi forms it.
+(a): open-loop sweep of the XC330 at P 900 with the steering column and
+headset installed (no fork or wheel, hanging)
+(`analysis/steer_response.py`, `traces/bench/steer_response_261017-175708.json`):
+gain/phase 0.81/-69 deg at 5 Hz against the sim's 0.66/-63. Repeated on the
+bare righting XC330 (mode 4, `steer_response_261017-190803.json`): within
+0.02 at +-5 deg, so the column adds nothing and the units agree. NOW IN THE
+PLANT: `steer_kp` 2.3, `steer_armature` 5.5e-4, `crank_armature` 5.5e-4 (kv
+held at the free-spin droop; a kv fit, 0.055, let the steer outrun its motor
+at 14.5 rad/s). Constant-speed ramps confirm it above 0.45 rad/s (droop
+29 ms, running friction 5.75 mN m from the lag's intercept). Below ~0.25 rad/s
+the bare servo tracks within ~1 encoder count, with no droop or friction --
+NOT modelled, deliberately: a one-count effect that the wheel's scrub and the
+horn-to-wheel backlash will swamp on the bike. Next for small motions: the
+assembled steering, loaded, with the backlash read off the wheel side. (b): `bike_bus` differences the steer
+counts through RateFilter (~8 ms) while training observed the exact joint
+velocity. Fixed in the training path (10-17): `steer_rate_encoder: counts`
+(`sim_odometry.SimSteerRate`; GeneralEnv, the GPU odometry kernel, the move
+yaml, teleop `--steer-rate`), ON in `rl_general_v3.yaml`. Every existing
+policy is `joint`; teleop `--steer-rate counts` flies one as the Pi does. The
+remaining 20x amplitude gap is unexplained (small-signal servo nonlinearity,
+sensor noise and the wheel-less drives are untested).
+
 Not next, deliberately: a trained (RL) ball shot (close-range scripted plays
 exist in teleop), the privileged critic, the odometry rewrite, the AHRS
 fixture (parked 09-24), the self-righting linkage choice (parked 09-27).
@@ -87,7 +119,7 @@ fixture (parked 09-24), the self-righting linkage choice (parked 09-27).
 
 | workstream | state | blocker | doc |
 |---|---|---|---|
-| **Simulation & model** | Working; 21 `GUESS`es in bike_params. Plant digest **4b5355ed** (10-17): the measured front wheel (10-05), the detailed drivetrain as the default plant (10-02), the V2 righting module (10-09) with the V3 blade (10-14), its linkage's measured friction on the crank (10-17; righting needs 530 -> 600 counts at 12 V). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30. Optional per-episode floor tilt for training, CPU and GPU, off by default (10-16) | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
+| **Simulation & model** | Working; 19 `GUESS`es in bike_params. Plant digest **7893a119** (10-17): the measured front wheel (10-05), the detailed drivetrain as the default plant (10-02), the V2 righting module (10-09) with the V3 blade (10-14), its linkage's measured friction on the crank (10-17; righting needs 530 -> 600 counts at 12 V -- before the crank armature moved, not re-run). The steer XC330's measured small-signal response, kp 2.3 + rotor inertia 5.5e-4, also the crank's (10-17). XC330s from the bench (current law, load-proportional gearbox friction); the steer as its firmware runs it, 4 ms delay; headset friction since 09-30. Optional per-episode floor tilt for training, CPU and GPU, off by default (10-16) | Contact and masses, unmeasured | `mujoco-modeling-decisions.md`, `drivetrain-model.md` |
 | **Control — RL** | Primary. Pointer `general_puffer_fixes_72M` (10-16): GPU, MinGRU (stateful), `tm151_filter` + odometry counts, detailed drivetrain, today's plant. On one `per_command.py --summary` grid (`--ahrs tm151_filter`): 0/20 falls, 7/9 turns resolved forward, 2/2 straight forward; chatter score 0.863, per-step action change 0.008 (v3 seeds 0.035-0.048); endurance minute **0/18 falls** (10-16). Two GPU seeds pick the same direction on all 20 grid commands. CPU arms on today's plant, finished on the box: `queue_general_v3` (5 seeds, MLP) and `queue_general_v3_mingru` (5 seeds, MinGRU actor); turns forward 4-8/9 (s0-s2 measured) and 5-7/9 (all five), 0 falls. `v3_s1` and `v3_mingru_s0` are on top of `moves/` | Crab never trained (`v_lat_frac` 0; crab L/R ~0.45/0.63 on the pointer); not flown on the bike | `gpu-training.md`, `general-rl-improvements.md`, `policy-smoothness-losses.md` |
 | **GPU training** | Phases 1-3 done (10-14 to 10-16): MuJoCo Warp env as one CUDA graph per policy step, bridged into PufferLib 5.0's CUDA trainer, patched for reward scale, advantage normalisation, the temporal smoothness term and a paced shared curriculum. Checkpoints convert to moves (`gpu/export_policy.py`). Cards: 5090 12 min / $0.23 per 72M steps, 4090 17 min, A40 38 min. Runs are not bit-repeatable (float atomics) | Phase 4 (MLP / loss parity) and 5 (five GPU seeds vs v3's five on one grid) not started; no sim-to-sim check of a GPU policy in C beyond the eval grid | `gpu-training.md` |
 | **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving, ~0.2-0.3 deg RMS at one mount against the sim's 1.5. `tm151_filter` with the accelerometer weighting from the drop rig (10-07) is the training level since 10-09, provisional; unproven on sustained acceleration | The bike's own AHRS log; the wave cams (sustained acceleration) | `sensor-workstream.md`, `ahrs-fixture.md` |
@@ -111,18 +143,24 @@ The 15 registered reds are all the deprecated LQR and are only judged under
 `pytest -m lqr`. `prospective` (the endurance minute, skipped unless named)
 passes on the pointer: 0/18 falls.
 
-**Digests, 2026-10-17**: `plant_digest` 4b5355ed44d6ca8c (was bc66ca20: the
-righting linkage's measured friction, `righting.module.linkage_friction_*`),
+**Digests, 2026-10-17**: `plant_digest` 7893a119b19f17d6 (was 4b5355ed, the
+righting linkage's measured friction, and before that bc66ca20; now also the
+steer's kp 2.3 + armature 5.5e-4 and the crank's armature 5.5e-4),
 `design_digest` 5fe8c19379988031 (unchanged); `deploy/bundle.npz` re-exported
-10-17, matches both (the previous one kept as `deploy/bundle_plant-bc66ca20.npz`).
+10-17, matches both, worst LQR fit over the grid R^2 0.977 (the export warned
+0.930 at the 0.93 bar once at the standstill design; not reproducible by
+itself; the previous bundle is kept as `deploy/bundle_plant-bc66ca20.npz`).
 NOT yet on the Pi, whose params and bundle are both still bc66ca20 (consistent).
 **Copy it to the Pi by hand**: `deploy/` is gitignored. History:
 `params-digest-split.md`.
 
 **Which exports carry today's plant:** none since 10-17. The 23 on bc66ca20 --
 every `general_puffer_*` checkpoint, `general_rl_v3_s0..s4`,
-`general_rl_v3_mingru_s0..s4` -- differ from it ONLY by the righting crank's
-linkage friction. ACCEPTED, not retrained: the policies never drive the crank
+`general_rl_v3_mingru_s0..s4` -- trained on the OLD STEER (kp 2.0, no rotor
+inertia) and the exact steer rate. OUTSTANDING: the steer is driven by every
+policy, so unlike the crank this is behaviour, not just digest; the next run
+(rl_general_v3, which now also observes the Pi's steer rate) retrains on both.
+The crank's linkage friction and armature are ACCEPTED as before: the policies never drive the crank
 (GeneralEnv holds it at stow, where the term is its 51 mN m constant, and the
 GPU port has no crank at all), so they are stale by digest, not by
 behaviour -- unmeasured; one `per_command.py` grid would settle it. Everything else in `moves/` trained on an
@@ -214,7 +252,6 @@ checklist).
 |---|---|---|---|
 | `chassis.mass` | 0.45 kg, **37% of the bike** | CAD printed-mass estimates per part, uncalibrated | the frame; weigh one printed part first |
 | `righting.module` masses (crank, coupler, wing_hub, blade, fixed) | 11.2 / 2.3 / 14.9 / 28.6 / 64.1 g, **167 g** with both sides | CAD check volumes (10-07), 2 perimeters / 15 % infill, steel pins | weigh the printed parts |
-| `righting.module.crank_armature` | 1e-3 kg m2 | the XC330's reflected rotor inertia; >= 1e-5 stops the bare actuator ringing; 1e-4 -> 1e-3 slows the full stroke 6 % | a crank coast-down, as `drivetrain_fit.py coast` |
 | `fork_mass` + `front_wheel.mass` | 0.025 + 0.060 kg | **86 g together** (09-30), not split | a scale |
 | `front_wheel.crown_radius` | 80 mm | the real tread is a 10 mm flat; the crown stands in for the tire flattening under load | the dial test repeated with the wheel tilted 1-2 deg |
 | `ahrs.mass` | 0.012 kg | the TM151 is on the bench | a scale |
