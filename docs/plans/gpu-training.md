@@ -673,7 +673,12 @@ A40 secure, EU-SE-1, $0.59/h; ~65 min for 1 h of training, ~$0.65.
    2>&1 < /dev/null &)'`.
 5. **Watch,** all in the background. Since 10-17 `pod_launch.sh` starts
    `watch.py` itself: one row per checkpoint plus its alarms in
-   `results/watch.log` (`ssh ... 'tail -f ~/aow/results/watch.log'`).
+   `results/watch.log`. Stream it HERE in the background too, ending on
+   ALL_DONE: `ssh ... 'cd ~/aow; until [ -f results/watch.log ]; do sleep
+   2; done; tail -n +1 -f results/watch.log & T=$!; while [ ! -f
+   results/ALL_DONE ]; do sleep 10; done; sleep 8; kill $T'`. Stop a run
+   with `pkill -x puffer`, never `pkill -f "puffer train"`: -f matched the
+   ssh command line that carried it and killed that session.
    - ~5 min: `results/timings.jsonl` (export compiled 1 / cached 42) and
      the last training panel -- SPS ~24k, kl small.
    - halfway (user's habit): `scp` `results/train.log`, then
@@ -1202,6 +1207,74 @@ all 20/20 on the eval grid, standstill max |v| 0.11-0.19 m/s (fixes_72M
 `wishlist.md`, "pivots". `standstill.py` needs `--config` for a 20-wide
 policy, and `per_command --style` refuses a policy without the bit, even
 at 0.
+
+**Run 2: the multiplier, at 16k worlds (ran 10-18).**
+`CONFIG=config/rl_general_v3_style_mult.yaml NW=16384 HORIZON=16`.
+- **Why horizon 16.** In the 5090 benchmark (`results_5090_bench/`, 240 s
+  each, same ini) learning tracked EPOCHS, not steps: return 268 at epoch
+  21 / 5.5M steps on 4k worlds, 398 at epoch 20 / 21.0M on 16k. An epoch
+  is horizon x worlds samples, and 16k runs only 1.87x faster (94.6k vs
+  50.6k steps/s), so 16k at horizon 64 is SLOWER per epoch in wall time.
+  16k x 16 keeps the batch (262144 samples, 128 gradient steps an epoch,
+  the checkpoint every ~6.5M steps): an epoch ~2.8 s against ~5.2 s, 80M
+  steps in ~14 min. Cost: rollout pieces of 0.32 s (from 1.28), so the
+  advantage bootstraps sooner and the MinGRU trains on shorter sequences.
+  The hidden STATE is not cut [read, `src/pufferl.cu` @ ea7f989, and both
+  runs' saved ini]: `reset_every_horizon = 0` (default.ini; not set by
+  aow_bike.ini), so the state carries across horizons and is zeroed only
+  on a terminal (`zero_term_state`; our bridge sends time limits as
+  terminals, so every episode end). Training starts each segment from the
+  state snapshotted at its first step (`snapshot_state` ->
+  `initial_states` -> `train_state`): the GRADIENT is truncated at the
+  horizon, the state is not. Also `async = 1`: rollouts act with a
+  one-epoch-stale copy of the policy.
+  32k / 64k would need horizon 8 / 4 for ~10 % more; not tried.
+- **`HORIZON=`** seds `[train] horizon` after `install.sh`, like
+  `PUFFER_SEED`; `run_pod.sh` logs it beside `total_agents` in build.log.
+- **Two changes in one run** (the user's call): bit-off behaviour against
+  run 1 mostly isolates the world count, the spins mostly the reward.
+
+**It ran, 2026-10-18** [measured]. Two secure 5090s on 74.2.96.x pulled
+pypi at ~200-300 KB/s (github 90 KB/s) and were terminated before any
+copy; EU-CZ-1 (`dataCenterIds`) gave 224 MB/s. The FIRST attempt (flat
+`--curriculum-lead 0.1`) was stopped at 464 s / ~35M steps: difficulty
+0.013 at 19.7M and 0.117 at 32.8M, against run 1's 0.38 and 0.81. The lead
+caps the rise at ~lead per episode length, i.e. per 750 x NW samples, 4x
+more samples at 16k; `run_pod.sh` now defaults it to 0.1 x NW/4096
+(`results_5090_mult_lead01/`). The relaunch, lead 0.4
+(`results_5090_mult/`): 80M steps in 1085 s of training (82-90k steps/s;
+1754 s at 4k), difficulty 0.17 (19.7M), 0.61 (32.8M), 1.0 from 52M; fall
+0.02-0.08 from 59M; two KL HIGH panels (0.171 at 6.6M, 0.354 at 19.7M),
+kl 0.03-0.05 after. Converted `general_puffer_mult_{52,72,80}M`: 0/20
+falls each way, 7/9 turns forward, 2/2 straight, but the bit-off HOLD
+creeps (-0.02..-0.05 m/s; standstill 0.13-0.24 m in 5 s, run 1 0.02-0.11;
+eval-grid drift 0.15-0.20 m, run 1 0.015-0.025). The style result is in
+`wishlist.md`. Pod ~32 min + two bad ones, ~$0.75.
+
+Curves, the two runs on steps, training wall time and bike time per world
+(steps / worlds x 0.02 s, in 15 s episodes):
+`python analysis/gpu/phase3/compare_curves.py --tag style_4k_vs_16k
+"run 1: 4k x 64, add=analysis/gpu/phase3/results_5090_style/train.log"
+"run 2: 16k x 16, mult, lead 0.4=analysis/gpu/phase3/results_5090_mult/train.log"`
+-> `analysis/plots/gpu_curves_style_4k_vs_16k.png`. The panel's
+"difficulty" is the mean difficulty that episodes ENDING that epoch were
+PLAYED at (`last_diff`), so it lags the shared value by up to one episode
+(750 steps x worlds: 3.1M samples at 4k, 12.3M at 16k) and is not
+monotonic -- run 2's dip 0.4 -> 0.13 at ~27M is the cohort started near
+15M (at ~0.13) truncating together after the collapse [reasoned; the
+shared value itself only rises: atomic adds, capped at 1, and is not
+logged]. On that lagged panel, 0.9 at 35.1M / 11.2 min (4k) and 52.2M /
+10.2 min (16k). 16k fell back to fall ~1.0 twice (~20-25M, ~33-38M) with kl
+up to 0.96. In BIKE time run 2's bikes lived ~6.5 episodes each (run 1
+~26), and run 1's difficulty climbs in stairs ~0.1 an episode apart (the
+lead cap, visible) where run 2's are ~0.4 (lead 0.4): same pace per
+sample, 4x coarser per episode. The second collapse follows the 0.4 ->
+0.8 stair; the FIRST is not the stair -- the lead-0.1 launch (stopped)
+collapsed at the same ~1.6 episodes / ~20-25M with difficulty ~0.05.
+Cause unknown. 16k's entropy sits lower throughout; the lead-0.1 launch's
+went to ~0.1 by 40M. One seed each. Underlying cost of more worlds: the
+curriculum is paced per bike lifetime, and at 16k ten 0.1 stairs are
+~123M steps.
 
 ### Phase 4 -- algorithm parity
 

@@ -1,0 +1,43 @@
+  general_puffer_mult_52M: 0/20 fell
+  general_puffer_mult_72M: 0/20 fell
+  general_puffer_mult_80M: 0/20 fell
+row keys: ['cmd', 'drift_lat', 'drift_lon', 'drift_m', 'drift_max', 'drift_sd', 'fell', 'head_err_deg', 'head_err_med', 'head_err_tail', 'steer_deg', 'steps', 't_head_s', 'track', 'v_ach', 'v_lat_ach', 'v_lat_net', 'v_osc_rms', 'vel_err', 'vel_err_med', 'vel_err_tail', 'wheel_path_deg', 'wheel_turn_deg', 'wing_deg', 'wing_duty', 'wing_touch', 'yaw_turn_deg']
+style 0 52M cmd (0.0, 0.0, 0)  fell False  yaw     0.6  wheel    -0.6  path   140.5  head_tail 2.3410071679692037
+style 0 52M cmd (0.0, 0.0, 90)  fell False  yaw    91.5  wheel    90.0  path   279.7  head_tail 2.5564540095825206
+style 0 52M cmd (0.0, 0.0, 180)  fell False  yaw   181.1  wheel   180.6  path   371.1  head_tail 2.129081962050643
+style 0 52M cmd (0.0, 0.0, 170)  fell False  yaw   167.5  wheel   171.5  path   424.1  head_tail 3.508077628473091
+style 0 52M cmd (0.0, 0.0, -170)  fell False  yaw   190.2  wheel   190.3  path   457.3  head_tail 3.5456493362758414
+style 0 52M cmd (0.0, 0.0, -90)  fell False  yaw   -88.7  wheel   -89.3  path   195.8  head_tail 2.3435195511303095
+style 0 72M cmd (0.0, 0.0, 0)  fell False  yaw    -1.6  wheel     9.7  path   281.6  head_tail 2.7368593994787553
+style 0 72M cmd (0.0, 0.0, 90)  fell False  yaw    92.3  wheel    92.9  path   506.2  head_tail 2.4849587564829188
+style 0 72M cmd (0.0, 0.0, 180)  fell False  yaw   179.9  wheel   186.8  path   742.7  head_tail 3.114827369282461
+style 0 72M cmd (0.0, 0.0, 170)  fell False  yaw   169.0  wheel   173.3  path   623.0  head_tail 3.4816322058756533
+style 0 72M cmd (0.0, 0.0, -170)  fell False  yaw   190.2  wheel   197.0  path   654.5  head_tail 2.2639286439052144
+style 0 72M cmd (0.0, 0.0, -90)  fell False  yaw   -90.3  wheel   -78.1  path   399.0  head_tail 3.676790664403425
+style 0 80M cmd (0.0, 0.0, 0)  fell False  yaw    -0.8  wheel     8.8  path   705.0  head_tail 2.745712371448578
+style 0 80M cmd (0.0, 0.0, 90)  fell False  yaw    90.6  wheel    87.8  path   863.9  head_tail 1.6637322609595724
+style 0 80M cmd (0.0, 0.0, 180)  fell False  yaw   181.1  wheel   180.2  path  1004.7  head_tail 2.098013443169128
+style 0 80M cmd (0.0, 0.0, 170)  fell False  yaw   167.6  wheel   190.0  path   962.1  head_tail 3.188269007818165
+style 0 80M cmd (0.0, 0.0, -170)  fell False  yaw   189.3  wheel   201.1  path   947.6  head_tail 2.9489091621532473
+style 0 80M cmd (0.0, 0.0, -90)  fell False  yaw   -89.5  wheel   -74.1  path   736.0  head_tail 2.698959957134247
+  general_puffer_mult_52M: 0/20 fell
+  general_puffer_mult_72M: 0/20 fell
+  general_puffer_mult_80M: 0/20 fell
+style 1 52M cmd (0.0, 0.0, 0)  fell False  yaw    -0.8  wheel     3.4  path   193.3  head_tail 2.3663690770593666
+style 1 52M cmd (0.0, 0.0, 90)  fell False  yaw    86.2  wheel    93.6  path   248.9  head_tail 5.510814142857069
+style 1 52M cmd (0.0, 0.0, 180)  fell False  yaw   162.3  wheel   158.8  path   290.9  head_tail 19.543949682261545
+style 1 52M cmd (0.0, 0.0, 170)  fell False  yaw   143.0  wheel   144.0  path   266.4  head_tail 27.76881597941044
+style 1 52M cmd (0.0, 0.0, -170)  fell False  yaw   164.8  wheel   162.5  path   370.2  head_tail 32.813658460641996
+style 1 52M cmd (0.0, 0.0, -90)  fell False  yaw   -88.2  wheel   -58.1  path   378.7  head_tail 4.9740771981270155
+style 1 72M cmd (0.0, 0.0, 0)  fell False  yaw    -3.7  wheel     5.1  path   220.4  head_tail 5.922416823587508
+style 1 72M cmd (0.0, 0.0, 90)  fell False  yaw    90.9  wheel    97.6  path   404.2  head_tail 7.193010033996546
+style 1 72M cmd (0.0, 0.0, 180)  fell False  yaw   156.1  wheel   160.8  path   413.9  head_tail 25.96910113951561
+style 1 72M cmd (0.0, 0.0, 170)  fell False  yaw   143.0  wheel   150.8  path   438.9  head_tail 26.0082030601862
+style 1 72M cmd (0.0, 0.0, -170)  fell False  yaw   162.2  wheel   163.7  path   471.3  head_tail 31.751683148410162
+style 1 72M cmd (0.0, 0.0, -90)  fell False  yaw   -93.1  wheel   -61.0  path   411.7  head_tail 5.737712058997836
+style 1 80M cmd (0.0, 0.0, 0)  fell False  yaw    -5.4  wheel     9.1  path   309.0  head_tail 7.035213480097547
+style 1 80M cmd (0.0, 0.0, 90)  fell False  yaw    94.9  wheel    83.3  path   947.2  head_tail 8.610632793254767
+style 1 80M cmd (0.0, 0.0, 180)  fell False  yaw   165.7  wheel   163.9  path   513.9  head_tail 21.559056599186494
+style 1 80M cmd (0.0, 0.0, 170)  fell False  yaw   150.4  wheel   146.3  path   587.6  head_tail 21.712598498249758
+style 1 80M cmd (0.0, 0.0, -170)  fell False  yaw   170.7  wheel   171.1  path   471.4  head_tail 22.930369949615994
+style 1 80M cmd (0.0, 0.0, -90)  fell False  yaw   -90.6  wheel   -73.1  path   547.7  head_tail 4.607737537647059

@@ -1,0 +1,20 @@
+name, driver_version, memory.total [MiB]
+NVIDIA GeForce RTX 5090, 610.57.04, 32607 MiB
+Cuda compilation tools, release 12.8, V12.8.93
+Build cuda_12.8.r12.8/compiler.35583870_0
+{"step":"venv","wall_s":1.51709}
+{"step":"pip_mujoco_warp","wall_s":1.17169}
+{"step":"pip_nccl","wall_s":0.9561}
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.3
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA GeForce RTX 5090" (31 GiB, sm_120, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.18.0
+1.18.0 cuda:0
+{"step":"warp_init","wall_s":0.769784}
+mujoco==3.10.0
+mujoco-warp==3.10.0.3
+nvidia-nccl-cu12==2.27.3
+warp-lang==1.18.0

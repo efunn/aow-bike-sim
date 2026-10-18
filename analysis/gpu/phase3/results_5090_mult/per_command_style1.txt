@@ -1,0 +1,22 @@
+eval: 3 policies in parallel, one process each, --encoder counts --ahrs tm151_filter --ahrs-tau 2
+  general_puffer_mult_52M: 0/20 fell
+  general_puffer_mult_72M: 0/20 fell
+  general_puffer_mult_80M: 0/20 fell
+
+  policy                        turns fwd  straight fwd   hold v   fell
+  ---------------------------------------------------------------------
+  general_puffer_mult_52M             7/9           2/2    -0.04      0
+  general_puffer_mult_72M             7/9           2/2    -0.05      0
+  general_puffer_mult_80M             7/9           2/2    -0.02      0
+
+  turns fwd    = turning commands resolved body-FORWARD (character)
+  straight fwd = forward commands actually driven forward (competence)
+  hold v       = body velocity on the pure hold command, m/s
+  fell counts ALL 20; the two ratios exclude the commands it fell on.
+
+  wheel/yaw, in place            spin +90   spin -90  spin +170  spin -170  spin +180
+  -----------------------------------------------------------------------------------
+  general_puffer_mult_52M            1.09       0.66       1.01       0.99       0.98
+  general_puffer_mult_72M            1.07       0.66       1.05       1.01       1.03
+  general_puffer_mult_80M            0.88       0.81       0.97       1.00       0.99
+  ~1 = steered spin (wheel turns with the chassis), ~0 = pivot

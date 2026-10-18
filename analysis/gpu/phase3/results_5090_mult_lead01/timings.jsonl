@@ -1,0 +1,15 @@
+{"step":"venv","wall_s":2.28643}
+{"step":"apt_update","wall_s":3.06369}
+{"step":"pip_mujoco_warp","wall_s":11.7586}
+{"step":"pip_nccl","wall_s":0.918166}
+{"step":"apt_install","wall_s":14.4303}
+{"step":"puffer_fetch","wall_s":4.25686}
+{"step":"warp_init","wall_s":0.821194}
+{"step":"warp_cache_restore","wall_s":0.238816,"files":270}
+{"step":"pip_phase3","rc":0,"wall_s":5.4551}
+{"step":"export","rc":0,"wall_s":9.61271}
+{"step":"build","rc":0,"wall_s":7.12743}
+{"step":"check_v3s0","rc":0,"wall_s":54.9992}
+{"step":"check_random","rc":0,"wall_s":19.1342}
+{"step":"train","rc":143,"wall_s":464.134}
+{"step":"warp_cache","rc":0,"wall_s":1.49783}

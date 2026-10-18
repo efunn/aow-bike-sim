@@ -448,12 +448,41 @@ from the design below, mostly after your review:
   roll and steer. Headless, 15 s, 72M / 80M, 3 seeds [measured]: bit off
   -0.1..+0.1 cm/s, roll sd 0.7-1.0 deg, steer sd 3.3-5.0 deg; bit on
   -1.5..-2.3 cm/s, roll sd 0.46-0.61, steer sd 1.8-2.6.
+- **What a hold pays [measured, 10-18, 15 s x 3 seeds, per step].** On a
+  hold every term but velocity and heading is ~0 (upright, effort, smooth
+  < 1e-4): style_72M bit off 2.959 of 3.0 (vel 1.472, mean |v| 3.4 cm/s),
+  bit on 2.965 (|v| 3.8), mult_72M bit off 2.943 (vel 1.446, |v| 5.7).
+  Velocity is scored on TRUTH; the policy sees odometry. Most of |v| is the
+  balancing sway, net creep a fraction of it. So nothing in the reward
+  opposes holding still -- nor pulls hard toward it: a creeping hold gives
+  up ~0.5 % a step. (The eval config carries w_style 0, so no style column.)
 - **The 90 deg point (user).** Pivoting about a held wheel, steer passes
   90 deg relative to the chassis at a 90 deg turn, an unstable point;
   big turns need it to learn to go past that rather than stop short of it.
-- **Next (not decided):** a form in which refusing earns nothing, e.g. the
-  bit as a multiplier on the heading term, w_head x r_head x (1 + k x
-  r_style): pivot > steered > refuse at any discount.
+- **Run 2 (10-18): `style_form: mult`**
+  (`config/rl_general_v3_style_mult.yaml`, one line from run 1). The heading
+  term becomes w_head x r_head x (1 + w_style x r_style): refusing ~0, a
+  steered spin 1.0 at heading, a pivot 1.75; on a hold, as before. It does
+  nothing for the 90 deg point by itself. Trained together with 16k worlds
+  x horizon 16 (`gpu-training.md`), the user's call: the bit is ~15 % of
+  commands, so bit-off behaviour against run 1 mostly isolates the world
+  count, and the spins mostly the reward.
+  **Result [measured]** (`general_puffer_mult_{52,72,80}M`, tm151_filter):
+  it no longer refuses -- all 15 bit-on spin episodes turn, 0 falls -- but
+  it STEERS (wheel/yaw 0.66-1.09; no pivot). +-90 end within 5-9 deg; the
+  big turns stop 20-33 deg short of the command (yaw 143-171), where bit
+  off they end within 2-4 deg. So refusing is fixed and the pivot is not
+  found: nothing in the reward rewards the wheel until the heading is
+  nearly reached, and a steered spin gets there first. Bit off, the hold
+  CREEPS: hold v -0.02..-0.05 m/s, standstill 0.13-0.24 m in 5 s (run 1
+  0.02-0.11) -- the world count / horizon change, not the bit [reasoned:
+  the bit is off there].
+- **Decision (user, 10-18): drop `mult`, build on `add`.** The multiplier
+  made heading tracking worse (bit on, the big spins end 20-33 deg short;
+  bit off 2-4) and found no pivot. The next style run starts from run 1's
+  form, the front wheel rewarded on its own term (`style_form: add`,
+  `config/rl_general_v3_style.yaml`), and attacks the refusal some other
+  way. `style_form: mult` stays in the code as the record of the run.
 
 **The style bit: the design, as written before it was built. [reasoned]**
 - **Obs.** A new optional block `obs_style: ("style",)`, appended through

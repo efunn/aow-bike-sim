@@ -1,0 +1,22 @@
+     v_lon  v_lat  dpsi |  track  v_ach t_head   dist  steer  fell
+      0.00   0.00     0 |  0.982  -0.04   -0.00   0.8   0.02   0.19    3.1  
+      0.00   0.00    90 |  0.891  -0.04   -0.00   0.5   0.74   0.29    1.4  
+      0.00   0.00   180 |  0.807  -0.04   -0.01   0.2   0.96   0.44    2.1  
+      0.80   0.00     0 |  0.952   0.81   -0.04   4.9   0.02   4.12   11.0  
+      0.80   0.00    90 |  0.851   0.79   -0.03   7.2   0.52   3.67   13.3  
+      0.80   0.00   180 |  0.791   0.87   -0.04   2.1   0.90   3.34    5.3  
+      1.20   0.00     0 |  0.943   1.13   -0.05   5.0   0.02   5.56   10.3  
+     -0.50   0.00     0 |  0.960  -0.58    0.03   3.5   0.02   2.86    3.4  
+     -0.50   0.00    90 |  0.810  -0.58    0.04   1.5   1.28   2.39    3.8  
+      0.00   0.40     0 |  0.616   0.03    0.02   6.0   0.02   0.17   17.4  
+      0.60   0.00    45 |  0.898   0.66   -0.05   1.8   0.42   3.07    4.4  
+      0.60   0.40   180 |  0.527   0.68    0.02  19.1   1.02   2.36   11.8  
+      0.00   0.00   170 |  0.819  -0.04    0.00   3.6   0.94   0.41    3.2  
+      0.00   0.00  -170 |  0.785  -0.04    0.01   0.3   1.20   0.42    1.8  
+      0.00   0.00   -90 |  0.838  -0.04   -0.01   0.4   1.24   0.33    3.2  
+      0.80   0.00   -90 |  0.655   0.74    0.03  11.4   1.72   3.30   13.7  
+     -0.50   0.00   -90 |  0.481  -0.55    0.02  17.9   5.00   2.26    1.8  
+      0.00  -0.40     0 |  0.606   0.14   -0.04  10.6   0.02   0.73   15.3  
+      0.60   0.00   -45 |  0.810   0.58    0.01   7.9   0.68   2.78   11.2  
+      0.60  -0.40   180 |  0.613   0.74   -0.07   8.1   1.70   2.88    5.0  
+{"wrote": "/Users/efun/Library/CloudStorage/Dropbox/code/aow-bike-sim/moves/general_puffer_mult_52M.npz", "unsaved_weights": 5, "logstd": [-0.7101, -1.0631, -1.3873], "metrics": {"survive_rate": 1.0, "wing_touch_rate": 0.0, "track": 0.782, "track_geo": 0.767, "vel_err": 0.112, "head_err_deg": 5.6, "n_eval": 20, "drift_m": 0.194, "drift_lon": -0.194, "drift_lat": 0.002, "drift_bearing_deg": 179.5, "drift_max": 0.194, "drift_sd": 0.054, "steer_rest_deg": 3.1, "speed_ratio_fwd": 0.973, "speed_ratio_rev": 1.151, "crab_ratio_left": 0.323, "crab_ratio_right": 0.294, "crab_head_err": 10.9, "crab_osc": 0.0, "wing_deg": 0.0, "wing_duty": 0.0, "turn_asym": 0.474, "by_family": {"hold": {"n": 1, "survive_rate": 1.0, "head_err_tail": 3.6, "vel_err_med": 0.053, "drift_m": 0.194, "drift_overshoot": 0.0}, "spin": {"n": 2, "survive_rate": 1.0, "t_head_s": 0.99, "t_head_n": 2, "head_err_tail": 3.4, "vel_err_med": 0.069}, "cruise": {"n": 9, "survive_rate": 1.0, "t_head_s": 0.98, "t_head_n": 6, "head_err_tail": 7.5, "vel_err_med": 0.103}, "crab": {"n": 2, "survive_rate": 1.0, "head_err_tail": 10.8, "vel_err_med": 0.379}, "turn_big": {"n": 6, "survive_rate": 1.0, "t_head_s": 0.99, "t_head_n": 6, "head_err_tail": 3.7, "vel_err_med": 0.091}}}}

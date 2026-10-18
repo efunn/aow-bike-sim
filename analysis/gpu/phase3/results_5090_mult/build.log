@@ -1,0 +1,6 @@
+Compiling ocean/aow_bike/aow_bike.cu -> puffer...
+Built: ./puffer
+built /root/puffer/puffer for aow_bike (16384 worlds, obs 20, graph /root/aow/graphs/aow_bike_16384)
+15:seed = 42
+22:total_agents = 16384
+57:horizon = 16
