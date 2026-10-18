@@ -230,3 +230,79 @@ def test_warp_kernels_match_the_spec():
     e_true = gs.wheel_err(extract_state(e.data, e._p0).yaw, steer, lat_true, e._rake)
     want = e.w_style * np.exp(-(e_true / e.sigma_style) ** 2)
     assert out[1.0][1] - out[0.0][1] == pytest.approx(want, rel=1e-4, abs=1e-5)
+
+
+def _cfg_mult():
+    cfg = _cfg()
+    cfg["reward"]["style_form"] = "mult"
+    return cfg
+
+
+def test_mult_pays_only_as_far_as_the_heading_is_reached():
+    """style_form mult (run 2): the bit multiplies the heading term, so on an
+    in-place turn it pays w_head x r_head x w_style x r_style -- ~0 while the
+    heading is far off, i.e. refusing the turn earns nothing from it."""
+    from aow_sim.control.general_env import GeneralEnv
+    e0, e1 = GeneralEnv(None, _cfg_mult(), seed=0), GeneralEnv(None, _cfg_mult(), seed=0)
+    assert e1.style_form == "mult"
+    acts = np.random.default_rng(3).uniform(-0.8, 0.8, (25, 3))
+    for dpsi in (1.5, 0.1):
+        _reset(e0, 0.0, dpsi=dpsi), _reset(e1, 1.0, dpsi=dpsi)
+        for a in acts:
+            (_o0, r0, *_), (_o1, r1, *_, i1) = e0.step(a), e1.step(a)
+            r_head = np.exp(-(np.radians(i1["head_err_deg"]) / e1.sigma_psi) ** 2)
+            r_style = np.exp(-(np.radians(i1["wheel_err_deg"]) / e1.sigma_style) ** 2)
+            assert r1 - r0 == pytest.approx(
+                e1.rw["w_head"] * r_head * e1.w_style * r_style, abs=1e-9)
+            if dpsi == 1.5 and i1["head_err_deg"] > 60:
+                assert r1 - r0 < 0.01       # far from heading: the bit pays ~nothing
+
+
+def test_style_form_is_checked():
+    from aow_sim.control.general_env import GeneralEnv
+    cfg = _cfg()
+    cfg["reward"]["style_form"] = "multiply"
+    with pytest.raises(ValueError, match="style_form"):
+        GeneralEnv(None, cfg, seed=0)
+
+
+def test_warp_kernel_mult_matches_the_cpu_env():
+    """gpu/obs_reward.py under style_form mult: the bit's reward difference
+    is w_head x r_head x w_style x r_style. r_head is on the bike's OWN
+    heading psi (as GeneralEnv's), here psi0 unchanged by the launch;
+    r_style on truth."""
+    wp = pytest.importorskip("warp")
+    pytest.importorskip("mujoco_warp")
+    from aow_sim.control.general_env import GeneralEnv
+    from aow_sim.control.balance import extract_state
+    from aow_sim.gpu import obs_reward as gor
+    wp.config.quiet = True
+    wp.init()
+    e = GeneralEnv(None, _cfg_mult(), seed=0)
+    c = gor.const_from(e)
+    assert c.style_mult == 1
+    e.reset(seed=1)
+    for a in np.random.default_rng(2).uniform(-1, 1, (10, 3)):
+        e.step(a)
+    qpos, qvel = e.data.qpos.copy(), e.data.qvel.copy()
+    psi0, lat_obs, lat_true, psi_cmd = 0.3, 1.1, -0.4, 0.5
+    f = lambda x: wp.array(np.atleast_1d(np.asarray(x, np.float32)), dtype=float, device="cpu")
+    f2 = lambda x: wp.array(np.asarray(x, np.float32)[None], dtype=float, device="cpu")
+    i1 = lambda x: wp.array(np.array([x], np.int32), dtype=int, device="cpu")
+    rew = {}
+    for bit in (0.0, 1.0):
+        obs = wp.zeros((1, 20), dtype=float, device="cpu")
+        r = wp.zeros(1, dtype=float, device="cpu")
+        gor.launch(c, f2(qpos), f2(qvel), f2([1.0, 0, 0, 0]), f2(np.zeros(3)),
+                   f(0.0), f(0.0), f(0.0), f2(np.zeros(2)), f(psi_cmd), f(bit),
+                   f(lat_obs), f(lat_true), f(psi0), f(0.0), f2(np.zeros(3)),
+                   f2(np.zeros(3)), i1(0), f(0.0), i1(0), obs, r, i1(0), i1(0))
+        rew[bit] = float(r.numpy()[0])
+    yaw = extract_state(e.data, e._p0).yaw
+    steer = float(qpos[e._sj])
+    e_true = gs.wheel_err(yaw, steer, lat_true, e._rake)
+    psi_err = np.arctan2(np.sin(psi_cmd - psi0), np.cos(psi_cmd - psi0))
+    want = (e.rw["w_head"] * np.exp(-(psi_err / e.sigma_psi) ** 2)
+            * e.w_style * np.exp(-(e_true / e.sigma_style) ** 2))
+    assert want > 0.05                      # the case is not a trivial zero
+    assert rew[1.0] - rew[0.0] == pytest.approx(want, rel=1e-3, abs=1e-5)

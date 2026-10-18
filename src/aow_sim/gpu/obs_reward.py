@@ -44,6 +44,7 @@ class RewConst:
     steer_rate_on: int    # obs[5] from the odometry's Pi-style steer rate
     style_on: int         # obs[17:20] the style bit and wheel error; w_style paid
     w_style: float
+    style_mult: int       # GeneralEnv.style_form: 0 "add", 1 "mult" (x w_head r_head)
     sigma_style: float    # [rad]
     cos_rake: float
 
@@ -69,6 +70,7 @@ def const_from(env) -> RewConst:
     c.steer_rate_on = int(env._steer_rate is not None)
     c.style_on = int(env.obs_style)
     c.w_style, c.sigma_style = float(env.w_style), float(env.sigma_style)
+    c.style_mult = int(env.style_form == "mult")
     c.cos_rake = float(np.cos(env._rake))
     return c
 
@@ -183,7 +185,10 @@ def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtyp
     if c.style_on == 1 and style[world] == 1.0:
         # general_spec.wheel_err on truth: the truth yaw, the truth latch
         e = wrap_pi(gcmd.wheel_world(yaw, steer, c.cos_rake) - latch_true[world])
-        r = r + c.w_style * wp.exp(-(e / c.sigma_style) * (e / c.sigma_style))
+        r_bit = c.w_style * wp.exp(-(e / c.sigma_style) * (e / c.sigma_style))
+        if c.style_mult == 1:
+            r_bit = c.w_head * r_head * r_bit
+        r = r + r_bit
     prev_a[world, 0] = a0
     prev_a[world, 1] = a1
     prev_a[world, 2] = a2

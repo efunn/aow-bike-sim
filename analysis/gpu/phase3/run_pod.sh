@@ -9,6 +9,20 @@
 #   ENV_SEED=1 PUFFER_SEED=43 bash ...              # another seed: BOTH halves
 #   CONFIG=config/rl_general_v3_style.yaml bash ... # another env config
 #                                                   # (default rl_general_v3.yaml)
+#   NW=16384 HORIZON=16 bash ...                    # more worlds, SAME batch
+#
+# HORIZON is aow_bike.ini's [train] horizon (64 as shipped). An epoch is
+# horizon x worlds samples and learning tracked EPOCHS, not steps, in the
+# 5090 benchmark (results_5090_bench: epoch ~20 gave return 268 at 4k and
+# 398 at 16k, the 16k epoch 4x the samples). So scale worlds with horizon
+# down to keep horizon x worlds = 262144: 16k x 16.
+#
+# CURRICULUM_LEAD is export_graph --curriculum-lead. DEFAULT 0.1 x NW/4096,
+# not a flat 0.1: the lead caps the shared difficulty's rise at ~lead per
+# episode length of play, and an episode length is 750 x NW samples, so a
+# flat 0.1 at 16k climbs 4x slower per sample than at 4k. Measured
+# 2026-10-17, 16k x 16 at 0.1: difficulty 0.013 at 19.7M steps and 0.117
+# at 32.8M, against 0.38 and 0.81 at 4k (that run stopped there).
 #
 # Two seeds: ENV_SEED is baked into the exported graph (commands, domain
 # draws; export_graph --seed, default 0) and PUFFER_SEED is aow_bike.ini's
@@ -37,9 +51,10 @@ NW=${NW:-4096}
 TRAIN_S=${TRAIN_S:-600}
 ENV_SEED=${ENV_SEED:-0}
 CONFIG=${CONFIG:-config/rl_general_v3.yaml}
+CURRICULUM_LEAD=${CURRICULUM_LEAD:-$(awk "BEGIN{print 0.1 * $NW / 4096}")}
 G=graphs/aow_bike_$NW
 step pip_phase3 pip install -q gymnasium==1.3.0 scipy pyyaml
-step export     python -m aow_sim.gpu.export_graph --config $CONFIG --nworld $NW --out $G --seed $ENV_SEED || exit 1
+step export     python -m aow_sim.gpu.export_graph --config $CONFIG --nworld $NW --out $G --seed $ENV_SEED --curriculum-lead $CURRICULUM_LEAD || exit 1
 du -sh $G.wrp ${G}_modules | tee -a results/export.log
 # SKIP_CHECKS=1 (the card benchmark, bench_card.sh): the checks fly every
 # world, ~75 s at 4096 and far longer at 64k, and judge the graph, not the card
@@ -55,7 +70,10 @@ wait $BUILD_PID || { echo "build failed: results/build.log"; exit 1; }
 if [ -n "${PUFFER_SEED:-}" ]; then
     sed -i "s/^seed = .*/seed = $PUFFER_SEED/" ~/puffer/config/aow_bike.ini
 fi
-grep -n '^seed' ~/puffer/config/aow_bike.ini | tee -a results/build.log
+if [ -n "${HORIZON:-}" ]; then
+    sed -i "s/^horizon = .*/horizon = $HORIZON/" ~/puffer/config/aow_bike.ini
+fi
+grep -n '^seed\|^horizon\|^total_agents' ~/puffer/config/aow_bike.ini | tee -a results/build.log
 # the trainer, headless, for a fixed wall time; its own log is the result
 ( cd ~/puffer && step_t0=$(date +%s.%N) && \
   timeout $TRAIN_S ./puffer train --headless > $OLDPWD/results/train.log 2>&1; \

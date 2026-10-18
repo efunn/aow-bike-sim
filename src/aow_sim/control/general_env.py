@@ -448,6 +448,14 @@ class GeneralEnv(gym.Env):
         self.style_p = float(env.get("style_p", 0.0))
         self.w_style = float(self.rw.get("w_style", 0.0))
         self.sigma_style = np.deg2rad(float(self.rw.get("sigma_style_deg", 25.0)))
+        # How it pays. "add" (run 1, 10-17): + w_style x r_style, which a
+        # policy collected by NOT turning -- it learned to refuse in-place
+        # turns. "mult": the heading term becomes w_head x r_head x (1 +
+        # w_style x r_style), so the bit pays only as far as the turn is
+        # done: pivot > steered spin > refusing, at any discount.
+        self.style_form = str(self.rw.get("style_form", "add"))
+        if self.style_form not in ("add", "mult"):
+            raise ValueError(f"reward.style_form: 'add' or 'mult', got {self.style_form!r}")
         if (self.style_p or self.w_style) and not self.obs_style:
             raise ValueError("style_p / w_style without obs_style: the policy "
                              "would be paid on a bit it cannot see")
@@ -1277,8 +1285,9 @@ class GeneralEnv(gym.Env):
         e_wheel = (wheel_err(s.yaw, float(self.data.qpos[self._sj]),
                              self._latch_true, self._rake) if self._style else 0.0)
         r_style = np.exp(-(e_wheel / self.sigma_style) ** 2)
+        r_bit = self.w_style * self._style * r_style
         reward = (rw["w_vel"] * r_vel
-                  + self.w_style * self._style * r_style
+                  + (rw["w_head"] * r_head * r_bit if self.style_form == "mult" else r_bit)
                   + rw["w_head"] * r_head
                   + rw["w_alive"]
                   - rw["w_upright"] * s.roll ** 2
