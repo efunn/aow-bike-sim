@@ -254,14 +254,49 @@ class BikeBus:
               f"(servo shaft); commands are relative to it")
 
     def arm(self, ids=None) -> None:
-        """Torque on, then re-read the gains: a torque change is where a gain
-        gets quietly restored (control_tables/README.md)."""
-        self.torque(True, ids)
-        bad = self._verify_gains()
+        """Torque on, then read back Torque Enable and the gains: a torque
+        change is where a gain gets quietly restored (control_tables/README.md).
+
+        TWO TRANSACTIONS, because a re-arm runs INSIDE a control tick. It was
+        a confirmed write per servo plus one read per gain register, of every
+        servo -- 13 round trips at 0.99 ms each (measured on the Pi), which
+        made each re-arm tick ~29 ms and handed the policy, on its first tick
+        after a fall, a 3-tick gap and then a burst of catch-up ticks. Now one
+        SyncWrite and one SyncRead of the span from Torque Enable (64) to the
+        last gain. The SyncWrite returns no status, which is why `torque()`
+        confirms each write; here the read-back of Torque Enable is the
+        confirmation, and a stronger one (it says the servo is ON, not only
+        that it acknowledged).
+
+        Only the servos being armed are checked: their torque is what changed.
+        On any mismatch, all of them go back off through the confirmed path.
+        """
+        ids = self.ids if ids is None else tuple(ids)
+        self._dxl.torque(True, ids)
+        names = {i: ["Torque Enable", *self.gains.get(i, {})] for i in ids}
+        try:
+            got = self._dxl.sync_read_raw(names)
+        except RuntimeError as e:
+            self.torque(False, ids)
+            raise RuntimeError(f"arm read-back failed: {e}") from e
+        bad = self._arm_mismatches(got)
         if bad:
             self.torque(False, ids)
-            raise RuntimeError("gains changed across torque enable: "
-                               + "; ".join(bad))
+            raise RuntimeError("arm read-back: " + "; ".join(bad))
+
+    def _arm_mismatches(self, got: dict) -> list:
+        """`sync_read_raw` result -> ["id 103 Torque Enable: read 0", ...].
+        Pure, so the rule is testable with no bus."""
+        bad = []
+        for i, regs in got.items():
+            if regs["Torque Enable"] != 1:
+                bad.append(f"id {i} Torque Enable: read {regs['Torque Enable']}"
+                           " (did not arm)")
+            for name, value in self.gains.get(i, {}).items():
+                if regs[name] != int(value):
+                    bad.append(f"id {i} {name}: wanted {int(value)}, "
+                               f"read {regs[name]} (changed across torque enable)")
+        return bad
 
     def _build_map(self) -> IndirectMap:
         """The bike's indirect layout. No I/O, so tests can check it."""

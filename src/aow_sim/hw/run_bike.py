@@ -560,11 +560,8 @@ class BikeRunner:
         self.ctl.crawl.feed(s["w_servo_a"], s["w_servo_b"])
 
         roll, pitch, yaw = _rpy(a.quat)
-        v_lon, v_lat = self.est.update(
-            dt, s["w_servo_a"], s["w_servo_b"],
-            steer_joint=s["steer_pos"], yaw_rate=a.gyro[2],
-            accel_body=a.accel, roll=roll, pitch=pitch)
-        self.data.set_velocity(body_to_world(v_lon, v_lat, yaw))
+        self._sensed = (s, a, dt, roll, pitch, yaw)
+        self._estimate()
         self.data.integrate_position(dt)
         self._roll = roll
         self._yaw = yaw
@@ -584,6 +581,16 @@ class BikeRunner:
         self._qos = a.qos
         self._accel = a.accel
         self._health = s["health"]
+
+    def _estimate(self) -> None:
+        """This tick's sensor sample -> `self.est` -> the velocity in `data`.
+        No bus I/O and no clock: `_engage` re-runs it on a fresh estimator."""
+        s, a, dt, roll, pitch, yaw = self._sensed
+        v_lon, v_lat = self.est.update(
+            dt, s["w_servo_a"], s["w_servo_b"],
+            steer_joint=s["steer_pos"], yaw_rate=a.gyro[2],
+            accel_body=a.accel, roll=roll, pitch=pitch)
+        self.data.set_velocity(body_to_world(v_lon, v_lat, yaw))
 
     def _apply_command(self) -> None:
         age = self.link.age()
@@ -870,7 +877,7 @@ class BikeRunner:
                                "policy out, righting servo live. r once "
                                "upright and still")
         elif event == "rearm":
-            self._engage()
+            self._engage(fresh_read=False)   # this tick already sensed
             # ONLY WITH --torque. This armed unconditionally until 2026-09-18,
             # so `r` after a cut ENERGISED a --no-torque session -- the one
             # mode whose whole promise is that nothing can move.
@@ -932,7 +939,7 @@ class BikeRunner:
             f"no command in {timeout:.0f} s. Start the ground station, or run "
             f"with --no-link for a bench session with no operator.")
 
-    def _engage(self) -> None:
+    def _engage(self, fresh_read: bool = True) -> None:
         """Hand the actuators to the policy, from a clean slate.
 
         Called at startup AND on every re-arm after a fall, and it has to be
@@ -943,9 +950,18 @@ class BikeRunner:
         prev_action it was using as it went over, and a velocity filter full of
         samples from the fall, is feeding it an observation from a bike that no
         longer exists.
+
+        `fresh_read=False` is the re-arm, which runs inside a tick that has
+        already sensed: the new estimator takes THAT tick's sample instead of
+        a second bus read. The second read cost ~2-3 ms of a tick already
+        over budget, advanced `data.time` a few ms twice in one tick, and fed
+        the servos' rate filters a sample a few ms after the last.
         """
         self.est = VelocityEstimator(self.params)
-        self._sense()
+        if fresh_read:
+            self._sense()
+        else:
+            self._estimate()
         self.ctl.reset(self.model, self.data)
         if self.controller == "lqr":
             # reset() already dropped a fresh line anchor where the bike

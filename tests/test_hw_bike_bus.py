@@ -376,3 +376,82 @@ def test_the_shared_slots_mean_the_same_register_on_both_models():
     for name in READ_BLOCK + ("Torque Enable", "Present Input Voltage",
                               "Goal Velocity", "Goal Position"):
         assert (a[name].address, a[name].size) == (b[name].address, b[name].size), name
+
+
+class _ArmDxl:
+    """Stands in for DynamixelBus under `BikeBus.arm`: records the calls and
+    answers the read-back from `regs`."""
+
+    def __init__(self, regs):
+        self.regs, self.calls = regs, []
+
+    def torque(self, on, ids=None):
+        self.calls.append(("sync_torque", on, tuple(ids)))
+
+    def sync_read_raw(self, names):
+        self.calls.append(("sync_read", {i: list(n) for i, n in names.items()}))
+        return {i: {n: self.regs[i][n] for n in ns} for i, ns in names.items()}
+
+    def write_raw(self, i, name, raw):
+        self.calls.append(("write", i, name, raw))
+
+
+def _armable(regs):
+    b = BikeBus(load_params(), ids=(1, 2, 3), righting_id=4,
+                gains={"drive": {"Velocity P Gain": 100, "Velocity I Gain": 1920},
+                       "steer": {"Position P Gain": 900},
+                       "righting": {"Position P Gain": 700, "Position D Gain": 1400}})
+    b._dxl = _ArmDxl(regs)
+    return b
+
+
+def _good():
+    return {1: {"Torque Enable": 1, "Velocity P Gain": 100, "Velocity I Gain": 1920},
+            2: {"Torque Enable": 1, "Velocity P Gain": 100, "Velocity I Gain": 1920},
+            3: {"Torque Enable": 1, "Position P Gain": 900},
+            4: {"Torque Enable": 1, "Position P Gain": 700, "Position D Gain": 1400}}
+
+
+def test_a_rearm_is_two_transactions_and_checks_only_what_it_armed():
+    """It was 13 round trips (~13 ms measured on the Pi) inside a control
+    tick, including the righting servo's gains, whose torque never changed."""
+    b = _armable(_good())
+    b.arm(b.policy_ids)
+    assert b._dxl.calls == [
+        ("sync_torque", True, (1, 2, 3)),
+        ("sync_read", {1: ["Torque Enable", "Velocity P Gain", "Velocity I Gain"],
+                       2: ["Torque Enable", "Velocity P Gain", "Velocity I Gain"],
+                       3: ["Torque Enable", "Position P Gain"]})]
+
+
+def test_startup_arm_covers_every_servo():
+    b = _armable(_good())
+    b.arm()
+    assert 4 in b._dxl.calls[1][1]
+
+
+@pytest.mark.parametrize("sid, reg, val, says", [
+    (3, "Torque Enable", 0, "did not arm"),
+    (1, "Velocity I Gain", 0, "changed across torque enable")])
+def test_a_bad_read_back_disarms_through_the_confirmed_path(sid, reg, val, says):
+    """The SyncWrite returns no status, so the read-back of Torque Enable is
+    the confirmation; on any mismatch every armed servo goes off one
+    confirmed write at a time."""
+    regs = _good()
+    regs[sid][reg] = val
+    b = _armable(regs)
+    with pytest.raises(RuntimeError, match=says):
+        b.arm(b.policy_ids)
+    assert b._dxl.calls[2:] == [("write", i, "Torque Enable", 0) for i in (1, 2, 3)]
+
+
+def test_the_arm_span_is_one_short_read_on_both_models():
+    """Torque Enable and every gain sit in 64..85 on the XC430 and the XC330,
+    so the read-back is one 22-byte SyncRead."""
+    for m in ("xc430_w150", "xc330_t181"):
+        t = table_by_name(m)
+        names = ["Torque Enable", *VELOCITY_GAIN_REGISTERS.values(), "Position P Gain",
+                 "Position I Gain", "Position D Gain"]
+        lo = min(t[n].address for n in names)
+        hi = max(t[n].address + t[n].size for n in names)
+        assert (lo, hi - lo) == (64, 22)

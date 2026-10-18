@@ -324,6 +324,7 @@ class DynamixelBus:
         self._port = self._packet = None
         self._map = self._reader = self._writer = None
         self._fast = True
+        self._span_readers: dict = {}     # sync_read_raw's readers, by span
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -550,6 +551,43 @@ class DynamixelBus:
             self._writer = GroupSyncWrite(self._port, self._packet,
                                           imap.write_addr, imap.write_len)
         return imap
+
+    def sync_read_raw(self, names: dict) -> dict:
+        """``{id: [register names]}`` -> ``{id: {name: raw}}`` in ONE
+        (Fast)SyncRead of the direct address span covering every name.
+
+        Not the per-tick path (that is the indirect map in `read_frame`): for
+        a burst of plain registers that would otherwise be one round trip
+        each, ~1 ms apiece on the Pi. Each id is decoded through its OWN
+        table, so the names may differ per id as long as the span holds them.
+        Raises if any servo is missing from the reply.
+        """
+        from dynamixel_sdk import GroupSyncRead
+
+        regs = {i: {n: self.tables[i][n] for n in ns} for i, ns in names.items()}
+        flat = [r for rs in regs.values() for r in rs.values()]
+        lo = min(r.address for r in flat)
+        hi = max(r.address + r.size for r in flat)
+        key = (id(self._port), lo, hi - lo, tuple(regs))   # a reopen is a new port
+        cache = self._span_readers
+        if key not in cache:
+            reader = GroupSyncRead(self._port, self._packet, lo, hi - lo)
+            for i in regs:
+                if not reader.addParam(i):
+                    raise RuntimeError(f"SyncRead refused id {i}")
+            cache[key] = reader
+        reader = cache[key]
+        fast = hasattr(reader, "fastSyncRead")
+        rc = reader.fastSyncRead() if fast else reader.txRxPacket()
+        if rc != 0:
+            raise RuntimeError(f"SyncRead {lo}..{hi - 1} failed: rc={rc}")
+        out = {}
+        for i, rs in regs.items():
+            if not reader.isAvailable(i, lo, hi - lo):
+                raise RuntimeError(f"SyncRead {lo}..{hi - 1}: no data for id {i}")
+            out[i] = {n: int(reader.getData(i, r.address, r.size))
+                      for n, r in rs.items()}
+        return out
 
     def read_frame(self, decode: bool = True) -> dict:
         """One FastSyncRead -> ``{id: {label: value}}``, each value decoded

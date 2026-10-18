@@ -554,13 +554,56 @@ def _runner(torque=True, age=0.0):
     said = []
     r = SimpleNamespace(bus=_Bus(), guard=FallGuard(), torque=torque,
                         require_link=True, link=link, _link_lost=False,
-                        _roll=0.0, _engage=lambda: None, said=said,
+                        _roll=0.0, said=said,
                         _servo_fault=False, _errs={},
                         _pack_low=False, pack=RB.PackMonitor(),
                         _health={}, _dt_meas=0.01,
                         _event=lambda kind, text: said.append((kind, text)))
+    r._engage = lambda fresh_read=True: r.bus.calls.append(("engage", fresh_read))
     r._hold_reason = lambda: RB.BikeRunner._hold_reason(r)
     return r
+
+
+def test_a_rearm_reuses_the_ticks_reading_rather_than_reading_again():
+    """The re-arm runs inside a tick that has already sensed. A second bus
+    read there cost ~2-3 ms of a tick that was already ~29 ms, and stepped
+    `data.time` twice in one tick."""
+    r = _runner(torque=True)
+    RB.BikeRunner._on_guard_event(r, "rearm")
+    assert ("engage", False) in r.bus.calls
+
+
+def test_engage_without_a_read_feeds_the_new_estimator_this_ticks_sample():
+    """No bus, no clock: only the fresh estimator and the velocity move."""
+    class Est:
+        def __init__(self, params):
+            self.seen = []
+
+        def update(self, dt, wa, wb, **kw):
+            self.seen.append((dt, wa, wb))
+            return 0.3, 0.0
+
+    data = SimpleNamespace(time=1.23, v=None)
+    data.set_velocity = lambda v: setattr(data, "v", tuple(v))
+    s = {"w_servo_a": 4.0, "w_servo_b": -4.0, "steer_pos": 0.0}
+    a = SimpleNamespace(gyro=(0.0, 0.0, 0.0), accel=(0.0, 0.0, 9.81))
+    r = SimpleNamespace(params={}, data=data, controller="policy",
+                        gen_name="x", _sensed=(s, a, 0.01, 0.0, 0.0, 0.0))
+    r._sense = lambda: pytest.fail("re-arm must not read the bus again")
+    r._estimate = lambda: RB.BikeRunner._estimate(r)
+    r.ctl = SimpleNamespace(reset=lambda m, d: None,
+                            engage_general=lambda d, name, reuse: None,
+                            set_command=lambda v_cmd_world: None)
+    r.model = None
+    orig = RB.VelocityEstimator
+    RB.VelocityEstimator = Est
+    try:
+        RB.BikeRunner._engage(r, fresh_read=False)
+    finally:
+        RB.VelocityEstimator = orig
+    assert r.est.seen == [(0.01, 4.0, -4.0)]
+    assert data.time == 1.23
+    assert data.v[0] == pytest.approx(0.3)
 
 
 def test_a_rearm_never_energises_a_no_torque_session():
