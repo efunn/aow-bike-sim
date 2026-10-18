@@ -324,6 +324,9 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         pol.obs_zero_lat = bool(d.get("obs_zero_lat", False))
         pol.obs_odometry = bool(d.get("obs_odometry", False))
         pol.odometry_encoder = str(d.get("odometry_encoder", "ideal"))
+        # "joint" for every export before the field: they trained on the exact
+        # steer velocity. "counts" = the Pi's differenced servo counts.
+        pol.steer_rate_encoder = str(d.get("steer_rate_encoder", "joint"))
         # The resolved drivetrain overlay it trained on; None = ideal drives.
         pol.drivetrain_model = d.get("drivetrain_model")
         # The attitude error model this policy trained against. Same contract

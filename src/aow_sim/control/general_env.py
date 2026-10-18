@@ -354,6 +354,19 @@ class GeneralEnv(gym.Env):
                 # before 2026-08-27 reproduces bit for bit.
                 encoder=env.get("odometry_encoder", "ideal"),
                 ahrs=self._ahrs)
+        # THE STEER RATE, AS THE PI FORMS IT. "joint" (the default, every
+        # policy before 2026-10-17) observes MuJoCo's exact steer velocity;
+        # "counts" observes what hw/bike_bus.py computes: Present Position
+        # counts, differenced per 100 Hz tick, RateFilter(25 ms, 0.5). Width
+        # unchanged, so like obs_odometry it is invisible to obs_layout and
+        # the move yaml's `steer_rate_encoder` is the only record. See
+        # sim_odometry.SimSteerRate for why it exists.
+        self.steer_rate_encoder = str(env.get("steer_rate_encoder", "joint"))
+        self._steer_rate = None
+        if self.steer_rate_encoder != "joint":
+            from ..sim_odometry import SimSteerRate
+            self._steer_rate = SimSteerRate(self.model, self.p,
+                                            encoder=self.steer_rate_encoder)
         self._vbar_alpha = vel_filter_alpha(self.ctrl_dt, self.vel_window_s)
         self._settle_steps = int(round(self.vel_window_s / self.ctrl_dt))
         # Pitch. Observed as well as penalized: charging w_pitch against a
@@ -921,9 +934,11 @@ class GeneralEnv(gym.Env):
             vb_lon, vb_lat = s.v_lon, s.v_lat
         if vb is not None:
             vb_lon, vb_lat = vb
+        o_steer_rate = (float(self.data.qvel[self._sd]) if self._steer_rate is None
+                        else self._steer_rate.update(self.data, 0.0))
         obs = build_obs(o_roll, o_roll_rate, o_yaw_rate,
                         float(self.data.qpos[self._sj]),
-                        float(self.data.qvel[self._sd]),
+                        o_steer_rate,
                         o_lon, o_lat, v_cl, v_ct, psi_err, self._prev_a,
                         zero_lat=self.zero_lat, v_bar=vb,
                         pitch=(o_pitch, o_pitch_rate) if self.obs_pitch else None,
@@ -960,6 +975,8 @@ class GeneralEnv(gym.Env):
             # The estimator INTEGRATES. An episode that inherits a warmed-up
             # filter is not the episode the bike will fly.
             self._odo.reset(self.model, self.p)
+        if self._steer_rate is not None:
+            self._steer_rate.reset()
         self._ahrs_acc = 0.0
         if self._ahrs is not None:
             # Same for the AHRS: its orientation error wanders and its yaw
@@ -1133,6 +1150,8 @@ class GeneralEnv(gym.Env):
             # loop would hand both the same `data`, which for the "counts"
             # encoder means the second one differences a shaft that has not
             # moved and reads zero.
+            if self._steer_rate is not None:
+                self._steer_rate.update(self.data, self.model.opt.timestep)
             if self._odo is not None:
                 self._odo.update(self.data, self.model.opt.timestep)
             elif self._ahrs is not None:

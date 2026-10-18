@@ -6,6 +6,12 @@ smooth the rate (`hw.rate_filter.RateFilter`), quantise the steer, then
 wheel's rolling constraint for v_lat, coasting on the accelerometer where the
 steer makes the constraint blind. One call per 100 Hz tick, after the AHRS
 kernel, reading its cached outputs (the Pi's order within one sense loop).
+
+With `steer_rate_on`, the same tick also forms the STEER RATE the policy
+observes as `sim_odometry.SimSteerRate` "counts" does (the Pi's bike_bus
+path): steer counts through the gear ratio, NOT unwrapped (extended
+position), differenced, the same RateFilter -- sharing the wheels' first-tick
+and tap-count state, since all three start on the same tick.
 """
 from __future__ import annotations
 
@@ -41,6 +47,7 @@ class OdoConst:
     n_taps: int
     w0: float             # RateFilter weights, newest first (n_taps <= 2 here)
     w1: float
+    steer_rate_on: int    # 1: also form the Pi's steer rate (SimSteerRate "counts")
 
 
 class OdoState:
@@ -52,9 +59,12 @@ class OdoState:
         self.rcount = z(nworld, dt=int)
         self.v_lon = z(nworld)
         self.v_lat = z(nworld)
+        self.sprev = z(nworld, dt=int)          # steer counts, last tick
+        self.sbuf = z(nworld, MAX_TAPS)         # steer raw rates, newest first
+        self.steer_rate = z(nworld)             # what obs[5] reads when on
 
 
-def const_from(odo) -> OdoConst:
+def const_from(odo, steer_rate=None) -> OdoConst:
     if odo.encoder != "counts" or odo.fusion != "front" or odo.channels != "both":
         raise NotImplementedError("the port covers counts / front / both")
     f = odo._filt["a"]
@@ -82,6 +92,15 @@ def const_from(odo) -> OdoConst:
     c.w0, c.w1 = float(w[0]), float(w[1])
     if est.lon_smooth != 1.0:
         raise NotImplementedError("lon_smooth != 1")
+    c.steer_rate_on = 0
+    if steer_rate is not None and steer_rate.encoder == "counts":
+        sf = steer_rate.filt
+        if (sf.n_taps != f.n_taps or list(sf.weights) != list(f.weights)
+                or steer_rate.odo_dt != odo.odo_dt
+                or steer_rate.ratio * steer_rate.cpr != c.steer_q):
+            raise NotImplementedError("the steer rate's filter, clock or quantum "
+                                      "differs from the odometry's")
+        c.steer_rate_on = 1
     return c
 
 
@@ -113,13 +132,35 @@ def _shaft_rate(c: OdoConst, world: int, k: int, angle: float,
     return (c.w0 * rbuf[world, k, 0] + c.w1 * rbuf[world, k, 1]) / (c.w0 + c.w1)
 
 
+@wp.func
+def _steer_rate(c: OdoConst, world: int, angle: float, sprev: wp.array(dtype=int),
+                ok: int, sbuf: wp.array2d(dtype=float), n: int):
+    """SimSteerRate._advance: counts per steer radian (servo counts x gear
+    ratio), no wrap, rate in steer rad/s through the shared filter."""
+    counts = int(wp.round(angle * c.steer_q))
+    p = sprev[world]
+    sprev[world] = counts
+    if ok == 0:
+        return 0.0                       # a fresh filter's peek
+    raw = (float(counts - p) / c.steer_q) / c.dt
+    if c.n_taps > 1:
+        sbuf[world, 1] = sbuf[world, 0]
+    sbuf[world, 0] = raw
+    m = wp.min(n + 1, c.n_taps)
+    if m == 1:
+        return raw
+    return (c.w0 * sbuf[world, 0] + c.w1 * sbuf[world, 1]) / (c.w0 + c.w1)
+
+
 @wp.kernel
 def advance(c: OdoConst, sensordata: wp.array2d(dtype=float),
             ahrs_quat: wp.array2d(dtype=float), ahrs_gyro: wp.array2d(dtype=float),
             ahrs_accel: wp.array2d(dtype=float),
             prev: wp.array2d(dtype=int), prev_ok: wp.array(dtype=int),
             rbuf: wp.array3d(dtype=float), rcount: wp.array(dtype=int),
-            v_lon: wp.array(dtype=float), v_lat: wp.array(dtype=float)):
+            v_lon: wp.array(dtype=float), v_lat: wp.array(dtype=float),
+            sprev: wp.array(dtype=int), sbuf: wp.array2d(dtype=float),
+            steer_rate: wp.array(dtype=float)):
     world = wp.tid()
     # roll, pitch from the AHRS quaternion (wxyz)
     qw = ahrs_quat[world, 0]
@@ -133,6 +174,9 @@ def advance(c: OdoConst, sensordata: wp.array2d(dtype=float),
     n = rcount[world]
     wa = _shaft_rate(c, world, 0, sensordata[world, c.adr_a], prev, ok, rbuf, n)
     wb = _shaft_rate(c, world, 1, sensordata[world, c.adr_b], prev, ok, rbuf, n)
+    if c.steer_rate_on == 1:
+        steer_rate[world] = _steer_rate(c, world, sensordata[world, c.adr_steer],
+                                        sprev, ok, sbuf, n)
     if ok == 1:
         rcount[world] = n + 1
     prev_ok[world] = 1
@@ -162,4 +206,4 @@ def advance(c: OdoConst, sensordata: wp.array2d(dtype=float),
 def launch_advance(c: OdoConst, s: OdoState, sensordata, quat, gyro, accel):
     wp.launch(advance, dim=sensordata.shape[0], inputs=[
         c, sensordata, quat, gyro, accel, s.prev, s.prev_ok, s.rbuf, s.rcount,
-        s.v_lon, s.v_lat], device=sensordata.device)
+        s.v_lon, s.v_lat, s.sprev, s.sbuf, s.steer_rate], device=sensordata.device)

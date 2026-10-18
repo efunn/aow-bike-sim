@@ -291,6 +291,7 @@ def policy_env_overrides(pol) -> dict:
                 obs_zero_lat=bool(getattr(pol, "obs_zero_lat", False)),
                 obs_odometry=bool(getattr(pol, "obs_odometry", False)),
                 odometry_encoder=str(getattr(pol, "odometry_encoder", "ideal")),
+                steer_rate_encoder=str(getattr(pol, "steer_rate_encoder", "joint")),
                 # "none" default so every policy exported before the field
                 # existed rebuilds the env it was evaluated in, bit for bit.
                 ahrs_level=str(getattr(pol, "ahrs_level", "none")),

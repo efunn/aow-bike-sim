@@ -339,3 +339,95 @@ class SimOdometry:
             data.qvel[:2] = true_v
             if q0 is not None:
                 data.qpos[3:7], data.qvel[3:6] = q0, w0
+
+
+# --------------------------------------------------------------------------
+# the steer RATE, as the Pi forms it
+# --------------------------------------------------------------------------
+
+STEER_RATE_ENCODERS = ("joint", "counts")
+
+
+class SimSteerRate:
+    """The steer joint rate the policy observes, by the Pi's own path.
+
+    `hw/bike_bus.py` (velocity_source "differenced", the default) reads the
+    steer servo's Present Position each 100 Hz tick, backward-differences the
+    counts, and smooths the result through `RateFilter(25 ms, 0.5)` -- the
+    same treatment the hub encoders get, ~8 ms of group delay plus half a
+    tick of differencing. Training handed the policy the exact joint velocity
+    instead (`GeneralEnv._obs`, obs[5]), so on the bike the steer channel alone
+    ran on a lag the policy never saw. Bench, 2026-10-17: with roll pinned the
+    policy sawed the steer at 5.2 Hz; in a pinned sim it did so only once this
+    lag AND the bench-fitted servo were both in (analysis/steer_pinned.py).
+
+    encoder "joint" is the old exact signal (every policy before this);
+    "counts" is the Pi's. The steer is extended-position (multi-turn), so its
+    counts are NOT unwrapped, as bike_bus does for every servo outside
+    `_wraps`. Counts are per SERVO radian; the rate is divided back by the
+    steering gear ratio, as `BikeBus.to_controller_units` does.
+
+    Its own 100 Hz clock, with SimOdometry's exact arithmetic, so the two tick
+    on the same substeps whether or not an odometry is attached.
+    """
+
+    def __init__(self, model, params: dict, encoder: str = "counts",
+                 odo_hz: float = CONTROL_HZ_DEFAULT,
+                 window_ms: float = 25.0, taper: float = 0.5):
+        if encoder not in STEER_RATE_ENCODERS:
+            raise ValueError(f"steer rate encoder must be one of "
+                             f"{STEER_RATE_ENCODERS}, got {encoder!r}")
+        self.encoder = encoder
+        self.odo_hz = float(odo_hz)
+        self.odo_dt = 1.0 / self.odo_hz
+        self.window_ms, self.taper = float(window_ms), float(taper)
+        self.ratio = float(params["bike"]["steering"]["gear_ratio"])
+        self.cpr = float(XC330_COUNTS_PER_RAD)       # counts per SERVO radian
+        sn = model.sensor("steer_pos")
+        self.adr = int(sn.adr[0])
+        j = model.joint("steer_joint")
+        self.dof = int(j.dofadr[0])
+        self.reset()
+
+    def reset(self, *_args) -> None:
+        self.filt = RateFilter(self.window_ms, self.taper, 1000.0 / self.odo_hz)
+        self._acc = 0.0
+        self._prev = None
+        self._last = 0.0
+
+    def _counts(self, data) -> int:
+        return int(round(float(data.sensordata[self.adr]) * self.ratio * self.cpr))
+
+    def _advance(self, data, dt: float) -> float:
+        c = self._counts(data)
+        prev, self._prev = self._prev, c
+        if prev is None:                     # first tick: no interval yet
+            return self.filt.peek()
+        raw = ((c - prev) / self.cpr) / dt   # servo rad/s
+        return self.filt.update(raw) / self.ratio
+
+    def update(self, data, dt: float) -> float:
+        """Advance by `dt` of simulated time; the estimate on hold between
+        ticks. Same clock as `SimOdometry.update`."""
+        if self.encoder == "joint":
+            return float(data.qvel[self.dof])
+        self._acc += float(dt)
+        n = int(self._acc / self.odo_dt)
+        if n:
+            self._acc -= n * self.odo_dt
+            for _ in range(min(n, 4)):
+                self._last = self._advance(data, self.odo_dt)
+        return self._last
+
+    @contextmanager
+    def estimated(self, data, dt: float):
+        """Controller sees the estimated steer rate; physics keeps the truth.
+        Wrap ONLY the controller call, as `SimOdometry.estimated`."""
+        true_w = float(data.qvel[self.dof])
+        est = self.update(data, dt)
+        data.qvel[self.dof] = est
+        try:
+            yield
+        finally:
+            data.qvel[self.dof] = true_w
+

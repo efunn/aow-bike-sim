@@ -36,6 +36,7 @@ class RewConst:
     max_steps: int
     steer_q: int
     steer_d: int
+    steer_rate_on: int    # obs[5] from the odometry's Pi-style steer rate
 
 
 def const_from(env) -> RewConst:
@@ -55,6 +56,7 @@ def const_from(env) -> RewConst:
     c.fall = float(env.fall)
     c.max_steps = int(env.max_steps)
     c.steer_q, c.steer_d = int(env._sj), int(env._sd)
+    c.steer_rate_on = int(env._steer_rate is not None)
     return c
 
 
@@ -67,6 +69,7 @@ def wrap_pi(x: float):
 def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtype=float),
                ahrs_quat: wp.array2d(dtype=float), ahrs_gyro: wp.array2d(dtype=float),
                odo_lon: wp.array(dtype=float), odo_lat: wp.array(dtype=float),
+               steer_rate: wp.array(dtype=float),
                v_cmd_w: wp.array2d(dtype=float), psi_cmd: wp.array(dtype=float),
                psi: wp.array(dtype=float), raw_prev: wp.array(dtype=float),
                action: wp.array2d(dtype=float), prev_a: wp.array2d(dtype=float),
@@ -123,7 +126,10 @@ def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtyp
     obs[world, 2] = ahrs_gyro[world, 2]
     obs[world, 3] = wp.sin(2.0 * steer)
     obs[world, 4] = wp.cos(2.0 * steer)
-    obs[world, 5] = qvel[world, c.steer_d]
+    if c.steer_rate_on == 1:
+        obs[world, 5] = steer_rate[world]
+    else:
+        obs[world, 5] = qvel[world, c.steer_d]
     obs[world, 6] = odo_lon[world]
     obs[world, 7] = odo_lat[world]
     obs[world, 8] = v_cl
@@ -174,11 +180,11 @@ def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtyp
     truncated[world] = trunc
 
 
-def launch(c: RewConst, qpos, qvel, ahrs_quat, ahrs_gyro, odo_lon, odo_lat, v_cmd_w,
-           psi_cmd, psi, raw_prev, action, prev_a, step, track_sum, track_n,
-           obs, reward, terminated, truncated):
+def launch(c: RewConst, qpos, qvel, ahrs_quat, ahrs_gyro, odo_lon, odo_lat,
+           steer_rate, v_cmd_w, psi_cmd, psi, raw_prev, action, prev_a, step,
+           track_sum, track_n, obs, reward, terminated, truncated):
     wp.launch(obs_reward, dim=qpos.shape[0], inputs=[
-        c, qpos, qvel, ahrs_quat, ahrs_gyro, odo_lon, odo_lat, v_cmd_w, psi_cmd,
+        c, qpos, qvel, ahrs_quat, ahrs_gyro, odo_lon, odo_lat, steer_rate, v_cmd_w, psi_cmd,
         psi, raw_prev, action, prev_a, step, track_sum, track_n, obs, reward,
         terminated, truncated], device=qpos.device)
 
@@ -209,7 +215,13 @@ def reset_obs(c: RewConst, done: wp.array(dtype=int), qpos: wp.array2d(dtype=flo
     obs[world, 2] = ahrs_gyro[world, 2]
     obs[world, 3] = wp.sin(2.0 * steer)
     obs[world, 4] = wp.cos(2.0 * steer)
-    obs[world, 5] = qvel[world, c.steer_d]
+    if c.steer_rate_on == 1:
+        # SimSteerRate right after its reset: a fresh filter, no tick yet.
+        # The odometry's priming tick does not advance it, so its array still
+        # holds the ended episode's value -- not read here.
+        obs[world, 5] = 0.0
+    else:
+        obs[world, 5] = qvel[world, c.steer_d]
     obs[world, 6] = odo_lon[world]
     obs[world, 7] = odo_lat[world]
     obs[world, 8] = cp * v_cmd_w[world, 0] + sp * v_cmd_w[world, 1]

@@ -504,6 +504,17 @@ def main() -> None:
                     dest="odometry",
                     help="drive on MuJoCo truth instead of the onboard "
                          "estimate (--odometry is ON by default)")
+    ap.add_argument("--steer-rate", choices=("auto", "joint", "counts"),
+                    default="auto", metavar="SOURCE",
+                    help="the steer RATE the controller observes. `counts` is "
+                         "the Pi's path (hw/bike_bus.py): servo counts "
+                         "differenced per 100 Hz tick through RateFilter, ~8 ms "
+                         "of lag. `joint` is MuJoCo's exact velocity, which "
+                         "every policy before 2026-10-17 trained on. `auto` "
+                         "(default) follows the active policy's own "
+                         "`steer_rate_encoder` -- the signal it trained with. "
+                         "Force `counts` on an older policy to fly it as the "
+                         "bike does (the bench's 5 Hz steer oscillation).")
     ap.add_argument("--lqr", action="store_true",
                     help="DEPRECATED (2026-10-09). --teleop starts on the "
                          "analytic LQR instead of the "
@@ -862,7 +873,7 @@ def main() -> None:
                 record=args.record,
                 slowmo_x=args.slowmo, odometry=args.odometry,
                 odometry_encoder=args.odometry_encoder, ahrs=args.ahrs,
-                ahrs_tau=args.ahrs_tau, design=design,
+                ahrs_tau=args.ahrs_tau, steer_rate=args.steer_rate, design=design,
                 drivetrain_base=drivetrain_base, servo_gains=servo_gains,
                 drivetrain_source=drivetrain_source, start_lqr=args.lqr,
                 crab_max_override=args.crab_max, verbose=args.verbose,
@@ -2633,7 +2644,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             show_ui=False, wings=False, linkage=False, swing=False,
             righting_ideal=False, linkage_friction=True, record=None,
             slowmo_x=1.0, odometry=False, odometry_encoder="counts",
-            ahrs="none", ahrs_tau=None, design=None, drivetrain_base=None,
+            ahrs="none", ahrs_tau=None, steer_rate="auto", design=None,
+            drivetrain_base=None,
             servo_gains=None, drivetrain_source="", frame_stats=None,
             start_lqr=False, rig=None, crab_max_override=None,
             verbose=False, auto_up=True, plays=()):
@@ -2706,6 +2718,22 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                   f"AHRS. Physics still uses the truth.\n  Encoders: {enc}.\n"
                   "  Still no gyro bias and no accelerometer noise, so this remains "
                   "kinder than the real bike.")
+
+    # THE STEER RATE, as the Pi forms it. Always ticking, so switching it on
+    # mid-session (a policy swap under `auto`) does not difference against a
+    # stale count; it only REPLACES the controller's qvel when active.
+    from contextlib import ExitStack
+
+    from .sim_odometry import SimSteerRate
+    steer_est = SimSteerRate(model, params, encoder="counts")
+    steer_shown = [None]
+
+    def steer_rate_source():
+        if steer_rate != "auto":
+            return steer_rate
+        if c.mode == "general" and getattr(c, "_gen", None) is not None:
+            return str(getattr(c._gen, "steer_rate_encoder", "joint"))
+        return "joint"
 
     menu = {"open": False, "cursor": 0, "entries": []}
     data = _fresh(model, eq_qpos)
@@ -3394,6 +3422,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             # standstill moved the wheels ~0 and hid it.
             if odo is not None:
                 odo.reset(m, params)
+            steer_est.reset()
         if state["want_general"] and c.mode != "general":
             engage(d, quiet=True)
         if rewound:
@@ -4040,20 +4069,33 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                         print(e)
         apply(m, d)
         sit_cmd = sit_command(m, d)
-        if odo is None and ahrs_model is not None:
-            # Orientation path only. SimOdometry would normally own the AHRS
-            # clock; without it the sensor keeps its own.
-            ahrs_model.tick(d, m.opt.timestep)
-            with ahrs_model.estimated(d):
-                c.step(m, d)
-        elif odo is None:
-            c.step(m, d)
+        src = steer_rate_source()
+        if src != steer_shown[0]:
+            print(f"steer rate: {src}"
+                  + (" (the Pi's differenced servo counts)" if src == "counts"
+                     else " (MuJoCo's exact joint velocity)"))
+            steer_shown[0] = src
+        steer_ctx = ExitStack()
+        if src == "counts":
+            # The controller reads qvel[steer] for obs[5]; physics keeps truth.
+            steer_ctx.enter_context(steer_est.estimated(d, m.opt.timestep))
         else:
-            # Controller sees the ESTIMATE, physics keeps the truth. Safe to
-            # swap around this one call because drive.py makes no MuJoCo calls
-            # -- it reads `d` and writes `d.ctrl`. See sim_odometry.
-            with odo.estimated(d, m.opt.timestep):
+            steer_est.update(d, m.opt.timestep)
+        with steer_ctx:
+            if odo is None and ahrs_model is not None:
+                # Orientation path only. SimOdometry would normally own the AHRS
+                # clock; without it the sensor keeps its own.
+                ahrs_model.tick(d, m.opt.timestep)
+                with ahrs_model.estimated(d):
+                    c.step(m, d)
+            elif odo is None:
                 c.step(m, d)
+            else:
+                # Controller sees the ESTIMATE, physics keeps the truth. Safe to
+                # swap around this one call because drive.py makes no MuJoCo calls
+                # -- it reads `d` and writes `d.ctrl`. See sim_odometry.
+                with odo.estimated(d, m.opt.timestep):
+                    c.step(m, d)
         sit_override(m, d, sit_cmd)
         wing_step(m, d)         # after c.step: it rewrites the whole ctrl vector
         if rig is not None:     # likewise: the rig motors' setpoints

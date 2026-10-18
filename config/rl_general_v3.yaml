@@ -68,6 +68,12 @@ env:
   odometry_mode: front   # what the Pi runs today; `blend` is the experiment
   # The two changes from rl_general_odo.yaml.
   odometry_encoder: counts   # 4096 counts/rev, differenced, 25 ms RateFilter
+  # The steer RATE (obs[5]) the way the Pi forms it: steer servo counts,
+  # differenced per 100 Hz tick, the same RateFilter -- ~8 ms the exact joint
+  # velocity does not have. `joint` (absent) is what every policy before
+  # 2026-10-17 trained on; the bench sawed the steer at 5.2 Hz flying one of
+  # them on the Pi's signal (analysis/steer_pinned.py, sim_odometry.SimSteerRate).
+  steer_rate_encoder: counts
   ahrs_level: tm151_filter   # the TM151 as its own fusion filter (c6d37b3 weighting); was tm151 to 10-09
   ahrs_tau_s: 2.0            # the level's own: the filter has its 0.19 built in; this only times its 0.1 deg residual
   obs_pitch: true            # in the state; no w_pitch penalty this run.

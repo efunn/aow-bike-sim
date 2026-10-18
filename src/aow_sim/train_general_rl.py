@@ -317,6 +317,12 @@ def move_doc(name: str, params, cfg, trained: dict) -> dict:
            # differenced, RateFilter -- the hardware path). Only meaningful
            # with obs_odometry. Like it, invisible to obs_layout.
            "odometry_encoder": str(cfg["env"].get("odometry_encoder", "ideal")),
+           # How the STEER RATE (obs[5]) was formed: "joint" (exact MuJoCo
+           # velocity, every export before 2026-10-17) or "counts" (the Pi's
+           # differenced, RateFilter'd servo counts -- sim_odometry.SimSteerRate).
+           # Written even at its default: replay and teleop rebuild the
+           # observation from it, and the width does not change.
+           "steer_rate_encoder": str(cfg["env"].get("steer_rate_encoder", "joint")),
            # THE ATTITUDE ERROR MODEL, and the exact counterpart of the two
            # fields above -- it corrupts roll, roll_rate and yaw_rate in
            # place, so obs_layout cannot catch a mismatch and this is the only

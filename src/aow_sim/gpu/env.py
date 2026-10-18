@@ -65,7 +65,7 @@ class GpuGeneralEnv:
         self.c_drv = gdrv.const_from(env._drive)
         self.c_gb = ggb.const_from(env._gearbox[0])
         self.c_ahrs = gahrs.const_from(env._ahrs)
-        self.c_odo = godo.const_from(env._odo)
+        self.c_odo = godo.const_from(env._odo, env._steer_rate)
         self.c_obs = gobs.const_from(env)
         self.c_cmd = gcmd.const_from(env)
         self.c_rst = grst.const_from(env)
@@ -231,7 +231,8 @@ class GpuGeneralEnv:
                 self.c_rb, d.qpos, self.s_drv.ref, self.s_drv.th, self.s_drv.fa,
                 self.s_drv.anchor, self.s_odo.prev, self.shifts], device=self.device)
         gobs.launch(self.c_obs, d.qpos, d.qvel, self.s_ahrs.quat, self.s_ahrs.gyro,
-                    self.s_odo.v_lon, self.s_odo.v_lat, self.v_cmd_w, self.psi_cmd,
+                    self.s_odo.v_lon, self.s_odo.v_lat, self.s_odo.steer_rate,
+                    self.v_cmd_w, self.psi_cmd,
                     self.psi, self.raw_prev, self.action, self.prev_a, self.step_i,
                     self.track_sum, self.track_n, self.obs, self.reward,
                     self.terminated, self.truncated)
