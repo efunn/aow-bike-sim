@@ -410,6 +410,22 @@ a BLACK background instead of white. 0.85 restored both. And the see-through
 should be spent only where it earns its keep — the mirrored belts, and the
 frame's inertia primitives, which are not parts at all.
 
+### Two more, both billed in one round (2026-10-19)
+
+**An oblique sketch will not extrude** -- the rail's grooves found it on
+2026-10-16 and the cage tongues' teardropped Y-axis holes found it again: a
+`polyPrism` (or `screwJointGeometry`'s slot) on a plane whose normal is the
+drive frame's 45 deg is `EXTRUDE_FAILED`, and the eval still bills. Draw it
+along an axis (the drive's +Y), then `opTransform` it about X onto the real
+direction; `cad_drive` now does that for every cage cutter.
+
+**`opRevolve`'s `angleBack` is where the revolve STARTS, not a second
+extent.** Both angles are normalised to 0..360 and measured the same way, so
+`angleForward: a, angleBack: a` is a FULL turn, silently. Every rollcage ring,
+cap and bayonet lug came out 360 deg; the giveaway was the bounding boxes
+(the rings reaching the bottom, z 31.3) and the volumes (a full revolve's).
+For a span symmetric about the profile: `angleForward: a, angleBack: 360 - a`.
+
 ## Imports
 
 `import(path : "<element id>", version : "<version>")`, optionally namespaced.
