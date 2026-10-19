@@ -56,9 +56,10 @@ def test_each_envelope_is_its_size_where_its_config_puts_it(L):
 def test_no_chassis_and_the_rightings_placeholders_dropped(L):
     """No chassis, deck or cage of the bike's own: the rails are the drive's,
     and the printed parts v2 adds are the two carriers (cad_power,
-    cad_pi_carrier) and the Pi's four separate spacers."""
+    cad_pi_carrier), the Pi's four separate spacers and the rollcages."""
     body = b2.build_fs(L).split("export function bikeV2Build")[1].split(b2.SPLIT_MARK)[0]
-    assert not any(w in body for w in ("deck", "tray", "cage"))
+    assert not any(w in body for w in ("deck", "tray"))
+    assert body.count("bk2Cage(") == 1
     assert body.count("bk2Carrier(") == 1 and len(L["carriers"]) == 6
     assert [c["name"] for c in L["carriers"]][2:] == [f"Pi spacer {k}" for k in (1, 2, 3, 4)]
     # the floor and the two rail placeholders (with the rails the righting
@@ -85,16 +86,29 @@ def test_the_rails_meet_their_joints(data, L):
     assert '"rail" : true' in fs
 
 
-def test_the_cage_posts_mirror_about_mid_wheelbase(data, L):
-    """The two cage posts: the same height, y mirrored about mid-wheelbase,
-    the front along the steering axis and the rear its mirror; each grooved
-    joint's groove runs out through the rail's edge the way its module
-    slides out (rail_layout refuses otherwise)."""
-    (yr, zr, ar), (yf, zf, af) = sorted(c["bike"] for c in data["rail"]["cage"])
-    assert yr + yf == pytest.approx(L["wb"]) and zr == pytest.approx(zf)
-    assert (ar, af) == pytest.approx((90 - L["rake"], 90 + L["rake"]))
-    # the rear arm ends on the case side (its last two points on its rear
-    # chamfer's top corner and the top edge), the rear post the front mirrored
-    rb, ob = data["rail"]["rearBike"], data["rail"]["outlineBike"]
-    assert sorted(round(L["wb"] - q[0], 6) for q in rb[1:6]) == \
-        sorted(round(q[0], 6) for q in ob[5:10])
+def test_the_rollcage_fits_the_rails_and_its_cap(data, L):
+    """The rails' cage tongues mirror about mid-wheelbase, the rear one's
+    face inside the rear ring; the ring is the blades' width, 270 deg; the
+    bayonet's lugs sit in their grooves against the stops and go in
+    through the gaps (or the opening) 15 deg back; the bars' chins stop
+    short of the bed on a chamfer, clear of the front pads and the holder's
+    panel; the cap's cone prints
+    at the user's ~60 deg (rollcage() refuses the rest)."""
+    rc, C = data["s"]["rollcage"], L["cage"]
+    assert L["railCheck"]["cageMirror"] == pytest.approx(0.0, abs=1e-6)
+    assert 0 < C["tongueFace"] < rc["depth"]
+    assert rc["r_out"] * 2 == pytest.approx(137.4)
+    assert C["ringArc"][1] * 2 == pytest.approx(360 - rc["opening_deg"])
+    for (a0, a1), g in zip(C["lugs_deg"], sorted(rc["slots_deg"])):
+        assert a1 == pytest.approx(g + rc["slot_deg"]) and a0 > g
+        back = (a0 - rc["slot_deg"], a1 - rc["slot_deg"])
+        assert back[1] <= rc["opening_deg"] / 2 + 1e-9 or any(g0 <= back[0] and back[1] <= g1 for g0, g1 in C["gaps_deg"])
+    # the chin's one chamfer: 45 deg at its inboard corner on the bed
+    ye0, ye1 = C["chinY"]
+    assert ye0 > C["tongueFace"] + 2.0 and ye1 - ye0 == pytest.approx(rc["bar_split_x"] - data["rail"]["cageIn"][0]["x"][0])
+    # the sheet's groove: 1.0 at the face to a 0.5 flat end 3.0 deep
+    s = C["sheet"]
+    assert s[2][0] - s[3][0] == pytest.approx(0.5) and s[2][1] == pytest.approx(rc["depth"] - 3.0)
+    assert 55.0 < C["cone_over_deg"] < 62.0 and C["cap_wall"] >= 1.5
+    assert C["wb"] == pytest.approx(L["wb"])
+

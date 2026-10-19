@@ -109,13 +109,17 @@ export const ST = {
     "zUS" : 120.25 * millimeter,
     "padBot" : 114.25 * millimeter,
     "v2HeadZ" : 108.55 * millimeter,
-    "v2RrY" : 17.8 * millimeter,
-    "v2RrHalfX" : 5.25 * millimeter,
-    "v2RrOut" : 23.05 * millimeter,
+    "v2FrY" : -32.8 * millimeter,
+    "v2FrHalfX" : 5.25 * millimeter,
+    "v2FrOut" : -38.05 * millimeter,
     "v2LugTop" : 118.05 * millimeter,
-    "v2RrPocket" : 10 * millimeter,
+    "v2FrPocket" : 10 * millimeter,
     "v2BlkTop" : 98.25 * millimeter,
-    "v2BlkBot" : 87.05 * millimeter,
+    "v2Foot" : -12.55 * millimeter,
+    "v2Rise" : 85.25 * millimeter,
+    "v2BlkMeetY" : -18.3968 * millimeter,
+    "v2BlkMeetZ" : 91.0968 * millimeter,
+    "v2FrHole" : 13.7108 * millimeter,
     "v2SideZ" : 75.55 * millimeter,
     "v2SideRidge" : 6 * millimeter,
     "v2SideRidgeTop" : 79.05 * millimeter,
@@ -123,8 +127,6 @@ export const ST = {
     "v2SideBoreWall" : 1.5 * millimeter,
     "v2SideNutWall" : 1.8 * millimeter,
     "v2PadTop" : 80.8 * millimeter,
-    "v2Foot" : -12.55 * millimeter,
-    "v2Rise" : 85.25 * millimeter,
     "tireOD" : 102.5 * millimeter,
     "tireW" : 24 * millimeter,
     "tireFlat" : 10 * millimeter,
@@ -1025,14 +1027,15 @@ export function blindScrewJoint(context is Context, id is Id, head is Vector, zI
                                 slotDir is Vector, slotLen is ValueWithUnits, pocket is ValueWithUnits,
                                 cskPart is Query, nutPart is Query, ridge is boolean, ridgeDir is Vector,
                                 ridgeHalf is ValueWithUnits,
-                                cskUp is Vector, nutUp is Vector)
+                                cskUp is Vector, nutUp is Vector, holeDepth is ValueWithUnits)
 {
     const f  = FIXTURE;
     const mm = millimeter;
     const cs = coordSystem(head, slotDir, zIn);
     const nd = f.joint_plate + 2 * mm;
     screwJointGeometry(context, id + "scr", cs, mergeMaps(SCREW_OPT, {
-            "nutDepth" : nd, "headPocket" : pocket, "bothWays" : false, "nutSlotLength" : slotLen }));
+            "nutDepth" : nd, "headPocket" : pocket, "bothWays" : false, "nutSlotLength" : slotLen,
+            "holeDepth" : holeDepth }));
     if (ridge)
     {
         const r = ridgeSolid(context, id + "ridge", head + f.joint_plate * zIn, ridgeDir, -zIn, f.ridge_height,
@@ -1235,14 +1238,6 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
                     at(sg > 0 ? L.v2SideX : -L.cupHalf + 0.5 * mm, L.cupNear, L.v2PadTop)));
         }
     }
-    if (v2)
-    {
-        polyPrism(context, P, "rrBlk", at(-L.v2RrHalfX, 0 * mm, 0 * mm), X, Y,
-                  [vector(L.yWallNear - 0.5 * mm, L.v2BlkBot - 0.5 * mm), vector(L.yWallNear, L.v2BlkBot),
-                   vector(L.v2RrOut, L.v2BlkTop), vector(L.v2RrOut, L.upBot), vector(L.yWallNear - 0.5 * mm, L.upBot)],
-                  2 * L.v2RrHalfX);
-        lcAdd = append(lcAdd, qCreatedBy(P + "rrBlkExt", EntityType.BODY));
-    }
     unite(context, P + "lcU", lcAdd);
     var lcPt = v2 ? at(L.cupHalf - 0.5 * mm, -L.cavR - 2.5 * mm, L.zCF - 2 * mm)
                   : at(L.cupHalf - 0.5 * mm, yCup + 1 * mm, L.caseBot + 1 * mm);
@@ -1263,6 +1258,12 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
                   2 * L.v2SideX + 2 * mm);
         opBoolean(context, P + "lcChCut", { "tools" : qCreatedBy(P + "lcChExt", EntityType.BODY),
                 "targets" : partAt(context, P, lcPt), "operationType" : BooleanOperationType.SUBTRACTION });
+        polyPrism(context, P, "frBlk", at(-L.v2FrHalfX, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.v2FrOut, L.upBot), vector(L.v2FrOut, L.v2BlkTop), vector(L.v2BlkMeetY, L.v2BlkMeetZ),
+                   vector(L.v2BlkMeetY + 1 * mm, L.v2BlkMeetZ + 1 * mm), vector(L.yServoFar - 0.2 * mm, L.zCF - 0.5 * mm),
+                   vector(L.yServoFar - 0.2 * mm, L.upBot)],
+                  2 * L.v2FrHalfX);
+        unite(context, P + "frBlkU", [partAt(context, P, lcPt), qCreatedBy(P + "frBlkExt", EntityType.BODY)]);
     }
     step("upper case");
     caseShellBuild(context, P + "ucShell", cs, mergeMaps(CASE_OPT, { "part" : "BOTTOM" }), qNothing());
@@ -1275,9 +1276,9 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     var ucAdd = [partAt(context, P, ucPt), ucWrap];
     if (v2)
     {
-        polyPrism(context, P, "ucLug", at(-L.v2RrHalfX, 0 * mm, 0 * mm), X, Y,
-                  [vector(L.yUpNear - 0.5 * mm, L.upBot), vector(L.v2RrOut, L.upBot), vector(L.v2RrOut, L.v2HeadZ),
-                   vector(L.yUpNear - 0.5 * mm, L.v2LugTop + 0.5 * mm)], 2 * L.v2RrHalfX);
+        polyPrism(context, P, "ucLug", at(-L.v2FrHalfX, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.yUpFar + 0.5 * mm, L.upBot), vector(L.v2FrOut, L.upBot), vector(L.v2FrOut, L.v2HeadZ),
+                   vector(L.yUpFar + 0.5 * mm, L.v2LugTop + 0.5 * mm)], 2 * L.v2FrHalfX);
         ucAdd = append(ucAdd, qCreatedBy(P + "ucLugExt", EntityType.BODY));
     }
     else
@@ -1338,9 +1339,9 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     }
     else
     {
-        blindScrewJoint(context, P + "jUL", at(0 * mm, L.v2RrY, L.v2HeadZ), -Z, Y,
-                        L.v2RrOut - L.v2RrY + 1 * mm, L.v2RrPocket,
-                        partAt(context, P, ucPt), partAt(context, P, lcPt), false, X, 0 * mm, -Z, Z);
+        blindScrewJoint(context, P + "jUL", at(0 * mm, L.v2FrY, L.v2HeadZ), -Z, -Y,
+                        L.v2FrY - L.v2FrOut + 1 * mm, L.v2FrPocket,
+                        partAt(context, P, ucPt), partAt(context, P, lcPt), false, X, 0 * mm, -Z, Z, L.v2FrHole);
         var k = 0;
         for (var sg in [1, -1])
         {
@@ -1353,7 +1354,7 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
             opBoolean(context, P + ("jSu" ~ k), { "tools" : qUnion([partAt(context, P, lcPt), rr]),
                     "operationType" : BooleanOperationType.UNION });
             blindScrewJoint(context, P + ("jS" ~ k), hd, -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
-                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z);
+                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z, SCREW_OPT.holeDepth);
             k += 1;
         }
         const rz = function(p is Vector) returns Vector { return vector(-p[0], -p[1], p[2]); };
@@ -1951,7 +1952,7 @@ export const BELT = [
     [[-3.11653, -8.34517], [-8.82928, 1.18254], [-0.810672, 8.87116]]
 ];
 
-export const RAIL = { "innerX" : 16, "plate" : 4.6, "outlineBike" : [[82.555, 41.896], [86, 38.6], [150, 38.6], [160.619, 60.022], [171.727, 62.998], [207.515005, 72.5872642], [204.215062, 84.9028185], [201.765572, 86.3170321], [194.231351, 84.2982435], [192.675716, 81.6038048], [168.479, 75.12], [105.11, 63.04], [104.404, 63.746]], "rearBike" : [[29.2388654, 62.8730689], [-7.01500503, 72.5872642], [-3.71506221, 84.9028185], [-1.26557247, 86.3170321], [6.26864898, 84.2982435], [7.8242839, 81.6038048], [32.8305441, 74.9033976], [29.2388654, 71.3117189]], "pieces" : [[[88.000146, -28.7502546], [88.1055049, -33.5168614], [133.360339, -78.7716954], [156.016747, -71.1328209], [165.975639, -76.8830132], [198.062214, -95.4083205], [204.437214, -84.3664966], [203.705163, -81.6344458], [196.950165, -77.7344458], [193.944909, -78.5397017], [172.250505, -66.014782], [118.900005, -29.7479823], [118.900005, -28.7495475]], [[65.1329734, 23.7829734], [46.3665891, 56.2873044], [57.408413, 62.6623044], [60.1404639, 61.9302536], [64.0404639, 55.1752554], [63.235208, 52.1699996], [76.1794007, 29.75], [71.1, 29.75]]], "leftPieces" : [[[118.895294, 20], [150.000294, 20], [150.000294, 33.5], [118.895294, 33.5]], [[64.7, 29.75], [76.2, 29.75], [76.2, 41.25], [64.7, 41.25]]], "stops" : [{ "kind" : "back", "x" : [8, 16.5], "y" : [55.7, 57.7], "z" : [42.5, 50], "face" : 57.7, "t" : 2 }, { "kind" : "side", "x" : [11.3, 16.5], "y" : [55.7, 60.7], "z" : [42.5, 50], "face" : 57.7, "t" : 2 }], "postRear" : [[46.3665891, 56.2873044], [57.408413, 62.6623044], [60.1404639, 61.9302536], [64.0404639, 55.1752554], [63.235208, 52.1699996]], "casePoly" : [[54.2, -12.85], [71.1, -29.75], [118.895294, -29.75], [118.895294, 29.75], [71.1, 29.75], [54.2, 12.85]], "joints" : [{ "tag" : "steer", "head" : [179.585323, -76.3109638], "dir" : [0.5, 0.866025404], "half" : 3.5, "room" : 1.49948508, "gMid" : -2.65, "gHalf" : 7.15 }, { "tag" : "bridge", "head" : [116.018899, -54.3938356], "dir" : [0.707106781, 0.707106781], "half" : 3, "room" : 1.2255, "gMid" : -1.738, "gHalf" : 5.738 }, { "tag" : "pi_low", "head" : [147.000004, -55.4999627], "dir" : [-0.707106781, -0.707106781], "half" : 3, "room" : 1.74966324, "gMid" : -2.25, "gHalf" : 6.25 }], "leftJoints" : [{ "tag" : "carrier", "head" : [70.4500386, 35.5000131], "dir" : [-1.8369702e-16, -1], "half" : 3, "room" : 1.99996144, "gMid" : -4.5, "gHalf" : 8.5 }, { "tag" : "carrier_front", "head" : [125.000003, 26.9999532], "dir" : [-1.8369702e-16, -1], "half" : 3, "room" : 2.35470926, "gMid" : -3.5, "gHalf" : 7.5 }, { "tag" : "pi_top", "head" : [140.999991, 26.9999532], "dir" : [-0.707106781, -0.707106781], "half" : 3, "room" : 2.7500468, "gMid" : -4.75, "gHalf" : 8.75 }], "anchor" : [123.743687, -60.1040764], "ahY1" : 122.395294, "ahN0" : 119.895294, "ahN1" : 121.495294, "ahTip" : 119.995294, "ahHoleR" : 1.2, "ahHoleY0" : 118.295294, "ahX" : 15, "ahZ" : [-25.7, 5.3], "ahNutHalf" : 2.05, "ahNutOut" : 17.4094011, "ahTabHalf" : 3.05, "ahTabIn" : 12, "ahBoard" : { "x" : 17, "y0" : 122.395294, "y1" : 123.995294, "z0" : -29.75, "z1" : 10.25 }, "ahRailGap" : 1.96333968, "ahScrewPast" : 0, "earGap" : 9.75, "cageWall" : 0.95, "cageNd" : 5.55, "cage" : [{ "head" : [56.078286, 54.966152], "slot" : [-0.5, 0.866025404], "slotLen" : 7, "bike" : [0.786397524, 78.5202751, 75] }, { "head" : [196.741062, -85.6966236], "slot" : [0.866025404, -0.5], "slotLen" : 7, "bike" : [199.713602, 78.5202751, 105] }] };
+export const RAIL = { "innerX" : 16, "plate" : 4.6, "outlineBike" : [[82.555, 41.896], [86, 38.6], [150, 38.6], [155.544, 56.318], [166.351, 60.251], [185, 67.0385943], [185, 74.8], [199.5, 74.8], [199.5, 83.5], [179, 83.5], [162.058, 72.044], [150, 71.6], [105.11, 63.04], [104.404, 63.746]], "rearBike" : [[29.2388654, 62.0380563], [15.5, 67.0385943], [15.5, 74.8], [1, 74.8], [1, 83.5], [21.5, 83.5], [32.2314296, 74.304283], [29.2388654, 71.3117189]], "pieces" : [[[88.000146, -28.7502546], [88.1055049, -33.5168614], [133.360339, -78.7716954], [149.809057, -70.1633775], [160.231811, -75.0240295], [178.218199, -83.4113099], [183.706342, -77.9231673], [193.95939, -88.1762156], [200.111219, -82.0243866], [185.61553, -67.5286976], [165.535112, -63.6495098], [156.694863, -55.4371716], [118.900005, -29.7479823], [118.900005, -28.7495475]], [[64.5425303, 23.1925303], [58.3635998, 36.4432896], [63.8517423, 41.9314321], [53.598694, 52.1844805], [59.750523, 58.3363094], [74.246212, 43.8406204], [75.3321248, 29.75], [71.1, 29.75]]], "leftPieces" : [[[118.895294, 20], [150.000294, 20], [150.000294, 33.5], [118.895294, 33.5]], [[64.7, 29.75], [76.2, 29.75], [76.2, 41.25], [64.7, 41.25]]], "cageX" : 16.475, "cageZ" : 79.5239092, "cage" : [{ "end" : "front", "headBike" : [204.1, 79.5239092], "head" : [200.55239, -88.0885986], "zIn" : [-0.707106781, 0.707106781], "slot" : [0.707106781, 0.707106781], "rot" : 135, "slotAl" : [1.11022302e-16, -1], "slotLen" : 4.97609076, "face" : 199.5, "in" : -1 }, { "end" : "rear", "headBike" : [-3.6, 79.5239092], "head" : [53.6863111, 58.7774799], "zIn" : [0.707106781, -0.707106781], "slot" : [0.707106781, 0.707106781], "rot" : -45, "slotAl" : [1.11022302e-16, 1], "slotLen" : 4.97609076, "face" : 1, "in" : 1 }], "cageIn" : [{ "end" : "front", "x" : [12.35, 16.5], "pts" : [[193.95939, -88.1762156], [189.009643, -83.2264681], [195.161472, -77.0746391], [200.111219, -82.0243866]], "bike" : [[199.5, 74.8], [192.5, 74.8], [192.5, 83.5], [199.5, 83.5]] }, { "end" : "rear", "x" : [12.35, 16.5], "pts" : [[53.598694, 52.1844805], [58.5484415, 47.234733], [64.7002705, 53.386562], [59.750523, 58.3363094]], "bike" : [[1, 74.8], [8, 74.8], [8, 83.5], [1, 83.5]] }], "stops" : [{ "kind" : "back", "x" : [8, 12.85], "y" : [55.7, 57.7], "z" : [50.8, 53.55], "face" : 57.7, "t" : 2 }, { "kind" : "side", "x" : [11.3, 12.85], "y" : [55.7, 60.7], "z" : [50.8, 53.55], "face" : 57.7, "t" : 2 }], "postRear" : [[58.3635998, 36.4432896], [63.8517423, 41.9314321], [53.598694, 52.1844805], [59.750523, 58.3363094], [74.246212, 43.8406204]], "casePoly" : [[54.2, -12.85], [71.1, -29.75], [118.895294, -29.75], [118.895294, 29.75], [71.1, 29.75], [54.2, 12.85]], "joints" : [{ "tag" : "steer", "head" : [173.738965, -73.2675762], "dir" : [0.422618262, 0.906307787], "half" : 3.5, "room" : 3.55030422, "gMid" : -2.65, "gHalf" : 7.15 }, { "tag" : "bridge", "head" : [116.018899, -54.3938356], "dir" : [0.707106781, 0.707106781], "half" : 3, "room" : 1.2255, "gMid" : -1.738, "gHalf" : 5.738 }, { "tag" : "pi_low", "head" : [147.000004, -55.4999627], "dir" : [-0.707106781, -0.707106781], "half" : 3, "room" : 1.75180541, "gMid" : -2.25, "gHalf" : 6.25 }], "leftJoints" : [{ "tag" : "carrier", "head" : [70.4500386, 35.5000131], "dir" : [-1.8369702e-16, -1], "half" : 3, "room" : 1.99996144, "gMid" : -7, "gHalf" : 11 }, { "tag" : "carrier_front", "head" : [125.000003, 26.9999532], "dir" : [-1.8369702e-16, -1], "half" : 3, "room" : 2.35470926, "gMid" : -3.5, "gHalf" : 7.5 }, { "tag" : "pi_top", "head" : [140.999991, 26.9999532], "dir" : [-0.707106781, -0.707106781], "half" : 3, "room" : 2.7500468, "gMid" : -4.75, "gHalf" : 8.75 }], "anchor" : [123.743687, -60.1040764], "ahY1" : 122.395294, "ahN0" : 119.895294, "ahN1" : 121.495294, "ahTip" : 119.995294, "ahHoleR" : 1.2, "ahHoleY0" : 118.295294, "ahX" : 15, "ahZ" : [-25.7, 5.3], "ahNutHalf" : 2.05, "ahNutOut" : 17.4094011, "ahTabHalf" : 3.05, "ahTabIn" : 12, "ahBoard" : { "x" : 17, "y0" : 122.395294, "y1" : 123.995294, "z0" : -29.75, "z1" : 10.25 }, "ahRailGap" : 1.96317543, "ahScrewPast" : 0, "earGap" : 9.75 };
 
 export function segPrism(context is Context, id is Id, tag is string, origin is Vector,
                          normal is Vector, xDir is Vector, segs is array, depth is ValueWithUnits,
@@ -2318,6 +2319,14 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
                 pts = append(pts, vector(q[0], q[1]) * mm);
             polyPrism(context, RB, "pc" ~ k, at(-L.xPo, z0, z0), X, Y, pts, L.xPo - R.innerX * mm);
         }
+        for (var k = 0; k < size(R.cageIn); k += 1)
+        {
+            var pts = [];
+            for (var q in R.cageIn[k].pts)
+                pts = append(pts, vector(q[0], q[1]) * mm);
+            polyPrism(context, RB, "cin" ~ k, at(-R.cageIn[k].x[1] * mm, z0, z0), X, Y, pts,
+                      (R.cageIn[k].x[1] - R.cageIn[k].x[0]) * mm);
+        }
         for (var k = 0; k < size(R.stops); k += 1)
         {
             const sb = R.stops[k];
@@ -2366,24 +2375,23 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
             step("rail joint " ~ k);
             rc = concatenateArrays([rc, railJoint(RC, k, R.joints[k])]);
         }
-        const bl = FIXTURE.bridge_layer;
         const rH = SCREW_OPT.holeDia / 2;
-        const sw = SCREW_OPT.nutSlotWidth;
         for (var k = 0; k < size(R.cage); k += 1)
         {
             step("rail cage " ~ k);
             const c = R.cage[k];
-            const h = at(-L.xPo - FIXTURE.joint_plate, c.head[0] * mm, c.head[1] * mm);
-            const cs = coordSystem(h, vector(0, c.slot[0], c.slot[1]), X);
+            const h = at(-R.cageX * mm, c.head[0] * mm, c.head[1] * mm);
             const J = RC + ("cgJ" ~ k);
-            screwJointGeometry(context, J, cs, mergeMaps(SCREW_OPT, {
-                    "nutDepth" : R.cageNd * mm, "headPocket" : 0 * mm, "bothWays" : false,
+            screwJointGeometry(context, J, coordSystem(h, vector(0, c.slotAl[0], c.slotAl[1]), Y), mergeMaps(SCREW_OPT, {
+                    "nutDepth" : FIXTURE.joint_plate + 2 * mm, "headPocket" : 0 * mm, "bothWays" : false,
                     "nutSlotLength" : c.slotLen * mm }));
-            rc = append(rc, qCreatedBy(J + "screwRev", EntityType.BODY));
-            rc = append(rc, qCreatedBy(J + "slotExt", EntityType.BODY));
-            const d0 = R.cageNd * mm + SCREW_OPT.nutSlotThickness;
-            rc = append(rc, boxIn(context, RC + ("cgB" ~ k), cs, vector(-rH, -sw / 2, d0), vector(rH, sw / 2, d0 + bl)));
-            rc = append(rc, boxIn(context, RC + ("cgC" ~ k), cs, vector(-rH, -rH, d0 + bl), vector(rH, rH, d0 + 2 * bl)));
+            polyPrism(context, RC, "cgT" ~ k, h, Y, Z,
+                      [vector(0 * mm, 0 * mm), vector(rH / sqrt(2), rH / sqrt(2)), vector(0 * mm, rH * sqrt(2)),
+                       vector(-rH / sqrt(2), rH / sqrt(2))], SCREW_OPT.holeDepth);
+            const cq = qUnion([qCreatedBy(J + "screwRev", EntityType.BODY), qCreatedBy(J + "slotExt", EntityType.BODY),
+                               qCreatedBy(RC + ("cgT" ~ k ~ "Ext"), EntityType.BODY)]);
+            opTransform(context, RC + ("cgR" ~ k), { "bodies" : cq, "transform" : rotationAround(line(h, X), c.rot * degree) });
+            rc = append(rc, cq);
         }
         step("rail cut");
         cutFrom(context, RC + "cut", railL, rc);
@@ -2765,7 +2773,7 @@ export function rgPose(context is Context, id is Id, groups is map, key is strin
     }
 }
 
-export const BK2 = { "wb" : 200.5, "yr" : 120.5, "zr" : -10, "tilt" : 45, "rake" : 15, "sOrigin" : [0, 200.5, 0.05], "sAxis" : [0, -0.2588190451, 0.9659258263], "rgDrop" : [[18.3, 6.5, 58.5755186068], [-18.3, 6.5, 58.5755186068], [100, 0, -42.2]], "comps" : [{ "name" : "battery", "frame" : "drive", "at" : [0, 87, 45.75], "rx" : 0, "boxes" : [{ "name" : "battery", "lo" : [-11, -29, -15], "hi" : [11, 29, 15], "color" : [0.85, 0.75, 0.2] }], "lift" : false }, { "name" : "AHRS", "frame" : "drive", "at" : [0, 128.6953, -9.75], "rx" : 0, "boxes" : [{ "name" : "AHRS", "lo" : [-17, -6.3, -20], "hi" : [17, -4.7, 20], "color" : [0.15, 0.35, 0.2] }, { "name" : "AHRS housing", "lo" : [-15, -4.7, -13.66], "hi" : [15, 6.3, 12.34], "color" : [0.55, 0.15, 0.15] }, { "name" : "AHRS USB-C", "lo" : [1.65, -4.7, 12.4], "hi" : [10.75, -1.3, 20], "color" : [0.75, 0.75, 0.78] }, { "name" : "AHRS USB plug (keep-out)", "lo" : [0, -6.25, 20], "hi" : [12.4, 0.25, 50], "color" : [0.85, 0.85, 0.9] }], "holes" : { "at" : [[15, -15.95], [-15, -15.95], [15, 15.05], [-15, 15.05]], "r" : 1.05, "y" : [-7.3, -3.7] }, "lift" : false }, { "name" : "Pi 3B+", "frame" : "drive", "at" : [0, 164.4, -5.8], "rx" : 0, "boxes" : [{ "name" : "Pi 3B+", "lo" : [-28, -7.4, -44.5], "hi" : [28, -6, 40.5], "color" : [0.1, 0.5, 0.2] }, { "name" : "Pi USB + Ethernet", "lo" : [-26.5, -6, 25], "hi" : [26.5, 10, 42.5], "color" : [0.75, 0.75, 0.78] }, { "name" : "Pi GPIO header", "lo" : [22, -6, -37.5], "hi" : [27, 2.5, 13.5], "color" : [0.15, 0.15, 0.15] }], "holes" : { "at" : [[24.5, -41], [-24.5, -41], [24.5, 17], [-24.5, 17]], "r" : 1.375, "y" : [-8.7, -4.7] }, "lift" : true }, { "name" : "U2D2", "frame" : "drive", "at" : [0, 143.55, -19], "rx" : 0, "boxes" : [{ "name" : "U2D2", "lo" : [-9, -7.45, -24], "hi" : [9, 7.45, 24], "color" : [0.2, 0.2, 0.25] }, { "name" : "U2D2 USB plug (keep-out)", "lo" : [-6.2, -3.25, 24], "hi" : [6.2, 3.25, 54], "color" : [0.85, 0.85, 0.9] }, { "name" : "U2D2 JST plugs (keep-out)", "lo" : [-7, -13.45, -24], "hi" : [7, -7.45, -7], "color" : [0.85, 0.85, 0.9] }], "lift" : true }, { "name" : "power board", "frame" : "drive", "at" : [-27.4, 115.45, 59.75], "rx" : 0, "boxes" : [{ "name" : "power board", "lo" : [4.7, -20.25, -26], "hi" : [6.3, 6.25, -1], "color" : [0.15, 0.4, 0.15] }, { "name" : "power board components", "lo" : [-6.3, -20.25, -26], "hi" : [4.7, 6.25, -1], "color" : [0.3, 0.3, 0.3] }, { "name" : "XT30", "lo" : [0.8, -13.92, -1], "hi" : [6.3, -3.72, 10], "color" : [0.9, 0.75, 0.1] }, { "name" : "XT30 plug (keep-out)", "lo" : [0.8, -13.92, 10], "hi" : [6.3, -3.72, 26], "color" : [0.85, 0.85, 0.9] }, { "name" : "5 V plug (keep-out)", "lo" : [-3.8, 6.25, -24.73], "hi" : [4.7, 20.25, -19.65], "color" : [0.85, 0.85, 0.9] }, { "name" : "JST plug (keep-out)", "lo" : [-3.8, 6.25, -17.11], "hi" : [4.7, 20.25, -9.49], "color" : [0.85, 0.85, 0.9] }], "holes" : { "ax" : "x", "r" : 1.45, "y" : [3.7, 7.3], "at" : [[-15.17, -20.92], [-15.17, -5.68]] }, "lift" : false }, { "name" : "switch", "frame" : "drive", "at" : [-25, 84, 58.5], "rx" : 0, "boxes" : [{ "name" : "switch", "lo" : [-6.5, -9.7, -11.25], "hi" : [6.5, 9.7, 7.25], "color" : [0.12, 0.12, 0.12] }, { "name" : "switch (through the shelf)", "lo" : [-6.5, -9.7, 7.25], "hi" : [6.5, 9.7, 9.25], "color" : [0.12, 0.12, 0.12] }, { "name" : "switch bezel", "lo" : [-7.5, -10.75, 9.25], "hi" : [7.5, 10.75, 11.25], "color" : [0.8, 0.1, 0.1] }], "lift" : false }], "carriers" : [{ "name" : "power holder", "color" : [0.93, 0.56, 0.2], "note" : "Printed -X (its battery-side face on the bed). The power board, the switch in the shelf, strap slits; two 6-32 into the left rail.", "adds" : [{ "tag" : "panel", "x" : [-16, -11.3], "pts" : [[25.438965005, 67.5118184856], [63.388795336, 105.4616488166], [68.673680331, 100.1767638216], [78.5939150359, 110.0969985265], [68.8896126585, 119.8013009039], [60.5990511477, 111.5107393931], [38.148410845, 133.9613796958], [-1.4310926801, 94.3818761707]] }, { "tag" : "shelf", "x" : [-33, -12.3], "pts" : [[3.8537319575, 96.8382736835], [34.2098260738, 127.1943677998], [32.7956125114, 128.6085813622], [2.4395183951, 98.2524872459]] }, { "tag" : "gusset0", "kind" : "wedge", "y" : [71.2, 72.8], "rot" : 45, "pts" : [[-15.5, 66.25], [-15.5, 59.25], [-16, 59.25], [-33, 65.75], [-33, 66.25]] }, { "tag" : "gusset1", "kind" : "wedge", "y" : [97.2, 98.8], "rot" : 45, "pts" : [[-15.5, 66.25], [-15.5, 59.25], [-16, 59.25], [-33, 65.75], [-33, 66.25]] }, { "tag" : "gusset2", "kind" : "wedge", "y" : [112.53, 114.13], "rot" : 45, "pts" : [[-15.5, 66.25], [-15.5, 59.25], [-16, 59.25], [-33, 65.75], [-33, 66.25]] }], "cuts" : [{ "tag" : "cutout", "x" : [-31.5, -18.5], "pts" : [[6.7528697603, 98.323197924], [20.4707413154, 112.041069479], [17.6423141906, 114.8694966038], [3.9244426356, 101.1516250487]] }, { "tag" : "xt30", "x" : [-26.9, -20.8], "pts" : [[25.7952553777, 117.3655835413], [33.4320086145, 125.0023367782], [30.6035814898, 127.8307639029], [22.9668282529, 120.1940106661]] }, { "tag" : "wires", "x" : [-17, -10.3], "pts" : [[40.7613783381, 81.4200182563], [48.9638169998, 89.622456918], [44.7211763127, 93.8650976052], [36.5187376509, 85.6626589434]] }, { "tag" : "strapUp", "x" : [-17, -10.3], "pts" : [[11.2783531599, 97.1918270741], [25.4204887837, 111.3339626978], [21.8849548777, 114.8694966038], [7.742819254, 100.72736098]] }, { "tag" : "strapLow", "x" : [-17, -10.3], "pts" : [[33.9057701579, 74.5644100761], [48.0479057816, 88.7065456999], [43.8052650945, 92.949186387], [29.6631294708, 78.8070507632]] }], "cyls" : [{ "tag" : "so0", "op" : "add", "p0" : [-15.5, 43.4517117039, 98.3656243309], "p1" : [-21.1, 43.4517117039, 98.3656243309], "r" : 3 }, { "tag" : "pl0", "op" : "cut", "p0" : [-10.8, 43.4517117039, 98.3656243309], "p1" : [-21.6, 43.4517117039, 98.3656243309], "r" : 1.15 }, { "tag" : "so1", "op" : "add", "p0" : [-15.5, 32.6754043586, 109.1419316761], "p1" : [-21.1, 32.6754043586, 109.1419316761], "r" : 3 }, { "tag" : "pl1", "op" : "cut", "p0" : [-10.8, 32.6754043586, 109.1419316761], "p1" : [-21.6, 32.6754043586, 109.1419316761], "r" : 1.15 }], "joints" : [{ "side" : "A", "head" : [-20.6, 24.7134, 74.918], "zIn" : [1, 0, 0], "slot" : [0, -0.7071067812, -0.7071067812], "nutDepth" : 5.6, "slotLen" : 5.7239092363, "holeDepth" : 8.3, "ridgeAt" : [-16, 23.2991864376, 76.3322135624], "ridgeHalf" : 5, "ridgeUp" : [-1, 0, 0], "ridgeRot" : 45 }, { "side" : "F", "head" : [-20.6, 69.2965, 107.4802], "zIn" : [1, 0, 0], "slot" : [0, 0.7071067812, 0.7071067812], "nutDepth" : 5.6, "slotLen" : 9.4246212025, "holeDepth" : 10.3, "ridgeAt" : [-16, 67.8822864376, 108.8944135624], "ridgeHalf" : 5, "ridgeUp" : [-1, 0, 0], "ridgeRot" : 45 }], "pt" : [-13.65, 27.5418091272, 95.0705067305] }, { "name" : "Pi carrier", "color" : [0.3, 0.55, 0.85], "lift" : true, "note" : "Printed. The U2D2 under the plate on two M2, the Pi over it on four spacers (4-40 self-tapping into the plate); three 6-32 into the rails, lifts out upward.", "adds" : [{ "tag" : "plate", "x" : [-28, 28], "pts" : [[142.3405950529, 71.2056528655], [143.7548086152, 72.6198664279], [83.6507322144, 132.7239428287], [82.236518652, 131.3097292663]] }, { "tag" : "cheekR", "x" : [9.3, 10.9], "pts" : [[122.3294731453, 84.1457069612], [126.2185604418, 88.0347942577], [114.9048519428, 99.3485027567], [111.0157646463, 95.4594154602]] }, { "tag" : "cheekL", "x" : [-10.9, -9.3], "pts" : [[122.3294731453, 84.1457069612], [126.2185604418, 88.0347942577], [114.9048519428, 99.3485027567], [111.0157646463, 95.4594154602]] }, { "tag" : "lugT", "x" : [-16, -11.3], "pts" : [[80.6102, 111.5867932188], [91.6383807404, 122.6149739592], [83.9312739592, 130.3220807404], [72.9030932188, 119.2939]] }, { "tag" : "lugLL", "x" : [-16, -11.3], "pts" : [[143.1891, 57.4931932188], [151.0352909121, 65.3393841309], [143.047701834, 73.326973209], [135.2015109219, 65.4807822969]] }, { "tag" : "lugLR", "x" : [11.3, 16], "pts" : [[143.1891, 57.4931932188], [151.0352909121, 65.3393841309], [143.047701834, 73.326973209], [135.2015109219, 65.4807822969]] }], "cuts" : [], "cyls" : [{ "tag" : "bs0", "op" : "add", "p0" : [24.5, 137.037294194, 70.8520994749], "p1" : [24.5, 140.2192747093, 74.0340799902], "r" : 3 }, { "tag" : "pl0", "op" : "cut", "p0" : [24.5, 136.6837408034, 70.4985460843], "p1" : [24.5, 141.6334882717, 75.4482935526], "r" : 1.15 }, { "tag" : "bs1", "op" : "add", "p0" : [-24.5, 137.037294194, 70.8520994749], "p1" : [-24.5, 140.2192747093, 74.0340799902], "r" : 3 }, { "tag" : "pl1", "op" : "cut", "p0" : [-24.5, 136.6837408034, 70.4985460843], "p1" : [-24.5, 141.6334882717, 75.4482935526], "r" : 1.15 }, { "tag" : "bs2", "op" : "add", "p0" : [24.5, 96.0251008851, 111.8642927837], "p1" : [24.5, 99.2070814005, 115.0462732991], "r" : 3 }, { "tag" : "pl2", "op" : "cut", "p0" : [24.5, 95.6715474945, 111.5107393931], "p1" : [24.5, 100.6212949628, 116.4604868614], "r" : 1.15 }, { "tag" : "bs3", "op" : "add", "p0" : [-24.5, 96.0251008851, 111.8642927837], "p1" : [-24.5, 99.2070814005, 115.0462732991], "r" : 3 }, { "tag" : "pl3", "op" : "cut", "p0" : [-24.5, 95.6715474945, 111.5107393931], "p1" : [-24.5, 100.6212949628, 116.4604868614], "r" : 1.15 }, { "tag" : "uh0", "op" : "cut", "p0" : [0, 134.703841816, 78.1352993211], "p1" : [0, 136.8251621596, 80.2566196647], "r" : 1.2 }, { "tag" : "uh1", "op" : "cut", "p0" : [0, 105.0053570062, 107.8337841309], "p1" : [0, 107.1266773498, 109.9551044745], "r" : 1.2 }], "joints" : [{ "side" : "T", "head" : [-20.6, 80.6102, 118.7939], "zIn" : [1, 0, 0], "slot" : [0, -0.7071067812, 0.7071067812], "nutDepth" : 5.6, "slotLen" : 6.8033008589, "holeDepth" : 10.3, "ridgeAt" : [-16, 80.6102, 119.2939], "ridgeHalf" : 3.5, "ridgeUp" : [-1, 0, 0], "ridgeRot" : 0 }, { "side" : "LL", "head" : [-20.6, 143.1891, 64.7003], "zIn" : [1, 0, 0], "slot" : [0, 0.7071067812, 0.7071067812], "nutDepth" : 5.6, "slotLen" : 6.9999955232, "holeDepth" : 10.3, "ridgeAt" : [-16, 143.1891, 65.2003], "ridgeHalf" : 3.5, "ridgeUp" : [-1, 0, 0], "ridgeRot" : 0 }, { "side" : "LR", "head" : [20.6, 143.1891, 64.7003], "zIn" : [-1, 0, 0], "slot" : [0, 0.7071067812, 0.7071067812], "nutDepth" : 5.6, "slotLen" : 6.9999955232, "holeDepth" : 10.3, "ridgeAt" : [16, 143.1891, 65.2003], "ridgeHalf" : 3.5, "ridgeUp" : [1, 0, 0], "ridgeRot" : 0 }], "pt" : [10.15, 112.9956636336, 101.9647978471] }, { "name" : "Pi spacer 1", "color" : [0.85, 0.85, 0.85], "lift" : true, "note" : "Printed, separate (4-40 clearance). Under the Pi's board.", "adds" : [], "cuts" : [], "cyls" : [{ "tag" : "sp", "op" : "add", "p0" : [24.5, 141.2799348811, 75.094740162], "p1" : [24.5, 144.1083620058, 77.9231672868], "r" : 3 }, { "tag" : "spb", "op" : "cut", "p0" : [24.5, 140.9263814905, 74.7411867714], "p1" : [24.5, 144.4619153964, 78.2767206774], "r" : 1.65 }], "joints" : [], "pt" : [26.825, 142.6941484434, 76.5089537244] }, { "name" : "Pi spacer 2", "color" : [0.85, 0.85, 0.85], "lift" : true, "note" : "Printed, separate (4-40 clearance). Under the Pi's board.", "adds" : [], "cuts" : [], "cyls" : [{ "tag" : "sp", "op" : "add", "p0" : [-24.5, 141.2799348811, 75.094740162], "p1" : [-24.5, 144.1083620058, 77.9231672868], "r" : 3 }, { "tag" : "spb", "op" : "cut", "p0" : [-24.5, 140.9263814905, 74.7411867714], "p1" : [-24.5, 144.4619153964, 78.2767206774], "r" : 1.65 }], "joints" : [], "pt" : [-22.175, 142.6941484434, 76.5089537244] }, { "name" : "Pi spacer 3", "color" : [0.85, 0.85, 0.85], "lift" : true, "note" : "Printed, separate (4-40 clearance). Under the Pi's board.", "adds" : [], "cuts" : [], "cyls" : [{ "tag" : "sp", "op" : "add", "p0" : [24.5, 100.2677415723, 116.1069334708], "p1" : [24.5, 103.096168697, 118.9353605956], "r" : 3 }, { "tag" : "spb", "op" : "cut", "p0" : [24.5, 99.9141881817, 115.7533800802], "p1" : [24.5, 103.4497220876, 119.2889139862], "r" : 1.65 }], "joints" : [], "pt" : [26.825, 101.6819551346, 117.5211470332] }, { "name" : "Pi spacer 4", "color" : [0.85, 0.85, 0.85], "lift" : true, "note" : "Printed, separate (4-40 clearance). Under the Pi's board.", "adds" : [], "cuts" : [], "cyls" : [{ "tag" : "sp", "op" : "add", "p0" : [-24.5, 100.2677415723, 116.1069334708], "p1" : [-24.5, 103.096168697, 118.9353605956], "r" : 3 }, { "tag" : "spb", "op" : "cut", "p0" : [-24.5, 99.9141881817, 115.7533800802], "p1" : [-24.5, 103.4497220876, 119.2889139862], "r" : 1.65 }], "joints" : [], "pt" : [-22.175, 101.6819551346, 117.5211470332] }] };
+export const BK2 = { "wb" : 200.5, "yr" : 120.5, "zr" : -10, "tilt" : 45, "rake" : 20, "sOrigin" : [0, 200.5, 0.05], "sAxis" : [0, -0.3420201433, 0.9396926208], "rgDrop" : [[18.3, 6.5, 58.5755186068], [-18.3, 6.5, 58.5755186068], [100, 0, -42.2]], "comps" : [{ "name" : "battery", "frame" : "drive", "at" : [0, 87, 45.75], "rx" : 0, "boxes" : [{ "name" : "battery", "lo" : [-11, -29, -15], "hi" : [11, 29, 15], "color" : [0.85, 0.75, 0.2] }], "lift" : false }, { "name" : "AHRS", "frame" : "drive", "at" : [0, 128.6953, -9.75], "rx" : 0, "boxes" : [{ "name" : "AHRS", "lo" : [-17, -6.3, -20], "hi" : [17, -4.7, 20], "color" : [0.15, 0.35, 0.2] }, { "name" : "AHRS housing", "lo" : [-15, -4.7, -13.66], "hi" : [15, 6.3, 12.34], "color" : [0.55, 0.15, 0.15] }, { "name" : "AHRS USB-C", "lo" : [1.65, -4.7, 12.4], "hi" : [10.75, -1.3, 20], "color" : [0.75, 0.75, 0.78] }, { "name" : "AHRS USB plug (keep-out)", "lo" : [0, -6.25, 20], "hi" : [12.4, 0.25, 50], "color" : [0.85, 0.85, 0.9] }], "holes" : { "at" : [[15, -15.95], [-15, -15.95], [15, 15.05], [-15, 15.05]], "r" : 1.05, "y" : [-7.3, -3.7] }, "lift" : false }, { "name" : "Pi 3B+", "frame" : "drive", "at" : [0, 164.4, -5.8], "rx" : 0, "boxes" : [{ "name" : "Pi 3B+", "lo" : [-28, -7.4, -44.5], "hi" : [28, -6, 40.5], "color" : [0.1, 0.5, 0.2] }, { "name" : "Pi USB + Ethernet", "lo" : [-26.5, -6, 25], "hi" : [26.5, 10, 42.5], "color" : [0.75, 0.75, 0.78] }, { "name" : "Pi GPIO header", "lo" : [22, -6, -37.5], "hi" : [27, 2.5, 13.5], "color" : [0.15, 0.15, 0.15] }], "holes" : { "at" : [[24.5, -41], [-24.5, -41], [24.5, 17], [-24.5, 17]], "r" : 1.375, "y" : [-8.7, -4.7] }, "lift" : true }, { "name" : "U2D2", "frame" : "drive", "at" : [0, 143.55, -19], "rx" : 0, "boxes" : [{ "name" : "U2D2", "lo" : [-9, -7.45, -24], "hi" : [9, 7.45, 24], "color" : [0.2, 0.2, 0.25] }, { "name" : "U2D2 USB plug (keep-out)", "lo" : [-6.2, -3.25, 24], "hi" : [6.2, 3.25, 54], "color" : [0.85, 0.85, 0.9] }, { "name" : "U2D2 JST plugs (keep-out)", "lo" : [-7, -13.45, -24], "hi" : [7, -7.45, -7], "color" : [0.85, 0.85, 0.9] }], "lift" : true }, { "name" : "power board", "frame" : "drive", "at" : [-27.4, 115.45, 59.75], "rx" : 0, "boxes" : [{ "name" : "power board", "lo" : [4.7, -20.25, -26], "hi" : [6.3, 6.25, -1], "color" : [0.15, 0.4, 0.15] }, { "name" : "power board components", "lo" : [-6.3, -20.25, -26], "hi" : [4.7, 6.25, -1], "color" : [0.3, 0.3, 0.3] }, { "name" : "XT30", "lo" : [0.8, -13.92, -1], "hi" : [6.3, -3.72, 10], "color" : [0.9, 0.75, 0.1] }, { "name" : "XT30 plug (keep-out)", "lo" : [0.8, -13.92, 10], "hi" : [6.3, -3.72, 26], "color" : [0.85, 0.85, 0.9] }, { "name" : "5 V plug (keep-out)", "lo" : [-3.8, 6.25, -24.73], "hi" : [4.7, 20.25, -19.65], "color" : [0.85, 0.85, 0.9] }, { "name" : "JST plug (keep-out)", "lo" : [-3.8, 6.25, -17.11], "hi" : [4.7, 20.25, -9.49], "color" : [0.85, 0.85, 0.9] }], "holes" : { "ax" : "x", "r" : 1.45, "y" : [3.7, 7.3], "at" : [[-15.17, -20.92], [-15.17, -5.68]] }, "lift" : false }, { "name" : "switch", "frame" : "drive", "at" : [-25, 84, 58.5], "rx" : 0, "boxes" : [{ "name" : "switch", "lo" : [-6.5, -9.7, -11.25], "hi" : [6.5, 9.7, 7.25], "color" : [0.12, 0.12, 0.12] }, { "name" : "switch (through the shelf)", "lo" : [-6.5, -9.7, 7.25], "hi" : [6.5, 9.7, 9.25], "color" : [0.12, 0.12, 0.12] }, { "name" : "switch bezel", "lo" : [-7.5, -10.75, 9.25], "hi" : [7.5, 10.75, 11.25], "color" : [0.8, 0.1, 0.1] }], "lift" : false }], "carriers" : [{ "name" : "power holder", "color" : [0.93, 0.56, 0.2], "note" : "Printed -X (its battery-side face on the bed). The power board, the switch in the shelf, strap slits; two 6-32 into the left rail.", "adds" : [{ "tag" : "panel", "x" : [-16, -11.3], "pts" : [[25.438965005, 67.5118184856], [63.388795336, 105.4616488166], [68.673680331, 100.1767638216], [78.5939150359, 110.0969985265], [68.8896126585, 119.8013009039], [60.5990511477, 111.5107393931], [38.148410845, 133.9613796958], [2.4395183951, 98.2524872459], [19.586848571, 81.10515707], [15.7162374958, 77.2345459948]] }, { "tag" : "shelf", "x" : [-33, -12.3], "pts" : [[3.8537319575, 96.8382736835], [34.2098260738, 127.1943677998], [32.7956125114, 128.6085813622], [2.4395183951, 98.2524872459]] }, { "tag" : "gusset0", "kind" : "wedge", "y" : [71.2, 72.8], "rot" : 45, "pts" : [[-15.5, 66.25], [-15.5, 59.25], [-16, 59.25], [-33, 65.75], [-33, 66.25]] }, { "tag" : "gusset1", "kind" : "wedge", "y" : [97.2, 98.8], "rot" : 45, "pts" : [[-15.5, 66.25], [-15.5, 59.25], [-16, 59.25], [-33, 65.75], [-33, 66.25]] }, { "tag" : "gusset2", "kind" : "wedge", "y" : [112.53, 114.13], "rot" : 45, "pts" : [[-15.5, 66.25], [-15.5, 59.25], [-16, 59.25], [-33, 65.75], [-33, 66.25]] }], "cuts" : [{ "tag" : "cutout", "x" : [-31.5, -18.5], "pts" : [[6.7528697603, 98.323197924], [20.4707413154, 112.041069479], [17.6423141906, 114.8694966038], [3.9244426356, 101.1516250487]] }, { "tag" : "xt30", "x" : [-26.9, -20.8], "pts" : [[25.7952553777, 117.3655835413], [33.4320086145, 125.0023367782], [30.6035814898, 127.8307639029], [22.9668282529, 120.1940106661]] }, { "tag" : "wires", "x" : [-17, -10.3], "pts" : [[40.7613783381, 81.4200182563], [48.9638169998, 89.622456918], [44.7211763127, 93.8650976052], [36.5187376509, 85.6626589434]] }, { "tag" : "strapUp", "x" : [-17, -10.3], "pts" : [[11.2783531599, 97.1918270741], [25.4204887837, 111.3339626978], [21.8849548777, 114.8694966038], [7.742819254, 100.72736098]] }, { "tag" : "strapLow", "x" : [-17, -10.3], "pts" : [[33.9057701579, 74.5644100761], [48.0479057816, 88.7065456999], [43.8052650945, 92.949186387], [29.6631294708, 78.8070507632]] }], "cyls" : [{ "tag" : "so0", "op" : "add", "p0" : [-15.5, 43.4517117039, 98.3656243309], "p1" : [-21.1, 43.4517117039, 98.3656243309], "r" : 3 }, { "tag" : "pl0", "op" : "cut", "p0" : [-10.8, 43.4517117039, 98.3656243309], "p1" : [-21.6, 43.4517117039, 98.3656243309], "r" : 1.15 }, { "tag" : "so1", "op" : "add", "p0" : [-15.5, 32.6754043586, 109.1419316761], "p1" : [-21.1, 32.6754043586, 109.1419316761], "r" : 3 }, { "tag" : "pl1", "op" : "cut", "p0" : [-10.8, 32.6754043586, 109.1419316761], "p1" : [-21.6, 32.6754043586, 109.1419316761], "r" : 1.15 }], "joints" : [{ "side" : "A", "head" : [-20.6, 24.7134, 74.918], "zIn" : [1, 0, 0], "slot" : [0, -0.7071067812, -0.7071067812], "nutDepth" : 5.6, "slotLen" : 5.7239092363, "holeDepth" : 8.3, "ridgeAt" : [-16, 23.2991864376, 76.3322135624], "ridgeHalf" : 5, "ridgeUp" : [-1, 0, 0], "ridgeRot" : 45 }, { "side" : "F", "head" : [-20.6, 69.2965, 107.4802], "zIn" : [1, 0, 0], "slot" : [0, 0.7071067812, 0.7071067812], "nutDepth" : 5.6, "slotLen" : 9.4246212025, "holeDepth" : 10.3, "ridgeAt" : [-16, 67.8822864376, 108.8944135624], "ridgeHalf" : 5, "ridgeUp" : [-1, 0, 0], "ridgeRot" : 45 }], "pt" : [-13.65, 27.5418091272, 95.0705067305] }, { "name" : "Pi carrier", "color" : [0.3, 0.55, 0.85], "lift" : true, "note" : "Printed. The U2D2 under the plate on two M2, the Pi over it on four spacers (4-40 self-tapping into the plate); three 6-32 into the rails, lifts out upward.", "adds" : [{ "tag" : "plate", "x" : [-28, 28], "pts" : [[142.3405950529, 71.2056528655], [143.7548086152, 72.6198664279], [83.6507322144, 132.7239428287], [82.236518652, 131.3097292663]] }, { "tag" : "cheekR", "x" : [9.3, 10.9], "pts" : [[122.3294731453, 84.1457069612], [126.2185604418, 88.0347942577], [114.9048519428, 99.3485027567], [111.0157646463, 95.4594154602]] }, { "tag" : "cheekL", "x" : [-10.9, -9.3], "pts" : [[122.3294731453, 84.1457069612], [126.2185604418, 88.0347942577], [114.9048519428, 99.3485027567], [111.0157646463, 95.4594154602]] }, { "tag" : "lugT", "x" : [-16, -11.3], "pts" : [[80.6102, 111.5867932188], [91.6383807404, 122.6149739592], [83.9312739592, 130.3220807404], [72.9030932188, 119.2939]] }, { "tag" : "lugLL", "x" : [-16, -11.3], "pts" : [[143.1891, 57.4931932188], [151.0352909121, 65.3393841309], [143.047701834, 73.326973209], [135.2015109219, 65.4807822969]] }, { "tag" : "lugLR", "x" : [11.3, 16], "pts" : [[143.1891, 57.4931932188], [151.0352909121, 65.3393841309], [143.047701834, 73.326973209], [135.2015109219, 65.4807822969]] }], "cuts" : [], "cyls" : [{ "tag" : "bs0", "op" : "add", "p0" : [24.5, 137.037294194, 70.8520994749], "p1" : [24.5, 140.2192747093, 74.0340799902], "r" : 3 }, { "tag" : "pl0", "op" : "cut", "p0" : [24.5, 136.6837408034, 70.4985460843], "p1" : [24.5, 141.6334882717, 75.4482935526], "r" : 1.15 }, { "tag" : "bs1", "op" : "add", "p0" : [-24.5, 137.037294194, 70.8520994749], "p1" : [-24.5, 140.2192747093, 74.0340799902], "r" : 3 }, { "tag" : "pl1", "op" : "cut", "p0" : [-24.5, 136.6837408034, 70.4985460843], "p1" : [-24.5, 141.6334882717, 75.4482935526], "r" : 1.15 }, { "tag" : "bs2", "op" : "add", "p0" : [24.5, 96.0251008851, 111.8642927837], "p1" : [24.5, 99.2070814005, 115.0462732991], "r" : 3 }, { "tag" : "pl2", "op" : "cut", "p0" : [24.5, 95.6715474945, 111.5107393931], "p1" : [24.5, 100.6212949628, 116.4604868614], "r" : 1.15 }, { "tag" : "bs3", "op" : "add", "p0" : [-24.5, 96.0251008851, 111.8642927837], "p1" : [-24.5, 99.2070814005, 115.0462732991], "r" : 3 }, { "tag" : "pl3", "op" : "cut", "p0" : [-24.5, 95.6715474945, 111.5107393931], "p1" : [-24.5, 100.6212949628, 116.4604868614], "r" : 1.15 }, { "tag" : "uh0", "op" : "cut", "p0" : [0, 134.703841816, 78.1352993211], "p1" : [0, 136.8251621596, 80.2566196647], "r" : 1.2 }, { "tag" : "uh1", "op" : "cut", "p0" : [0, 105.0053570062, 107.8337841309], "p1" : [0, 107.1266773498, 109.9551044745], "r" : 1.2 }], "joints" : [{ "side" : "T", "head" : [-20.6, 80.6102, 118.7939], "zIn" : [1, 0, 0], "slot" : [0, -0.7071067812, 0.7071067812], "nutDepth" : 5.6, "slotLen" : 6.8033008589, "holeDepth" : 10.3, "ridgeAt" : [-16, 80.6102, 119.2939], "ridgeHalf" : 3.5, "ridgeUp" : [-1, 0, 0], "ridgeRot" : 0 }, { "side" : "LL", "head" : [-20.6, 143.1891, 64.7003], "zIn" : [1, 0, 0], "slot" : [0, 0.7071067812, 0.7071067812], "nutDepth" : 5.6, "slotLen" : 6.9999955232, "holeDepth" : 10.3, "ridgeAt" : [-16, 143.1891, 65.2003], "ridgeHalf" : 3.5, "ridgeUp" : [-1, 0, 0], "ridgeRot" : 0 }, { "side" : "LR", "head" : [20.6, 143.1891, 64.7003], "zIn" : [-1, 0, 0], "slot" : [0, 0.7071067812, 0.7071067812], "nutDepth" : 5.6, "slotLen" : 6.9999955232, "holeDepth" : 10.3, "ridgeAt" : [16, 143.1891, 65.2003], "ridgeHalf" : 3.5, "ridgeUp" : [1, 0, 0], "ridgeRot" : 0 }], "pt" : [10.15, 112.9956636336, 101.9647978471] }, { "name" : "Pi spacer 1", "color" : [0.85, 0.85, 0.85], "lift" : true, "note" : "Printed, separate (4-40 clearance). Under the Pi's board.", "adds" : [], "cuts" : [], "cyls" : [{ "tag" : "sp", "op" : "add", "p0" : [24.5, 141.2799348811, 75.094740162], "p1" : [24.5, 144.1083620058, 77.9231672868], "r" : 3 }, { "tag" : "spb", "op" : "cut", "p0" : [24.5, 140.9263814905, 74.7411867714], "p1" : [24.5, 144.4619153964, 78.2767206774], "r" : 1.65 }], "joints" : [], "pt" : [26.825, 142.6941484434, 76.5089537244] }, { "name" : "Pi spacer 2", "color" : [0.85, 0.85, 0.85], "lift" : true, "note" : "Printed, separate (4-40 clearance). Under the Pi's board.", "adds" : [], "cuts" : [], "cyls" : [{ "tag" : "sp", "op" : "add", "p0" : [-24.5, 141.2799348811, 75.094740162], "p1" : [-24.5, 144.1083620058, 77.9231672868], "r" : 3 }, { "tag" : "spb", "op" : "cut", "p0" : [-24.5, 140.9263814905, 74.7411867714], "p1" : [-24.5, 144.4619153964, 78.2767206774], "r" : 1.65 }], "joints" : [], "pt" : [-22.175, 142.6941484434, 76.5089537244] }, { "name" : "Pi spacer 3", "color" : [0.85, 0.85, 0.85], "lift" : true, "note" : "Printed, separate (4-40 clearance). Under the Pi's board.", "adds" : [], "cuts" : [], "cyls" : [{ "tag" : "sp", "op" : "add", "p0" : [24.5, 100.2677415723, 116.1069334708], "p1" : [24.5, 103.096168697, 118.9353605956], "r" : 3 }, { "tag" : "spb", "op" : "cut", "p0" : [24.5, 99.9141881817, 115.7533800802], "p1" : [24.5, 103.4497220876, 119.2889139862], "r" : 1.65 }], "joints" : [], "pt" : [26.825, 101.6819551346, 117.5211470332] }, { "name" : "Pi spacer 4", "color" : [0.85, 0.85, 0.85], "lift" : true, "note" : "Printed, separate (4-40 clearance). Under the Pi's board.", "adds" : [], "cuts" : [], "cyls" : [{ "tag" : "sp", "op" : "add", "p0" : [-24.5, 100.2677415723, 116.1069334708], "p1" : [-24.5, 103.096168697, 118.9353605956], "r" : 3 }, { "tag" : "spb", "op" : "cut", "p0" : [-24.5, 99.9141881817, 115.7533800802], "p1" : [-24.5, 103.4497220876, 119.2889139862], "r" : 1.65 }], "joints" : [], "pt" : [-22.175, 101.6819551346, 117.5211470332] }], "cage" : { "zc" : 100, "wb" : 200.5, "D" : 15, "ring" : [[58.7, 0], [68.7, 0], [68.7, 15], [58.7, 15]], "ringArc" : [-270, 135], "base" : [[58.7, -10], [63.7, -10], [63.7, 0.5], [58.7, 0.5]], "baseArcs" : [[-186.5, 51.5], [-306.5, 51.5], [-390, 15]], "groove" : [[63.7, 0], [61.2, -2.5], [61.2, -5.5], [64.2, -8.5], [64.2, 0]], "grooveArcs" : [[-142.5, 7.5], [-262.5, 7.5], [-382.5, 7.5]], "sheet" : [[65.6583333333, 15.5], [66.7416666667, 15.5], [66.45, 12], [65.95, 12]], "sheetArc" : [-270, 130], "Ro" : 68.7, "He" : 50, "cav" : [[0, 1], [63.9, 1], [63.9, -10], [0, -47.5]], "lug" : [[64.4, -0.2], [63.7828427125, -0.2], [61.4, -2.5828427125], [61.4, -5.4171572875], [64.4, -8.4171572875]], "lugArcs" : [[-143, 7], [-263, 7], [-383, 7]], "capArc" : [-270, 135], "bars" : [{ "sx" : 1, "outer" : [[16.2, 0, 72.65], [59.7, 15, 85.65]], "head" : [[12.35, -3.6, 72.65], [24.75, 0.5, 85.65]], "chin" : [[12.35, 0, 72.65], [16.7, 15, 85.65]], "socket" : [[11.35, 1, 74.65], [20.75, 16, 83.65]], "screw" : [16.475, -3.6, 79.5239092363], "hints" : [[[14.675, 0.8, 74.65], [18.275, 1, 83.65]], [[14.675, 0.6, 77.7239092363], [18.275, 0.8, 81.3239092363]]] }, { "sx" : -1, "outer" : [[-16.2, 0, 72.65], [-59.7, 15, 85.65]], "head" : [[-12.35, -3.6, 72.65], [-24.75, 0.5, 85.65]], "chin" : [[-12.35, 0, 72.65], [-16.7, 15, 85.65]], "socket" : [[-11.35, 1, 74.65], [-20.75, 16, 83.65]], "screw" : [-16.475, -3.6, 79.5239092363], "hints" : [[[-14.675, 0.8, 74.65], [-18.275, 1, 83.65]], [[-14.675, 0.6, 77.7239092363], [-18.275, 0.8, 81.3239092363]]] }], "cham" : [[11.35, 7.4367190769], [11.35, 16], [16.2, 16], [16.2, 12.2867190769]], "chamZ" : [71.65, 86.65], "ringPt" : [0, 7.5, 163.7], "capPt" : [0, -5, 165.8], "base_deg" : [[45, 148], [165, 268], [285, 315]], "gaps_deg" : [[148, 165], [268, 285]], "lugs_deg" : [[46, 60], [166, 180], [286, 300]], "cone_over_deg" : 59.5932682189, "cap_wall" : 1.8271905533, "chinY" : [8.4367190769, 12.2867190769], "tongueFace" : 1 } };
 
 /** A bike-frame vector from a plain [x, y, z] in mm. */
 export function bk2V(a is array) returns Vector
@@ -2855,6 +2863,131 @@ export function bk2Carrier(context is Context, id is Id, C is map) returns Query
     if (C.lift == true)
         setAttribute(context, { "entities" : q, "name" : "bk_lift", "attribute" : "pi" });
     return q;
+}
+
+/**
+ * The rollcage rings and their caps (cad_bike_v2.rollcage): built at the
+ * REAR, then turned 180 deg about Z through mid-wheelbase for the front --
+ * one part each, the bayonet's hand kept. Profiles (r, y) about the ring's
+ * axis (along Y at z RC.zc), revolved over [psi centre, half] (deg, psi
+ * from +X toward +Z). Each scope's children are made contiguously.
+ */
+export function bk2Cage(context is Context, id is Id, RC is map)
+{
+    const mm = millimeter;
+    const X  = vector(1, 0, 0);
+    const Y  = vector(0, 1, 0);
+    const Z  = vector(0, 0, 1);
+    const C  = vector(0, 0, RC.zc) * mm;
+    const ax = line(C, Y);
+    const v2 = function(q is array) returns Vector { return vector(q[0], q[1]) * mm; };
+    // the profile on the plane through the axis toward +X ((u, v) = (x, y)),
+    // revolved both ways by the half span, then turned to its centre.
+    // opRevolve's angleBack is where the revolve STARTS (normalised to
+    // 0..360), not a second extent: equal angles make a full turn (every
+    // ring, cap and lug came out 360 deg, --check 2026-10-19)
+    const arc = function(scope is Id, tag is string, prof is array, a is array) returns Query
+    {
+        var sk = newSketchOnPlane(context, scope + tag, { "sketchPlane" : plane(C, Z, X) });
+        var pts = [];
+        for (var q in prof)
+            pts = append(pts, v2(q));
+        skPolygon(sk, pts);
+        skSolve(sk);
+        if (a[1] >= 180)
+            opRevolve(context, scope + (tag ~ "Rv"), { "entities" : qSketchRegion(scope + tag), "axis" : ax,
+                    "angleForward" : 360 * degree });
+        else
+            opRevolve(context, scope + (tag ~ "Rv"), { "entities" : qSketchRegion(scope + tag), "axis" : ax,
+                    "angleForward" : a[1] * degree, "angleBack" : (360 - a[1]) * degree });
+        opDeleteBodies(context, scope + (tag ~ "Dl"), { "entities" : qCreatedBy(scope + tag, EntityType.BODY) });
+        const b = qCreatedBy(scope + (tag ~ "Rv"), EntityType.BODY);
+        if (a[1] < 180)
+            opTransform(context, scope + (tag ~ "Tf"), { "bodies" : b, "transform" : rotationAround(ax, -a[0] * degree) });
+        return b;
+    };
+    // ---- the ring: its 270 deg, the bayonet base, the bars' blocks
+    const R = id + "r";
+    var adds = [arc(R, "ring", RC.ring, RC.ringArc)];
+    for (var k = 0; k < size(RC.baseArcs); k += 1)
+        adds = append(adds, arc(R, "base" ~ k, RC.base, RC.baseArcs[k]));
+    for (var k = 0; k < size(RC.bars); k += 1)
+    {
+        const b = RC.bars[k];
+        for (var nm in ["outer", "head", "chin"])
+            adds = append(adds, boxW(context, R + (nm ~ k), bk2V(b[nm][0]), bk2V(b[nm][1])));
+    }
+    opBoolean(context, id + "ru", { "tools" : qUnion(adds), "operationType" : BooleanOperationType.UNION });
+    const ringPt = bk2V(RC.ringPt);
+    // ---- its cuts: the bayonet's grooves, the sheet's groove, each bar's
+    // socket, its chin's two chamfered ends, its screw (head outboard)
+    const K = id + "k";
+    var cuts = [];
+    for (var k = 0; k < size(RC.grooveArcs); k += 1)
+        cuts = append(cuts, arc(K, "gv" ~ k, RC.groove, RC.grooveArcs[k]));
+    cuts = append(cuts, arc(K, "sheet", RC.sheet, RC.sheetArc));
+    var slots = [];
+    for (var k = 0; k < size(RC.bars); k += 1)
+    {
+        const b = RC.bars[k];
+        cuts = append(cuts, boxW(context, K + ("sock" ~ k), bk2V(b.socket[0]), bk2V(b.socket[1])));
+        for (var i = 0; i < size(b.hints); i += 1)
+            cuts = append(cuts, boxW(context, K + ("hint" ~ k ~ "_" ~ i), bk2V(b.hints[i][0]), bk2V(b.hints[i][1])));
+        // the chin's 45 deg chamfer at its inboard corner on the bed, the
+        // edge along Z: sketched in (x, y), extruded up the bar's z
+        var pts = [];
+        for (var q in RC.cham)
+            pts = append(pts, vector(b.sx * q[0], q[1]) * mm);
+        polyPrism(context, K, "ch" ~ k, vector(0, 0, RC.chamZ[0]) * mm, Z, X, pts, (RC.chamZ[1] - RC.chamZ[0]) * mm);
+        cuts = append(cuts, qCreatedBy(K + ("ch" ~ k ~ "Ext"), EntityType.BODY));
+        const J = K + ("sc" ~ k);
+        screwJointGeometry(context, J, coordSystem(bk2V(b.screw), Z, Y), mergeMaps(SCREW_OPT, {
+                "nutDepth" : FIXTURE.joint_plate + 2 * mm, "headPocket" : 0 * mm, "bothWays" : false,
+                "nutSlotLength" : 1 * mm }));
+        cuts = append(cuts, qCreatedBy(J + "screwRev", EntityType.BODY));
+        slots = append(slots, qCreatedBy(J + "slotExt", EntityType.BODY));
+    }
+    opDeleteBodies(context, id + "kd", { "entities" : qUnion(slots) });
+    cutFrom(context, id + "kc", partAt(context, R, ringPt), cuts);
+    const note = "Printed Y-outboard (its inboard face, with the sheet's groove, on the bed). ONE part: the "
+                 ~ "front is the rear turned 180 deg about Z. One 6-32 a side along Y into the rail's cage tongue, "
+                 ~ "the head outboard (under the cap).";
+    dress(context, partAt(context, R, ringPt), "rollcage rear", color(0.30, 0.30, 0.34), note);
+    // ---- the cap: the dome (one ellipse, its quarter outboard of the rim
+    // and off the axis), less its cone, plus the three lugs on its skirt's bore
+    const P = id + "p";
+    var sk = newSketchOnPlane(context, P + "dome", { "sketchPlane" : plane(C, Z, X) });
+    skEllipse(sk, "ell", { "center" : v2([0, 0]), "majorRadius" : RC.Ro * mm, "minorRadius" : RC.He * mm });
+    skLineSegment(sk, "ax", { "start" : v2([0, -RC.He - 2]), "end" : v2([0, RC.He + 2]) });
+    skLineSegment(sk, "rim", { "start" : v2([-RC.Ro - 2, 0]), "end" : v2([RC.Ro + 2, 0]) });
+    skSolve(sk);
+    const quarter = qContainsPoint(qSketchRegion(P + "dome"), C + RC.Ro / 2 * mm * X - RC.He / 2 * mm * Y);
+    opRevolve(context, P + "domeRv", { "entities" : quarter, "axis" : ax,
+            "angleForward" : RC.capArc[1] * degree, "angleBack" : (360 - RC.capArc[1]) * degree });
+    opDeleteBodies(context, P + "domeDl", { "entities" : qCreatedBy(P + "dome", EntityType.BODY) });
+    opTransform(context, P + "domeTf", { "bodies" : qCreatedBy(P + "domeRv", EntityType.BODY),
+            "transform" : rotationAround(ax, -RC.capArc[0] * degree) });
+    var lugs = [];
+    for (var k = 0; k < size(RC.lugArcs); k += 1)
+        lugs = append(lugs, arc(P, "lug" ~ k, RC.lug, RC.lugArcs[k]));
+    const cav = arc(id + "q", "cav", RC.cav, [0, 180]);
+    const capPt = bk2V(RC.capPt);
+    cutFrom(context, id + "pc", qCreatedBy(P + "domeRv", EntityType.BODY), [cav]);
+    opBoolean(context, id + "pu", { "tools" : qUnion(concatenateArrays([[partAt(context, P, capPt)], lugs])),
+            "operationType" : BooleanOperationType.UNION });
+    dress(context, partAt(context, P, capPt), "cap rear", color(0.85, 0.85, 0.88),
+          "Printed Y-outboard (its rim on the bed; the inside a cone). Turns on CLOCKWISE seen from outboard, "
+          ~ "three lugs into the ring's grooves. ONE part: the front is the rear turned 180 deg about Z.");
+    // ---- the front: the same two parts turned about mid-wheelbase
+    const W = line(vector(0, RC.wb / 2, 0) * mm, Z);
+    opPattern(context, id + "f", { "entities" : qUnion([partAt(context, R, ringPt), partAt(context, P, capPt)]),
+            "transforms" : [rotationAround(W, 180 * degree)], "instanceNames" : ["front"] });
+    const fl = function(q is Vector) returns Vector { return vector(-q[0], RC.wb * mm - q[1], q[2]); };
+    dress(context, partAt(context, id + "f", fl(ringPt)), "rollcage front", color(0.30, 0.30, 0.34), note);
+    dress(context, partAt(context, id + "f", fl(capPt)), "cap front", color(0.85, 0.85, 0.88),
+          "The rear cap turned 180 deg about Z (the same part).");
+    setAttribute(context, { "entities" : qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID),
+                            "name" : "bk_mod", "attribute" : "bike" });
 }
 
 /**
@@ -2950,6 +3083,8 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
     step("carriers");
     for (var k = 0; k < size(BK2.carriers); k += 1)
         bk2Carrier(context, id + ("pc" ~ k), BK2.carriers[k]);
+    step("rollcage");
+    bk2Cage(context, id + "cage", BK2.cage);
     return { "steer" : rs, "righting" : rr, "rXf" : rXf,
              "sAxis" : line(bk2V(BK2.sOrigin), vector(BK2.sAxis[0], BK2.sAxis[1], BK2.sAxis[2])) };
 }

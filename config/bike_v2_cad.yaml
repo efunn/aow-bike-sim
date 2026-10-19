@@ -269,3 +269,56 @@ pi_carrier:
   ridge: {value: [3.0, 4.0], source: design}   # down (closed) and up (open) of each head, bike z
   holder_gap: {value: 1.0, source: design}     # the top lug off the power holder's front
 
+
+# THE ROLLCAGES (user, 2026-10-19, docs/plans/aow-bike-whole-v2-touchups.md;
+# the user's mocks were `rear-pill-ring` and `rear-pill-v2` in
+# aow-bike-whole-v2, read back with cad_hand_edits). ONE part, at the rear
+# and turned 180 deg about Z (about mid-wheelbase) at the front, which keeps
+# the bayonet's hand. Each: a 270 deg ring (open at the bottom) depth deep,
+# Y-inboard from the wheelbase's end, printed Y-outboard (its inboard face
+# on the bed); a bayonet base on its outboard face for a half-dome cap; a
+# V-groove on its inboard face for the flexible sheet between the rings;
+# a bar each side in to the rail's cage tongue (drive_cad.yaml rail.cage_*),
+# one 6-32 along Y in each, the head outboard (under the cap).
+# ANGLES (theta) from the bottom, clockwise seen from OUTBOARD; the caps
+# attach clockwise (user: "both attaching clockwise").
+rollcage:
+  r_out: {value: 68.7, source: design (user; = the blades' widest at rest, 137.4; --check measures them)}
+  z: {value: 100.0, source: design (user; the blades' height)}
+  depth: {value: 15.0, source: design (user)}
+  wall: {value: 10.0, source: design (user; ~10)}
+  opening_deg: {value: 90.0, source: design (user; 270 deg ring)}
+  # the bayonet base: the inner half of the wall, out past the ring's
+  # outboard face (user: "5mm or half the X/thk ... I made it 10mm
+  # Y-outboard but can maybe be shorter")
+  base: {value: [5.0, 10.0], source: design (user's mock)}
+  # the V in the base's outer face (the female half on the ring, user):
+  # depth, width at the face (45 deg flanks), from the ring's outboard face
+  groove: {value: [2.5, 8.0], source: design (user's mock)}
+  # three grooves, 15 deg of travel each (user), a stop past each; where
+  # each starts (the first at the ring's end, its lug entering through the
+  # opening); the lugs 14 deg; each lug's way in a gap in the base
+  slots_deg: {value: [45.0, 165.0, 285.0], source: design (user's mock)}
+  slot_deg: {value: 15.0, source: design (user)}
+  stop_deg: {value: 3.0, source: design (user's mock)}
+  lug_deg: {value: 14.0, source: design}
+  gap_deg: {value: 17.0, source: design (a lug and 1.5 each side)}
+  fit: {value: 0.2, source: GUESS (the cap on the base, each face)}
+  # the flexible sheet (0.02 in) between the rings (it has cutouts for the
+  # blades, user): a groove in each ring's inboard face, its radius, 1.0
+  # wide at the face to a 0.5 flat end 3.0 deep (user, 2026-10-19), stopping
+  # short of the ring's ends by end_deg so the sheet cannot slide out (user)
+  sheet_groove: {value: [66.2, 1.0, 0.5, 3.0, 5.0], source: design (user; the radius GUESS, mid of the outer half)}
+  # the cap: an elliptical half-dome (user: 137.4 across, 50 high, its curve
+  # starting at the ring's outboard face), 270 deg as the ring; its inside
+  # a CONE (user: "a polygon/cone type shape to print better"), from the
+  # skirt's bore at the base's end to roof_wall under the dome's top
+  dome: {value: [50.0, 2.5], source: design (user; roof GUESS)}
+  # the bars: socket clearance round the tongue, the socket's walls; the
+  # chin (inboard of the rail, |x| < 16.2, carrying the screw's head) stops
+  # short of the bed on a 45 deg chamfer at its inboard corner, the edge
+  # along Z (user, 2026-10-19), clear of the steering's side pads (front)
+  # and the power holder's panel (rear left)
+  bar_fit: {value: 0.15, source: GUESS (as the house ridge)}
+  bar_wall: {value: 2.0, source: design}
+  bar_split_x: {value: 16.2, source: design (0.2 outside the rail's inner face, where the pads and the panel stop)}

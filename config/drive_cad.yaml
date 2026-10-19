@@ -241,36 +241,41 @@ rail:
   #             underside (z 38.6), up over the fork's top (module z 68.75)
   #             23 behind the steer axis -- the fork sweeps r 25.5 round it
   #             below z 67.25 -- to the steering's side pad (module z
-  #             68.75..80.8, y -11.5..12: the pad's footprint), and on up
-  #             to the front cage post, which is part of its outline
-  #   THE CAGE POSTS (user, 2026-10-16): short posts at 15 deg. The FRONT
-  #   one is parallel to the steering axis just ahead of the steering's foot
-  #   (module y cage_post_ym, from the band's bottom to cage_post_top_zm);
-  #   the REAR one is its exact MIRROR about mid-wheelbase, carried by an arm
-  #   whose edges continue the post's bottom and the band's top (15 deg), and
-  #   end ON the case side's rear chamfer face and top edge (no overlap).
-  #   Each post is the rail's 4.6 thick (a boss inward blocked the front
-  #   fork's nut slots) and is itself the MALE locating feature: the cage's
-  #   socket slides DOWN over it along its axis, with lead-ins at its top. One
-  #   6-32 in from the side, the head in the cage part outside the rail, the
-  #   nut centred in the 4.6 (0.95 walls, two line widths) in a slot from the
-  #   screw out through the post's FREE edge (front post: forward; rear:
-  #   back). Through both edges it ran on into the rail.
+  #             68.75..80.8, y -11.5..12: the pad's footprint), and on
+  #             to the front cage tongue, which is part of its outline
+  #   THE ROLL CAGE TONGUES (user, 2026-10-19, docs/plans/
+  #   aow-bike-whole-v2-touchups.md; they replace 2026-10-16's cage posts):
+  #   the rollcage rings slide on Y-INBOARD and bolt on with one 6-32 a side
+  #   ALONG Y, each from a bar off the ring that reaches in to the rail. A
+  #   ring prints Y-outboard (its inboard face on the bed), so the bar's
+  #   clamp face is a pocket's ceiling, and the rail's end in the ring is a
+  #   TONGUE the bar's socket slides over: cage_tongue_z tall, from
+  #   cage_band_y (0.5 inboard of the front ring's bed) out to cage_face_y.
+  #   The nut sits in the tongue across the screw (6.45 across X), so the
+  #   tongue grows inward to cage_inner_x for cage_inboard_len past its
+  #   face; its slot runs up out of the tongue's top. Behind the front
+  #   tongue its top runs back cage_post_top, then straight down to the
+  #   band's top beside the pad (user, 2026-10-19: no notch there). The REAR
+  #   tongue is the front's MIRROR about mid-wheelbase; its arm's edges
+  #   continue the band's bottom and top (mirrored; the top straight from
+  #   the tongue's top corner) and end ON the case side's rear chamfer face
+  #   and top edge. Both ends' rail is clear of the
+  #   ring's bar below the tongue (cage_band_y) and above it (cage_post_top).
   inner_x: {value: 0.016, source: design (= case_half 17 - 1.0; plate = joint_plate 4.6)}
-  # the outline in two runs, the front cage post drawn between them (code:
+  # the outline in two runs, the front cage tongue drawn between them (code:
   # cad_drive.rail_layout): along the bottom to the steering's pad, then
   # back along the top from it
   outline_bottom:
-    value: [[0.082555, 0.041896], [0.0860, 0.0386], [0.1500, 0.0386], [0.160619, 0.060022], [0.171727, 0.062998]]
+    value: [[0.082555, 0.041896], [0.0860, 0.0386], [0.1500, 0.0386], [0.155544, 0.056318], [0.166351, 0.060251]]
     source: design
   outline_top:
-    value: [[0.168479, 0.07512], [0.10511, 0.06304], [0.104404, 0.063746]]
+    value: [[0.162058, 0.072044], [0.1500, 0.0716], [0.10511, 0.06304], [0.104404, 0.063746]]
     source: design
   # The steering's frame, to draw the front post in and mirror the rear one
   # by (cad_bike_v2 refuses it if it is not the bike's): the front axle (y,
   # z, bike) and the rake. The rear axle is the origin.
   steer_axle: {value: [0.2005, 0.00005], source: design (= the bike's wheelbase, front axle height)}
-  steer_rake_deg: {value: 15.0, source: design (= bike.rake_deg)}
+  steer_rake_deg: {value: 20.0, source: design (= bike.rake_deg; 15 until 2026-10-19)}
   # The band the rail is beside the steering, module z: from the lower
   # case's bottom (the user: flush with it; the fork's top is 1.0 under it)
   # to the side pads' top.
@@ -278,14 +283,14 @@ rail:
   # The joints: (y, z) of the head on the rail's outer face, the ridge's
   # direction in the side view (deg up from +Y) and half-length. The ridge
   # is on the OTHER part (steering pad, bridge lug); the rail has the groove.
-  steer_joint: {value: [0.180946, 0.073026], source: design (= cad_steering v2 side joint, in the bike)}
+  steer_joint: {value: [0.174660, 0.071044], source: design (= cad_steering v2 side joint, in the bike)}
   # Both joints' grooves run ALONG THE WAY THE MODULE SLIDES OUT and open
   # through the rail's lower edge (user, 2026-10-16: the steering and the
   # righting come out of the rails downward, the rails staying on the
   # drive): `*_ridge_half` is how far the groove's ridge runs past the head
   # (+1 for the groove), `*_groove_open` how far the groove runs back from
   # the head, out past the edge.
-  steer_ridge_deg: {value: 105.0, source: design (up the steering axis, raked 15)}
+  steer_ridge_deg: {value: 110.0, source: design (up the steering axis, raked 20)}
   steer_ridge_half: {value: 0.0035, source: design (= steering v2.side_ridge_above)}
   steer_groove_open: {value: 0.0098, source: design (2.5 past the rail's edge at module z 68.25, its 45 deg end taper outside the rail)}
   bridge_joint: {value: [0.1205, 0.0435755], source: design (= cad_righting rail joint, in the bike)}
@@ -315,7 +320,7 @@ rail:
   carrier_joint: {value: [0.0247134, 0.074918], source: design (bike frame, = drive (70.45, 35.5))}
   carrier_ridge_deg: {value: 315.0, source: design (user; slides in along the drive's -Z)}
   carrier_ridge_half: {value: 0.003, source: design}
-  carrier_groove_open: {value: 0.013, source: design (out through the arm's edge across the groove's width)}
+  carrier_groove_open: {value: 0.018, source: design (out through the rear cage post's top across the groove's width; 13 until the 2026-10-19 tongue)}
   # FORE: an EAR off the case side's front edge at its top (drive frame:
   # front_ear = length forward, z0, z1), over the AHRS tab and board, near
   # the left drive pulley. The head at drive (125, 27): the head and 1 mm
@@ -364,12 +369,19 @@ rail:
   # face at |x| side_x (0.3 off it), leg long past the lip. cad_bike_v2
   # refuses it off the battery (bike_v2_cad.yaml components.battery).
   # y1, thick, z0, z1, x_in, side_x, leg
-  battery_stop: {value: [0.0577, 0.002, 0.0425, 0.050, 0.008, 0.0113, 0.003], source: design}
+  # SINCE 2026-10-19 the rear arm no longer reaches the battery's rear face
+  # at these heights; the stop hangs off the rear cage TONGUE's inboard part
+  # instead (|x| to cage_inner_x), so it is shorter: drive z 50.8..53.55, the
+  # tongue's footprint at the stop's y less 0.5, still in the battery's
+  # upper third.
+  battery_stop: {value: [0.0577, 0.002, 0.0508, 0.05355, 0.008, 0.0113, 0.003], source: design}
 
-  cage_post_ym: {value: [0.01355, 0.02555], source: design (1.0 ahead of the steering's foot at 12.55; 12 wide)}
-  cage_post_top_zm: {value: 0.083, source: design}
-  cage_post_lead: {value: 0.002, source: design}    # the free edge's lead-in; the rail's side runs 45 deg from the band's top
-  cage_screw_zm: {value: 0.076, source: design}     # module z of the screws (the rear's mirrored)
+  cage_face_y: {value: 0.1995, source: design (the head 4.6 out, 3.6 past the ring's outer face, in the cap's bore)}
+  cage_tongue_z: {value: [0.0748, 0.0835], source: design (front, its foot over the fork's top plane; rear, its inboard part under the power holder's panel)}
+  cage_band_y: {value: 0.185, source: design (0.5 inboard of the front ring's bed, 185.5)}
+  cage_post_top: {value: 0.006, source: design}
+  cage_inner_x: {value: 0.01235, source: design (= 20.6 - 0.9 - 6.45 - 0.9, two lines each side of the nut)}
+  cage_inboard_len: {value: 0.007, source: design (past the nut; the battery stop on it; the rear one under the power holder's panel)}
 
 ahrs:
   # The TM151 on the case sides' front edges (user, 2026-10-16: "two

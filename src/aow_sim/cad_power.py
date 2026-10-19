@@ -221,13 +221,25 @@ def layout(p: dict, D: dict, R: dict, dd: dict, battery: dict) -> dict:
     zf0 = fz - rl_
     ytop = max(y0 + bw, s1 + 1.0)                      # the high part: the board, the strap
     need(ytop < yf1, "the panel's high part runs past its front")
+    # above the aft joint the panel needs only reach the shelf's (or its
+    # gusset's) aft end: the aft lug's extra is an EAR at the bottom, to the
+    # ridge's top + 1 (user, 2026-10-19: "5.474mm hanging out back there
+    # ... not necessary for most of its height (just needed at the bottom,
+    # for the 'ear')"), as the fore joint's square hangs off the front
+    ya1 = min(cy0 - m, g_aft[0])
+    ze = az + p["ridge"][1] + 1.0
+    need(ze < pz1, "the panel's aft ear runs up to the shelf")
+    back = [(ya1, pz1), (ya1, ze), (ya0, ze)] if ya1 > ya0 + 1e-6 else [(ya0, pz1)]
     outline = [(ya0, Zp), (yc, Zp), (yc, zf0), (yf1, zf0), (yf1, p["front_top"]), (ytop, p["front_top"]),
-               (ytop, pz1), (ya0, pz1)]
+               (ytop, pz1)] + back
+    P["aftEar"] = [ya0, ya1, ze]
     need(fz + rl_ <= p["front_top"] and zf0 < Zp, "the fore joint is not on the panel")
     need(az - rl_ >= Zp - 1e-9 or az - nW / 2 - p["lug_wall"] >= Zp, "the aft joint's nut runs under the case sides' top edge")
-    # off the rear cage post in the side view (the cage's socket goes over it)
-    post = R["postRear"]
-    need(_poly_off_rect(post, (ya0, ytop, Zp, pz1), 1.0), "the panel comes within 1 of the rear cage post")
+    # off the rear cage tongue's inboard part in the side view (2026-10-19:
+    # it grows in to |x| 12.35 for the nut, where the panel is); the rear
+    # ring's bar is checked against the panel in the bike
+    tin = next(q["pts"] for q in R["cageIn"] if q["end"] == "rear")
+    need(_poly_off_rect(tin, (ya0, ytop, Zp, pz1), 0.5), "the panel comes within 0.5 of the rear cage tongue")
     adds = [{"tag": "panel", "x": [-xi, -wi], "pts": dpoly(outline)}]
     shelf_y1 = max(xt_f + m, g_xt[1])
     need(shelf_y1 <= y0 + bw + 1e-9, "the shelf runs past the board")

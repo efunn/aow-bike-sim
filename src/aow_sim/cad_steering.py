@@ -102,7 +102,7 @@ def load(steer_path: str = STEER_PARAMS, cad_path: str = sm.CAD_PARAMS,
             "hornDiameter": mm(servo["horn_diameter"])}
     return {"s": s, "x330": x330, "horn_pins": horn_pins,
             "servo_clearance": mm(params["bike"]["steering"]["servo_clearance"]),
-            "rake_deg": params["bike"]["rake_deg"],
+            "rake_deg": params["bike"]["rake_deg_v1"],      # v1's mount-plate tab only (v2 has none)
             "table": sm.servo_table(params, mounts),
             "screw": sm.screw_table(mounts, snug=snug)}
 
@@ -271,27 +271,40 @@ def layout(data: dict) -> dict:
     v2 = s["v2"]
     hr = sc["headDia"] / 2
     nut_c = sc["nutSlotWidth"] / math.sqrt(3)                        # the nut's corner
-    # upper -> lower: ONE 6-32 at the REAR on the centreline (user,
-    # 2026-10-16: the two side screws' lugs and blocks stood over the rails, and
-    # the U2D2 that sat behind the steering has gone). Built before the case
-    # group's turn, so the bike's rear is +y here. The head in a lug off the
-    # upper case's rear face (its pocket ul_pocket_gap off the face), jp above
-    # the joint plane (the upper case's underside); the nut in a block the
-    # lower case grows from its rear walls, its slot out the block's back
+    # upper -> lower: ONE 6-32 at the FRONT on the centreline (user,
+    # 2026-10-19: it was at the rear, 2026-10-16; the module now tilts back
+    # 20 deg, so the room is in front). Built before the case group's turn,
+    # so the bike's front is -y here, past the servo's far end. The head in a
+    # lug off the upper case's front face (its pocket ul_pocket_gap off the
+    # face), jp above the joint plane (the upper case's underside); the nut
+    # in a block the lower case grows from its front walls, its slot out the
+    # block's front
     L["v2HeadZ"] = L["upBot"] + jp
-    L["v2RrY"] = L["yUpNear"] + hr + v2["ul_pocket_gap"]
-    L["v2RrHalfX"] = max(hr, sc["nutSlotWidth"] / 2) + v2["lug_side_wall"]
-    L["v2RrOut"] = L["v2RrY"] + max(hr, nut_c) + v2["lug_side_wall"]   # the lug's and block's back faces
-    # the lug: its back face up to the head, then 45 deg forward to the case
-    L["v2LugTop"] = L["v2HeadZ"] + (L["v2RrOut"] - L["yUpNear"])
-    need(L["v2LugTop"] <= L["upTopZ"], "the rear lug's 45 deg top runs past the cap")
-    L["v2RrPocket"] = L["v2RrOut"] - (L["v2RrY"] - hr) + 1.0           # up through the 45 deg top
-    # the block: the walls' back face straight down, 45 deg out to the block,
-    # under_nut_wall under the nut
+    L["v2FrY"] = L["yUpFar"] - hr - v2["ul_pocket_gap"]
+    L["v2FrHalfX"] = max(hr, sc["nutSlotWidth"] / 2) + v2["lug_side_wall"]
+    L["v2FrOut"] = L["v2FrY"] - max(hr, nut_c) - v2["lug_side_wall"]   # the lug's and block's front faces
+    # the lug: its front face up to the head, then 45 deg back to the case
+    L["v2LugTop"] = L["v2HeadZ"] + (L["yUpFar"] - L["v2FrOut"])
+    need(L["v2LugTop"] <= L["upTopZ"], "the front lug's 45 deg top runs past the cap")
+    L["v2FrPocket"] = (L["v2FrY"] + hr) - L["v2FrOut"] + 1.0         # up through the 45 deg top
+    # the block: its front face down to under_nut_wall under the nut slot,
+    # then its underside back at nut_block_underside_deg from LEVEL (user:
+    # "the current undercut angle for the nut slot support is 45deg, but can
+    # cut under more ... so the case doesn't get any bigger") until it meets
+    # the lower case's front chamfer (45 deg up from the foot)
     L["v2BlkTop"] = L["v2HeadZ"] - (jp + 2.0) - sc["nutSlotThickness"] - v2["under_nut_wall"]
-    L["v2BlkBot"] = L["v2BlkTop"] - (L["v2RrOut"] - L["yWallNear"])
-    need(L["v2RrY"] - nut_c >= L["yWallNear"] + 0.5 * wall, "the rear nut reaches the lower case's walls")
-    need(L["v2BlkBot"] > L["caseBot"] + wall, "the rear block's 45 deg underside runs out of the case's bottom")
+    tu = math.tan(math.radians(v2["nut_block_underside_deg"]))
+    # the chamfer: z = v2Rise + (v2Foot - y), for y from yWallFar to v2Foot
+    L["v2Foot"] = foot = -v2["foot_front"]
+    L["v2Rise"] = rise = L["zCF"] - v2["under_floor"] - (L["v2Foot"] - L["yServoFar"])
+    L["v2BlkMeetY"] = (rise + foot - L["v2BlkTop"] - L["v2FrOut"] * tu) / (1.0 - tu)
+    L["v2BlkMeetZ"] = L["v2BlkTop"] - (L["v2BlkMeetY"] - L["v2FrOut"]) * tu
+    need(L["yWallFar"] < L["v2BlkMeetY"] < foot, "the front block's underside misses the lower case's front chamfer")
+    need(L["v2FrY"] + nut_c <= L["yWallFar"] - 0.5 * wall, "the front nut reaches the lower case's walls")
+    # its hole runs on out through the block's underside (user, 2026-10-19:
+    # it "is partway clipping, should just go all the way through the lower
+    # case"), 1.5 past the underside under the screw
+    L["v2FrHole"] = L["v2HeadZ"] - (L["v2BlkTop"] - (L["v2FrY"] - L["v2FrOut"]) * tu) + 1.5
     # lower -> the bike: one a side on the axis at the bushing's mid-height,
     # the interface on a full-length pad; the hole stops a wall short of the bore
     L["v2SideZ"] = (L["caseBot"] + L["sleeveTop"]) / 2
@@ -312,8 +325,6 @@ def layout(data: dict) -> dict:
     # face, meeting it at the underside of the servo shell's cap (zCF less
     # the cap): any higher and the cap's last 3 mm hang level (a 74 mm2
     # downward face, --check 2026-10-11)
-    L["v2Foot"] = -v2["foot_front"]
-    L["v2Rise"] = L["zCF"] - v2["under_floor"] - (L["v2Foot"] - L["yServoFar"])
     need(L["v2Rise"] >= L["v2SideZ"] + sc["nutSlotWidth"] / 2 + wall, "the vertical front ends under the side nut slots' tops")
     need(L["v2Foot"] <= -(L["v2SideRidge"] + 1.0), "the foot is shorter than the side joints' ridges")
     return L
@@ -510,14 +521,15 @@ export function blindScrewJoint(context is Context, id is Id, head is Vector, zI
                                 slotDir is Vector, slotLen is ValueWithUnits, pocket is ValueWithUnits,
                                 cskPart is Query, nutPart is Query, ridge is boolean, ridgeDir is Vector,
                                 ridgeHalf is ValueWithUnits,
-                                cskUp is Vector, nutUp is Vector)
+                                cskUp is Vector, nutUp is Vector, holeDepth is ValueWithUnits)
 {
     const f  = FIXTURE;
     const mm = millimeter;
     const cs = coordSystem(head, slotDir, zIn);
     const nd = f.joint_plate + 2 * mm;
     screwJointGeometry(context, id + "scr", cs, mergeMaps(SCREW_OPT, {
-            "nutDepth" : nd, "headPocket" : pocket, "bothWays" : false, "nutSlotLength" : slotLen }));
+            "nutDepth" : nd, "headPocket" : pocket, "bothWays" : false, "nutSlotLength" : slotLen,
+            "holeDepth" : holeDepth }));
     if (ridge)
     {
         const r = ridgeSolid(context, id + "ridge", head + f.joint_plate * zIn, ridgeDir, -zIn, f.ridge_height,
@@ -765,17 +777,6 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
                     at(sg > 0 ? L.v2SideX : -L.cupHalf + 0.5 * mm, L.cupNear, L.v2PadTop)));
         }
     }
-    if (v2)
-    {
-        // the upper case's nut block, on the centreline off the rear walls:
-        // their back face straight down, 45 deg out to the block under its
-        // nut; a prism in (y, z) along X
-        polyPrism(context, P, "rrBlk", at(-L.v2RrHalfX, 0 * mm, 0 * mm), X, Y,
-                  [vector(L.yWallNear - 0.5 * mm, L.v2BlkBot - 0.5 * mm), vector(L.yWallNear, L.v2BlkBot),
-                   vector(L.v2RrOut, L.v2BlkTop), vector(L.v2RrOut, L.upBot), vector(L.yWallNear - 0.5 * mm, L.upBot)],
-                  2 * L.v2RrHalfX);
-        lcAdd = append(lcAdd, qCreatedBy(P + "rrBlkExt", EntityType.BODY));
-    }
     unite(context, P + "lcU", lcAdd);
     // v2: high in the cup, behind the turning cavity -- the front-bottom
     // corner the old point sat in is chamfered away
@@ -801,6 +802,19 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
                   2 * L.v2SideX + 2 * mm);
         opBoolean(context, P + "lcChCut", { "tools" : qCreatedBy(P + "lcChExt", EntityType.BODY),
                 "targets" : partAt(context, P, lcPt), "operationType" : BooleanOperationType.SUBTRACTION });
+        // the upper case's nut block, on the centreline off the front
+        // walls, added AFTER the chamfer (which would notch its underside,
+        // a 10.5 mm edge hanging in the air, --check 2026-10-19): its front
+        // face down under the nut, then its underside back at v2
+        // nut_block_underside_deg from level until it meets the chamfer;
+        // back into the cup under the servo's pocket and up the walls, not
+        // into the pocket. A prism in (y, z) along X
+        polyPrism(context, P, "frBlk", at(-L.v2FrHalfX, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.v2FrOut, L.upBot), vector(L.v2FrOut, L.v2BlkTop), vector(L.v2BlkMeetY, L.v2BlkMeetZ),
+                   vector(L.v2BlkMeetY + 1 * mm, L.v2BlkMeetZ + 1 * mm), vector(L.yServoFar - 0.2 * mm, L.zCF - 0.5 * mm),
+                   vector(L.yServoFar - 0.2 * mm, L.upBot)],
+                  2 * L.v2FrHalfX);
+        unite(context, P + "frBlkU", [partAt(context, P, lcPt), qCreatedBy(P + "frBlkExt", EntityType.BODY)]);
     }
 
     // ---- upper case: the X330 back-half shell, then the cap and the walls
@@ -824,11 +838,11 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     var ucAdd = [partAt(context, P, ucPt), ucWrap];
     if (v2)
     {
-        // the rear lug on the centreline: its back face up to the head, then
-        // 45 deg forward to the case's rear face (it prints cap-down)
-        polyPrism(context, P, "ucLug", at(-L.v2RrHalfX, 0 * mm, 0 * mm), X, Y,
-                  [vector(L.yUpNear - 0.5 * mm, L.upBot), vector(L.v2RrOut, L.upBot), vector(L.v2RrOut, L.v2HeadZ),
-                   vector(L.yUpNear - 0.5 * mm, L.v2LugTop + 0.5 * mm)], 2 * L.v2RrHalfX);
+        // the front lug on the centreline: its front face up to the head,
+        // then 45 deg back to the case's front face (it prints cap-down)
+        polyPrism(context, P, "ucLug", at(-L.v2FrHalfX, 0 * mm, 0 * mm), X, Y,
+                  [vector(L.yUpFar + 0.5 * mm, L.upBot), vector(L.v2FrOut, L.upBot), vector(L.v2FrOut, L.v2HeadZ),
+                   vector(L.yUpFar + 0.5 * mm, L.v2LugTop + 0.5 * mm)], 2 * L.v2FrHalfX);
         ucAdd = append(ucAdd, qCreatedBy(P + "ucLugExt", EntityType.BODY));
     }
     else
@@ -902,12 +916,12 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
     }
     else
     {
-        // upper -> lower, ONE at the rear: head in the lug (its pocket up
+        // upper -> lower, ONE at the front: head in the lug (its pocket up
         // through the lug's top), down into the nut block, the slot out of
-        // the block's back
-        blindScrewJoint(context, P + "jUL", at(0 * mm, L.v2RrY, L.v2HeadZ), -Z, Y,
-                        L.v2RrOut - L.v2RrY + 1 * mm, L.v2RrPocket,
-                        partAt(context, P, ucPt), partAt(context, P, lcPt), false, X, 0 * mm, -Z, Z);
+        // the block's front
+        blindScrewJoint(context, P + "jUL", at(0 * mm, L.v2FrY, L.v2HeadZ), -Z, -Y,
+                        L.v2FrY - L.v2FrOut + 1 * mm, L.v2FrPocket,
+                        partAt(context, P, ucPt), partAt(context, P, lcPt), false, X, 0 * mm, -Z, Z, L.v2FrHole);
         // lower -> the bike, one a side on the axis at the bushing's
         // mid-height: heads in parts not drawn yet, the ridge along Y on the
         // pad, the nut slot forward (build -Y) out of the case's front
@@ -930,7 +944,7 @@ export function steeringBuild(context is Context, id is Id, opt is map) returns 
             opBoolean(context, P + ("jSu" ~ k), { "tools" : qUnion([partAt(context, P, lcPt), rr]),
                     "operationType" : BooleanOperationType.UNION });
             blindScrewJoint(context, P + ("jS" ~ k), hd, -sg * X, -Y, -L.v2Foot + 1 * mm, 0 * mm, qNothing(),
-                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z);
+                            partAt(context, P, lcPt), false, Y, 0 * mm, Z, Z, SCREW_OPT.holeDepth);
             k += 1;
         }
         // the servo's body out the front: the case group turned about the axis

@@ -18,6 +18,10 @@ its station (its own floor mock and chassis-plate placeholder dropped).
     python -m aow_sim.cad_bike_v2 --check               # ONE call
     python -m aow_sim.cad_bike_v2 --push bike_v2_features
 
+The rollcages (2026-10-19, `rollcage:`): a 270 deg ring at each end,
+the same part turned 180 deg about Z at the front, a bayonet half-dome cap
+on each, and a bar a side onto the rails' cage tongues.
+
 The check: every body, interference between modules and the envelopes at
 rest, steered 30/90/180/270, the righting at every pose, and the Pi carrier
 lifted out of the rails 3..15 mm straight up (each module's
@@ -177,6 +181,7 @@ def layout(data: dict) -> dict:
         comps.append({"key": k, "name": NAMES[k], "frame": "drive", "size": [hi[i] - lo[i] for i in range(3)],
                       "at": at, "rx": 0.0, "mass": None, "boxes": rel, "holes": hr, "lift": False})
     L["comps"] = comps
+    L["cage"] = rollcage(data, L)
     keys = ("adds", "cuts", "cyls", "joints", "pt")
     L["carriers"] = [{"name": "power holder", "color": [0.93, 0.56, 0.20],
                       "note": "Printed -X (its battery-side face on the bed). The power board, the switch in the "
@@ -259,7 +264,7 @@ def rail_joints(data: dict, L: dict) -> dict:
     if abs(zb[0] - S["caseBot"]) > 1e-6 or abs(zb[1] - S["v2PadTop"]) > 1e-6:
         raise ValueError(f"rail.steer_band_zm is not the steering's lower case bottom and pad top: "
                          f"[{S['caseBot'] / 1000:g}, {S['v2PadTop'] / 1000:g}]")
-    (yr_, zr_, _), (yf_, zf_, _) = sorted(c["bike"] for c in data["rail"]["cage"])
+    (yr_, zr_), (yf_, zf_) = sorted(tuple(c["headBike"]) for c in data["rail"]["cage"])
     off = abs((yr_ + yf_) - L["wb"]) + abs(zr_ - zf_)
     out["cageMirror"] = off
     # the TM151 on its tabs: the envelope's back face on the tabs' fronts
@@ -273,6 +278,155 @@ def rail_joints(data: dict, L: dict) -> dict:
     if [round(v, 6) for v in c["size"]] != [round(v, 6) for v in (tm["board_width"], th, tm["board_length"])]:
         raise ValueError("components.ahrs.size is not the TM151's (ahrs_fixture_cad.yaml tm151)")
     return out
+
+
+def rollcage(data: dict, L: dict) -> dict:
+    """The rollcage ring and its cap, built at the REAR (the front is the
+    same part turned 180 deg about Z through mid-wheelbase), bike frame, mm.
+    Profiles are (r, y) about the ring's axis (along Y at x 0, z rc.z);
+    arcs are [psi_centre, half] in degrees, psi from +X toward +Z. Raises
+    where the ring, its bars or the cap do not fit the rails, the power
+    holder's panel or the steering's side pads; returns what the
+    FeatureScript draws (BK2.cage) and the numbers the report prints."""
+    rc, S = data["s"]["rollcage"], data["steer"]
+    rl = data["driveData"]["s"]["rail"]
+    RA, jp = data["rail"], data["steerData"]["s"]["joint"]["joint_plate"]
+
+    def need(ok: bool, what: str) -> None:
+        if not ok:
+            raise ValueError(what)
+
+    Ro, zc, D = rc["r_out"], rc["z"], rc["depth"]
+    Ri = Ro - rc["wall"]
+    bw, hb = rc["base"]
+    Rb = Ri + bw
+    dv, wg = rc["groove"]
+    fit = rc["fit"]
+    th0 = rc["opening_deg"] / 2                               # the ring's ends, from the bottom
+    th1 = 360.0 - th0
+    psi = lambda a, b: [-90.0 - (a + b) / 2, (b - a) / 2]     # noqa: E731  theta range -> [psi centre, half]
+    # ---- the bayonet: groove k from g, its stop past it, its lug's way in
+    # a gap before it (the first's through the ring's opening)
+    sl, stp, lug, gap = rc["slot_deg"], rc["stop_deg"], rc["lug_deg"], rc["gap_deg"]
+    gs = sorted(rc["slots_deg"])
+    need(gs[0] >= th0 - 1e-9 and gs[-1] + sl + stp <= th1 + 1e-9, "a bayonet slot runs off the ring")
+    need(lug < sl and gap > lug, "a bayonet lug is longer than its groove or its way in")
+    gaps = []
+    for k, g in enumerate(gs):
+        if g - lug >= th0 - 1e-9 and g > th0 + 1e-9:
+            need(k == 0 or gs[k - 1] + sl + stp <= g - gap - 1e-9, "a bayonet gap runs into the slot before it")
+            gaps.append((g - gap, g))
+        else:
+            need(abs(g - th0) < 1e-9, "a bayonet lug's way in is neither a gap nor the ring's opening")
+    base, a0 = [], th0
+    for g0, g1 in gaps:
+        base.append((a0, g0))
+        a0 = g1
+    base.append((a0, th1))
+    lugs = [(g + sl - lug, g + sl) for g in gs]
+    # ---- profiles
+    rcb = Rb + fit                                            # the cap's skirt bore
+    c2 = fit * math.sqrt(2)
+    ring = [[Ri, 0.0], [Ro, 0.0], [Ro, D], [Ri, D]]
+    base_p = [[Ri, -hb], [Rb, -hb], [Rb, 0.5], [Ri, 0.5]]
+    groove = [[Rb, 0.0], [Rb - dv, -dv], [Rb - dv, -(wg - dv)], [Rb + 0.5, -(wg + 0.5)], [Rb + 0.5, 0.0]]
+    need(wg - 2 * dv > 0 and hb - wg >= 1.0, "the bayonet groove does not fit its base")
+    lug_p = [[rcb + 0.5, -fit], [Rb - fit + c2, -fit], [Rb - dv + fit, -dv + fit - c2],
+             [Rb - dv + fit, -(wg - dv) - fit + c2], [rcb + 0.5, -(rcb + 0.5 - Rb) - wg + c2]]
+    sr, sw, sw1, sd, se = rc["sheet_groove"]
+    need(Ri + 1.0 <= sr - sw / 2 and sr + sw / 2 <= Ro - 1.0, "the sheet's groove runs off the ring's face")
+    need(0 < sw1 <= sw and sd < D - 2.0, "the sheet's groove is wider at its end, or too deep")
+    ex, tp = 0.5, (sw - sw1) / 2 / sd                         # past the face along its flanks
+    sheet = [[sr - sw / 2 - tp * ex, D + ex], [sr + sw / 2 + tp * ex, D + ex],
+             [sr + sw1 / 2, D - sd], [sr - sw1 / 2, D - sd]]
+    # the cap: an elliptical dome (one ellipse, Ro across, He outboard),
+    # the inside a cone
+    He, roof = rc["dome"]
+    need(He <= Ro, "the dome is taller than it is wide (the ellipse's major axis is across)")
+    apex = He - roof
+    cav = [[0.0, 1.0], [rcb, 1.0], [rcb, -hb], [0.0, -apex]]
+    need(apex > hb, "the cap's cone has no height")
+    # its wall round the cone (normal to the cone, sampled), and the cone's
+    # overhang from the vertical as it prints (rim on the bed)
+    over = math.degrees(math.atan2(rcb, apex - hb))
+    cw = math.inf
+    for i in range(1, 200):
+        f = math.radians(90.0 * i / 200)
+        q = (Ro * math.cos(f), He * math.sin(f))
+        if q[1] < hb:
+            cw = min(cw, q[0] - rcb)
+            continue
+        # distance from q to the cone's line (rcb, hb) -> (0, apex)
+        ux, uy = -rcb, apex - hb
+        n = math.hypot(ux, uy)
+        cw = min(cw, abs((q[0] - rcb) * uy - (q[1] - hb) * ux) / n)
+    need(cw >= 1.5, f"the cap's wall comes to {cw:.2f} round its cone")
+    # ---- the bars, one a side, in to the rails' rear tongue
+    tg = next(c for c in RA["cage"] if c["end"] == "rear")
+    yj = tg["face"]
+    t0, t1 = rl["cage_tongue_z"]
+    bf, bwl, xs = rc["bar_fit"], rc["bar_wall"], rc["bar_split_x"]
+    zb0, zb1 = t0 - bf - bwl, t1 + bf + bwl
+    xin = RA["cageIn"][0]["x"][0]                             # the tongue's inboard face, |x|
+    xo = data["drive"]["xPo"]                                 # the rail's outer face, |x|
+    need(0.0 < yj < D, "the rear tongue's face is not inside the ring")
+    need(abs(rl["cage_face_y"] + yj - L["wb"]) < 1e-6, "the rails' cage tongues are not mirrored about mid-wheelbase")
+    need(L["wb"] - rl["cage_band_y"] >= D + 0.25, "the rear arm runs into the rear ring's bed")
+    # the chin (|x| xin .. xs) stops short of the bed on a 45 deg chamfer at
+    # its inboard corner, the edge along Z: at |x| xin it reaches y ye, at
+    # xs ye + (xs - xin). Clear, at the FRONT ring, of the steering's side
+    # pads (to |x| 16, ending at the foot, module y -v2Foot, under the pad's
+    # top: the bar's lowest z binds), and at the REAR of the power holder's
+    # panel above its aft ear (the drive plane y = ya1)
+    rk = math.radians(L["rake"])
+    foot = -S["v2Foot"] + 0.5
+    ymax = lambda z: ((z - L["sOrigin"][2]) * math.sin(rk) - foot) / math.cos(rk)   # noqa: E731  rear-frame y
+    ya1 = data["power"]["aftEar"][1]
+    ye = min(ymax(zb0) - 0.25, ya1 * math.sqrt(2) - 0.5 * math.sqrt(2) - zb1) - (xs - xin)
+    need(ye > yj + 2.0, f"the chin's chamfer comes {ye - yj:.2f} past the tongue's face")
+    # and the panel's aft ear stays out of the ring altogether
+    ea0, ea1, eaz = data["power"]["aftEar"]
+    need((ea0 - eaz) * math.sqrt(0.5) >= D + 0.5, "the power holder's aft ear reaches into the rear ring")
+    rH = data["driveData"]["screw"]["holeDia"] / 2
+    bl = data["driveData"]["s"]["joint"]["bridge_layer"]
+    bars = []
+    for sx in (1, -1):
+        bars.append({"sx": sx,
+                     "outer": [[sx * xs, 0.0, zb0], [sx * (Ri + 1.0), D, zb1]],
+                     "head": [[sx * xin, yj - jp, zb0], [sx * (xo + bf + bwl + 2.0), 0.5, zb1]],
+                     "chin": [[sx * xin, 0.0, zb0], [sx * (xs + 0.5), D, zb1]],
+                     "socket": [[sx * (xin - 1.0), yj, t0 - bf], [sx * (xo + bf), D + 1.0, t1 + bf]],
+                     "screw": [sx * RA["cageX"], yj - jp, RA["cageZ"]],
+                     # the hole leaves the socket's ceiling (a bridge as the
+                     # ring prints, bed at y D): two sacrificial layers over
+                     # it (user: "counterbore hints"), a hole-wide strip
+                     # across the bridge's span between the socket's walls,
+                     # then the hole's square
+                     "hints": [[[sx * (RA["cageX"] - rH), yj - bl, t0 - bf], [sx * (RA["cageX"] + rH), yj, t1 + bf]],
+                               [[sx * (RA["cageX"] - rH), yj - 2 * bl, RA["cageZ"] - rH],
+                                [sx * (RA["cageX"] + rH), yj - bl, RA["cageZ"] + rH]]]})
+    # the chin's chamfer: an (x, y) region (for +x; mirrored for -x), over
+    # the bar's whole z
+    cham = [[xin - 1.0, ye - 1.0], [xin - 1.0, D + 1.0], [xs, D + 1.0], [xs, ye + (xs - xin)]]
+    # where the bars sit on the ring: their outer blocks inside its wall
+    for z in (zb0, zb1):
+        r_ = math.hypot(Ri + 1.0, z - zc)
+        need(Ri < r_ < Ro - 1.0, "a rollcage bar's end comes out of the ring")
+        need(math.hypot(xs, z - zc) < Ri - 1.0, "a rollcage bar starts outside the ring")
+    # the head under the cap: inside the base's bore
+    for x in (xin, xo + bf + bwl + 2.0):
+        for z in (zb0, zb1):
+            need(math.hypot(x, z - zc) < Ri - 1.0, "a rollcage bar's head boss reaches the bayonet base")
+    return {"zc": zc, "wb": L["wb"], "D": D, "ring": ring, "ringArc": psi(th0, th1),
+            "base": base_p, "baseArcs": [psi(a, b) for a, b in base], "groove": groove,
+            "grooveArcs": [psi(g, g + sl) for g in gs], "sheet": sheet, "sheetArc": psi(th0 + se, th1 - se),
+            "Ro": Ro, "He": He, "cav": cav, "lug": lug_p, "lugArcs": [psi(a, b) for a, b in lugs],
+            "capArc": psi(th0, th1), "bars": bars, "cham": cham, "chamZ": [zb0 - 1.0, zb1 + 1.0],
+            "ringPt": [0.0, D / 2, zc + (Ri + Ro) / 2],
+            "capPt": [0.0, -5.0, zc + (rcb + Ro) / 2 - 0.5],
+            # the report's
+            "base_deg": base, "gaps_deg": gaps, "lugs_deg": lugs, "cone_over_deg": over, "cap_wall": cw,
+            "chinY": [ye, ye + (xs - xin)], "tongueFace": yj}
 
 
 def pi_boxes(pi: dict, h: list) -> list[dict]:
@@ -499,6 +653,131 @@ export function bk2Carrier(context is Context, id is Id, C is map) returns Query
 }
 
 /**
+ * The rollcage rings and their caps (cad_bike_v2.rollcage): built at the
+ * REAR, then turned 180 deg about Z through mid-wheelbase for the front --
+ * one part each, the bayonet's hand kept. Profiles (r, y) about the ring's
+ * axis (along Y at z RC.zc), revolved over [psi centre, half] (deg, psi
+ * from +X toward +Z). Each scope's children are made contiguously.
+ */
+export function bk2Cage(context is Context, id is Id, RC is map)
+{
+    const mm = millimeter;
+    const X  = vector(1, 0, 0);
+    const Y  = vector(0, 1, 0);
+    const Z  = vector(0, 0, 1);
+    const C  = vector(0, 0, RC.zc) * mm;
+    const ax = line(C, Y);
+    const v2 = function(q is array) returns Vector { return vector(q[0], q[1]) * mm; };
+    // the profile on the plane through the axis toward +X ((u, v) = (x, y)),
+    // revolved both ways by the half span, then turned to its centre.
+    // opRevolve's angleBack is where the revolve STARTS (normalised to
+    // 0..360), not a second extent: equal angles make a full turn (every
+    // ring, cap and lug came out 360 deg, --check 2026-10-19)
+    const arc = function(scope is Id, tag is string, prof is array, a is array) returns Query
+    {
+        var sk = newSketchOnPlane(context, scope + tag, { "sketchPlane" : plane(C, Z, X) });
+        var pts = [];
+        for (var q in prof)
+            pts = append(pts, v2(q));
+        skPolygon(sk, pts);
+        skSolve(sk);
+        if (a[1] >= 180)
+            opRevolve(context, scope + (tag ~ "Rv"), { "entities" : qSketchRegion(scope + tag), "axis" : ax,
+                    "angleForward" : 360 * degree });
+        else
+            opRevolve(context, scope + (tag ~ "Rv"), { "entities" : qSketchRegion(scope + tag), "axis" : ax,
+                    "angleForward" : a[1] * degree, "angleBack" : (360 - a[1]) * degree });
+        opDeleteBodies(context, scope + (tag ~ "Dl"), { "entities" : qCreatedBy(scope + tag, EntityType.BODY) });
+        const b = qCreatedBy(scope + (tag ~ "Rv"), EntityType.BODY);
+        if (a[1] < 180)
+            opTransform(context, scope + (tag ~ "Tf"), { "bodies" : b, "transform" : rotationAround(ax, -a[0] * degree) });
+        return b;
+    };
+    // ---- the ring: its 270 deg, the bayonet base, the bars' blocks
+    const R = id + "r";
+    var adds = [arc(R, "ring", RC.ring, RC.ringArc)];
+    for (var k = 0; k < size(RC.baseArcs); k += 1)
+        adds = append(adds, arc(R, "base" ~ k, RC.base, RC.baseArcs[k]));
+    for (var k = 0; k < size(RC.bars); k += 1)
+    {
+        const b = RC.bars[k];
+        for (var nm in ["outer", "head", "chin"])
+            adds = append(adds, boxW(context, R + (nm ~ k), bk2V(b[nm][0]), bk2V(b[nm][1])));
+    }
+    opBoolean(context, id + "ru", { "tools" : qUnion(adds), "operationType" : BooleanOperationType.UNION });
+    const ringPt = bk2V(RC.ringPt);
+    // ---- its cuts: the bayonet's grooves, the sheet's groove, each bar's
+    // socket, its chin's two chamfered ends, its screw (head outboard)
+    const K = id + "k";
+    var cuts = [];
+    for (var k = 0; k < size(RC.grooveArcs); k += 1)
+        cuts = append(cuts, arc(K, "gv" ~ k, RC.groove, RC.grooveArcs[k]));
+    cuts = append(cuts, arc(K, "sheet", RC.sheet, RC.sheetArc));
+    var slots = [];
+    for (var k = 0; k < size(RC.bars); k += 1)
+    {
+        const b = RC.bars[k];
+        cuts = append(cuts, boxW(context, K + ("sock" ~ k), bk2V(b.socket[0]), bk2V(b.socket[1])));
+        for (var i = 0; i < size(b.hints); i += 1)
+            cuts = append(cuts, boxW(context, K + ("hint" ~ k ~ "_" ~ i), bk2V(b.hints[i][0]), bk2V(b.hints[i][1])));
+        // the chin's 45 deg chamfer at its inboard corner on the bed, the
+        // edge along Z: sketched in (x, y), extruded up the bar's z
+        var pts = [];
+        for (var q in RC.cham)
+            pts = append(pts, vector(b.sx * q[0], q[1]) * mm);
+        polyPrism(context, K, "ch" ~ k, vector(0, 0, RC.chamZ[0]) * mm, Z, X, pts, (RC.chamZ[1] - RC.chamZ[0]) * mm);
+        cuts = append(cuts, qCreatedBy(K + ("ch" ~ k ~ "Ext"), EntityType.BODY));
+        const J = K + ("sc" ~ k);
+        screwJointGeometry(context, J, coordSystem(bk2V(b.screw), Z, Y), mergeMaps(SCREW_OPT, {
+                "nutDepth" : FIXTURE.joint_plate + 2 * mm, "headPocket" : 0 * mm, "bothWays" : false,
+                "nutSlotLength" : 1 * mm }));
+        cuts = append(cuts, qCreatedBy(J + "screwRev", EntityType.BODY));
+        slots = append(slots, qCreatedBy(J + "slotExt", EntityType.BODY));
+    }
+    opDeleteBodies(context, id + "kd", { "entities" : qUnion(slots) });
+    cutFrom(context, id + "kc", partAt(context, R, ringPt), cuts);
+    const note = "Printed Y-outboard (its inboard face, with the sheet's groove, on the bed). ONE part: the "
+                 ~ "front is the rear turned 180 deg about Z. One 6-32 a side along Y into the rail's cage tongue, "
+                 ~ "the head outboard (under the cap).";
+    dress(context, partAt(context, R, ringPt), "rollcage rear", color(0.30, 0.30, 0.34), note);
+    // ---- the cap: the dome (one ellipse, its quarter outboard of the rim
+    // and off the axis), less its cone, plus the three lugs on its skirt's bore
+    const P = id + "p";
+    var sk = newSketchOnPlane(context, P + "dome", { "sketchPlane" : plane(C, Z, X) });
+    skEllipse(sk, "ell", { "center" : v2([0, 0]), "majorRadius" : RC.Ro * mm, "minorRadius" : RC.He * mm });
+    skLineSegment(sk, "ax", { "start" : v2([0, -RC.He - 2]), "end" : v2([0, RC.He + 2]) });
+    skLineSegment(sk, "rim", { "start" : v2([-RC.Ro - 2, 0]), "end" : v2([RC.Ro + 2, 0]) });
+    skSolve(sk);
+    const quarter = qContainsPoint(qSketchRegion(P + "dome"), C + RC.Ro / 2 * mm * X - RC.He / 2 * mm * Y);
+    opRevolve(context, P + "domeRv", { "entities" : quarter, "axis" : ax,
+            "angleForward" : RC.capArc[1] * degree, "angleBack" : (360 - RC.capArc[1]) * degree });
+    opDeleteBodies(context, P + "domeDl", { "entities" : qCreatedBy(P + "dome", EntityType.BODY) });
+    opTransform(context, P + "domeTf", { "bodies" : qCreatedBy(P + "domeRv", EntityType.BODY),
+            "transform" : rotationAround(ax, -RC.capArc[0] * degree) });
+    var lugs = [];
+    for (var k = 0; k < size(RC.lugArcs); k += 1)
+        lugs = append(lugs, arc(P, "lug" ~ k, RC.lug, RC.lugArcs[k]));
+    const cav = arc(id + "q", "cav", RC.cav, [0, 180]);
+    const capPt = bk2V(RC.capPt);
+    cutFrom(context, id + "pc", qCreatedBy(P + "domeRv", EntityType.BODY), [cav]);
+    opBoolean(context, id + "pu", { "tools" : qUnion(concatenateArrays([[partAt(context, P, capPt)], lugs])),
+            "operationType" : BooleanOperationType.UNION });
+    dress(context, partAt(context, P, capPt), "cap rear", color(0.85, 0.85, 0.88),
+          "Printed Y-outboard (its rim on the bed; the inside a cone). Turns on CLOCKWISE seen from outboard, "
+          ~ "three lugs into the ring's grooves. ONE part: the front is the rear turned 180 deg about Z.");
+    // ---- the front: the same two parts turned about mid-wheelbase
+    const W = line(vector(0, RC.wb / 2, 0) * mm, Z);
+    opPattern(context, id + "f", { "entities" : qUnion([partAt(context, R, ringPt), partAt(context, P, capPt)]),
+            "transforms" : [rotationAround(W, 180 * degree)], "instanceNames" : ["front"] });
+    const fl = function(q is Vector) returns Vector { return vector(-q[0], RC.wb * mm - q[1], q[2]); };
+    dress(context, partAt(context, id + "f", fl(ringPt)), "rollcage front", color(0.30, 0.30, 0.34), note);
+    dress(context, partAt(context, id + "f", fl(capPt)), "cap front", color(0.85, 0.85, 0.88),
+          "The rear cap turned 180 deg about Z (the same part).");
+    setAttribute(context, { "entities" : qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID),
+                            "name" : "bk_mod", "attribute" : "bike" });
+}
+
+/**
  * The whole bike, v2. opt: steer (angle), pose (a RG_POSES key), mocks
  * (bool: the electronics envelopes). Returns what the check sweeps.
  */
@@ -591,6 +870,8 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
     step("carriers");
     for (var k = 0; k < size(BK2.carriers); k += 1)
         bk2Carrier(context, id + ("pc" ~ k), BK2.carriers[k]);
+    step("rollcage");
+    bk2Cage(context, id + "cage", BK2.cage);
     return { "steer" : rs, "righting" : rr, "rXf" : rXf,
              "sAxis" : line(bk2V(BK2.sOrigin), vector(BK2.sAxis[0], BK2.sAxis[1], BK2.sAxis[2])) };
 }
@@ -634,7 +915,7 @@ export const aowBikeV2 = defineFeature(function(context is Context, id is Id, de
 
 
 def build_fs(L: dict, fs_version: str = "3044") -> str:
-    keep = ("wb", "yr", "zr", "tilt", "rake", "sOrigin", "sAxis", "rgDrop", "comps", "carriers")
+    keep = ("wb", "yr", "zr", "tilt", "rake", "sOrigin", "sAxis", "rgDrop", "comps", "carriers", "cage")
     bk = {k: L[k] for k in keep}
     bk["comps"] = [{k: c[k] for k in ("name", "frame", "at", "rx", "boxes", "holes", "lift") if c[k] is not None}
                    for c in L["comps"]]
@@ -799,6 +1080,21 @@ def judge(console: str, L: dict) -> bool:
         print("  no interference across modules and envelopes: at rest, steered "
               f"{'/'.join(str(a) for a in STEER_SWEEP)}, the righting at every pose, the Pi carrier lifted "
               f"{'/'.join(str(a) for a in LIFT_SWEEP)}")
+    # the rollcages: four bodies (two rings, two caps), the rings the blades'
+    # width at rest (the user's "diameter equal to the maximum width of the
+    # wing blades at rest/stow")
+    rc_b = {r[1]: [float(v) for v in r[2:9]] for r in bodies if r[1] in ("rollcage rear", "rollcage front", "cap rear", "cap front")}
+    good = len(rc_b) == 4
+    ok &= good
+    blades = [max(abs(float(r[2])), abs(float(r[5]))) for r in bodies if r[1].endswith("blade")]
+    ro = L["cage"]["Ro"]
+    bw = max(blades) if blades else float("nan")
+    good_b = bool(blades) and bw <= ro + 1e-3
+    ok &= good_b
+    print(f"  rollcage: {len(rc_b)} of 4 bodies; the blades' widest |x| {bw:.2f} at rest, the rings' {ro:.2f}  "
+          f"{'ok' if good and good_b else 'FAIL'}")
+    for n, v in sorted(rc_b.items()):
+        print(f"    {n:15} x {v[0]:6.1f}..{v[3]:5.1f}  y {v[1]:6.1f}..{v[4]:6.1f}  z {v[2]:6.1f}..{v[5]:6.1f}  {v[6] / 1000:6.1f} cm3")
     # what the lift moved: the carrier, its four spacers, the Pi's and the
     # U2D2's boxes
     want_lift = 5 + sum(len(c["boxes"]) for c in L["comps"] if c.get("lift"))

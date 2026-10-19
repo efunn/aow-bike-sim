@@ -485,48 +485,58 @@ def _cross_lines(p, d, q, e):
 
 def rail_outlines(data: dict, L: dict) -> dict:
     """The rails' side view in the BIKE frame: the main outline with the
-    front cage post drawn into it, and the rear arm and post -- the front
-    post mirrored about mid-wheelbase, the arm's edges continuing its bottom
-    and the band's top until they meet the case side's rear chamfer face and
-    top edge. Also the posts' screws and slot directions."""
+    front cage tongue (and the post behind it) drawn into it, and the rear
+    arm and tongue -- the front's mirrored about mid-wheelbase, the arm's
+    edges continuing the band's bottom and top (mirrored) until they meet
+    the case side's rear chamfer face and top edge. Also the tongues: their
+    end faces, z and the screws' axes (y along the bike)."""
     rl = data["s"]["rail"]
     ay, az = rl["steer_axle"]
     r = math.radians(rl["steer_rake_deg"])
     c, s = math.cos(r), math.sin(r)
     st = lambda ym, zm: (ay + ym * c - zm * s, az + ym * s + zm * c)   # noqa: E731  steering module -> bike
     mir = lambda q: (ay - q[0], q[1])                                   # noqa: E731  about mid-wheelbase
-    p0, p1 = rl["cage_post_ym"]
+    ym_of = lambda q: (q[0] - ay) * c + (q[1] - az) * s                 # noqa: E731  bike -> steering module y
     z0, zb = rl["steer_band_zm"]
-    zt, lead = rl["cage_post_top_zm"], rl["cage_post_lead"]
-    # the post, free edge (p1) first, the rail's side (p0) 45 deg down to the band's top
-    post_m = [(p1, z0), (p1, zt - lead), (p1 - lead, zt), (p0 + (zt - zb), zt), (p0, zb)]
-    if p0 + (zt - zb) > p1 - lead:
-        raise ValueError("the cage post's top is narrower than its lead-ins")
-    post = [st(*q) for q in post_m]
-    outline = [tuple(q) for q in rl["outline_bottom"]] + post + [tuple(q) for q in rl["outline_top"]]
-    # the rear: the mirrored post; its arm continues the post's bottom
-    # (module z z0) and the band's top (zb) forward to the case side
-    rpost = [mir(q) for q in post]
+    yb, yf, pt = rl["cage_band_y"], rl["cage_face_y"], rl["cage_post_top"]
+    t0, t1 = rl["cage_tongue_z"]
+
+    def on_band(zm: float, y: float) -> tuple:
+        """The point on the band's line at module z zm whose bike y is y."""
+        return st((y - ay + zm * s) / c, zm)
+
+    if not yb < yf:
+        raise ValueError("the cage tongue's face is behind the band's front edge")
+    pb = on_band(z0, yb)                      # the band's bottom at its front edge
+    q = (yb - pt, t1)                         # the post's top-rear corner
+    pq = st(ym_of(q), zb)                     # down the steering axis from it to the band's top
+    if not (pb[1] < t0 and pq[1] < t1 and pq[0] < yb):
+        raise ValueError("the cage tongue does not stand over the band beside the steering")
+    # the top edge runs straight from the tongue's top corner back to the
+    # band's top beside the pad (user, 2026-10-19: the notch between the
+    # band's top, square to the steering axis, and the post's edge was a
+    # "weird gap"; at the rear the holder's groove ran through it)
+    front = [pb, (yb, t0), (yf, t0), (yf, t1), q]
+    outline = [tuple(q) for q in rl["outline_bottom"]] + front + [tuple(q) for q in rl["outline_top"]]
+    # the rear: the mirrored tongue and post; its arm continues the band's
+    # bottom (module z z0) and top (zb), mirrored, forward to the case side
+    rseg = [mir(q) for q in front]
     k = math.sqrt(0.5)
     bike = lambda yd, zd: ((yd - zd) * k, (yd + zd) * k)               # noqa: E731  drive -> bike
     ch0 = bike(L["Yc0"], L["Zp"] - L["rcLeg"])                          # the rear chamfer, bottom
     ch1 = bike(L["Yc0"] + L["rcLeg"], L["Zp"])                          # its top = the top edge's rear end
     top1 = bike(L["Ytab0"], L["Zp"])
-    up = (0.0, 1.0)
-    d_bot = (rpost[0][0] - mir(st(p0, z0))[0], rpost[0][1] - mir(st(p0, z0))[1])   # along the post's bottom
-    d_top = (rpost[-1][0] - mir(st(p0 - 10, zb))[0], rpost[-1][1] - mir(st(p0 - 10, zb))[1])
-    B = _cross_lines(rpost[0], d_bot, ch0, (ch1[0] - ch0[0], ch1[1] - ch0[1]))
-    T = _cross_lines(rpost[-1], d_top, ch1, (top1[0] - ch1[0], top1[1] - ch1[1]))
+    d_bot = (-c, s)                                                     # along the band's lines, mirrored
+    B = _cross_lines(rseg[0], d_bot, ch0, (ch1[0] - ch0[0], ch1[1] - ch0[1]))
+    T = _cross_lines(mir(pq), d_bot, ch1, (top1[0] - ch1[0], top1[1] - ch1[1]))   # the band's top, mirrored
     if not (ch0[1] < B[1] < ch1[1]):
         raise ValueError(f"the rear arm's bottom misses the case side's rear chamfer (z {B[1]:.2f})")
     if not (ch1[0] < T[0] < top1[0]):
         raise ValueError("the rear arm's top misses the case side's top edge")
-    rear = [B] + rpost + [T, ch1]
-    scr_f = st((p0 + p1) / 2, rl["cage_screw_zm"])
-    posts = [{"screw": mir(scr_f), "axis": 90.0 - rl["steer_rake_deg"], "free": (-c, s)},
-             {"screw": scr_f, "axis": 90.0 + rl["steer_rake_deg"], "free": (c, s)}]
-    return {"outline": outline, "rear": rear, "posts": posts, "postHalf": (p1 - p0) / 2,
-            "screwAbove": zt - rl["cage_screw_zm"], "screwBelow": rl["cage_screw_zm"] - z0, "lead": lead}
+    rear = [B] + rseg + [T, ch1]
+    tongues = [{"end": "front", "face": yf, "in": -1.0, "z": [t0, t1], "band": yb},
+               {"end": "rear", "face": ay - yf, "in": 1.0, "z": [t0, t1], "band": ay - yb}]
+    return {"outline": outline, "rear": rear, "front": front, "rseg": rseg, "tongues": tongues}
 
 
 # the rail joints on the LEFT rail only (added after the mirror): the power
@@ -579,27 +589,61 @@ def rail_layout(data: dict, L: dict) -> dict:
              "the back ear runs off the case side's top edge and the rear arm")
         bear = [(by0, L["Zp"]), (by1, L["Zp"]), (by1, bz1), (by0, bz1)]
         R["leftPieces"].append([list(q) for q in bear])
-    # the battery stops, on both arms (user, 2026-10-16 night: the arms to
-    # the rear roll cage "should have some hints (like 2mm lateral, going
-    # slightly behind the battery) so the battery couldn't slide backwards
-    # into the rear wheel"): a lip off each arm's inner face, in past the
-    # battery's side, its front face just behind the battery's rear face.
-    # Wholly on the arm, and off the cage post (the cage's socket goes over
-    # the post). cad_bike_v2 (cad_power) refuses it off the battery.
+    # ---- the cage tongues' inboard parts (drive frame): the nut's across-
+    # flats lie along X, so past the tongue's face the tongue grows inward to
+    # cage_inner_x, two lines each side of the nut's slot
+    w, T = sc["nutSlotWidth"], sc["nutSlotThickness"]
+    jpl = jn["joint_plate"]
+    wall9 = 0.9
+    R["cageX"] = L["xPo"] - wall9 - w / 2                               # the screw's axis, |x|
+    need(R["cageX"] - w / 2 - wall9 >= rl["cage_inner_x"] - 1e-6,
+         f"the cage nut slots leave {R['cageX'] - w / 2 - rl['cage_inner_x']:.2f} inside (two lines: 0.9)")
+    t0, t1 = rl["cage_tongue_z"]
+    nut_c = w / math.sqrt(3)
+    R["cageZ"] = t0 + nut_c + 1.0                                       # the axis: the slot's closed end 1.0 over the foot
+    need(R["cageZ"] + nut_c <= t1, "the cage tongue's top is under its nut slot's open end")
+    R["cage"], R["cageIn"] = [], []
+    for tg in RO["tongues"]:
+        f, sgn = tg["face"], tg["in"]
+        f_in = f + sgn * rl["cage_inboard_len"]
+        box = [(f, t0), (f_in, t0), (f_in, t1), (f, t1)]
+        R["cageIn"].append({"end": tg["end"], "x": [rl["cage_inner_x"], rl["inner_x"] + 0.5],
+                            "pts": [list(to_drive(q)) for q in box], "bike": [list(q) for q in box]})
+        # the head jp outboard of the face (in the ring's bar); the nut 2 past
+        # the face, its slot up out of the tongue's top
+        head = (f - sgn * jpl, R["cageZ"])
+        zin = (sgn * math.sqrt(0.5), -sgn * math.sqrt(0.5))           # bike +-Y in the drive's (y, z)
+        # the cutters are drawn with the screw along the drive's +Y and turned
+        # about X onto it (an oblique sketch will not extrude, 2026-10-16 and
+        # again here 2026-10-19): `rot`, and the slot's way before the turn
+        slot = (math.sqrt(0.5), math.sqrt(0.5))                         # the bike's +Z
+        phi = math.atan2(zin[1], zin[0])
+        slot_al = (slot[0] * math.cos(phi) + slot[1] * math.sin(phi), -slot[0] * math.sin(phi) + slot[1] * math.cos(phi))
+        R["cage"].append({"end": tg["end"], "headBike": list(head), "head": list(to_drive(head)),
+                          "zIn": list(zin), "slot": list(slot), "rot": math.degrees(phi), "slotAl": list(slot_al),
+                          "slotLen": t1 - R["cageZ"] + 1.0, "face": f, "in": sgn})
+    # the battery stops, on both rear tongues (user, 2026-10-16 night: the
+    # arms to the rear roll cage "should have some hints (like 2mm lateral,
+    # going slightly behind the battery) so the battery couldn't slide
+    # backwards into the rear wheel"): a lip off the tongue's inboard part,
+    # in past the battery's side, its front face just behind the battery's
+    # rear face; and a leg forward along its side. Wholly on the tongue's
+    # inboard part (2026-10-19: the arm no longer reaches there).
+    # cad_bike_v2 (cad_power) refuses it off the battery.
     R["stops"] = []
-    R["postRear"] = [list(q) for q in rear[1:-2]]
+    rin = [tuple(q) for q in next(q for q in R["cageIn"] if q["end"] == "rear")["pts"]]
+    R["postRear"] = [list(to_drive(q)) for q in RO["rseg"]]
     if "battery_stop" in rl:
         # behind the battery (`back`), and a short leg forward along its side
         # (`side`, user: "a similar hint so the battery is also constrained
         # laterally a bit"), its inner face side_x, leg long past the back one
         sy1, st_, sz0, sz1, sxi, ssx, sleg = rl["battery_stop"]
-        need(sxi < ssx < rl["inner_x"], "the battery stop does not reach in off the rail's inner face")
+        need(sxi < ssx < rl["cage_inner_x"], "the battery stop does not reach in off the cage tongue's inner face")
         for kind, x0, ya, yb in (("back", sxi, sy1 - st_, sy1), ("side", ssx, sy1 - st_, sy1 + sleg)):
             for q in ((ya, sz0), (yb, sz0), (yb, sz1), (ya, sz1)):
-                need(_inside(q, rear) and _edge_dist(q, rear) >= 0.5 - 1e-6, "the battery stop runs off the rear arm")
-                need(not _inside(q, rear[1:-2]) and _edge_dist(q, rear[1:-2]) >= 1.0 - 1e-6,
-                     "the battery stop runs into the rear cage post")
-            R["stops"].append({"kind": kind, "x": [x0, rl["inner_x"] + 0.5], "y": [ya, yb], "z": [sz0, sz1],
+                need(_inside(q, rin) and _edge_dist(q, rin) >= 0.5 - 1e-6,
+                     "the battery stop runs off the rear cage tongue's inboard part")
+            R["stops"].append({"kind": kind, "x": [x0, rl["cage_inner_x"] + 0.5], "y": [ya, yb], "z": [sz0, sz1],
                                "face": sy1, "t": st_})
     # the case side's outline (its rear corners chamfered): inside it the
     # rail stays the plate's thickness, the servos being there
@@ -719,23 +763,6 @@ def rail_layout(data: dict, L: dict) -> dict:
         ez0 = rl["front_ear"][1]
         R["earGap"] = ez0 - max(R["ahZ"][-1] + R["ahTabHalf"], R["ahBoard"]["z1"])
         need(R["earGap"] >= 1.0, f"the rail's front ear is {R['earGap']:.2f} over the AHRS tab / board")
-    # ---- the cage posts: each the male feature the cage's socket slides
-    # down over (drawn in the outlines above), one 6-32 in from the side, the
-    # nut slot from the screw out through the post's free edge
-    w, T = sc["nutSlotWidth"], sc["nutSlotThickness"]
-    jpl = jn["joint_plate"]
-    R["cageWall"] = (R["plate"] - T) / 2                          # each side of the nut, in x
-    need(R["cageWall"] >= 0.9 - 1e-9, f"the cage nut slots leave {R['cageWall']:.2f} walls (two lines: 0.9)")
-    R["cageNd"] = jpl + R["cageWall"]                              # head (cage, outside) to the nut
-    need(RO["screwAbove"] - RO["lead"] - w / 2 >= 1.0 and RO["screwBelow"] - w / 2 >= 1.5,
-         "a cage post is too short round its nut slot")
-    R["cage"] = []
-    for pq in RO["posts"]:
-        f = pq["free"]
-        fd = (f[0] * math.cos(math.radians(DRIVE_TILT)) + f[1] * math.sin(math.radians(DRIVE_TILT)),
-              -f[0] * math.sin(math.radians(DRIVE_TILT)) + f[1] * math.cos(math.radians(DRIVE_TILT)))
-        R["cage"].append({"head": list(to_drive(pq["screw"])), "slot": list(fd),
-                          "slotLen": RO["postHalf"] + 1.0, "bike": list(pq["screw"]) + [pq["axis"]]})
     return R
 
 
@@ -1300,7 +1327,16 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
                 pts = append(pts, vector(q[0], q[1]) * mm);
             polyPrism(context, RB, "pc" ~ k, at(-L.xPo, z0, z0), X, Y, pts, L.xPo - R.innerX * mm);
         }
-        // the battery stops: a lip off each arm's inner face (both rails)
+        // the cage tongues' inboard parts, for the nuts (both rails, both ends)
+        for (var k = 0; k < size(R.cageIn); k += 1)
+        {
+            var pts = [];
+            for (var q in R.cageIn[k].pts)
+                pts = append(pts, vector(q[0], q[1]) * mm);
+            polyPrism(context, RB, "cin" ~ k, at(-R.cageIn[k].x[1] * mm, z0, z0), X, Y, pts,
+                      (R.cageIn[k].x[1] - R.cageIn[k].x[0]) * mm);
+        }
+        // the battery stops: a lip off each rear tongue's inner face (both rails)
         for (var k = 0; k < size(R.stops); k += 1)
         {
             const sb = R.stops[k];
@@ -1361,28 +1397,29 @@ export function driveBuild(context is Context, id is Id, opt is map) returns map
             step("rail joint " ~ k);
             rc = concatenateArrays([rc, railJoint(RC, k, R.joints[k])]);
         }
-        // the cage posts' joints: the head in the cage (not drawn) joint_plate
-        // outside the rail; the nut centred in the post's thickness, its slot
-        // out through the post's free edge (across its axis), its roof
-        // bridged in two layers as the rail prints
-        const bl = FIXTURE.bridge_layer;
+        // the cage tongues' joints, along the BIKE's Y: the head in the
+        // ring's bar (not drawn) joint_plate outboard of the tongue's face,
+        // the nut 2 past it across the screw, its slot up out of the
+        // tongue's top; the bore teardropped (level as the rail prints, X
+        // up). All drawn along the drive's +Y and turned about X onto the
+        // screw: an oblique sketch will not extrude (EXTRUDE_FAILED)
         const rH = SCREW_OPT.holeDia / 2;
-        const sw = SCREW_OPT.nutSlotWidth;
         for (var k = 0; k < size(R.cage); k += 1)
         {
             step("rail cage " ~ k);
             const c = R.cage[k];
-            const h = at(-L.xPo - FIXTURE.joint_plate, c.head[0] * mm, c.head[1] * mm);
-            const cs = coordSystem(h, vector(0, c.slot[0], c.slot[1]), X);
+            const h = at(-R.cageX * mm, c.head[0] * mm, c.head[1] * mm);
             const J = RC + ("cgJ" ~ k);
-            screwJointGeometry(context, J, cs, mergeMaps(SCREW_OPT, {
-                    "nutDepth" : R.cageNd * mm, "headPocket" : 0 * mm, "bothWays" : false,
+            screwJointGeometry(context, J, coordSystem(h, vector(0, c.slotAl[0], c.slotAl[1]), Y), mergeMaps(SCREW_OPT, {
+                    "nutDepth" : FIXTURE.joint_plate + 2 * mm, "headPocket" : 0 * mm, "bothWays" : false,
                     "nutSlotLength" : c.slotLen * mm }));
-            rc = append(rc, qCreatedBy(J + "screwRev", EntityType.BODY));
-            rc = append(rc, qCreatedBy(J + "slotExt", EntityType.BODY));
-            const d0 = R.cageNd * mm + SCREW_OPT.nutSlotThickness;
-            rc = append(rc, boxIn(context, RC + ("cgB" ~ k), cs, vector(-rH, -sw / 2, d0), vector(rH, sw / 2, d0 + bl)));
-            rc = append(rc, boxIn(context, RC + ("cgC" ~ k), cs, vector(-rH, -rH, d0 + bl), vector(rH, rH, d0 + 2 * bl)));
+            polyPrism(context, RC, "cgT" ~ k, h, Y, Z,
+                      [vector(0 * mm, 0 * mm), vector(rH / sqrt(2), rH / sqrt(2)), vector(0 * mm, rH * sqrt(2)),
+                       vector(-rH / sqrt(2), rH / sqrt(2))], SCREW_OPT.holeDepth);
+            const cq = qUnion([qCreatedBy(J + "screwRev", EntityType.BODY), qCreatedBy(J + "slotExt", EntityType.BODY),
+                               qCreatedBy(RC + ("cgT" ~ k ~ "Ext"), EntityType.BODY)]);
+            opTransform(context, RC + ("cgR" ~ k), { "bodies" : cq, "transform" : rotationAround(line(h, X), c.rot * degree) });
+            rc = append(rc, cq);
         }
         step("rail cut");
         cutFrom(context, RC + "cut", railL, rc);
@@ -1553,6 +1590,17 @@ def hole_probes(data: dict, L: dict) -> list:
                 out.append([j["tag"], sd, -sg * (L["xPo"] - dx), y, z, 0])
             if ctl is not None:
                 out.append([j["tag"], sd, -sg * (L["xPo"] - 1.0), ctl[0], ctl[1], 1])
+    # the cage tongues' screws run along the bike's Y: on the axis 0.6, 3.5
+    # (in the nut's slot) and 6.5 past the tongue's face, and a point in the
+    # wall beside the hole 1.0 past it, outboard of the bore
+    for c in R["cage"]:
+        f, sgn = c["face"], c["in"]
+        zs = c["headBike"][1]
+        for sg in (1, -1):
+            sd = "L" if sg > 0 else "R"
+            for dy in (0.6, 3.5, 6.5):
+                out.append([f"cage {c['end']}", sd, -sg * R["cageX"], *to_drive((f + sgn * dy, zs)), 0])
+            out.append([f"cage {c['end']}", sd, -sg * (L["xPo"] - 0.45), *to_drive((f + sgn * 1.0, zs)), 1])
     return out
 
 

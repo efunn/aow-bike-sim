@@ -178,15 +178,19 @@ def test_v2_turns_the_servo_out_the_front_and_drops_the_plate(data):
     no mount plate in the parts or the extents; the studio lints."""
     L = st.full_layout(data)
     wall = data["s"]["print"]["min_wall"]
-    # upper -> lower, ONE screw at the rear on the centreline (2026-10-16):
-    # the head's pocket off the upper case's rear face, the nut clear of the
-    # lower case's walls, nothing out at the sides over the rails
-    assert L["v2RrY"] - data["screw"]["headDia"] / 2 > L["yUpNear"]
-    assert L["v2RrY"] - data["screw"]["nutSlotWidth"] / 3 ** 0.5 > L["yWallNear"]
-    assert L["v2RrHalfX"] < L["cupHalf"]
-    # a short lug and block: 45 deg each, the block's under its nut
-    assert L["v2LugTop"] < L["upTopZ"] and L["v2BlkBot"] > L["caseBot"]
+    # upper -> lower, ONE screw at the FRONT on the centreline (2026-10-19;
+    # the rear before): the head's pocket off the upper case's front face,
+    # the nut clear of the lower case's walls, nothing out at the sides
+    assert L["v2FrY"] + data["screw"]["headDia"] / 2 < L["yUpFar"]
+    assert L["v2FrY"] + data["screw"]["nutSlotWidth"] / 3 ** 0.5 < L["yWallFar"]
+    assert L["v2FrHalfX"] < L["cupHalf"]
+    # a short lug (45 deg) and a short block, its underside at 20 deg from
+    # level (user) meeting the front chamfer, under its nut
+    assert L["v2LugTop"] < L["upTopZ"]
     assert L["v2BlkTop"] < L["v2HeadZ"] - 6.6 - data["screw"]["nutSlotThickness"]
+    assert L["yWallFar"] < L["v2BlkMeetY"] < L["v2Foot"]
+    assert L["v2BlkMeetZ"] == pytest.approx(L["v2Rise"] + L["v2Foot"] - L["v2BlkMeetY"])
+    assert (L["v2BlkTop"] - L["v2BlkMeetZ"]) / (L["v2BlkMeetY"] - L["v2FrOut"]) == pytest.approx(math.tan(math.radians(20)))
     # lower -> bike: on the axis at the bushing's mid-height, the hole a
     # wall short of the bore; the pad puts the nut slot's inner face on the
     # cup's original side (side_pad 5 = jp + 2 + nut 3 - jp... the user's 1.5 more)

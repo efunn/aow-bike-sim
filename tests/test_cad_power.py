@@ -71,6 +71,17 @@ def test_the_screws_enter_clear_in_side_view(P):
     assert P["headView"] >= 0 and P["pulleyView"] >= 0
 
 
+def test_the_panel_reaches_back_only_at_its_aft_ear(P):
+    """The aft lug's extra (5.47) is an ear at the bottom, up to the aft
+    ridge's top + 1; above it the panel stops at the shelf's aft gusset
+    (user, 2026-10-19)."""
+    ya0, ya1, ze = P["aftEar"]
+    assert ya1 - ya0 == pytest.approx(5.474, abs=0.01) and ya1 == pytest.approx(P["gussets"][0][0])
+    ys = [q[0] for q in P["outline"] if q[1] > ze + 1e-6]
+    assert min(ys) == pytest.approx(ya1)
+    assert min(q[0] for q in P["outline"]) == pytest.approx(ya0)
+
+
 def test_the_board_beside_the_battery_and_the_switch_flush_with_the_xt30(data, P):
     """Square to the drive (XT30 up and back), outboard of the rail, a
     cable's room off the case side's top edge, off the left pulley's flange;

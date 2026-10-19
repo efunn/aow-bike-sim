@@ -392,7 +392,14 @@ drivetrain:
 
 bike:
   wheelbase: {value: 0.20, source: design}
-  rake_deg: {value: 15.0, source: design}      # steering axis tilt back from vertical
+  # steering axis tilt back from vertical. 20 since 2026-10-19 (user,
+  # docs/plans/aow-bike-whole-v2-touchups.md: "steer tube angle/rake increased
+  # to 20deg (keep wheelbase)"; analysis/steer_wobble.py, commit d2df2ce). The
+  # SIMULATOR's bike_params.yaml stays at 15 until the as-built pass.
+  rake_deg: {value: 20.0, source: design}
+  # v1 (aow-bike-whole, aow-bike-steering: frozen, printed) was drawn at 15;
+  # its generators read this so they do not move.
+  rake_deg_v1: {value: 15.0, source: design (as-built v1)}
   fork_offset: {value: 0.0, source: design}  # perpendicular distance steer axis -> front axle
   # Offset of the fork's prospective BUILD plane from the derived datum plane
   # `plane_fork_print`, along that plane's own normal -- mostly forward, tilted

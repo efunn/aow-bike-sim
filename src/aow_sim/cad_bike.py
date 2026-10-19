@@ -275,7 +275,7 @@ def layout(data: dict) -> dict:
     pl, ch, bt, el, rc = s["placement"], s["chassis"], s["battery"], s["electronics"], s["rollcage"]
     R = p["omni_wheel"]["outer_radius"] * 1000
     tilt = p["drivetrain"]["drive_servo_angle_deg"]
-    rake = p["bike"]["rake_deg"]
+    rake = p["bike"]["rake_deg_v1"]                    # v1 is frozen at its as-built rake
     wb, yr = pl["wheelbase"], pl["righting_y"]
     zr = -R - rL["floor_z"]
     zf = S["R"] - R
@@ -1583,7 +1583,7 @@ def fit2_probe(rear=(140, 175, 2.5), front=(80, 90, 2.5), y_at: float | None = N
     rL = cr.layout(righting_v1())
     body = sm.geometry_layer("\n".join(["FeatureScript 3044;", merge_layers(module_texts()), SPLIT_MARK]))
     subs = {"%LAYER%": body, "%TILT%": f"{p['drivetrain']['drive_servo_angle_deg']:g}",
-            "%ZF%": f"{st['R'] - R:g}", "%RAKE%": f"{p['bike']['rake_deg']:g}",
+            "%ZF%": f"{st['R'] - R:g}", "%RAKE%": f"{p['bike']['rake_deg_v1']:g}",
             "%RB%": f"{st['R']:g}", "%ZR%": f"{-R - rL['floor_z']:g}",
             "%Y0%": str(rear[0]), "%Y1%": str(rear[1]), "%DY%": str(rear[2]),
             "%F0%": str(front[0]), "%F1%": str(front[1]), "%DF%": str(front[2]),

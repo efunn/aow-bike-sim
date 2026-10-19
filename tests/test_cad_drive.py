@@ -221,16 +221,28 @@ def test_the_side_rails_fit(data, L):
     for pc in R["pieces"] + R["leftPieces"]:
         for c in cbs:
             assert not cd._inside(c, pc) and cd._edge_dist(c, pc) >= L["m25CbR"] + wall - 1e-3
-    # the cage posts: two, the rail's thickness, the nut slot's walls two lines
-    assert len(R["cage"]) == 2 and R["cageWall"] >= 0.9 - 1e-9
-    # the battery stop (both rails): a lip in off the rear arm's inner face,
-    # on the arm, off the cage post
+    # the cage tongues (2026-10-19): two, mirrored about mid-wheelbase, the
+    # screw along the bike's Y, the nut's slot two lines each side in X and
+    # 1.0 over the tongue's foot, its open end under the tongue's top
+    assert [c["end"] for c in R["cage"]] == ["front", "rear"]
+    rl = data["s"]["rail"]
+    f, r = R["cage"]
+    assert f["face"] + r["face"] == pytest.approx(rl["steer_axle"][0])
+    assert f["headBike"][1] == pytest.approx(r["headBike"][1]) == pytest.approx(R["cageZ"])
+    assert abs(f["headBike"][0] - f["face"]) == pytest.approx(4.6) and f["in"] == -r["in"]
+    w = data["screw"]["nutSlotWidth"]
+    assert L["xPo"] - (R["cageX"] + w / 2) == pytest.approx(0.9)
+    assert R["cageX"] - w / 2 - rl["cage_inner_x"] == pytest.approx(0.9)
+    t0, t1 = rl["cage_tongue_z"]
+    assert R["cageZ"] - w / math.sqrt(3) == pytest.approx(t0 + 1.0) and R["cageZ"] + w / math.sqrt(3) <= t1
+    # the battery stop (both rails): a lip and a leg in off the rear tongue's
+    # inboard part, wholly on it
     assert [st["kind"] for st in R["stops"]] == ["back", "side"]
-    rear = [tuple(q) for q in R["pieces"][1]]
+    rin = [tuple(q) for q in next(q for q in R["cageIn"] if q["end"] == "rear")["pts"]]
     for st in R["stops"]:
-        assert st["x"][0] < data["s"]["rail"]["inner_x"] < st["x"][1]
+        assert st["x"][0] < rl["cage_inner_x"] < st["x"][1]
         for q in ((st["y"][0], st["z"][0]), (st["y"][1], st["z"][1])):
-            assert cd._inside(q, rear) and not cd._inside(q, [tuple(v) for v in R["postRear"]])
+            assert cd._inside(q, rin) and cd._edge_dist(q, rin) >= 0.5 - 1e-6
 
 
 def test_the_ahrs_tabs_take_the_tm151(data, L):
