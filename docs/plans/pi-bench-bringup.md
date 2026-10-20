@@ -914,10 +914,12 @@ The editable install means a code rsync needs no reinstall. The bundle's
 digest is what makes this safe to do casually: a stale `deploy/bundle.npz`
 refuses to load rather than flying wrong numbers.
 
-Worth adding once the shape is known: `scripts/pi_setup.sh` (Phase 1 OS items
-+ Phase 2) and a `scripts/deploy.sh` for the three rsyncs, so neither is a
-remembered sequence. Not yet — write them after the session, from what was
-actually typed.
+**`scripts/bike.sh` (2026-10-19)** is the redeploy-and-run half: `sync` (the
+rsync above WITHOUT `--delete`, which would remove Pi-only policy files and
+bench logs), `bench` / `run` (run_bike over `ssh -t`, falling back to the one
+FTDI adapter plugged in when the configured U2D2 is not), `mirror`, and
+`status` (bundle md5 both sides, ports, and a UDP send to the Pi from the
+current terminal). `scripts/pi_setup.sh` for the OS half is still unwritten.
 
 ## 8. Still open after this session
 

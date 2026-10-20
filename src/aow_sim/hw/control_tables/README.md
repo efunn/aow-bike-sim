@@ -158,6 +158,16 @@ torque-off check has to write a register that holds (`drivetrain_bench.py idle
 --write` uses Profile Velocity). Not yet checked on the XC330, nor in position
 mode, where Goal Position is the register that matters.
 
+## Profiles do not shape every mode
+
+From the X-series e-manual, not measured here: **Profile Velocity (112)** is
+applied only in Position (3) and Extended Position (4) mode; **Profile
+Acceleration (108)** in every mode except Current (0) and PWM (16). So the
+righting XC330, in Current-based Position (5), moves as fast as its Goal
+Current lets it toward whatever goal it is given: its speed is shaped by
+Goal Current and by how the HOST moves the goal (stepped or ramped), never
+by a profile. Do not reach for Profile Velocity to slow it.
+
 ## Firmware: the XC330 needs 53
 
 Measured 2026-09-01: id 104 on XC330 firmware 50 against id 103 on 53, same
