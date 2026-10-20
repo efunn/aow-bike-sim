@@ -90,7 +90,8 @@ BIKE_COLS = {
     "righting_goal": 1, "righting_current": 1, "volts": 1,
     "controller": 1,                # index into telemetry.CONTROLLERS
 }
-STATES = ("engaged", "cut")   # FallGuard.state
+# FallGuard.state. Appended, never reordered: records store the index.
+STATES = ("engaged", "cut", "standby")
 
 # Defaults for the fall guard, overridable from control.onboard in
 # bike_params.yaml and from the command line.
@@ -212,6 +213,10 @@ class FallGuard:
         self.consent = False
         self._settled_since = None
         self.cuts = 0
+        # True once the OPERATOR put the bike in standby (`standby()`): at
+        # connect, or by disengaging. Unlike a cut it is never left
+        # automatically -- --auto-rearm is about falls, and a bike someone
+        # deliberately stood down must not re-engage because it sat still.
         # While True, nothing re-arms -- not consent, not --auto-rearm. Set by
         # the runner while the link is down: there is nobody to consent, and
         # an auto re-arm with no operator would drive a bike nobody can stop.
@@ -224,6 +229,16 @@ class FallGuard:
         was engaged, i.e. whether there was torque to take off."""
         was = self.state == "engaged"
         self.state = "cut"
+        self.consent = False
+        self._settled_since = None
+        return was
+
+    def standby(self) -> bool:
+        """The operator's disengage (and the state at connect): policy out,
+        like a cut, but left only on consent -- see `__init__`. Clears any
+        consent given before it. -> whether it was engaged."""
+        was = self.state == "engaged"
+        self.state = "standby"
         self.consent = False
         self._settled_since = None
         return was
@@ -255,7 +270,7 @@ class FallGuard:
             self._settled_since = t
         if t - self._settled_since < self.dwell_s:
             return ""
-        if not (self.auto or self.consent):
+        if not (self.consent or (self.auto and self.state == "cut")):
             return ""
         self.state = "engaged"
         self.consent = False
@@ -527,6 +542,7 @@ class BikeRunner:
         self._health: dict = {}
         self._link_lost = False
         self._rearm_seen = None           # (peer, rearm_n) last heard
+        self._stop_seen = None            # (peer, stop_n) last heard
         # What the bike tells the station, in words (telemetry.EventLog).
         self.events = telemetry.EventLog()
         self._errs: dict = {}             # role -> Hardware Error Status seen
@@ -642,6 +658,7 @@ class BikeRunner:
         an operator-scale knob on the control path.
         """
         self._rearm_from(c.get("rearm_n"))
+        self._stop_from(c.get("stop_n"))
         if not self.bus.id_right:
             return
         if "righting_rad" in c:
@@ -667,9 +684,27 @@ class BikeRunner:
             if reason is not None and self.guard.state != "engaged":
                 # SAID, not swallowed: a press the bike will not act on
                 # used to vanish without a word.
-                self._event("hold", f"r ignored -- held: {reason}")
+                self._event("hold", f"engage ignored -- held: {reason}")
             self.guard.request_rearm()
         self._rearm_seen = (peer, n)
+
+    def _stop_from(self, n) -> None:
+        """The operator's disengage, a press COUNT like `rearm_n` and judged
+        the same way (`_rearm_from`): a change from a known station is a
+        press. Unlike consent it is acted on even mid-dropout's recovery --
+        but a press needs a live link to arrive at all. Policy servos limp,
+        righting servo still holding, state STANDBY until the next engage."""
+        if n is None:
+            return
+        peer = self.link.peer
+        seen = self._stop_seen
+        if seen is not None and seen[0] == peer and n != seen[1]:
+            if self.guard.standby() and self.torque:
+                self.bus.torque(False, self.bus.policy_ids)
+            self._event("standby", "STANDBY: disengaged by the operator -- "
+                                   "policy out, righting servo live. Enter / "
+                                   "Y to engage")
+        self._stop_seen = (peer, n)
 
     def _warning(self) -> str | None:
         """A standing warning, or None: the pack below warn but not yet cut
@@ -886,8 +921,8 @@ class BikeRunner:
             # one moment it has a job.
             self.bus.torque(False, self.bus.policy_ids)
             self._event("cut", f"CUT: roll {np.degrees(self._roll):.0f} deg -- "
-                               "policy out, righting servo live. r once "
-                               "upright and still")
+                               "policy out, righting servo live. Enter / Y "
+                               "once upright and still")
         elif event == "rearm":
             self._engage(fresh_read=False)   # this tick already sensed
             # ONLY WITH --torque. This armed unconditionally until 2026-09-18,
@@ -895,7 +930,7 @@ class BikeRunner:
             # mode whose whole promise is that nothing can move.
             if self.torque:
                 self.bus.arm(self.bus.policy_ids)
-            self._event("rearm", "RE-ARMED: policy engaged, command zeroed"
+            self._event("rearm", "ENGAGED: policy driving, command zeroed"
                         + ("" if self.torque else " (--no-torque: still limp)"))
 
     def _watch_link(self) -> None:
@@ -922,7 +957,7 @@ class BikeRunner:
             reason = self._hold_reason()
             self._event("link", f"LINK BACK from {self.link.peer[0]}: " + (
                 f"still HELD -- {reason}" if reason
-                else "r once the bike is upright and still"))
+                else "Enter / Y once the bike is upright and still"))
 
     def wait_for_link(self, timeout: float = LINK_WAIT_S) -> None:
         """Block until the ground station says hello. Before any torque.
@@ -1087,8 +1122,17 @@ class BikeRunner:
         # "general_rl" default -- so the BIKE always drove general_rl no matter
         # what control.general_move said, while teleop honoured it. The two
         # disagreed, and the one that mattered was the one nobody could see.
-        print(f"pack {voltage:.1f} V — engaging general policy {self.gen_name} "
-              f"at {1/self.dt:.0f} Hz")
+        # STANDBY AT CONNECT (2026-10-20). A station connecting used to BE
+        # the engage: the first packet put the policy on the bike and, with
+        # torque, energised the drives and steer, with nothing pressed. Now
+        # the policy waits for the operator's engage (Enter / Y), through the
+        # same gate as a re-arm (upright, still, consent). --no-link has no
+        # operator to ask, so it engages at once as before.
+        standby = self.require_link
+        print(f"pack {voltage:.1f} V — general policy {self.gen_name} at "
+              f"{1/self.dt:.0f} Hz, "
+              + ("STANDBY: Enter / Y on the station engages" if standby
+                 else "engaging (--no-link)"))
         print(f"  {self.gain_note}")
         print(f"  pack: warn below {self.pack.warn_v:.1f} V, cut below "
               f"{self.pack.cut_v:.1f} V (max servo reading, "
@@ -1099,8 +1143,15 @@ class BikeRunner:
 
         self.data.time = 0.0
         self._engage()
+        if standby:
+            self.guard.standby()
         if self.torque and voltage < self.pack.cut_v:
             print(f"pack {voltage:.1f} V is below the cut -- NOT arming")
+        elif self.torque and standby:
+            # Only the righting servo: it holds the wings and takes the
+            # triggers in standby. The policy's three wait for the engage.
+            if self.bus.id_right:
+                self.bus.arm((self.bus.id_right,))
         elif self.torque:
             self.bus.arm()                   # <- the first torque of the run
         else:

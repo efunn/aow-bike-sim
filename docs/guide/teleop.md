@@ -185,8 +185,9 @@ The reader reports the standard layout (+x right, +y up, triggers 0..1, Xbox but
 | LB / RB | snap heading left / right (`6` / `7`) | same |
 | Back | about-face (`8`) | same |
 | A | re-aim the heading at the bike (`/`) | same |
-| Y | reset / respawn (Backspace) | **re-arm** (`r`) |
-| X / B | lie down / get up (`swing_sit`) | — (not onboard yet) |
+| Y | reset / respawn (Backspace) | **engage** / re-arm (Enter) |
+| B | get up (`swing_sit`) | **disengage** (Backspace) |
+| X | lie down (`swing_sit`) | — (not onboard yet) |
 | Start | camera (`\`) | — |
 | d-pad up / down | righting current + / − (`]` / `[`) | same |
 | RT − LT | **slews the righting crank's goal** | same, on the real servo |
@@ -203,6 +204,8 @@ The sticks own the velocity only while one is out of the deadzone. When they're 
 
 | key | what it does |
 |---|---|
+| `Enter` | **engage**: the policy takes the bike once it is upright and still. The bike starts in **STANDBY** when the mirror connects (drives and steer limp, righting servo live), and the same key re-arms after a fall. Standby is never left on its own, even with `--auto-rearm` (pad Y, or `r`) |
+| `Backspace` | **disengage**: back to standby, policy out (pad B) |
 | `P` | **pin the bike at the origin**, or let it go. Unpinned it walks by its own dead-reckoned odometry, so the drift *is* the odometry error, made visible. Pinned, the drift is hidden and you get a fixed reference |
 | `-` / `=` | zoom. The viewer owns the scroll wheel |
 

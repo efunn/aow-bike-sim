@@ -101,9 +101,9 @@ BUTTON_MAP = {
     "A": "re-aim",        # heading setpoint to where the bike points (`/`);
                           # the sticks zero the velocity on release, but the
                           # heading is a setpoint and holds
-    "Y": "rearm / reset", # mirror `r`; teleop BACKSPACE (the sim never cuts)
-    "X": "lie down",      # teleop PageDown (swing_sit); nothing on the bike yet
-    "B": "get up",        # teleop PageUp
+    "Y": "engage / reset",  # mirror ENTER (engage, re-arm); teleop BACKSPACE
+    "X": "lie down",        # teleop PageDown (swing_sit); nothing on the bike yet
+    "B": "get up / disengage",  # teleop PageUp; mirror BACKSPACE (standby)
     "START": "camera",    # teleop `\\`
     "DPAD_UP": "righting current +",    # `]`
     "DPAD_DOWN": "righting current -",  # `[`

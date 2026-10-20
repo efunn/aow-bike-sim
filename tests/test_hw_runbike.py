@@ -386,16 +386,18 @@ def test_the_viewer_and_the_terminal_share_one_command_model():
     from aow_sim.run_drive import MIRROR_KEYS
     from aow_sim.hw.ground import OperatorState
     handled = {"UP", "DOWN", "LEFT", "RIGHT", "/", " ", "9", "4", "[", "]",
-               "r", "q"}
+               "r", "q", "ENTER", "BACKSPACE"}
     assert set(MIRROR_KEYS.values()) <= handled, (
         f"unhandled: {set(MIRROR_KEYS.values()) - handled}")
     # and every one of them actually moves the state
     for name in set(MIRROR_KEYS.values()):
         op = OperatorState(travel_rad=1.0)
         op.sync({"state": "engaged", "psi": 0.3})   # the bike has said where
-        before = (op.v, op.psi, op.pos, op.righting_current, op.rearms, op.quit)
+        before = (op.v, op.psi, op.pos, op.righting_current, op.rearms,
+                  op.stops, op.quit)
         op.key(name)
-        after = (op.v, op.psi, op.pos, op.righting_current, op.rearms, op.quit)
+        after = (op.v, op.psi, op.pos, op.righting_current, op.rearms,
+                 op.stops, op.quit)
         if name not in (" ", "/"):        # stop from a standstill is a no-op
             assert before != after, f"{name!r} changed nothing"
 
@@ -883,14 +885,17 @@ def test_a_latched_error_is_rebooted_away_at_startup():
 
 # --- the packed command (hw/telemetry.encode_command) ----------------------
 
-def test_the_command_is_thirteen_bytes_and_round_trips():
+def test_the_command_is_fourteen_bytes_and_round_trips():
+    """v3 (2026-10-20) added `stop_n`, the disengage count: 13 -> 14 B."""
     from aow_sim.hw import telemetry as T
     op = OperatorState(travel_rad=2.4)
     op.v, op.psi = 0.37, 1.234
     op.key("9"), op.key("]"), op.key("r"), op.key("l")
+    op.key("BACKSPACE"), op.key("BACKSPACE")
     pkt = op.packet()
     wire = T.encode_command(pkt)
-    assert len(wire) == T.COMMAND_BYTES == 13
+    assert len(wire) == T.COMMAND_BYTES == 14
+    assert T.decode_command(wire)["stop_n"] == pkt["stop_n"] == 2
     assert pkt["controller"] == "lqr" and T.decode_command(wire)["controller"] == "lqr"
     got = T.decode_command(wire)
     assert set(got) == set(pkt)               # same fields, same names
@@ -1025,7 +1030,7 @@ def test_a_flat_pack_cuts_and_holds_and_a_returning_link_does_not_release():
     assert "still HELD" in r.said[-1][1] and "pack" in r.said[-1][1]
     r._rearm_seen = (r.link.peer, 0)
     RB.BikeRunner._rearm_from(r, 1)
-    assert r.said[-1][0] == "hold" and "r ignored" in r.said[-1][1]
+    assert r.said[-1][0] == "hold" and "engage ignored" in r.said[-1][1]
 
     r = _runner(torque=False)
     r.pack.v = 9.0
@@ -1133,3 +1138,51 @@ def test_a_refused_switch_is_said_once_and_changes_nothing():
         RB.BikeRunner._switch_controller(r, "lqr")
     assert r.controller == "policy" and calls == []
     assert said == [("mode", "LQR refused: gains designed at 200 Hz")]
+
+
+# --- standby: connecting is not engaging (2026-10-20) -----------------------
+
+def test_a_v2_command_still_decodes_with_no_disengage_in_it():
+    from aow_sim.hw import telemetry as T
+    v2 = T._CMD_V2.pack(2, 5, 0, 370, 0, 12340, T.ABSENT, T.ABSENT)
+    got = T.decode_command(v2)
+    assert got["rearm_n"] == 5 and "stop_n" not in got
+
+
+def test_standby_is_left_only_on_consent_even_with_auto_rearm():
+    """--auto-rearm is about falls. A bike the operator stood down (or one
+    that has just connected) must not engage because it sat still."""
+    g = FallGuard(cut_deg=60.0, rearm_deg=30.0, dwell_s=0.1, auto=True)
+    assert g.standby() is True and g.state == "standby"
+    assert g.update(0.0, 0.0, 0.0) == "" == g.update(5.0, 0.0, 0.0)
+    g.request_rearm()
+    assert g.update(5.1, 0.0, 0.0) == "rearm" and g.state == "engaged"
+    # a FALL from there is still an ordinary cut, which auto does re-arm
+    g.update(6.0, math.radians(90.0), 0.0)
+    g.update(7.0, 0.0, 0.0)
+    assert g.update(7.2, 0.0, 0.0) == "rearm"
+
+
+def test_standby_drops_consent_given_before_it():
+    g = FallGuard(cut_deg=60.0, rearm_deg=30.0, dwell_s=0.1)
+    g.update(0.0, math.radians(90.0), 0.0)          # cut
+    g.request_rearm()
+    assert g.standby() is False                     # was not engaged
+    g.update(1.0, 0.0, 0.0)
+    assert g.update(1.2, 0.0, 0.0) == "", "an old engage must not carry over"
+
+
+def test_a_disengage_press_stands_the_bike_down_and_limps_the_policy():
+    """A CHANGE in `stop_n` from the known station is a press: policy servos
+    off, the righting servo left alone, state standby. The first count heard
+    from a station is not a press, as with `rearm_n`."""
+    r = _runner(torque=True)
+    r._stop_seen = None
+    RB.BikeRunner._stop_from(r, 0)                  # first contact: no press
+    assert r.guard.state == "engaged" and r.bus.calls == []
+    RB.BikeRunner._stop_from(r, 1)
+    assert r.guard.state == "standby"
+    assert r.bus.calls == [("torque", False, (1, 2, 3))]
+    assert r.said[-1][0] == "standby"
+    RB.BikeRunner._stop_from(r, 2)                  # already down: no torque call
+    assert r.bus.calls == [("torque", False, (1, 2, 3))]

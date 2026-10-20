@@ -312,7 +312,12 @@ def status_text(tel: dict) -> tuple[str, str]:
         left.append(k)
         right.append(v)
 
-    row("state", f"{tel.get('state', '?')}   cuts {tel.get('cuts', 0)}")
+    st = tel.get("state", "?")
+    hint = {"standby": "   Enter / Y engages",
+            "engaged": "   Backspace / B disengages",
+            "cut": "   Enter / Y re-arms when upright"}.get(st, "")
+    row("state", f"{st.upper() if st == 'standby' else st}   cuts "
+                 f"{tel.get('cuts', 0)}{hint}")
     if tel.get("hold"):
         row("HELD", str(tel["hold"]))
     if tel.get("warn"):
@@ -370,10 +375,13 @@ def status_text(tel: dict) -> tuple[str, str]:
 # (the servo resolves 0.088).
 # ---------------------------------------------------------------------------
 
-COMMAND_VERSION = 2
-_CMD = __import__("struct").Struct("<BBBhhhhh")
+# v3 (2026-10-20): `stop_n`, the operator's disengage presses, as a count like
+# `rearm_n`. v2 and v1 still decode, with no disengage in them.
+COMMAND_VERSION = 3
+_CMD = __import__("struct").Struct("<BBBBhhhhh")
+_CMD_V2 = __import__("struct").Struct("<BBBhhhhh")
 _CMD_V1 = __import__("struct").Struct("<BBhhhhh")
-COMMAND_BYTES = _CMD.size          # 13
+COMMAND_BYTES = _CMD.size          # 14
 ABSENT = -32768
 # What the operator can ask the bike to fly. The index is the wire value.
 CONTROLLERS = ("policy", "lqr")
@@ -398,7 +406,8 @@ def encode_command(pkt: dict) -> bytes:
     r = pkt.get("righting_rad")
     cur = pkt.get("righting_current")
     ctl = CONTROLLERS.index(pkt.get("controller", "policy"))
-    return _CMD.pack(COMMAND_VERSION, int(pkt.get("rearm_n", 0)) & 0xFF, ctl,
+    return _CMD.pack(COMMAND_VERSION, int(pkt.get("rearm_n", 0)) & 0xFF,
+                     int(pkt.get("stop_n", 0)) & 0xFF, ctl,
                      _i16(vx * 1e3), _i16(vy * 1e3),
                      ABSENT if psi is None else _i16(psi * 1e4),
                      ABSENT if r is None else _i16(r * 1e3),
@@ -413,19 +422,24 @@ def decode_command(data: bytes) -> dict:
             "the station is sending JSON -- it predates the packed command "
             "format. Update the station (this repo, same commit as the bike).")
     ver = data[0] if data else None
+    stop = None                       # v1/v2 carried no disengage
     if ver == 1 and len(data) == _CMD_V1.size:
         _, n, vx, vy, psi, r, cur = _CMD_V1.unpack(data)
         ctl = None                    # v1 carried no controller request
+    elif ver == 2 and len(data) == _CMD_V2.size:
+        _, n, ctl, vx, vy, psi, r, cur = _CMD_V2.unpack(data)
     elif ver == COMMAND_VERSION and len(data) == COMMAND_BYTES:
-        _, n, ctl, vx, vy, psi, r, cur = _CMD.unpack(data)
-        if ctl >= len(CONTROLLERS):
-            raise CommandFormatError(f"controller {ctl} is not one of {CONTROLLERS}")
-    elif ver in (1, COMMAND_VERSION):
+        _, n, stop, ctl, vx, vy, psi, r, cur = _CMD.unpack(data)
+    elif ver in (1, 2, COMMAND_VERSION):
         raise CommandFormatError(f"{len(data)} B is not a v{ver} command")
     else:
         raise CommandFormatError(
-            f"command format v{ver}, this bike reads v1 and v{COMMAND_VERSION}")
+            f"command format v{ver}, this bike reads v1-v{COMMAND_VERSION}")
+    if ctl is not None and ctl >= len(CONTROLLERS):
+        raise CommandFormatError(f"controller {ctl} is not one of {CONTROLLERS}")
     out = {"v_cmd_world": [vx * 1e-3, vy * 1e-3], "rearm_n": n}
+    if stop is not None:
+        out["stop_n"] = stop
     if ctl is not None:
         out["controller"] = CONTROLLERS[ctl]
     if psi != ABSENT:

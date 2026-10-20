@@ -1778,7 +1778,13 @@ MIRROR_KEYS = {265: "UP", 264: "DOWN", 263: "LEFT", 262: "RIGHT",
                ord("W"): "UP", ord("S"): "DOWN", ord("A"): "LEFT",
                ord("D"): "RIGHT", ord("/"): "/", ord(" "): " ",
                ord("9"): "9", ord("4"): "4", ord("["): "[", ord("]"): "]",
-               ord("R"): "r", ord("Q"): "q"}
+               ord("R"): "r", ord("Q"): "q",
+               # ENGAGE / DISENGAGE (2026-10-20). Enter engages from standby
+               # and re-arms after a cut (`r` still does); Backspace stands
+               # the bike down. The viewer also resets its sim on Backspace,
+               # which in the mirror only redraws one frame from qpos0 before
+               # telemetry overwrites it.
+               257: "ENTER", 259: "BACKSPACE"}
 
 
 # macOS virtual keycodes for the arrows (Carbon kVK_* constants).
@@ -2016,7 +2022,7 @@ TELEOP_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
                    "START": 92, "Y": 259,      # BACKSPACE: reset / respawn
                    "DPAD_UP": _KEY_PELT_UP, "DPAD_DOWN": _KEY_PELT_DOWN}
 MIRROR_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
-                   "BACK": ord("8"), "Y": ord("R"),
+                   "BACK": ord("8"), "Y": 257, "B": 259,   # engage / disengage
                    "DPAD_UP": ord("]"), "DPAD_DOWN": ord("[")}
 _TRIGGER_DEAD = 0.05
 # Full trigger, deg/s: twice swing_sit's lift rate (user, 2026-10-19). Analog,
@@ -2516,14 +2522,17 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             return          # the ramps own these; a discrete step is applied below
         if name is not None:
             op.key(name)
-            if name == "r":
+            if name == "BACKSPACE":
+                print("DISENGAGE sent — policy out, its servos limp, righting "
+                      "servo holding; Enter / Y engages again")
+            if name in ("r", "ENTER"):
                 # CONSENT IS STICKY, and that is the part worth saying out
                 # loud: `FallGuard` stores it and spends it the moment the
                 # bike is back inside the window, so pressing r while it is
                 # still on its side is not wasted -- it just does not look
                 # like it did anything. The bike must be under REARM_ROLL_DEG
                 # (12) and settled for the dwell before the policy comes back.
-                print("re-arm requested — the bike takes it when it is back "
+                print("engage requested — the bike takes it when it is "
                       "under 12° and still for 0.2 s")
             if name in (" ", "/"):
                 v_lat[0] = 0.0
@@ -2739,9 +2748,12 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
              "  arrows drive (hold to ramp) · 1/3 crab · / stop and re-aim\n"
              "  6/7/8 snap heading +90/-90/180 · -/= zoom out/in\n"
              "  o re-centre · p pin at centre (and flatten the floor)\n"
-             "  9/4 righting servo · [ ] its current · r re-arm · q quit\n"
+             "  9/4 righting servo · [ ] its current · q quit\n"
+             "  ENTER engage (and re-arm) · BACKSPACE disengage — the bike "
+             "starts in STANDBY\n"
              + ("  PAD: left stick drive/crab · right stick turn · LB/RB snap "
-                "L/R · Back 180\n       A re-aim · Y re-arm · RT-LT slew the "
+                "L/R · Back 180\n       A re-aim · Y engage · B disengage · "
+                "RT-LT slew the "
                 "righting servo · d-pad up/down its current\n"
                 if padin else "")
              + ("  wings DRAWN from the servo's measured angle — check "

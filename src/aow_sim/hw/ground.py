@@ -68,8 +68,13 @@ eats escape sequences (ssh through something odd, tmux misconfigured).
               no gains at its loop rate. The LQR regulates a DEAD-RECKONED
               position (it re-anchors on every heading key) -- a bench and
               comparison mode, see docs/plans/untethered-setup.md
-    r         request re-arm after a fall cut (the bike will not come back on
-              its own unless it was started with --auto-rearm)
+    Enter     ENGAGE: the policy takes the bike once it is upright and
+              still. The bike starts in STANDBY when a station connects
+              (policy servos limp, righting live), and the same press
+              re-arms after a fall cut; it never leaves standby on its own,
+              not even with --auto-rearm                  (also r)
+    Backspace DISENGAGE: policy out, its three servos limp, righting
+              servo still holding -- back to standby
     q         quit -- and quitting stops the heartbeat: a second later the
               bike cuts (policy servos limp) and WAITS for a station. It no
               longer exits; restart a station and press r to re-arm
@@ -210,6 +215,8 @@ class OperatorState:
         # ate the operator's re-arm; a count survives any number of losses
         # (the next packet carries it) and duplicates are harmless.
         self.rearms = 0
+        # The disengage, the same way: one per press, the bike acts on a change.
+        self.stops = 0
         # A LEVEL, like everything in the packet: which controller the
         # operator wants. `controller_actual` is the bike's answer.
         self.controller = "policy"
@@ -289,8 +296,10 @@ class OperatorState:
                                             else -CURRENT_STEP)
         elif ch == "l":
             self.controller = "lqr" if self.controller == "policy" else "policy"
-        elif ch == "r":
-            self.rearms += 1
+        elif ch in ("r", "\n", "\r", "ENTER"):
+            self.rearms += 1                 # engage / re-arm
+        elif ch in ("\x7f", "\x08", "BACKSPACE"):
+            self.stops += 1                  # disengage: policy out
         elif ch in ("q", "\x03"):          # q or ctrl-C
             self.quit = True
 
@@ -325,6 +334,7 @@ class OperatorState:
         if self.righting_current is not None:
             out["righting_current"] = self.righting_current
         out["rearm_n"] = self.rearms
+        out["stop_n"] = self.stops
         out["controller"] = self.controller
         return out
 
