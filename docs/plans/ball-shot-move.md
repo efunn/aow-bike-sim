@@ -68,9 +68,9 @@ Two different rigs, and they are easy to mix up:
 | `1498590690` | 10.0 | no | repeated finger pokes at the front wheel | perturbed standstill balance, survives 9.3 s | falls ~9.6 s |
 | `156276133` | 10.0 | no | none | free ride, slow S-curves, drives ~8 m away | up |
 | `1216730766` | 12.1 | yes | none, filmed from overhead | ~10 s loitering beside the ball, then a dribble | up |
-| `ob/1940365976` | 6.0 | no | open-hand slaps | perturbed balance, recovers every time | up |
-| `ob/2055006982` | 7.9 | no | pushes and holds | same; holds large lean angles | up |
-| `ob/807706018` | 8.3 | no | none | free ride, wide slow arcs, persistent lean | up |
+| `ob/1940365976` | 6.0 | no | open-hand slaps | two-wheel standstill; each slap swings the tail into a 45–90° yaw. It seems to turn back in frame, but the camera is handheld, and the owner says the toy does not hold heading | up |
+| `ob/2055006982` | 7.9 | no | pushes and holds | **wheelie** (manual's "Back Wheel Mode"), not two-wheel; carried by hand 4.3–5.8 s without falling | up |
+| `ob/807706018` | 8.3 | no | none | **wheelie**, no input; heading roughly constant, position wanders | up |
 
 Ball speeds, scaled off the ball's Ø67 mm in-frame: **1.0–1.2, 1.0–1.1, 0.7,
 0.34 m/s** for the four clips with a ball. Only the 0.34 is solid. The other
