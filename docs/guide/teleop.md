@@ -10,6 +10,12 @@ mjpython -m aow_sim.run_drive --teleop
 
 Bindings are mostly digits, arrows, and punctuation to avoid collisions with the default MuJoCo keybinds (i.g. A-Z keys).
 
+## The look
+
+`--teleop` and `--mirror` draw the bike **bare** by default: the floor, the wheels (black front tyre with an orange/blue spoke cover, grey rollers on a black hub), the wings, and the rollcage (a translucent blue shell over the two orange rings). Every mass shape (servos, cases, electronics, battery, fork) and marker is hidden. In teleop the ground dial is only the green commanded-heading arc (no dashed rim); the grids and the trail are as in `--look full`. `--look full` draws everything.
+
+It is viewing only. The hiding zeroes colours on the compiled model, which no physics reads and no digest hashes, so the bike drives exactly the same either way. The shell is the CAD's shape, not the contact: the contact is still the `roof` capsule, which differs from the drawn shell by up to 2.6 mm at the rings.
+
 ---
 
 ## Controllers

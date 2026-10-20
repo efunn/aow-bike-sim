@@ -43,7 +43,8 @@ import mujoco
 import numpy as np
 
 from .build_model import (FLOOR_CONAFF, FLOOR_CONTYPE, SWING_LINKAGE_CFG, _FLOOR_ALPHA,
-                          build_model, load_params, tune_lighting)
+                          build_model, load_params, strip_visuals,
+                          tune_lighting)
 from .wheel_overlay import STRIPE_RADIUS_TELEOP, add_stripes
 from .control import DriveController, run
 from .control.balance import extract_state, mix
@@ -606,6 +607,14 @@ def main() -> None:
                          "SYNC is the column a headless profile cannot "
                          "produce, and a healthy loop shows a large sleep. "
                          "Works in --teleop and --mirror")
+    ap.add_argument("--look", choices=("full", "bare"), default=None,
+                    help="bare (the default for --teleop and --mirror): "
+                         "draw the floor, the wheels, the wings and the "
+                         "rollcage, and hide every mass shape and marker; "
+                         "teleop's dial is then only the commanded-heading "
+                         "arc, with no dashed rim. full: "
+                         "every geom, the default elsewhere. Viewing only: "
+                         "the physics and both digests are untouched")
     ap.add_argument("--ui", action="store_true",
                     help="restore the viewer's side panels (off by default: "
                          "teleop is keyboard-driven and Reset is Backspace)")
@@ -879,6 +888,11 @@ def main() -> None:
     # Same lighting the recorder applies, so a teleop session and a video of
     # the same thing do not look like two different simulators.
     tune_lighting(model)
+    if args.look is None:
+        args.look = "bare" if (args.teleop or args.mirror) else "full"
+    if args.look == "bare":
+        print(f"look bare: {len(strip_visuals(model))} shapes and markers "
+              "hidden (--look full shows them)")
     eq = settle_upright(model)
 
     if args.mirror:
@@ -911,7 +925,7 @@ def main() -> None:
                 crab_max_override=args.crab_max, verbose=args.verbose,
                 rig=rig_cfg, auto_up=not args.no_auto_up, plays=args.play,
                 style_ungated=args.style_ungated, pad=not args.no_pad,
-                pad_righting_dps=args.pad_righting_dps)
+                pad_righting_dps=args.pad_righting_dps, bare=args.look == "bare")
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1355,7 +1369,7 @@ def _draw_slowmo_badge(view, factor, shown) -> None:
 
 def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
              command=None, trail=None, grid=False, trail_level=None,
-             stripes=None, wheel_view=False, spawn=None):
+             stripes=None, wheel_view=False, spawn=None, rim=True):
     """Ground dial under the bike showing the teleop command against reality.
 
     The commanded heading is a green arc ON the rim; velocities (hidden while
@@ -1491,9 +1505,10 @@ def _overlay(scn, model, data, c, on, v_max=1.2, reset=True,
     if not on[0]:
         return
 
-    # rim: a dashed circle, the reference dial the ticks sit on
+    # rim: a dashed circle, the reference dial the ticks sit on (off in the
+    # bare look, which keeps only the commanded-heading arc)
     n = 48
-    for i in range(0, n, 2):
+    for i in range(0, n, 2) if rim else ():
         a0, a1 = 2 * np.pi * i / n, 2 * np.pi * (i + 1) / n
         seg(at(a0, _DIAL_R), at(a1, _DIAL_R),
             mujoco.mjtGeom.mjGEOM_LINE, 4.0, _RING)
@@ -2794,7 +2809,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             servo_gains=None, drivetrain_source="", frame_stats=None,
             start_lqr=False, rig=None, crab_max_override=None,
             verbose=False, auto_up=True, plays=(), style_ungated=False,
-            pad=False, pad_righting_dps=PAD_RIGHTING_DPS):
+            pad=False, pad_righting_dps=PAD_RIGHTING_DPS, bare=False):
     from .interactive import FrameStats, teleop_loop
 
     from . import policy_menu
@@ -4327,6 +4342,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         the viewer has handed the handle over (on_start), hence the guard."""
         apply_pending_respawn(m, d)
         _overlay(scn, m, d, c, overlay_on, v_max, trail=trail, grid=True,
+                 rim=not bare,
                  trail_level=trail_levels[trail_level[0]],
                  wheel_view=cam_mode[0] == "wheel", spawn=spawn)
         if menu["open"] and view[0] is not None:

@@ -543,3 +543,27 @@ def test_reset_actuator_state_is_safe_to_call_unconditionally(params, full_model
     assert np.all(d.act == 0.0), "default restores the at-rest equilibrium"
     reset_actuator_state(m, d, np.full(m.na, 1.5))
     assert np.all(d.act == 1.5), "an explicit activation is restored verbatim"
+
+
+def test_bare_look_hides_the_mass_shapes_and_leaves_the_physics(params):
+    """`--look bare` (teleop's and the mirror's default) only zeroes alpha:
+    the wheels, wings and rollcage stay drawn, every mass shape and marker
+    goes, and a fall is bit-identical to the fully drawn bike."""
+    from aow_sim.build_model import strip_visuals
+    full, bare = build_model(params), build_model(params)
+    hidden = set(strip_visuals(bare))
+    drawn = {bare.geom(g).name for g in range(bare.ngeom)
+             if bare.geom_rgba[g][3] > 0 and bare.geom_bodyid[g] != 0}
+    assert {"servo_drive_left", "payload_battery", "fork", "ahrs_site"} <= hidden
+    assert {"front_tire", "front_tire_q0", "roller_0_a_q0", "hub_drawn",
+            "rollcage_shell", "rollcage_rear", "rollcage_front",
+            "swing_wing_left", "swing_wing_right_toe"} <= drawn
+    assert not any(n.startswith(("servo_", "payload_", "drive_")) for n in drawn)
+    qpos = []
+    for m in (full, bare):
+        d = mujoco.MjData(m)
+        d.qpos[3:7] = [0.996, 0.087, 0.0, 0.0]
+        d.qpos[2] = 0.2
+        _step_for(m, d, 0.5)
+        qpos.append(d.qpos.copy())
+    np.testing.assert_array_equal(*qpos)
