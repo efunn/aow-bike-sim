@@ -164,7 +164,7 @@ def main() -> None:
     print(f"  worst fit   R^2 {r2.min():.3f}  (per-state min over the grid)")
     q, src = mount
     print(f"  ahrs mount  {np.round(q, 4)}  (source: {src})")
-    if src != "measured":
+    if src not in ("measured", "design"):   # design: the CAD, which places it exactly
         print("              ^ NOT calibrated — the bike will assume the sensor "
               "is perfectly\n                aligned with the chassis. A few degrees "
               "of tilt is a permanent\n                roll bias the controller trims "

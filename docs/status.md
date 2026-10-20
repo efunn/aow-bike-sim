@@ -1,4 +1,4 @@
-# Project status — 2026-10-16
+# Project status — 2026-10-19
 
 **How to read this.** The navigation layer: what is true now, what to do next,
 and where the detail lives. Rewritten, not appended to. **For the reasoning,
@@ -45,12 +45,25 @@ and the 10-14 env fixes had all landed without this file catching up.
 | 3 | **Finish the drivetrain station**: firmware Velocity P and I, the D5 torque-scale check, fit the five drivetrain `GUESS`es | The sim cannot pick the gain (policies tie at P 100 / P 400; P 400 buzzes ~3x harder). Decide on the bike | `drivetrain-model.md`, `drivetrain-measurements.yaml` |
 | 4 | **The style bit: find the pivot** (GPU training PAUSED, user 10-18: the bike is being built, policies get tried on it first) | Run 1 (add) refused in-place turns; run 2 (mult, 10-18) turns but STEERS, and stops 20-33 deg short on the big ones. Refusing is fixed, the pivot is not found. Also: 16k x horizon 16 trains in 18 min (4k: 29) but its bit-off hold creeps (-0.02..-0.05 m/s; run 1 ~0) -- decide whether that is acceptable before using 16k again | `wishlist.md`, `gpu-training.md` |
 | 5 | **Sim: the eval score's directional gate** | `_score` is still `survive_rate x track_geo`; a policy that abandons a direction outranks good ones. Every export since v3 drives both straight commands forward, so this is insurance for future runs. Risk #2 | `eval-score-rewrite.md` |
-| 6 | **Sim to as-built, one pass (user, soon)**: rake 15 deg -> probably **20** (the CAD is at 20 since 10-19, and lays out clean), with the other as-built changes together, not piecemeal | `analysis/steer_wobble.py` (10-18), pointer flown unchanged on other rakes: forward wobble roughly halves by 20 deg (straight 2.5 -> 1.4 deg; a 9 deg 4 Hz wobble turning at 0.8 m/s gone), hold wobble grows (5.6 -> 7.2 deg; 15.6 at 25, 21.8 at 30), reverse turns worsen with rake (fall-free only at 20). `style_72M`'s flick reproduces at 20 in teleop, not at 25 (user). Wheelbase: leave it. The bike alone has no 1-4 Hz mode: the wobble is the policy's balance loop. Every export moves to provisional when the plant does | `analysis/steer_wobble.py`, `run_drive --rake` |
+| 6 | **Weigh the as-built parts into the v2 sim** (the sim moved to the v2 CAD 10-19: rake 20, wheelbase 200.5, every part placed) | Every frame mass is one `bike.frame_parts` / `bike.payload` entry, a CAD printed estimate or GUESS until weighed: change `mass` only. The six printed frame parts + spacers read 88.2 g from CAD against the slicer's 81. Then a policy on the v2 plant -- nothing has trained on it | `traces/weigh_v2_printed.txt`, `config/bike_params.yaml` `bike:` |
 
-Weighing waits for the as-built parts: the mass entries will be re-cut by
-module (the Pi 3 is a stand-in, the printed modules are new), so weigh once
-they exist. One printed part weighed sooner would calibrate the CAD estimates
-(`cad_bike.printed_mass`).
+**The sim is the v2 bike since 10-19**: positions, orientations, rake 20
+and wheelbase 200.5 from the v2 CAD; the TM151 tilted 45 deg (the box and
+the accelerometer's place in the part; the IMU site stays on the chassis
+axes, as the mount calibration delivers); the rollcages + caps + sheet as
+one shell-inertia capsule (`righting.rollcage`, ~212 g, the heaviest single
+GUESS); the righting XC330 placed on its own. Every mass is a shape you
+can see: each part its CAD tight box in its own frame (45 deg drive, 20
+deg steering), the rails their CAD outlines extruded, the pulleys discs, the belts their
+runs, the righting's fixed block its five parts (`bike.frame_parts`,
+`righting.module.fixed`); cosmetics to replace them are next. 1248 -> 1104 g, CoM (86.8, 0.0,
+66.4) -> (87.3, 0.5 left, 60.4) mm from the rear axle; inertia about the CoM
+UP despite the lighter bike (roll/pitch/yaw 2.97/6.25/4.34 -> 3.37/7.43/5.73
+e-3 kg m2), the 212 g rollcage at the radius. The power board weighed 16 g
+(was 56 GUESS). What moves is untouched: drive inputs, steer, wheels,
+the righting four-bar (its wing hubs read 11.5 g in the v2 CAD against 14.9
+listed). `bike_params_cad.yaml` is retired in practice (user): nothing in
+the sim reads it. Weighing sheet: `traces/weigh_v2_printed.txt`.
 
 Bring-up (10-17): all four servos share one bus at 3 Mbps as configured,
 101/102 XC430 velocity, 103 XC330 extended position (steer), 104 XC330
@@ -135,9 +148,17 @@ fixture (parked 09-24), the self-righting linkage choice (parked 09-27).
 
 ## Health
 
-**Tests, 2026-10-17**: `964 passed, 55 skipped` after the style bit
-(`tests/test_style_bit.py`), red set unchanged, **no accepted reds** in the
-default run (`pytest -n 10 --dist loadgroup`, 56 s). The Warp parity tests
+**Tests, 2026-10-19**: on the v2 plant, red set unchanged, **no accepted
+reds**. `test_sensor_modes.py` lost its IDEAL and SENSOR floors (user): quality
+floors for two August policies on the old `tm151` level, which the v2 plant
+took below them (odo_ahrs 0.72 against 0.78) and nothing uses; the policy in
+use on its own sensors is `test_odometry_in_the_loop.py` (14 passed on v2).
+Its wiring guards stay. `test_teleop.py::test_swing_lie_down_get_up_and_auto_up`'s fall is now
+teleop's own `.` shove (8 N sideways, 0.35 s), checked for having gone past
+60 deg at any point. It was a -8 rad/s roll rate set in one step, checked
+still lying 2 s later: at the v2 plant that kick left the bike still on its
+roof, so the auto-up fired at ~1 s and had it up by 2 s -- red for being
+fast. With the key it tumbles, lands at ~-80 deg by 1.4 s, is up by ~3 s (`pytest -n 10 --dist loadgroup`, 56 s). The Warp parity tests
 (`test_righting_linkage_friction.py`, and the steer-rate and style-bit
 kernels) skip here; they passed in `aow-sim-gpu` (Warp 1.18, CPU device),
 which has no pytest -- run their functions directly.
@@ -145,18 +166,26 @@ The 15 registered reds are all the deprecated LQR and are only judged under
 `pytest -m lqr`. `prospective` (the endurance minute, skipped unless named)
 passes on the pointer: 0/18 falls.
 
-**Digests, 2026-10-17**: `plant_digest` 7893a119b19f17d6 (was 4b5355ed, the
-righting linkage's measured friction, and before that bc66ca20; now also the
-steer's kp 2.3 + armature 5.5e-4 and the crank's armature 5.5e-4),
+**Digests, 2026-10-19**: `plant_digest` 0c0518e9225f399e (the v2 bike, its parts shaped from the
+CAD's tight boxes; was
+7893a119, the steer's kp 2.3 + armature, before that 4b5355ed and bc66ca20),
 `design_digest` 5fe8c19379988031 (unchanged); `deploy/bundle.npz` re-exported
-10-17, matches both, worst LQR fit over the grid R^2 0.977 (the export warned
-0.930 at the 0.93 bar once at the standstill design; not reproducible by
-itself; the previous bundle is kept as `deploy/bundle_plant-bc66ca20.npz`).
-NOT yet on the Pi, whose params and bundle are both still bc66ca20 (consistent).
+10-19, matches both, worst LQR fit over the grid R^2 0.985. The 10-17 bundle
+(7893a119) was overwritten, not kept -- `export_deploy` at df6cf70 rebuilds
+it; `deploy/bundle_plant-bc66ca20.npz` is untouched. NOT yet on the Pi, whose
+params and bundle are both still bc66ca20 (consistent). `config/ahrs_mount.yaml`
+is the CAD's 45 deg nose-down mount (source: design, pinned equal to
+bike.ahrs.quat by a test), and `hw/ahrs.MountCalibration` now applies it on
+the correct side: before 10-19 it composed on the LEFT and rotated vectors by
+the inverse, harmless near identity and wrong at 45 deg (roll would have read
+as roll + yaw). `capture` still zeroes a reference pose, now as a separate
+earth offset.
 **Copy it to the Pi by hand**: `deploy/` is gitignored. History:
 `params-digest-split.md`.
 
-**Which exports carry today's plant:** none since 10-17. The 23 on bc66ca20 --
+**Which exports carry today's plant:** none -- the v2 bike (10-19) moved
+the whole mass layout, the rake and the AHRS, so EVERY export is now
+provisional by behaviour, not only by digest. Before that, none since 10-17. The 23 on bc66ca20 --
 every `general_puffer_*` checkpoint, `general_rl_v3_s0..s4`,
 `general_rl_v3_mingru_s0..s4` -- trained on the OLD STEER (kp 2.0, no rotor
 inertia) and the exact steer rate. OUTSTANDING: the steer is driven by every
@@ -246,19 +275,18 @@ to V2 with the rest of the configs, for consistency only.
 
 ## The guesses
 
-**21 `source: GUESS` in `config/bike_params.yaml`.** Never promote one
+**32 `source: GUESS` in `config/bike_params.yaml`** (10-19; most are the v2 masses, grouped in the table). Never promote one
 quietly: promoting is a physical parameter change (the `CLAUDE.md`
 checklist).
 
 | parameter | value | what is known | dies at |
 |---|---|---|---|
-| `chassis.mass` | 0.45 kg, **37% of the bike** | CAD printed-mass estimates per part, uncalibrated | the frame; weigh one printed part first |
-| `righting.module` masses (crank, coupler, wing_hub, blade, fixed) | 11.2 / 2.3 / 14.9 / 28.6 / 64.1 g, **167 g** with both sides | CAD check volumes (10-07), 2 perimeters / 15 % infill, steel pins | weigh the printed parts |
+| `chassis.mass` (the residual) | 0.030 kg, spread over the frame parts by mass | fasteners, cables, glue: whatever no entry names | the whole bike, less every listed mass |
+| `frame_parts` printed masses (12 parts) | 7.7-20.7 g each, ~146 g | CAD printed estimate; the batch reads 9 % over its slicer total | `traces/weigh_v2_printed.txt` |
+| `righting.rollcage` mass | 68.5 + 108.5 + 35 g | cages and caps CAD printed estimates; the sheet's material and thickness assumed | weigh them |
+| `righting.module` masses (crank, coupler, wing_hub, blade, fixed) | 11.2 / 2.3 / 14.9 / 38.8 / 41.8 g (+ the 23 g XC330 on its own) | CAD check volumes (10-07), 2 perimeters / 15 % infill, steel pins | weigh the printed parts |
 | `fork_mass` + `front_wheel.mass` | 0.025 + 0.060 kg | **86 g together** (09-30), not split | a scale |
 | `front_wheel.crown_radius` | 80 mm | the real tread is a 10 mm flat; the crown stands in for the tire flattening under load | the dial test repeated with the wheel tilted 1-2 deg |
-| `ahrs.mass` | 0.012 kg | the TM151 is on the bench | a scale |
-| `payload.electronics.mass` | 0.076 kg | written for a Zero 2 W stack; the bench runs a Pi 3 | a scale |
-| `payload.battery.mass` | 0.115 kg | no pack yet | the pack |
 | `contact_solimp` | MuJoCo stock | hand drops: the real contact is softer at first touch and stiffer at peak than any `solref` gives | the drop rig + bench fit |
 | `friction_sliding` | 0.9 | nothing | P0b pull test |
 | `friction_torsional` | 0.005 | deferred; the risk is setting it high | later |
@@ -266,7 +294,7 @@ checklist).
 | `righting_sign` | +1 | a build decision; the render only | mounting the motor |
 | `hockey.ball.radius` / `.mass` | 33.5 mm / 60 g | used by teleop's `--hockey` and the plays | the ball |
 
-So: six die on a scale once the as-built parts exist; three with the
+So: the masses die on a scale once the as-built parts exist; three with the
 contact work, plus the front crown with a tilted dial test; the roller
 slop's spring and damping with a measured in-play flick; three are parked
 (`righting_sign`, the hockey ball). The remaining drivetrain `GUESS`es wait

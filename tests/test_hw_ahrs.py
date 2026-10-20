@@ -63,6 +63,40 @@ def test_mount_calibration_preserves_relative_rotation():
     assert np.isclose(np.arctan2(R[2, 1], R[2, 2]), lean, atol=1e-9)
 
 
+def test_a_45_deg_mount_returns_the_chassis_attitude_and_rates():
+    """The v2 mount (45 deg nose-down about y), simulated as the physics has
+    it: the sensor's attitude is the chassis's times the mount, its gyro the
+    chassis rate in the sensor's axes. Out must come the CHASSIS attitude
+    and rate -- a chassis roll as roll, not as roll and yaw mixed, which is
+    what the left-side formula before 2026-10-19 gave."""
+    h = np.deg2rad(45.0) / 2
+    q_m = np.array([np.cos(h), 0.0, np.sin(h), 0.0])
+    cal = MountCalibration(q_m)
+    R_m = quat_to_mat(q_m)
+    for q_c in _random_quats(20, seed=6):
+        out = cal.to_chassis_quat(quat_mul(q_c, q_m))
+        assert np.allclose(quat_to_mat(out), quat_to_mat(q_c), atol=1e-12)
+        w_c = np.array([0.3, -1.2, 0.7])
+        assert np.allclose(cal.to_chassis_vec(R_m.T @ w_c), w_c, atol=1e-12)
+    # a pure 7 deg chassis roll reads as 7 deg of roll and nothing else
+    lean = np.deg2rad(7.0)
+    q_roll = np.array([np.cos(lean / 2), np.sin(lean / 2), 0.0, 0.0])
+    R = quat_to_mat(cal.to_chassis_quat(quat_mul(q_roll, q_m)))
+    assert np.isclose(np.arctan2(R[2, 1], R[2, 2]), lean, atol=1e-12)
+    assert np.isclose(np.arctan2(R[1, 0], R[0, 0]), 0.0, atol=1e-12)
+
+
+def test_the_mount_file_is_the_sims_ahrs_orientation():
+    """config/ahrs_mount.yaml (what the bike applies) and bike.ahrs.quat
+    (where the sim puts the part) are one fact in two files."""
+    from aow_sim.export_deploy import load_ahrs_mount
+    from aow_sim.params import load_params
+    q_file, _ = load_ahrs_mount()
+    q_sim = np.asarray(load_params()["bike"]["ahrs"]["quat"], float)
+    q_sim /= np.linalg.norm(q_sim)
+    assert np.allclose(q_file, q_sim, atol=1e-5) or np.allclose(q_file, -q_sim, atol=1e-5)
+
+
 def test_rpy_matches_extract_state():
     """hw.run_bike._rpy must extract roll/yaw the way extract_state does."""
     from aow_sim.hw.run_bike import _rpy

@@ -50,10 +50,11 @@ FRAME CONVENTIONS (these are the part that is easy to get wrong):
   * Quaternions are (w, x, y, z), matching MuJoCo's qpos[3:7].
   * The gyro is BODY-frame [wx, wy, wz] = [roll rate, pitch rate, yaw rate],
     matching MuJoCo's freejoint qvel[3:6].
-  * The sensor is mounted at [0.05, 0, 0.13] in the chassis frame and at some
-    unknown fixed ORIENTATION relative to it. Angular velocity is the same
-    everywhere on a rigid body so position does not matter for the gyro, but
-    orientation does — hence `MountCalibration`.
+  * The sensor sits at bike.ahrs.pos in the chassis frame, at a fixed
+    ORIENTATION relative to it -- 45 deg nose-down on the v2 bike, from the
+    CAD (config/ahrs_mount.yaml). Angular velocity is the same everywhere on
+    a rigid body so position does not matter for the gyro, but orientation
+    does -- hence `MountCalibration`.
 """
 
 from __future__ import annotations
@@ -93,30 +94,52 @@ def quat_to_mat(q) -> np.ndarray:
 
 
 class MountCalibration:
-    """Fixed rotation between the AHRS case and the chassis frame.
+    """The TM151's fixed orientation on the chassis, and the earth frame.
 
-    Procedure: hold the bike in the reference pose — upright, wheels on the
-    ground, pointing along chassis +X — and call `capture`. From then on the
-    reference pose reads as identity, which is what the controllers assume.
+    `q_mount` is the SENSOR'S AXES IN THE CHASSIS FRAME (w, x, y, z): what
+    the CAD gives (config/ahrs_mount.yaml; the v2 bike's is 45 deg
+    nose-down about y). The TM151's quaternion is sensor -> earth, MuJoCo's
+    convention (analysis/ahrs_fixture.py, checked on the fixture), so
 
-    Without this, a few degrees of mounting tilt become a permanent roll bias:
-    the balance controller trims against it forever and the bike creeps.
+        R_earth_sensor = R_earth_chassis @ R_mount
+        chassis attitude = q_sensor * conj(q_mount)       (right side)
+        chassis vector   = R_mount @ v_sensor             (gyro, accel)
+
+    Until 2026-10-19 this applied conj(q_mount) * q_sensor -- on the LEFT --
+    and R_mount^T to vectors. That is the chassis rotation expressed in the
+    sensor's axes, harmless for the few-degree misalignment it was written
+    for and wrong at 45 deg, where a chassis roll would read as roll and
+    yaw mixed.
+
+    `capture` keeps the old procedure's meaning on top of that: hold the bike
+    in the reference pose (upright, wheels on the ground, along chassis +X)
+    and call it; that pose then reads as identity. What it stores is the
+    earth-frame offset, separate from the mount.
     """
 
-    def __init__(self, q_mount=None):
-        self.q_mount = np.array([1.0, 0, 0, 0]) if q_mount is None else np.asarray(q_mount)
+    def __init__(self, q_mount=None, q_earth=None):
+        ident = np.array([1.0, 0, 0, 0])
+        self.q_mount = ident if q_mount is None else self._unit(q_mount)
+        self.q_earth = ident if q_earth is None else self._unit(q_earth)
+        self._R_mount = quat_to_mat(self.q_mount)
+
+    @staticmethod
+    def _unit(q) -> np.ndarray:
+        q = np.asarray(q, dtype=float)
+        return q / np.linalg.norm(q)
 
     def capture(self, q_sensor_at_reference) -> None:
-        q = np.asarray(q_sensor_at_reference, dtype=float)
-        self.q_mount = q / np.linalg.norm(q)
+        q = quat_mul(self._unit(q_sensor_at_reference), quat_conj(self.q_mount))
+        self.q_earth = q / np.linalg.norm(q)
 
     def to_chassis_quat(self, q_sensor) -> np.ndarray:
-        q = quat_mul(quat_conj(self.q_mount), np.asarray(q_sensor, dtype=float))
+        q = quat_mul(quat_mul(quat_conj(self.q_earth), np.asarray(q_sensor, dtype=float)),
+                     quat_conj(self.q_mount))
         return q / np.linalg.norm(q)
 
     def to_chassis_vec(self, v_sensor) -> np.ndarray:
         """Rotate a sensor-frame vector (gyro, accel) into the chassis frame."""
-        return quat_to_mat(quat_conj(self.q_mount)) @ np.asarray(v_sensor, dtype=float)
+        return self._R_mount @ np.asarray(v_sensor, dtype=float)
 
 
 # Ep_Status_SysState.qos -- the sensor grading its own fusion, from
