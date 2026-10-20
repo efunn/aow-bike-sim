@@ -349,8 +349,8 @@ def test_stowed_wings_park_outboard_of_the_drive_servos(wing_model, params):
     the simulation runs perfectly happily."""
     d = mujoco.MjData(wing_model)
     mujoco.mj_forward(wing_model, d)
-    servo = params["servos"]["xc430_w150"]
-    face = abs(servo["pos_right"][1]) + servo["box_size"][1] / 2
+    servo = params["bike"]["frame_parts"]["servo_drive_right"]["geoms"][0]   # box y: across the bike
+    face = abs(servo["pos"][1]) + servo["size"][1] / 2
     for tag in ("left", "right"):
         for part in ("leg", "foot"):
             y = abs(float(d.geom_xpos[wing_model.geom(f"wing_{tag}_{part}").id][1]))

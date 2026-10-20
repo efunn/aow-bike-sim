@@ -29,18 +29,21 @@ so it is a REGRESSION GUARD rather than a measurement. The measurement is
 `analysis/chatter.py` and the tables in docs/status.md; do not re-derive
 policy standings from here.
 
-THE THRESHOLDS ARE FLOORS UNDER MEASURED VALUES, deliberately slack. Measured
-2026-08-28 on this subset:
+THE GUARD'S THRESHOLD is a ceiling over a measured value, deliberately slack.
+Measured 2026-08-28 on this subset:
 
     mode / policy                          surv  track_geo   asserted
-    IDEAL   smooth_diff_pi on truth        1.00      0.951   >= 0.90
-    SENSOR  odo_ahrs tm151 tau 2.0         1.00      0.859   >= 0.78
-    SENSOR  odo_ahrs tm151 tau 0.19        1.00      0.849   >= 0.78
     GUARD   smooth_diff_pi in sensor mode  0.25      0.493   surv <= 0.50
 
-A tighter floor would make this a policy-quality test, which it is not: it
-exists to catch the modes being wired up wrong, and a real quality regression
-shows up as a fall long before it shows up as 0.02 of track.
+REMOVED 2026-10-19 (user): the IDEAL and SENSOR floors -- `smooth_diff_pi`
+on truth >= 0.90 and `odo_ahrs` on the old `tm151` level >= 0.78. Both were
+quality floors for August policies nothing uses, on a sensor level nothing
+trains on, measured on a plant that has since moved (the v2 bike took
+odo_ahrs to 0.72). "The policy in use survives and tracks on its own
+sensors" is tests/test_odometry_in_the_loop.py, which flies
+`control.general_move` on the level its move yaml declares. What stays here
+is wiring: the sensor models are applied, the default is sensor-trained, and
+no observation reads truth.
 """
 
 from pathlib import Path
@@ -58,12 +61,9 @@ pytestmark = pytest.mark.contact
 
 REPO = Path(__file__).resolve().parents[1]
 
-# The ceiling reference: trained on MuJoCo truth, and what "if the sensing
-# were perfect" is worth. NOT the default any more -- see bike_params.yaml.
+# A policy trained on MuJoCo truth: the guard's subject, which the sensor
+# models must break.
 IDEAL_POLICY = "general_rl_smooth_diff_pi"
-# Trained against the onboard velocity estimate AND a TM151 attitude, and what
-# `control.general_move` names as of 2026-08-28.
-SENSOR_POLICY = "general_rl_odo_ahrs"
 
 
 @pytest.fixture(scope="module")
@@ -125,33 +125,6 @@ def _eval(name, params, *, ahrs="none", encoder=None, tau=2.0,
     from aow_sim.train_general_rl import _eval_episodes
     m, _ = _eval_episodes(env, act, _subset(cfg["env"]["v_max"]))
     return m
-
-
-def test_ideal_mode_is_the_ceiling(params):
-    """Truth sensors, truth-trained policy: the number the sensor modes are
-    measured against. If THIS moves, the plant moved and every sensor result
-    in docs/status.md is provisional -- so it is asserted separately rather
-    than folded into the sensor test."""
-    m = _eval(IDEAL_POLICY, params)
-    assert m["survive_rate"] == 1.0
-    assert m["track_geo"] >= 0.90, m["track_geo"]
-
-
-@pytest.mark.parametrize("tau", [2.0, 0.19])
-def test_sensor_mode_survives_on_the_policy_that_trained_for_it(params, tau):
-    """The sensors the bike will actually have: quantised encoders through the
-    Pi's own RateFilter, and a TM151 attitude.
-
-    BOTH TAUS, because the policy trained at 2.0 and the real part measures
-    0.19 -- and on the full grid that difference costs it 0.672 / 1.00 ->
-    0.570 / 0.95. The subset does not resolve that (both are 1.00 here), which
-    is the honest limit of a 4-command guard: it catches the modes being
-    broken, not the specialisation. `general_rl_odo_ahrs_rand` is the run that
-    addresses the specialisation.
-    """
-    m = _eval(SENSOR_POLICY, params, ahrs="tm151", encoder="counts", tau=tau)
-    assert m["survive_rate"] == 1.0
-    assert m["track_geo"] >= 0.78, m["track_geo"]
 
 
 def test_sensor_mode_catches_a_truth_trained_policy(params):

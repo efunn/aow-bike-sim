@@ -167,10 +167,14 @@ def test_the_headset_term_reproduces_the_bench_line(params):
     """bike.steering's headset constants, under the gearbox's running line,
     give back the steer bench's fit (steering-design.md, 2026-09-30): a motor
     turning the headset steadily needs (1 + c) x headset + f0, and at 86-368 g
-    along the 15 deg axis that is 7.68 + 0.0518 x grams mN m, rms 0.4."""
+    along the 15 deg axis that is 7.68 + 0.0518 x grams mN m, rms 0.4.
+
+    The BENCH's axis, 15 deg, not the bike's rake: the weight hung on the
+    first print's steering at 15 whatever the bike is now (20 since
+    2026-10-19)."""
     st = params["bike"]["steering"]
     c = gf.constants(params)
-    cos = np.cos(np.radians(params["bike"]["rake_deg"]))
+    cos = np.cos(np.radians(15.0))
     for grams in (86, 158, 268, 368):
         T = grams * 1e-3 * G * cos
         H = st["headset_friction_nm"] + st["headset_friction_per_n"] * T

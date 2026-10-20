@@ -60,7 +60,7 @@ def _stroke(params):
 def test_the_default_bike_carries_v2(params, model):
     names = {model.geom(g).name for g in range(model.ngeom)}
     assert {"swing_wing_right_toe", "swing_wing_left_toe",
-            "righting_fixed", "roof"} <= names
+            "righting_fixed_bridge", "roof"} <= names
     assert not {"bumper_left", "bumper_right"} & names   # user: no bumpers
     lo, hi = np.degrees(model.actuator_ctrlrange[model.actuator("swing").id])
     # the commanded stroke: the linkage's, or the blade file's own level point
@@ -169,12 +169,15 @@ def test_the_bare_actuator_holds_without_ringing(params):
 
 def test_the_module_adds_its_listed_mass(params, model):
     """Every gram of the module is a GUESS from CAD volumes; this pins that
-    the builder puts exactly the listed ones on the bike (and the roof)."""
+    the builder puts exactly the listed ones on the bike (and its servo, and
+    the rollcage that is the v2 bike's roof)."""
     mod, rg = params["righting"]["module"], params["righting"]
     bare = build_model(params, swing_linkage=False)
     listed = (mod["crank"]["mass"] + 2 * mod["coupler"]["mass"]
               + 2 * (mod["wing_hub"]["mass"] + mod["blade"]["mass"])
-              + mod["fixed"]["mass"] + rg["roof"]["mass"])
+              + sum(f["mass"] for f in mod["fixed"].values())
+              + params["servos"][mod["servo"]]["mass"]
+              + sum(rg["rollcage"]["mass"].values()))
     assert model.body_subtreemass[1] - bare.body_subtreemass[1] == \
         pytest.approx(listed, abs=1e-9)
 
@@ -256,7 +259,7 @@ def test_the_digest_sees_the_blade_file(params, tmp_path):
 def test_the_other_mechanisms_still_build_instead(params, kw):
     m = build_model(params, **kw)
     names = {m.geom(g).name for g in range(m.ngeom)}
-    assert "swing_wing_right_toe" not in names and "righting_fixed" not in names
+    assert "swing_wing_right_toe" not in names and "righting_fixed_bridge" not in names
 
 
 def test_the_ground_station_strokes_the_module(params):

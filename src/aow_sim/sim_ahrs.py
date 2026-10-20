@@ -323,10 +323,23 @@ FILTER_WANDER_TAU_S = 2.0        # its 1/e time, 1-4 s measured
 TM151_ACCEL_OFFSET_M = np.array([0.0084, 0.0094, -0.0055])
 
 # How the TM151's axes sit in the AHRS site's (= the chassis's) frame on the
-# bike. ASSUMED identity -- x forward, z up -- until the bike's mount is
-# built; the real mount goes through `ahrs_q_mount` on hardware. Only the
-# accelerometer offset above uses it.
+# bike: `bike.ahrs.quat` (the v2 mount, 45 deg nose-down, since 2026-10-19),
+# identity -- x forward, z up -- where a params tree has none. The real mount
+# goes through `ahrs_q_mount` on hardware. Only the accelerometer offset
+# above uses it. TM151_TO_SITE is the identity, kept for callers without a
+# params tree.
 TM151_TO_SITE = np.eye(3)
+
+
+def tm151_to_site(params: dict | None) -> np.ndarray:
+    """The TM151's axes (columns) in the chassis frame, from bike.ahrs.quat."""
+    q = ((params or {}).get("bike", {}).get("ahrs", {}).get("quat"))
+    if q is None:
+        return TM151_TO_SITE
+    w, x, y, z = np.asarray(q, float) / np.linalg.norm(q)
+    return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+                     [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+                     [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
 assert ORIENT_RMS_DEG["tm151_filter"][:2] == (FILTER_WANDER_DEG, FILTER_WANDER_DEG)
 
 LEVELS = ("none", "tm151_static", "tm151", "tm171", "tm151_filter")
@@ -604,6 +617,8 @@ class SimAhrs:
                                                   orient_rms_deg))
         self.hz = float(hz)
         self._dt = 1.0 / self.hz
+        # where the accelerometer sits in the part, in the site's frame
+        self.accel_offset_m = tm151_to_site(params) @ TM151_ACCEL_OFFSET_M
         self.filter_tau_motion_s = FILTER_TAU_MOTION_S
         self.adr = {}
         for name in ("ahrs_gyro", "ahrs_accel", "ahrs_quat"):
@@ -697,7 +712,7 @@ class SimAhrs:
                 float(a_b), float(np.sqrt(max(0.0, 1.0 - a_b * a_b))),
                 tuple(np.deg2rad(self.orient_rms_deg).tolist()),
                 float(np.deg2rad(YAW_DRIFT_DEG_PER_S[self.level])),
-                tuple((TM151_TO_SITE @ TM151_ACCEL_OFFSET_M).tolist()),
+                tuple(self.accel_offset_m.tolist()),
                 float(np.deg2rad(GYRO_NOISE_PP_DPS * PP_TO_SIGMA)),
                 float(np.deg2rad(GYRO_BIAS_STABILITY_DPH / 3600.0)),
                 float(np.deg2rad(GYRO_G_SENS_DPS_PER_G)))
@@ -850,7 +865,7 @@ class SimAhrs:
 
         if self.level == "tm151_filter":
             # The accelerometer is not at the site: ~1 cm off it in the part.
-            d = TM151_TO_SITE @ TM151_ACCEL_OFFSET_M
+            d = self.accel_offset_m
             accel = accel_at_offset(accel, gyro, self._w_prev, dt, d)
             self._w_prev = gyro.copy()
 

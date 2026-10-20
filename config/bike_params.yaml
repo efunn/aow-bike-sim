@@ -307,13 +307,134 @@ drivetrain_model:
     wall_timeconst_s: 0.001
 
 bike:
-  wheelbase: {value: 0.20, source: design}
-  rake_deg: {value: 15.0, source: design}      # steering axis tilt back from vertical
+  # THE V2 BIKE AS BUILT (2026-10-19): wheelbase, rake and every placement
+  # below are read off the v2 CAD (cad_bike_v2, commit 6a73da8), positions
+  # from one Onshape eval of its bodies' centroids
+  # (traces/bike_v2_cad/mass_eval.txt). CAD bike frame -> this frame:
+  # x = CAD y, y = -CAD x, z = CAD z (both origin on the rear axle).
+  wheelbase: {value: 0.2005, source: design}   # the CAD's; was 0.200
+  # 20, was 15 (2026-10-19): the CAD's since 10-19. analysis/steer_wobble.py
+  # (10-18): forward wobble roughly halves by 20 deg, the hold wobble grows.
+  rake_deg: {value: 20.0, source: design}      # steering axis tilt back from vertical
   fork_offset: {value: 0.0, source: design}  # perpendicular distance steer axis -> front axle
   chassis:
-    mass: {value: 0.45, source: GUESS}   # frame + electronics + wiring, excluding servos/wheels/AHRS
-    box_size: [0.16, 0.04, 0.05]         # inertia primitive (full extents)
-    com_pos: [0.09, 0.0, 0.10]           # chassis-frame position of that primitive (origin = rear axle)
+    # THE RESIDUAL: what no entry below names -- fasteners, servo cables,
+    # glue. Was 0.45 GUESS for the whole frame + wiring before the frame
+    # existed; the frame's parts are now `frame_parts`. Once the bike is
+    # whole: weigh it, subtract every listed mass, put the rest here.
+    mass: {value: 0.030, source: GUESS}
+    # SPREAD over the frame parts in proportion to their mass (screws sit in
+    # the printed parts, cables run between the servos and the Pi), so it
+    # draws as nothing of its own. false: its own box, below -- which stays
+    # either way, massless and invisible when spread, as the older studies'
+    # contact envelope.
+    spread: true
+    box_size: [0.20, 0.04, 0.10]         # inertia primitive (full extents): the rails' span
+    com_pos: [0.10, 0.0, 0.08]           # chassis-frame position of that primitive (origin = rear axle)
+  # EVERY RIGID PART ON THE CHASSIS. `mass` (or `servo:`, the mass from
+  # `servos:`) and its `geoms`, each a MuJoCo box or cylinder carrying
+  # `share` of the mass (default: an equal split): `pos` [m], `size` full
+  # extents [x, y, z] for a box, [radius, length] for a cylinder (its axis
+  # the local z), `quat` (w x y z, optional) its axes in the chassis frame.
+  # To fold in a weighing, change `mass` only.
+  #
+  # The shapes come from one Onshape eval (traces/bike_v2_cad/shape_eval.txt,
+  # 2026-10-19): each part's tight box in the bike, drive (45 deg) or
+  # steering (20 deg) frame, whichever is smallest, CENTRED ON THE PART'S
+  # CENTROID so the mass sits where the CAD's does. A thin part (a rail
+  # slice, the Pi carrier, the power holder) keeps its outline and takes the
+  # thickness that holds its volume. The side rails are their CAD outline
+  # pieces extruded (type: prism, `outline` [x, z] in the side view, `across`
+  # [y0, y1], an exact-inertia mesh), mass by area; the pulleys discs; the
+  # belts their two straight runs. They shape the inertia (a printed part is
+  # a shell, a box solid: together the boxes are ~5 % of the bike's) and
+  # show where every gram is. Not a picture of the parts.
+  #
+  # Printed parts: `mass` is cad_servo_mount.printed_mass (0.9 skin over the
+  # surface, 15 % infill, ASA 1.07) from the CAD's volume and area -- GUESS
+  # until weighed; the batch of the six printed below plus the Pi spacers
+  # reads 88.2 g against the slicer's 81 (traces/weigh_v2_printed.txt).
+  #
+  # Nothing that moves is here: the input pulleys' turning inertia is in
+  # drivetrain.input_armature (fitted), the steering's turning half in
+  # fork_mass, the righting's in righting.module.
+  frame_parts:
+    servo_drive_left:      # XC430 "A", horn on the left
+      servo: xc430_w150
+      geoms:
+        - {type: box, pos: [0.0768, -0.0, 0.0567], size: [0.0465, 0.034, 0.0285], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    servo_drive_right:      # XC430 "B", beside A across the drive
+      servo: xc430_w150
+      geoms:
+        - {type: box, pos: [0.0567, 0.0, 0.0768], size: [0.0465, 0.034, 0.0285], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    drive_case_left:      # the left side rail: its CAD outline pieces (cad_drive.rail_layout), extruded across the plate (x 16..20.6 mm), mass by area
+      mass: {value: 0.0207, source: GUESS}
+      geoms:
+        - {type: prism, share: 0.3431, across: [0.0160, 0.0206],   # outline
+           outline: [[0.08256, 0.04190], [0.08600, 0.03860], [0.15000, 0.03860], [0.15554, 0.05632], [0.16635, 0.06025], [0.18500, 0.06704], [0.18500, 0.07480], [0.19950, 0.07480], [0.19950, 0.08350], [0.17900, 0.08350], [0.16206, 0.07204], [0.15000, 0.07160], [0.10511, 0.06304], [0.10440, 0.06375]]}
+        - {type: prism, share: 0.0541, across: [0.0160, 0.0206],   # rear arm
+           outline: [[0.02924, 0.06204], [0.01550, 0.06704], [0.01550, 0.07480], [0.00100, 0.07480], [0.00100, 0.08350], [0.02150, 0.08350], [0.03223, 0.07430], [0.02924, 0.07131]]}
+        - {type: prism, share: 0.5219, across: [0.0160, 0.0206],   # case side
+           outline: [[0.04741, 0.02924], [0.07131, 0.02924], [0.10511, 0.06304], [0.06304, 0.10511], [0.02924, 0.07131], [0.02924, 0.04741]]}
+        - {type: prism, share: 0.0615, across: [0.0160, 0.0206],   # front ear
+           outline: [[0.06993, 0.09821], [0.09192, 0.12021], [0.08238, 0.12975], [0.06038, 0.10776]]}
+        - {type: prism, share: 0.0194, across: [0.0160, 0.0206],   # back ear
+           outline: [[0.02471, 0.06679], [0.03285, 0.07492], [0.02471, 0.08305], [0.01658, 0.07492]]}
+    drive_case_right:      # the right side rail: its CAD outline pieces (cad_drive.rail_layout), extruded across the plate (x 16..20.6 mm), mass by area
+      mass: {value: 0.0195, source: GUESS}
+      geoms:
+        - {type: prism, share: 0.3733, across: [-0.0206, -0.0160],   # outline
+           outline: [[0.08256, 0.04190], [0.08600, 0.03860], [0.15000, 0.03860], [0.15554, 0.05632], [0.16635, 0.06025], [0.18500, 0.06704], [0.18500, 0.07480], [0.19950, 0.07480], [0.19950, 0.08350], [0.17900, 0.08350], [0.16206, 0.07204], [0.15000, 0.07160], [0.10511, 0.06304], [0.10440, 0.06375]]}
+        - {type: prism, share: 0.0588, across: [-0.0206, -0.0160],   # rear arm
+           outline: [[0.02924, 0.06204], [0.01550, 0.06704], [0.01550, 0.07480], [0.00100, 0.07480], [0.00100, 0.08350], [0.02150, 0.08350], [0.03223, 0.07430], [0.02924, 0.07131]]}
+        - {type: prism, share: 0.5679, across: [-0.0206, -0.0160],   # case side
+           outline: [[0.04741, 0.02924], [0.07131, 0.02924], [0.10511, 0.06304], [0.06304, 0.10511], [0.02924, 0.07131], [0.02924, 0.04741]]}
+    drive_chainstay_left:
+      mass: {value: 0.0063, source: GUESS}
+      geoms:
+        - {type: box, pos: [0.0235, 0.0323, 0.0235], size: [0.077, 0.0217, 0.019], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    drive_chainstay_right:
+      mass: {value: 0.0063, source: GUESS}
+      geoms:
+        - {type: box, pos: [0.0235, -0.0323, 0.0235], size: [0.077, 0.0217, 0.019], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    drive_pulley_left:      # the servo's pulley, a disc across the bike: its MASS (its spin is in input_armature)
+      mass: {value: 0.0198, source: GUESS}
+      geoms:
+        - {type: cylinder, pos: [0.0853, 0.0276, 0.0652], size: [0.0372, 0.0172], quat: [0.70711, -0.70711, 0.0, 0.0]}
+    drive_belt_left:      # not printed: a few g of GT2 belt, as its two straight runs (the wraps left out: its CoM ~18 mm back of the CAD belt's)
+      mass: {value: 0.004, source: GUESS}
+      geoms:
+        - {type: box, pos: [0.0244, 0.0277, 0.0477], size: [0.1047, 0.009, 0.0015], quat: [0.90549, 0.0, -0.42437, 0.0], share: 0.5}
+        - {type: box, pos: [0.0525, 0.0277, 0.011], size: [0.1047, 0.009, 0.0015], quat: [0.97719, 0.0, -0.21236, 0.0], share: 0.5}
+    drive_pulley_right:      # the servo's pulley, a disc across the bike: its MASS (its spin is in input_armature)
+      mass: {value: 0.0198, source: GUESS}
+      geoms:
+        - {type: cylinder, pos: [0.0652, -0.0276, 0.0853], size: [0.0372, 0.0172], quat: [0.70711, -0.70711, 0.0, 0.0]}
+    drive_belt_right:      # not printed: a few g of GT2 belt, as its two straight runs (the wraps left out: its CoM ~18 mm back of the CAD belt's)
+      mass: {value: 0.004, source: GUESS}
+      geoms:
+        - {type: box, pos: [0.011, -0.0277, 0.0525], size: [0.1047, 0.009, 0.0015], quat: [0.84114, 0.0, -0.54082, 0.0], share: 0.5}
+        - {type: box, pos: [0.0477, -0.0277, 0.0244], size: [0.1047, 0.009, 0.0015], quat: [0.94035, 0.0, -0.3402, 0.0], share: 0.5}
+    servo_steer:      # XC330, shaft down the steering axis, case out the front
+      servo: xc330_t181
+      geoms:
+        - {type: box, pos: [0.1697, -0.0, 0.1067], size: [0.034, 0.02, 0.023], quat: [0.98481, 0.0, -0.17365, 0.0]}
+    steer_case_lower:      # the steering's STATIC half (cad_steering stages)
+      mass: {value: 0.0121, source: GUESS}
+      geoms:
+        - {type: box, pos: [0.1752, -0.0, 0.084], size: [0.0499, 0.0344, 0.0425], quat: [0.98481, 0.0, -0.17365, 0.0]}
+    steer_case_upper:
+      mass: {value: 0.0079, source: GUESS}
+      geoms:
+        - {type: box, pos: [0.1685, 0.0, 0.1136], size: [0.0516, 0.0281, 0.0223], quat: [0.98481, 0.0, -0.17365, 0.0]}
+    pi_carrier:      # a plate over the drive's front face; with its four printed spacers (0.3 g)
+      mass: {value: 0.0126, source: GUESS}
+      geoms:
+        - {type: box, pos: [0.1138, 0.0007, 0.0998], size: [0.0022, 0.056, 0.0953], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    power_holder:      # a panel on the left, between the battery and the rail
+      mass: {value: 0.0077, source: GUESS}
+      geoms:
+        - {type: box, pos: [0.0349, 0.0149, 0.1045], size: [0.0677, 0.0033, 0.0455], quat: [0.92388, 0.0, -0.38268, 0.0]}
   fork_mass: {value: 0.025, source: GUESS}   # steerer + fork, excluding front wheel
   front_wheel:
     # The wheel carried over from the original bike, measured 2026-10-05.
@@ -351,31 +472,53 @@ bike:
     headset_friction_nm: {value: 0.00172, source: measured}      # N m, a
     headset_friction_per_n: {value: 0.00475, source: measured}   # N m per N, b
   ahrs:                                       # SYD Dynamics TM151
-    pos: [0.05, 0.0, 0.13]
-    mass: {value: 0.012, source: GUESS}
-    box_size: [0.030, 0.030, 0.012]
+    # On the drive's tabs, USB up and back (v2 CAD). `pos` is the centre of
+    # the housing (footprint centre, mid-height): where `ahrs_site` -- the
+    # IMU sensors -- sits, and the point sim_ahrs.TM151_ACCEL_OFFSET_M is
+    # measured from. `quat` is the TM151's OWN axes in the chassis frame
+    # (datasheet: +x the pin header, +z out of the housing's top): +x down
+    # and forward, +z up and forward -- pitched 45 deg nose-down about y.
+    # The SITE stays on the chassis axes: on the bike the mount calibration
+    # (config/ahrs_mount.yaml) rotates the readings into that frame, so
+    # chassis-aligned is what the controllers see. The tilt reaches the sim
+    # through the box and through where the accelerometer sits in the part
+    # (sim_ahrs.tm151_to_site).
+    pos: [0.0989, 0.0, 0.0842]
+    quat: [0.92388, 0.0, 0.38268, 0.0]
+    mass: {value: 0.019, source: datasheet}   # was 0.012 GUESS
+    box_size: [0.040, 0.034, 0.0126]          # in its own axes: x along the 40
   payload:
-    # Untethered running gear — see docs/plans/untethered-setup.md. Kept
-    # SEPARATE from chassis.mass (which is frame + wiring only) so the two are
-    # independently identifiable: the payload is a known, weighable set of
-    # parts, while the chassis mass stays a GUESS until the frame is built.
-    # Omitted by build_model(payload=False) to recover the tethered bike.
+    # Untethered running gear -- see docs/plans/untethered-setup.md, entries
+    # as in frame_parts (pos, box_size, quat, mass). Omitted by
+    # build_model(payload=False) to recover the tethered bike. Placements are
+    # the v2 CAD's; all four sit in the drive frame (quat: box x across the
+    # bike, y up the belt, z up and back).
     #
-    # ~190 g on an 825 g bike (+23%). Placement is NOT critical for balance:
-    # across the plausible mounting envelope the CoM height only moves
-    # 0.117-0.131 m and the fall time constant 1/sqrt(g/h) only 0.109-0.116 s.
-    # What matters is (a) staying on the centerline — a lateral offset is a
-    # standing roll bias the controller must trim out continuously, and (b)
-    # staying near the rear axle, since yaw inertia is what the pivot and
-    # flick moves fight. Positions below are a plausible layout, not a design.
-    battery:                                  # 3S 1300 mAh LiPo, slung under
-      pos: [0.09, 0.0, 0.055]                 #   the frame between the wheels
-      mass: {value: 0.115, source: GUESS}     # -> weigh the actual pack
-      box_size: [0.072, 0.035, 0.026]
-    electronics:                              # Pi Zero 2 W + U2D2 + buck + wiring
-      pos: [0.09, 0.0, 0.105]
-      mass: {value: 0.076, source: GUESS}     # -> weigh the actual stack
-      box_size: [0.065, 0.030, 0.025]
+    # The power module is OFF the centreline, on the left (the holder above
+    # is too): a lateral offset is a standing roll bias the controller must
+    # trim out continuously, so its mass is worth weighing early.
+    battery:                                  # 3S 1300 mAh LiPo, on the drive's back face
+      pos: [0.02917, 0.0, 0.09387]
+      mass: {value: 0.076, source: measured}  # bike_v2_cad.yaml; was 0.115 GUESS
+      box_size: [0.022, 0.058, 0.030]
+      quat: [0.65328, 0.2706, -0.2706, -0.65328]
+    pi:                                       # Raspberry Pi 3B+, the stand-in
+      pos: [0.12035, 0.0, 0.11215]
+      mass: {value: 0.050, source: datasheet}   # approx. (bike_v2_cad.yaml)
+      box_size: [0.056, 0.020, 0.089]
+      quat: [0.65328, 0.2706, -0.2706, -0.65328]
+    u2d2:                                     # ROBOTIS U2D2, under the Pi
+      pos: [0.11494, 0.0, 0.08807]
+      mass: {value: 0.009, source: measured}  # case only (bike_params_cad, 2026-08)
+      box_size: [0.018, 0.0149, 0.048]
+      quat: [0.65328, 0.2706, -0.2706, -0.65328]
+    power_board:                              # the PCB with its components + the power switch
+      pos: [0.0440, 0.0274, 0.1094]
+      # Weighed 2026-10-19 (user): 16 g, was 0.056 GUESS. The printed holder
+      # is frame_parts.power_holder; the wiring is in chassis.mass.
+      mass: {value: 0.016, source: measured}
+      box_size: [0.0126, 0.0265, 0.025]
+      quat: [0.65328, 0.2706, -0.2706, -0.65328]
 
 servos:
   # NOTE: the values below are the 12 V datasheet column, i.e. the TETHERED
@@ -393,8 +536,7 @@ servos:
     no_load_rpm: {value: 106.0, source: datasheet}
     mass: {value: 0.065, source: datasheet}
     box_size: [0.034, 0.0285, 0.0465]   # D x W x H, axis along Y
-    pos_left: [0.045, 0.030, 0.075]     # chassis-frame positions of the two drive servos
-    pos_right: [0.045, -0.030, 0.075]
+    # placements: bike.frame_parts.servo_drive_left / _right
   xc330_t181:   # steering (values at 12 V per datasheet)
     # KEPT AT THE DATASHEET, but the bench says it may be as low as ~0.6.
     # X330 fixture, id 103, mode 3 at the steer's own gains (2026-09-26,
@@ -436,7 +578,7 @@ servos:
     friction_stick_speed: {value: 0.05, source: design}      # rad/s
     mass: {value: 0.023, source: datasheet}
     box_size: [0.026, 0.020, 0.034]
-    pos: [0.16, 0.0, 0.11]
+    # placement: bike.frame_parts.servo_steer (the righting's: righting.module.servo_case)
 
 actuators:
   # Drive velocity servo, both gains AT THE INPUT SHAFTS (i.e. after
@@ -1087,6 +1229,33 @@ righting:
     #     python analysis/self_righting.py invert --wings
     #     python analysis/self_righting.py rest   --wings
     mass: {value: 0.045, source: design}    # shell only -- see the CoG note above
+  rollcage:
+    # THE V2 BIKE'S ROOF (2026-10-19), built in place of `roof` whenever the
+    # righting module is (the default bike); `roof` above stays for the
+    # older studies, whose wings it is derived around. Same contact geom
+    # (`roof`), same job.
+    #
+    # It models two rollcage rings (cad_bike_v2.rollcage: 270 deg, outer
+    # radius 68.7 = the blades' widest at rest, axis 100 mm above the rear
+    # axle, at the two ends), their elliptical half-dome caps (50 deep, tips
+    # at x -50 and +250.5) and the flexible sheet between them, as ONE
+    # CAPSULE: the rings' radius, its hemispherical tips put on the caps'.
+    # Where that is off: 2.6 mm inside the rings at their own stations (a
+    # hemisphere is fuller than the 50-deep caps everywhere else), and closed
+    # across the rings' 90 deg opening at the bottom -- which faces the floor
+    # only while the wheels carry the bike.
+    radius: {value: 0.0687, source: design}
+    height: {value: 0.100, source: design}       # its axis, above the rear axle
+    x_start: {value: 0.0187, source: design}     # -0.050 + radius
+    x_end: {value: 0.1818, source: design}       # 0.2505 - radius
+    # A SHELL's inertia (MuJoCo's shell inertia), not a solid's: the mass is
+    # all out at the radius, which the roll inertia feels.
+    mass:
+      cages: {value: 0.0685, source: GUESS}   # 2 x 34.3, CAD printed estimate
+      caps: {value: 0.1085, source: GUESS}    # 2 x 54.2, CAD printed estimate
+      # Not in the CAD. 0.5 mm polycarbonate over 270 deg of the groove's
+      # 66.2 radius, ~185 long: 35 g. Material and thickness both assumed.
+      sheet: {value: 0.035, source: GUESS}
   bumper:
     # Side geometry that sets the resting attitude: a short capsule pad per
     # side, sitting just proud of the drive servo it protects.
@@ -1312,8 +1481,8 @@ righting:
     linkage_cad: {value: config/righting_cad.yaml, source: design}
     blade_file: {value: config/swing_explore/blade_v3.yaml, source: design}   # V3; V2 is config/righting_blade.yaml
     # The couplers' mid-plane on the wing rod, ahead of the rear axle: the
-    # CAD's (wheelbase 200.5 there, 200 in the sim). Module-frame fore/aft
-    # positions below are relative to it.
+    # CAD's (the sim's wheelbase is the CAD's 200.5 since 2026-10-19).
+    # Module-frame fore/aft positions below are relative to it.
     station_x: {value: 0.1205, source: design}
     # MASSES, all GUESS: printed parts at 1.07 g/cm3, 2 perimeters / 15 %
     # infill (cad_servo_mount.printed_mass), steel at 7.85, from the CAD
@@ -1330,10 +1499,23 @@ righting:
       at: [31.0, 17.1, -3.3]
     blade:     # each, from its outline x span (660 mm2 x 82 mm), 2 perim / 15 %
       mass: {value: 0.0286, source: GUESS}
-    fixed:     # cases, bulkhead, bridge, steel wing rod (41.1 g) + XC330 (23 g, datasheet)
-      mass: {value: 0.0641, source: GUESS}
-      at: [0.0, 16.6, -19.3]
-      size: [0.034, 0.024, 0.060]   # inertia box, full extents (x fore, y, z): the module's envelope
+    # FIXED to the chassis, so not a moving mass: since 2026-10-19 one entry
+    # per part from the v2 evals (traces/bike_v2_cad/), `at` in the module
+    # frame like the groups above (mm), `size` full extents in the chassis
+    # frame [fore, across, up] (a cylinder: [radius, length]); the XC330 is
+    # `servo_case`. Was one 64.1 g box 19 mm behind the rod, the servo in it
+    # -- the servo sits 44 mm behind it.
+    fixed:     # printed parts at their CAD centroids; the steel wing rod a cylinder along the bike
+      bulkhead: {mass: {value: 0.0054, source: GUESS}, at: [0.0, 22.6, 18.5], size: [0.01, 0.0247, 0.0588]}
+      bridge: {mass: {value: 0.0066, source: GUESS}, at: [0.0, 53.6, 0.0], size: [0.047, 0.0344, 0.01]}
+      lower_case: {mass: {value: 0.0116, source: GUESS}, at: [0.0, 20.0, -24.7], size: [0.0307, 0.0247, 0.0588]}
+      upper_case: {mass: {value: 0.0078, source: GUESS}, at: [0.0, 19.0, -51.2], size: [0.0223, 0.0281, 0.051]}
+      wing_rod: {mass: {value: 0.0104, source: GUESS}, at: [0.0, 0.0, 0.0], size: [0.003, 0.047], type: cylinder}
+    # The crank's XC330 case, mass from servos.xc330_t181 (datasheet).
+    # Module frame like `at` above (mm); `size` chassis-frame, shaft fore.
+    servo_case:
+      at: [0.0, 17.6, -44.2]
+      size: [0.023, 0.020, 0.034]
     # The crank servo: the four-bar's own `limits.torque_nm` caps it, as for
     # every swing-linkage config (build_model._add_swing_linkage).
     servo: xc330_t181

@@ -133,6 +133,32 @@ def _convex_pieces(pts) -> list[list[int]]:
     return sorted(done)
 
 
+def _prism_mesh(spec: mujoco.MjSpec, name: str, outline, across) -> str:
+    """A side-view outline extruded across the bike, as a closed mesh in the
+    chassis frame: `outline` [(x, z)] [m], a simple polygon, `across` [y0, y1]
+    [m]. Triangulated through `_convex_pieces` (each piece a fan), so it may
+    be non-convex; its inertia is MuJoCo's EXACT one for that solid. For
+    inertia and looks only -- a mesh COLLIDES as its convex hull."""
+    P = np.asarray(outline, float)
+    if _shoelace(P) < 0:                   # counter-clockwise in (x, z)
+        P = P[::-1]
+    n = len(P)
+    y0, y1 = sorted(float(v) for v in across)
+    vert = [[x, y0, z] for x, z in P] + [[x, y1, z] for x, z in P]
+    face = []
+    for piece in _convex_pieces(P):
+        for a, b in zip(piece[1:-1], piece[2:]):
+            face += [[piece[0], a, b], [n + piece[0], n + b, n + a]]   # -y cap, +y cap
+    for i in range(n):
+        j = (i + 1) % n
+        face += [[i, n + j, j], [i, n + i, n + j]]
+    mesh = spec.add_mesh(name=name)
+    mesh.uservert = np.asarray(vert, float).flatten()
+    mesh.userface = np.asarray(face, np.int32).flatten()
+    mesh.inertia = mujoco.mjtMeshInertia.mjMESH_INERTIA_EXACT
+    return name
+
+
 def _quat_z_to(v) -> np.ndarray:
     """Quaternion (w,x,y,z) rotating local +Z onto direction v."""
     v = np.asarray(v, dtype=float)
@@ -596,7 +622,7 @@ def _add_hockey(spec: mujoco.MjSpec, chassis, p: dict) -> None:
 
 
 def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True,
-                  bumper: bool = True) -> None:
+                  bumper: bool = True, rollcage: bool = False) -> None:
     """Self-righting study extras (build_model(..., righting=True)); see
     docs/plans/self-righting.md and the `righting` block in bike_params.yaml.
 
@@ -613,7 +639,26 @@ def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True,
     that sinks through the servos rests on nothing."""
     rg, sim = p["righting"], p["sim"]
 
-    if "roof" in rg:
+    if rollcage:
+        # The v2 bike's rollcages, caps and sheet as one capsule (see
+        # righting.rollcage), under the roof's name: same job. A SHELL's
+        # inertia, the mass out at the radius.
+        r = rg["rollcage"]
+        chassis.add_geom(
+            name="roof",
+            type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+            size=[r["radius"], 0, 0],
+            fromto=[r["x_start"], 0.0, r["height"],
+                    r["x_end"], 0.0, r["height"]],
+            mass=float(sum(r["mass"].values())),
+            typeinertia=mujoco.mjtGeomInertia.mjINERTIA_SHELL,
+            contype=DYN_CONTYPE,
+            conaffinity=DYN_CONAFF,
+            condim=sim["condim"],
+            friction=_contact_friction(sim),
+            rgba=[0.35, 0.6, 0.85, 0.25],
+        )
+    elif "roof" in rg:
         # A capsule along +X: round in the ROLL plane, so an inverted bike
         # rolls off it instead of balancing on it, with hemispherical ends
         # giving the fore/aft doming for free. The flat-topped AHRS is what
@@ -1552,14 +1597,30 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         # rod and the XC330 -- as one inertia box on the chassis at their
         # centroid (module frame: out, up from the rod, fore). No contact:
         # the chassis lumps and the roof already make the shell.
-        fx = module["fixed"]
-        at = np.asarray(fx["at"], float) / 1000.0
-        chassis.add_geom(
-            name="righting_fixed", type=mujoco.mjtGeom.mjGEOM_BOX,
-            size=np.asarray(fx["size"], float) / 2.0,
-            pos=[px + at[2], -at[0], sl.pivot_z + at[1]],
-            mass=fx["mass"], contype=0, conaffinity=0,
-            rgba=[0.3, 0.3, 0.3, 0.5])
+        # One geom per part (righting.module.fixed), `righting_fixed_<part>`;
+        # a cylinder lies along the bike (the wing rod).
+        for key, fx in module["fixed"].items():
+            at = np.asarray(fx["at"], float) / 1000.0
+            cyl = fx.get("type", "box") == "cylinder"
+            chassis.add_geom(
+                name=f"righting_fixed_{key}",
+                type=mujoco.mjtGeom.mjGEOM_CYLINDER if cyl else mujoco.mjtGeom.mjGEOM_BOX,
+                size=([fx["size"][0], fx["size"][1] / 2, 0] if cyl
+                      else np.asarray(fx["size"], float) / 2.0),
+                quat=[0.70711, 0.0, 0.70711, 0.0] if cyl else [1.0, 0.0, 0.0, 0.0],
+                pos=[px + at[2], -at[0], sl.pivot_z + at[1]],
+                mass=fx["mass"], contype=0, conaffinity=0,
+                rgba=[0.55, 0.55, 0.58, 1] if cyl else [0.3, 0.45, 0.75, 1])
+        # Its XC330's case, on its own: the crank's servo, behind the rod.
+        if "servo_case" in module:
+            sc = module["servo_case"]
+            at = np.asarray(sc["at"], float) / 1000.0
+            chassis.add_geom(
+                name="servo_righting", type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=np.asarray(sc["size"], float) / 2.0,
+                pos=[px + at[2], -at[0], sl.pivot_z + at[1]],
+                mass=p["servos"][module.get("servo", "xc330_t181")]["mass"],
+                contype=0, conaffinity=0, rgba=[0.1, 0.1, 0.1, 1])
     crank = chassis.add_body(name="swing_crank", pos=[px, servo[0], servo[1]])
     # The servo's gearbox friction at its no-load static value, for loops that
     # step without the servo model; CurrentBasedPositionServo makes it
@@ -2283,49 +2344,90 @@ def build_spec(
     # The chassis lumps are inertia primitives, not contact shapes — normally
     # nothing above the wheels can touch anything, which is exactly right for a
     # bike that stays upright. A FALLEN bike lands on them, so the righting
-    # study turns them into the outer shell they physically are.
+    # study turns them into the outer shell they physically are. The v2 bike
+    # has a real outer shell -- the rollcage, with the blades and wheels --
+    # and every lump sits inside it, so there they stay inertia only.
+    rollcage = module is not None and "rollcage" in p["righting"]
     shell = ((DYN_CONTYPE, DYN_CONAFF)
-             if (righting or wings or swing or swing_linkage) else (0, 0))
+             if (righting or wings or swing or swing_linkage) and not rollcage
+             else (0, 0))
     ch = bike["chassis"]
+    # The residual's own box -- or, when it is spread over the frame parts,
+    # a massless invisible one, kept as the old studies' contact envelope
+    # (the swing wings' contact pairs name it).
     chassis.add_geom(
         name="chassis_box",
         type=mujoco.mjtGeom.mjGEOM_BOX,
         size=np.array(ch["box_size"]) / 2,
         pos=ch["com_pos"],
-        mass=ch["mass"],
+        mass=0.0 if ch.get("spread") else ch["mass"],
         contype=shell[0],
         conaffinity=shell[1],
         condim=p["sim"]["condim"],
         friction=_contact_friction(p["sim"]),
-        rgba=[0.2, 0.4, 0.7, 0.6],
+        rgba=[0.2, 0.4, 0.7, 0.0 if ch.get("spread") else 0.08],
     )
-    lumps = [
-        ("servo_drive_left", p["servos"]["xc430_w150"], p["servos"]["xc430_w150"]["pos_left"]),
-        ("servo_drive_right", p["servos"]["xc430_w150"], p["servos"]["xc430_w150"]["pos_right"]),
-        ("servo_steer", p["servos"]["xc330_t181"], p["servos"]["xc330_t181"]["pos"]),
-        ("ahrs", bike["ahrs"], bike["ahrs"]["pos"]),
-    ]
-    # Untethered running gear (~190 g, +23%). On by default: the bike we are
-    # actually building carries it, and a policy trained without it is
-    # optimistic about a bike that does not exist. payload=False recovers the
-    # tethered bike for comparison. See docs/plans/untethered-setup.md.
+    # Every rigid part on the frame (bike.frame_parts): its mass split over
+    # its geoms by `share`. Geom name = the entry's name, `_<i>` after it
+    # when there are several; a servo entry takes its mass from `servos:`.
+    def part_rgba(name):
+        if name.startswith("servo"):
+            return [0.1, 0.1, 0.1, 1]
+        if "belt" in name:
+            return [0.15, 0.15, 0.15, 1]
+        return [0.62, 0.66, 0.72, 1] if name.startswith("drive") else [0.75, 0.75, 0.78, 1]
+    masses = {k: p["servos"][v["servo"]]["mass"] if "servo" in v else v["mass"]
+              for k, v in bike["frame_parts"].items()}
+    # chassis.spread: the residual rides on the frame parts in proportion to
+    # their mass, instead of as a box of its own (see bike.chassis).
+    spread = 1.0 + (ch["mass"] / sum(masses.values()) if ch.get("spread") else 0.0)
+    for name, part in bike["frame_parts"].items():
+        geoms = part["geoms"]
+        for i, g in enumerate(geoms):
+            share = g.get("share", 1.0 / len(geoms))
+            gname = name if len(geoms) == 1 else f"{name}_{i}"
+            kind = g.get("type", "box")
+            extra = {}
+            if kind == "prism":
+                extra = {"type": mujoco.mjtGeom.mjGEOM_MESH,
+                         "meshname": _prism_mesh(spec, f"{gname}_mesh", g["outline"], g["across"])}
+            elif kind == "cylinder":
+                extra = {"type": mujoco.mjtGeom.mjGEOM_CYLINDER, "size": [g["size"][0], g["size"][1] / 2, 0]}
+            else:
+                extra = {"type": mujoco.mjtGeom.mjGEOM_BOX, "size": np.array(g["size"]) / 2}
+            if kind != "prism":
+                extra.update(pos=g["pos"], quat=g.get("quat", [1.0, 0.0, 0.0, 0.0]))
+            chassis.add_geom(
+                name=gname, mass=masses[name] * share * spread,
+                contype=shell[0], conaffinity=shell[1],
+                condim=p["sim"]["condim"], friction=_contact_friction(p["sim"]),
+                rgba=part_rgba(name), **extra)
+    lumps = [("ahrs", bike["ahrs"])]
+    # Untethered running gear. On by default: the bike we are actually
+    # building carries it, and a policy trained without it is optimistic
+    # about a bike that does not exist. payload=False recovers the tethered
+    # bike for comparison. See docs/plans/untethered-setup.md.
     if payload:
-        lumps += [(f"payload_{k}", v, v["pos"]) for k, v in bike["payload"].items()]
+        lumps += [(f"payload_{k}", v) for k, v in bike["payload"].items()]
     rgba = {"ahrs": [0.7, 0.1, 0.1, 1], "payload_battery": [0.9, 0.5, 0.1, 1],
-            "payload_electronics": [0.2, 0.7, 0.3, 1]}
-    for name, part, pos in lumps:
+            "payload_pi": [0.2, 0.7, 0.3, 1], "payload_u2d2": [0.15, 0.3, 0.6, 1],
+            "payload_power_board": [0.8, 0.75, 0.2, 1]}
+    for name, part in lumps:
         chassis.add_geom(
             name=name,
             type=mujoco.mjtGeom.mjGEOM_BOX,
             size=np.array(part["box_size"]) / 2,
-            pos=pos,
+            pos=part["pos"],
+            quat=part.get("quat", [1.0, 0.0, 0.0, 0.0]),
             mass=part["mass"],
             contype=shell[0],
             conaffinity=shell[1],
             condim=p["sim"]["condim"],
             friction=_contact_friction(p["sim"]),
-            rgba=rgba.get(name, [0.1, 0.1, 0.1, 1]),
+            rgba=rgba.get(name, [0.75, 0.75, 0.78, 1]),
         )
+    # The IMU's sensors: at the housing's centre, on the CHASSIS axes -- the
+    # frame the bike's mount calibration delivers (bike.ahrs, sim_ahrs).
     chassis.add_site(name="ahrs_site", pos=bike["ahrs"]["pos"])
 
     if training_wheels:
@@ -2491,7 +2593,7 @@ def build_spec(
         # The module keeps the roof and has no bumpers (user, 2026-10-09).
         _add_righting(spec, chassis, p,
                       arm=not (wings or linkage or swing or swing_linkage),
-                      bumper=module is None)
+                      bumper=module is None, rollcage=rollcage)
     if wings:
         _add_wings(spec, chassis, p)
     if linkage:

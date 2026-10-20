@@ -35,10 +35,15 @@ def test_bike_mass_unchanged_and_rig_is_massless():
 
 
 def test_free_rig_carries_no_weight():
-    """All joints free: the floor contacts carry the whole bike."""
+    """All joints free: the floor contacts carry the whole bike.
+
+    At 0.1 s, while it still stands: a free rig lets it topple, and the sum
+    of vertical normal forces is the weight only upright. The v2 bike's CoM
+    sits 1.5 mm left (the power module), so it is ~16 deg over by 0.5 s,
+    where this used to look; the symmetric bike before stood there."""
     m = build_rig_model()
     d = mujoco.MjData(m)
-    for _ in range(int(0.5 / m.opt.timestep)):
+    for _ in range(int(0.1 / m.opt.timestep)):
         mujoco.mj_step(m, d)
     f, total = np.zeros(6), 0.0
     for i in range(d.ncon):

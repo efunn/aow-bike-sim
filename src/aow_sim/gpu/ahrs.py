@@ -73,7 +73,7 @@ def const_from(ahrs) -> AhrsConst:
     c.adr_quat = ahrs.adr["ahrs_quat"][0]
     c.adr_gyro = ahrs.adr["ahrs_gyro"][0]
     c.adr_accel = ahrs.adr["ahrs_accel"][0]
-    c.offset = wp.vec3(*(sa.TM151_TO_SITE @ sa.TM151_ACCEL_OFFSET_M).tolist())
+    c.offset = wp.vec3(*ahrs.accel_offset_m.tolist())
     c.sigma_g = float(np.deg2rad(sa.GYRO_NOISE_PP_DPS * sa.PP_TO_SIGMA))
     c.bias_sigma = float(np.deg2rad(sa.GYRO_BIAS_STABILITY_DPH / 3600.0))
     c.k_g = float(np.deg2rad(sa.GYRO_G_SENS_DPS_PER_G))

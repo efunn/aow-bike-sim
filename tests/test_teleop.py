@@ -1257,9 +1257,18 @@ def test_swing_lie_down_get_up_and_auto_up(monkeypatch, params, policy):
     assert abs(roll()) < 5 and c.mode == "general", (
         f"did not get up: roll {roll():+.1f}, mode {c.mode}")
 
-    d.qvel[3] = -8.0                    # knocked over, hard
-    _idle(g, 2.0)
-    assert abs(roll()) > 60, "the shove was caught; it tests nothing"
-    _idle(g, 7.0)
+    # Knocked over by teleop's own shove, the `.` key (8 N sideways for
+    # 0.35 s). It used to be a -8 rad/s roll rate set in one step, checked
+    # still lying 2 s later -- and at the v2 plant (2026-10-19) that kick put
+    # the bike on its roof, still, so the auto-up fired at ~1 s and had it
+    # upright by 2 s: the test failed for the auto-up being FAST. So: did it
+    # go over at any point, then is it up.
+    _tap(g, ord("."), settle=0.0)
+    worst = 0.0
+    for _ in range(15):                 # 3 s: tumbles, lands, the auto-up starts
+        _idle(g, 0.2)
+        worst = max(worst, abs(roll()))
+    assert worst > 60, f"the shove did not knock it over: worst roll {worst:.1f}"
+    _idle(g, 6.0)
     assert abs(roll()) < 5 and c.mode == "general", (
         f"no auto-up: roll {roll():+.1f}, mode {c.mode}")

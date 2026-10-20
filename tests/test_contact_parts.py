@@ -123,8 +123,19 @@ def test_the_split_did_not_move_the_plant_digest():
                           righting.module.crank_armature 1e-3 GUESS -> 5.5e-4:
                           open-loop sine sweeps of the steer XC330 (column on)
                           and the bare righting XC330 (analysis/steer_response.py)
+        0c0518e9225f399e  2026-10-19  the v2 bike as built: wheelbase 0.2005,
+                          rake 20 (was 15), every frame part placed from the
+                          v2 CAD (bike.frame_parts; servos on the centreline,
+                          the chassis box a 30 g residual), the TM151 tilted
+                          45 deg and moved, payload split battery / pi / u2d2 /
+                          power_board, righting servo split from the fixed
+                          box, and righting.rollcage as the roof; each
+                          part shaped from the CAD's tight boxes (rails
+                          their extruded outlines, pulleys discs, belts
+                          their runs), the chassis residual spread over them,
+                          the power board weighed (16 g, was 56 GUESS)
     """
-    assert plant_digest(load_params()) == "7893a119b19f17d6"
+    assert plant_digest(load_params()) == "0c0518e9225f399e"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():
