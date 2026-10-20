@@ -921,6 +921,77 @@ FTDI adapter plugged in when the configured U2D2 is not), `mirror`, and
 `status` (bundle md5 both sides, ports, and a UDP send to the Pi from the
 current terminal). `scripts/pi_setup.sh` for the OS half is still unwritten.
 
+Since 2026-10-20 `bench` / `run` first WAIT for the Pi (its ssh port polled
+every 0.25 s, at the last address it had and at whatever the name resolves
+to), print how long that took, and then connect by IP with
+`HostKeyAlias=aowbike.local`, so a stale address fails on the host key
+instead of reaching another machine. Started while the Pi boots, ssh's own
+connect retries back off to 15 s and more, and every ssh by name paid ~1 s
+of mDNS (1.11 s against 0.12 s by IP).
+
+### Boot time (Pi 3B+, trixie, 2026-10-20)
+
+Power to a running `bench` was ~30 s by stopwatch. On the Pi's own clock
+(from kernel start; the firmware stage before it is invisible from the Pi),
+read with `systemd-analyze` and `journalctl -b -o short-monotonic | grep
+"address record.*wlan0.IPv4"`:
+
+| | kernel | userspace (to multi-user) | WiFi has its IP |
+|---|---|---|---|
+| stock | 4.4 s | 13.5 s | 20.8 s |
+| trimmed (below) | 2.7 s | 11.1 s | 16.7 s |
+| + networkd instead of NetworkManager | 2.7 s | 7.0 s | 13.0 s |
+| + scan pinned to the router's channel | | | **10.6 s** |
+
+From the Mac, `ssh pi sudo reboot; sleep 0.5; bike.sh bench` prints the time
+until the Pi's ssh answers: 24.3 s trimmed, 20.7 / 20.8 s with networkd,
+**18.2 s** with the channel pinned.
+That includes the shutdown (ssh stops answering within 0.5 s, the rest of the
+shutdown does not show) and the firmware stage; a cold start, `bench` begun
+at the switch, gives the firmware stage alone (minus the 13.0 s).
+
+The trims, all reversible (back up `config.txt` / `cmdline.txt` first; the
+boot partition opens on any computer):
+
+* `config.txt`: `auto_initramfs=0` (root is plain ext4 on the card; the
+  initramfs was 1.3-3.8 s of the kernel's time), `camera_auto_detect=0`,
+  `display_auto_detect=0`, `dtparam=audio=off`, `disable_splash=1`,
+  `boot_delay=0`, `initial_turbo=30`, `dtoverlay=disable-bt`.
+* `cmdline.txt`: `quiet`, and `console=serial0,115200` removed (nothing is on
+  the GPIO UART; the U2D2 and the AHRS are USB).
+* swap: zram only, no swap file (the file's setup sat on the path to the
+  network, and its resize took 2.1 s every boot):
+  `printf '[Main]\nMechanism=zram\n' | sudo tee /etc/rpi/swap.conf.d/50-bike.conf`.
+* services: `e2scrub_reap udisks2 rpi-eeprom-update keyboard-setup
+  console-setup` disabled; `apt-daily.timer apt-daily-upgrade.timer
+  man-db.timer` disabled too -- not for boot, but so nothing updates or
+  reindexes on the card mid-drive. Kept: the boot partition's fsck (~1.2 s;
+  a bike loses power abruptly) and `fstrim.timer`.
+
+**NetworkManager -> systemd-networkd + wpa_supplicant** (`scripts/
+pi_networkd.sh`, run from the Mac: `ssh efun@aowbike.local 'sudo bash -s' <
+scripts/pi_networkd.sh`, then reboot; `... rollback` reverses it). NM sat
+2.9 s on its own netplan round trip (`netplan generate` + a 1.48 s systemd
+reload, both under NetworkManager.service) and then 2.5 s with the radio up
+before it began to connect. The script takes the WiFi credentials from NM's
+saved connection, and it also has to replace three things NM was doing:
+WiFi power save OFF (a oneshot unit; this supersedes step (b)'s nmcli line
+above), `/etc/resolv.conf` (written static: the router, then 1.1.1.1 --
+without systemd-resolved, networkd does not write it), and eth0, which gets
+DHCP plus link-local so a cable straight to the Mac reaches `aowbike.local`
+if WiFi ever fails. The router hands networkd a different lease than NM had
+(it identifies itself differently): 192.168.0.117 became .113.
+
+**The channel pin** (`WIFI_FREQ=2417` to the script): wpa_supplicant's
+start to associated went 3.4 s -> 0.93 s, because it no longer scans every
+channel. It never finds the network if the router moves, so the router's
+2.4 GHz channel is FIXED at 2 (set by hand, 2026-10-20; "Auto" lets a
+router move on its own). 2 rather than 1/6/11: no neighbouring networks
+here, and the low channels are the farthest from a microwave oven's
+~2.45 GHz leakage. Change both together, or neither.
+
+What is left on the Pi's side: DHCP, 0.6 s (a static IP would cut it).
+
 ## 8. Still open after this session
 
 * **Steer homing at power-up** (§2.6). Blocks the fork going on, not the
@@ -933,9 +1004,10 @@ current terminal). `scripts/pi_setup.sh` for the OS half is still unwritten.
   (TTL 3.3 V) and USB 2.0 VCP. Nothing in this repo has ever implemented or specced SPI for it —
   `hw/ahrs.py` is pyserial only, and the string does not appear in `src/` or `docs/`. The fallback
   for a USB port that is needed elsewhere is the GPIO UART, not SPI.
-* **The Zero 2 W's own timing.** Everything measured here is a 3B+ with four
-  USB ports and a better radio. The numbers transfer as an upper bound on what
-  the software costs, not as the flying budget.
+* **The final board's own timing.** It will be a custom PCBA (to be
+  determined; not the Zero 2 W, which cannot be bought). Everything measured
+  here is a 3B+, so the numbers transfer as a statement of what the software
+  costs on that CPU, not as the flying budget.
 * **Whether the drivetrain model is right.** The wheel is in the air, so the
   bench sees the servo loop and the differential but no contact. The P 100 /
   P 400 decision (`docs/status.md` item 3) still wants the bike on the floor.
