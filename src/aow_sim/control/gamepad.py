@@ -81,15 +81,32 @@ def to_polar(v_lon: float, v_lat: float) -> tuple[float, float]:
     return float(np.hypot(v_lon, v_lat)), float(np.arctan2(v_lat, v_lon))
 
 
-# Suggested physical bindings, recorded here so a future HID reader has no
-# decisions left to make. Names match `Pad.buttons`.
+def from_state(s) -> Pad:
+    """A controller snapshot in the STANDARD layout (`gamepad_usb.PadState`:
+    +x right, +y up) -> the bike's `Pad` (+lx and +rx LEFT, the bike's +y and
+    CCW). The one place the two sign conventions meet: push the left stick
+    right and the bike crabs right; push the right stick right and it turns
+    clockwise."""
+    return Pad(ly=float(s.ly), lx=-float(s.lx), rx=-float(s.rx))
+
+
+# Physical buttons -> what they do, by the stations' own keys. Names are the
+# standard layout's (`gamepad_usb.PadState.buttons`), so any controller that
+# reports them binds the same. The stations hold the key codes
+# (run_drive.TELEOP_PAD_KEYS / MIRROR_PAD_KEYS); this table is the intent.
 BUTTON_MAP = {
-    "A": "stop",          # all motion to zero (teleop `5`)
-    "B": "zero",          # re-zero the whole command (teleop `/`)
-    "X": "snap_l",        # heading -90 deg  (teleop `7`)
-    "Y": "snap_r",        # heading +90 deg  (teleop `6`)
-    "RB": "pen_up",       # shorter trail / pen up   (teleop `[`)
-    "LB": "pen_down",     # longer trail  / pen down (teleop `]`)
-    "START": "camera",    # follow <-> overhead      (teleop `\\`)
-    "BACK": "snap_180",   # about-face               (teleop `8`)
+    "LB": "snap_l",       # heading +90 deg, CCW  (`6`)
+    "RB": "snap_r",       # heading -90 deg, CW   (`7`)
+    "BACK": "snap_180",   # about-face            (`8`)
+    "A": "re-aim",        # heading setpoint to where the bike points (`/`);
+                          # the sticks zero the velocity on release, but the
+                          # heading is a setpoint and holds
+    "Y": "rearm / reset", # mirror `r`; teleop BACKSPACE (the sim never cuts)
+    "X": "lie down",      # teleop PageDown (swing_sit); nothing on the bike yet
+    "B": "get up",        # teleop PageUp
+    "START": "camera",    # teleop `\\`
+    "DPAD_UP": "righting current +",    # `]`
+    "DPAD_DOWN": "righting current -",  # `[`
+    # Triggers: RT - LT slews the righting crank's goal (analog; equal pulls
+    # cancel), teleop and mirror both.
 }

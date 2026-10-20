@@ -41,9 +41,15 @@ viz = ["matplotlib>=3.7", "imageio>=2.31", "imageio-ffmpeg>=0.4"]
 # work if the OS supplies real key state. On macOS that means pyobjc:
 # AppKit for the (permission-free) NSEvent local monitor, Quartz for polling.
 # Without these, teleop still works — the arrows step the command per tap.
+#
+# pyusb: a wired Xbox One pad, read over raw USB (control/gamepad_usb.py) --
+# macOS ships no driver for third-party ones. Also needs libusb itself
+# (`brew install libusb`). Without either, teleop and the mirror just say
+# "no pad" and run on the keyboard.
 teleop = [
     "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    "pyusb>=1.2",
 ]
 # RL training only (the base install replays a trained policy with numpy alone).
 rl = [

@@ -592,25 +592,31 @@ def test_general_mode_reports_a_missing_policy(monkeypatch, model, params,
 @pytest.mark.parametrize("override", [None, 0.3])
 def test_crab_max_replaces_the_policy_envelope(monkeypatch, model, params,
                                                eq_qpos, capsys, override):
-    """The crab key is clamped to the policy's v_lat_frac * v_max -- 0 for
-    every policy since curriculum2b -- unless --crab-max replaces it, which
-    also warns that the command is off-distribution."""
+    """Crab always works: with no --crab-max the clamp is the larger of the
+    policy's own v_lat_frac * v_max (0 for every policy since curriculum2b)
+    and 0.4 v_max, with a one-line note when that is past what it trained on
+    (user, 2026-10-19: "make crab a default possible command again").
+    --crab-max replaces the clamp outright, and warns past the envelope."""
     _needs_general()
     from aow_sim.run_drive import _command_ref
     g = _capture(monkeypatch, model, params, eq_qpos,
                  crab_max_override=override)
     c = g["c"]
     assert c.mode == "general"
-    frac = float(c._gen.v_lat_frac)
+    v_max = c.profile.v_max
+    trained = float(c._gen.v_lat_frac) * v_max
     _idle(g, 0.05)                       # the envelope resolves on a step
-    for _ in range(3):
+    for _ in range(10):                  # well past either clamp
         _tap(g, ord("1"))
     _h, v_cmd = _command_ref(c, g["data"])
-    want = frac * c.profile.v_max if override is None else override
+    want = max(trained, 0.4 * v_max) if override is None else override
     assert np.linalg.norm(v_cmd) == pytest.approx(want, abs=1e-6)
-    warned = "past what this policy trained on" in capsys.readouterr().out
-    assert warned == (override is not None
-                      and override > frac * c.profile.v_max)
+    out = capsys.readouterr().out
+    if override is None:
+        assert ("off-distribution beyond" in out) == (want > trained + 1e-9)
+    else:
+        assert ("past what this policy trained on" in out) == (
+            override > trained)
 
 
 # --- virtual gamepad + trail ------------------------------------------------
@@ -1272,3 +1278,64 @@ def test_swing_lie_down_get_up_and_auto_up(monkeypatch, params, policy):
     _idle(g, 6.0)
     assert abs(roll()) < 5 and c.mode == "general", (
         f"no auto-up: roll {roll():+.1f}, mode {c.mode}")
+
+
+# -- a physical pad, through the real teleop closures ---------------------
+
+class _FakePad:
+    """A `gamepad_usb.GipPad` stand-in: `s` is the held state, `p` the
+    presses waiting to be drained."""
+
+    def __init__(self):
+        from aow_sim.control.gamepad_usb import PadState
+        self.s, self.p = PadState(), []
+
+    def state(self):
+        return self.s
+
+    def presses(self):
+        out, self.p = self.p, []
+        return out
+
+    def close(self):
+        pass
+
+
+def test_pad_triggers_slew_the_swing_crank_and_lb_snaps_left(monkeypatch, params):
+    """RT - LT moves the crank's goal at up to PAD_RIGHTING_DPS and it holds
+    when released; 4 then steps to the NEXT stop (centre), not past it; LB is
+    the +90 heading snap; Y resets. Its own model, as the swing tests take one."""
+    _needs_general()
+    import aow_sim.run_drive as RD
+    from aow_sim.control.gamepad_usb import PadState
+    fake = _FakePad()
+    monkeypatch.setattr(RD, "_open_pad", lambda keys, enabled=True:
+                        RD._PadInput(fake, keys) if enabled else None)
+    m = build_model(params, variant="full")
+    eq = settle_upright(m).qpos.copy()
+    g = _capture(monkeypatch, m, params, eq, swing=True, pad=True,
+                 auto_up=False)
+    d = g["data"]
+    jadr = m.joint("swing_crank_joint").qposadr[0]
+    _idle(g, 0.3)
+
+    fake.s = PadState(rt=1.0)                       # full RT for 0.25 s
+    _idle(g, 0.25)
+    fake.s = PadState()                             # released: holds
+    _idle(g, 1.0)
+    crank = np.degrees(d.qpos[jadr])
+    want = RD.PAD_RIGHTING_DPS * 0.25
+    assert abs(crank - want) < 6.0, f"crank {crank:+.1f}, goal {want:+.1f}"
+
+    _tap(g, ord("4"), settle=1.0)                   # next stop: centre
+    assert abs(np.degrees(d.qpos[jadr])) < 4.0
+
+    psi0 = g["c"]._psi
+    fake.p = ["LB"]
+    _idle(g, 2.0)
+    turned = np.degrees(np.angle(np.exp(1j * (g["c"]._psi - psi0))))
+    assert turned > 45, f"LB turned the bike {turned:+.0f} deg"
+
+    fake.p = ["Y"]                                  # Y is BACKSPACE: a reset
+    _idle(g, 0.1)
+    assert d.time < 0.2, f"Y did not reset: t = {d.time:.2f} s"

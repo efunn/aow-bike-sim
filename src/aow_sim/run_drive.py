@@ -381,6 +381,15 @@ def main() -> None:
                          "hw/ground.py, no physics. Nothing is simulated -- "
                          "every pose comes from telemetry. Needs mjpython.")
     ap.add_argument("--mirror-port", type=int, default=9910)
+    ap.add_argument("--no-pad", action="store_true",
+                    help="ignore a wired Xbox One pad on USB (--teleop / "
+                         "--mirror pick one up by default; "
+                         "control/gamepad_usb.py)")
+    ap.add_argument("--pad-righting-dps", type=float, default=PAD_RIGHTING_DPS,
+                    metavar="DPS",
+                    help="the righting crank's slew rate at FULL trigger "
+                         "(RT - LT), deg/s; analog below that "
+                         f"(default {PAD_RIGHTING_DPS:.0f})")
     ap.add_argument("--record", nargs="?", const="auto", default=None,
                     metavar="PATH",
                     help="log the teleop session to traces/teleop/<stamp>.npz "
@@ -568,13 +577,14 @@ def main() -> None:
                          "drivetrain if nothing else asks for it. "
                          "e.g. 0.16:0.21")
     ap.add_argument("--crab-max", type=float, default=None, metavar="M/S",
-                    help="teleop only: the crab command's clamp (1 / 3 keys) in "
-                         "m/s, REPLACING the loaded policy's own envelope "
-                         "(v_lat_frac * v_max from its yaml -- 0 for every "
-                         "policy trained since curriculum2b, which is why the "
-                         "keys do nothing). Above that envelope the command is "
-                         "off-distribution, the same one the eval grid's crab "
-                         "rows ask for; a warning says so per policy.")
+                    help="teleop only: the crab command's clamp (1 / 3 keys, "
+                         "left stick X) in m/s. Default: the larger of the "
+                         "policy's own envelope (v_lat_frac * v_max -- 0 for "
+                         "every policy trained since curriculum2b) and 0.4 * "
+                         "v_max, so crab always works; beyond the policy's "
+                         "envelope it is off-distribution, the same command "
+                         "the eval grid's crab rows ask for, and a note says "
+                         "so once per policy.")
     ap.add_argument("--slowmo", type=float, default=1.0, metavar="X",
                     help="run teleop at 1/X speed (2 = half, 10 = a tenth). "
                          "- halves and = doubles it live (shifted _ and + too), "
@@ -881,7 +891,8 @@ def main() -> None:
                            if isinstance(args.swing_linkage, str)
                            else params["righting"]["module"]["linkage"]
                            if righting_module else None),
-                frame_stats=args.frame_stats)
+                frame_stats=args.frame_stats, pad=not args.no_pad,
+                pad_righting_dps=args.pad_righting_dps)
         return
     if args.teleop:
         _teleop(model, params, eq.qpos, frame_stats=args.frame_stats,
@@ -899,7 +910,8 @@ def main() -> None:
                 drivetrain_source=drivetrain_source, start_lqr=args.lqr,
                 crab_max_override=args.crab_max, verbose=args.verbose,
                 rig=rig_cfg, auto_up=not args.no_auto_up, plays=args.play,
-                style_ungated=args.style_ungated)
+                style_ungated=args.style_ungated, pad=not args.no_pad,
+                pad_righting_dps=args.pad_righting_dps)
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1978,6 +1990,80 @@ _PLAY_ABORT_KEYS = (265, 264, 263, 262, ord("1"), ord("3"), ord("5"), ord("/"))
 # --hockey wins if both are on.
 
 
+# --- a physical gamepad ------------------------------------------------------
+# Buttons -> each station's own key codes, so a pad press goes through exactly
+# the handler a keypress does (control/gamepad.BUTTON_MAP is the intent).
+# GLFW code 92 is backslash. A is `/`, not `5`: releasing the sticks already
+# zeroes the velocity, but the HEADING is a setpoint that holds, so re-aiming
+# it at the bike is the reset a pad actually needs.
+TELEOP_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
+                   "BACK": ord("8"), "X": _KEY_LIE_DOWN, "B": _KEY_GET_UP,
+                   "START": 92, "Y": 259,      # BACKSPACE: reset / respawn
+                   "DPAD_UP": _KEY_PELT_UP, "DPAD_DOWN": _KEY_PELT_DOWN}
+MIRROR_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
+                   "BACK": ord("8"), "Y": ord("R"),
+                   "DPAD_UP": ord("]"), "DPAD_DOWN": ord("[")}
+_TRIGGER_DEAD = 0.05
+# Full trigger, deg/s: twice swing_sit's lift rate (user, 2026-10-19). Analog,
+# so a light pull is as slow as you like; this is only the ceiling.
+PAD_RIGHTING_DPS = 240.0
+
+
+class _PadInput:
+    """A physical pad, driving a station alongside the keyboard.
+
+    STICKS ARE ABSOLUTE, `gamepad.apply`'s law: left stick deflection is the
+    velocity command as a fraction of the envelope, right stick X a heading
+    RATE. The pad owns the velocity only while a stick is out of the deadzone
+    -- plus the one tick it comes back, which zeroes the command -- so the
+    keyboard's hold-to-ramp still works with a pad plugged in and idle.
+
+    BUTTONS go through the station's `on_key`, called from the loop thread.
+    """
+
+    def __init__(self, pad, keys: dict):
+        self.pad, self.keys = pad, keys
+        self._owned = False
+
+    def dispatch(self, on_key) -> None:
+        for name in self.pad.presses():
+            k = self.keys.get(name)
+            if k is not None:
+                on_key(k)
+
+    def drive(self):
+        """-> (v_frac, lat_frac) while the pad owns the velocity, else None;
+        and the heading-rate fraction (0 when centred). Bike convention: +lat
+        LEFT, +turn CCW."""
+        from .control import gamepad as gp
+        p = gp.from_state(self.pad.state())
+        fv, fl, ft = gp._dz(p.ly), gp._dz(p.lx), gp._dz(p.rx)
+        if fv or fl:
+            self._owned = True
+            return (fv, fl), ft
+        if self._owned:                 # released: one zero, then hand back
+            self._owned = False
+            return (0.0, 0.0), ft
+        return None, ft
+
+    def triggers(self) -> float:
+        """RT - LT in [-1, 1], with a small deadzone. Both pulled is their
+        DIFFERENCE: equal pulls cancel and the goal holds."""
+        s = self.pad.state()
+        d = float(s.rt) - float(s.lt)
+        return 0.0 if abs(d) < _TRIGGER_DEAD else d
+
+
+def _open_pad(keys: dict, enabled: bool = True):
+    """A `_PadInput`, or None. Never fatal: a station without a pad is the
+    keyboard station it always was."""
+    if not enabled:
+        return None
+    from .control.gamepad_usb import open_gamepad
+    pad = open_gamepad()
+    return None if pad is None else _PadInput(pad, keys)
+
+
 def _pelt_ball(model, data, params, speed=_PELT_SPEED, side=1.0, rng=None):
     """Roll the hockey ball into the side of the bike. Returns its momentum.
 
@@ -2165,7 +2251,8 @@ def _rec_write(rec, path, params, gen_name, mode):
 
 def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             v_max: float = 1.2, show_ui: bool = False, travel_deg=None,
-            swing_cfg=None, frame_stats=None) -> None:
+            swing_cfg=None, frame_stats=None, pad: bool = False,
+            pad_righting_dps: float = PAD_RIGHTING_DPS) -> None:
     """Drive the REAL bike, and watch a MuJoCo bike mirror it.
 
     Not a simulation. Nothing is stepped: each frame writes the latest
@@ -2522,6 +2609,30 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         if ramp_psi:
             turn(ramp_psi * _TURN_RATE * dt)
 
+    padin = _open_pad(MIRROR_PAD_KEYS, pad)
+    pad_rate = np.deg2rad(float(pad_righting_dps))
+
+    def pad_frame(dt):
+        """The pad, after the keyboard's ramps: buttons through `on_key`,
+        sticks as absolute commands while deflected, and the triggers as the
+        righting servo's DIRECT control -- RT - LT slews its goal at up to
+        `pad_righting_dps`, starting from where the servo IS (its encoder),
+        and stops where it is the moment they are released. The servo is in
+        current-based position mode, so `[` / `]` (LB / RB) still cap how
+        hard it pushes on the way."""
+        padin.dispatch(on_key)
+        vel, ft = padin.drive()
+        if vel is not None:
+            op.v = float(np.clip(vel[0] * v_max, -v_max, v_max))
+            v_lat[0] = float(vel[1] * 0.4 * v_max)
+        if ft:
+            turn(ft * _TURN_RATE * dt)
+        tr = padin.triggers()
+        if tr:
+            got = tel.get("righting_pos")
+            op.slew_righting(tr * pad_rate * dt,
+                             measured=None if got is None else float(got))
+
     def frame(m, d):
         wall = time.perf_counter()
         dt = min(0.1, wall - box["t_frame"]) if box["t_frame"] else 1 / 60.0
@@ -2546,6 +2657,8 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         apply_camera()
         hud(wall)
         ramps(dt)
+        if padin is not None:
+            pad_frame(dt)
         # EVERY RENDERED FRAME, capped at 100 Hz. The gate used to be 50 Hz,
         # and against 60 fps frames that meant EVERY OTHER frame -- 16.7 ms
         # is short of 20 ms -- so the bike saw 30.0 commands/s (measured from
@@ -2603,6 +2716,10 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
              "  6/7/8 snap heading +90/-90/180 · -/= zoom out/in\n"
              "  o re-centre · p pin at centre (and flatten the floor)\n"
              "  9/4 righting servo · [ ] its current · r re-arm · q quit\n"
+             + ("  PAD: left stick drive/crab · right stick turn · LB/RB snap "
+                "L/R · Back 180\n       A re-aim · Y re-arm · RT-LT slew the "
+                "righting servo · d-pad up/down its current\n"
+                if padin else "")
              + ("  wings DRAWN from the servo's measured angle — check "
                 "against the real\n  mechanism: righting_sign is still TBD "
                 "(which wing drops)\n" if swing_pose else "") +
@@ -2659,6 +2776,8 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
                     else FrameStats(frame_stats))
     finally:
         sock.close()
+        if padin is not None:
+            padin.pad.close()
         # Only when the viewer actually came up. Printing "mirror stopped" after
         # launch_passive refused (the mjpython hint) reads as though it ran and
         # buries the one line that says what to do.
@@ -2674,7 +2793,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             drivetrain_base=None,
             servo_gains=None, drivetrain_source="", frame_stats=None,
             start_lqr=False, rig=None, crab_max_override=None,
-            verbose=False, auto_up=True, plays=(), style_ungated=False):
+            verbose=False, auto_up=True, plays=(), style_ungated=False,
+            pad=False, pad_righting_dps=PAD_RIGHTING_DPS):
     from .interactive import FrameStats, teleop_loop
 
     from . import policy_menu
@@ -3277,6 +3397,27 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     def on_key(keycode):
         pending.append(keycode)
 
+    pad_rate = np.deg2rad(float(pad_righting_dps))
+
+    def pad_crank(d, delta):
+        """The triggers on the swing crank: its goal moves by `delta` [rad],
+        clamped to the stroke, and holds when they are released -- the same
+        latched target 9/4 set, so those step on from wherever this left it.
+        Takes the crank back from a policy that drives it, and from a
+        lie-down that has finished (`lying` holds the crank limp); does
+        nothing while a lie-down or get-up is still running."""
+        if sit is not None and sit.active:
+            return
+        if sit is not None and sit.phase == "lying":
+            sit_reset()                 # its Goal Current back, riding again
+        if not wing["manual"]:
+            wing["manual"] = True
+            wing["cmd"] = wing["target"] = float(d.qpos[wing["jadr"]])
+        t = float(np.clip(wing["target"] + delta, -wing["deploy"],
+                          wing["deploy"]))
+        wing["target"] = t
+        wing["pos"] = t / wing["deploy"]
+
     def zero_command(d):
         """Drop every residual command: speed intent, key state, and the
         heading command re-aimed at where the bike actually points. Runs on
@@ -3491,6 +3632,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         step, so the ramps are step-rate independent."""
         now, dt = d.time, m.opt.timestep
         keys.poll(now)
+        if padin is not None:
+            padin.dispatch(on_key)
         if keys.confirmed and not announced[0]:
             announced[0] = True     # say so the first time hold really works
             print(f"hold-to-drive active (via {keys.source})")
@@ -3559,6 +3702,19 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         if ramp_psi:
             turn(ramp_psi * _TURN_RATE * dt)
 
+        # The pad, after the keyboard: absolute sticks while deflected (see
+        # _PadInput), the right stick X a heading rate like the arrows.
+        if padin is not None:
+            vel, ft = padin.drive()
+            if vel is not None:
+                state["v"] = float(np.clip(vel[0] * v_max, -v_max, v_max))
+                state["v_lat"] = float(vel[1] * crab_max[0])
+            if ft:
+                turn(ft * _TURN_RATE * dt)
+            tr = padin.triggers()
+            if tr and wing is not None and wing.get("swing"):
+                pad_crank(d, tr * pad_rate * dt)
+
         play_step(d)
         if c.mode == "general":
             # Clamp to the envelope the loaded policy declares (yaml
@@ -3567,7 +3723,16 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             # policy the TAB menu lands on.
             trained = float(getattr(c._gen, "v_lat_frac", 0.4)) * v_max
             if crab_max_override is None:
-                crab_max[0] = trained
+                # CRAB IS ALWAYS ON, at least 0.4 v_max. Every policy since
+                # curriculum2b trained with v_lat_frac 0 -- the obs still
+                # carries the lateral command, so it is off-distribution, not
+                # unseen -- and clamping to that made 1/3 do nothing. Said
+                # once per policy instead.
+                crab_max[0] = max(trained, 0.4 * v_max)
+                if crab_max[0] > trained + 1e-9 and crab_warned[0] is not c._gen:
+                    crab_warned[0] = c._gen
+                    print(f"note: crab up to {crab_max[0]:.2f} m/s; this policy "
+                          f"trained to {trained:.2f} (off-distribution beyond)")
             elif crab_max_override > trained + 1e-9 \
                     and crab_warned[0] is not c._gen:
                 crab_warned[0] = c._gen
@@ -4020,6 +4185,13 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 wing["push_n"] = int(wing["push_s"] / m.opt.timestep)
                 print(f"SHOVE {'left' if wing['push_dir'] > 0 else 'right'} "
                       f"({wing['push_force']:.0f} N for {wing['push_s']:.2f} s)")
+            elif (wing is not None and k in (ord("9"), ord("4"))
+                  and sit is not None and (sit.active or sit.phase == "lying")):
+                # swing_sit writes the crank goal every step after this, so a
+                # 9/4 here would be overwritten without a word. Say so. (The
+                # triggers DO take a `lying` crank back -- see pad_crank.)
+                print(f"  busy ({sit.phase})" + (": the triggers take the "
+                      "crank back" if sit.phase == "lying" else ""))
             elif wing is not None and k in (ord("9"), ord("4")):
                 if not wing["manual"]:
                     wing["manual"] = True
@@ -4242,6 +4414,14 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         "\\ camera   -/= slowmo\n"
         "  (--verbose for every key and the sensor-model notes)"
         + ball_help + wing_help + ("" if routes else hold_help))
+    padin = _open_pad(TELEOP_PAD_KEYS, pad)
+    if padin is not None:
+        pad_help = ("\n  PAD: left stick drive/crab · right stick turn · LB/RB "
+                    "snap L/R · Back 180 · A re-aim\n       X lie down · B get"
+                    " up · Y reset · RT-LT righting crank · d-pad up/down its"
+                    " current · Start camera")
+        short_keys += pad_help
+        full_keys += pad_help
     teleop_loop(model, data, step, on_key,
                 full_keys if verbose else short_keys,
                 "aow_sim.run_drive",
@@ -4256,6 +4436,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     # teleop_loop returns when the operator closes the viewer, so this is the
     # natural flush point. Ctrl-C bypasses it -- accepted, since a session
     # abandoned that way is usually one you did not want kept.
+    if padin is not None:
+        padin.pad.close()
     if rec is not None:
         _rec_write(rec, record, params, gen_name[0], c.mode)
     return c      # returned so the input model can be driven headlessly

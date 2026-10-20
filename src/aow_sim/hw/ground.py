@@ -216,7 +216,13 @@ class OperatorState:
             if self.psi_actual is not None:
                 self.psi = _wrap(self.psi_actual)
         elif ch in "94" and self.travel is not None:
-            self.pos = max(-1, min(1, self.pos + (1 if ch == "9" else -1)))
+            # To the NEXT STOP of -1 / 0 / +1 that way. `pos` is fractional
+            # after a trigger slew (`slew_righting`), and +-1 from there would
+            # land between stops -- or, rounded, jump past the nearer one.
+            eps = 1e-6
+            self.pos = (math.floor(self.pos + eps) + 1 if ch == "9"
+                        else math.ceil(self.pos - eps) - 1)
+            self.pos = max(-1, min(1, self.pos))
             self.righting = self.stow + self.pos * self.travel
         elif ch in "[]":
             base = 0 if self.righting_current is None else self.righting_current
@@ -228,6 +234,19 @@ class OperatorState:
             self.rearms += 1
         elif ch in ("q", "\x03"):          # q or ctrl-C
             self.quit = True
+
+    def slew_righting(self, delta: float, measured: float | None = None) -> None:
+        """Move the righting goal by `delta` [rad of servo shaft], clamped
+        to the stroke. The first slew starts from `measured` -- the servo's
+        encoder -- when there is no goal yet, so taking control of a servo
+        that is somewhere else does not snap it to the stow angle first."""
+        if self.travel is None:
+            return
+        if self.righting is None:
+            self.righting = self.stow if measured is None else float(measured)
+        lo, hi = self.stow - self.travel, self.stow + self.travel
+        self.righting = min(hi, max(lo, self.righting + float(delta)))
+        self.pos = (self.righting - self.stow) / self.travel
 
     def packet(self) -> dict:
         """The datagram. Every field is a LEVEL -- the current state of the

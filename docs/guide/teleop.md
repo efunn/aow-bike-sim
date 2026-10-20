@@ -162,6 +162,35 @@ Teleop and the drawing scripts are two front-ends onto one mapping, `control/gam
 
 `aow_sim.record` burns a gamepad overlay into every video frame (stick gates, pen state, snap button) so a recording shows what was *commanded*, not just what happened. The live viewer does not have it, deliberately: the keyboard path has no continuous axes to display, so the gates would read as a square wave. It becomes worth porting if a real game controller feeds `gamepad.py`.
 
+## A game controller
+
+A wired Xbox One pad on USB is picked up by `--teleop` and `--mirror` automatically (`--no-pad` to ignore it). It is read over raw USB by `control/gamepad_usb.py`, because macOS has no driver for third-party wired Xbox pads: the PDP one enumerates with nothing attached, so no browser, SDL or GameController app can see it. It needs `pyusb` and `brew install libusb`. To check a pad on its own:
+
+```bash
+python -m aow_sim.control.gamepad_usb
+```
+
+The reader reports the standard layout (+x right, +y up, triggers 0..1, Xbox button names), and `gamepad.from_state` maps that onto the bike's command. A different controller only needs a backend that produces the same `PadState`.
+
+| input | teleop | mirror |
+|---|---|---|
+| left stick | velocity (forward) and crab, absolute, while deflected | same |
+| right stick X | heading rate | same |
+| LB / RB | snap heading left / right (`6` / `7`) | same |
+| Back | about-face (`8`) | same |
+| A | re-aim the heading at the bike (`/`) | same |
+| Y | reset / respawn (Backspace) | **re-arm** (`r`) |
+| X / B | lie down / get up (`swing_sit`) | — (not onboard yet) |
+| Start | camera (`\`) | — |
+| d-pad up / down | righting current + / − (`]` / `[`) | same |
+| RT − LT | **slews the righting crank's goal** | same, on the real servo |
+
+The triggers are analog: full pull is `--pad-righting-dps` (240 °/s, twice `swing_sit`'s lift rate), a light pull as slow as you like. Both pulled is their difference, so equal pulls hold. The slew starts from where the crank actually is, holds when released, and `9`/`4` then step to the next stop of left / centre / right from there. In teleop it takes the crank from a finished lie-down, and is ignored while one is running. To right the bike by hand with the policy on throughout: `--no-auto-up`, knock it over with `.`, then the triggers.
+
+Crab works by default: the clamp is the larger of the policy's own envelope and 0.4 `v_max`. Every current policy trained with `v_lat_frac` 0, so crab is off-distribution for them (it sees the command, but never trained on one), and teleop says so once.
+
+The sticks own the velocity only while one is out of the deadzone. When they're released, the command goes to zero once and the keyboard takes over again.
+
 ## Driving the real bike
 
 `run_drive --mirror HOST` drives the real bike and mirrors it in a viewer of its own. **Nothing is simulated**: there is no physics step at all, and every pose you see is telemetry coming back from the bike over UDP. What carries across is the *key map*: the same command surface as `--teleop`, on the same protocol `hw/ground.py` speaks.
