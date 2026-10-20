@@ -1114,6 +1114,12 @@ def test_the_mirror_does_not_take_the_viewer_lock_on_an_idle_frame():
             locks[0] += 1
             yield
 
+        def set_texts(self, *texts):
+            # The HUD's link line runs before telemetry now. The real
+            # Handle.set_texts hands text to the sim and takes no
+            # viewer.lock(), so it does not count here.
+            pass
+
     seen = {}
 
     def stub_loop(model, data, frame, on_key, intro, module, draw=None,

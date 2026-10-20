@@ -2314,7 +2314,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
 
     from .build_model import SWING_LINKAGE_CFG, SwingLinkageSolver
     from .hw import telemetry as T
-    from .hw.ground import OperatorState, linkage_travel_deg
+    from .hw.ground import BikeAddress, OperatorState, linkage_travel_deg
     from .interactive import FrameStats, mirror_loop
 
     data = mujoco.MjData(model)
@@ -2384,7 +2384,9 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setblocking(False)
-    dest = (host, port)
+    # Resolved off the frame loop: sendto((name, port)) resolved the name
+    # every frame, 5 s each for a .local name nobody answers (BikeAddress).
+    addr = BikeAddress(host, port)
     link = None if frame_stats is None else _LinkStats(frame_stats)
 
     tel: dict = {}
@@ -2691,7 +2693,8 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             th = (op.psi or 0.0) + course
             pkt["v_cmd_world"] = [speed * np.cos(th), speed * np.sin(th)]
             try:
-                sock.sendto(T.encode_command(pkt), dest)
+                if addr.dest is not None:
+                    sock.sendto(T.encode_command(pkt), addr.dest)
             except OSError:
                 pass
         if op.quit:
@@ -2704,10 +2707,16 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         nothing a human reads at 60 Hz. Hardware errors reach the terminal
         through the bike's own log (see `drain`), not from here."""
         v = view[0]
-        if v is None or not tel or wall - box["t_hud"] < 0.25:
+        if v is None or wall - box["t_hud"] < 0.25:
             return
         box["t_hud"] = wall
-        text = T.status_text(tel)
+        # Before telemetry, and once it stops: a link line that moves and
+        # the command being sent, so the window visibly takes input.
+        lk = T.link_text(host, addr.dest,
+                         wall - box["t_tel"] if box["seen"] else None, wall,
+                         (op.v, v_lat[0], op.psi))
+        st = T.status_text(tel) if tel else ("", "")
+        text = tuple("\n".join(x for x in pair if x) for pair in zip(lk, st))
         if text != box["hud"]:
             box["hud"] = text
             v.set_texts((mujoco.mjtFontScale.mjFONTSCALE_100,
@@ -2791,6 +2800,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
                     else FrameStats(frame_stats))
     finally:
         sock.close()
+        addr.close()
         if padin is not None:
             padin.pad.close()
         # Only when the viewer actually came up. Printing "mirror stopped" after

@@ -83,6 +83,7 @@ import math
 import os
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -105,6 +106,64 @@ STOW_RAD = math.radians(180.0)
 # degrees. LINKAGE_CONFIG stays for `--travel-deg`-less runs of an older bike.
 LINKAGE_CONFIG = (Path(__file__).resolve().parents[3] / "config"
                   / "swing_linkage_smaller.yaml")
+
+
+class BikeAddress:
+    """The bike's address, resolved OFF the station's loop.
+
+    `sock.sendto(pkt, (host, port))` resolves `host` on every call, and
+    blocks while it does. For an mDNS name nobody answers (`aowbike.local`
+    with the Pi off) that is 5.0 s a send (measured, macOS, 2026-10-19), and
+    the gaierror after it is an OSError the stations swallowed: the mirror
+    drew one frame every 5 s and its overlay never appeared. Mid-session it
+    is the same freeze whenever the name's cache lapses, and a station that
+    stops sending is a heartbeat the bike reads as lost.
+
+    So a daemon thread resolves the name -- every `retry_s` until it
+    answers, then every `refresh_s` to follow a new DHCP lease -- and the
+    loop only ever reads `dest`: (ip, port), or None while unknown. A
+    numeric host is resolved at once, on the caller's thread."""
+
+    def __init__(self, host: str, port: int, retry_s: float = 2.0,
+                 refresh_s: float = 30.0, verbose: bool = True):
+        self.host, self.port = host, port
+        self.retry_s, self.refresh_s, self.verbose = retry_s, refresh_s, verbose
+        self.dest: tuple[str, int] | None = None
+        try:
+            socket.inet_aton(host)
+            self.dest = (host, port)
+            return
+        except OSError:
+            pass
+        self._stop = threading.Event()
+        threading.Thread(target=self._run, daemon=True,
+                         name=f"resolve {host}").start()
+
+    def _resolve(self) -> str:
+        return socket.getaddrinfo(self.host, self.port, socket.AF_INET,
+                                  socket.SOCK_DGRAM)[0][4][0]
+
+    def _run(self) -> None:
+        said = False
+        while not self._stop.is_set():
+            try:
+                ip = self._resolve()
+            except OSError as e:
+                if self.verbose and not said:
+                    print(f"\n  {self.host}: not resolving yet ({e}); "
+                          f"retrying every {self.retry_s:g} s")
+                    said = True
+                self._stop.wait(self.retry_s if self.dest is None
+                                else self.refresh_s)
+                continue
+            if self.verbose and (self.dest is None or self.dest[0] != ip):
+                print(f"\n  {self.host} -> {ip}")
+            self.dest = (ip, self.port)
+            self._stop.wait(self.refresh_s)
+
+    def close(self) -> None:
+        if hasattr(self, "_stop"):
+            self._stop.set()
 
 
 class OperatorState:
@@ -372,7 +431,7 @@ def run(host: str, port: int = 9910, v_max: float = 1.2,
              else "NO TRAVEL — 9/4 inert, pass --travel-deg"))
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setblocking(False)
-    dest = (host, port)
+    addr = BikeAddress(host, port)
     telemetry, t_tel = {}, 0.0
     pending = ""
     checked = False
@@ -413,13 +472,15 @@ def run(host: str, port: int = 9910, v_max: float = 1.2,
             if now >= next_tx:
                 next_tx = now + 1.0 / SEND_HZ
                 try:
-                    sock.sendto(encode_command(op.packet()), dest)
+                    if addr.dest is not None:
+                        sock.sendto(encode_command(op.packet()), addr.dest)
                 except OSError as e:
                     print(f"\nsend failed: {e}")
                     break
                 print("\r" + _status(op, telemetry, now - t_tel)[:150].ljust(150),
                       end="", flush=True)
     finally:
+        addr.close()
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         print("\nstation stopped — the bike will torque off in ~1 s")
 

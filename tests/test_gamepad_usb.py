@@ -133,3 +133,53 @@ def test_9_and_4_go_to_the_next_stop_after_a_slew():
     assert op.pos == 1                            # clamped
     op.key("4"), op.key("4"), op.key("4")
     assert op.pos == -1
+
+
+def test_bike_address_never_blocks_the_station_loop(monkeypatch):
+    """`aowbike.local` with the Pi off took 5 s to fail on every sendto, so
+    the mirror drew a frame every 5 s. The name now resolves on a thread:
+    the loop reads `dest`, None until it is known, and never waits."""
+    import time
+
+    from aow_sim.hw.ground import BikeAddress
+
+    assert BikeAddress("127.0.0.1", 9910).dest == ("127.0.0.1", 9910)
+
+    calls = []
+
+    def slow(self):
+        calls.append(1)
+        time.sleep(0.3)
+        if len(calls) == 1:
+            raise OSError("nodename nor servname provided")
+        return "10.0.0.7"
+    monkeypatch.setattr(BikeAddress, "_resolve", slow)
+    t0 = time.perf_counter()
+    a = BikeAddress("aowbike.local", 9910, retry_s=0.05, verbose=False)
+    assert a.dest is None and time.perf_counter() - t0 < 0.05
+    deadline = time.perf_counter() + 3.0
+    while a.dest is None and time.perf_counter() < deadline:
+        time.sleep(0.01)
+    a.close()
+    assert a.dest == ("10.0.0.7", 9910) and len(calls) >= 2
+
+
+def test_link_text_says_what_the_station_is_waiting_for():
+    """No telemetry yet: the mirror said nothing and looked frozen. The
+    link rows now move (2 Hz dots) and echo the command being sent; they
+    vanish while telemetry is fresh and come back, as LOST, when it stops."""
+    import math
+
+    from aow_sim.hw.telemetry import LINK_STALE_S, link_text
+
+    k, v = link_text("aowbike.local", None, None, 0.0)
+    assert k == "link\nsending" and v.startswith("resolving aowbike.local.")
+    _, v2 = link_text("aowbike.local", None, None, 0.5)
+    assert v2.split("\n")[0] != v.split("\n")[0]          # the dots move
+    _, v = link_text("aowbike.local", ("10.0.0.7", 9910), None, 0.0,
+                     (0.25, -0.1, math.radians(30)))
+    assert "waiting for aowbike.local (10.0.0.7)" in v
+    assert "v +0.25" in v and "crab -0.10" in v and "+30 deg" in v
+    assert link_text("h", ("1.2.3.4", 1), 0.1, 0.0) == ("", "")
+    assert "LOST 3 s ago" in link_text("h", ("1.2.3.4", 1),
+                                       LINK_STALE_S + 2.0, 0.0)[1]

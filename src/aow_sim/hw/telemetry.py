@@ -66,6 +66,8 @@ of those is a DRAWING, not a reading:
 
 from __future__ import annotations
 
+import math
+
 # Bump when a field changes MEANING or disappears. Adding a field does not
 # need a bump -- `apply_pose` tolerates absence so a newer bike can talk to an
 # older station -- but a station reading a renamed field silently gets zero,
@@ -261,6 +263,38 @@ def servo_errors(tel: dict) -> dict:
     return {role: describe_hardware_error(int(row.get("err", 0)))
             for role, row in (tel.get("servos") or {}).items()
             if row.get("err")}
+
+
+# Telemetry older than this reads as a lost link. run_bike sends at its
+# control rate, so this is many missed packets, not one.
+LINK_STALE_S = 1.0
+
+
+def link_text(host: str, dest, age_s: float | None, wall_s: float,
+              cmd: tuple[float, float, float | None] = (0.0, 0.0, None)
+              ) -> tuple[str, str]:
+    """The station's link rows, for before telemetry and after it stops:
+    ("", "") while it is fresh. Animated (the dots step at 2 Hz) and with
+    the operator's own command echoed, so a station with no bike still
+    visibly takes input.
+
+    `dest` is the resolved (ip, port) or None (ground.BikeAddress), `age_s`
+    the seconds since the last telemetry or None for never, `cmd` the
+    command being sent: (v [m/s], v_lat [m/s], heading [rad] or None)."""
+    if age_s is not None and age_s <= LINK_STALE_S:
+        return "", ""
+    # padded to three, so nothing after the dots ever shifts as they step
+    dots = ("." * (1 + int(wall_s * 2) % 3)).ljust(3)
+    if age_s is None and dest is None:
+        link = f"resolving {host}{dots}"
+    elif age_s is None:
+        link = f"waiting for {host} ({dest[0]}){dots}"
+    else:
+        link = f"LOST {age_s:.0f} s ago, last pose held{dots}"
+    v, lat, psi = cmd
+    you = (f"v {v:+.2f}   crab {lat:+.2f} m/s   heading "
+           + ("-" if psi is None else f"{math.degrees(psi):+.0f} deg"))
+    return "link\nsending", f"{link}\n{you}"
 
 
 def status_text(tel: dict) -> tuple[str, str]:
