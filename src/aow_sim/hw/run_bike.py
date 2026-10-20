@@ -60,7 +60,7 @@ from ..control.drive import DriveController
 from ..control.recovery import HANDOFF_RATE, RECOVER_DEG, ready_for_policy
 from . import telemetry
 from .bench_log import RunRecorder, new_capture_dir
-from .ahrs import (QOS_MIN_SERVICE, QOS_NAMES, QOS_UNKNOWN,
+from .ahrs import (QOS_LIMITED, QOS_MIN_SERVICE, QOS_NAMES, QOS_UNKNOWN,
                    AhrsReader, MountCalibration)
 from .bike_bus import CONTROL_HZ_DEFAULT, BikeBus, resolve_gains
 from .odometry import VelocityEstimator, body_to_world
@@ -758,13 +758,24 @@ class BikeRunner:
                 "AHRS frames carry no QoS — the sample came from a path that "
                 "does not decode Ep_Combo's sysState. Check the parser, not "
                 "the sensor."))
+        elif qos == QOS_LIMITED:
+            # A WARNING, not a fault (user, 2026-10-20): it is the TM151
+            # still settling after power-up. Measured on the bench Pi after a
+            # reboot: first sample at 14.4 s of uptime already at 2, 3 at
+            # 16.8 s, 4 at 33.9 s -- so `bench` started the moment the Pi
+            # answers lands in it, and failing there only made the operator
+            # retype the command. Lower grades (booting, fault) still block.
+            problems.append((AHRS_QOS_LIMITED,
+                f"AHRS reports QoS {qos} ({QOS_NAMES[QOS_LIMITED]}), below "
+                f"{QOS_MIN_SERVICE} ({QOS_NAMES[QOS_MIN_SERVICE]}): normally "
+                "the sensor settling after power-up (on the bench it reached 3 "
+                "~2.5 s after its first sample). Keep the bike still; "
+                "telemetry's qos shows it rise."))
         elif qos < QOS_MIN_SERVICE:
             problems.append((None,
                 f"AHRS reports QoS {qos} ({QOS_NAMES.get(qos, '?')}); the bike "
                 f"needs at least {QOS_MIN_SERVICE} "
-                f"({QOS_NAMES[QOS_MIN_SERVICE]}). Low grades right after "
-                "power-on usually clear on their own — wait ~30 s for the "
-                "gyro calibration and preflight again."))
+                f"({QOS_NAMES[QOS_MIN_SERVICE]})."))
         if abs(a - GRAVITY) > PREFLIGHT_ACCEL_TOL * GRAVITY:
             problems.append((None,
                 f"|accel| is {a:.2f} m/s^2, expected ~{GRAVITY:.2f} "
@@ -776,7 +787,8 @@ class BikeRunner:
                 "or the bike is moving"))
         print(f"preflight: |accel| {a:.2f} m/s^2, |gyro| max {np.degrees(g):.2f} deg/s, "
               f"qos {qos} ({QOS_NAMES.get(qos, '?')}), mount '{self.mount_source}'")
-        return _report_preflight(problems, strict, self._preflight_allow)
+        return _report_preflight(problems, strict,
+                                 (*self._preflight_allow, AHRS_QOS_LIMITED))
 
     def _ahrs_diagnosis(self) -> str:
         """Why is there no attitude? The three cases have different fixes.
@@ -1396,6 +1408,8 @@ def _rpy(quat) -> tuple[float, float, float]:
 # true on every run until a separate piece of work clears it. Tagged rather
 # than worded specially, so an escape hatch can be aimed at exactly this one.
 MOUNT_UNCALIBRATED = "ahrs-mount-uncalibrated"
+# QoS 2 right after power-up: always a warning (preflight_ahrs).
+AHRS_QOS_LIMITED = "ahrs-qos-limited"
 
 
 def _report_preflight(problems, strict: bool, allow=()) -> list[str]:

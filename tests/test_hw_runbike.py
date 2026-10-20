@@ -453,6 +453,32 @@ def test_the_error_names_the_narrow_flag_only_when_it_would_work():
         _report_preflight([(MOUNT_UNCALIBRATED, "m"), (None, "gyro")], True)
 
 
+def test_ahrs_qos_2_warns_and_lower_still_blocks(capsys):
+    """QoS 2 is the TM151 settling after power-up (3 within ~2.5 s of its
+    first sample, measured on the bench), and `bench` started the moment the
+    Pi answers lands in it. It warns; booting (0) and fault (1) block."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from aow_sim.hw.ahrs import AhrsSample
+    from aow_sim.hw.run_bike import BikeRunner
+
+    def runner(qos):
+        s = AhrsSample(np.array([1.0, 0, 0, 0]), np.zeros(3),
+                       np.array([0, 0, 9.81]), 0.0, qos)
+        return SimpleNamespace(mount_source="measured", _preflight_allow=(),
+                               ahrs=SimpleNamespace(latest=lambda: s),
+                               _ahrs_diagnosis=lambda: "")
+
+    BikeRunner.preflight_ahrs(runner(2), seconds=0.03)
+    assert "PREFLIGHT WARNING (accepted): AHRS reports QoS 2" in capsys.readouterr().out
+    for qos in (0, 1):
+        with pytest.raises(RuntimeError, match="1 preflight problem"):
+            BikeRunner.preflight_ahrs(runner(qos), seconds=0.03)
+    BikeRunner.preflight_ahrs(runner(3), seconds=0.03)       # silent pass
+
+
 def test_non_strict_preflight_reports_without_raising():
     from aow_sim.hw.run_bike import _report_preflight
     got = _report_preflight([(None, "gyro running away")], False)
