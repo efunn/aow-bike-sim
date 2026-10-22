@@ -15,9 +15,9 @@ Four Dynamixel servos, one AHRS, one single-board computer, one battery. No cust
 `config/bike_params.yaml` holds every physical measurement with its provenance marked `measured`, `tooth-count`, `datasheet`, `design` or `GUESS`, and it is the **single source** for both the MuJoCo model and the CAD. The drawn bike is not a separate model that has to be kept in step; it is generated:
 
 ```sh
-python -m aow_sim.cad_layout --format featurescript --push --shot
-python -m aow_sim.cad_servo_mount
-python -m aow_sim.cad_swing_linkage
+python -m aow_sim.cad.layout --format featurescript --push --shot
+python -m aow_sim.cad.servo_mount
+python -m aow_sim.cad.swing_linkage
 ```
 
 Those emit **FeatureScript** — Onshape's scripting language — write it straight into a Feature Studio, and render the result. So a dimension cannot silently diverge between the thing being simulated and the thing being physically built: change the parameter, regenerate, and both move together.

@@ -1,6 +1,6 @@
 # The rear drive module's CAD numbers: mock rear wheel, the spline+pulley and
 # drive pulley pairs, the drive case sides, the chainstays and a mock fixture.
-# Read by aow_sim.cad_drive only -- never by the simulator. Metres (keys ending
+# Read by aow_sim.cad.drive only -- never by the simulator. Metres (keys ending
 # _deg or _n are not scaled). Spec: docs/plans/drive-design.md.
 #
 # MODULE FRAME: origin on the rear axle's centre, +Y ALONG THE MEAN BELT
@@ -208,7 +208,7 @@ fixture:
   # OFF in the module (2026-10-11, user: "for now, drop the fixture mock and
   # the extensions to the case sides that meet with it"): the case sides end
   # at the skirt's front wall. `AOW drive`'s "Fixture mock" box puts it back;
-  # the v1 whole bike (cad_bike) builds it always, since its chassis grows
+  # the v1 whole bike (cad.bike) builds it always, since its chassis grows
   # from the block.
   # 2 x 6-32 a side into a mock block between the case sides' tabs, the
   # locator a ridge along Y (the shared screw joint). The heads sit out of the
@@ -232,7 +232,7 @@ rail:
   # AHRS (user), which hangs on tabs off the case sides (ahrs: below).
   #
   # IN THE BIKE FRAME, metres: (y, z) in the side view, origin on the rear
-  # axle (the module turns them by the drive's 45 deg). cad_bike_v2 refuses a
+  # axle (the module turns them by the drive's 45 deg). cad.bike_v2 refuses a
   # joint here that is not where the steering's / righting's own joint is.
   #   outline   the left rail's side view (the right rail is its mirror):
   #             in from the case side's lower-front corner (two points 1
@@ -263,7 +263,7 @@ rail:
   #   ring's bar below the tongue (cage_band_y) and above it (cage_post_top).
   inner_x: {value: 0.016, source: design (= case_half 17 - 1.0; plate = joint_plate 4.6)}
   # the outline in two runs, the front cage tongue drawn between them (code:
-  # cad_drive.rail_layout): along the bottom to the steering's pad, then
+  # cad.drive.rail_layout): along the bottom to the steering's pad, then
   # back along the top from it
   outline_bottom:
     value: [[0.082555, 0.041896], [0.0860, 0.0386], [0.1500, 0.0386], [0.155544, 0.056318], [0.166351, 0.060251]]
@@ -272,7 +272,7 @@ rail:
     value: [[0.162058, 0.072044], [0.1500, 0.0716], [0.10511, 0.06304], [0.104404, 0.063746]]
     source: design
   # The steering's frame, to draw the front post in and mirror the rear one
-  # by (cad_bike_v2 refuses it if it is not the bike's): the front axle (y,
+  # by (cad.bike_v2 refuses it if it is not the bike's): the front axle (y,
   # z, bike) and the rake. The rear axle is the origin.
   steer_axle: {value: [0.2005, 0.00005], source: design (= the bike's wheelbase, front axle height)}
   steer_rake_deg: {value: 20.0, source: design (= bike.rake_deg; 15 until 2026-10-19)}
@@ -283,7 +283,7 @@ rail:
   # The joints: (y, z) of the head on the rail's outer face, the ridge's
   # direction in the side view (deg up from +Y) and half-length. The ridge
   # is on the OTHER part (steering pad, bridge lug); the rail has the groove.
-  steer_joint: {value: [0.174660, 0.071044], source: design (= cad_steering v2 side joint, in the bike)}
+  steer_joint: {value: [0.174660, 0.071044], source: design (= cad.steering v2 side joint, in the bike)}
   # Both joints' grooves run ALONG THE WAY THE MODULE SLIDES OUT and open
   # through the rail's lower edge (user, 2026-10-16: the steering and the
   # righting come out of the rails downward, the rails staying on the
@@ -293,19 +293,19 @@ rail:
   steer_ridge_deg: {value: 110.0, source: design (up the steering axis, raked 20)}
   steer_ridge_half: {value: 0.0035, source: design (= steering v2.side_ridge_above)}
   steer_groove_open: {value: 0.0098, source: design (2.5 past the rail's edge at module z 68.25, its 45 deg end taper outside the rail)}
-  bridge_joint: {value: [0.1205, 0.0435755], source: design (= cad_righting rail joint, in the bike)}
+  bridge_joint: {value: [0.1205, 0.0435755], source: design (= cad.righting rail joint, in the bike)}
   bridge_ridge_deg: {value: 90.0, source: design (user; slides in from below)}
   bridge_ridge_half: {value: 0.003, source: design (= righting rail.ridge_half)}
   bridge_groove_open: {value: 0.007476, source: design (2.5 past the rail's edge at bike z 38.6, its taper outside)}
   # THE POWER HOLDER'S JOINTS, both on the LEFT rail only (user, 2026-10-16
   # night: the attachments "should only be on LHS case (the features are
-  # mirrored to RHS unnecessarily)"): cad_drive adds the ears and cuts the
+  # mirrored to RHS unnecessarily)"): cad.drive adds the ears and cuts the
   # joints after the mirror. The holder SLIDES IN FROM THE BACK + TOP, which
   # is the drive's -Z (user: "rather than straight up and down, so it can be
   # removed independently from the pi+u2d2 carrier"): each groove is closed
   # toward drive -Z below the head and open along +Z (ridge_deg 315 in the
   # bike), and the holder's bottom comes to rest on the case side's top
-  # edge. cad_bike_v2 refuses them off the holder's (bike_v2_cad.yaml
+  # edge. cad.bike_v2 refuses them off the holder's (bike_v2_cad.yaml
   # power.joints).
   # AFT: a BACK EAR in the corner the rear arm makes with the case side's
   # top edge, mostly inside the arm (user: the "rear ear can move further
@@ -341,7 +341,7 @@ rail:
   # face, the nut in the carrier's lug inboard of the rail. The carrier
   # LIFTS OUT STRAIGHT UP IN THE BIKE (the drive's +Y+Z: off the face and up
   # it, away from the AHRS and the holder alike), so each groove is closed
-  # toward the bike's down (ridge_deg 270) and open upward. cad_bike_v2
+  # toward the bike's down (ridge_deg 270) and open upward. cad.bike_v2
   # refuses them off the carrier's (bike_v2_cad.yaml pi_carrier.joints).
   # TOP, LEFT only: on the front ear's run forward, drive (141, 27); the
   # groove out through the ear's top-front corner.
@@ -366,7 +366,7 @@ rail:
   # (3 past the battery's side, |x| 11: user, "can go an extra mm"); and a
   # SIDE LEG (user: "a similar hint so the battery is also constrained
   # laterally a bit"): from the lip forward along the battery's side, its
-  # face at |x| side_x (0.3 off it), leg long past the lip. cad_bike_v2
+  # face at |x| side_x (0.3 off it), leg long past the lip. cad.bike_v2
   # refuses it off the battery (bike_v2_cad.yaml components.battery).
   # y1, thick, z0, z1, x_in, side_x, leg
   # SINCE 2026-10-19 the rear arm no longer reaches the battery's rear face
@@ -417,7 +417,7 @@ print:
   min_wall: {value: 0.001, source: design (user; two perimeters)}
 
 joint:
-  # The shared 6-32 joint (cad_ahrs_fixture's screwJoint), as the steering's.
+  # The shared 6-32 joint (cad.ahrs_fixture's screwJoint), as the steering's.
   joint_plate: {value: 0.0046, source: design (as-built)}
   ridge_height: {value: 0.0012, source: design}
   ridge_flat: {value: 0.0046, source: design}

@@ -6,7 +6,7 @@
 > happened since (servo mounts, the swing linkage, a Feature Studio tab); that
 > work is recorded in `docs/status.md`, not here.
 
-How `aow_sim.cad_layout` gets the simulator's geometry into a drawn bike, what
+How `aow_sim.cad.layout` gets the simulator's geometry into a drawn bike, what
 the platform will and will not let us do, and the things that cost a day to
 find out. Started 2026-08-18; this section of the record covers up to
 2026-08-19.
@@ -146,7 +146,7 @@ that, at the cost of a version per regeneration. Not done; noted.
 
 ## Getting the script into Onshape
 
-Copy-paste, or `--push`. Wired 2026-08-21 as `aow_sim.onshape`, two calls wide:
+Copy-paste, or `--push`. Wired 2026-08-21 as `aow_sim.cad.onshape`, two calls wide:
 
 ```
 POST /api/featurestudios/d/{did}/w/{wid}/e/{eid}   {"contents": "<the .fs text>"}
@@ -179,7 +179,7 @@ from recoverable into not.
 a nonexistent document id whether or not you are authenticated, and 403 to a
 real one identically for bogus credentials and for no `Authorization` header at
 all. So no probe of an absent document distinguishes a good key from a bad one,
-and `python -m aow_sim.onshape <url>` reads a document you own instead — one
+and `python -m aow_sim.cad.onshape <url>` reads a document you own instead — one
 call on success, zero on failure, because 4xx is not billable. It proves read
 scope only; the first push is the only test of write. `sourceMicroversion` + `rejectMicroversionSkew`
 are optional concurrency guards — for a generated file that is never
@@ -192,7 +192,7 @@ fine. A watcher that syncs on save, or anything that walks the feature tree
 through `getPartStudioFeatures`, is how you burn a year's allowance in a week.
 Onshape shows a total and never a breakdown, so every call is appended to
 `~/.local/state/aow/onshape_calls.jsonl` with what it did, billable or not
-(`python -m aow_sim.onshape --log`). It lives outside the repo because it is
+(`python -m aow_sim.cad.onshape --log`). It lives outside the repo because it is
 per-machine state, and it is advisory — check it against the usage page rather
 than trusting it.
 
@@ -236,7 +236,7 @@ script; the single-feature `.../features/featureid/{id}` refused every form
 with `Feature does not match` (free 400s). A studio in ANOTHER document is
 referenced by version, which this test says nothing about.
 
-`cad_ahrs_fixture --check` builds all three TM151 mounts in one eval since the
+`cad.ahrs_fixture --check` builds all three TM151 mounts in one eval since the
 same day (build, report, delete, next), and `lint_fs` refuses reserved-word
 names and out-of-range dialog defaults before anything is sent. Classified
 call by call, the session that built the fixture spent 97 calls, about 45 of
@@ -246,14 +246,14 @@ them on what these now avoid; CLAUDE.md carries the table.
 
 **The layout.** Each module (`aow-bike-drive`, `-steering`, `-righting`)
 has its own generator, Feature Studio and Part Studio. The whole bike
-(`aow-bike-whole`, `aow_sim.cad_bike`) merges the modules' geometry layers
+(`aow-bike-whole`, `aow_sim.cad.bike`) merges the modules' geometry layers
 and rebuilds them from the same local config and code. It does NOT read the
 module tabs in Onshape. So:
 
 - Work on a module alone, as long as it takes:
   `cad_<module> --check --push <module>_features`. `-whole` does not move.
 - Pull settled modules into the bike when you choose:
-  `cad_bike --check --push bike_features --shot` (1 check, 1 push, 1
+  `cad.bike --check --push bike_features --shot` (1 check, 1 push, 1
   render). Nothing pushes `-whole` automatically, on purpose: an all-at-once
   push per edit costs calls for every module and grows with the machine.
 - **What reaches `-whole` is generated geometry only.** Hand features in a
@@ -269,7 +269,7 @@ module tabs in Onshape. So:
 2. **Model the real finishing by hand** after the generated feature:
    chamfers, fillets, sketch + extrude cuts or pads. Edit only ONE side of
    an L/R pair if that is quicker; the generator applies it to both.
-3. **Read it back:** `python -m aow_sim.cad_hand_edits <tab>`, TWO calls
+3. **Read it back:** `python -m aow_sim.cad.hand_edits <tab>`, TWO calls
    whatever the tree's size. It writes
    `traces/hand_edits/<tab>_hand_edits.txt`. Each hand feature comes back
    with:
@@ -301,17 +301,17 @@ module tabs in Onshape. So:
 7. **Roll into `-whole`** when the module is settled (step "Pull" above).
 
 Hand edits made directly in `-whole` (the last-step option) pick edges of
-generated geometry. A later `cad_bike --push` that changes a part's shape
+generated geometry. A later `cad.bike --push` that changes a part's shape
 can orphan them, exactly as in a module tab. So that is a true final step;
 anything that should survive another design round goes through the module.
 
 **v2 (2026-10-16): fold hand edits from the whole bike too.** The user
 prefers to model the finishing in `bike_v2`, where everything is seen
-fitting together. The readback is the same (`cad_hand_edits bike_v2`, two
+fitting together. The readback is the same (`cad.hand_edits bike_v2`, two
 calls). Its face boxes come back in the BIKE frame, so each is turned into
 its module's frame (the drive's 45 deg tilt, the steering's origin and
 rake, the righting's offset) and encoded in that module's generator. The
-carriers (`cad_power`, `cad_pi_carrier`) live only in `bike_v2` and take
+carriers (`cad.power`, `cad.pi_carrier`) live only in `bike_v2` and take
 theirs directly. Then the hand features are deleted from `bike_v2`, and
 each module studio gets the edit on its next push. Not yet tried on
 `bike_v2`. An edit that spans two modules has no one generator to go in:
@@ -417,7 +417,7 @@ frame's inertia primitives, which are not parts at all.
 `polyPrism` (or `screwJointGeometry`'s slot) on a plane whose normal is the
 drive frame's 45 deg is `EXTRUDE_FAILED`, and the eval still bills. Draw it
 along an axis (the drive's +Y), then `opTransform` it about X onto the real
-direction; `cad_drive` now does that for every cage cutter.
+direction; `cad.drive` now does that for every cage cutter.
 
 **`opRevolve`'s `angleBack` is where the revolve STARTS, not a second
 extent.** Both angles are normalised to 0..360 and measured the same way, so
@@ -565,7 +565,7 @@ drive Onshape; this is what has been drawn with it.
 
 ### CAD — the bike stops being parametric
 
-Started 2026-08-18. Drawn in Onshape; `python -m aow_sim.cad_layout` exports the
+Started 2026-08-18. Drawn in Onshape; `python -m aow_sim.cad.layout` exports the
 component layout from the parameters, as YAML for reading and as a FeatureScript
 Feature Studio for Onshape. Both are **exports** — generated, never edited, with
 the regeneration command in the header.
@@ -670,13 +670,13 @@ workstream and it arrived immediately:
   out. **Not adopted, and nothing is changed by it.** Smaller pulleys at the
   same ratio, closer together, is the free lunch and the thing to check first;
   the cases are translated rather than re-solved, so any shortlist entry wants
-  re-deriving through `cad_layout` before it is believed.
+  re-deriving through `cad.layout` before it is believed.
 
 - **The Feature Studio pushes over the API now.** `--push` and `--shot` on
-  `aow_sim.cad_layout`, one billable call each, with the document and tab ids
+  `aow_sim.cad.layout`, one billable call each, with the document and tab ids
   in `config/onshape.yaml` and API keys in the macOS Keychain — never in this
   checkout, which is Dropbox-synced, where gitignored is not un-synced. Every
-  call is logged with what it did (`python -m aow_sim.onshape --log`). The
+  call is logged with what it did (`python -m aow_sim.cad.onshape --log`). The
   annual quota is 2500 and the cycle is anchored to **13 Oct**, not January and
   not the "Tracking start date" the usage page shows — that field disagreed
   with the same page's own elapsed-day count. Copy-paste still works and is
@@ -690,7 +690,7 @@ workstream and it arrived immediately:
   ground rules are in `CLAUDE.md`, "Onshape — the CAD round trip".
 
 - **Generated FeatureScript is checked before it is pushed, as of 2026-08-24.**
-  `--check` on `aow_sim.cad_layout` compiles AND RUNS the export against a
+  `--check` on `aow_sim.cad.layout` compiles AND RUNS the export against a
   throwaway copy of a Part Studio's context and refuses to push if it does not
   build. One billable call. This closes a real hole: a push *cannot* fail on
   bad FeatureScript, because the contents endpoint takes any text at all, so a
@@ -712,7 +712,7 @@ workstream and it arrived immediately:
   confirmed by building a body, counting it, and counting 0 again on the next
   call.
 
-  The awkward part is `_eval_wrapper` in `cad_layout.py`, which has to bring
+  The awkward part is `_eval_wrapper` in `cad/layout.py`, which has to bring
   every top-level declaration inside one function expression — `export const`
   passes through, `export function` becomes a `const f = function(...)`, and
   the one `export predicate` is dropped as precondition-only — and must
@@ -733,7 +733,7 @@ answers before the user caught them from the CAD:
   the battery's headroom by 36 mm.
 
 **Outstanding.** `bike_params_cad.yaml` still has the drive servos at their old
-`[45, 30, 75]` — `cad_layout` derives the real position every run and prints it
+`[45, 30, 75]` — `cad.layout` derives the real position every run and prints it
 but does not write it back, so a MuJoCo model built from that file is not yet
 the layout the CAD shows. Electronics packing is deferred until the tethered
 version's wire routing is understood.
@@ -742,9 +742,9 @@ version's wire routing is understood.
 
 ### Servo mounts — two custom features, screwless (2026-08-25)
 
-`aow_sim.cad_servo_mount` generates two Onshape custom features into their own
+`aow_sim.cad.servo_mount` generates two Onshape custom features into their own
 Feature Studio (`horn_features` in `config/onshape.yaml`), separate from the
-`cad_layout` studio because that one is overwritten wholesale on every push.
+`cad.layout` studio because that one is overwritten wholesale on every push.
 
 | feature | what it makes |
 |---|---|

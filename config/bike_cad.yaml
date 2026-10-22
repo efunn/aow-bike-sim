@@ -1,6 +1,6 @@
 # The whole bike in one Part Studio (`aow-bike` in Onshape): the three
 # modules placed, and the parts that tie them together. Read by
-# aow_sim.cad_bike. Millimetres, BIKE FRAME: origin on the rear axle, +Y
+# aow_sim.cad.bike. Millimetres, BIKE FRAME: origin on the rear axle, +Y
 # forward, +X right, +Z up (the floor at -51.2).
 #
 # CAD ONLY. Nothing here reaches the simulator: bike_params.yaml keeps its
@@ -10,7 +10,7 @@
 
 placement:
   # 250 (2026-09-30, second layout), was 300. With knuckle R behind knuckle
-  # L, the narrow bridge and the central upper-case joint, `cad_bike --fit 2`
+  # L, the narrow bridge and the central upper-case joint, `cad.bike --fit 2`
   # (traces/bike_cad/fit2_righting.txt) puts the righting's rod >= 157.5
   # ahead of the rear axle (it tucks under the drive's case sides) and the
   # front axle >= 85 ahead of the rod (2.5 mm grid, zero margin). Was 190 and
@@ -50,10 +50,10 @@ placement:
   rear_clear: {value: 0.5, source: design (user)}    # to the drive, at rest and every pose
   front_clear: {value: 5.0, source: design (user)}   # less the wings, to the straight front wheel
   # What the placement and electronics.edge were probed against: a hash of
-  # the righting module's parts and poses (`cad_bike.righting_digest`). The
+  # the righting module's parts and poses (`cad.bike.righting_digest`). The
   # bike always rebuilds the righting from its generator, so a linkage change
-  # comes in on its own; cad_bike says when these numbers predate it.
-  righting_digest: {value: 3f1a260e969b, source: design (cad_bike --fit righting / --check, 2026-10-07 late: wings +-41, at 120.5)}
+  # comes in on its own; cad.bike says when these numbers predate it.
+  righting_digest: {value: 3f1a260e969b, source: design (cad.bike --fit righting / --check, 2026-10-07 late: wings +-41, at 120.5)}
 
 chassis:
   # The deck: the righting's chassis-plate placeholder (its joints already
@@ -121,7 +121,7 @@ electronics:
   # Off for now (user, 2026-10-05): the U2D2, AHRS, power board, switch and
   # the two USB cables "need to go back in later". false: the carrier is one
   # plate the Pi's size (narrow_half, board + 2 x pi.margin), slid down and
-  # in by `cad_bike --fit e`. The numbers below are kept for their return.
+  # in by `cad.bike --fit e`. The numbers below are kept for their return.
   underside: {value: false, source: design (user)}
   # -58 (2026-10-05), was -33: `--fit e` slid the Pi's plate 0..-25 down the
   # face at gap 8..14 and found nothing in the way, at rest, steered and

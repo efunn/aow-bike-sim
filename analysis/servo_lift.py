@@ -1,7 +1,7 @@
 """Loaded lever: the Goal Current at which an XC330 lifts a known torque, and
 the one below which it lets it fall.
 
-The X330 fixture (`aow_sim.cad_x330_fixture`, IDLER) puts a two-armed lever
+The X330 fixture (`aow_sim.cad.x330_fixture`, IDLER) puts a two-armed lever
 on the horn, shaft horizontal, with a mass slot in each arm. A mass m at r
 from the shaft is a gravity torque m g r cos(angle) on the output, KNOWN
 without any current law. So this asks the question the breakaway sweep

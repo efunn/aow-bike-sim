@@ -1,5 +1,5 @@
 # The front steer module's CAD numbers: mock front wheel, fork, headset, the
-# steer XC330's cases and horn hub. Read by aow_sim.cad_steering only --
+# steer XC330's cases and horn hub. Read by aow_sim.cad.steering only --
 # never by the simulator. Metres. Spec: docs/plans/steering-design.md.
 #
 # MODULE FRAME: Z UP THE STEERING AXIS, Y FORWARD, X RIGHT; origin on the
@@ -240,7 +240,7 @@ joint:
 
 v2:
   # aow-bike-steering-v2 (user, 2026-10-11; docs/plans/aow-bike-whole-v2.md):
-  # `cad_steering --v2`. The servo turned 180 deg about Z, its body out the
+  # `cad.steering --v2`. The servo turned 180 deg about Z, its body out the
   # FRONT (+Y); NO mount plate. Built in v1's frame (body -Y) and the case
   # group turned at the end -- exact, because the fork, headset, horn hub
   # and horn are all symmetric under the turn.

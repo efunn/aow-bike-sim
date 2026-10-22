@@ -2,10 +2,10 @@ FeatureScript 3044;
 import(path : "onshape/std/geometry.fs", version : "3044.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_righting --push righting_features
+ *   python -m aow_sim.cad.righting --push righting_features
  *
  * Every primitive of the simple parts, the upper case's additions and cuts,
- * the joints and the poses are computed in aow_sim.cad_righting and carried
+ * the joints and the poses are computed in aow_sim.cad.righting and carried
  * here as RG, RG_PARTS, RG_POSES. Millimetres. MODULE FRAME: origin on the
  * wing rod at the mid-plane between the couplers, +Y forward, +X right, +Z
  * up; the XC330 at the rear, horn forward.
@@ -678,7 +678,7 @@ export function caseShellPair(context is Context, id is Id, cs is CoordSystem,
     // already inserted in live documents; if Onshape does not backfill a
     // default into an existing instance it reads as undefined, and under
     // `== true` both halves would vanish on the next regeneration. Unset
-    // builds. Same reasoning as the group tickboxes in cad_layout.
+    // builds. Same reasoning as the group tickboxes in cad.layout.
     if (opt.makeTop != false)
         made = append(made, caseShellBuild(context, id + "top", useCS,
                 mergeMaps(opt, { "part" : "TOP" }), qNothing()));

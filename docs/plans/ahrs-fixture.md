@@ -1,6 +1,6 @@
 # AHRS fixture: the TM151's dynamic error
 
-Status: **parked** (2026-09-24): no new mounts; the fixture comes back only if the bike's AHRS misbehaves. Code: `analysis/ahrs_fixture.py`, CAD `aow_sim.cad_ahrs_fixture`. The model it produced is the opt-in `ahrs_level: tm151_filter`.
+Status: **parked** (2026-09-24): no new mounts; the fixture comes back only if the bike's AHRS misbehaves. Code: `analysis/ahrs_fixture.py`, CAD `aow_sim.cad.ahrs_fixture`. The model it produced is the opt-in `ahrs_level: tm151_filter`.
 
 ## Log, 2026-09-23 to 09-24 (from status.md)
 
@@ -165,7 +165,7 @@ Also: **the TM151's clock runs 0.3% fast**; the Combo gyro is in rad/s; the
 Pi logged undervoltage on a different supply brick that session and none on
 the usual 5 V 2 A one. Captures under `traces/ahrs_fixture/` (Dropbox).
 
-*The fixture CAD (2026-09-23).* `python -m aow_sim.cad_ahrs_fixture` writes
+*The fixture CAD (2026-09-23).* `python -m aow_sim.cad.ahrs_fixture` writes
 the `AHRS fixture` feature (studio `ahrs-fixture-gen`), inserted into the
 `ahrs-fixture` Part Studio: nine printed parts round the servo and TM151
 envelopes, each named with the side that prints UP (every mount pin points

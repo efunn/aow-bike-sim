@@ -28,7 +28,7 @@
 # other, which is what affords the narrow layout), not a read-back from
 # Onshape.
 #
-# Read by:  python -m aow_sim.cad_layout        (defaults to this file)
+# Read by:  python -m aow_sim.cad.layout        (defaults to this file)
 #
 # NEVER pass this to `export_deploy`. `params_digest` hashes the whole
 # parameter tree, so a bundle built from this file carries a digest that no
@@ -222,7 +222,7 @@ drivetrain:
     flange_thickness: {value: 0.001, source: design}   # per side
     flange_margin: {value: 0.004, source: design}      # diameter over pitch dia
     # Total thickness, belt back to tooth tip. HTD 5M nominal (2.06 mm tooth
-    # on a 1.5 mm back). Read ONLY by cad_layout, to give each belt run a
+    # on a 1.5 mm back). Read ONLY by cad.layout, to give each belt run a
     # volume instead of a bare clearance plane -- the tangent lines were never
     # enough to draw a chainstay against.
     #
@@ -233,7 +233,7 @@ drivetrain:
   # Gap between the rear wheel's side face and the inner flange of the input
   # pulley.
   wheel_clearance: {value: 0.002, source: design}
-  # STALE, and NOT read by cad_layout — which derives the belt plane itself,
+  # STALE, and NOT read by cad.layout — which derives the belt plane itself,
   # from whichever of two clearances binds (see `drive_mount_plate`). Kept only
   # because build_model still wants it. The wheel-driven figure it describes,
   # 24.0 mm, is no longer the answer: the servo mount is what sets the plane now.
@@ -361,7 +361,7 @@ drivetrain:
   # Re-solve if the case size, the shaft offset or C change.
   # With the cases parallel and at the same radius this now has a closed form,
   #   sep = 2 asin((case_width + drive_servo_gap) / 2C),
-  # and cad_layout prints it every run so a gap change cannot leave it stale.
+  # and cad.layout prints it every run so a gap change cannot leave it stale.
   # 16.35 was the value for the old 2 mm gap; 15.2563 is the zero-gap one.
   drive_servo_separation_deg: {value: 15.2563, source: design}
   # Standoff between the servo's horn face and the pulley's inner face, for a
@@ -369,7 +369,7 @@ drivetrain:
   #
   # The mount plate forces a standoff of its own (`drive_mount_plate` less the
   # horn thickness), and the two do not add: a hub that already stands off is
-  # room the plate can use. cad_layout takes the larger.
+  # room the plate can use. cad.layout takes the larger.
   #
   # HAD TWO BUGS while it sat at zero, both now fixed: it was added to a
   # metre-valued expression after being multiplied by 1000, and it was added
@@ -649,14 +649,14 @@ servos:
     # 20 / 16 across and 34 / 30 down, so the pattern is 16 x 30 on the face.
     case_hole_pattern: [0.016, 0.030]
     shaft_dir: {value: 1.0, source: design}
-    # DERIVED, not chosen, and NOT read by cad_layout — which recomputes it
+    # DERIVED, not chosen, and NOT read by cad.layout — which recomputes it
     # every run from `bike.steering.servo_clearance`, the rake and the
     # datasheet shaft offsets. It is kept here only because build_model still
     # wants a `pos` for the MuJoCo geom, and deleting it would break this file
     # the moment it becomes the authoritative one.
     #
     # So: do not tune this. Change `servo_clearance` and re-run
-    # `python -m aow_sim.cad_layout`, which prints the value to paste back.
+    # `python -m aow_sim.cad.layout`, which prints the value to paste back.
     pos: [0.164415, 0.0, 0.102628]
 
 actuators:
@@ -716,7 +716,7 @@ control:
     x_kp: 8.0           # common-mode input [rad/s] per meter of fore/aft drift
   lqr:                  # weights for the DLQR on the identified lateral model
     # NOT A CAD CONCERN. This block exists only because this file began as a
-    # whole-file copy of bike_params.yaml, and nothing in cad_layout reads it.
+    # whole-file copy of bike_params.yaml, and nothing in cad.layout reads it.
     # It had DRIFTED: q_roll_rate 6.0 and q_steer 0.5 were the PRE-RECOVERY
     # weights, still here after bike_params.yaml moved them to 30.0 and 5.0 --
     # the two changes that took peak roll 60 deg -> 1.17 deg. Synced 2026-08-25.
@@ -1151,7 +1151,7 @@ hockey:
 # CAD-ONLY: how each servo is actually installed.
 # ============================================================================
 #
-# Read by `aow_sim.cad_layout`; the MuJoCo builder ignores this block entirely.
+# Read by `aow_sim.cad.layout`; the MuJoCo builder ignores this block entirely.
 #
 # THE IDEA. A servo is fully located by three things, and only the last is a
 # free choice:
@@ -1167,7 +1167,7 @@ hockey:
 # direction of derivation: the mechanism fixes the axis, and the box follows.
 #
 # Vectors are MODEL frame (+X forward, +Y left, +Z up) — the same frame as the
-# rest of this file. `cad_layout` converts.
+# rest of this file. `cad.layout` converts.
 #
 # `shaft_point` is seeded from each servo's existing box centre so nothing
 # jumps on the first regeneration. As real constraints land (belt geometry,
@@ -1182,7 +1182,7 @@ cad_mounts:
   #
   # `body_up` is the case's +H direction. BOTH servos use the same one, aligned
   # with the 45 deg mean radius, so the cases are parallel and can share a flat
-  # mounting plate. cad_layout no longer overrides this.
+  # mounting plate. cad.layout no longer overrides this.
   servo_drive_left:
     model: xc430_w150
     shaft_axis: [0.0, 1.0, 0.0]     # belt plane on the left
@@ -1196,7 +1196,7 @@ cad_mounts:
   servo_steer:
     model: xc330_t181
     # Direct drive at gear_ratio 1.0, so this MUST be the steering axis.
-    # cad_layout substitutes the raked axis; the value here is a placeholder
+    # cad.layout substitutes the raked axis; the value here is a placeholder
     # that gets overridden, kept so the block reads completely.
     shaft_axis: [0.0, 0.0, -1.0]    # horn faces DOWN the steering axis
     horn_dir: 1.0

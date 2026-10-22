@@ -152,7 +152,7 @@ The XC330 sits at the rear, horn forward. Each L part is its R twin turned
 
 ## As built
 
-`python -m aow_sim.cad_righting` (config `config/righting_cad.yaml`), one
+`python -m aow_sim.cad.righting` (config `config/righting_cad.yaml`), one
 feature `AOW righting` (dialog: pose rest / ±25/50/75/100 %, mocks on/off) in
 the Feature Studio **aow-bike-righting features**, inserted in the Part
 Studio **aow-bike-righting** (`onshape.yaml` tabs `righting_features` /
@@ -254,7 +254,7 @@ panels, are ~52 of it. Nothing prints solid (user); solid it would be 222
 (270 before). The estimate came from the parts' outlines, whose solid total
 matches Onshape's less the upper case. From the next `--check` the judge
 prints the printed figure itself: the body rows carry the area now, and
-`printed_mass` moved to `cad_servo_mount` for both generators.
+`printed_mass` moved to `cad.servo_mount` for both generators.
 
 ## Rear chamfers and shorter wings (2026-10-05 pm, user)
 
@@ -350,7 +350,7 @@ exact, every L part equals its R, ~102 g printed. The rocker's and
 knuckle's 8 downward faces are the nut slot's ~8 roof and the hole's
 sacrificial layers, the same as the bearings' slots. The one hanging edge is
 the old one, accepted.
-`cad_bike --fit righting`: FITS, unchanged at 0.50 rear and 5.25 front;
+`cad.bike --fit righting`: FITS, unchanged at 0.50 rear and 5.25 front;
 wings L 2.6 / R 7.6 spare. Bike `--check` clean, 58 bodies.
 
 ## Flipping the XC330 (measured, not drawn: 2026-10-07)
@@ -427,7 +427,7 @@ down to ~47.6 above the rod (now 55.6), which is the lowering lever.
 | check | result |
 |---|---|
 | righting `--check` | 23 bodies, 0 interference over 10 poses, pins exact, L = R turned, rocker and knuckle the same volume; ~100 g printed; 0 hanging edges |
-| `cad_bike --fit righting` | FITS at 143.5 (1.04 rear, 5.25 front); room to **131.5 (+12.0)**, then the turned upper case's rear-top edge (\|x\| 12, ~39 above the rod) on drive case side R (0.06 at 130.5) |
+| `cad.bike --fit righting` | FITS at 143.5 (1.04 rear, 5.25 front); room to **131.5 (+12.0)**, then the turned upper case's rear-top edge (\|x\| 12, ~39 above the rod) on drive case side R (0.06 at 130.5) |
 | bike `--check` | clean, 56 bodies |
 
 `--fit righting` now scans back in 1 mm steps (`fit2_probe(step, nmax)`):
@@ -480,7 +480,7 @@ expected).
 
 **Two chassis joints** again (+-8, ridge 6; user: the chassis is a
 placeholder). In the bike the -8 joint is under the drive block's wedge.
-`cad_bike` now NOTES this rather than refusing, and the wedge stands on the
+`cad.bike` now NOTES this rather than refusing, and the wedge stands on the
 deck's top, so the plate keeps the grooves.
 
 **The wing** (`wing.blade: ends`; user: "the wing chamfer can go on two
@@ -551,13 +551,13 @@ edit here reaches `aow-bike-whole` by itself. What it must keep:
 **After an edit:**
 
     pytest -m cad                                  # free: generators, the wing sweep rule
-    python -m aow_sim.cad_righting --check         # 1 call: the module itself
-    python -m aow_sim.cad_bike --fit righting      # 1 call: does it still fit the bike?
+    python -m aow_sim.cad.righting --check         # 1 call: the module itself
+    python -m aow_sim.cad.bike --fit righting      # 1 call: does it still fit the bike?
 
 `--fit righting` runs the pose-aware 0.5 scan, 1 mm steps from 1 ahead of
 the station, and the front-wheel distance, and prints FITS or what binds. It
 also gives the room either way: how far the righting could go back now.
-`cad_bike` prints a NOTE whenever the righting no longer matches
+`cad.bike` prints a NOTE whenever the righting no longer matches
 `placement.righting_digest`, which it was last fitted against.
 
 Measured ceiling: with the central screw gone altogether (bridge chamfer
@@ -591,7 +591,7 @@ the tip) to a uniform 5 mm on the same tip midpoint: stop 136.25 -> 136.5
 on the planar search, nothing material lost.
 
 **Masses, GUESS** (CAD check volumes of 10-07, 2 perimeters / 15 % infill,
-`cad_servo_mount.printed_mass`):
+`cad.servo_mount.printed_mass`):
 
 | body | g |
 |---|---|

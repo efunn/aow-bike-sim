@@ -1,7 +1,7 @@
-"""The battery / electronics / switch holder's layout (cad_power) and the
-Pi + U2D2 carrier (cad_pi_carrier), checked without Onshape.
+"""The battery / electronics / switch holder's layout (cad.power) and the
+Pi + U2D2 carrier (cad.pi_carrier), checked without Onshape.
 
-cad_bike_v2 --check builds them in the bike and sweeps them for clashes;
+cad.bike_v2 --check builds them in the bike and sweeps them for clashes;
 these check the fits the layouts themselves promise: the two joints on the
 rail's, the nuts and the cut screws between the rail and the battery, the
 heads clear in side view, the board square to the drive beside the battery,
@@ -17,8 +17,8 @@ import math
 
 import pytest
 
-from aow_sim import cad_bike_v2 as b2
-from aow_sim import cad_power as cpw
+from aow_sim.cad import bike_v2 as b2
+from aow_sim.cad import power as cpw
 
 pytestmark = pytest.mark.cad
 

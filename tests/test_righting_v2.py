@@ -1,6 +1,6 @@
 """The bike's righting module, V2, as the simulator builds it by default.
 
-V2 is the diamond four-bar `cad_righting` draws (config/righting_cad.yaml:
+V2 is the diamond four-bar `cad.righting` draws (config/righting_cad.yaml:
 swing_linkage_shared_rod.yaml at linkage.scale) with the blades of
 config/righting_blade.yaml. These pin the sim to the CAD: the same links, the
 blade where the file draws it, the toes stopping the stroke past the
@@ -68,14 +68,14 @@ def test_the_default_bike_carries_v2(params, model):
 
 
 def test_the_links_are_the_cads(params):
-    """The sim's four-bar is cad_righting's: shared_rod x linkage.scale."""
+    """The sim's four-bar is cad.righting's: shared_rod x linkage.scale."""
     cad = yaml.safe_load((ROOT / "config/righting_cad.yaml").read_text())
     k = cad["linkage"]["scale"]["value"]
     raw = yaml.safe_load((ROOT / cad["linkage"]["config"]["value"]).read_text())
     m = params["righting"]["module"]["linkage"]["mechanism"]
     for n in ("crank_length", "coupler_length", "rocker_length"):
         assert m[n] == pytest.approx(raw["mechanism"][n] * k)
-    from aow_sim import cad_righting as cr
+    from aow_sim.cad import righting as cr
     lk = cr.load()["lk"]
     assert (lk.crank, lk.coupler, lk.rocker) == pytest.approx(
         (m["crank_length"], m["coupler_length"], m["rocker_length"]))

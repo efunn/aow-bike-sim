@@ -57,7 +57,7 @@ Pushed: `aow-bike-steering-v2`, `aow-bike-drive`, `aow-bike-whole-v2`. Every
 12 Onshape calls (85 -> 97). Two were wasted, both in
 `cad-onshape-workflow.md` now: an oblique sketch again (`EXTRUDE_FAILED`)
 and `opRevolve`'s `angleBack` (every ring, cap and lug came out 360 deg).
-The user's mocks were read back with `cad_hand_edits bike_v2` (2 calls)
+The user's mocks were read back with `cad.hand_edits bike_v2` (2 calls)
 before any of it; they are left in place, to be deleted.
 
 **Rake 20, CAD only.** `bike_params_cad.yaml` `bike.rake_deg` 20. The frozen
@@ -105,7 +105,7 @@ the tongue.
   50.8..53.55 (was 42.5..50: the arm no longer reaches there).
 - **Holder's aft groove:** opened 13 -> 18, out through the new post's top.
 
-**The rollcage** (`bike_v2_cad.yaml` `rollcage:`, `cad_bike_v2.rollcage`):
+**The rollcage** (`bike_v2_cad.yaml` `rollcage:`, `cad.bike_v2.rollcage`):
 one part at the rear, turned 180 deg about Z at the front.
 
 | | |

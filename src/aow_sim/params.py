@@ -104,7 +104,7 @@ def scaled_linkage(cad_cfg: str | Path) -> dict:
     """The four-bar a righting CAD config builds: its `linkage.config` with
     the links at `linkage.scale` about the wing rod -- the three lengths
     times k, the servo's height pulled toward the rod's by the same k -- as
-    `cad_righting.load` and `analysis/swing_stepthrough.py` scale it. Angles,
+    `cad.righting.load` and `analysis/swing_stepthrough.py` scale it. Angles,
     the panel and the stroke are left as the file has them."""
     cad = _normalize(yaml.load((ROOT / cad_cfg).read_text(), Loader=_Loader))
     cfg = yaml.load((ROOT / cad["linkage"]["config"]).read_text(), Loader=_Loader)

@@ -1,6 +1,6 @@
 # The X330 load-test fixture's CAD numbers: one bare X330, shaft HORIZONTAL,
 # a lever on its horn to hang known masses from. Read by
-# aow_sim.cad_x330_fixture only -- never by the simulator. Metres.
+# aow_sim.cad.x330_fixture only -- never by the simulator. Metres.
 #
 # What it is for (docs/plans/pre-assembly-bench-checklist.md, "Bench test
 # for it"): back-drive slip torque with torque OFF, and lift-the-mass

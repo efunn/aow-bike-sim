@@ -1,4 +1,4 @@
-"""The Pi + U2D2 carrier for aow-bike-whole-v2. Layout only: cad_bike_v2
+"""The Pi + U2D2 carrier for aow-bike-whole-v2. Layout only: cad.bike_v2
 draws it. Spec: docs/plans/aow-bike-whole-v2-complete.md ("Pi + U2D2
 carrier"). Numbers: config/bike_v2_cad.yaml `pi_carrier:`.
 
@@ -27,25 +27,25 @@ went to the back-top beside the battery):
 
 Assembly (user): the U2D2 onto the plate, then the Pi on its spacers, then
 the carrier into the bike. Every piece is a drive-frame box or polygon,
-returned as bike-frame (y, z) polygons over an x range, as cad_power's. Mm.
+returned as bike-frame (y, z) polygons over an x range, as cad.power's. Mm.
 """
 
 from __future__ import annotations
 
 import math
 
-from .cad_power import K, _hull_gap, _inside, _poly_off_rect, bike, dpoly, drect
+from .power import K, _hull_gap, _inside, _poly_off_rect, bike, dpoly, drect
 
 LIFT = (K, K)           # the way it comes out, drive (y, z): straight up in the bike
 
 
 def layout(p: dict, D: dict, R: dict, dd: dict, pi: dict, comps: dict, ahrs_top: float, ahrs_low: float,
            jst_len: float, holder: dict, bridge_top: float) -> dict:
-    """p: bike_v2_cad.yaml `pi_carrier:`; D, R: cad_drive full_layout and
-    rail_layout; dd: cad_drive.load(); pi: the `pi:` detail; comps:
+    """p: bike_v2_cad.yaml `pi_carrier:`; D, R: cad.drive full_layout and
+    rail_layout; dd: cad.drive.load(); pi: the `pi:` detail; comps:
     `components:`; ahrs_top: the drive y of the AHRS housing's top face;
     ahrs_low: the drive z of the AHRS housing's lower end; jst_len: the
-    U2D2's JST keep-out, along it from its lower end; holder: cad_power's
+    U2D2's JST keep-out, along it from its lower end; holder: cad.power's
     layout; bridge_top: the bike z of the righting bridge's top face.
     Raises if something does not fit."""
 

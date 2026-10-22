@@ -36,7 +36,7 @@ Orientation and printing directions: Z-up, Y-forward X-right. Z-up is the steeri
   -- ream/turn to fit). A metal shaft stays off the table: it would need
   keying to align the two headset halves.
 - **Height relaxed:** `steering.servo_clearance` 40 -> **45** (bike_params_cad;
-  `cad_layout` regenerated, the steer servo's derived `pos` pasted back). It
+  `cad.layout` regenerated, the steer servo's derived `pos` pasted back). It
   buys a 14.6 mm bushing and a 12 mm fork block.
 - **Axle:** knurled end in the +X leg (the head's side), the other end in
   the -X leg, **one Φ3.9 press-fit hole in both** (`GUESS`) -- so the **two
@@ -110,11 +110,11 @@ Orientation and printing directions: Z-up, Y-forward X-right. Z-up is the steeri
 
 ## As built
 
-`python -m aow_sim.cad_steering` (config `config/steering_cad.yaml`), one
+`python -m aow_sim.cad.steering` (config `config/steering_cad.yaml`), one
 feature `AOW steering` in the Feature Studio **aow-bike-steering features**,
 inserted in the Part Studio **aow-bike-steering** (`onshape.yaml` tabs
 `steering_features` / `steering`). Render: `docs/cad/steering.png`.
-`python -m aow_sim.cad_steering` prints the full stack; the landmarks, mm up
+`python -m aow_sim.cad.steering` prints the full stack; the landmarks, mm up
 the steering axis from the axle:
 
 | z | |
@@ -337,7 +337,7 @@ gearbox: a + b x |T|.
 - **The hand features in `aow-bike-steering` are exploratory** (user,
   2026-09-30): 24 after `AOW steering`, read back into
   `traces/hand_edits/steering_hand_edits.txt`. They will be cleared and
-  redone, then folded into `cad_steering` by the workflow in
+  redone, then folded into `cad.steering` by the workflow in
   `cad-onshape-workflow.md`. The Φ9.5 cut through the mount plate's bench
   tab is screwdriver access to the lower case's joint.
 - **`bike.front_wheel.radius` is still 0.050 (`design`) against the measured
@@ -378,7 +378,7 @@ gearbox: a + b x |T|.
 > steer's XC330 is modelled from the bench (friction, ~0.52 N m usable
 > breaking away against a load); the CAD station is pinned.
 >
-> **Printed and assembled 2026-09-30** (ASA, PINS hub): `aow_sim.cad_steering`,
+> **Printed and assembled 2026-09-30** (ASA, PINS hub): `aow_sim.cad.steering`,
 > one feature in its own Onshape tabs. It has:
 > - a fork on ledges;
 > - a printed-bushing headset;
@@ -450,7 +450,7 @@ gearbox: a + b x |T|.
 > in `~/aow-bike-sim-before-260930.tgz`. Outstanding: `front_wheel.radius` 0.050 against the
 > measured 51.25 mm. See `steering-design.md`.
 >
-> **Rear drive designed 2026-09-28, not yet printed:** `aow_sim.cad_drive`,
+> **Rear drive designed 2026-09-28, not yet printed:** `aow_sim.cad.drive`,
 > the hand-drawn working version split into separate generated parts:
 > - spline pulley, drive pulley;
 > - case side with a +Y fixture tab;
@@ -462,7 +462,7 @@ gearbox: a + b x |T|.
 > move. See `drive-design.md`.
 >
 > **Righting module designed 2026-09-29, not yet printed:**
-> `aow_sim.cad_righting`, the diamond swing linkage (1.25x, from its linkage
+> `aow_sim.cad.righting`, the diamond swing linkage (1.25x, from its linkage
 > config) printed in ASA:
 > - a crankshaft on two printed bearings, the steering's horn hub and lugs,
 >   the steering's XC330 cases;

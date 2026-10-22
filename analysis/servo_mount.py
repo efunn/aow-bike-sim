@@ -3,7 +3,7 @@
     python analysis/servo_mount.py                 # -> analysis/plots/servo_mount_cage.png
     python analysis/servo_mount.py --tag alt       # a variant, at its own name
 
-A PROPOSAL, not a decision. Everything is read from `aow_sim.cad_layout`, so
+A PROPOSAL, not a decision. Everything is read from `aow_sim.cad.layout`, so
 the figure cannot drift from the layout the CAD is drawn against; if a servo
 angle or a pulley diameter moves, re-run this and the drawing moves with it.
 Changes nothing — see the header of `analysis/wing_linkage.py` for the rule.
@@ -42,7 +42,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Polygon, Rectangle
 
-from aow_sim.cad_layout import CAD_PARAMS, LINKAGE_CFG, build, load_params, \
+from aow_sim.cad.layout import CAD_PARAMS, LINKAGE_CFG, build, load_params, \
     load_sources, to_cad_dir, to_cad_pos
 
 PLATE_GAP = 1.0     # mm of air between a plate and the pulley face beside it

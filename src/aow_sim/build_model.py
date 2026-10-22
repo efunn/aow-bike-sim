@@ -261,7 +261,7 @@ TIRE_BLACK = [0.07, 0.07, 0.07, 1]
 # measurement: the band outside it is what reads as the tyre.
 SPOKE_COVER_FRAC = 0.70
 SPOKE_COVER_PROUD = 0.0003
-# The v2 rollcage as drawn (user, 2026-10-19). The rings: cad_bike_v2.rollcage's,
+# The v2 rollcage as drawn (user, 2026-10-19). The rings: cad.bike_v2.rollcage's,
 # 15 deep along x and 10 thick radially, 270 deg with the opening at the
 # bottom (clear of the wheels), the two ends rounded. The shell: the CAD's
 # shape, a cylinder between the rings' outboard faces with an elliptical
@@ -772,7 +772,7 @@ def _add_rollcage_drawing(spec: mujoco.MjSpec, chassis, r: dict, wb: float,
     pop blue -- and two 270 deg
     rings (translucent orange) at the bike's ends, the rear ring's outboard
     face on the rear axle's plane, the front one's on the front axle's
-    (cad_bike_v2.rollcage builds the rear ring and turns it about
+    (cad.bike_v2.rollcage builds the rear ring and turns it about
     mid-wheelbase). Visual only, no mass, no contact: the `roof` capsule is
     the contact and the inertia. They differ by up to 2.6 mm at the rings,
     where the capsule's hemispherical ends have already started to close."""
@@ -1492,7 +1492,7 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
 
 
 # `_smaller`, not the bare `swing_linkage.yaml`, because that is the design
-# the CAD path builds -- `cad_swing_linkage.CONFIG` -- and CAD is downstream of
+# the CAD path builds -- `cad.swing_linkage.CONFIG` -- and CAD is downstream of
 # the decision. The two disagreed: teleop and analysis/swing_linkage.py drove
 # one geometry while the part being made was another. Which config actually won
 # on 2026-09-02/03 is NOT recorded anywhere: the plan doc says that work lives

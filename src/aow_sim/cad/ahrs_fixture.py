@@ -42,13 +42,13 @@ the roll horn's distance from the yaw axis (the TM151 lands centred), and the
 roll axis height (the swept roll stage clears the yaw arm by
 `stage_clearance`).
 
-    python -m aow_sim.cad_ahrs_fixture                 # write docs/cad/ahrs_fixture.fs
-    python -m aow_sim.cad_ahrs_fixture --check         # parts, clashes over the travel, print check
-    python -m aow_sim.cad_ahrs_fixture --push fixture_features
-    python -m aow_sim.cad_ahrs_fixture --shot          # render -> docs/cad/ahrs_fixture.png
+    python -m aow_sim.cad.ahrs_fixture                 # write docs/cad/ahrs_fixture.fs
+    python -m aow_sim.cad.ahrs_fixture --check         # parts, clashes over the travel, print check
+    python -m aow_sim.cad.ahrs_fixture --push fixture_features
+    python -m aow_sim.cad.ahrs_fixture --shot          # render -> docs/cad/ahrs_fixture.png
 
 Numbers: config/ahrs_fixture_cad.yaml (TM151 and the fixture), plus the X330
-envelope and mount interface cad_servo_mount already reads.
+envelope and mount interface cad.servo_mount already reads.
 """
 
 from __future__ import annotations
@@ -61,8 +61,8 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import cad_servo_mount as sm
-from .params import _normalize, load_params
+from . import servo_mount as sm
+from ..params import _normalize, load_params
 
 FIXTURE_PARAMS = "config/ahrs_fixture_cad.yaml"
 OUT_FS = "docs/cad/ahrs_fixture.fs"
@@ -274,7 +274,7 @@ def _servo_mount_layer(data: dict, fs_version: str) -> str:
 
 # The fixture-agnostic FeatureScript: primitives, part lookup, naming, the
 # screw joint with its ridge, and the X330 envelope. Shared with
-# cad_x330_fixture, whose FIXTURE map must carry the joint/ridge/bridge keys.
+# cad.x330_fixture, whose FIXTURE map must carry the joint/ridge/bridge keys.
 FS_HELPERS = r'''/** A box between two corners given in `cs`. One body, created by `id`. */
 export function boxIn(context is Context, id is Id, cs is CoordSystem,
                       lo is Vector, hi is Vector) returns Query
@@ -551,7 +551,7 @@ FS = r'''FeatureScript %VERSION%;
 import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_ahrs_fixture --push fixture_features
+ *   python -m aow_sim.cad.ahrs_fixture --push fixture_features
  *
  * Numbers from config/ahrs_fixture_cad.yaml, config/servo_mounts.yaml and
  * bike_params_cad.yaml. Millimetres.
@@ -1135,7 +1135,7 @@ def check_wrapper(fs: str, data: dict, configs) -> str:
 
 # The print check, run over `r.prints` ([name, query, up vector] per part):
 # downward faces above the bed, flat-crowned horizontal holes, and level
-# edges hanging in the air. Shared with cad_x330_fixture.
+# edges hanging in the air. Shared with cad.x330_fixture.
 PRINT_CHECK_FS = r'''    // print check: planar faces facing within 20 deg of straight down and
     // above the bed overhang past 70 deg -- bridges, or faults
     for (var pr in r.prints)

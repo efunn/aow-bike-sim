@@ -1,5 +1,5 @@
 # The yaw-roll AHRS fixture's CAD numbers: the TM151's envelope and hole
-# pattern, and where the fixture puts it. Read by aow_sim.cad_ahrs_fixture
+# pattern, and where the fixture puts it. Read by aow_sim.cad.ahrs_fixture
 # only -- never by the simulator. Metres, like every yaml here.
 #
 # THE TM151 FRAME used throughout, the datasheet's own sensor axes (Figure 2,

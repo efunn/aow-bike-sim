@@ -4,7 +4,7 @@
 faults; these check the Python side it is compared against, and the things
 the load test's numbers depend on.
 Invalidated by: config/x330_fixture_cad.yaml, the X330 envelope in
-bike_params_cad.yaml, or the shared FeatureScript in cad_ahrs_fixture.
+bike_params_cad.yaml, or the shared FeatureScript in cad.ahrs_fixture.
 """
 
 import math
@@ -12,8 +12,8 @@ import re
 
 import pytest
 
-from aow_sim import cad_servo_mount as sm
-from aow_sim import cad_x330_fixture as fx
+from aow_sim.cad import servo_mount as sm
+from aow_sim.cad import x330_fixture as fx
 
 pytestmark = pytest.mark.cad
 

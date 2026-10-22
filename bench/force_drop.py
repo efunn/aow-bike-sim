@@ -647,7 +647,7 @@ def main() -> None:
     cam.add_argument("--margin-deg", type=float, default=30.0,
                      help="hold this far short of the step: on its top flat, the run-up")
     cam.add_argument("--park-deg", type=float, default=12.0,
-                     help="park this far past a step, in the dwell (0.87 mm clear, cad_drop_rig)")
+                     help="park this far past a step, in the dwell (0.87 mm clear, cad.drop_rig)")
     cam.add_argument("--hold-s", type=float, default=0.5, help=f"on the top flat; > {ARM_S} s to arm")
     cam.add_argument("--settle-s", type=float, default=0.3, help="after each drop's record")
     cam.add_argument("--r-rest-mm", type=float, default=13.0,

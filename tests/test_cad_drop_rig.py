@@ -6,16 +6,16 @@ cam's parked clearance, the interfaces borrowed from the fork and the
 chainstay -- and that the generated FeatureScript lints.
 Invalidated by: config/drop_rig_cad.yaml, bench/drop_cam.py's profile,
 config/steering_cad.yaml or config/drive_cad.yaml (the two joints), the X330
-envelope and case shells, or the shared FeatureScript in cad_ahrs_fixture /
-cad_servo_mount.
+envelope and case shells, or the shared FeatureScript in cad.ahrs_fixture /
+cad.servo_mount.
 """
 
 import math
 
 import pytest
 
-from aow_sim import cad_drop_rig as rig
-from aow_sim import cad_servo_mount as sm
+from aow_sim.cad import drop_rig as rig
+from aow_sim.cad import servo_mount as sm
 
 pytestmark = pytest.mark.cad
 

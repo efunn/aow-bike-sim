@@ -22,11 +22,11 @@ So `--check` is testing that Onshape's revolve, pattern and boolean did what
 the polygon says, which is where the bugs have actually been. It is NOT an
 independent check of the shape itself; that still needs eyes on the part.
 
-WHY THIS IS NOT PART OF `cad_layout`. That module generates a whole document
+WHY THIS IS NOT PART OF `cad.layout`. That module generates a whole document
 and its push overwrites its Feature Studio wholesale. This is the opposite kind
 of artifact: a few small features, hand-designed, that a person inserts once and
 then drives from the dialog. It gets its own studio tab and its own push, and
---push refuses the cad_layout tab outright.
+--push refuses the cad.layout tab outright.
 
 THE SPLIT AT `SPLIT_MARK` IS LOAD-BEARING. Above it is pure geometry taking a
 CoordSystem; below it is the Onshape UI layer -- enums, precondition,
@@ -34,9 +34,9 @@ defineFeature. --check keeps the top half and throws the bottom away, which is
 the only reason the feature can be exercised without a human picking a mate
 connector. Keep new geometry above the line and new dialog below it.
 
-    python -m aow_sim.cad_servo_mount -o docs/cad/servo_mount.fs
-    python -m aow_sim.cad_servo_mount --check
-    python -m aow_sim.cad_servo_mount --push horn_features
+    python -m aow_sim.cad.servo_mount -o docs/cad/servo_mount.fs
+    python -m aow_sim.cad.servo_mount --check
+    python -m aow_sim.cad.servo_mount --push horn_features
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ import math
 import re
 from pathlib import Path
 
-from .params import load_params
+from ..params import load_params
 
 CAD_PARAMS = "config/bike_params_cad.yaml"
 # The fastener interface lives in its own file. bike_params_cad.yaml is meant
@@ -332,7 +332,7 @@ def dedupe(poly: list[tuple[float, float]], tol: float = 1e-9):
 def load_mounts(path: str | Path | None = None) -> dict:
     """The fastener interface file, `{value, source}` wrappers stripped."""
     import yaml
-    from .params import _normalize
+    from ..params import _normalize
     return _normalize(yaml.safe_load(Path(path or MOUNT_PARAMS).read_text()))
 
 
@@ -670,7 +670,7 @@ def build_fs(table: dict[str, dict], fs_version: str = "3044",
 import(path : "onshape/std/geometry.fs", version : "{fs_version}.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_servo_mount --push horn_features
+ *   python -m aow_sim.cad.servo_mount --push horn_features
  *
  * The command above is deliberately BARE. Wrapped in backticks it is shell
  * command substitution, and an edge filter in front of the Onshape API rejects
@@ -684,7 +684,7 @@ import(path : "onshape/std/geometry.fs", version : "{fs_version}.0");
  * existing dynamixel_wrench_with_idler part, not a measurement of it.
  *
  * The mounting datum is the OUTER FACE OF THE HORN with +Z pointing out of the
- * servo -- the same datum cad_layout uses, so a mate connector that lands a
+ * servo -- the same datum cad.layout uses, so a mate connector that lands a
  * ROBOTIS STEP correctly also drives this feature correctly.
  */
 
@@ -1162,7 +1162,7 @@ export function caseShellPair(context is Context, id is Id, cs is CoordSystem,
     // already inserted in live documents; if Onshape does not backfill a
     // default into an existing instance it reads as undefined, and under
     // `== true` both halves would vanish on the next regeneration. Unset
-    // builds. Same reasoning as the group tickboxes in cad_layout.
+    // builds. Same reasoning as the group tickboxes in cad.layout.
     if (opt.makeTop != false)
         made = append(made, caseShellBuild(context, id + "top", useCS,
                 mergeMaps(opt, {{ "part" : "TOP" }}), qNothing()));
@@ -1438,7 +1438,7 @@ export const screwAndNut632 = defineFeature(function(context is Context, id is I
 # point: the assertions are independent of the FeatureScript, so agreeing means
 # something.
 #
-# ONE billable call, and a failed compile still bills (see onshape.py). Every
+# ONE billable call, and a failed compile still bills (see cad/onshape.py). Every
 # question goes in the one script.
 # --------------------------------------------------------------------------
 
@@ -1482,7 +1482,7 @@ def _strip_comments(fs: str) -> str:
 def geometry_layer(fs: str, mark: str = SPLIT_MARK) -> str:
     """Everything above `mark`, as statements for the inside of one function.
 
-    Shared with `cad_ahrs_fixture`, whose studio has the same split.
+    Shared with `cad.ahrs_fixture`, whose studio has the same split.
     """
     head = _strip_comments(fs.split(mark)[0]).splitlines()
     out, i = [], 0
@@ -1514,7 +1514,7 @@ def check_wrapper(fs: str) -> str:
     after its callee in the generated file -- which is why caseShellBuild is
     written before caseShellPair even though the pair reads as the outer idea.
 
-    Simpler than `cad_layout._eval_wrapper` because the split earns it: there
+    Simpler than `cad.layout._eval_wrapper` because the split earns it: there
     are no enums, no `precondition` and no synthesised definition map to get
     wrong, since everything that needs a human is below SPLIT_MARK and gets
     thrown away. What is left is one const and one function.
@@ -1902,7 +1902,7 @@ def main() -> None:
     ap.add_argument("--push", metavar="TAB|URL", nargs="?", const="",
                     default=None,
                     help="replace a Feature Studio's contents. NOT the "
-                         "`feature_studio` tab -- cad_layout owns that one")
+                         "`feature_studio` tab -- cad.layout owns that one")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the check script instead of spending a call")
     args = ap.parse_args()
@@ -1928,7 +1928,7 @@ def main() -> None:
         from . import onshape
         if args.push in ("", "feature_studio"):
             raise SystemExit(
-                "refusing to push at `feature_studio`: cad_layout overwrites "
+                "refusing to push at `feature_studio`: cad.layout overwrites "
                 "that tab wholesale. Give this feature its own studio tab.")
         url = onshape.resolve(args.push, args.push)
         onshape.push_feature_studio(text, url)
@@ -1948,7 +1948,7 @@ if __name__ == "__main__":
 
 # ---------------------------------------------------------------- printed mass
 # Nothing here prints solid (user): 2 perimeters, 15 % infill. Shared by the
-# generators' checks (cad_bike, cad_righting).
+# generators' checks (cad.bike, cad.righting).
 SKIN = 0.9          # mm: 2 perimeters x ~0.45, and ~4-5 top/bottom layers at 0.2 -- UNCALIBRATED
 INFILL = 0.15
 

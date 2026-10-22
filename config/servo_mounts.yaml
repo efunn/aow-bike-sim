@@ -24,7 +24,7 @@
 #                           case_hole_pattern. Physical facts about the part,
 #                           which the sim legitimately wants.
 #
-# aow_sim.cad_servo_mount reads BOTH and merges them.
+# aow_sim.cad.servo_mount reads BOTH and merges them.
 #
 # Read by the simulator: nothing, ever. If a key here ever needs to reach
 # MuJoCo, that is a sign it was filed in the wrong place.

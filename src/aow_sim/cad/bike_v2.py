@@ -4,7 +4,7 @@ yet. ONE custom feature, `AOW bike v2`, in its own Feature Studio. Spec:
 docs/plans/aow-bike-whole-v2.md. Numbers: config/bike_v2_cad.yaml, plus
 each module's own generator and config.
 
-v1 (`aow_sim.cad_bike`, `aow-bike-whole`) grew a chassis, tray, carrier and
+v1 (`aow_sim.cad.bike`, `aow-bike-whole`) grew a chassis, tray, carrier and
 cage round a placement fitted constraint by constraint; v2 starts again with
 only the modules and the parts that must be carried, so the layout can be
 found first and the structure designed round it.
@@ -14,9 +14,9 @@ the drive turned up by drivetrain.drive_servo_angle_deg about X; the
 steering at the front axle, raked by bike.rake_deg; the righting moved to
 its station (its own floor mock and chassis-plate placeholder dropped).
 
-    python -m aow_sim.cad_bike_v2                       # docs/cad/bike_v2.fs
-    python -m aow_sim.cad_bike_v2 --check               # ONE call
-    python -m aow_sim.cad_bike_v2 --push bike_v2_features
+    python -m aow_sim.cad.bike_v2                       # docs/cad/bike_v2.fs
+    python -m aow_sim.cad.bike_v2 --check               # ONE call
+    python -m aow_sim.cad.bike_v2 --push bike_v2_features
 
 The rollcages (2026-10-19, `rollcage:`): a 270 deg ring at each end,
 the same part turned 180 deg about Z at the front, a bayonet half-dome cap
@@ -38,15 +38,15 @@ from pathlib import Path
 
 import yaml
 
-from . import cad_ahrs_fixture as af
-from . import cad_bike as cb
-from . import cad_drive as cd
-from . import cad_pi_carrier as cpc
-from . import cad_power as cpw
-from . import cad_righting as cr
-from . import cad_servo_mount as sm
-from . import cad_steering as cs
-from .params import _normalize, load_params
+from . import ahrs_fixture as af
+from . import bike as cb
+from . import drive as cd
+from . import pi_carrier as cpc
+from . import power as cpw
+from . import righting as cr
+from . import servo_mount as sm
+from . import steering as cs
+from ..params import _normalize, load_params
 
 PARAMS = "config/bike_v2_cad.yaml"
 OUT_FS = "docs/cad/bike_v2.fs"
@@ -59,7 +59,7 @@ STEER_SWEEP = cb.STEER_SWEEP
 # of its grooves, mm: its ridges are off the rails by 14 (the top one; the
 # low ones by 9.3)
 LIFT_SWEEP = (3, 6, 9, 12, 15)
-COMPONENTS = ("battery", "ahrs", "pi", "u2d2")      # + the power board and switch, from cad_power
+COMPONENTS = ("battery", "ahrs", "pi", "u2d2")      # + the power board and switch, from cad.power
 # the USB-C plug's overmold, a typical one (ahrs_fixture_cad.yaml
 # usb_plug_keepout, GUESS): length past the receptacle, width, height, m
 USB_KEEPOUT = (0.030, 0.0124, 0.0065)
@@ -148,7 +148,7 @@ def layout(data: dict) -> dict:
     # drive's rails are the real ones)
     L["rgDrop"] = [q["anchor"] for q in rL["parts"] if q["slug"] in ("floor", "chassis", "railR", "railL")]
     L["railCheck"] = rail_joints(data, L)
-    # the rails' screw-hole probes (cad_drive.hole_probes), turned into the
+    # the rails' screw-hole probes (cad.drive.hole_probes), turned into the
     # bike with the drive
     L["holeProbes"] = [[t, sd, x, *cpw.bike(y, z), w] for t, sd, x, y, z, w in cd.hole_probes(data["driveData"], data["drive"])]
     comps = []
@@ -168,7 +168,7 @@ def layout(data: dict) -> dict:
         comps.append({"key": k, "name": NAMES[k], "frame": c["frame"], "size": list(c["size"]),
                       "at": list(c["at"]), "rx": float(c.get("rx") or 0.0), "mass": c.get("mass"),
                       "boxes": boxes, "holes": holes, "lift": k in ("pi", "u2d2")})
-    # the power board and the switch, on the carrier (cad_power), drive frame
+    # the power board and the switch, on the carrier (cad.power), drive frame
     P = data["power"]
     for k, src, holes in (("power", P["board"]["boxes"], P["board"]["holes"]), ("switch", P["switch"]["boxes"], None)):
         lo = [min(b["lo"][i] for b in src) for i in range(3)]
@@ -198,7 +198,7 @@ def layout(data: dict) -> dict:
 
 
 def rail_joints(data: dict, L: dict) -> dict:
-    """The side rails (cad_drive `rail:`) against the parts they bolt to: the
+    """The side rails (cad.drive `rail:`) against the parts they bolt to: the
     head on the rail's outer face, at the steering's / the righting's own
     joint, the ridges the length the rail's grooves are cut for. Refuses a
     mismatch, with the value to use; returns the misses (all ~0)."""
@@ -547,12 +547,12 @@ FS = r'''FeatureScript %VERSION%;
 import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_bike_v2 --push bike_v2_features
+ *   python -m aow_sim.cad.bike_v2 --push bike_v2_features
  *
  * The drive, steering-v2 and righting modules' geometry layers, merged (each
  * module's own studio is generated from the same config), placed in the bike
  * frame, and the electronics as envelopes. No chassis. Numbers from
- * config/bike_v2_cad.yaml through aow_sim.cad_bike_v2's layout(), carried
+ * config/bike_v2_cad.yaml through aow_sim.cad.bike_v2's layout(), carried
  * here as BK2. Millimetres.
  *
  * BIKE FRAME: origin on the rear axle's centre, +Y forward, +X right, +Z up.
@@ -569,7 +569,7 @@ export function bk2V(a is array) returns Vector
 }
 
 /**
- * The battery + power carrier (cad_power): prisms on the bike's (y, z) over
+ * The battery + power carrier (cad.power): prisms on the bike's (y, z) over
  * x ranges, united, cut; then one 6-32 a side, the head in the rail (cut by
  * the drive), the nut and its slot here, and the ridge on the lug's face.
  * Printed; found again by a point in its floor.
@@ -653,7 +653,7 @@ export function bk2Carrier(context is Context, id is Id, C is map) returns Query
 }
 
 /**
- * The rollcage rings and their caps (cad_bike_v2.rollcage): built at the
+ * The rollcage rings and their caps (cad.bike_v2.rollcage): built at the
  * REAR, then turned 180 deg about Z through mid-wheelbase for the front --
  * one part each, the bayonet's hand kept. Profiles (r, y) about the ring's
  * axis (along Y at z RC.zc), revolved over [psi centre, half] (deg, psi

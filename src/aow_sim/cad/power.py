@@ -2,7 +2,7 @@
 printed panel on the left, between the battery and the left rail (user,
 2026-10-16 night: "instead of a case, it's just a panel (printed -X) with an
 overhang panel that goes around the XT30 connector and allows the power
-switch to be panel installed"). Layout only: cad_bike_v2 draws it, and its
+switch to be panel installed"). Layout only: cad.bike_v2 draws it, and its
 --check is the check. Spec: docs/plans/aow-bike-whole-v2-complete.md.
 Numbers: config/bike_v2_cad.yaml `power:`.
 
@@ -73,8 +73,8 @@ def _inside(p, poly) -> bool:
 
 
 def layout(p: dict, D: dict, R: dict, dd: dict, battery: dict) -> dict:
-    """p: bike_v2_cad.yaml `power:`; D, R: cad_drive full_layout and
-    rail_layout; dd: cad_drive.load(); battery: components.battery. Raises
+    """p: bike_v2_cad.yaml `power:`; D, R: cad.drive full_layout and
+    rail_layout; dd: cad.drive.load(); battery: components.battery. Raises
     if something does not fit."""
 
     def need(ok: bool, what: str) -> None:
@@ -292,7 +292,7 @@ def layout(p: dict, D: dict, R: dict, dd: dict, battery: dict) -> dict:
                             "ridgeAt": [-xi, *bike(hy_, (r0 + r1) / 2)], "ridgeHalf": (r1 - r0) / 2,
                             "ridgeUp": [-1, 0, 0], "ridgeRot": 45.0})
     P.update({"nut": [xn0, xn1], "tip": tip, "tipToPack": tip - battery["size"][0] / 2, "outline": outline})
-    # ---- the battery stops on the rear arms (cad_drive rail.battery_stop):
+    # ---- the battery stops on the rear arms (cad.drive rail.battery_stop):
     # just behind the battery's rear face, in past its side, over its height
     bya = battery["at"][1] - battery["size"][1] / 2
     for st in R["stops"]:

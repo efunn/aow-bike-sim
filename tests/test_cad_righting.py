@@ -7,7 +7,7 @@ clearances the layout was chosen for -- and that the generated FeatureScript
 lints.
 Invalidated by: config/righting_cad.yaml, the linkage config it names,
 steering_cad.yaml's hub and coupling blocks, the X330 envelope and mount
-tables, or the shared FeatureScript in cad_ahrs_fixture / cad_servo_mount.
+tables, or the shared FeatureScript in cad.ahrs_fixture / cad.servo_mount.
 """
 
 import itertools
@@ -19,8 +19,8 @@ import pytest
 from scipy.spatial import cKDTree
 import yaml
 
-from aow_sim import cad_righting as cr
-from aow_sim import cad_servo_mount as sm
+from aow_sim.cad import righting as cr
+from aow_sim.cad import servo_mount as sm
 
 pytestmark = pytest.mark.cad
 
@@ -423,7 +423,7 @@ def test_the_wing_is_a_stub_and_the_blade_an_inverted_u_over_it(tmp_path):
     (n, + inward) both keep the panel's own faces, so nothing grows and the
     floor clearance at full stroke is the panel's. Along Y the blade spans
     the panel's ends, the stub stops short of them by the legs. (v1's bike
-    is still built round it: cad_bike.righting_v1.)"""
+    is still built round it: cad.bike.righting_v1.)"""
     data = variant(tmp_path, wing__blade="ends")
     L = cr.layout(data)
     wg = data["s"]["wing"]
@@ -473,7 +473,7 @@ def test_the_bridge_takes_the_side_rails():
     """One 6-32 a side in from each rail's outer face into a lug on the
     bridge: the ridge on the lug, the nut slot up out of its top, the rails
     drawn as placeholders (mocks); the v1 bike's righting has none."""
-    from aow_sim import cad_bike as cb
+    from aow_sim.cad import bike as cb
     L = cr.layout(cr.load())
     js = {j["tag"]: j for j in L["RG"]["joints"]}
     for tag, sl, sx in (("jS0", "railR", 1), ("jS1", "railL", -1)):

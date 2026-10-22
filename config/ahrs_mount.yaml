@@ -1,6 +1,6 @@
 # The TM151's fixed orientation on the chassis: ITS AXES IN THE CHASSIS FRAME.
 #
-# From the v2 CAD (cad_bike_v2, 2026-10-19): the TM151 sits on the drive's
+# From the v2 CAD (cad.bike_v2, 2026-10-19): the TM151 sits on the drive's
 # tabs, on the 45 deg drive face, USB up and back -- its +x (the pin header)
 # down and forward, +z (out of the housing's top) up and forward, +y left.
 # That is +45 deg about chassis y: (cos 22.5, 0, sin 22.5, 0). The sim

@@ -1,7 +1,7 @@
 # The machined swing linkage (`wing-linkage-metal` in Onshape): the diamond
 # four-bar -- one crank pin, one wing rod -- built as a supported crankshaft
 # with every pivot in a bushing, so the XC330 only ever delivers torque.
-# Read by aow_sim.cad_wing_linkage_metal only -- never by the simulator.
+# Read by aow_sim.cad.wing_linkage_metal only -- never by the simulator.
 # MILLIMETRES. Spec and reasoning: docs/plans/wing-linkage-metal.md.
 #
 # MODULE FRAME: origin on the wing rod's axis at the bay's mid-plane (between

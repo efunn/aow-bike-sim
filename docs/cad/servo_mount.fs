@@ -2,7 +2,7 @@ FeatureScript 3044;
 import(path : "onshape/std/geometry.fs", version : "3044.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_servo_mount --push horn_features
+ *   python -m aow_sim.cad.servo_mount --push horn_features
  *
  * The command above is deliberately BARE. Wrapped in backticks it is shell
  * command substitution, and an edge filter in front of the Onshape API rejects
@@ -16,7 +16,7 @@ import(path : "onshape/std/geometry.fs", version : "3044.0");
  * existing dynamixel_wrench_with_idler part, not a measurement of it.
  *
  * The mounting datum is the OUTER FACE OF THE HORN with +Z pointing out of the
- * servo -- the same datum cad_layout uses, so a mate connector that lands a
+ * servo -- the same datum cad.layout uses, so a mate connector that lands a
  * ROBOTIS STEP correctly also drives this feature correctly.
  */
 
@@ -625,7 +625,7 @@ export function caseShellPair(context is Context, id is Id, cs is CoordSystem,
     // already inserted in live documents; if Onshape does not backfill a
     // default into an existing instance it reads as undefined, and under
     // `== true` both halves would vanish on the next regeneration. Unset
-    // builds. Same reasoning as the group tickboxes in cad_layout.
+    // builds. Same reasoning as the group tickboxes in cad.layout.
     if (opt.makeTop != false)
         made = append(made, caseShellBuild(context, id + "top", useCS,
                 mergeMaps(opt, { "part" : "TOP" }), qNothing()));

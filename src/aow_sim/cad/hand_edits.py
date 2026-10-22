@@ -1,7 +1,7 @@
 """Read back the hand edits in a generated module's Part Studio, so they can
 be folded into its generator. TWO billable calls, whatever the tree's size.
 
-    python -m aow_sim.cad_hand_edits steering      # an onshape.yaml tab name
+    python -m aow_sim.cad.hand_edits steering      # an onshape.yaml tab name
 
 1. GET .../features: the feature tree. Each feature after the generated one
    is a hand edit; its dialog values (widths, radii, depths, end types) and

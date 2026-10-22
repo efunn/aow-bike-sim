@@ -2,12 +2,12 @@ FeatureScript 3044;
 import(path : "onshape/std/geometry.fs", version : "3044.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_bike_v2 --push bike_v2_features
+ *   python -m aow_sim.cad.bike_v2 --push bike_v2_features
  *
  * The drive, steering-v2 and righting modules' geometry layers, merged (each
  * module's own studio is generated from the same config), placed in the bike
  * frame, and the electronics as envelopes. No chassis. Numbers from
- * config/bike_v2_cad.yaml through aow_sim.cad_bike_v2's layout(), carried
+ * config/bike_v2_cad.yaml through aow_sim.cad.bike_v2's layout(), carried
  * here as BK2. Millimetres.
  *
  * BIKE FRAME: origin on the rear axle's centre, +Y forward, +X right, +Z up.
@@ -2782,7 +2782,7 @@ export function bk2V(a is array) returns Vector
 }
 
 /**
- * The battery + power carrier (cad_power): prisms on the bike's (y, z) over
+ * The battery + power carrier (cad.power): prisms on the bike's (y, z) over
  * x ranges, united, cut; then one 6-32 a side, the head in the rail (cut by
  * the drive), the nut and its slot here, and the ridge on the lug's face.
  * Printed; found again by a point in its floor.
@@ -2866,7 +2866,7 @@ export function bk2Carrier(context is Context, id is Id, C is map) returns Query
 }
 
 /**
- * The rollcage rings and their caps (cad_bike_v2.rollcage): built at the
+ * The rollcage rings and their caps (cad.bike_v2.rollcage): built at the
  * REAR, then turned 180 deg about Z through mid-wheelbase for the front --
  * one part each, the bayonet's hand kept. Profiles (r, y) about the ring's
  * axis (along Y at z RC.zc), revolved over [psi centre, half] (deg, psi

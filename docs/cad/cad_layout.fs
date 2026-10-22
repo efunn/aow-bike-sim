@@ -3,7 +3,7 @@ import(path : "onshape/std/geometry.fs", version : "3044.0");
 import(path : "onshape/std/variable.fs", version : "3044.0");
 
 // AOW bike component layout — GENERATED, do not edit.
-//   python -m aow_sim.cad_layout --format featurescript
+//   python -m aow_sim.cad.layout --format featurescript
 //
 // FRAME:  +X right, +Y forward, +Z up.  ORIGIN: the rear axle,
 // 51.2 mm above the floor when the bike is upright.

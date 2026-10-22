@@ -2,9 +2,9 @@ FeatureScript 3044;
 import(path : "onshape/std/geometry.fs", version : "3044.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_wing_linkage_metal --push wing_metal_features
+ *   python -m aow_sim.cad.wing_linkage_metal --push wing_metal_features
  *
- * Every primitive of every part is computed in aow_sim.cad_wing_linkage_metal
+ * Every primitive of every part is computed in aow_sim.cad.wing_linkage_metal
  * and carried here as WLM_PARTS; this file only builds them. Millimetres.
  * MODULE FRAME: origin on the wing rod at the mid-plane between the couplers,
  * +Y forward, +X right, +Z up. Poses: WLM_POSES, a rotation about +Y through

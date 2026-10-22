@@ -1,14 +1,14 @@
 # aow-bike-whole-v2: the modules placed, the electronics free-floating, NO
 # chassis yet (user, 2026-10-11; docs/plans/aow-bike-whole-v2.md). Read by
-# aow_sim.cad_bike_v2. Millimetres, BIKE FRAME: origin on the rear axle, +Y
+# aow_sim.cad.bike_v2. Millimetres, BIKE FRAME: origin on the rear axle, +Y
 # forward, +X right, +Z up (the floor at -51.2).
 #
 # CAD ONLY, as v1 (config/bike_cad.yaml): nothing here reaches the sim.
 #
 # Modules, each from its own generator and config, built fresh every time:
-#   drive     cad_drive, the fixture mock OFF
-#   steering  cad_steering --v2 (servo out the front, no mount plate)
-#   righting  cad_righting, wing.blade outline (the V3 blade); its floor
+#   drive     cad.drive, the fixture mock OFF
+#   steering  cad.steering --v2 (servo out the front, no mount plate)
+#   righting  cad.righting, wing.blade outline (the V3 blade); its floor
 #             mock and chassis-plate placeholder are left out here
 
 placement:
@@ -64,16 +64,16 @@ components:
     size: {value: [34.0, 12.6, 40.0], source: datasheet}
     frame: {value: drive, source: design}
     # ON ITS TABS (2026-10-16): the board's back face on the case sides' AHRS
-    # tabs (cad_drive `ahrs:`, drive y 122.0), its lower edge on the face's
-    # (-29.75); cad_bike_v2 refuses it anywhere else
+    # tabs (cad.drive `ahrs:`, drive y 122.0), its lower edge on the face's
+    # (-29.75); cad.bike_v2 refuses it anywhere else
     at: {value: [0.0, 128.6953, -9.75], source: design (= the drive's AHRS tabs)}
     mass: {value: null, source: GUESS (not weighed)}
   # power: the power board and the switch are drawn from `power:` below
-  # (cad_power), in the bike frame, no longer as an envelope here
+  # (cad.power), in the bike frame, no longer as an envelope here
   pi:
     size: {value: [56.0, 20.0, 89.0], source: datasheet (the box the detail sits in; the ports 2 proud of the board's end)}
     frame: {value: drive, source: design}
-    # ON THE PI CARRIER (2026-10-16 night; cad_pi_carrier refuses it
+    # ON THE PI CARRIER (2026-10-16 night; cad.pi_carrier refuses it
     # anywhere else): parallel to the front face, on its 4 spacers over the
     # carrier's plate (was 163, on 2.6 printed-in standoffs)
     at: {value: [0.0, 164.4, -5.8], source: design (= pi_carrier)}
@@ -115,7 +115,7 @@ pi:
 # left rail fore and aft of the board, one strap round the battery. Slides
 # in from the back + top (the drive's -Z; user, 2026-10-16 night: "so it
 # can be removed independently from the pi+u2d2 carrier"). Read by
-# aow_sim.cad_power, drawn by cad_bike_v2. DRIVE frame (x across, y along
+# aow_sim.cad.power, drawn by cad.bike_v2. DRIVE frame (x across, y along
 # the belt, z off the case sides' top edges), mm.
 power:
   # ---- the joints, house 6-32 turned round: the flat head in the rail's
@@ -124,7 +124,7 @@ power:
   # rail's ears only: AFT on the back ear in the rear arm's corner (drive
   # rail.carrier_joint; user: "rear ear can move further back ... inside
   # the arm"), FORE on the front ear (rail.carrier_front_joint); bike (y,
-  # z), cad_power refuses them off the rail's.
+  # z), cad.power refuses them off the rail's.
   joints: {value: [[24.7134, 74.918], [69.2965, 107.4802]], source: design (user; = rail.carrier_joint, carrier_front_joint)}
   # The panel is only battery to rail (|x| 11.3..16), so each nut sits a
   # wall past the joint plane and a wall short of the battery side. The
@@ -212,7 +212,7 @@ power:
 # THE PI + U2D2 CARRIER (aow-bike-whole-v2-complete.md, "Pi + U2D2
 # carrier"): a plate over the drive's front face, the U2D2 under it on two
 # M2, the Pi over it on separate spacers, three 6-32 into the rails (user,
-# 2026-10-16 night). Read by aow_sim.cad_pi_carrier. DRIVE frame, mm.
+# 2026-10-16 night). Read by aow_sim.cad.pi_carrier. DRIVE frame, mm.
 pi_carrier:
   plate_y0: {value: 151.0, source: design}     # its inner face, drive y: past the pulleys' rims (143.6)
   plate: {value: 2.0, source: design}
@@ -243,7 +243,7 @@ pi_carrier:
   # down for room (user: "you can lower the u2d2 back a little bit"):
   # 2.6 past it. Was -23.25, past the whole envelope's end (-29.75). The
   # keep-out is generous (user: the plugs sit flush with its face, only
-  # wires come out); its 17 along and 6 out are GUESSes (cad_bike_v2.U2D2_JST).
+  # wires come out); its 17 along and 6 out are GUESSes (cad.bike_v2.U2D2_JST).
   u2d2_z: {value: -19.0, source: design}
   # the U2D2's cradle: two cheeks at mid-length (wall, depth, length); its
   # ends and the connectors there left open (which long side has its
@@ -262,7 +262,7 @@ pi_carrier:
   # rails' lower arms above the righting's bridge (rail.pi_low_joint; user:
   # "at the bottom, near the righting mechanism: a screw on each side").
   # The holes go THROUGH the lugs (user): no screw cut down.
-  # Bike (y, z); cad_pi_carrier refuses them off the rail's.
+  # Bike (y, z); cad.pi_carrier refuses them off the rail's.
   joints: {value: [[80.6102, 118.7939], [143.1891, 64.7003]], source: design (user; = rail.pi_top_joint, pi_low_joint)}
   nut_wall: {value: 1.0, source: design}
   lug_wall: {value: 1.0, source: design}       # round the nuts' corners, and behind them
@@ -272,7 +272,7 @@ pi_carrier:
 
 # THE ROLLCAGES (user, 2026-10-19, docs/plans/aow-bike-whole-v2-touchups.md;
 # the user's mocks were `rear-pill-ring` and `rear-pill-v2` in
-# aow-bike-whole-v2, read back with cad_hand_edits). ONE part, at the rear
+# aow-bike-whole-v2, read back with cad.hand_edits). ONE part, at the rear
 # and turned 180 deg about Z (about mid-wheelbase) at the front, which keeps
 # the bayonet's hand. Each: a 270 deg ring (open at the bottom) depth deep,
 # Y-inboard from the wheelbase's end, printed Y-outboard (its inboard face

@@ -2,10 +2,10 @@ FeatureScript 3044;
 import(path : "onshape/std/geometry.fs", version : "3044.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_steering --push steering_features
+ *   python -m aow_sim.cad.steering --push steering_features
  *
  * Numbers from config/steering_cad.yaml, config/servo_mounts.yaml and
- * bike_params_cad.yaml, every derived one computed in aow_sim.cad_steering's
+ * bike_params_cad.yaml, every derived one computed in aow_sim.cad.steering's
  * layout() and carried here as ST. Millimetres.
  *
  * MODULE FRAME: origin on the front axle's centre, +Z up the steering axis,
@@ -828,7 +828,7 @@ export function caseShellPair(context is Context, id is Id, cs is CoordSystem,
     // already inserted in live documents; if Onshape does not backfill a
     // default into an existing instance it reads as undefined, and under
     // `== true` both halves would vanish on the next regeneration. Unset
-    // builds. Same reasoning as the group tickboxes in cad_layout.
+    // builds. Same reasoning as the group tickboxes in cad.layout.
     if (opt.makeTop != false)
         made = append(made, caseShellBuild(context, id + "top", useCS,
                 mergeMaps(opt, { "part" : "TOP" }), qNothing()));
@@ -1293,7 +1293,7 @@ export function plainScrewJoint(context is Context, id is Id, head is Vector,
 /**
  * v2's joints: the shared screw geometry with a BLIND nut slot (out along
  * `slotDir` for `slotLen`, back only past the nut) and an optional ridge on
- * the nut's part -- aow_sim.cad_righting's rgJoint. `cskPart` may be
+ * the nut's part -- aow_sim.cad.righting's rgJoint. `cskPart` may be
  * qNothing(): the head then sits in a part not drawn yet (the bike).
  */
 export function blindScrewJoint(context is Context, id is Id, head is Vector, zIn is Vector,

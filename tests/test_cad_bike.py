@@ -5,15 +5,15 @@ for interference; these check what can be checked locally -- that the three
 modules' geometry layers merge (shared helpers kept once, a disagreement
 refused), that the studio lints and reads no names during regeneration, and
 that the layout's own clearances hold.
-Invalidated by: config/bike_cad.yaml, any module generator (cad_drive,
-cad_steering, cad_righting) or its config, or the shared FeatureScript in
-cad_ahrs_fixture / cad_servo_mount.
+Invalidated by: config/bike_cad.yaml, any module generator (cad.drive,
+cad.steering, cad.righting) or its config, or the shared FeatureScript in
+cad.ahrs_fixture / cad.servo_mount.
 """
 
 import pytest
 
-from aow_sim import cad_bike as cb
-from aow_sim import cad_servo_mount as sm
+from aow_sim.cad import bike as cb
+from aow_sim.cad import servo_mount as sm
 
 pytestmark = pytest.mark.cad
 
@@ -125,7 +125,7 @@ def test_the_carrier_works_round_the_deck_the_pulleys_and_its_holes(L, data):
     """On the face (2026-10-05): the middle stops over the deck, the legs
     carry the board's lower holes, a pocket clears each drive pulley, and the
     printed standoffs' self-tap pilots stop short of every pocket."""
-    from aow_sim.cad_bike import data_deck_top, rx
+    from aow_sim.cad.bike import data_deck_top, rx
     el = data["s"]["electronics"]
     plates = L["carrier"]["plates"]
     deck = data_deck_top(data["rL"], L["zr"]) + el["notch"]["deck_clear"] - 1e-6
@@ -241,9 +241,9 @@ def test_the_cables_bend_no_tighter_than_specified(L_full):
 
 def test_a_righting_change_is_noticed(data, L, tmp_path):
     """The placement was probed against one righting; a different linkage or
-    stack gives a different digest (and cad_bike says so), the same one the same."""
+    stack gives a different digest (and cad.bike says so), the same one the same."""
     import copy
-    from aow_sim import cad_righting as cr
+    from aow_sim.cad import righting as cr
     assert cb.righting_digest(data["rL"]) == cb.righting_digest(cr.layout(cb.righting_v1()))
     rd = copy.deepcopy(data["rd"])
     rd["s"]["stack"]["clearance"] = 0.3

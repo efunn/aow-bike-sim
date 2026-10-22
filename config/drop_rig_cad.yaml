@@ -1,6 +1,6 @@
 # The drop release rig's CAD numbers: the base holding the force-sensor PCB
 # and the XL330, the cam, and the two wheel interfaces. Read by
-# aow_sim.cad_drop_rig only -- never by the simulator. Metres (keys ending
+# aow_sim.cad.drop_rig only -- never by the simulator. Metres (keys ending
 # _deg are not scaled). Spec: docs/plans/drop-release-rig.md, "Parts".
 #
 # RIG FRAME: origin on the top of the drop sensor's button (pcb.drop_button_n),
@@ -10,7 +10,7 @@
 # follower.
 #
 # The fork joint and the chainstay joint are NOT numbers here: they are
-# cad_steering's and cad_drive's own layouts, read at build time, so a change
+# cad.steering's and cad.drive's own layouts, read at build time, so a change
 # to the fork or the chainstay moves its interface with it.
 
 pcb:

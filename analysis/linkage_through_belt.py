@@ -3,7 +3,7 @@
     python analysis/linkage_through_belt.py              # -> analysis/plots/linkage_through_belt.png
     python analysis/linkage_through_belt.py --tag alt    # a variant, at its own name
 
-A FEASIBILITY MAP, not a decision. Everything is read from `aow_sim.cad_layout`
+A FEASIBILITY MAP, not a decision. Everything is read from `aow_sim.cad.layout`
 and `analysis.wing_linkage`, so the answer cannot drift from the layout the CAD
 is drawn against. Changes nothing — see `analysis/wing_linkage.py` for the rule.
 
@@ -65,7 +65,7 @@ re-solved: they keep their size, clocking and tangential straddle. That is
 right to first order and it is what stops short-C candidates scoring for
 packing they have not paid for, but a real re-solve would move the straddle and
 the plate outline too. Anything on the shortlist wants re-deriving through
-`cad_layout` before it is believed. Belt tooth counts are also swept as
+`cad.layout` before it is believed. Belt tooth counts are also swept as
 integers; stocked HTD 5M lengths are a subset, so a winner is a supplier
 question, not an order.
 """
@@ -79,7 +79,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-from aow_sim.cad_layout import (CAD_PARAMS, LINKAGE_CFG, belt_centre_distance,
+from aow_sim.cad.layout import (CAD_PARAMS, LINKAGE_CFG, belt_centre_distance,
                                 belt_tangent, build, load_params, load_sources)
 
 # Ratio 3.0 tops the drive out here on a 3S average — see `belt_ratio` in
@@ -226,7 +226,7 @@ def belt_keep_outs(teeth_in, teeth_sv, belt_teeth, angle_deg, sep_deg,
     """The belt-and-pulley keep-out for a CANDIDATE drivetrain, in mm.
 
     Rebuilt from tooth counts rather than read from the export, because that is
-    the whole point of the sweep. Same envelope convention as `cad_layout` —
+    the whole point of the sweep. Same envelope convention as `cad.layout` —
     pitch diameter plus half the flange margin — so the numbers are comparable.
     """
     d_in = teeth_in * pitch / np.pi

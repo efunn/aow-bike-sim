@@ -15,8 +15,8 @@ import re
 import numpy as np
 import pytest
 
-from aow_sim import cad_ahrs_fixture as fx
-from aow_sim import cad_servo_mount as sm
+from aow_sim.cad import ahrs_fixture as fx
+from aow_sim.cad import servo_mount as sm
 
 pytestmark = pytest.mark.cad
 

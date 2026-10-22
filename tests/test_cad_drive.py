@@ -5,16 +5,16 @@
 the tension joint, the clearances the parts depend on -- the sketch profiles,
 and that the generated FeatureScript lints.
 Invalidated by: config/drive_cad.yaml, bike_params_cad's belt, XC430 and
-omni_wheel blocks, or the shared FeatureScript in cad_ahrs_fixture /
-cad_servo_mount.
+omni_wheel blocks, or the shared FeatureScript in cad.ahrs_fixture /
+cad.servo_mount.
 """
 
 import math
 
 import pytest
 
-from aow_sim import cad_drive as cd
-from aow_sim import cad_servo_mount as sm
+from aow_sim.cad import drive as cd
+from aow_sim.cad import servo_mount as sm
 
 pytestmark = pytest.mark.cad
 

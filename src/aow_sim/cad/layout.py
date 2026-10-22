@@ -1,6 +1,6 @@
 """Emit the component layout in CAD coordinates, for drawing the real bike.
 
-    python -m aow_sim.cad_layout            # -> docs/cad/cad_layout.yaml
+    python -m aow_sim.cad.layout            # -> docs/cad/cad_layout.yaml
 
 WHY THIS EXISTS: `config/bike_params.yaml` is the simulator's frame — **+X
 forward, +Y left, +Z up**, metres, kilograms. The CAD model is drawn in the
@@ -33,7 +33,7 @@ import re
 from math import cos, radians, sin
 from pathlib import Path
 
-from .params import DEFAULT_PARAMS, load_params
+from ..params import DEFAULT_PARAMS, load_params
 
 CAD_PARAMS = "config/bike_params_cad.yaml"
 # The 75 mm-envelope solve, not the 120 mm one the sim still builds.
@@ -1284,7 +1284,7 @@ def render(items: list[dict], params: dict, linkage_used: str = "") -> str:
         "# AOW bike — component layout in CAD coordinates.",
         "#",
         "# GENERATED — do not edit. Regenerate with:",
-        "#     python -m aow_sim.cad_layout",
+        "#     python -m aow_sim.cad.layout",
         "#",
         "# FRAME:  +X right, +Y forward, +Z up.   UNITS: mm and g.",
         f"# ORIGIN: the REAR AXLE, {_mm(axle_h)} mm above the floor when upright.",
@@ -1428,7 +1428,7 @@ import(path : "onshape/std/geometry.fs", version : "{ver}.0");
 import(path : "onshape/std/variable.fs", version : "{ver}.0");
 
 // AOW bike component layout — GENERATED, do not edit.
-//   python -m aow_sim.cad_layout --format featurescript
+//   python -m aow_sim.cad.layout --format featurescript
 //
 // FRAME:  +X right, +Y forward, +Z up.  ORIGIN: the rear axle,
 // {axle} mm above the floor when the bike is upright.
@@ -2180,7 +2180,7 @@ def main() -> None:
                          "Bare --push targets the `feature_studio` tab in "
                          "config/onshape.yaml; or name another tab, or paste a "
                          "browser URL. Implies --format featurescript. ONE "
-                         "billable call — see aow_sim.onshape for the quota")
+                         "billable call — see aow_sim.cad.onshape for the quota")
     ap.add_argument("--shot", metavar="TAB|URL", nargs="?", const="",
                     help="render a Part Studio to PNG afterwards. Bare --shot "
                          "targets the `layout` tab. One more billable call")
@@ -2246,7 +2246,7 @@ def main() -> None:
 def _to_onshape(args, text: str) -> None:
     """Push, then optionally render. Two calls at most, and never in a loop.
 
-    Import is local so that `cad_layout` with no network flags stays a pure
+    Import is local so that `cad.layout` with no network flags stays a pure
     offline export — the module reads the Keychain on first call.
     """
     from . import onshape

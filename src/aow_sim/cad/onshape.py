@@ -1,6 +1,6 @@
 """Push the generated Feature Studio to Onshape, and pull a render back.
 
-    python -m aow_sim.cad_layout --format featurescript \
+    python -m aow_sim.cad.layout --format featurescript \
         --push https://cad.onshape.com/documents/<did>/w/<wid>/e/<eid>
 
 WHY THIS IS SMALL: the whole workflow is two calls. `POST /featurestudios/...`
@@ -14,7 +14,7 @@ calls per year**, per user. Not per day. Only 2xx/3xx responses count, so a
 push that fails on a compile error is free. Every call is appended to
 `~/.local/state/aow/onshape_calls.jsonl` with what it did, because Onshape
 shows you a total and never a breakdown. It is advisory, not authoritative --
-`python -m aow_sim.onshape --log` prints it, and the running total is meant to
+`python -m aow_sim.cad.onshape --log` prints it, and the running total is meant to
 be checked against cad.onshape.com occasionally, not trusted blindly. It lives
 outside the repo because it is per-machine state, not project data.
 
@@ -491,7 +491,7 @@ def eval_featurescript(script: str, url: str) -> dict:
 
     - The script must be a BARE FUNCTION EXPRESSION. A `FeatureScript 3044;` +
       `import(...)` preamble is a parse error; std is implicit. See
-      `cad_layout._eval_wrapper`, which does the rewrite for a whole studio.
+      `cad.layout._eval_wrapper`, which does the rewrite for a whole studio.
     - A script that fails to compile still returns 200, so unlike a failed push
       it COSTS A CALL. Batch every question into one script.
 
@@ -590,7 +590,7 @@ if __name__ == "__main__":
         except OnshapeError as e:
             raise SystemExit(str(e))
     else:
-        raise SystemExit("usage: python -m aow_sim.onshape <document url>  "
+        raise SystemExit("usage: python -m aow_sim.cad.onshape <document url>  "
                          "# check keys: 1 call on success, 0 on failure\n"
-                         "       python -m aow_sim.onshape --log           "
+                         "       python -m aow_sim.cad.onshape --log           "
                          "# every call made, free")

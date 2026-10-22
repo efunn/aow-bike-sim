@@ -32,4 +32,4 @@ y: [-61.25, 20.75]      # fore/aft span, as V2
 # the rest and FLAGS this number when the two differ by > 0.25 deg -- after
 # a shape change, copy its "Level (roll 0)" here, rounded down to 0.1.
 crank_travel_deg: 116.9
-mass: {value: 0.0388, source: GUESS}   # each: cad_servo_mount.printed_mass of the section x span, 2 perim / 15 %
+mass: {value: 0.0388, source: GUESS}   # each: cad.servo_mount.printed_mass of the section x span, 2 perim / 15 %

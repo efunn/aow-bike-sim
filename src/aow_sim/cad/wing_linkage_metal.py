@@ -3,10 +3,10 @@ every pivot in a Delrin bushing, the XC330 coupled for torque only. ONE custom
 feature, `AOW wing linkage metal`, in its own Feature Studio. Spec:
 docs/plans/wing-linkage-metal.md. Numbers: config/wing_linkage_metal_cad.yaml.
 
-    python -m aow_sim.cad_wing_linkage_metal                  # write the .fs, print the layout
-    python -m aow_sim.cad_wing_linkage_metal --check          # ONE call, `check` tab
-    python -m aow_sim.cad_wing_linkage_metal --push wing_metal_features
-    python -m aow_sim.cad_wing_linkage_metal --shot           # -> docs/cad/wing_linkage_metal.png
+    python -m aow_sim.cad.wing_linkage_metal                  # write the .fs, print the layout
+    python -m aow_sim.cad.wing_linkage_metal --check          # ONE call, `check` tab
+    python -m aow_sim.cad.wing_linkage_metal --push wing_metal_features
+    python -m aow_sim.cad.wing_linkage_metal --shot           # -> docs/cad/wing_linkage_metal.png
 
 WHAT IT IS FOR. The righting linkage takes the hardest knocks on the bike: the
 sim's pin peaks are 72 N lifting and ~160 N in a fall (the diamond, 9.9 V,
@@ -54,10 +54,10 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import cad_servo_mount as sm
-from .params import _normalize, load_params
+from . import servo_mount as sm
+from ..params import _normalize, load_params
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "analysis"))
 import swing_synthesis as ss                    # noqa: E402
 
@@ -463,9 +463,9 @@ FS = r'''FeatureScript %VERSION%;
 import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_wing_linkage_metal --push wing_metal_features
+ *   python -m aow_sim.cad.wing_linkage_metal --push wing_metal_features
  *
- * Every primitive of every part is computed in aow_sim.cad_wing_linkage_metal
+ * Every primitive of every part is computed in aow_sim.cad.wing_linkage_metal
  * and carried here as WLM_PARTS; this file only builds them. Millimetres.
  * MODULE FRAME: origin on the wing rod at the mid-plane between the couplers,
  * +Y forward, +X right, +Z up. Poses: WLM_POSES, a rotation about +Y through

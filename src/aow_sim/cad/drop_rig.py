@@ -1,8 +1,8 @@
 """The drop release rig's printed parts, as ONE custom feature, `AOW drop rig`,
 in its own Feature Studio. Spec: docs/plans/drop-release-rig.md, "Parts".
-Numbers: config/drop_rig_cad.yaml, plus cad_steering's and cad_drive's own
+Numbers: config/drop_rig_cad.yaml, plus cad.steering's and cad.drive's own
 layouts for the two wheel interfaces, plus the X330 envelope and case shells
-cad_servo_mount and the X330 fixture use.
+cad.servo_mount and the X330 fixture use.
 
 RIG FRAME: origin on the drop sensor's button top, +Z up, +X along the arm
 toward the hinge, +Y along the wheel's axle. The wheel stands on the button,
@@ -16,10 +16,10 @@ axle straight above it; the arm leaves the board over its short edge.
     cover             Y+      the horn-half shell, full wrap, leg down to the base
     cam               Y+      bench/drop_cam.py's profile on the horn's pins
     front interface   X+      the fork's headset block (its ledges, cheeks and
-                              two 6-32 nut slots, from cad_steering), the bar
+                              two 6-32 nut slots, from cad.steering), the bar
                               slot, the follower
     rear interface    X+      both case sides' chainstay joint (channel, screw
-                              slot, nut slot, from cad_drive), the bar slot,
+                              slot, nut slot, from cad.drive), the bar slot,
                               the follower
     wave cam <name>   Y+      AHRS mode, one per `wave_kit` cam: drop_cam.py's
                               tones on the horn's pins, drawn `wave.offset`
@@ -39,10 +39,10 @@ axle. Each interface carries its own wheel's radius (the rear's is the
 contact under test, `wheels.rear_radius_offset`), and puts its follower at
 the same height over the button.
 
-    python -m aow_sim.cad_drop_rig                     # write docs/cad/drop_rig.fs
-    python -m aow_sim.cad_drop_rig --check             # both wheels, ONE call
-    python -m aow_sim.cad_drop_rig --push drop_rig_features
-    python -m aow_sim.cad_drop_rig --shot              # -> docs/cad/drop_rig.png
+    python -m aow_sim.cad.drop_rig                     # write docs/cad/drop_rig.fs
+    python -m aow_sim.cad.drop_rig --check             # both wheels, ONE call
+    python -m aow_sim.cad.drop_rig --push drop_rig_features
+    python -m aow_sim.cad.drop_rig --shot              # -> docs/cad/drop_rig.png
 """
 
 from __future__ import annotations
@@ -54,11 +54,11 @@ from pathlib import Path
 
 import yaml
 
-from . import cad_ahrs_fixture as af
-from . import cad_drive as dr
-from . import cad_servo_mount as sm
-from . import cad_steering as st
-from .params import _normalize
+from . import ahrs_fixture as af
+from . import drive as dr
+from . import servo_mount as sm
+from . import steering as st
+from ..params import _normalize
 
 RIG_PARAMS = "config/drop_rig_cad.yaml"
 X330_PARAMS = "config/x330_fixture_cad.yaml"
@@ -239,13 +239,13 @@ def full_layout(data: dict) -> dict:
               "pcbHoleR": 1.63, "fsHalfX": fs["body_x"] / 2, "fsY0": fs["body_y0"],
               "fsY1": fs["body_y1"], "buttonR": fs["button_dia"] / 2,
               "head_recess": data["joint"]["head_recess"]})
-    # the front block and fork, borrowed from cad_steering (module -> rig:
+    # the front block and fork, borrowed from cad.steering (module -> rig:
     # X = module Z, Y = module X, Z = axle + module Y)
     for k in ("blockBot", "blockTop", "xBlk", "blockHalf", "zFS", "forkPocket", "xIn", "xOut",
               "forkHalf", "cheekIn", "legHalf", "tireW"):
         L["S_" + k] = S[k]
     L["S_R"] = S["R"]
-    # the rear joint, borrowed from cad_drive (module -> rig: X = module Y,
+    # the rear joint, borrowed from cad.drive (module -> rig: X = module Y,
     # Y = module X, Z = axle + module Z)
     for k in ("xPo", "Yc0", "Yj1", "Yr0", "Yscr", "travel", "tongueTop", "tongueEnd", "tongueHalf",
               "tongueClr", "xN0", "nutSlotT", "tipSlot", "holeR", "nutHalfY", "nutCornerY",
@@ -423,11 +423,11 @@ FS = r'''FeatureScript %VERSION%;
 import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_drop_rig --push drop_rig_features
+ *   python -m aow_sim.cad.drop_rig --push drop_rig_features
  *
- * Numbers from config/drop_rig_cad.yaml, cad_steering's and cad_drive's
+ * Numbers from config/drop_rig_cad.yaml, cad.steering's and cad.drive's
  * layouts (the fork and chainstay joints) and config/servo_mounts.yaml, every
- * derived one computed in aow_sim.cad_drop_rig's layout() and carried here as
+ * derived one computed in aow_sim.cad.drop_rig's layout() and carried here as
  * RIG. Millimetres.
  *
  * RIG FRAME: origin on the drop sensor's button top, +Z up, +X along the arm
@@ -529,7 +529,7 @@ export function barAndFollower(context is Context, id is Id, x0 is ValueWithUnit
 }
 
 /**
- * The front interface: cad_steering's headset block (fork ledges under its
+ * The front interface: cad.steering's headset block (fork ledges under its
  * -X face, cheeks round its +-Z faces, one 6-32 a side into a nut slot along
  * X), then the bar housing and the follower. With the fork mock and tire
  * when `mocks`. Returns the part's point and the hardware.
@@ -590,7 +590,7 @@ export function frontInterface(context is Context, id is Id, mocks is boolean) r
 
 /**
  * The rear interface: one block between the chainstays, its +-Y faces where
- * the case sides' outer faces are, each with cad_drive's channel, screw slot
+ * the case sides' outer faces are, each with cad.drive's channel, screw slot
  * (the tension travel), nut slot from the -X face and tip slot. Then the bar
  * housing and the follower. With chainstay mocks and the wheel when `mocks`.
  */

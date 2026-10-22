@@ -32,7 +32,7 @@ the parts that tie them together.
 
 ## Decisions (2026-09-30)
 
-- **Composition, not import.** `aow_sim.cad_bike` merges the three modules'
+- **Composition, not import.** `aow_sim.cad.bike` merges the three modules'
   geometry layers into one Feature Studio and calls `driveBuild`,
   `steeringBuild` and `rightingBuild` under their own ids before moving
   each into place.
@@ -41,13 +41,13 @@ the parts that tie them together.
   - An FS `import` was not used: it pins a microversion, and the check
     eval cannot import, so the check would test different code from the
     push.
-  - A module change reaches the bike on the next `cad_bike --push`.
+  - A module change reaches the bike on the next `cad.bike --push`.
 - **Bike frame:** origin on the rear axle, +Y forward, +X right, +Z up,
   the axes of every module:
   - the drive is turned 45 deg about X;
   - the steering is moved to the front axle and raked 15 deg;
   - the righting is translated.
-- **Wheelbase 300, not 200.** `cad_bike --fit 2` (one call,
+- **Wheelbase 300, not 200.** `cad.bike --fit 2` (one call,
   `traces/bike_cad/fit2_righting.txt`, 5 mm grid, zero margin) slid the
   righting along the wheelbase:
 
@@ -136,7 +136,7 @@ the block's 45 deg face, z along it.
 
 **Third pass, the same day (user): the electronics lower, the power board
 as tall as the U2D2** (its 25 was a guess that set the layout).
-`cad_bike --fit e` (one call, `traces/bike_cad/fit_electronics.txt`)
+`cad.bike --fit e` (one call, `traces/bike_cad/fit_electronics.txt`)
 builds the bike without the electronics, then slides their envelopes
 down the drive's face and off it. Each position is tested at rest, steered
 and at five righting poses:
@@ -188,7 +188,7 @@ Consequences:
   "doesn't represent the cable narrowing").
   - Two USB-A plug bodies (17.5 x 15, stacked), then a 6 mm pipe per cable:
     the 6 mm hard stub straight out, then bends at a true 6 mm centreline
-    radius (`cad_bike.rounded_path`, which refuses a leg too short for its
+    radius (`cad.bike.rounded_path`, which refuses a leg too short for its
     bends). Down past the carrier's lower edge, back under it into each
     device's USB-C plug.
   - The upper plug's cable nests one bundle outside the lower one's in the
@@ -227,7 +227,7 @@ Consequences:
   in, translucent and untagged, so poses and the check ignore it.
 - **`placement.righting_digest`:** the bike rebuilds the righting from its
   generator every time, so a linkage or stack change comes in on its own.
-  The placement and the edge are measured numbers, though: `cad_bike`
+  The placement and the edge are measured numbers, though: `cad.bike`
   prints a NOTE when the righting no longer matches the digest they were
   probed against. Re-run `--fit 2`, `--fit e` and `--check`, then update it.
 
@@ -327,7 +327,7 @@ that turns up gets written down (below).
 diagonal, (11, 14) and (-11, -24.5) on the face (`post_mirror` false). The
 centreline is avoided because of the tray nut's slot. "Happy with the
 layout for now"; nothing printed in this setup. The righting will be
-reworked against `cad_bike --fit righting` (one call: the pose-aware 0.5
+reworked against `cad.bike --fit righting` (one call: the pose-aware 0.5
 scan and the front wheel, FITS or what binds), with the constraints in
 `righting-design.md`, "Fitting the whole bike".
 
@@ -364,11 +364,11 @@ tentative):**
   for "far back";
 - the power switch near the front/steer. Its geometry stays in
   `electronics.switch`: cutout 13 x 19.4, panel 0.75-3 (2 drawn), 18.5
-  behind the panel, the bezel GUESS, and the tab code in `cad_bike` behind
+  behind the panel, the bezel GUESS, and the tab code in `cad.bike` behind
   `underside`.
 
 **Printed mass** is now estimated beside the solid figure, using
-`skin x area + 15 % x the rest` with skin 0.9 mm (`cad_bike.printed_mass`).
+`skin x area + 15 % x the rest` with skin 0.9 mm (`cad.bike.printed_mass`).
 UNCALIBRATED: weigh a printed part and fit `SKIN`.
 
 ## Wheelbase 200.5: the righting's servo turned (2026-10-07, user)
@@ -384,7 +384,7 @@ rear, so the placement was re-fitted:
 | `placement.wheelbase` | 223.5 | **200.5** | + the front's 80 (front bulkhead 5.25 from the straight wheel, unchanged) |
 | deck top | 58.24 | 51.18 | the bridge |
 | `electronics.edge` | -69.5 | **-44.5** | one probe, plate slid UP the face in 5 mm steps: the lower case and deck sit under the old spot; clear from +25. The plate is now one piece (no notch needed) |
-| righting `chassis.joints_y` | +8 / -8 | +-8 again (late; +9.5 alone for an afternoon) | user: two nut slots, the chassis is a placeholder. -8 is under the wedge, its head buried: `cad_bike` NOTES it (it refused), and the wedge now stands on the deck's top so the righting plate keeps the grooves |
+| righting `chassis.joints_y` | +8 / -8 | +-8 again (late; +9.5 alone for an afternoon) | user: two nut slots, the chassis is a placeholder. -8 is under the wedge, its head buried: `cad.bike` NOTES it (it refused), and the wedge now stands on the deck's top so the righting plate keeps the grooves |
 
 `deckPt`, how the chassis finds its body after the union, moved into the
 wedge: mid-deck it fell into the -8 joint's screw hole
@@ -393,7 +393,7 @@ between +20 and +25 (not resolved finer).
 
 ## As built
 
-`python -m aow_sim.cad_bike` (config `config/bike_cad.yaml`), one feature
+`python -m aow_sim.cad.bike` (config `config/bike_cad.yaml`), one feature
 `AOW bike` (dialog: steer angle, righting pose, envelopes on/off, ghost
 wings on/off) in the
 Feature Studio **aow-bike-whole features**, inserted in the Part Studio
@@ -481,7 +481,7 @@ places.** Known to change:
   the block's own orientation, so expect cleanup there.
 - **Finishing (chamfers, fillets, cosmetic cuts) goes through the modules,
   not `-whole`** (user, 2026-09-30). Hand-model it in a module's Part
-  Studio, read it back with `cad_hand_edits`, Claude folds it into that
+  Studio, read it back with `cad.hand_edits`, Claude folds it into that
   generator, check, then roll into `-whole`. The steps are in
   `cad-onshape-workflow.md`, "Modules, the whole bike, and folding hand
   edits in". Hand edits made in `-whole` are a last step only: a re-push

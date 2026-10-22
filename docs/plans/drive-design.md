@@ -122,7 +122,7 @@ flexing the arm. `--check` lists the overlap as intended.
 - **45° nominal tilt** in the bike (user). The module is drawn with Y along
   the belt; the whole-bike studio tilts it.
 
-## As built (`aow_sim.cad_drive`)
+## As built (`aow_sim.cad.drive`)
 
 | along X, each side | mm |
 |---|---|

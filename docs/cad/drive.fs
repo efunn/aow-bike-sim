@@ -2,10 +2,10 @@ FeatureScript 3044;
 import(path : "onshape/std/geometry.fs", version : "3044.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_drive --push drive_features
+ *   python -m aow_sim.cad.drive --push drive_features
  *
  * Numbers from config/drive_cad.yaml and bike_params_cad.yaml, every derived
- * one computed in aow_sim.cad_drive's layout() and carried here as DR.
+ * one computed in aow_sim.cad.drive's layout() and carried here as DR.
  * Millimetres. X in DR is a MAGNITUDE on the left side; the code negates.
  *
  * MODULE FRAME: origin on the rear axle, +Y along the mean belt (toward the
@@ -1205,7 +1205,7 @@ export function caseShellPair(context is Context, id is Id, cs is CoordSystem,
     // already inserted in live documents; if Onshape does not backfill a
     // default into an existing instance it reads as undefined, and under
     // `== true` both halves would vanish on the next regeneration. Unset
-    // builds. Same reasoning as the group tickboxes in cad_layout.
+    // builds. Same reasoning as the group tickboxes in cad.layout.
     if (opt.makeTop != false)
         made = append(made, caseShellBuild(context, id + "top", useCS,
                 mergeMaps(opt, { "part" : "TOP" }), qNothing()));

@@ -57,15 +57,15 @@ in general, can reposition these to find the best layout, then design case/routi
 
 ## Drive (done 2026-10-11)
 
-`python -m aow_sim.cad_drive --check --push drive_features`, the existing
+`python -m aow_sim.cad.drive --check --push drive_features`, the existing
 `aow-bike-drive` tab.
 
 - **Fixture mock off.** The case sides now end at the skirt's front wall
   (Y 118.9, was 142.9 with the tabs). The mock and the tabs are still in the
   code, behind the dialog's "Fixture mock" box (default off). v1's
-  `cad_bike` builds them always, because its chassis grows from the block.
+  `cad.bike` builds them always, because its chassis grows from the block.
 - **Your hand edits are in the generator,** on both chainstays. They were
-  read back with `cad_hand_edits drive` (`traces/hand_edits/drive_hand_edits.txt`)
+  read back with `cad.hand_edits drive` (`traces/hand_edits/drive_hand_edits.txt`)
   and are set in `drive_cad.yaml` `chainstay:`:
 
   | edit | where | size |
@@ -81,12 +81,12 @@ in general, can reposition these to find the best layout, then design case/routi
   convex fillets, which the hole detector mistakes for holes.
 - **To do (user):** delete the four hand features from `aow-bike-drive`.
   They now duplicate the generated ones and will error.
-- `cad_hand_edits` now lists every face per feature. With only one example
+- `cad.hand_edits` now lists every face per feature. With only one example
   face, Chamfer 2's second edge (the concave gusset) was ambiguous.
 
 ## Steering v2 (done 2026-10-11)
 
-`python -m aow_sim.cad_steering --v2 --check --push steering_v2_features`.
+`python -m aow_sim.cad.steering --v2 --check --push steering_v2_features`.
 New tabs `aow-bike-steering-v2 features` and `aow-bike-steering-v2`, with
 `AOW steering v2` inserted (SCREWS / CROSS). v1's tabs are untouched.
 Config: `steering_cad.yaml` `v2:`.
@@ -119,7 +119,7 @@ Config: `steering_cad.yaml` `v2:`.
 
 ## Righting (done 2026-10-11)
 
-`python -m aow_sim.cad_righting --check --push righting_features`, the
+`python -m aow_sim.cad.righting --check --push righting_features`, the
 existing `aow-bike-righting` tab.
 
 - **`wing.blade: outline`** (new; `ends` was the stub plus U blade). Each
@@ -143,8 +143,8 @@ existing `aow-bike-righting` tab.
 - `--check`: 0 interference at rest and over 10 poses; L/R stubs and
   blades are twins; 0 hanging edges, 0 flat crowns. ~59 g printed ASA,
   blades not counted.
-- **v1's `cad_bike` is frozen on `ends` and the linkage stroke**
-  (`cad_bike.righting_v1`). V3's toe reaches v1's front tyre sweep at
+- **v1's `cad.bike` is frozen on `ends` and the linkage stroke**
+  (`cad.bike.righting_v1`). V3's toe reaches v1's front tyre sweep at
   wheelbase 200.5, and v1 is not being re-fitted.
 - **Side effect, not acted on:** `analysis/swing_stepthrough.py` reads the
   CAD's blade as its default design, so a re-run now sweeps V3 there. Its
@@ -155,12 +155,12 @@ existing `aow-bike-righting` tab.
 
 ## The v2 bike (first layout, 2026-10-11)
 
-`python -m aow_sim.cad_bike_v2 --check --push bike_v2_features`. New tabs
+`python -m aow_sim.cad.bike_v2 --check --push bike_v2_features`. New tabs
 `aow-bike-whole-v2 features` and `aow-bike-whole-v2`, with `AOW bike v2`
 inserted (steer, righting pose and envelopes on/off in the dialog). Config:
 `config/bike_v2_cad.yaml`; tests: `tests/test_cad_bike_v2.py` (`cad`).
 
-- **Composition as v1** (`cad_bike.merge_layers`, the same transforms),
+- **Composition as v1** (`cad.bike.merge_layers`, the same transforms),
   built from scratch with none of v1's chassis, tray, carrier, cage, fit
   rules or digest: drive (no fixture), steering v2, righting (V3). The
   righting's floor mock and chassis-plate placeholder are dropped.
@@ -185,7 +185,7 @@ inserted (steer, righting pose and envelopes on/off in the dialog). Config:
   sits exactly where its config puts it.
 - **Moving things:** edit `components:` and re-run (check 1 + push 1).
   Or move a part in the browser with a Transform after the feature (free),
-  and say where it went. A read-back (`cad_hand_edits bike_v2`, 2 calls)
+  and say where it went. A read-back (`cad.hand_edits bike_v2`, 2 calls)
   gives the transform's values.
 
 ## Round 2 (2026-10-11 pm, user's review)
@@ -195,7 +195,7 @@ inserted (steer, righting pose and envelopes on/off in the dialog). Config:
   [-61.25, 20.75], which is mid-wheelbase 100.25 with the rod at 120.5.
 - The left blade is now the right one **mirrored** across the midline. A
   180 deg turn would have put it the other way along Y.
-- `cad_bike_v2` refuses a wheelbase the blades are not centred on, and
+- `cad.bike_v2` refuses a wheelbase the blades are not centred on, and
   says the span to use.
 
 **Wheelbase back to 200.5** (front 80, v1's). Centred, the blades' front
@@ -233,7 +233,7 @@ to be able to come in and out easily".
 - The user is not settled on where the U2D2 and power board go. The AHRS
   stays where it is (user: "looks good").
 
-`cad_bike_v2 --check`: no interference at rest, steered or at any pose.
+`cad.bike_v2 --check`: no interference at rest, steered or at any pose.
 
 ## Round 3 (2026-10-11 evening, user's review)
 
@@ -268,7 +268,7 @@ is 59.5 tall, so the AHRS slid to its lower part (drive z -29.75..10.25),
 and the power board sits above it. It overhangs the face's upper edge by
 11, forward of the battery and not over it.
 
-`cad_bike_v2 --check`: no interference at rest, steered or at any pose.
+`cad.bike_v2 --check`: no interference at rest, steered or at any pose.
 
 ## Round 4 (2026-10-11 late): the upper <-> lower joints shortened
 
@@ -281,12 +281,12 @@ and the power board sits above it. It overhangs the face's upper edge by
 | lower / upper case, if solid (superseded, round 5) | 31.5 / 15.2 g | 27.2 / 14.0 g |
 
 `--check`: 0 interference, 0 hanging edges, 0 flat crowns. The upper
-case's bed is back to 997.9 mm2. `cad_bike_v2 --check`: clean.
+case's bed is back to 997.9 mm2. `cad.bike_v2 --check`: clean.
 
 ## Round 5: printed mass, not solid (2026-10-11 late)
 
 The steering's check reported **solid PLA**. Nothing here prints in PLA or
-solid (user: ASA, 15 % infill). It now uses `cad_servo_mount.printed_mass`,
+solid (user: ASA, 15 % infill). It now uses `cad.servo_mount.printed_mass`,
 as the righting's does: a 0.9 skin over the whole surface, 15 % infill
 inside, ASA 1.07 g/cm3, UNCALIBRATED. The check records each part's
 surface area for it. The solid figures in the rounds above are left as
@@ -301,7 +301,7 @@ written and marked superseded; they compare only with each other.
 | headset upper | 1.3 |
 | horn hub | 1.0 (SCREWS), 1.3 (PINS) |
 
-Still on solid PLA, unchanged: `cad_drop_rig`, `cad_x330_fixture`.
+Still on solid PLA, unchanged: `cad.drop_rig`, `cad.x330_fixture`.
 
 ## Outstanding
 

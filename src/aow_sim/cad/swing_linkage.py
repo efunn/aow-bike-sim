@@ -5,10 +5,10 @@ pair; this puts the same geometry into CAD as a CUSTOM FEATURE with a crank
 input you can turn. Insert it several times on one plane at different inputs
 and the overlay IS the motion study -- no animation, no assembly, no mates.
 
-    python -m aow_sim.cad_swing_linkage                        # default config
-    python -m aow_sim.cad_swing_linkage --config config/swing_linkage_flat.yaml
-    python -m aow_sim.cad_swing_linkage --check                # 1 billable call
-    python -m aow_sim.cad_swing_linkage --push swing_features  # 2 calls
+    python -m aow_sim.cad.swing_linkage                        # default config
+    python -m aow_sim.cad.swing_linkage --config config/swing_linkage_flat.yaml
+    python -m aow_sim.cad.swing_linkage --check                # 1 billable call
+    python -m aow_sim.cad.swing_linkage --push swing_features  # 2 calls
 
 THE FOUR-BAR IS SOLVED IN FEATURESCRIPT, NOT HERE. That is the whole point of
 the feature and it is also the cost: `swingSolve` below is a second
@@ -38,13 +38,13 @@ back here when the answer is worth keeping in a config.
 COORDINATES. The study is a front view in (y, z) millimetres from the
 CENTRELINE and the AXLE -- its `wing_z_min` and friends are measured along the
 panel, not upward. The sketch is laid out with u = -y and v = z, because CAD x
-is -y everywhere else in this repo (`cad_layout.to_cad_pos`), so on the world
+is -y everywhere else in this repo (`cad.layout.to_cad_pos`), so on the world
 front plane this lands exactly where `aowFourBarSketch` puts the steering
 linkage. The floor is at v = -wheel_radius, which is what `Draw the floor line`
 draws and what the chassis keep-out heights are measured from.
 
-WHERE IT PUSHES. Nowhere by default, and never to `feature_studio` (cad_layout
-overwrites that tab wholesale) or `horn_features` (cad_servo_mount owns it). A
+WHERE IT PUSHES. Nowhere by default, and never to `feature_studio` (cad.layout
+overwrites that tab wholesale) or `horn_features` (cad.servo_mount owns it). A
 push needs its own Feature Studio tab: make one in the browser, which is free,
 add its id to config/onshape.yaml under a name, and pass the name.
 """
@@ -60,11 +60,11 @@ from string import Template
 import yaml
 
 # The third module in this package to want these two, and they are already
-# duplicated between cad_layout and cad_servo_mount. Imported rather than
+# duplicated between cad.layout and cad.servo_mount. Imported rather than
 # copied a third time.
-from .cad_servo_mount import _block_end, _strip_comments
+from .servo_mount import _block_end, _strip_comments
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 # `SwingLinkage` lives in analysis/, which is not a package. Same sys.path
 # trick analysis/linkage_through_belt.py uses to reach analysis.wing_linkage,
 # and preferable to a third copy of the derivations: build_model already
@@ -142,7 +142,7 @@ def keepout_fs(cfg: dict) -> str:
 # almost entirely braces; an f-string has to double every one of them, and on
 # 2026-08-25 a quadrupled pair put a literal `{{` into the horn-pin studio and
 # turned every feature in it red while --check still reported green (see
-# cad_servo_mount.lint_fs). With `$name` substitution the mistake is not
+# cad.servo_mount.lint_fs). With `$name` substitution the mistake is not
 # representable -- the braces below are exactly the braces that get emitted.
 
 FS = Template(r'''FeatureScript $ver;
@@ -150,7 +150,7 @@ import(path : "onshape/std/geometry.fs", version : "$ver.0");
 
 /* GENERATED, do not hand-edit: the next push replaces this studio
    wholesale. Regenerate with
-       python -m aow_sim.cad_swing_linkage --config $config
+       python -m aow_sim.cad.swing_linkage --config $config
 
    The co-rotating swing linkage, drawn as a sketch at a crank input you pick.
    Insert the feature once per pose you want to see -- 0, a third of the
@@ -508,7 +508,7 @@ def lint_fs(text: str) -> None:
         raise SystemExit(f"unsubstituted Template placeholders: {bad[:5]}")
     # A COMMAND IN BACKTICKS is rejected by an edge filter in front of the
     # Onshape API, 403 with an nginx page rather than anything from Onshape.
-    # `cad_servo_mount._strip_comments` records this for the eval endpoint;
+    # `cad.servo_mount._strip_comments` records this for the eval endpoint;
     # the CONTENTS endpoint refuses it too, which cost a push on 2026-09-03 --
     # the header cited its own regeneration command in backticks. Backticked
     # IDENTIFIERS are fine and both existing studios are full of them, so the
@@ -717,7 +717,7 @@ def main() -> None:
                          "the `check` tab")
     ap.add_argument("--push", metavar="TAB|URL",
                     help="replace a Feature Studio's contents. Needs its OWN "
-                         "tab -- cad_layout and cad_servo_mount own theirs")
+                         "tab -- cad.layout and cad.servo_mount own theirs")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the check script instead of spending a call")
     args = ap.parse_args()

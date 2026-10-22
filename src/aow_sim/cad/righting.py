@@ -3,7 +3,7 @@ crankshaft in ASA, metal rod stock only for the wing rod, the crankpin and the
 two rocker pins. ONE custom feature, `AOW righting`, in its own Feature
 Studio. Spec: docs/plans/righting-design.md. Numbers: config/righting_cad.yaml,
 the steering module's hub and lugs (config/steering_cad.yaml), the X330
-envelope and mount interface cad_servo_mount reads.
+envelope and mount interface cad.servo_mount reads.
 
 MODULE FRAME: origin on the wing rod's axis at the mid-plane between the
 couplers, +Y forward, +X right, +Z up. The XC330 at the rear, horn forward.
@@ -40,10 +40,10 @@ Every metal hole is drawn at `rod.dia`, line-to-line: ream to press (webs,
 rocker arms, bulkheads) or to run (couplers, rocker and knuckle hubs,
 washers). The journal bores alone carry a clearance (`crank.bore_clearance`).
 
-    python -m aow_sim.cad_righting                   # write docs/cad/righting.fs
-    python -m aow_sim.cad_righting --check           # ONE call, `check` tab
-    python -m aow_sim.cad_righting --push righting_features
-    python -m aow_sim.cad_righting --shot            # -> docs/cad/righting.png
+    python -m aow_sim.cad.righting                   # write docs/cad/righting.fs
+    python -m aow_sim.cad.righting --check           # ONE call, `check` tab
+    python -m aow_sim.cad.righting --push righting_features
+    python -m aow_sim.cad.righting --shot            # -> docs/cad/righting.png
 """
 
 from __future__ import annotations
@@ -59,11 +59,11 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import cad_ahrs_fixture as af
-from . import cad_servo_mount as sm
-from .params import _normalize, blade_points, blade_segments, load_params
+from . import ahrs_fixture as af
+from . import servo_mount as sm
+from ..params import _normalize, blade_points, blade_segments, load_params
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "analysis"))
 import swing_synthesis as ss                    # noqa: E402
 
@@ -555,7 +555,7 @@ def layout(data: dict) -> dict:
         sec = [np.array([x, y + fzb]) for x, y in blade_points(spec["outline"])]
         # the EXACT outline for the studio: lines and the cubic Beziers, so
         # Onshape draws the spline, not the flattening (`pts` stays, for
-        # the checks here and in cad_bike)
+        # the checks here and in cad.bike)
         segs = [[[x, y + fzb] for x, y in (s.get("line") or s["bezier"])]
                 for s in blade_segments(spec["outline"])]
         # the stubs must stand on the blade: the boss's base corners on its inner face
@@ -565,7 +565,7 @@ def layout(data: dict) -> dict:
                  "its inner face is not the panel's")
         # the blades' span: wing.blade_y, centred on the bike's wheelbase
         # (user, 2026-10-11) -- both blades the same span, the stubs where
-        # the links put them (cad_bike_v2 checks the centring)
+        # the links put them (cad.bike_v2 checks the centring)
         ya, yb = wg["blade_y"]
         need(ya <= min(tab_y[0], -kn_tab[1]) and yb >= max(kn_tab[1], -tab_y[0]),
              "the blade's span does not cover both wings' stubs")
@@ -1258,10 +1258,10 @@ FS = r'''FeatureScript %VERSION%;
 import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_righting --push righting_features
+ *   python -m aow_sim.cad.righting --push righting_features
  *
  * Every primitive of the simple parts, the upper case's additions and cuts,
- * the joints and the poses are computed in aow_sim.cad_righting and carried
+ * the joints and the poses are computed in aow_sim.cad.righting and carried
  * here as RG, RG_PARTS, RG_POSES. Millimetres. MODULE FRAME: origin on the
  * wing rod at the mid-plane between the couplers, +Y forward, +X right, +Z
  * up; the XC330 at the rear, horn forward.

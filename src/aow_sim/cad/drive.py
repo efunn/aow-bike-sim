@@ -25,7 +25,7 @@ B (horn +X, above it). So each pair is one part, by construction.
                              the user's chamfers, gusset and fillets
     fixture mock     Y+      PLACEHOLDER between the tabs, 2 x 6-32 a side.
                              OFF in the module since 2026-10-11 (the dialog's
-                             "Fixture mock" box); cad_bike (v1) always builds
+                             "Fixture mock" box); cad.bike (v1) always builds
                              it, its chassis grows from the block
 
 The axle stack is the user's hand drawing (50.5 between the M5's head and
@@ -33,10 +33,10 @@ nut, which preload chainstay -> pulley cone -> wheel hub). The belt plane is
 set from the servo side (horn face + pad + flange gap) and the spline pulley
 is checked to land its teeth in the same band.
 
-    python -m aow_sim.cad_drive                  # write docs/cad/drive.fs
-    python -m aow_sim.cad_drive --check          # ONE call
-    python -m aow_sim.cad_drive --push drive_features
-    python -m aow_sim.cad_drive --shot           # -> docs/cad/drive.png
+    python -m aow_sim.cad.drive                  # write docs/cad/drive.fs
+    python -m aow_sim.cad.drive --check          # ONE call
+    python -m aow_sim.cad.drive --push drive_features
+    python -m aow_sim.cad.drive --shot           # -> docs/cad/drive.png
 """
 
 from __future__ import annotations
@@ -47,9 +47,9 @@ from pathlib import Path
 
 import yaml
 
-from . import cad_ahrs_fixture as af
-from . import cad_servo_mount as sm
-from .params import _normalize, load_params
+from . import ahrs_fixture as af
+from . import servo_mount as sm
+from ..params import _normalize, load_params
 
 DRIVE_PARAMS = "config/drive_cad.yaml"
 AHRS_PARAMS = "config/ahrs_fixture_cad.yaml"     # the TM151's board and holes
@@ -629,7 +629,7 @@ def rail_layout(data: dict, L: dict) -> dict:
     # in past the battery's side, its front face just behind the battery's
     # rear face; and a leg forward along its side. Wholly on the tongue's
     # inboard part (2026-10-19: the arm no longer reaches there).
-    # cad_bike_v2 (cad_power) refuses it off the battery.
+    # cad.bike_v2 (cad.power) refuses it off the battery.
     R["stops"] = []
     rin = [tuple(q) for q in next(q for q in R["cageIn"] if q["end"] == "rear")["pts"]]
     R["postRear"] = [list(to_drive(q)) for q in RO["rseg"]]
@@ -857,10 +857,10 @@ FS = r'''FeatureScript %VERSION%;
 import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_drive --push drive_features
+ *   python -m aow_sim.cad.drive --push drive_features
  *
  * Numbers from config/drive_cad.yaml and bike_params_cad.yaml, every derived
- * one computed in aow_sim.cad_drive's layout() and carried here as DR.
+ * one computed in aow_sim.cad.drive's layout() and carried here as DR.
  * Millimetres. X in DR is a MAGNITUDE on the left side; the code negates.
  *
  * MODULE FRAME: origin on the rear axle, +Y along the mean belt (toward the

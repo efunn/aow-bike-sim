@@ -138,7 +138,7 @@ move, at 3 Mbps; a synthetic 500 deg/s trace read back as 483).
   - 5.75mm tall x 19.75mm wide x ~20mm length slot for a plastic bar to be friction fit into (the lever arm)
 - everything past the lever arm attach I'll rig manually
 
-**Generated 2026-10-02:** `python -m aow_sim.cad_drop_rig`, the custom
+**Generated 2026-10-02:** `python -m aow_sim.cad.drop_rig`, the custom
 feature `AOW drop rig` in aow-bike's `drop-rig` Part Studio (studio
 `drop-rig features`), numbers in `config/drop_rig_cad.yaml`. Render:
 ![drop rig](../cad/drop_rig.png)
@@ -148,8 +148,8 @@ feature `AOW drop rig` in aow-bike's `drop-rig` Part Studio (studio
 | base | Z+ | the PCB on 5 standoffs (M3 self-tap pilots 2.5 GUESS, THROUGH so a tap can run all the way), the shells' two 6-32s from below; board outline, holes and buttons read off key-holder-v5 through the API, not measured on the board |
 | back shell, cover | Y-, Y+ | the X330 fixture's IDLER shells, legs down to the base |
 | cam | Y+ | `drop_cam.py`'s profile on the horn pins (no D-hub, no M2), its back face 1 mm off the cover |
-| front interface | X+ | cad_steering's headset block (ledges, cheeks, two 6-32 nut slots) + bar slot + follower |
-| rear interface | X+ | cad_drive's case-side joint both sides (channel, tension slot, nut slot) + bar slot + follower |
+| front interface | X+ | cad.steering's headset block (ledges, cheeks, two 6-32 nut slots) + bar slot + follower |
+| rear interface | X+ | cad.drive's case-side joint both sides (channel, tension slot, nut slot) + bar slot + follower |
 
 The wheel stands on button 3 (user: 2 or 3, for a compacter base; the
 wheels pass 6.6 mm over button 2). The arm runs along the row toward the
@@ -163,7 +163,7 @@ at that one height, so one base and one cam serve both. `--check` (one call) bui
 
 - **The follower is NOT the ~10 mm centred flat above.** Parked past a
   step, a centred 10 mm flat rests on the next ramp and the step's
-  corner, up to 1.85 mm over the gap (computed, `cad_drop_rig.park_clearance`):
+  corner, up to 1.85 mm over the gap (computed, `cad.drop_rig.park_clearance`):
   the arm would be held off the sensor. It runs 1 mm downstream of the cam's
   centre (that corner is the release) and 4.5 mm upstream (a flat follower's
   contact offset on the 2 mm ramp is 4.3).

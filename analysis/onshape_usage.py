@@ -33,7 +33,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from aow_sim.onshape import BUDGET, LOG, cycle_start, read_log
+from aow_sim.cad.onshape import BUDGET, LOG, cycle_start, read_log
 
 # Where a stray ledger plausibly ends up. Not exhaustive — a deliberate
 # ONSHAPE_LOG somewhere exotic will not be found, which is why the summary

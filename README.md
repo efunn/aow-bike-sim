@@ -148,7 +148,7 @@ The trainer keeps the best-scoring snapshot from a periodic deterministic eval a
 
 The physical bike is **under construction**. Several subassemblies exist and the control loop is proven on real servos and a real AHRS at 100 Hz, but the subassemblies are still being integrated. Four Dynamixel servos, one AHRS, one single-board computer, one battery.
 
-The **CAD is generated from the same parameter file the simulator reads**: `aow_sim.cad_layout` emits FeatureScript straight into Onshape, pinning the sim and physical model together.
+The **CAD is generated from the same parameter file the simulator reads**: `aow_sim.cad.layout` emits FeatureScript straight into Onshape, pinning the sim and physical model together.
 
 **[docs/guide/physical-build.md](docs/guide/physical-build.md)** explains what the machine is, how it's wired, the CAD workflow, bring-up, and failsafes.
 

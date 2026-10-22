@@ -124,9 +124,9 @@ outline given in the BIKE side view:
 - The fork sweeps r 25.5 round the steer axis below module z 67.25 (legs to
   |x| 22.5, plate +-12.1). The first outline met fork L at 30 deg steer.
   The rail now keeps 3.45 clear of that disc at every angle, and
-  `cad_bike_v2` refuses less than 1.
+  `cad.bike_v2` refuses less than 1.
 - Its joints are checked against the steering's and the righting's own
-  (`cad_bike_v2` refuses a miss, and says the value to use).
+  (`cad.bike_v2` refuses a miss, and says the value to use).
 - The rear stub ends short of the skirt's wire gap on the left (drive y
   86.9..97.5). On the right the case's wire gap is on its lower edge, where
   the rail's band runs. The user: there is enough clearance, and the wires
@@ -215,7 +215,7 @@ old envelope on the face, which is to move (below). 9 calls (16 -> 25).
 - **The model is the TM151, not a box:** the board with its four
   Phi 2.1 holes, the housing off-centre, the USB-C receptacle, and a
   keep-out for the plug (typical overmold, 30 x 12.4 x 6.5, GUESS). A
-  keep-out's hits are reported by `cad_bike_v2 --check`, not failed. It
+  keep-out's hits are reported by `cad.bike_v2 --check`, not failed. It
   now reaches the power board's old box on the face, which the electronics
   carrier replaces.
 
@@ -252,7 +252,7 @@ drive servos"). The house ridge along Y locked them in. Now:
   steering axis just ahead of the steering's foot (module y 13.55..25.55,
   from z 68.75 over the fork). The rear one is its mirror about
   mid-wheelbase: the same height, axis at 75 deg. The screws are at bike
-  (199.7 | 0.8, 78.5), 99.46 either side of 100.25. `cad_bike_v2` refuses
+  (199.7 | 0.8, 78.5), 99.46 either side of 100.25. `cad.bike_v2` refuses
   them unmirrored, or the front off the steering axis.
 - **The rail ends** just past the steering's foot (module y 14) and runs
   into the front post. A short bar back off the case side's rear chamfer,
@@ -281,7 +281,7 @@ and the bike's are clean. Calls 41 -> 47.
   top, along its top edge from the chamfer's corner. No overlap into the
   case, which is what had made it meet the case untidily.
 - **Config:** `rail.cage_post_*` in the steering's module frame, with
-  `steer_axle` and `steer_rake_deg`, which `cad_bike_v2` checks against
+  `steer_axle` and `steer_rake_deg`, which `cad.bike_v2` checks against
   the bike's.
 - **Nut slots:** from the screw out through the post's FREE edge only
   (front post forward, rear post back), 7 long. Through both edges they ran
@@ -311,8 +311,8 @@ stray bodies, nothing in a keep-out. Calls 47 -> 54. Three of the seven were
 waste: one drive check re-run by a careless command, and two bike checks on
 Claude's own build bugs (cutters interleaved with the adds under one parent
 Id, which Onshape refuses; standoffs started 0.5 outside the plate instead
-of inside it). Layout `aow_sim.cad_power`, numbers `bike_v2_cad.yaml
-power:`, drawn by `cad_bike_v2`. ONE printed part, `power carrier`,
+of inside it). Layout `aow_sim.cad.power`, numbers `bike_v2_cad.yaml
+power:`, drawn by `cad.bike_v2`. ONE printed part, `power carrier`,
 16.3 cm^3 (17.5 g if solid ASA; printed, less).
 
 **The joint, one 6-32 a side, on the rails' rear arms** (user: "off the rear
@@ -334,7 +334,7 @@ rollcage arms, but as close to the drive case as possible"; the screw
 - **Locating:**
   - the lug's ridge runs up its face, into a groove in the rail's inner face that opens UP through the arm's top edge, so the carrier drops in from above;
   - the nut slot runs up out of the lug's top;
-  - drive `rail.carrier_*`. `cad_power` refuses a joint off the rail's.
+  - drive `rail.carrier_*`. `cad.power` refuses a joint off the rail's.
 
 **The tray** (drive frame, on the case sides' top edges):
 - **The pack:** 2.5 forward and 3 up from where it was, so the strap's tunnel fits under the floor ahead of the wire gap.
@@ -391,7 +391,7 @@ front-top"). The front-top is the Pi + U2D2's.
 - **Switch:** aft of the board, centred across on the XT30, its bezel flush with the XT30's top (bike z 117).
 - **Open:** the switch's panel spans the rail's x over the rear cage post (bike y -15..6.5, z 112..114). The cage's rear upright cannot rise straight up out of that post's socket.
 
-**The Pi + U2D2 carrier, an outline** (`cad_pi_carrier`, `bike_v2_cad.yaml pi_carrier:`). It is self-contained and attached to nothing yet (user).
+**The Pi + U2D2 carrier, an outline** (`cad.pi_carrier`, `bike_v2_cad.yaml pi_carrier:`). It is self-contained and attached to nothing yet (user).
 - **Plate:** 2.0, parallel to the drive's front face at drive y 151, 7.4 past the pulleys' rims.
 - **Pi:** on 2.6 standoffs (M2.5 pilots, GUESS) on the plate's outer side, its box 2 further out than before (drive y 163).
 - **U2D2:** under the plate, between the drive pulleys, 1.1 off the AHRS's housing, in a short cradle at mid-length. Its ends and connectors are left open, since which long side has the connectors is not recorded.
@@ -423,7 +423,7 @@ of them was waste: a bike check whose finding point sat on a slit cutter's
 edge, so `partAt` returned the cutter with the part (BOOLEAN_SAME_INPUT).
 The layout now refuses a finding point inside any cutter.
 
-**The power holder** (`cad_power`) is ONE printed panel on the left, between
+**The power holder** (`cad.power`) is ONE printed panel on the left, between
 the battery and the left rail (user: "instead of a case, it's just a panel
 (printed -X)").
 - **Size:** |x| 11.3..16, drive y 68.6..133.4, 9.8 cm^3.
@@ -496,7 +496,7 @@ behind the battery) so the battery couldn't slide backwards into the rear
 wheel"). On BOTH rear arms: a lip off the inner face in to |x| 9 (2 past the
 battery's side), 2 thick, drive y 55.7..57.7 (0.3 behind the battery), z
 42.5..50, on the arm and 1 off the cage post's base. Both case sides now
-reach |x| 9. `cad_power` refuses a stop off the battery.
+reach |x| 9. `cad.power` refuses a stop off the battery.
 
 **Outstanding:**
 - **The cage socket:** the holder slides out inboard of the rear cage post (1.7 off it in side view at rest). If the cage's socket wraps the post's inner face, the cage has to come off first.

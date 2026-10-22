@@ -1,7 +1,7 @@
 # AOW bike — component layout in CAD coordinates.
 #
 # GENERATED — do not edit. Regenerate with:
-#     python -m aow_sim.cad_layout
+#     python -m aow_sim.cad.layout
 #
 # FRAME:  +X right, +Y forward, +Z up.   UNITS: mm and g.
 # ORIGIN: the REAR AXLE, 51.2 mm above the floor when upright.

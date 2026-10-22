@@ -2,7 +2,7 @@
 cases and horn hub, as ONE custom feature, `AOW steering`, in its own Feature
 Studio. Spec: docs/plans/steering-design.md. Numbers:
 config/steering_cad.yaml, plus the X330 envelope and mount interface
-cad_servo_mount reads, plus bike_params_cad's steering.servo_clearance.
+cad.servo_mount reads, plus bike_params_cad's steering.servo_clearance.
 
 MODULE FRAME: Z up the steering axis, Y forward, X right, origin on the front
 axle's centre. The servo's horn faces DOWN the axis and its body runs back
@@ -29,15 +29,15 @@ central screw goes in from the TOP, because the block's underside is 4 mm off
 the tire and a screw from below is unreachable with the wheel on.
 
 The screw joint, ridge, case shells, horn pins and X330 envelope are the AHRS
-fixture's own FeatureScript (cad_ahrs_fixture.FS_HELPERS), and so is the
+fixture's own FeatureScript (cad.ahrs_fixture.FS_HELPERS), and so is the
 print check.
 
-    python -m aow_sim.cad_steering                     # write docs/cad/steering.fs
-    python -m aow_sim.cad_steering --check             # both variants, ONE call
-    python -m aow_sim.cad_steering --push steering_features
-    python -m aow_sim.cad_steering --shot              # -> docs/cad/steering.png
+    python -m aow_sim.cad.steering                     # write docs/cad/steering.fs
+    python -m aow_sim.cad.steering --check             # both variants, ONE call
+    python -m aow_sim.cad.steering --push steering_features
+    python -m aow_sim.cad.steering --shot              # -> docs/cad/steering.png
 
-    python -m aow_sim.cad_steering --v2 --check --push steering_v2_features
+    python -m aow_sim.cad.steering --v2 --check --push steering_v2_features
 
 --v2 builds aow-bike-steering-v2 (2026-10-11): the servo turned 180 deg about
 Z, its body out the FRONT; one 6-32 from a lug on the upper case down into
@@ -53,9 +53,9 @@ from pathlib import Path
 
 import yaml
 
-from . import cad_ahrs_fixture as af
-from . import cad_servo_mount as sm
-from .params import _normalize, load_params
+from . import ahrs_fixture as af
+from . import servo_mount as sm
+from ..params import _normalize, load_params
 
 STEER_PARAMS = "config/steering_cad.yaml"
 X330_PARAMS = "config/x330_fixture_cad.yaml"
@@ -376,7 +376,7 @@ def full_layout(data: dict) -> dict:
 
 
 def mass_estimate(vols: dict[str, float], areas: dict[str, float]) -> str:
-    """Each part as printed in ASA: cad_servo_mount.printed_mass (a 0.9 skin
+    """Each part as printed in ASA: cad.servo_mount.printed_mass (a 0.9 skin
     over the surface, 15 % infill inside, 1.07 g/cm^3) -- UNCALIBRATED."""
     return ", ".join(f"{k} {sm.printed_mass(v, areas[k]):.1f} g" for k, v in vols.items())
 
@@ -397,10 +397,10 @@ FS = r'''FeatureScript %VERSION%;
 import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_steering --push steering_features
+ *   python -m aow_sim.cad.steering --push steering_features
  *
  * Numbers from config/steering_cad.yaml, config/servo_mounts.yaml and
- * bike_params_cad.yaml, every derived one computed in aow_sim.cad_steering's
+ * bike_params_cad.yaml, every derived one computed in aow_sim.cad.steering's
  * layout() and carried here as ST. Millimetres.
  *
  * MODULE FRAME: origin on the front axle's centre, +Z up the steering axis,
@@ -514,7 +514,7 @@ export function plainScrewJoint(context is Context, id is Id, head is Vector,
 /**
  * v2's joints: the shared screw geometry with a BLIND nut slot (out along
  * `slotDir` for `slotLen`, back only past the nut) and an optional ridge on
- * the nut's part -- aow_sim.cad_righting's rgJoint. `cskPart` may be
+ * the nut's part -- aow_sim.cad.righting's rgJoint. `cskPart` may be
  * qNothing(): the head then sits in a part not drawn yet (the bike).
  */
 export function blindScrewJoint(context is Context, id is Id, head is Vector, zIn is Vector,

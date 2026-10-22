@@ -580,7 +580,7 @@ Worked through against the tests above:
     - Not yet done: step 2 (back-drive slip torque with masses), which
       measures the friction directly.
   - **The load-test fixture is drawn** (2026-09-25), two versions of one
-    feature (`aow_sim.cad_x330_fixture`): Part Studios `x330-fixture`
+    feature (`aow_sim.cad.x330_fixture`): Part Studios `x330-fixture`
     (IDLER, the one to build) and `x330-fixture-screwdriver`, renders
     `docs/cad/x330_fixture_{idler,screwdriver}.png`. Both: one X330, shaft
     horizontal (the AHRS fixture's roll-servo pose), 50 mm arms each way

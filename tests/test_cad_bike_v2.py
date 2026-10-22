@@ -5,15 +5,15 @@ interference between modules and envelopes; these check what can be checked
 locally -- the modules v2 composes (steering v2, the drive without its
 fixture, the righting's V3 blade), the blades' room to the front tyre, the
 envelopes where their config puts them, and that the studio lints.
-Invalidated by: config/bike_v2_cad.yaml, any module generator (cad_drive,
-cad_steering, cad_righting) or its config, or the shared FeatureScript in
-cad_ahrs_fixture / cad_servo_mount.
+Invalidated by: config/bike_v2_cad.yaml, any module generator (cad.drive,
+cad.steering, cad.righting) or its config, or the shared FeatureScript in
+cad.ahrs_fixture / cad.servo_mount.
 """
 
 import pytest
 
-from aow_sim import cad_bike_v2 as b2
-from aow_sim import cad_servo_mount as sm
+from aow_sim.cad import bike_v2 as b2
+from aow_sim.cad import servo_mount as sm
 
 pytestmark = pytest.mark.cad
 
@@ -55,8 +55,8 @@ def test_each_envelope_is_its_size_where_its_config_puts_it(L):
 
 def test_no_chassis_and_the_rightings_placeholders_dropped(L):
     """No chassis, deck or cage of the bike's own: the rails are the drive's,
-    and the printed parts v2 adds are the two carriers (cad_power,
-    cad_pi_carrier), the Pi's four separate spacers and the rollcages."""
+    and the printed parts v2 adds are the two carriers (cad.power,
+    cad.pi_carrier), the Pi's four separate spacers and the rollcages."""
     body = b2.build_fs(L).split("export function bikeV2Build")[1].split(b2.SPLIT_MARK)[0]
     assert not any(w in body for w in ("deck", "tray"))
     assert body.count("bk2Cage(") == 1

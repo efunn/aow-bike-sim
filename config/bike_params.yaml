@@ -308,7 +308,7 @@ drivetrain_model:
 
 bike:
   # THE V2 BIKE AS BUILT (2026-10-19): wheelbase, rake and every placement
-  # below are read off the v2 CAD (cad_bike_v2, commit 6a73da8), positions
+  # below are read off the v2 CAD (cad.bike_v2, commit 6a73da8), positions
   # from one Onshape eval of its bodies' centroids
   # (traces/bike_v2_cad/mass_eval.txt). CAD bike frame -> this frame:
   # x = CAD y, y = -CAD x, z = CAD z (both origin on the rear axle).
@@ -350,7 +350,7 @@ bike:
   # a shell, a box solid: together the boxes are ~5 % of the bike's) and
   # show where every gram is. Not a picture of the parts.
   #
-  # Printed parts: `mass` is cad_servo_mount.printed_mass (0.9 skin over the
+  # Printed parts: `mass` is cad.servo_mount.printed_mass (0.9 skin over the
   # surface, 15 % infill, ASA 1.07) from the CAD's volume and area -- GUESS
   # until weighed; the batch of the six printed below plus the Pi spacers
   # reads 88.2 g against the slicer's 81 (traces/weigh_v2_printed.txt).
@@ -367,7 +367,7 @@ bike:
       servo: xc430_w150
       geoms:
         - {type: box, pos: [0.0567, 0.0, 0.0768], size: [0.0465, 0.034, 0.0285], quat: [0.92388, 0.0, -0.38268, 0.0]}
-    drive_case_left:      # the left side rail: its CAD outline pieces (cad_drive.rail_layout), extruded across the plate (x 16..20.6 mm), mass by area
+    drive_case_left:      # the left side rail: its CAD outline pieces (cad.drive.rail_layout), extruded across the plate (x 16..20.6 mm), mass by area
       mass: {value: 0.0207, source: GUESS}
       geoms:
         - {type: prism, share: 0.3431, across: [0.0160, 0.0206],   # outline
@@ -380,7 +380,7 @@ bike:
            outline: [[0.06993, 0.09821], [0.09192, 0.12021], [0.08238, 0.12975], [0.06038, 0.10776]]}
         - {type: prism, share: 0.0194, across: [0.0160, 0.0206],   # back ear
            outline: [[0.02471, 0.06679], [0.03285, 0.07492], [0.02471, 0.08305], [0.01658, 0.07492]]}
-    drive_case_right:      # the right side rail: its CAD outline pieces (cad_drive.rail_layout), extruded across the plate (x 16..20.6 mm), mass by area
+    drive_case_right:      # the right side rail: its CAD outline pieces (cad.drive.rail_layout), extruded across the plate (x 16..20.6 mm), mass by area
       mass: {value: 0.0195, source: GUESS}
       geoms:
         - {type: prism, share: 0.3733, across: [-0.0206, -0.0160],   # outline
@@ -419,7 +419,7 @@ bike:
       servo: xc330_t181
       geoms:
         - {type: box, pos: [0.1697, -0.0, 0.1067], size: [0.034, 0.02, 0.023], quat: [0.98481, 0.0, -0.17365, 0.0]}
-    steer_case_lower:      # the steering's STATIC half (cad_steering stages)
+    steer_case_lower:      # the steering's STATIC half (cad.steering stages)
       mass: {value: 0.0121, source: GUESS}
       geoms:
         - {type: box, pos: [0.1752, -0.0, 0.084], size: [0.0499, 0.0344, 0.0425], quat: [0.98481, 0.0, -0.17365, 0.0]}
@@ -1246,7 +1246,7 @@ righting:
     # older studies, whose wings it is derived around. Same contact geom
     # (`roof`), same job.
     #
-    # It models two rollcage rings (cad_bike_v2.rollcage: 270 deg, outer
+    # It models two rollcage rings (cad.bike_v2.rollcage: 270 deg, outer
     # radius 68.7 = the blades' widest at rest, axis 100 mm above the rear
     # axle, at the two ends), their elliptical half-dome caps (50 deep, tips
     # at x -50 and +250.5) and the flexible sheet between them, as ONE
@@ -1476,7 +1476,7 @@ righting:
     servo_kv: 0.0473
   module:
     # V2, THE RIGHTING MODULE THE BIKE IS BUILT WITH: the diamond four-bar as
-    # aow_sim.cad_righting draws it (one crankpin, one wing rod), the blades of
+    # aow_sim.cad.righting draws it (one crankpin, one wing rod), the blades of
     # `blade_file` -- V3 since 2026-10-14 (user: "v3 wing should also be the
     # default now for teleop and training"; the CAD already drew it), V2's
     # config/righting_blade.yaml before -- the XC330 in current-based
@@ -1496,7 +1496,7 @@ righting:
     # Module-frame fore/aft positions below are relative to it.
     station_x: {value: 0.1205, source: design}
     # MASSES, all GUESS: printed parts at 1.07 g/cm3, 2 perimeters / 15 %
-    # infill (cad_servo_mount.printed_mass), steel at 7.85, from the CAD
+    # infill (cad.servo_mount.printed_mass), steel at 7.85, from the CAD
     # check's per-part volumes (traces/righting_check.txt, 2026-10-07);
     # UNCALIBRATED, nothing printed. `at`: the group's centroid in the module
     # frame, mm -- [out (+ = the right wing's side), up from the wing rod,

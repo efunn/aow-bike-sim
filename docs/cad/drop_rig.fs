@@ -2,11 +2,11 @@ FeatureScript 3044;
 import(path : "onshape/std/geometry.fs", version : "3044.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_drop_rig --push drop_rig_features
+ *   python -m aow_sim.cad.drop_rig --push drop_rig_features
  *
- * Numbers from config/drop_rig_cad.yaml, cad_steering's and cad_drive's
+ * Numbers from config/drop_rig_cad.yaml, cad.steering's and cad.drive's
  * layouts (the fork and chainstay joints) and config/servo_mounts.yaml, every
- * derived one computed in aow_sim.cad_drop_rig's layout() and carried here as
+ * derived one computed in aow_sim.cad.drop_rig's layout() and carried here as
  * RIG. Millimetres.
  *
  * RIG FRAME: origin on the drop sensor's button top, +Z up, +X along the arm
@@ -1076,7 +1076,7 @@ export function caseShellPair(context is Context, id is Id, cs is CoordSystem,
     // already inserted in live documents; if Onshape does not backfill a
     // default into an existing instance it reads as undefined, and under
     // `== true` both halves would vanish on the next regeneration. Unset
-    // builds. Same reasoning as the group tickboxes in cad_layout.
+    // builds. Same reasoning as the group tickboxes in cad.layout.
     if (opt.makeTop != false)
         made = append(made, caseShellBuild(context, id + "top", useCS,
                 mergeMaps(opt, { "part" : "TOP" }), qNothing()));
@@ -1524,7 +1524,7 @@ export function barAndFollower(context is Context, id is Id, x0 is ValueWithUnit
 }
 
 /**
- * The front interface: cad_steering's headset block (fork ledges under its
+ * The front interface: cad.steering's headset block (fork ledges under its
  * -X face, cheeks round its +-Z faces, one 6-32 a side into a nut slot along
  * X), then the bar housing and the follower. With the fork mock and tire
  * when `mocks`. Returns the part's point and the hardware.
@@ -1585,7 +1585,7 @@ export function frontInterface(context is Context, id is Id, mocks is boolean) r
 
 /**
  * The rear interface: one block between the chainstays, its +-Y faces where
- * the case sides' outer faces are, each with cad_drive's channel, screw slot
+ * the case sides' outer faces are, each with cad.drive's channel, screw slot
  * (the tension travel), nut slot from the -X face and tip slot. Then the bar
  * housing and the follower. With chainstay mocks and the wheel when `mocks`.
  */

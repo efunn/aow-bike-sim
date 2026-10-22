@@ -42,18 +42,18 @@ and the cradle walls stop the case turning while letting it float; the key
 between two slots forgives misalignment in one direction.
 
 The screw joint, ridge, case shells, idler and X330 envelope are the AHRS
-fixture's own FeatureScript (cad_ahrs_fixture.FS_HELPERS), and so is the
+fixture's own FeatureScript (cad.ahrs_fixture.FS_HELPERS), and so is the
 print check.
 
-    python -m aow_sim.cad_x330_fixture                 # write docs/cad/x330_fixture.fs
-    python -m aow_sim.cad_x330_fixture --check         # both versions, ONE call
-    python -m aow_sim.cad_x330_fixture --push x330_fixture_features
-    python -m aow_sim.cad_x330_fixture --shot          # IDLER tab -> docs/cad/x330_fixture_idler.png
-    python -m aow_sim.cad_x330_fixture --shot x330_fixture_screwdriver --version SCREWDRIVER
-    python -m aow_sim.cad_x330_fixture --shot --version COUPON   # the pin coupon's tab
+    python -m aow_sim.cad.x330_fixture                 # write docs/cad/x330_fixture.fs
+    python -m aow_sim.cad.x330_fixture --check         # both versions, ONE call
+    python -m aow_sim.cad.x330_fixture --push x330_fixture_features
+    python -m aow_sim.cad.x330_fixture --shot          # IDLER tab -> docs/cad/x330_fixture_idler.png
+    python -m aow_sim.cad.x330_fixture --shot x330_fixture_screwdriver --version SCREWDRIVER
+    python -m aow_sim.cad.x330_fixture --shot --version COUPON   # the pin coupon's tab
 
 Numbers: config/x330_fixture_cad.yaml, plus the X330 envelope and mount
-interface cad_servo_mount reads.
+interface cad.servo_mount reads.
 """
 
 from __future__ import annotations
@@ -64,9 +64,9 @@ from pathlib import Path
 
 import yaml
 
-from . import cad_ahrs_fixture as af
-from . import cad_servo_mount as sm
-from .params import _normalize, load_params
+from . import ahrs_fixture as af
+from . import servo_mount as sm
+from ..params import _normalize, load_params
 
 FIXTURE_PARAMS = "config/x330_fixture_cad.yaml"
 OUT_FS = "docs/cad/x330_fixture.fs"
@@ -177,7 +177,7 @@ FS = r'''FeatureScript %VERSION%;
 import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
- *   python -m aow_sim.cad_x330_fixture --push x330_fixture_features
+ *   python -m aow_sim.cad.x330_fixture --push x330_fixture_features
  *
  * Numbers from config/x330_fixture_cad.yaml, config/servo_mounts.yaml and
  * bike_params_cad.yaml. Millimetres.

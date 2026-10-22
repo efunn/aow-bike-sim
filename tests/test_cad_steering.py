@@ -5,15 +5,15 @@
 parts depend on -- and that the generated FeatureScript lints.
 Invalidated by: config/steering_cad.yaml, bike_params_cad's
 steering.servo_clearance, the X330 envelope and mount interface, or the shared
-FeatureScript in cad_ahrs_fixture / cad_servo_mount.
+FeatureScript in cad.ahrs_fixture / cad.servo_mount.
 """
 
 import math
 
 import pytest
 
-from aow_sim import cad_servo_mount as sm
-from aow_sim import cad_steering as st
+from aow_sim.cad import servo_mount as sm
+from aow_sim.cad import steering as st
 
 pytestmark = pytest.mark.cad
 

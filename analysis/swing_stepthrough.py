@@ -50,7 +50,7 @@ HOW (for changing this file): the configs are the sim's own
 (`build_model(..., swing_linkage_cfg=)`), posed with
 `swing_linkage.SwingLinkage` (held to the builder's own solver by
 tests/test_hw_telemetry.py) and scored with `swing_synthesis.stroke`. A CAD
-entry (V2, V3) is the diamond exactly as `cad_righting` builds it -- links at
+entry (V2, V3) is the diamond exactly as `cad.righting` builds it -- links at
 `linkage.scale` (1.25), the XC330 long end DOWN, every righting part's front
 section posed with the CAD's own group transforms (no Onshape call) -- with
 the blade swept on each wing; past its commanded stroke it runs on to where
@@ -268,7 +268,7 @@ def on_frames(trace: dict, frames: list) -> None:
 DIAMOND = ROOT / "config" / "swing_linkage_shared_rod.yaml"
 # (config, label, blade): blade None is a config design as the sim builds it;
 # a blade yaml (or "cad", the CAD's own dummy) makes it the CAD entry -- the
-# diamond as cad_righting builds it, with that blade swept.
+# diamond as cad.righting builds it, with that blade swept.
 DEFAULT = [
     (SWING_LINKAGE_CFG, "V1", None),                                       # built today
     (DIAMOND, "V2", ROOT / "config" / "righting_blade.yaml"),  # the first blade
@@ -303,9 +303,9 @@ NOTES = [
     "Its rest, wing CoM and sim carry "
     "that blade, its mass (38.8 g each, GUESS; V2's 28.6) and its own stroke, to its level point.",
     "<b>Where V1 and V2 come from.</b> V2's CAD is generated as solid parts "
-    "(cad_righting, 1.25x, with righting_blade.yaml), so the page reads its real "
+    "(cad.righting, 1.25x, with righting_blade.yaml), so the page reads its real "
     "part outlines and checks the blade against them. V1's CAD is a 2D "
-    "sketch generated from the same config (cad_swing_linkage): lines, no "
+    "sketch generated from the same config (cad.swing_linkage): lines, no "
     "parts. So V1 is drawn and checked from its config's links and limits.",
     "<b>View.</b> The bike is drawn seen from behind: the right wing on the "
     "right, as the blade files' (x, y) have it.",
@@ -368,10 +368,10 @@ def sim_counts(params, path: Path | None, supply: float = 9.9) -> int:
 
 
 def _section(q):
-    """One cad_righting primitive as (front section in module (x, z), y0, y1)."""
+    """One cad.righting primitive as (front section in module (x, z), y0, y1)."""
     from shapely.geometry import MultiPoint, Point, Polygon, box
     from shapely.ops import unary_union
-    from aow_sim import cad_righting as cr
+    from aow_sim.cad import righting as cr
     k = q["k"]
     if k == "cyl":
         return Point(q["x"], q["z"]).buffer(q["r"], 16), q["y0"], q["y1"]
@@ -399,13 +399,13 @@ def _rings(geom) -> list:
 
 
 def cad_parts(blade: dict | None):
-    """The righting module from `cad_righting`, ready to pose: the linkage,
+    """The righting module from `cad.righting`, ready to pose: the linkage,
     the layout, and each part's front-section pieces with their fore/aft
     span. The CAD's own blades are replaced by `blade` (or kept as the
     default outline) and swept as wR / wL."""
     from shapely.geometry import Polygon, box
     from shapely.ops import unary_union
-    from aow_sim import cad_righting as cr
+    from aow_sim.cad import righting as cr
     data = cr.load()
     L = cr.layout(data)
     parts, cad_blade = [], None
@@ -494,7 +494,7 @@ def blade_meet(data, L, bl) -> float | None:
     for the whole mechanism; mirror-symmetric, so the same angle stops the
     other end. Searched up to the deploying side's toggle, past the flat."""
     from shapely import affinity
-    from aow_sim import cad_righting as cr
+    from aow_sim.cad import righting as cr
     lk = data["lk"]
     bR = bl["geom"]
     bL = affinity.scale(bR, -1.0, 1.0, origin=(0, 0))
@@ -512,7 +512,7 @@ def link_limit(data, L, parts, T: float) -> dict | None:
     its boss, layers that share a span) are held to their worst in-stroke
     overlap. 0.5 deg steps up to the deploying side's toggle."""
     from itertools import combinations
-    from aow_sim import cad_righting as cr
+    from aow_sim.cad import righting as cr
     lk = data["lk"]
 
     def overlaps(t):
@@ -537,7 +537,7 @@ def cad_sweep(data, L, parts, bl, frames, pz: float, T: float, meet) -> dict:
     """Pose every part and both blades at each frame; least clearance of each
     blade to everything it shares fore/aft span with, over the stroke."""
     from shapely import affinity
-    from aow_sim import cad_righting as cr
+    from aow_sim.cad import righting as cr
     lk = data["lk"]
     fz = float(L["floor_z"])
     bR = bl["geom"]
@@ -946,7 +946,7 @@ def main() -> int:
            "max_ma": round(min(ss.counts(sc, sc["ts"] * ss.SUPPLY), ss.CURRENT_LIMIT_A * 1000)),
            "limit_nm": sc["k"] * (ss.CURRENT_LIMIT_A - sc["i0"])}
     # The CAD entries' sim: the bike's own righting module, the default build
-    # (bike_params righting.module -- these links scaled as cad_righting
+    # (bike_params righting.module -- these links scaled as cad.righting
     # does, toes and all), carrying each entry's blade (`blade_params`: V2's
     # is the module's own, V3's swaps the outline and its mass). The CAD's
     # dummy blade is not simulated.
