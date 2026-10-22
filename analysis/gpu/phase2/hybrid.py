@@ -39,7 +39,7 @@ from aow_sim.gpu.env import GpuGeneralEnv
 from aow_sim.gpu import ahrs as gahrs
 from aow_sim.gpu import odometry as godo
 
-CONFIG = "config/rl_general_v3.yaml"
+CONFIG = "config/rl/rl_general_v3.yaml"
 PUSH = ("qpos", "qvel", "act", "ctrl", "qfrc_applied", "history", "qacc_warmstart")
 MODEL = ("dof_frictionloss", "body_mass", "geom_friction", "actuator_forcerange",
          "actuator_ctrlrange")

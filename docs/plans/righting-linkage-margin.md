@@ -7,7 +7,7 @@ is `wing-linkage-design-and-optimization.md`; by the user's account it was left
 half-baked, and step 1 found why its torque numbers could not be designed
 against (below).
 
-All numbers are SIM, for the live geometry `config/swing_linkage_smaller.yaml`
+All numbers are SIM, for the live geometry `config/linkage/swing_linkage_smaller.yaml`
 (`build_model.SWING_LINKAGE_CFG`), unless marked otherwise.
 
 ## What the current four-bar needs
@@ -303,8 +303,8 @@ that made it and its sim check. The stepthrough page it writes
 through the stroke, reading the same files the sim does.
 
     python analysis/swing_synthesis.py --stagger-couplers --tag _staggered \
-        --save config/swing_linkage_stagger.yaml
-    python analysis/righting_current_sweep.py --config config/swing_linkage_stagger.yaml --supply 9.9
+        --save config/linkage/archive/swing_linkage_stagger.yaml
+    python analysis/righting_current_sweep.py --config config/linkage/archive/swing_linkage_stagger.yaml --supply 9.9
     python analysis/swing_stepthrough.py --sim
 
 - **The couplers passing each other is what binds `_smaller`.** In one plane

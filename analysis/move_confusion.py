@@ -297,7 +297,7 @@ def main():
         args.out = _plots_dir() / f"move_confusion_{args.set}.png"
 
     params = load_params()
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     env = GeneralEnv(params, cfg)
     conds = condition_sets(cfg["env"]["v_max"])[args.set]

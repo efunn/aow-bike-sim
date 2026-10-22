@@ -494,7 +494,7 @@ internals are not documented at that level and this cannot check them.
 
 ## Trained against the whole suite, and what the real part then said
 
-`general_rl_odo_ahrs` (12M, `config/rl_general_odo_ahrs.yaml`) added the
+`general_rl_odo_ahrs` (12M, `config/rl/archive/rl_general_odo_ahrs.yaml`) added the
 encoder model and a TM151 attitude error to the `odo` recipe. On the eval grid
 at `--encoder counts --ahrs tm151` it holds **survival 1.00** against `odo`'s
 0.90, score 0.672 against 0.526, and heading error **7.8° against 34.5°**. The

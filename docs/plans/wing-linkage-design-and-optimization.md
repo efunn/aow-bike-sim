@@ -87,7 +87,7 @@ be hand-edited, because the optimiser and the model both recompute it.**
 
 ### 1. The bike envelope — you fix these
 
-| in `config/wing_linkage.yaml` | what it means |
+| in `config/linkage/wing_linkage.yaml` | what it means |
 |---|---|
 | `bike.bike_width` | wing tip to wing tip, stowed. Also the roof DIAMETER |
 | `bike.bike_height` | **top of the bike** — the roof CREST — above the floor. Same meaning as in `bike_params.yaml` |
@@ -134,11 +134,11 @@ python analysis/wing_linkage.py --optimize --iters 400
 
 # 2. add statics -- minimise peak servo torque among designs that pass (1)
 python analysis/wing_linkage.py --optimize --torque --iters 400 \
-    --save config/wing_linkage_optimized.yaml
+    --save config/linkage/archive/wing_linkage_optimized.yaml
 
 # 3. or optimise for a SELF-LOCKING deployed pose instead (the current pick)
 python analysis/wing_linkage.py --optimize --lock --iters 400 \
-    --save config/wing_linkage_locking.yaml
+    --save config/linkage/wing_linkage_locking.yaml
 ```
 
 Run several `--seed` values. All three modes are stochastic, and agreement
@@ -149,7 +149,7 @@ Then look at it, in this order — **every wrong answer in this study passed its
 own numeric test and was caught by a picture**:
 
 ```sh
-C=config/wing_linkage_locking.yaml
+C=config/linkage/wing_linkage_locking.yaml
 python analysis/wing_linkage.py --config $C --panels     # stow vs deploy
 python analysis/wing_linkage.py --config $C --righting   # bike pushing itself up
 python analysis/wing_linkage.py --config $C --torque     # servo torque, both sides
@@ -169,7 +169,7 @@ python analysis/wing_linkage.py --righting
 python analysis/wing_linkage.py --righting --video
 python analysis/wing_linkage.py --video
 
-O=config/wing_linkage_optimized.yaml
+O=config/linkage/archive/wing_linkage_optimized.yaml
 python analysis/wing_linkage.py --config $O --tag _opt            # torque-optimised
 python analysis/wing_linkage.py --config $O --deploy --tag _opt
 
@@ -216,7 +216,7 @@ mode rests on:
 
 ## Where it stands
 
-Current pick, `config/wing_linkage_locking.yaml`:
+Current pick, `config/linkage/wing_linkage_locking.yaml`:
 
 | | geared 2:1 | linkage |
 |---|---|---|
@@ -266,8 +266,8 @@ are the dates the work was done.
 
 ### The SWING mechanisms — co-rotating, and the reason they exist
 
-Two new mechanisms and a study, all from 2026-08-25. `config/swing_wings.yaml`
-(geared), `config/swing_linkage*.yaml` (four-bar), `analysis/swing_linkage.py`,
+Two new mechanisms and a study, all from 2026-08-25. `config/linkage/swing_wings.yaml`
+(geared), `config/linkage/swing_linkage*.yaml` (four-bar), `analysis/swing_linkage.py`,
 `analysis/swing_demo.py`. Figures at `analysis/plots/swing_linkage_*`. The
 four-bar variants: the hand-drawn `swing_linkage.yaml` (BUILT), `_opt` and
 `_margin` from the first searches, and `_compact` / `_vertical` from
@@ -421,13 +421,13 @@ than its body.
 **The reasoning is not here.** Every constraint, every metric that was wrong
 once, the four-bar identities the closed forms rest on, and the objective's
 rung structure live in `analysis/swing_linkage.py`'s docstrings, beside the code
-they govern. `config/swing_linkage_constraints.yaml` is the annotated input
+they govern. `config/linkage/archive/swing_linkage_constraints.yaml` is the annotated input
 schema. This section carries only what moves.
 
 ### The wing LINKAGE — a second mechanism, and a real alternative
 
 `docs/plans/wing-linkage-design-and-optimization.md`, `analysis/wing_linkage.py`,
-`config/wing_linkage*.yaml`. Figures in `analysis/plots/wing_linkage_*`, with
+`config/linkage/wing_linkage*.yaml`. Figures in `analysis/plots/wing_linkage_*`, with
 `--tag _opt` / `_lock` marking which config drew each one.
 
 A four-bar per wing, both on one servo, as an alternative to the gear train.
@@ -500,14 +500,14 @@ the wing 181 → 84.6 mm, dropped the fall-set requirement from 0.66 N·m to the
 
 #### Which swing-linkage config won — 2026-09-02/03
 
-**`config/swing_linkage_smaller.yaml`.** `swing_linkage_smaller_v2.yaml` was
+**`config/linkage/swing_linkage_smaller.yaml`.** `swing_linkage_smaller_v2.yaml` was
 tried as an even smaller envelope and did not buy enough to justify itself.
 `_smaller` is the one that was exported to CAD for construction, which is the
 strongest evidence available: CAD is downstream of the decision.
 
 This was the gap the banner at the top of this file flags — the 09-02/03 work
 was recorded "only in `docs/status.md`", and a later rewrite of that file
-dropped it, leaving fourteen `config/swing_linkage*.yaml` and nothing saying
+dropped it, leaving fourteen `config/linkage/swing_linkage*.yaml` and nothing saying
 which one mattered. Written down here because this doc is the one that grows
 rather than being rewritten.
 

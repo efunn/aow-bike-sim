@@ -98,7 +98,7 @@ def main():
     arms = ([(n, "", "none") for n in args.policies] if args.policies
             else DEFAULT_ARMS)
     params = load_params()
-    base = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    base = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     base = {**base, "randomization": {**base["randomization"], "enabled": False}}
     v_max = base["env"]["v_max"]
 

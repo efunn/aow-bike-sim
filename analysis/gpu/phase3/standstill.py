@@ -25,7 +25,7 @@ from aow_sim.eval_general import _eval_cfg
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("moves", nargs="+", help="names under moves/")
-    ap.add_argument("--config", default="config/rl_general_v3.yaml")
+    ap.add_argument("--config", default="config/rl/rl_general_v3.yaml")
     ap.add_argument("--seeds", type=int, default=6)
     a = ap.parse_args()
     cfg = _load_rl_config(a.config)

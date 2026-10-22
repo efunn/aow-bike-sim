@@ -703,7 +703,7 @@ def main():
     args = ap.parse_args()
 
     base = load_params()
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     solref = (args.timeconst, args.dampratio)
     if args.drive_tau:

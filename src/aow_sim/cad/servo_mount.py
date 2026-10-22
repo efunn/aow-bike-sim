@@ -48,11 +48,11 @@ from pathlib import Path
 
 from ..params import load_params
 
-CAD_PARAMS = "config/bike_params_cad.yaml"
+CAD_PARAMS = "config/cad/bike_params_cad.yaml"
 # The fastener interface lives in its own file. bike_params_cad.yaml is meant
 # to fold back into bike_params.yaml and reach MuJoCo; a pin clearance has no
 # business making that trip. See the header of servo_mounts.yaml for the split.
-MOUNT_PARAMS = "config/servo_mounts.yaml"
+MOUNT_PARAMS = "config/cad/servo_mounts.yaml"
 OUT_FS = "docs/cad/servo_mount.fs"
 SPLIT_MARK = "// ==== UI LAYER BELOW -- dropped by --check ===="
 
@@ -1535,7 +1535,7 @@ def check_wrapper(fs: str) -> str:
         // returned query names the collar, so it reports one body whether or
         // not the pins actually merged into it -- which is exactly the failure
         // being looked for. Scoped to qCreatedBy so a body already in the tab
-        // cannot inflate it; see the `check` tab note in config/onshape.yaml.
+        // cannot inflate it; see the `check` tab note in config/cad/onshape.yaml.
         const q = qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID);
         println("{tag}_bodies=" ~ toString(size(evaluateQuery(context, q))));
         println("{tag}_vol="    ~ toString(evVolume(context,

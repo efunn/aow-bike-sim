@@ -1,7 +1,7 @@
 """GeneralEnv on MJWarp: N worlds, every hook a kernel, auto-reset inside the
 step. The v3 recipe only (each piece's `const_from` refuses anything else).
 
-    env = GpuGeneralEnv("config/rl_general_v3.yaml", nworld=4096, seed=0)
+    env = GpuGeneralEnv("config/rl/rl_general_v3.yaml", nworld=4096, seed=0)
     obs = env.reset()                       # (nworld, 17; 20 with obs_style), wp.array
     obs, reward, terminated, truncated = env.step(action)   # action (nworld, 3)
 

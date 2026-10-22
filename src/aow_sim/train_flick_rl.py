@@ -3,7 +3,7 @@ the scipy trajectory optimization. Requires the `[rl]` extra (gymnasium, SB3,
 torch, tensorboard); the base install needs none of these to *replay* the result.
 
   pip install -e '.[rl]'
-  python -m aow_sim.train_flick_rl                 # reads config/rl_flick.yaml
+  python -m aow_sim.train_flick_rl                 # reads config/rl/rl_flick.yaml
   python -m aow_sim.train_flick_rl --resume        # continue from last checkpoint
   tensorboard --logdir runs/flick_rl               # watch learning curves
 

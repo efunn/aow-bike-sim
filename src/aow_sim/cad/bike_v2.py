@@ -1,7 +1,7 @@
 """aow-bike-whole-v2: the drive, steering-v2 and righting modules placed in
 the bike frame, the electronics as free-floating envelopes, and NO chassis
 yet. ONE custom feature, `AOW bike v2`, in its own Feature Studio. Spec:
-docs/plans/aow-bike-whole-v2.md. Numbers: config/bike_v2_cad.yaml, plus
+docs/plans/aow-bike-whole-v2.md. Numbers: config/cad/bike_v2_cad.yaml, plus
 each module's own generator and config.
 
 v1 (`aow_sim.cad.bike`, `aow-bike-whole`) grew a chassis, tray, carrier and
@@ -48,7 +48,7 @@ from . import servo_mount as sm
 from . import steering as cs
 from ..params import _normalize, load_params
 
-PARAMS = "config/bike_v2_cad.yaml"
+PARAMS = "config/cad/bike_v2_cad.yaml"
 OUT_FS = "docs/cad/bike_v2.fs"
 SPLIT_MARK = af.SPLIT_MARK
 TAB = "bike_v2_features"
@@ -552,7 +552,7 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
  * The drive, steering-v2 and righting modules' geometry layers, merged (each
  * module's own studio is generated from the same config), placed in the bike
  * frame, and the electronics as envelopes. No chassis. Numbers from
- * config/bike_v2_cad.yaml through aow_sim.cad.bike_v2's layout(), carried
+ * config/cad/bike_v2_cad.yaml through aow_sim.cad.bike_v2's layout(), carried
  * here as BK2. Millimetres.
  *
  * BIKE FRAME: origin on the rear axle's centre, +Y forward, +X right, +Z up.
@@ -860,7 +860,7 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
                 // its own id: boxIn already used C + "xf" for its own placement
                 opTransform(context, id + ("compXf" ~ k ~ "_" ~ i), { "bodies" : q, "transform" : xf });
                 dress(context, q, b.name, color(b.color[0], b.color[1], b.color[2]),
-                      "Not a print. Free to move: config/bike_v2_cad.yaml.");
+                      "Not a print. Free to move: config/cad/bike_v2_cad.yaml.");
                 setAttribute(context, { "entities" : q, "name" : "bk_mod", "attribute" : "bike" });
                 // on the Pi carrier: the check lifts them out with it
                 if (c.lift == true)

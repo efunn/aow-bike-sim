@@ -226,7 +226,7 @@ to ~190 mA.
    trained with the swing linkage in the plant), note it in `docs/status.md`.
 
 4. **`floor_rig`**: `servo_friction_ma` / `servo_friction_nm` go -- the
-   servo now carries its own friction. Remove from `config/floor_rig.yaml`
+   servo now carries its own friction. Remove from `config/bench/floor_rig.yaml`
    (it is 22, flagged an upper end), `floor_rig.py` (`add_chain`,
    `servo_friction_nm`) and `tests/test_floor_rig.py` (the servo-friction
    test becomes "the attached servo's friction is the righting servo's").

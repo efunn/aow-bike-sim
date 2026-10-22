@@ -1,6 +1,6 @@
 """The drop release rig's printed parts, as ONE custom feature, `AOW drop rig`,
 in its own Feature Studio. Spec: docs/plans/drop-release-rig.md, "Parts".
-Numbers: config/drop_rig_cad.yaml, plus cad.steering's and cad.drive's own
+Numbers: config/cad/drop_rig_cad.yaml, plus cad.steering's and cad.drive's own
 layouts for the two wheel interfaces, plus the X330 envelope and case shells
 cad.servo_mount and the X330 fixture use.
 
@@ -60,8 +60,8 @@ from . import servo_mount as sm
 from . import steering as st
 from ..params import _normalize
 
-RIG_PARAMS = "config/drop_rig_cad.yaml"
-X330_PARAMS = "config/x330_fixture_cad.yaml"
+RIG_PARAMS = "config/cad/drop_rig_cad.yaml"
+X330_PARAMS = "config/cad/x330_fixture_cad.yaml"
 CAM_SCRIPT = "bench/drop_cam.py"
 OUT_FS = "docs/cad/drop_rig.fs"
 OUT_PNG = "docs/cad/drop_rig{}.png"
@@ -425,8 +425,8 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
  *   python -m aow_sim.cad.drop_rig --push drop_rig_features
  *
- * Numbers from config/drop_rig_cad.yaml, cad.steering's and cad.drive's
- * layouts (the fork and chainstay joints) and config/servo_mounts.yaml, every
+ * Numbers from config/cad/drop_rig_cad.yaml, cad.steering's and cad.drive's
+ * layouts (the fork and chainstay joints) and config/cad/servo_mounts.yaml, every
  * derived one computed in aow_sim.cad.drop_rig's layout() and carried here as
  * RIG. Millimetres.
  *

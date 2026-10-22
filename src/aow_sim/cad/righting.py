@@ -1,8 +1,8 @@
 """The righting module, printed: the diamond swing linkage as a supported
 crankshaft in ASA, metal rod stock only for the wing rod, the crankpin and the
 two rocker pins. ONE custom feature, `AOW righting`, in its own Feature
-Studio. Spec: docs/plans/righting-design.md. Numbers: config/righting_cad.yaml,
-the steering module's hub and lugs (config/steering_cad.yaml), the X330
+Studio. Spec: docs/plans/righting-design.md. Numbers: config/cad/righting_cad.yaml,
+the steering module's hub and lugs (config/cad/steering_cad.yaml), the X330
 envelope and mount interface cad.servo_mount reads.
 
 MODULE FRAME: origin on the wing rod's axis at the mid-plane between the
@@ -67,8 +67,8 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "analysis"))
 import swing_synthesis as ss                    # noqa: E402
 
-PARAMS = "config/righting_cad.yaml"
-STEER_PARAMS = "config/steering_cad.yaml"
+PARAMS = "config/cad/righting_cad.yaml"
+STEER_PARAMS = "config/cad/steering_cad.yaml"
 OUT_FS = "docs/cad/righting.fs"
 OUT_PNG = "docs/cad/righting{}.png"
 SPLIT_MARK = af.SPLIT_MARK

@@ -1,7 +1,7 @@
 # A CONSTRAINTS-ONLY input to `analysis/swing_linkage.py --optimize`.
 #
 #     python analysis/swing_linkage.py \
-#         --config config/swing_linkage_constraints.yaml \
+#         --config config/linkage/archive/swing_linkage_constraints.yaml \
 #         --optimize --seed 1 --iters 400 --save config/my_result.yaml
 #
 # Copy it, edit the numbers, point --optimize at it. Nothing here is a link

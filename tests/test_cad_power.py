@@ -8,8 +8,8 @@ heads clear in side view, the board square to the drive beside the battery,
 the switch flush with the XT30 in the shelf, the strap's path and the
 gussets round it, the wire notch, the battery stops, the U2D2 between the
 pulleys with its JSTs in front of the AHRS, the Pi carrier's three joints.
-Invalidated by: config/bike_v2_cad.yaml `power:` / `pi_carrier:` /
-components, config/drive_cad.yaml rail.carrier_* / pi_* / front_ear /
+Invalidated by: config/cad/bike_v2_cad.yaml `power:` / `pi_carrier:` /
+components, config/cad/drive_cad.yaml rail.carrier_* / pi_* / front_ear /
 back_ear / battery_stop / case / pulley, the 6-32 table.
 """
 

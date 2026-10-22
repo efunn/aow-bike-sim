@@ -148,11 +148,11 @@ tabs:
   bike: eb278418be25018fb7253dd3
   # Hand-drawn Part Studio the SWING linkage was traced from, read back through
   # the API on 2026-08-25. Its `assignVariable` features name the driving values
-  # directly, which is how config/swing_linkage.yaml's numbers were derived --
+  # directly, which is how config/linkage/swing_linkage.yaml's numbers were derived --
   # and how the crank angle was found to be 45 deg rather than the 90 traced
   # earlier from `swing-wings-geom-mock`. Nothing generated is ever pushed here.
   # Listed 2026-09-08; it had been recorded only in a comment in
-  # config/swing_linkage.yaml.
+  # config/linkage/swing_linkage.yaml.
   wing_linkage_straight: 011b691f0af4ce5194344456
   # Hand-drawn Part Studio holding the as-built idler, 6-32 joint and the
   # case-side-wall / case-end-wall sketches that the X330 idler, screw and

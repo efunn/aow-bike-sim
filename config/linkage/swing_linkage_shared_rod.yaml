@@ -1,6 +1,6 @@
 # From: python analysis/swing_synthesis.py --pivot-x 0 --keep-panel --stagger-couplers --stagger-rockers --one-pin --tag _shared
 # 586 counts at 9.9 V on the planar scorer (reference 669), margin 1.40x, travel 128 deg.
-# Sim check: python analysis/righting_current_sweep.py --config config/swing_linkage_shared_rod.yaml --supply 9.9
+# Sim check: python analysis/righting_current_sweep.py --config config/linkage/swing_linkage_shared_rod.yaml --supply 9.9
 bike:
   wheel_radius: 51.2
   bike_width: 80.0
@@ -66,10 +66,10 @@ bounds:
   - 50.0
 stroke:
   # 129.3 (user, 2026-10-09): where the bike reaches LEVEL resting on the
-  # blade (config/righting_blade.yaml) at righting_cad's 1.25 -- the
+  # blade (config/linkage/righting_blade.yaml) at righting_cad's 1.25 -- the
   # stepthrough's blade rest and the sim trace both cross roll 0 at ~129.3.
   # Was 128.4, the synthesis's "flat" (its placeholder panel line, the
   # blade's centre line, horizontal in the bike frame), 0.9 short of level.
   # The blades' toes stop the crank at ~130, before the knuckles reach the
-  # couplers (config/righting_blade.yaml).
+  # couplers (config/linkage/righting_blade.yaml).
   crank_travel_deg: 129.3

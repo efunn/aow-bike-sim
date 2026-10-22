@@ -102,7 +102,7 @@ ERROR_TAUS = (1e-5, 0.19, 2.0, 10.0, 60.0, 1e7)
 
 def base_cfg():
     """The eval config chatter.py uses: rl_general.yaml, randomization off."""
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     return {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
 
 

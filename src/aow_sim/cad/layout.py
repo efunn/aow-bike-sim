@@ -35,9 +35,9 @@ from pathlib import Path
 
 from ..params import DEFAULT_PARAMS, load_params
 
-CAD_PARAMS = "config/bike_params_cad.yaml"
+CAD_PARAMS = "config/cad/bike_params_cad.yaml"
 # The 75 mm-envelope solve, not the 120 mm one the sim still builds.
-LINKAGE_CFG = "config/wing_linkage_w75.yaml"
+LINKAGE_CFG = "config/linkage/wing_linkage_w75.yaml"
 OUT = "docs/cad/cad_layout.yaml"
 OUT_FS = "docs/cad/cad_layout.fs"
 OUT_PNG = "docs/cad/cad_layout.png"
@@ -2178,7 +2178,7 @@ def main() -> None:
     ap.add_argument("--push", metavar="TAB|URL", nargs="?", const="",
                     help="after writing, POST the FeatureScript into Onshape. "
                          "Bare --push targets the `feature_studio` tab in "
-                         "config/onshape.yaml; or name another tab, or paste a "
+                         "config/cad/onshape.yaml; or name another tab, or paste a "
                          "browser URL. Implies --format featurescript. ONE "
                          "billable call — see aow_sim.cad.onshape for the quota")
     ap.add_argument("--shot", metavar="TAB|URL", nargs="?", const="",
@@ -2205,7 +2205,7 @@ def main() -> None:
                          "pushing, and refuse to push if it does not build. One "
                          "call. Nothing is written to the document — the "
                          "context Onshape builds is discarded. Defaults to the "
-                         "`check` tab in config/onshape.yaml")
+                         "`check` tab in config/cad/onshape.yaml")
     args = ap.parse_args()
     if args.check is not None and args.format != "featurescript":
         ap.error("--check evaluates FeatureScript; add --format featurescript")

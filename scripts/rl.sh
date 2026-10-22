@@ -365,7 +365,7 @@ cmd_seeds() {
   local tag; tag="$(basename "$base")"
 
   # Which config the trainer will actually read, for the ETA below.
-  local cfg_file="config/rl_${move}.yaml" j
+  local cfg_file="config/rl/rl_${move}.yaml" j
   local -a argv=("${rest[@]+"${rest[@]}"}")
   for ((j = 0; j < ${#argv[@]}; j++)); do
     case "${argv[j]}" in
@@ -392,7 +392,7 @@ cmd_seeds() {
   # ONE LINE, no embedded newlines. `start` records the argv as the log's FIRST
   # LINE and `cmd_eta` resolves --config and --timesteps by reading exactly that
   # line. A multi-line chain puts them on line 2+, so eta silently falls back to
-  # config/rl_<move>.yaml and reports the percentage against the WRONG budget --
+  # config/rl/rl_<move>.yaml and reports the percentage against the WRONG budget --
   # which is the quiet failure cmd_eta's own comment documents (a 12M run shown
   # as 6M, 2026-08-09). Observed again here before this was collapsed.
   # TRAP + BACKGROUND-AND-WAIT, not a plain foreground call. Two reasons, and
@@ -469,7 +469,7 @@ cmd_seeds() {
 # The file, one job per line, `#` comments and blank lines ignored:
 #
 #   # config                                seed  export-name                   [trainer args]
-#   config/rl_general_drivetrain_p100.yaml  0     general_rl_drivetrain_p100_0
+#   config/rl/archive/rl_general_drivetrain_p100.yaml  0     general_rl_drivetrain_p100_0
 #
 # READ ONCE, AT LAUNCH. Every line is checked (config exists, integer seed, no
 # moves/<name>.yaml already) before anything starts, and the jobs are baked
@@ -616,9 +616,9 @@ cmd_eta() {
   [[ -f "$log" ]] || die "no training log for '$move' yet -- has it been started?"
 
   # The config the run was LAUNCHED with, not the one this move is NAMED
-  # after. `train general --config config/rl_general_smooth_diff.yaml` is an
+  # after. `train general --config config/rl/archive/rl_general_smooth_diff.yaml` is an
   # ordinary thing to do -- that is how the smooth/diff variants are trained --
-  # and reading config/rl_general.yaml instead silently reports a DIFFERENT
+  # and reading config/rl/rl_general.yaml instead silently reports a DIFFERENT
   # run's budget. It is a quiet failure: you get a percentage and an ETA that
   # look fine and are computed against the wrong denominator (observed
   # 2026-08-09, a 12M run reported as 6M because rl_general.yaml still said
@@ -637,7 +637,7 @@ cmd_eta() {
     echo "job          $(grep '^=== job ' "$log" | tail -1 | sed 's/^=== \(job [0-9]* of [0-9]*: [^ ]*\).*/\1/')"
   fi
   [[ -n "$cfg" && "$cfg" != /* ]] && cfg="$REPO/$cfg"
-  [[ -n "$cfg" && -f "$cfg" ]] || cfg="$REPO/config/rl_$move.yaml"
+  [[ -n "$cfg" && -f "$cfg" ]] || cfg="$REPO/config/rl/rl_$move.yaml"
   echo "config       ${cfg#$REPO/}"
 
   dev="$(grep -m1 -o 'Using [^ ]* device' "$log" || true)"

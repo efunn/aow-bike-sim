@@ -20,7 +20,7 @@ def _env():
     from aow_sim.control.general_env import GeneralEnv, _load_rl_config
     from aow_sim.drivetrain_model import from_env_config
     from aow_sim.train_general_rl import _eval_cfg
-    cfg = _eval_cfg(_load_rl_config("config/rl_general_v3.yaml"))
+    cfg = _eval_cfg(_load_rl_config("config/rl/rl_general_v3.yaml"))
     return GeneralEnv(from_env_config(load_params(), cfg["env"]), cfg)
 
 

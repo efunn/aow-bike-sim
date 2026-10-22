@@ -1,6 +1,6 @@
 """The Pi + U2D2 carrier for aow-bike-whole-v2. Layout only: cad.bike_v2
 draws it. Spec: docs/plans/aow-bike-whole-v2-complete.md ("Pi + U2D2
-carrier"). Numbers: config/bike_v2_cad.yaml `pi_carrier:`.
+carrier"). Numbers: config/cad/bike_v2_cad.yaml `pi_carrier:`.
 
 DRIVE frame, over the drive's front face (the front-top; the power board
 went to the back-top beside the battery):

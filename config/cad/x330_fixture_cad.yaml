@@ -152,7 +152,7 @@ fixture:
   spring_gap: {value: 0.002, source: design}      # back wall to case back face
   spring_height: {value: 0.0125, source: design}  # spring axis above the plate
   # --- the stop. 45 deg either side of level: the full rig's roll stop
-  # (config/floor_rig.yaml roll_stop.deg, where its skids land).
+  # (config/bench/floor_rig.yaml roll_stop.deg, where its skids land).
   stop_deg: {value: 45.0, source: design (= floor_rig roll_stop.deg)}
   # IDLER: the YOKE is the stop, landing FLAT on the cover's top. At 45 deg a
   # face swinging about the shaft can only land flat on the part of that top
@@ -194,7 +194,7 @@ fixture:
   bolt_hole_dia: {value: 0.0051, source: design (10-32 free fit)}
   bolt_span_x: {value: 0.0381, source: design (1.5 in)}
   bolt_span_y: {value: 0.0254, source: design (1 in)}
-  # --- the screw joint, identical to the AHRS fixture's (config/ahrs_fixture_cad.yaml)
+  # --- the screw joint, identical to the AHRS fixture's (config/cad/ahrs_fixture_cad.yaml)
   joint_plate: {value: 0.0046, source: design (as-built)}
   ridge_height: {value: 0.0012, source: design}
   ridge_flat: {value: 0.0046, source: design}

@@ -5,7 +5,7 @@ interference between modules and envelopes; these check what can be checked
 locally -- the modules v2 composes (steering v2, the drive without its
 fixture, the righting's V3 blade), the blades' room to the front tyre, the
 envelopes where their config puts them, and that the studio lints.
-Invalidated by: config/bike_v2_cad.yaml, any module generator (cad.drive,
+Invalidated by: config/cad/bike_v2_cad.yaml, any module generator (cad.drive,
 cad.steering, cad.righting) or its config, or the shared FeatureScript in
 cad.ahrs_fixture / cad.servo_mount.
 """

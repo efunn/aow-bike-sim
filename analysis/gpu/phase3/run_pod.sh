@@ -7,7 +7,7 @@
 #   bash analysis/gpu/phase3/run_pod.sh            # export, check, build, train
 #   NW=16384 bash analysis/gpu/phase3/run_pod.sh   # another world count
 #   ENV_SEED=1 PUFFER_SEED=43 bash ...              # another seed: BOTH halves
-#   CONFIG=config/rl_general_v3_style.yaml bash ... # another env config
+#   CONFIG=config/rl/rl_general_v3_style.yaml bash ... # another env config
 #                                                   # (default rl_general_v3.yaml)
 #   NW=16384 HORIZON=16 bash ...                    # more worlds, SAME batch
 #
@@ -50,7 +50,7 @@ step() {  # step <name> <cmd...>; keeps going on failure, records the status
 NW=${NW:-4096}
 TRAIN_S=${TRAIN_S:-600}
 ENV_SEED=${ENV_SEED:-0}
-CONFIG=${CONFIG:-config/rl_general_v3.yaml}
+CONFIG=${CONFIG:-config/rl/rl_general_v3.yaml}
 CURRICULUM_LEAD=${CURRICULUM_LEAD:-$(awk "BEGIN{print 0.1 * $NW / 4096}")}
 G=graphs/aow_bike_$NW
 step pip_phase3 pip install -q gymnasium==1.3.0 scipy pyyaml

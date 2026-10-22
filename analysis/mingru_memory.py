@@ -22,7 +22,7 @@ output reads h rather than x (s near 1). Reported per policy:
     NO GATE costs nothing, the policy is not using its memory.
 
 Eval: train_general_rl's own grid and eval env (`_eval_cfg`: randomization
-off, 5 s episodes) on config/rl_general_v3.yaml's env -- the env both the
+off, 5 s episodes) on config/rl/rl_general_v3.yaml's env -- the env both the
 CPU MinGRU arm and the GPU port train on. One episode per command, so a
 single-command difference is one episode.
 """
@@ -94,7 +94,7 @@ def run(name: str, mode: str, params, cfg):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("moves", nargs="+")
-    ap.add_argument("--config", default="config/rl_general_v3.yaml")
+    ap.add_argument("--config", default="config/rl/rl_general_v3.yaml")
     a = ap.parse_args()
     cfg = _load_rl_config(a.config)
     params = from_env_config(load_params(), cfg["env"])

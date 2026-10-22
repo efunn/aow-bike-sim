@@ -328,7 +328,7 @@ def test_yaw_error_reaches_the_policy_at_all(model, params):
 
     from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 
-    cfg = _load_rl_config(Path("config/rl_general.yaml"))
+    cfg = _load_rl_config(Path("config/rl/rl_general.yaml"))
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
 
     def psi_after(level, steps=60):
@@ -399,14 +399,14 @@ def test_absent_ranges_leave_the_rng_stream_untouched(params):
 
     from aow_sim.control.general_env import GeneralEnv, _load_rl_config
 
-    cfg = _load_rl_config(Path("config/rl_general_odo_ahrs.yaml"))
+    cfg = _load_rl_config(Path("config/rl/archive/rl_general_odo_ahrs.yaml"))
     env = GeneralEnv(params, cfg)
     for seed in (0, 1, 2):
         env.reset(seed=seed)
         assert env._ahrs.orient_rms_deg == ORIENT_RMS_DEG["tm151"]
         assert env._ahrs.tau_orient_s == 2.0
 
-    cfg = _load_rl_config(Path("config/rl_general_odo_ahrs_rand.yaml"))
+    cfg = _load_rl_config(Path("config/rl/archive/rl_general_odo_ahrs_rand.yaml"))
     env = GeneralEnv(params, cfg)
     seen = set()
     for seed in (0, 1, 2, 3):

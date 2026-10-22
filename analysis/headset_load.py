@@ -50,7 +50,7 @@ from aow_sim.train_general_rl import eval_cmds  # noqa: E402
 
 def fly(policy: str, episode_s: float, cut_roll_deg: float):
     params = load_params()
-    cfg = _load_rl_config(ROOT / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(ROOT / "config" / "rl" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     pol = load_move(policy)
     over = policy_env_overrides(pol)

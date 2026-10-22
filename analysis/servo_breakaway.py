@@ -4,7 +4,7 @@ Current-based position mode (5), the mode the righting and rig servos run in.
 Written to replace a GUESS of 100 mA (from rough experience that turned out
 to be the XL330's). Its first run, 2026-09-25, both bare XC330s: nothing
 moves at <= 20 mA, everything at >= 25, and running they stop between 22 and
-20 -- `config/floor_rig.yaml` now has `servo_friction_ma: 22` from it. Plan
+20 -- `config/bench/floor_rig.yaml` now has `servo_friction_ma: 22` from it. Plan
 and interpretation: docs/plans/pre-assembly-bench-checklist.md, "Breakaway
 sweep RUN".
 

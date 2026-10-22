@@ -3,7 +3,7 @@
 `--check` builds the FeatureScript in Onshape and measures every part against
 `layout()`; these check `layout()` itself -- the axial stack and the fits the
 parts depend on -- and that the generated FeatureScript lints.
-Invalidated by: config/steering_cad.yaml, bike_params_cad's
+Invalidated by: config/cad/steering_cad.yaml, bike_params_cad's
 steering.servo_clearance, the X330 envelope and mount interface, or the shared
 FeatureScript in cad.ahrs_fixture / cad.servo_mount.
 """

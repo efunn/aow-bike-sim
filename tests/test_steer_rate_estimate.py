@@ -21,7 +21,7 @@ from aow_sim.sim_odometry import SimSteerRate
 
 pytestmark = pytest.mark.spec
 
-CFG = "config/rl_general_v3.yaml"
+CFG = "config/rl/rl_general_v3.yaml"
 
 
 @pytest.fixture(scope="module")

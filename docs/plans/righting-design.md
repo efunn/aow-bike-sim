@@ -16,7 +16,7 @@ printed in ASA except the rods, which are metal stock.
 
 - The four-bar comes from a **linkage config**, the same files the sim and
   `analysis/swing_stepthrough.py` read: `linkage.config` in
-  `config/righting_cad.yaml` (now `config/swing_linkage_shared_rod.yaml`).
+  `config/cad/righting_cad.yaml` (now `config/linkage/swing_linkage_shared_rod.yaml`).
   - From it: crank, coupler and rocker lengths, the servo shaft height, the
     stroke, and the panel's line at rest.
   - The panel's standoff and angle off the rocker are re-derived onto that
@@ -152,7 +152,7 @@ The XC330 sits at the rear, horn forward. Each L part is its R twin turned
 
 ## As built
 
-`python -m aow_sim.cad.righting` (config `config/righting_cad.yaml`), one
+`python -m aow_sim.cad.righting` (config `config/cad/righting_cad.yaml`), one
 feature `AOW righting` (dialog: pose rest / ±25/50/75/100 %, mocks on/off) in
 the Feature Studio **aow-bike-righting features**, inserted in the Part
 Studio **aow-bike-righting** (`onshape.yaml` tabs `righting_features` /
@@ -576,7 +576,7 @@ an opt-in); the pill roof stays, no bumpers; masses from the CAD volumes,
 **What builds it.** `build_model` with no mechanism flag builds bike_params
 `righting.module`. `params.resolve_righting_module` inlines the scaled
 linkage (this file's `linkage.config` at `linkage.scale`) and the blade
-outline (`config/righting_blade.yaml`, was `swing_explore/blade_toe.yaml`)
+outline (`config/linkage/righting_blade.yaml`, was `swing_explore/blade_toe.yaml`)
 into params, so `plant_digest` moves when either file does.
 `swing_linkage=False` is the wingless bike every earlier export trained on;
 `wings=` / `linkage=` / `swing=` / a `swing_linkage_cfg` build their study

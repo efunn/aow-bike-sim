@@ -156,7 +156,7 @@ GET  /api/partstudios/d/{did}/w/{wid}/e/{eid}/shadedviews?pixelSize=0&...
 Copy-paste is still the default and still the fallback: browser calls are
 exempt from the quota, so exhausting the API changes nothing about pasting.
 
-`config/onshape.yaml` holds the document, workspace and three tab ids under
+`config/cad/onshape.yaml` holds the document, workspace and three tab ids under
 names, so `--push` and `--shot` take no arguments. It is checked in and carries
 no secret — an id grants nobody anything. Naming the tabs is not tidiness: the
 Feature Studio and the two Part Studios are three 24-hex strings with no
@@ -230,7 +230,7 @@ belief it replaced -- "the render after a push showed the old geometry" --
 was inferred from a timed-out swap; nobody had looked at that render.
 
 So a publish is push + render, 2 calls. `onshape.update_custom_feature`
-(`POST .../features/updates`, featureId + nodeId from `config/onshape.yaml`
+(`POST .../features/updates`, featureId + nodeId from `config/cad/onshape.yaml`
 `features:`) stays for changing an inserted feature's dialog values from a
 script; the single-feature `.../features/featureid/{id}` refused every form
 with `Feature does not match` (free 400s). A studio in ANOTHER document is
@@ -394,7 +394,7 @@ permanently immune.
 
 Nothing in the generator can recover them. **What actually worked was a fresh
 Part Studio tab**: new bodies have no hand-set appearance, so they take the
-palette immediately. The old tab is kept as `rip` in `config/onshape.yaml`
+palette immediately. The old tab is kept as `rip` in `config/cad/onshape.yaml`
 rather than deleted, because the lock-out is worth being able to poke at.
 Resetting appearance per part is the in-place alternative, if you can find the
 control.
@@ -570,7 +570,7 @@ component layout from the parameters, as YAML for reading and as a FeatureScript
 Feature Studio for Onshape. Both are **exports** — generated, never edited, with
 the regeneration command in the header.
 
-`config/bike_params_cad.yaml` is a scratch copy of `bike_params.yaml` that the
+`config/cad/bike_params_cad.yaml` is a scratch copy of `bike_params.yaml` that the
 CAD work edits freely. It eventually becomes the authoritative one. **Never pass
 it to `export_deploy`**: `params_digest` hashes the whole tree, so a bundle built
 from a diverged file carries a digest no bike matches, and refusing that is the
@@ -674,7 +674,7 @@ workstream and it arrived immediately:
 
 - **The Feature Studio pushes over the API now.** `--push` and `--shot` on
   `aow_sim.cad.layout`, one billable call each, with the document and tab ids
-  in `config/onshape.yaml` and API keys in the macOS Keychain — never in this
+  in `config/cad/onshape.yaml` and API keys in the macOS Keychain — never in this
   checkout, which is Dropbox-synced, where gitignored is not un-synced. Every
   call is logged with what it did (`python -m aow_sim.cad.onshape --log`). The
   annual quota is 2500 and the cycle is anchored to **13 Oct**, not January and
@@ -705,7 +705,7 @@ workstream and it arrived immediately:
   which is exactly what the monolithic `AOW bike layout` feature builds alone.
 
   The target is a **new empty Part Studio, `Eval Harness`**, created via the
-  API on 2026-08-24 and recorded as the `check` tab in `config/onshape.yaml`.
+  API on 2026-08-24 and recorded as the `check` tab in `config/cad/onshape.yaml`.
   **Keep it empty** — its emptiness is the feature, since a body modelled there
   lands in any query not scoped to `qCreatedBy(id, ...)`. Nothing is ever
   written to it: Onshape derives the context, runs the script and discards it,
@@ -743,7 +743,7 @@ version's wire routing is understood.
 ### Servo mounts — two custom features, screwless (2026-08-25)
 
 `aow_sim.cad.servo_mount` generates two Onshape custom features into their own
-Feature Studio (`horn_features` in `config/onshape.yaml`), separate from the
+Feature Studio (`horn_features` in `config/cad/onshape.yaml`), separate from the
 `cad.layout` studio because that one is overwritten wholesale on every push.
 
 | feature | what it makes |
@@ -754,7 +754,7 @@ Feature Studio (`horn_features` in `config/onshape.yaml`), separate from the
 **Screwless, and the two pins are not the same pin.** The horn pin is Phi 1.4 in
 the Phi 1.6 tapping hole (0.2 diametral); the case pin is Phi 1.9 in the Phi 2
 *relief* bore of the drawing's Detail A/B (0.1). Different holes doing different
-jobs — `config/bike_params_cad.yaml` says not to unify them.
+jobs — `config/cad/bike_params_cad.yaml` says not to unify them.
 
 **Only one of the two case hole rows is usable**, and it shapes the whole part.
 The rows sit +/-15 from the face centre, putting one 22.5 mm from the shaft axis

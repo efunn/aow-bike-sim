@@ -4,6 +4,7 @@ teleop, DriveController and the Pi all take it unchanged. No warp import.
 
     python -m aow_sim.gpu.export_policy CHECKPOINT.bin --graph-meta G.json \\
         --ini aow_bike.ini --name general_puffer_<run> [--steps N] [--no-eval]
+        [--config config/rl/<cfg>.yaml]   # a graph from before 2026-10-21
 
 WHAT THE .bin IS (PufferLib ea7f989, read from the source, not documented):
 `puf_save_weights` dumps the fp32 master weights, one flat array of
@@ -87,6 +88,10 @@ def main():
     ap.add_argument("--float", action="store_true", help="the trainer was built --float")
     ap.add_argument("--no-eval", action="store_true", help="skip the deterministic eval")
     ap.add_argument("--moves-dir", default=None, help="default: moves/")
+    ap.add_argument("--config", default=None,
+                    help="the env config, when the graph json's recorded path is gone "
+                         "(graphs exported before 2026-10-21 say config/rl_general_v3*.yaml; "
+                         "those files are now config/rl/, superseded ones config/rl/archive/)")
     a = ap.parse_args()
 
     import yaml
@@ -108,7 +113,15 @@ def main():
     flat = np.fromfile(a.checkpoint, dtype=np.float32)
     t, missing = unpack(flat, obs, act, hidden, nl, 4 if a.float else 8)
 
-    cfg = _load_rl_config(meta["config"])
+    # The graph records the config PATH it was exported with. The 2026-10-21
+    # reorg moved every config, so an older graph names a file that is not
+    # there; say where it went rather than guessing by name.
+    cfg_path = a.config or meta["config"]
+    if not Path(cfg_path).exists():
+        raise SystemExit(f"{cfg_path} (recorded in {a.graph_meta}) does not exist; pass "
+                         f"--config with its new path: config/rl/ or config/rl/archive/ "
+                         f"+ {Path(cfg_path).name}")
+    cfg = _load_rl_config(cfg_path)
     params = from_env_config(load_params(), cfg["env"])
     out = Path(a.moves_dir) if a.moves_dir else tg.MOVES_DIR
     name = flick.reserve_move_name(a.name, out)       # never overwrites a move

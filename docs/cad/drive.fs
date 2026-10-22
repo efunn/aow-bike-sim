@@ -4,7 +4,7 @@ import(path : "onshape/std/geometry.fs", version : "3044.0");
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
  *   python -m aow_sim.cad.drive --push drive_features
  *
- * Numbers from config/drive_cad.yaml and bike_params_cad.yaml, every derived
+ * Numbers from config/cad/drive_cad.yaml and bike_params_cad.yaml, every derived
  * one computed in aow_sim.cad.drive's layout() and carried here as DR.
  * Millimetres. X in DR is a MAGNITUDE on the left side; the code negates.
  *

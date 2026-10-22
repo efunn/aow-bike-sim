@@ -141,7 +141,7 @@ markers = [
     "boundary: the onboard import boundary -- the Pi installs no mujoco, scipy or torch. Run after touching imports under hw/.",
     "trainer: SmoothPPO (src/aow_sim/smooth_ppo.py), the smoothness terms on the policy mean. Its train() is a COPY of stable-baselines3's, so run this after touching it OR upgrading SB3: with every weight at 0 an update must stay bit-identical to stock PPO.",
     "pure: builds no model and returns in well under a second. The inner loop while editing control logic.",
-    "cad: the CAD generators (src/aow_sim/cad/*.py) checked without Onshape -- layouts, stacks, clearances, and that the generated FeatureScript lints. Builds no sim model. Run after touching a cad/ module or its config/*_cad.yaml.",
+    "cad: the CAD generators (src/aow_sim/cad/*.py) checked without Onshape -- layouts, stacks, clearances, and that the generated FeatureScript lints. Builds no sim model. Run after touching a cad/ module or its config/cad/*_cad.yaml.",
     "analysis: a study script under analysis/ checked against a synthetic case with a known answer. Run after touching the script it imports.",
     "prospective: a bar the current policy is not expected to clear yet -- a target, not a regression guard. SKIPPED unless asked for by name (`pytest -m prospective`, or the file's path), so the full run does not pay for a known failure. Run it on each new policy export.",
     "drivetrain: the opt-in detailed drivetrain overlay -- config/drivetrain_model.yaml and src/aow_sim/drivetrain_model.py (XC430 firmware loop, differential detent, roller slop). Run after touching either, or the drive actuator / roller coupling blocks of build_model.",

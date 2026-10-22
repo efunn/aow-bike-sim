@@ -89,7 +89,7 @@ TC_DEFAULT = [0.005]
 def _cfg():
     """Eval config: randomization OFF, no ball. Matches per_command.py so the
     numbers here sit on the same scale as every other table in analysis/."""
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     cfg = {**cfg, "env": {**cfg["env"], "ball_prob": 0.0}}
     return cfg

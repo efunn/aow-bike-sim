@@ -107,7 +107,7 @@ with the ball inside the sweep.** Nobody aimed it.
 ## what this says about the move as specified above
 
 The concept at the top of this file optimises a *deliberate* strike with the
-stick panel, and `config/rl_ball.yaml` prices a wheel contact as a fault
+stick panel, and `config/rl/rl_ball.yaml` prices a wheel contact as a fault
 (`w_wheel_hit: 200.0`). `moves/ball_rl.yaml` duly reports `stick_hit_rate:
 1.0`, `wheel_hit_rate: 0.0`, `mean_launch_speed: 0.378`.
 

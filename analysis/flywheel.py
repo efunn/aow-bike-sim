@@ -15,7 +15,7 @@ no-load speed it has nothing left. So its whole authority is
 and everything else -- stall torque, gear ratio, how quickly it spins up -- only
 says how fast H gets spent. Both servo candidates are torque-rich and
 momentum-poor by three orders of magnitude, which is why `gear_ratio` in
-config/flywheel.yaml is a step-UP: the servo gearbox already traded away the
+config/archive/flywheel.yaml is a step-UP: the servo gearbox already traded away the
 speed that H is made of.
 
     python analysis/flywheel.py                    # budget + both axes
@@ -24,7 +24,7 @@ speed that H is made of.
 
 Read-only apart from an optional --csv. Builds its own models; touches no
 policy, no bundle, and no bike_params.yaml -- the flywheel geometry lives in
-config/flywheel.yaml precisely so this study cannot move the params digest.
+config/archive/flywheel.yaml precisely so this study cannot move the params digest.
 """
 from __future__ import annotations
 
@@ -39,11 +39,15 @@ import mujoco
 import numpy as np
 import yaml
 
-from aow_sim.build_model import (FLYWHEEL_CFG, build_model, flywheel_budget,
+from aow_sim.build_model import (build_model, flywheel_budget,
                                  load_params)
 from aow_sim.control.balance import extract_state
 from aow_sim.control.drive import DriveController
 from aow_sim.control.linearize import design_all, settle_rolling
+
+# This study's own config. build_model has no default for it any more:
+# flywheel=True is only ever built from here.
+FLYWHEEL_CFG = Path(__file__).resolve().parents[1] / "config" / "archive" / "flywheel.yaml"
 
 FALL_DEG = 75.0
 RECOVER_DEG = 20.0
@@ -284,7 +288,7 @@ def main() -> None:
 
     rows = []
     print("=" * 74)
-    print("MOMENTUM BUDGET  (config/flywheel.yaml"
+    print("MOMENTUM BUDGET  (config/archive/flywheel.yaml"
           + (f", overrides {over}" if over else "") + ")")
     print("=" * 74)
     ref = _cfg("roll", **over)

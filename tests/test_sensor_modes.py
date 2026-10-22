@@ -92,7 +92,7 @@ def _eval(name, params, *, ahrs="none", encoder=None, tau=2.0,
     itself it declares `obs_odometry` false and is handed MuJoCo truth, i.e. a
     cleaner signal than the Pi will ever give it.
     """
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     # Randomization OFF: this is a fixed point, and the AHRS parameter ranges
     # under `randomization:` are a TRAINING distribution. Leaving it on would
     # make every threshold here a distribution rather than a number.
@@ -187,7 +187,7 @@ def test_every_orientation_channel_in_the_obs_comes_from_the_sensor(params):
     from aow_sim.control.general_env import GeneralEnv, _load_rl_config
     from aow_sim.sim_ahrs import rpy_from_quat
 
-    cfg = _load_rl_config(REPO / "config" / "rl_general_odo_ahrs_pitch.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "archive" / "rl_general_odo_ahrs_pitch.yaml")
     env = GeneralEnv(params, cfg)
     lay = env.obs_layout
     assert "pitch" in lay, "config no longer sets obs_pitch; test is vacuous"

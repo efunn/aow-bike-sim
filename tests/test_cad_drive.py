@@ -4,7 +4,7 @@
 `layout()`; these check `layout()` itself -- the axle stack, the belt plane,
 the tension joint, the clearances the parts depend on -- the sketch profiles,
 and that the generated FeatureScript lints.
-Invalidated by: config/drive_cad.yaml, bike_params_cad's belt, XC430 and
+Invalidated by: config/cad/drive_cad.yaml, bike_params_cad's belt, XC430 and
 omni_wheel blocks, or the shared FeatureScript in cad.ahrs_fixture /
 cad.servo_mount.
 """

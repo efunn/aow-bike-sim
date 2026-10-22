@@ -406,7 +406,7 @@ def main() -> None:
                          "Placeholder physics by default -- massless rig, "
                          "frictionless joints; the config's link_mass_g / "
                          "friction / damping (or --rig-mode guessed_mass) add "
-                         "guessed ones. CONFIG defaults to config/floor_rig.yaml, "
+                         "guessed ones. CONFIG defaults to config/bench/floor_rig.yaml, "
                          "where each joint can be locked. The rig's pitch/roll "
                          "motors stay at zero: the controller owns the whole "
                          "ctrl vector. Measured 2026-09-25: the startup policy "
@@ -620,15 +620,15 @@ def main() -> None:
                          "teleop is keyboard-driven and Reset is Backspace)")
     ap.add_argument("--linkage-config", default=None, metavar="PATH",
                     help="four-bar geometry for --linkage (default "
-                         "config/wing_linkage_locking.yaml). "
-                         "config/wing_linkage_w75.yaml is the 75 mm-envelope "
+                         "config/linkage/wing_linkage_locking.yaml). "
+                         "config/linkage/wing_linkage_w75.yaml is the 75 mm-envelope "
                          "variant -- same mechanism, bike_width 120 -> 75, "
                          "which moves the wing panel in to +-37.5 mm and "
                          "lengthens it 84.6 -> 107.1 mm. record.py has had "
                          "this flag; teleop was hardcoded to the 120 mm one.")
     ap.add_argument("--linkage", action="store_true",
                     help="the four-bar wing mechanism instead of the geared "
-                         "pair (config/wing_linkage_locking.yaml); same 9/4 "
+                         "pair (config/linkage/wing_linkage_locking.yaml); same 9/4 "
                          "keys, but the actuator drives the CRANK")
     ap.add_argument("--swing-linkage", nargs="?", const=True, default=False,
                     metavar="CONFIG",
@@ -637,11 +637,11 @@ def main() -> None:
                          "Takes an OPTIONAL config path -- there are fourteen "
                          "swing_linkage*.yaml -- and the bare flag builds V1, "
                          "build_model.SWING_LINKAGE_CFG "
-                         "(config/swing_linkage_smaller.yaml), flat panels.")
+                         "(config/linkage/swing_linkage_smaller.yaml), flat panels.")
     ap.add_argument("--blade", default=None, metavar="YAML",
                     help="another blade on the bike's righting module, in "
                          "memory (bike_params.yaml untouched), e.g. "
-                         "config/righting_blade.yaml (V2; the default is V3): "
+                         "config/linkage/righting_blade.yaml (V2; the default is V3): "
                          "its outline, and "
                          "its file's `mass` and `crank_travel_deg` (the wing "
                          "keys' stroke) where it gives them. Moves "
@@ -668,7 +668,7 @@ def main() -> None:
                          "frictionless linkage of every run before 2026-10-17. "
                          "For comparing the two at a low Goal Current ([ / ])")
     ap.add_argument("--swing", action="store_true",
-                    help="co-rotating wing pair (config/swing_wings.yaml): one "
+                    help="co-rotating wing pair (config/linkage/swing_wings.yaml): one "
                          "side down, other side tucked. 3 teleop positions.")
     ap.add_argument("--wings", action="store_true",
                     help="add the self-righting wing pair (teleop: 9 extends, "
@@ -3081,7 +3081,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         # THREE positions, not two. The co-rotating pair has a signed range
         # (+-deploy about a symmetric centre), so "extend/retract" is not the
         # right verb -- 9 puts the RIGHT wing down, 7 the LEFT, 4 returns to
-        # the centre V. See config/swing_wings.yaml.
+        # the centre V. See config/linkage/swing_wings.yaml.
         import yaml as _yaml
         from .build_model import SWING_CFG, SWING_LINKAGE_CFG, swing_poses
         # The FOUR-BAR and the geared pair are both driven by a `swing`

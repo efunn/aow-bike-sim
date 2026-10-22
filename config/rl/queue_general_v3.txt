@@ -1,0 +1,14 @@
+# The next general run: ONE setting, five seeds, in series. One job per line,
+# run in file order by:
+#
+#   ./scripts/rl.sh queue general config/rl/queue_general_v3.txt
+#
+# Runs land in runs/queue_general_v3/<export-name>. Why this setting: the
+# header of config/rl/rl_general_v3.yaml.
+#
+# config                         seed  export-name
+config/rl/rl_general_v3.yaml        0     general_rl_v3_s0
+config/rl/rl_general_v3.yaml        1     general_rl_v3_s1
+config/rl/rl_general_v3.yaml        2     general_rl_v3_s2
+config/rl/rl_general_v3.yaml        3     general_rl_v3_s3
+config/rl/rl_general_v3.yaml        4     general_rl_v3_s4

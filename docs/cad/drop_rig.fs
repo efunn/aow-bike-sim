@@ -4,8 +4,8 @@ import(path : "onshape/std/geometry.fs", version : "3044.0");
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
  *   python -m aow_sim.cad.drop_rig --push drop_rig_features
  *
- * Numbers from config/drop_rig_cad.yaml, cad.steering's and cad.drive's
- * layouts (the fork and chainstay joints) and config/servo_mounts.yaml, every
+ * Numbers from config/cad/drop_rig_cad.yaml, cad.steering's and cad.drive's
+ * layouts (the fork and chainstay joints) and config/cad/servo_mounts.yaml, every
  * derived one computed in aow_sim.cad.drop_rig's layout() and carried here as
  * RIG. Millimetres.
  *

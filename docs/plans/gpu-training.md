@@ -191,7 +191,7 @@ is a guess until phase 3; on the box they are ~37 % of an env step plus
   from aow_sim.build_model import load_params
   from aow_sim.control.general_env import GeneralEnv, _load_rl_config
   from aow_sim.drivetrain_model import from_env_config
-  cfg = _load_rl_config("config/rl_general_v3.yaml")
+  cfg = _load_rl_config("config/rl/rl_general_v3.yaml")
   env = GeneralEnv(from_env_config(load_params(), cfg["env"]), cfg)
   mujoco.mj_saveModel(env.model, "v3_rigid.mjb")
   # the probes' start state (analysis/gpu/phase1/): one reset, seed 0
@@ -891,7 +891,7 @@ pretty smooth". Not yet run: the standing-endurance `prospective` test.
 
 **What the MinGRU memory does** (`analysis/mingru_memory.py`, the eval
 grid, 5000 steps) [measured], beside the CPU arm's first seed
-(`general_rl_v3_mingru_s0`, `config/rl_general_v3_mingru.yaml`):
+(`general_rl_v3_mingru_s0`, `config/rl/rl_general_v3_mingru.yaml`):
 
 | | CPU mingru_s0 | GPU fixes_52M |
 |---|---|---|
@@ -1169,7 +1169,7 @@ volume was considered and dropped: it would tie every run to one data
 center's stock (EUR-IS-2, where both cards worked, has no volumes).
 
 **The next run: the style bit (2026-10-17; scripts changed, nothing run).**
-`CONFIG=config/rl_general_v3_style.yaml`, 4096 worlds, like every policy trained
+`CONFIG=config/rl/rl_general_v3_style.yaml`, 4096 worlds, like every policy trained
 so far: on a 5090 (50.6k steps/s at 4k) ~26 min for the ini's 80M steps
 plus ~4 min setup. No plain v3 control run (the user's call: the existing
 policies drove on the updated plant).
@@ -1180,7 +1180,7 @@ policies drove on the updated plant).
   that is not scripted.
   Since 10-17 that config trains the Pi-style steer rate
   (`steer_rate_encoder: counts`), whose Warp kernel has run only on Warp's
-  CPU device here. `config/rl_general_v3_style.yaml` adds the style bit
+  CPU device here. `config/rl/rl_general_v3_style.yaml` adds the style bit
   (`wishlist.md`, "pivots").
 - **Obs width.** The style config's graph is 20 wide. `install.sh` writes
   `OBS_SIZE` into `aow_bike.cu` from the graph's json. `aow_bike.cu` now
@@ -1209,7 +1209,7 @@ policy, and `per_command --style` refuses a policy without the bit, even
 at 0.
 
 **Run 2: the multiplier, at 16k worlds (ran 10-18).**
-`CONFIG=config/rl_general_v3_style_mult.yaml NW=16384 HORIZON=16`.
+`CONFIG=config/rl/rl_general_v3_style_mult.yaml NW=16384 HORIZON=16`.
 - **Why horizon 16.** In the 5090 benchmark (`results_5090_bench/`, 240 s
   each, same ini) learning tracked EPOCHS, not steps: return 268 at epoch
   21 / 5.5M steps on 4k worlds, 398 at epoch 20 / 21.0M on 16k. An epoch

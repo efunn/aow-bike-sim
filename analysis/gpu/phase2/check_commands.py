@@ -54,7 +54,7 @@ def warp_draws(c, d, n, seed):
 def main(n):
     wp.config.quiet = True
     wp.init()
-    env = GeneralEnv(None, _load_rl_config("config/rl_general_v3.yaml"))
+    env = GeneralEnv(None, _load_rl_config("config/rl/rl_general_v3.yaml"))
     c = gc.const_from(env)
     worst = 0.0
     for d in (0.0, 0.3, 0.6, 1.0):

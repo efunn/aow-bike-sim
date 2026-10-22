@@ -110,7 +110,7 @@ STOW_RAD = math.radians(180.0)
 # drives the CRANK directly -- gear ratio 1 -- so crank degrees ARE servo
 # degrees. LINKAGE_CONFIG stays for `--travel-deg`-less runs of an older bike.
 LINKAGE_CONFIG = (Path(__file__).resolve().parents[3] / "config"
-                  / "swing_linkage_smaller.yaml")
+                  / "linkage" / "swing_linkage_smaller.yaml")
 
 
 class BikeAddress:

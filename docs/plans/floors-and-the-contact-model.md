@@ -175,7 +175,7 @@ cannot see this: `hold` is 1 command of 20 through a geometric mean. Use
 
 Read all of it as *how the current policy copes*, not as what is achievable:
 **nothing has ever trained over the contact axis.** `solref_frac` and
-`dampratio_range` sit commented out in `config/rl_general.yaml`.
+`dampratio_range` sit commented out in `config/rl/rl_general.yaml`.
 
 ---
 
@@ -366,7 +366,7 @@ bench tests inform.
 *Moved verbatim from `docs/status.md` on 2026-10-02, when that file was rewritten as a short navigation layer. "Above", "below", "Health" and numbered "What to do next" items refer to status.md as it was then (`git show d0dffeb:docs/status.md`).*
 
 1. **No trained policy has ever seen contact-stiffness variation.** The
-   randomization axis exists but sits commented out in `config/rl_general.yaml`.
+   randomization axis exists but sits commented out in `config/rl/rl_general.yaml`.
    **Most likely single cause of a policy that works in sim and not on the
    floor.** It depends on no measurement, which is the point — so it is the one
    thing a long run grid should do before the bike exists.

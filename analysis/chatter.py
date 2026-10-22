@@ -12,7 +12,7 @@ so a row here can be multiplied by a candidate w_smooth and read directly as
 "reward per step". The per-channel split is the point. Under a UNIFORM
 w_smooth of 0.05 (moves/general_rl_smooth_og) steer and hub gave up ~70% of
 their chatter and `diff` gave up 3% of its own, which is invisible in any
-total and is the whole reason config/rl_general_smooth_diff.yaml exists.
+total and is the whole reason config/rl/archive/rl_general_smooth_diff.yaml exists.
 
 WHY THE EVAL IS RE-RUN HERE rather than read from moves/*.yaml. Those metrics
 blocks were written by training runs with different grids (n_eval 12 vs 20)
@@ -285,7 +285,7 @@ def _one_policy(job):
     # "own" is each policy's recorded drivetrain (policy_env_overrides);
     # anything else forces one drivetrain_eval variant on every policy.
     params = load_params() if plant == "own" else params_for(plant)
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     pol = load_general(name)
     if plant != "own":
@@ -370,7 +370,7 @@ def main():
     names = args.policies or list(POLICIES)
 
     params = load_params()
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     # No AHRS patch here: the parent only needs v_max off this cfg, and the
     # sensor mode is applied per policy inside `_one_policy` -- see the note

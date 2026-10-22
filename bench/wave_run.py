@@ -243,7 +243,7 @@ def main() -> None:
     ap.add_argument("--ahrs-port", default=None)
     ap.add_argument("--no-ahrs", action="store_true", help="the servo alone (a shakedown)")
     ap.add_argument("--note", default="", help="free text for the run record (the mount, ...)")
-    cam = ap.add_argument_group("the servo, default config/drop_rig_bench.yaml")
+    cam = ap.add_argument_group("the servo, default config/bench/drop_rig_bench.yaml")
     cam.add_argument("--cam-port", default=None)
     cam.add_argument("--cam-id", type=int, default=None)
     cam.add_argument("--cam-dir", type=int, choices=(-1, 1), default=None)
@@ -263,7 +263,7 @@ def main() -> None:
     cc = fd.cam_config(SimpleNamespace(cam_port=args.cam_port, cam_id=args.cam_id,
                                        cam_index=0, cam_dir=args.cam_dir, cam_ma=None))
     if cc["dir"] is None:
-        sys.exit("cam.dir is not set in config/drop_rig_bench.yaml (or pass --cam-dir)")
+        sys.exit("cam.dir is not set in config/bench/drop_rig_bench.yaml (or pass --cam-dir)")
     steps = plan(speeds, args.spin_s, args.hold_s, args.ramp_s)
     ARCHIVE.mkdir(parents=True, exist_ok=True)
     stem, big = stem_pair(f"wave_{datetime.now():%Y%m%d-%H%M}")

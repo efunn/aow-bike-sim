@@ -27,7 +27,7 @@
 #                                      FROM rather than guessed at (the 15 mm
 #                                      floors in `_VARS` are hand-picked).
 #
-# HOW IT DIFFERS FROM config/wing_linkage.yaml, which is the MIRRORED four-bar:
+# HOW IT DIFFERS FROM config/linkage/wing_linkage.yaml, which is the MIRRORED four-bar:
 #
 #   wing_linkage   two INDEPENDENT four-bars sharing a crank shaft, with
 #                  per-side first-link lengths (`right: 30.575, left: 31.011`)
@@ -68,7 +68,7 @@
 #              and written back, so a saved config carries the resolved number.
 #   OUTPUT     stroke.crank_travel_deg, written by `--save`.
 #
-# TO POSE A NEW QUESTION, START FROM config/swing_linkage_constraints.yaml --
+# TO POSE A NEW QUESTION, START FROM config/linkage/archive/swing_linkage_constraints.yaml --
 # same schema, INPUT rows only, nothing the search decides. Everything omitted
 # falls back to the module defaults in analysis/swing_linkage.py.
 

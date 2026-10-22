@@ -162,7 +162,7 @@ from it, which costs 0.780 → 0.742 and 7x the drift.
 
 #### Trained against the AHRS too — `general_rl_odo_ahrs` (2026-08-27)
 
-**The hypothesis held.** `config/rl_general_odo_ahrs.yaml` added the encoder
+**The hypothesis held.** `config/rl/archive/rl_general_odo_ahrs.yaml` added the encoder
 model and a TM151 attitude error to `rl_general_odo.yaml` and committed in
 advance to what would count. Eval grid at `--encoder counts --ahrs tm151`:
 
@@ -300,7 +300,7 @@ content of the change:
 | the PARAMETERS — orientation RMS, `ahrs_tau_s` | **no**, one fixed value every episode |
 
 **The verdict.** `general_rl_odo_ahrs_rand`, 12M steps against
-`config/rl_general_odo_ahrs_rand.yaml` (RMS 0.05–2.0°, tau 0.1–3.0 s). One
+`config/rl/archive/rl_general_odo_ahrs_rand.yaml` (RMS 0.05–2.0°, tau 0.1–3.0 s). One
 grid, identical seeds, randomization off, `--encoder counts --ahrs tm151`:
 
 | | tau 2.0 | tau 0.19 |
@@ -437,7 +437,7 @@ part has.
 **Nothing was retrained for it.** The four AHRS policies stand as exported and
 are re-scored at the new default. Three consequences to know:
 
-- `config/rl_general_odo_ahrs.yaml` now **pins `ahrs_tau_s: 2.0` explicitly**.
+- `config/rl/archive/rl_general_odo_ahrs.yaml` now **pins `ahrs_tau_s: 2.0` explicitly**.
   It previously relied on the fallback, so moving the default would have
   silently changed what a re-run of that config trains — the export would no
   longer be reproducible from its own config. The randomised configs draw from
@@ -738,7 +738,7 @@ policy only needs "above ~3°". **A low-pass filter on pitch would be actively
 harmful** — it would clean the idle band at the cost of lagging the onset,
 which is the one thing the channel is for.
 
-**Queued: `config/rl_general_odo_ahrs_pitch_w.yaml`** — `obs_pitch: true` AND
+**Queued: `config/rl/archive/rl_general_odo_ahrs_pitch_w.yaml`** — `obs_pitch: true` AND
 `w_pitch: 2.0`, 20M steps, matching what both truth-trained flicking configs
 carry. The penalty is now chosen on evidence rather than by matching: it
 biases the policy OUT of the 2–8° band rather than requiring it to resolve
@@ -746,7 +746,7 @@ pitch inside it at SNR ~2, which is a different and more robust mechanism than
 the first arm had.
 
 ```sh
-./scripts/rl.sh up general --config config/rl_general_odo_ahrs_pitch_w.yaml \
+./scripts/rl.sh up general --config config/rl/archive/rl_general_odo_ahrs_pitch_w.yaml \
     --run-dir runs/general_rl_odo_ahrs_pitch_w \
     --export-name general_rl_odo_ahrs_pitch_w
 ```

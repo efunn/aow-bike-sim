@@ -12,7 +12,7 @@ images.
     python analysis/wing_linkage.py --deploy   # stowed -> deployed sweep
 
 Everything is the 2D front/back view: (y, z) in millimetres, from the FLOOR and
-the CENTRELINE, +y to the bike's left. Reads config/wing_linkage.yaml and
+the CENTRELINE, +y to the bike's left. Reads config/linkage/wing_linkage.yaml and
 writes analysis/plots/. Changes nothing else — this study is deliberately
 outside bike_params.yaml and the params digest.
 
@@ -38,7 +38,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-CONFIG = Path(__file__).resolve().parents[1] / "config" / "wing_linkage.yaml"
+CONFIG = Path(__file__).resolve().parents[1] / "config" / "linkage" / "wing_linkage.yaml"
 
 
 def _plots_dir():

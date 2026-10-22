@@ -3,7 +3,7 @@
 `--check` builds the FeatureScript in Onshape and looks for clashes and print
 faults; these check the Python side it is compared against, and the things
 the load test's numbers depend on.
-Invalidated by: config/x330_fixture_cad.yaml, the X330 envelope in
+Invalidated by: config/cad/x330_fixture_cad.yaml, the X330 envelope in
 bike_params_cad.yaml, or the shared FeatureScript in cad.ahrs_fixture.
 """
 
@@ -129,7 +129,7 @@ def test_screwdriver_post_stops_the_lever_at_its_stop_angle(data):
 
 def test_idler_stop_is_the_full_rigs_roll_stop(data):
     import yaml
-    rig = yaml.safe_load(open("config/floor_rig.yaml"))
+    rig = yaml.safe_load(open("config/bench/floor_rig.yaml"))
     assert data["fixture"]["stop_deg"] == pytest.approx(rig["roll_stop"]["deg"])
 
 
@@ -302,7 +302,7 @@ def test_idler_ledges_grow_out_of_the_side_wall_at_the_overhang_limit(data):
     f, sv = data["fixture"], data["x330"]
     t = {k: v * 1000 for k, v in data["table"]["XC330"].items() if k != "hornHoleCount"}
     import yaml
-    mounts = yaml.safe_load(open("config/servo_mounts.yaml"))
+    mounts = yaml.safe_load(open("config/cad/servo_mounts.yaml"))
     over = mounts["servos"]["xc330_t181"]["case_wrap_overhang_deg"]["value"]
     tan_o = math.tan(math.radians(90 - over))
     cy, cx = _cover_top(data)

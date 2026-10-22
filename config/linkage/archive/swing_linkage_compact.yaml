@@ -1,40 +1,34 @@
-# The FLAT-DEPLOY swing linkage: `wing_angle_from_rocker` derived so the panel
-# is HORIZONTAL at the deployed toggle.
+# The COMPACT swing linkage -- the narrowest FEASIBLE geometry found.
 #
-# Reproduce from the CONSTRAINTS file, which is the honest input -- it carries
-# the limits and none of the answer:
-#     python analysis/swing_linkage.py \
-#         --config config/swing_linkage_constraints.yaml \
-#         --optimize --seed 1 --iters 400 --save <out>.yaml
-# Seeds 1-7 of 8 return 66.326 to five decimals. SEED 0 DOES NOT: it stalls on
-# a boundary local optimum at 172 mm. It used to be one of the good ones, and
-# the search trajectory moved when `solve` switched to picking its branch by
-# the assembly invariant -- the evaluation is unchanged (this file still scores
-# 8/8 at 66.3) but differential evolution is chaotic in the objective, so a
-# pinned seed is not a durable reproduction recipe. Run several.
+# Reproduce exactly:
+#     python analysis/swing_linkage.py --config config/linkage/swing_linkage.yaml \
+#         --optimize --seed 0 --iters 400 --save config/linkage/archive/swing_linkage_compact.yaml
+# Seeds 0, 2, 3 and 4 all return this to 0.05 mm.
 #
-# WHAT IT BUYS: hand-off roll is 0.0000 deg BY CONSTRUCTION, and the commanded
-# stroke IS the deployed toggle -- so the study's fourth angle, the travel that
-# lays the panel flat, stops being a separate thing to compute. Under `fixed`
-# and `vertical_rest` that pose can fall short of the toggle (it does on the
-# built geometry, 112.0 of 125.4), and then the mechanism's last 13 deg is
-# stroke you would never command.
+#     rest half-width    65.3 mm   <- 73.3 hand-drawn, 61.3 in _opt
+#     panel |y| rest/end 65.3 / 65.3    hand-off roll 0.0 deg (window 6)
+#     transmission       55.7 deg (floor 30)    rest grounds at 61.5 deg
+#     coupler-coupler     4.00 mm (needs 4.0)   panel keep-out 0.00 mm
+#     peak torque        0.494 N.m at 72% of the stroke (budget 0.55)
 #
-#     |                   | fixed (_compact) | this  | vertical (_vertical) |
-#     |-------------------|------------------|-------|----------------------|
-#     | rest half-width   |          65.3 mm | 66.3  |               71.5   |
-#     | commanded stroke  |          115.0   | 129.3 |              141.5   |
-#     | hand-off roll     |           0.0    | 0.0 exactly |          6.0   |
-#     | peak servo torque |         0.494 N.m| 0.446 |     0.550, on budget |
-#     | worst transmission|          55.7 deg| 43.0  |               36.1   |
+# THIS SUPERSEDES A 56.4 mm RESULT, and the difference is a corrected
+# constraint, not a better search. That number was found against a chassis
+# keep-out of 18 mm half-width, derived by projecting the `shape: box` entries
+# of docs/cad/cad_layout.yaml. It missed the CYLINDERS: the servo
+# pulleys sit at |y| 26.5 with an 11 mm face, so their outer edges are at 32.0
+# -- 64 mm across the pair, measured. Against the real bound the 56.4 mm design
+# drives its panel 3.5 mm INTO the chassis, and so does `_opt` at 2.8 mm.
 #
-# 1.0 mm wider than the free-panel optimum and 10% cheaper at the servo. The
-# width difference is small enough that this is a reasonable default: it uses
-# the mechanism's whole travel and removes a constraint from the search.
+# THREE THINGS ARE ON A LIMIT: the far wing at exactly +5.0 deg (this has bound
+# in every search this study has run), the couplers at exactly their 4.0 mm
+# width, and the panel at exactly 0.00 mm of chassis clearance. A design that
+# spends every allowance is a design with nothing left for tolerance -- the
+# built hand-drawn geometry holds 2.06 mm of keep-out and 10.98 mm between
+# couplers at 73.3 mm of width, and that is what the 8 mm buys.
 #
-# ONE POSE, NOT TWO. This pins the DEPLOYED attitude, so the parked one is
-# whatever the rocker swing leaves -- 21.5 deg off vertical here. It is
-# mutually exclusive with `vertical_rest`, which pins the other end.
+# STILL BOUNDED BY A HAND-PICKED FLOOR: `wing_pivot_x` sits AT its 15 mm lower
+# bound in `_VARS`, and that bound is a guess. The Part Studio carries
+# `pin_diameter` 1/16 in and `pin_support_radius` 0.1 in to derive it from.
 
 bike:
   wheel_radius: 51.2
@@ -42,16 +36,16 @@ bike:
   bike_height: 216.2
   ground_clearance: 61.9
 mechanism:
-  wing_pivot_x: 15.000000756762224
+  wing_pivot_x: 15.000002104400247
   wing_pivot_z: 0.0
-  crank_length: 16.482832823399274
-  coupler_length: 52.75985180297695
-  rocker_length: 25.67461939638776
-  angle_between_cranks: 33.07401557648707
+  crank_length: 24.63426633871389
+  coupler_length: 65.8406590481145
+  rocker_length: 35.625257471549475
+  angle_between_cranks: 25.00384208570901
   crank_input_angle: 180.0
-  servo_offset: 47.960759544961114
-  wing_angle_mode: flat_deploy
-  wing_angle_from_rocker: 21.240526588052433
+  servo_offset: 64.44397735111043
+  wing_angle_mode: fixed
+  wing_angle_from_rocker: 15.0
   wing_norm_offset: 5.0
   wing_z_min: -20.0
   wing_z_max: 80.0
@@ -114,5 +108,5 @@ clearance:
                               # never used the ceiling and are unchanged.
 
 stroke:
-  crank_travel_deg: 129.3
+  crank_travel_deg: 115.0
   goal_current_nm: 0.44

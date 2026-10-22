@@ -4,7 +4,7 @@ import(path : "onshape/std/geometry.fs", version : "3044.0");
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
  *   python -m aow_sim.cad.steering --push steering_features
  *
- * Numbers from config/steering_cad.yaml, config/servo_mounts.yaml and
+ * Numbers from config/cad/steering_cad.yaml, config/cad/servo_mounts.yaml and
  * bike_params_cad.yaml, every derived one computed in aow_sim.cad.steering's
  * layout() and carried here as ST. Millimetres.
  *

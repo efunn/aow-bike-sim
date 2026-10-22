@@ -627,7 +627,7 @@ Reproduce with `python analysis/contact_surrogates.py`.
   (`7af0ce42dfc91154`). Every `moves/*` export trained before it warns on load.
 - **GATED NOW: a policy trained at 4e-4 matches the 2e-4 baseline.**
   `general_rl_glide_pitch_dt4e4`, 6M steps on unmodified
-  `config/rl_general_glide_pitch.yaml`, scores **track_geo 0.886 / survive
+  `config/rl/archive/rl_general_glide_pitch.yaml`, scores **track_geo 0.886 / survive
   1.00** against `general_rl_glide_pitch_og`'s identical 0.886 at 2e-4.
   Head error improved 4.7° → 2.6°; crab stayed symmetric (.242/.245 vs
   .248/.262). The righting handoff still catches the bike on both mechanisms

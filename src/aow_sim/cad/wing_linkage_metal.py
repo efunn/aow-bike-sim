@@ -1,7 +1,7 @@
 """The machined swing linkage: the diamond four-bar as a supported crankshaft,
 every pivot in a Delrin bushing, the XC330 coupled for torque only. ONE custom
 feature, `AOW wing linkage metal`, in its own Feature Studio. Spec:
-docs/plans/wing-linkage-metal.md. Numbers: config/wing_linkage_metal_cad.yaml.
+docs/plans/wing-linkage-metal.md. Numbers: config/cad/wing_linkage_metal_cad.yaml.
 
     python -m aow_sim.cad.wing_linkage_metal                  # write the .fs, print the layout
     python -m aow_sim.cad.wing_linkage_metal --check          # ONE call, `check` tab
@@ -21,7 +21,7 @@ docs/plans/righting-linkage-margin.md). So the load path is designed first:
     each wing has a SECOND knuckle on the rod beyond the far bulkhead, so a
     panel is held at both ends and a knock on it goes rod -> bulkheads.
 
-THE FOUR-BAR is config/swing_linkage_shared_rod.yaml scaled about the rod
+THE FOUR-BAR is config/linkage/swing_linkage_shared_rod.yaml scaled about the rod
 (`linkage.scale`). Scaling every length keeps every angle, so the current the
 stroke needs is unchanged (planar scorer, 1.0-1.5); it buys wall thickness and
 1/scale of the pin forces. The panel is re-derived onto the same line through
@@ -61,7 +61,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "analysis"))
 import swing_synthesis as ss                    # noqa: E402
 
-PARAMS = "config/wing_linkage_metal_cad.yaml"
+PARAMS = "config/cad/wing_linkage_metal_cad.yaml"
 OUT_FS = "docs/cad/wing_linkage_metal.fs"
 OUT_PNG = "docs/cad/wing_linkage_metal{}.png"
 SPLIT_MARK = "// ==== UI LAYER BELOW -- dropped by --check ===="

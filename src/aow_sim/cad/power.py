@@ -4,7 +4,7 @@ printed panel on the left, between the battery and the left rail (user,
 overhang panel that goes around the XT30 connector and allows the power
 switch to be panel installed"). Layout only: cad.bike_v2 draws it, and its
 --check is the check. Spec: docs/plans/aow-bike-whole-v2-complete.md.
-Numbers: config/bike_v2_cad.yaml `power:`.
+Numbers: config/cad/bike_v2_cad.yaml `power:`.
 
     the panel     |x| 11.3..16 (the battery's side + 0.3 to the rail's inner
                   face), its +X face on the bed, everything else standing

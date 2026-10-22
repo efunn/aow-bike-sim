@@ -44,7 +44,7 @@ import mujoco
 import numpy as np
 import yaml
 
-RIG_CFG = Path(__file__).resolve().parents[2] / "config" / "floor_rig.yaml"
+RIG_CFG = Path(__file__).resolve().parents[2] / "config" / "bench" / "floor_rig.yaml"
 TOKEN_MASS = 1e-6             # kg: "massless" as far as MuJoCo allows
 TOKEN_INERTIA = 1e-10         # kg m^2
 # Rotor-like inertia on each rig JOINT (not on a body: no mass, no weight),

@@ -21,7 +21,7 @@ from aow_sim.control.steer import wheel_heading
 
 pytestmark = pytest.mark.spec
 
-CFG = "config/rl_general_v3_style.yaml"
+CFG = "config/rl/rl_general_v3_style.yaml"
 RAKE = np.deg2rad(15.0)
 STYLE = ("style", "sin_wheel_err", "cos_wheel_err")
 
@@ -171,7 +171,7 @@ def test_style_without_obs_style_is_refused():
 def test_v3_is_untouched_by_the_feature():
     """No obs_style: 17 wide, and the bit is never drawn (no rng consumed)."""
     from aow_sim.control.general_env import GeneralEnv
-    with open("config/rl_general_v3.yaml") as f:
+    with open("config/rl/rl_general_v3.yaml") as f:
         e = GeneralEnv(None, yaml.safe_load(f), seed=0)
     assert e.obs_dim == 17 and "style" not in e.obs_layout
     rng = np.random.default_rng(5)
@@ -185,7 +185,7 @@ def test_move_doc_records_the_flag():
     from aow_sim.train_general_rl import move_doc
     doc = move_doc("general_style_smoke", load_params(), _cfg(), {})
     assert doc["obs_style"] is True and tuple(doc["obs_layout"][-3:]) == STYLE
-    with open("config/rl_general_v3.yaml") as f:
+    with open("config/rl/rl_general_v3.yaml") as f:
         plain = move_doc("general_plain_smoke", load_params(), yaml.safe_load(f), {})
     assert plain["obs_style"] is False and "style" not in plain["obs_layout"]
 

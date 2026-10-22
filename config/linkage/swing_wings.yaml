@@ -3,7 +3,7 @@
 #
 # DELIBERATELY NOT IN bike_params.yaml, which is hashed whole into
 # params_digest and pins deploy/bundle.npz plus every trained move. Same
-# treatment as config/flywheel.yaml and config/wing_linkage*.yaml.
+# treatment as config/archive/flywheel.yaml and config/linkage/wing_linkage*.yaml.
 # Read only by build_model(..., swing=True). A default build never opens it.
 #
 # WHAT MAKES IT DIFFERENT FROM `wings`: the coupling. The geared pair uses a
@@ -20,7 +20,7 @@
 # right plants the left wing too, which turns the bike into a tripod.
 #
 # A CO-ROTATING FOUR-BAR EXISTS, and it is the better mechanism. See
-# config/swing_linkage.yaml and analysis/swing_linkage.py.
+# config/linkage/swing_linkage.yaml and analysis/swing_linkage.py.
 #
 # An earlier version of this note said the four-bar "CANNOT be re-coupled this
 # way". What was actually measured is narrower and still true: RE-PHASING the

@@ -410,7 +410,7 @@ from the design below, mostly after your review:
   has to come round to the new course; what can stay held is the CHASSIS.
   That is a crab, already a command (lateral velocity, heading kept), never
   trained since `v_lat_frac: 0`. Its own experiment if wanted.
-- **Where:** `config/rl_general_v3_style.yaml` (v3 plus `obs_style`,
+- **Where:** `config/rl/rl_general_v3_style.yaml` (v3 plus `obs_style`,
   `style_p` 0.5, `w_style` 0.75, `sigma_style_deg` 25; the header says why);
   GeneralEnv and the GPU kernels (Warp CPU device checked against the spec);
   the move yaml; `drive.set_style`; teleop **Home** (fn+left); `per_command
@@ -460,7 +460,7 @@ from the design below, mostly after your review:
   90 deg relative to the chassis at a 90 deg turn, an unstable point;
   big turns need it to learn to go past that rather than stop short of it.
 - **Run 2 (10-18): `style_form: mult`**
-  (`config/rl_general_v3_style_mult.yaml`, one line from run 1). The heading
+  (`config/rl/rl_general_v3_style_mult.yaml`, one line from run 1). The heading
   term becomes w_head x r_head x (1 + w_style x r_style): refusing ~0, a
   steered spin 1.0 at heading, a pivot 1.75; on a hold, as before. It does
   nothing for the 90 deg point by itself. Trained together with 16k worlds
@@ -481,7 +481,7 @@ from the design below, mostly after your review:
   made heading tracking worse (bit on, the big spins end 20-33 deg short;
   bit off 2-4) and found no pivot. The next style run starts from run 1's
   form, the front wheel rewarded on its own term (`style_form: add`,
-  `config/rl_general_v3_style.yaml`), and attacks the refusal some other
+  `config/rl/rl_general_v3_style.yaml`), and attacks the refusal some other
   way. `style_form: mult` stays in the code as the record of the run.
 
 **The style bit: the design, as written before it was built. [reasoned]**

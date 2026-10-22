@@ -1,7 +1,7 @@
 # Pivot Controller (crawl pivot about the front contact)
 
 > **Status: BUILT — 2026-07-18.** `control/pivot.py`, `control/pivot_env.py`,
-> `run_pivot.py`, `train_pivot_rl.py` and `config/rl_pivot.yaml` all exist; the
+> `run_pivot.py`, `train_pivot_rl.py` and `config/rl/rl_pivot.yaml` all exist; the
 > move was later re-authored as an RL policy. The lesson it exists to preserve —
 > yaw-position feedback must stay light or the loop rings against the steer clamp
 > — is restated in `mujoco-modeling-decisions.md`.

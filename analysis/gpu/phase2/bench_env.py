@@ -31,7 +31,7 @@ import warp as wp
 from aow_sim.control.policy import MinGRUPolicy, load_policy_npz
 from aow_sim.gpu.env import GpuGeneralEnv
 
-CONFIG = "config/rl_general_v3.yaml"
+CONFIG = "config/rl/rl_general_v3.yaml"
 ACT = {"none": 0, "tanh": 1, "relu": 2}
 
 

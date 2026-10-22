@@ -3,7 +3,7 @@ Requires the `[rl]` extra (gymnasium, SB3, torch, tensorboard); the base install
 needs none of these to *replay* the result. Mirrors train_flick_rl.py.
 
   pip install -e '.[rl]'
-  python -m aow_sim.train_ball_rl                  # reads config/rl_ball.yaml
+  python -m aow_sim.train_ball_rl                  # reads config/rl/rl_ball.yaml
   python -m aow_sim.train_ball_rl --timesteps 50000  # short smoke run
   python -m aow_sim.train_ball_rl --resume         # continue from last checkpoint
   tensorboard --logdir runs/ball_rl                # watch learning curves

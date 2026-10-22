@@ -28,7 +28,7 @@ always FORWARD: per step a setpoint on its top flat (--margin-deg short of the
 step: the run-up) and one in the dwell past it (--park-deg), so the cam goes
 _|_|_ lift, hold, drop, lift... Never backward: that drives the follower into
 a step's undercut face. The port, the servo's ID, the calibration, the
-cam's drops and the current are config/drop_rig_bench.yaml's (each flag
+cam's drops and the current are config/bench/drop_rig_bench.yaml's (each flag
 overrides one).
 
 The cam sits on the horn pins in one position, so the encoder knows its
@@ -315,7 +315,7 @@ POS_TOL = 45              # ticks (~4 deg)
 BUS_TRIES = 3             # per register access (Cam._bus)
 
 
-BENCH_CFG = Path(__file__).resolve().parents[1] / "config" / "drop_rig_bench.yaml"
+BENCH_CFG = Path(__file__).resolve().parents[1] / "config" / "bench" / "drop_rig_bench.yaml"
 
 
 def arm_lever(cfg=None) -> float:
@@ -336,7 +336,7 @@ def contact_drop(h_mm, cfg=None) -> float:
 
 
 def cam_config(args) -> dict:
-    """config/drop_rig_bench.yaml, each value overridden by its flag if given."""
+    """config/bench/drop_rig_bench.yaml, each value overridden by its flag if given."""
     import yaml
     cfg = yaml.safe_load(BENCH_CFG.read_text())
     sv, cm = cfg["servo"], cfg["cam"]
@@ -592,7 +592,7 @@ def cam_where(port, dxl_id) -> None:
                   f"dir {sign:>2}  ", end="", flush=True)
             last = p
     except KeyboardInterrupt:
-        print(f"\n\nin config/{BENCH_CFG.name}, under cam:\n"
+        print(f"\n\nin config/bench/{BENCH_CFG.name}, under cam:\n"
               f"  index: <the ticks at the drop>\n  dir: {seen}")
     finally:
         bus.close()
@@ -630,7 +630,7 @@ def main() -> None:
                          "force_sensor.CALIBRATED_N_PER_COUNT); with --reanalyse")
     cam = ap.add_argument_group("the drop rig's cam (see the docstring)")
     cam.add_argument("--cam", action="store_true",
-                     help=f"drive the cam; the settings below default to config/{BENCH_CFG.name}")
+                     help=f"drive the cam; the settings below default to config/bench/{BENCH_CFG.name}")
     cam.add_argument("--cam-port", default=None,
                      help="the U2D2 (default: servo.port, else AOW_DXL_PORT, else the one usbserial)")
     cam.add_argument("--dry-run", action="store_true",
@@ -690,7 +690,7 @@ def main() -> None:
         sys.exit("--wheel is required")
     if cc:
         if cc["index"] is None or cc["dir"] is None:
-            sys.exit(f"cam.index / cam.dir are not set in config/{BENCH_CFG.name}: "
+            sys.exit(f"cam.index / cam.dir are not set in config/bench/{BENCH_CFG.name}: "
                      f"calibrate with --cam --cam-where")
         if args.park_deg <= 0 or args.margin_deg <= 0:
             sys.exit("--park-deg and --margin-deg must be positive")

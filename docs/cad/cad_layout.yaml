@@ -12,7 +12,7 @@
 # design. As parts get drawn and built, the real numbers go back into
 # config/bike_params.yaml with `source: measured` and this file is
 # REGENERATED. It is an export, never a source.
-# Wing linkage geometry from: config/wing_linkage_w75.yaml
+# Wing linkage geometry from: config/linkage/wing_linkage_w75.yaml
 #
 # Conversion from the sim frame (+X forward, +Y left, +Z up, m/kg):
 #     cad_x = -model_y ;  cad_y = model_x ;  cad_z = model_z

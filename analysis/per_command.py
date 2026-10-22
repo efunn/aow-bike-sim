@@ -271,7 +271,7 @@ def _cfg_for(_ahrs=None, _tau=None):
     `eval_video.py`, so the clips and the bars are the same episodes the
     metrics describe.
     """
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     cfg = {**cfg, "env": {**cfg["env"], "ball_prob": 0.0}}
     return cfg

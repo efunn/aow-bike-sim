@@ -3,7 +3,7 @@ global ground heading, from standstill or a glide (see pivot_env.py).
 Requires the `[rl]` extra; the base install replays the result with numpy.
 
   pip install -e '.[rl]'
-  python -m aow_sim.train_pivot_rl                 # reads config/rl_pivot.yaml
+  python -m aow_sim.train_pivot_rl                 # reads config/rl/rl_pivot.yaml
   python -m aow_sim.train_pivot_rl --resume        # continue from last checkpoint
   tensorboard --logdir runs/pivot_rl               # watch learning curves
 

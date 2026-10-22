@@ -603,7 +603,7 @@ def test_the_family_arm_config_is_wired_end_to_end():
     """The shipped arm must actually select the family sampler."""
     from aow_sim.build_model import load_params
     from aow_sim.control.general_env import GeneralEnv, _load_rl_config
-    cfg = _load_rl_config("config/rl_general_cmd_curriculum.yaml")
+    cfg = _load_rl_config("config/rl/archive/rl_general_cmd_curriculum.yaml")
     assert cfg["env"]["v_lat_frac"] == 0.0, "the partition needs no lateral"
     assert cfg["curriculum"]["start"] == 0.0, "d=0 is the pure-hold stage"
     assert "w_pitch" not in cfg["reward"] and cfg["env"]["obs_pitch"] is True
@@ -670,12 +670,12 @@ def test_export_bounds_pin_a_faded_differential():
     pytest.importorskip("stable_baselines3")
     from aow_sim.control.general_env import _load_rl_config
     from aow_sim.train_general_rl import export_bounds
-    cfg = _load_rl_config("config/rl_general_nodiff.yaml")
+    cfg = _load_rl_config("config/rl/archive/rl_general_nodiff.yaml")
     b = export_bounds(cfg)
     assert b["diff_max"] == 0.0
     assert b["steer_rate_max"] == cfg["env"]["action_bounds"]["steer_rate_max"]
     assert cfg["env"]["action_bounds"]["diff_max"] > 0, "config left alone"
-    base = _load_rl_config("config/rl_general_smooth_temporal.yaml")
+    base = _load_rl_config("config/rl/rl_general_smooth_temporal.yaml")
     assert export_bounds(base) == base["env"]["action_bounds"]
 
 
@@ -683,8 +683,8 @@ def test_nodiff_config_is_smooth_temporal_plus_its_listed_changes():
     """The arm differs from the pointer's config in exactly the blocks its
     header lists, so the comparison stays readable."""
     from aow_sim.control.general_env import _load_rl_config
-    a = _load_rl_config("config/rl_general_smooth_temporal.yaml")
-    b = _load_rl_config("config/rl_general_nodiff.yaml")
+    a = _load_rl_config("config/rl/rl_general_smooth_temporal.yaml")
+    b = _load_rl_config("config/rl/archive/rl_general_nodiff.yaml")
     ea, eb = a["env"], b["env"]
     added = {k: eb[k] for k in eb if k not in ea}
     assert added == {"obs_swing": True, "act_swing": True,
@@ -711,7 +711,7 @@ def _linkage_env(tip=0.1, touch=True):
     pytest.importorskip("gymnasium")
     from aow_sim.build_model import load_params
     from aow_sim.control.general_env import GeneralEnv, _load_rl_config
-    cfg = _load_rl_config("config/rl_general_nodiff.yaml")
+    cfg = _load_rl_config("config/rl/archive/rl_general_nodiff.yaml")
     env = {**cfg["env"], "ball_prob": 0.0, "swing_tip_mass_kg": tip,
            "wing_touch_fails": touch}
     cfg = {**cfg, "env": env,
@@ -754,7 +754,7 @@ def test_geared_swing_channel_is_commanded_too():
     """The same regression on the geared stand-in."""
     pytest.importorskip("gymnasium")
     from aow_sim.control.general_env import GeneralEnv, _load_rl_config
-    cfg = _load_rl_config("config/rl_general_swing.yaml")
+    cfg = _load_rl_config("config/rl/archive/rl_general_swing.yaml")
     cfg = {**cfg, "env": {**cfg["env"], "ball_prob": 0.0},
            "randomization": {**cfg["randomization"], "enabled": False}}
     e = GeneralEnv(rl_cfg=cfg, seed=0)
@@ -1468,7 +1468,7 @@ def test_the_eval_env_has_no_ball():
     from aow_sim.build_model import load_params
     from aow_sim.control.general_env import GeneralEnv, _load_rl_config
     from aow_sim.train_general_rl import _eval_cfg
-    cfg = _load_rl_config("config/rl_general_cmd_curriculum2.yaml")
+    cfg = _load_rl_config("config/rl/archive/rl_general_cmd_curriculum2.yaml")
     assert cfg["env"]["ball_prob"] > 0.0, "the fixture wants a ball to remove"
     env = GeneralEnv(load_params(), rl_cfg=_eval_cfg(cfg), seed=0)
     assert env.ball_prob == 0.0 and env.hockey is False

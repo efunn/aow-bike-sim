@@ -134,7 +134,7 @@ def read(tab: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("tab", help="the module's Part Studio, as named in config/onshape.yaml tabs:")
+    ap.add_argument("tab", help="the module's Part Studio, as named in config/cad/onshape.yaml tabs:")
     args = ap.parse_args()
     print(read(args.tab))
     print(f"-> {OUT}/{args.tab}_hand_edits.txt")

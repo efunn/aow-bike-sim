@@ -289,7 +289,7 @@ with `rl_general_pc_smoke.yaml` a copy of `rl_general_odo_ahrs_rand2.yaml`
 carrying the flag:
 
 ```bash
-python -m aow_sim.train_general_rl --config config/rl_general_pc_smoke.yaml --run-dir runs/pc_smoke --export-name pc_smoke --timesteps 100000
+python -m aow_sim.train_general_rl --config config/rl/rl_general_pc_smoke.yaml --run-dir runs/pc_smoke --export-name pc_smoke --timesteps 100000
 ```
 
 then read `time/fps` off the board against the same 100k with the flag off.
@@ -311,7 +311,7 @@ are the throwaways.)
 ## 7. How to evaluate it — and the prerequisite
 
 **This cannot be judged from one run per arm, and neither can anything else in
-`docs/status.md`'s standings table.** Every `config/rl_general_*.yaml` carries
+`docs/status.md`'s standings table.** Every `config/rl/rl_general_*.yaml` carries
 `seed: 0`. The eval grid is deterministic — `_eval_episodes` fixes seeds per
 command, `chatter.py` runs with randomization off, 20 commands, one episode
 each — so there is no eval sampling noise. What has never been measured is the
@@ -341,7 +341,7 @@ exists anywhere it should be largest there.
 Launch, per the hard rule, as `scripts/rl.sh` and not a bare module:
 
 ```bash
-ssh 192.168.1.101 'cd ~/aow-bike-sim && ./scripts/rl.sh up general --config config/rl_general_odo_ahrs_rand2_pc.yaml --run-dir runs/general_rl_pc_s0 --export-name general_rl_pc_s0'
+ssh 192.168.1.101 'cd ~/aow-bike-sim && ./scripts/rl.sh up general --config config/rl/rl_general_odo_ahrs_rand2_pc.yaml --run-dir runs/general_rl_pc_s0 --export-name general_rl_pc_s0'
 ```
 
 ## 8. Rejected and deferred

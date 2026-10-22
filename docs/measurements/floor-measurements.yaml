@@ -73,7 +73,7 @@ surfaces:
 
 # ---------------------------------------------------------------------------
 # Filled once at least two surfaces are done. This is what goes into
-# config/rl_general.yaml's `randomization:` block -- see the plan doc section 6.
+# config/rl/rl_general.yaml's `randomization:` block -- see the plan doc section 6.
 across_surfaces:
   n_surfaces: 0
   mu_min: 0.0

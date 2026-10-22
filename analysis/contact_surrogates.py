@@ -506,7 +506,7 @@ def study_refsafe():
     print("  reproduces the shipped positive pair's rest sink exactly.")
 
 
-def study_transfer(policy="general_rl_smooth_stiff", cfg_name="rl_general_smooth.yaml"):
+def study_transfer(policy="general_rl_smooth_stiff", cfg_name="archive/rl_general_smooth.yaml"):
     """Same weights, different rear wheel (and different timestep).
 
     Actions are divided by the policy's own bounds before they reach the env:
@@ -528,7 +528,7 @@ def study_transfer(policy="general_rl_smooth_stiff", cfg_name="rl_general_smooth
     pol = load_general(policy)
     b = pol.bounds
     scale = np.array([b.steer_rate_max, b.hub_max, b.diff_max])
-    cfg = yaml.safe_load((repo / "config" / cfg_name).read_text())
+    cfg = yaml.safe_load((repo / "config" / "rl" / cfg_name).read_text())
     cfg["env"] = {**cfg["env"],
                   "v_lat_frac": float(getattr(pol, "v_lat_frac", 0.4)),
                   "randomize": {**cfg["env"].get("randomize", {}), "enabled": False}}
@@ -757,8 +757,8 @@ def main():
                     help="override sim.timestep for every study except `timestep`")
     ap.add_argument("--policy", default="general_rl_smooth_stiff",
                     help="policy for --study transfer")
-    ap.add_argument("--rl-config", default="rl_general_smooth.yaml",
-                    help="config matching --policy")
+    ap.add_argument("--rl-config", default="archive/rl_general_smooth.yaml",
+                    help="config matching --policy, relative to config/rl/")
     args = ap.parse_args()
     want = set(args.study)
     # `transfer` is opt-in: it needs a trained export and takes minutes, while

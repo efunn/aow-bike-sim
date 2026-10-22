@@ -90,7 +90,7 @@ def params_for(variant: str) -> dict:
 
 def cfg_for() -> dict:
     """Randomization off and no ball, as train_general_rl._eval_cfg."""
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     return {**cfg,
             "randomization": {**cfg["randomization"], "enabled": False},
             "env": {**cfg["env"], "ball_prob": 0.0}}

@@ -70,7 +70,7 @@ def main(policy, config, seeds):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--policy", default="moves/general_rl_v3_s0.npz")
-    ap.add_argument("--config", default="config/rl_general_v3.yaml")
+    ap.add_argument("--config", default="config/rl/rl_general_v3.yaml")
     ap.add_argument("--seeds", type=int, default=5)
     a = ap.parse_args()
     main(a.policy, a.config, a.seeds)

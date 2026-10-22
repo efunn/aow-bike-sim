@@ -244,7 +244,7 @@ applied (`drivetrain_model.teleop_overlay`). Checked 2026-09-14 by driving the
 real teleop closures headlessly through a `p100_1` -> `p400_2` swap in all
 three launches.
 
-Training, per config (`config/rl_general.yaml` documents the keys):
+Training, per config (`config/rl/rl_general.yaml` documents the keys):
 
     env:
       drivetrain_model: true            # or a path; absent = ideal drives
@@ -319,11 +319,11 @@ multi-seed check if training time ever makes it matter.
 
 1. **Retrain on the full plant, and at P 400**, before choosing firmware gains
    — the eval says the two are one decision. **Queued, not yet run
-   (2026-09-14):** `config/rl_general_drivetrain_p100.yaml` and `_p400.yaml`,
+   (2026-09-14):** `config/rl/archive/rl_general_drivetrain_p100.yaml` and `_p400.yaml`,
    `rl_general_cmd_curriculum2.yaml` (the line the 12-seed sweep ran;
    `cmd_curriculum2b` is its seed 1) with the drivetrain on, I 1920 in both
    arms and the battery fixed (`actuator_frac` 0), three seeds each,
-   interleaved by `config/queue_drivetrain_gains.txt` through
+   interleaved by `config/rl/archive/queue_drivetrain_gains.txt` through
    `./scripts/rl.sh queue`. ~14.5 h serial at 20M steps each. Training loads the plant now; the
    detent phase is already drawn per episode, and supply and per-side friction
    randomisation exist and are off. Not randomised at all yet: detent friction,

@@ -1,8 +1,8 @@
 """The bike's righting module, V2, as the simulator builds it by default.
 
-V2 is the diamond four-bar `cad.righting` draws (config/righting_cad.yaml:
+V2 is the diamond four-bar `cad.righting` draws (config/cad/righting_cad.yaml:
 swing_linkage_shared_rod.yaml at linkage.scale) with the blades of
-config/righting_blade.yaml. These pin the sim to the CAD: the same links, the
+config/linkage/righting_blade.yaml. These pin the sim to the CAD: the same links, the
 blade where the file draws it, the toes stopping the stroke past the
 commanded travel and short of the knuckles, and the mass the module adds.
 Invalidated by a change to the module's files, `righting.module` in
@@ -37,7 +37,7 @@ def model(params):
     return build_model(params)
 
 
-V3 = "config/swing_explore/blade_v3.yaml"
+V3 = "config/linkage/blade_v3.yaml"
 
 
 def _blade_geoms(model, tag):
@@ -69,7 +69,7 @@ def test_the_default_bike_carries_v2(params, model):
 
 def test_the_links_are_the_cads(params):
     """The sim's four-bar is cad.righting's: shared_rod x linkage.scale."""
-    cad = yaml.safe_load((ROOT / "config/righting_cad.yaml").read_text())
+    cad = yaml.safe_load((ROOT / "config/cad/righting_cad.yaml").read_text())
     k = cad["linkage"]["scale"]["value"]
     raw = yaml.safe_load((ROOT / cad["linkage"]["config"]["value"]).read_text())
     m = params["righting"]["module"]["linkage"]["mechanism"]
@@ -241,7 +241,7 @@ def test_rigid_needs_a_four_bar_to_weld(params):
 def test_the_digest_sees_the_blade_file(params, tmp_path):
     """The blade is inlined into params, so a changed blade file moves the
     plant digest even though bike_params.yaml did not change."""
-    blade = yaml.safe_load((ROOT / "config/righting_blade.yaml").read_text())
+    blade = yaml.safe_load((ROOT / "config/linkage/righting_blade.yaml").read_text())
     blade["outline"][2] = [17.0, 24.0]
     f = tmp_path / "blade.yaml"
     f.write_text(yaml.safe_dump(blade))
@@ -283,7 +283,7 @@ def _convex(P) -> bool:
 
 
 # V2's six points as built 2026-10-09, frozen here: the splitter's
-# regression case, whatever config/righting_blade.yaml later becomes.
+# regression case, whatever config/linkage/righting_blade.yaml later becomes.
 V2_OUTLINE = [[63.9, 147.4], [38.5, 50.6], [15.69, 22.32], [19.57, 19.24],
               [43.3, 49.4], [68.7, 146.1]]
 
@@ -320,7 +320,7 @@ def test_a_curve_is_tangent_to_its_neighbours_by_angle(end_deg):
     # is at 48.8 there, the straight outer face at 54.0)
     [[63.9, 147.4], [38.5, 50.6], [15.69, 22.32], [19.57, 19.24], [43.3, 49.4],
      [51.5, 90.0], [68.7, 146.1]],
-    "config/swing_explore/blade_v3.yaml",
+    "config/linkage/blade_v3.yaml",
 ))
 def test_any_outline_is_cut_into_convex_pieces_that_tile_it(outline):
     from aow_sim.build_model import _convex_pieces, _shoelace
@@ -364,7 +364,7 @@ def test_a_swapped_blade_is_another_plant(params):
     an absolute one would differ per machine). Naming the module's own file
     is no change at all."""
     own = params["righting"]["module"]["blade_file"]
-    other = V3 if Path(own) != Path(V3) else "config/righting_blade.yaml"
+    other = V3 if Path(own) != Path(V3) else "config/linkage/righting_blade.yaml"
     a, b = load_params(blade=other), load_params(blade=ROOT / other)
     assert plant_digest(a) == plant_digest(b) != plant_digest(params)
     assert plant_digest(load_params(blade=own)) == plant_digest(params)

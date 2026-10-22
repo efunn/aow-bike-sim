@@ -33,7 +33,7 @@ Orientation and printing directions: Z-up, Y-forward X-right. Y-forward is the m
 Three calls against the `bike` tab (raw output in `traces/drive/`): every
 cylinder, cone and plane of `spline-rear-wheel`, `drive-pulley`,
 `drive-case-lh` and `rear-wheel-mock`. Everything that printed and worked is
-carried into `config/drive_cad.yaml` as `measured (hand drawing)`:
+carried into `config/cad/drive_cad.yaml` as `measured (hand drawing)`:
 
 - **Spline pulley:** 15T, 10 mm tooth band, flanges with a 55° cone, a 45°
   chamfer from the inner flange to the Φ15 hub, the 5-lobe spline stub

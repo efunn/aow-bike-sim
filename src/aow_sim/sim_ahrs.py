@@ -131,7 +131,7 @@ is not a live risk -- see `analysis/ahrs_tau.py` and docs/status.md, "The tau
 question, answered". So the constant is now simply the number the part has.
 
 NOTHING WAS RETRAINED FOR THIS. The four AHRS policies stand as exported and
-are re-scored at the new default. `config/rl_general_odo_ahrs.yaml` pins
+are re-scored at the new default. `config/rl/archive/rl_general_odo_ahrs.yaml` pins
 `ahrs_tau_s: 2.0` explicitly so the policy that trained at the guess stays
 reproducible from its own config; the randomised configs draw from a range and
 never touched this default.
@@ -304,7 +304,7 @@ FILTER_WANDER_TAU_S = 2.0        # its 1/e time, 1-4 s measured
 
 # Where the ACCELEROMETER sits in the TM151, from the centre of the housing's
 # footprint at the housing's mid-height (the fixture CAD's assumed point,
-# config/ahrs_fixture_cad.yaml `sensor_height`), in the TM151's own axes
+# config/cad/ahrs_fixture_cad.yaml `sensor_height`), in the TM151's own axes
 # (datasheet Figure 2: +x toward the pin header, +y left in the top view, +z
 # out of the housing's top) [m]. Fixture, 2026-09-23/24:
 #   x, y  ~12 mm off the yaw axis in every fit, the SAME way round in the

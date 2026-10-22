@@ -134,8 +134,13 @@ def test_the_split_did_not_move_the_plant_digest():
                           their extruded outlines, pulleys discs, belts
                           their runs), the chassis residual spread over them,
                           the power board weighed (16 g, was 56 GUESS)
+        28946489e64c05de  2026-10-21  no physics: config/ split into folders,
+                          so righting.module.linkage_cad / blade_file now
+                          name config/cad/ and config/linkage/, and the
+                          `source:` notes name the cad/ modules by their
+                          new package path (aow_sim.cad.<name>)
     """
-    assert plant_digest(load_params()) == "0c0518e9225f399e"
+    assert plant_digest(load_params()) == "28946489e64c05de"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

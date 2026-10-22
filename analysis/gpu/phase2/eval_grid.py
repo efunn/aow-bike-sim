@@ -39,7 +39,7 @@ from aow_sim.gpu.env import GpuGeneralEnv                       # noqa: E402
 from aow_sim.eval_general import (_HEAD_TOL_DEG, _TAIL_S, _eval_cfg,  # noqa: E402
                                   _eval_episodes, eval_cmds)
 
-CONFIG = "config/rl_general_v3.yaml"
+CONFIG = "config/rl/rl_general_v3.yaml"
 METRICS = ("head_err_med", "vel_err_med", "head_err_tail", "vel_err_tail",
            "t_head_s", "drift_m", "v_ach")
 

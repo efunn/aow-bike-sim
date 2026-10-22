@@ -73,7 +73,7 @@ def main() -> None:
                     help="comma-separated n_envs values to sweep")
     ap.add_argument("--steps", type=int, default=16384,
                     help="env steps to time per row (default: one rollout)")
-    ap.add_argument("--config", default="config/rl_general.yaml")
+    ap.add_argument("--config", default="config/rl/rl_general.yaml")
     args = ap.parse_args()
 
     params = load_params()

@@ -12,11 +12,11 @@ are real.
 
 THE DESIGNS (`DEFAULT`, in this file):
 
-    V1   config/swing_linkage_smaller.yaml      the earlier four-bar, flat panels
-    V2   config/swing_linkage_shared_rod.yaml   the righting module's linkage,
-         + config/righting_blade.yaml           with its first blade
+    V1   config/linkage/swing_linkage_smaller.yaml      the earlier four-bar, flat panels
+    V2   config/linkage/swing_linkage_shared_rod.yaml   the righting module's linkage,
+         + config/linkage/righting_blade.yaml           with its first blade
     V3   V2's linkage                           the bike's blade: the sim's
-         + config/swing_explore/blade_v3.yaml   default since 2026-10-14
+         + config/linkage/blade_v3.yaml   default since 2026-10-14
 
 TO CHANGE A BLADE, edit its yaml and re-render. The outline's entries --
 points, straight runs at an angle, cubic curves -- are documented in
@@ -31,9 +31,9 @@ after a shape change). Its dropdown on the page lists the file. To try blades wi
 or more (each is the V2 linkage with that blade); the two panes open on the
 last two, and `--labels` names them:
 
-    python analysis/swing_stepthrough.py --blade config/swing_explore/my_blade.yaml
+    python analysis/swing_stepthrough.py --blade config/linkage/my_blade.yaml
     python analysis/swing_stepthrough.py --sim \
-        --blade config/righting_blade.yaml config/swing_explore/my_blade.yaml --labels V2 mine
+        --blade config/linkage/righting_blade.yaml config/linkage/my_blade.yaml --labels V2 mine
 
 That page holds only the `--blade` entries and goes to
 analysis/swing_stepthrough_custom.html (scratch, gitignored; `--out` to put it
@@ -265,14 +265,14 @@ def on_frames(trace: dict, frames: list) -> None:
         fr["sim_r"] = round(float(a[j, 3]), 2) if ok else None
 
 
-DIAMOND = ROOT / "config" / "swing_linkage_shared_rod.yaml"
+DIAMOND = ROOT / "config" / "linkage" / "swing_linkage_shared_rod.yaml"
 # (config, label, blade): blade None is a config design as the sim builds it;
 # a blade yaml (or "cad", the CAD's own dummy) makes it the CAD entry -- the
 # diamond as cad.righting builds it, with that blade swept.
 DEFAULT = [
     (SWING_LINKAGE_CFG, "V1", None),                                       # built today
-    (DIAMOND, "V2", ROOT / "config" / "righting_blade.yaml"),  # the first blade
-    (DIAMOND, "V3", ROOT / "config" / "swing_explore" / "blade_v3.yaml"),  # the bike's
+    (DIAMOND, "V2", ROOT / "config" / "linkage" / "righting_blade.yaml"),  # the first blade
+    (DIAMOND, "V3", ROOT / "config" / "linkage" / "blade_v3.yaml"),  # the bike's
 ]
 
 

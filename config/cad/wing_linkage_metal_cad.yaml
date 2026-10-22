@@ -19,7 +19,7 @@
 # behind the rear bulkhead (under the servo), wing R's ahead of the front one.
 
 linkage:
-  # The four-bar is config/swing_linkage_shared_rod.yaml scaled about the rod.
+  # The four-bar is config/linkage/swing_linkage_shared_rod.yaml scaled about the rod.
   # All four lengths scale together, so every angle -- and so the ratio, the
   # stroke and the servo current -- is unchanged: 586 counts on the planar
   # scorer at 1.0, 1.15, 1.25, 1.35 and 1.5 (checked 2026-09-29, the panel
@@ -27,7 +27,7 @@ linkage:
   # walls and 1/scale of the pin forces; what it costs is the servo shaft
   # height (10.1 above the axle at 1.0, 15.1 at 1.25) and the panel standoff
   # (19.9 -> 15.5 mm; the coupler needs 8).
-  config: {value: config/swing_linkage_shared_rod.yaml, source: design}
+  config: {value: config/linkage/swing_linkage_shared_rod.yaml, source: design}
   scale: {value: 1.25, source: design}
 
 stack:

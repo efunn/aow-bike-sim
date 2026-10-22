@@ -4,7 +4,7 @@ import(path : "onshape/std/geometry.fs", version : "3044.0");
 /* The floor arm rig -- GEOMETRY ONLY, best estimate of 2026-09-25.
  * Hand-written, not generated: this file IS the source, pushed as-is into
  * the `floor-rig-gen` Feature Studio of aow-bike (tabs.floor_rig_gen in
- * config/onshape.yaml) and inserted in `aow-bike-rig`, around the real bike
+ * config/cad/onshape.yaml) and inserted in `aow-bike-rig`, around the real bike
  * parts already drawn there.
  *
  * Plan: docs/plans/pre-assembly-bench-checklist.md, "Rig 1 -- the floor arm".

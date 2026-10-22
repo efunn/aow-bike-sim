@@ -1,7 +1,7 @@
 """The rear drive module: mock rear wheel, the two XC430s, the spline pulleys,
 drive pulleys, case sides and chainstays (and, on request, a mock fixture),
 as ONE custom feature, `AOW drive`, in its own Feature Studio. Spec:
-docs/plans/drive-design.md. Numbers: config/drive_cad.yaml, plus
+docs/plans/drive-design.md. Numbers: config/cad/drive_cad.yaml, plus
 bike_params_cad's belt, XC430 and omni wheel blocks.
 
 MODULE FRAME: origin on the rear axle, +Y along the mean belt (toward the
@@ -51,8 +51,8 @@ from . import ahrs_fixture as af
 from . import servo_mount as sm
 from ..params import _normalize, load_params
 
-DRIVE_PARAMS = "config/drive_cad.yaml"
-AHRS_PARAMS = "config/ahrs_fixture_cad.yaml"     # the TM151's board and holes
+DRIVE_PARAMS = "config/cad/drive_cad.yaml"
+AHRS_PARAMS = "config/cad/ahrs_fixture_cad.yaml"     # the TM151's board and holes
 OUT_FS = "docs/cad/drive.fs"
 OUT_PNG = "docs/cad/drive{}.png"
 SPLIT_MARK = af.SPLIT_MARK
@@ -859,7 +859,7 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
  *   python -m aow_sim.cad.drive --push drive_features
  *
- * Numbers from config/drive_cad.yaml and bike_params_cad.yaml, every derived
+ * Numbers from config/cad/drive_cad.yaml and bike_params_cad.yaml, every derived
  * one computed in aow_sim.cad.drive's layout() and carried here as DR.
  * Millimetres. X in DR is a MAGNITUDE on the left side; the code negates.
  *

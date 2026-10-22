@@ -3,7 +3,7 @@
 Status: **built and run** (first run 2026-10-03: front wheel, 65 drops;
 findings in `docs/status.md`, contact calibration). The arm as built:
 pivot to the wheel's contact **205 mm**, pivot to the follower **124 mm**
-(lever 1.65), the axle 6.5 mm above the pivot -- `config/drop_rig_bench.yaml`
+(lever 1.65), the axle 6.5 mm above the pivot -- `config/bench/drop_rig_bench.yaml`
 `arm`, which `force_drop.py` and `analysis/drop_rig_sim.py` read. The side
 view and the arm/hinge rows below are the 10-02 sketch where they differ
 from the build; the hinge itself was rigged by hand. Replaces hand drops
@@ -50,7 +50,7 @@ impact. The cam is under the block, at d from the hinge, not under the axle.
 | axle height at rest | sensor seat + 8.25 mm (FS20 incl. button, datasheet) + wheel radius (front 50 mm) | measure it on the built base; the slots take up the difference |
 | arm | sketch: **two parallel rods**; as built, the plastic bar friction-fit in the interface's slot (see "Parts") | stiff in twist, so the wheel cannot lean; keep them light (see "Impact mass") |
 | hinge | sketch: bearings on a steel pin; as built, the bar rests on a 15 mm collar on the pivot (user) | low friction; their spacing across the arm stops the wheel leaning |
-| wheel interface, front | the **clamp block**: a double-D socket like the headset upper (dia 11, 6 mm across the flats, central 6-32), its axis along the arm | reuses the fork's own spigot (`config/steering_cad.yaml` `spigot_*`); no new fork parts |
+| wheel interface, front | the **clamp block**: a double-D socket like the headset upper (dia 11, 6 mm across the flats, central 6-32), its axis along the arm | reuses the fork's own spigot (`config/cad/steering_cad.yaml` `spigot_*`); no new fork parts |
 | wheel interface, rear | the same block holding the rear dropouts; the axle nut locks the wheel's roller phase | one arm for both wheels; still to design with the new dropouts |
 | follower | **a small printed flat** under the clamp block, in line with the cam; face square to the arm's motion | the release is the cam's step corner passing the flat's downstream corner. On a ramp the contact sits ~5 mm off centre, hence ~6-10 mm wide. Printed corners round to ~0.45 mm, so the release still wants the cam at speed: the script holds at the start of the top flat as a run-up |
 | cam | `bench/drop_cam.py`: per 90 deg segment a 20 deg bottom dwell at r 12 mm, a 40 deg ramp, a 30 deg top flat (constant radius) at 13.5 / 14 / 14.5 / 15 mm, then the step; 5 mm thick, D-bore dia 8 / 7 flat | four drops per turn, 0.5 / 1 / 1.5 / 2 mm; the top flat is the servo's run-up to speed before the edge, the bottom dwell is where it brakes and parks. Ramp pressure angles 9.6-17.7 deg |
@@ -140,7 +140,7 @@ move, at 3 Mbps; a synthetic 500 deg/s trace read back as 483).
 
 **Generated 2026-10-02:** `python -m aow_sim.cad.drop_rig`, the custom
 feature `AOW drop rig` in aow-bike's `drop-rig` Part Studio (studio
-`drop-rig features`), numbers in `config/drop_rig_cad.yaml`. Render:
+`drop-rig features`), numbers in `config/cad/drop_rig_cad.yaml`. Render:
 ![drop rig](../cad/drop_rig.png)
 
 | part | print | from |
@@ -203,7 +203,7 @@ pins in one position, so `Present Position mod 4096` is its angle;
 reading as the first drop releases the follower is `cam.index`. That, the
 direction, the U2D2's port (default: the one `usbserial` present), the
 servo's ID, the cam's drops and the current live in
-`config/drop_rig_bench.yaml`; each has a flag to override it.
+`config/bench/drop_rig_bench.yaml`; each has a flag to override it.
 Current-based position mode with one Goal Current (300 mA) written with
 every move, and every move FORWARD: per step a setpoint on its top flat
 (`--margin-deg` 30 short of the step, the run-up) and one in the dwell
@@ -239,7 +239,7 @@ known frequency with the wheel held clear of the sensor, so nothing drops.
   so the tip clears the rig with or without the cam holding it up.
   The flat pad itself cannot ride a wave: it bridges the valleys.
 - **The cam kit** (CAD, `wave cam <name>`, each prints Y+, ~15 min;
-  `config/drop_rig_cad.yaml` `wave_kit`; `drop_cam.py --tones` draws any of
+  `config/cad/drop_rig_cad.yaml` `wave_kit`; `drop_cam.py --tones` draws any of
   them and prints its table). Each cam is a sum of tones -- N lobes per turn,
   a peak-to-peak height at the follower -- on the same horn pins, never under
   0.7 mm above the nose's resting height (the wheel ~0.9 mm clear, after the

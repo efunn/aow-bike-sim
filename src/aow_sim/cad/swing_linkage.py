@@ -6,7 +6,7 @@ input you can turn. Insert it several times on one plane at different inputs
 and the overlay IS the motion study -- no animation, no assembly, no mates.
 
     python -m aow_sim.cad.swing_linkage                        # default config
-    python -m aow_sim.cad.swing_linkage --config config/swing_linkage_flat.yaml
+    python -m aow_sim.cad.swing_linkage --config config/linkage/swing_linkage_flat.yaml
     python -m aow_sim.cad.swing_linkage --check                # 1 billable call
     python -m aow_sim.cad.swing_linkage --push swing_features  # 2 calls
 
@@ -46,7 +46,7 @@ draws and what the chassis keep-out heights are measured from.
 WHERE IT PUSHES. Nowhere by default, and never to `feature_studio` (cad.layout
 overwrites that tab wholesale) or `horn_features` (cad.servo_mount owns it). A
 push needs its own Feature Studio tab: make one in the browser, which is free,
-add its id to config/onshape.yaml under a name, and pass the name.
+add its id to config/cad/onshape.yaml under a name, and pass the name.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "analysis"))
 from swing_linkage import SwingLinkage          # noqa: E402
 
-CONFIG = "config/swing_linkage_smaller.yaml"
+CONFIG = "config/linkage/swing_linkage_smaller.yaml"
 OUT_FS = "docs/cad/swing_linkage.fs"
 SPLIT_MARK = "// ==== UI LAYER BELOW -- dropped by --check ===="
 
@@ -743,7 +743,7 @@ def main() -> None:
                 f"refusing to push at `{args.push}`: {OWNED[args.push]} "
                 f"overwrites that tab wholesale. Give this feature its own "
                 f"Feature Studio tab (free, in the browser) and name it in "
-                f"config/onshape.yaml.")
+                f"config/cad/onshape.yaml.")
         url = onshape.resolve(args.push, args.push)
         onshape.push_feature_studio(text, url)
         print(f"pushed {len(text)} chars -> {url}")

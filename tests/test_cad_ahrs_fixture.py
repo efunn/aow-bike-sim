@@ -5,8 +5,8 @@ clashes; these check the PYTHON side it is compared against -- that the
 derived roll-axis height really clears the yaw arm over the whole swing, in
 every mount, and that the idler's defaults reproduce the part that was
 actually printed.
-Invalidated by: config/ahrs_fixture_cad.yaml, the idler block of
-config/servo_mounts.yaml, or the X330 envelope in bike_params_cad.yaml.
+Invalidated by: config/cad/ahrs_fixture_cad.yaml, the idler block of
+config/cad/servo_mounts.yaml, or the X330 envelope in bike_params_cad.yaml.
 """
 
 import math

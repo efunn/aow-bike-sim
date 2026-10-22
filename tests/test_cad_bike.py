@@ -5,7 +5,7 @@ for interference; these check what can be checked locally -- that the three
 modules' geometry layers merge (shared helpers kept once, a disagreement
 refused), that the studio lints and reads no names during regeneration, and
 that the layout's own clearances hold.
-Invalidated by: config/bike_cad.yaml, any module generator (cad.drive,
+Invalidated by: config/cad/bike_cad.yaml, any module generator (cad.drive,
 cad.steering, cad.righting) or its config, or the shared FeatureScript in
 cad.ahrs_fixture / cad.servo_mount.
 """

@@ -1,0 +1,14 @@
+# The memory arm: rl_general_v3 plus a MinGRU in the actor, five seeds, in
+# series. Run AFTER queue_general_v3 (its baseline) has finished:
+#
+#   ./scripts/rl.sh queue general config/rl/queue_general_v3_mingru.txt
+#
+# Runs land in runs/queue_general_v3_mingru/<export-name>. Why: the header of
+# config/rl/rl_general_v3_mingru.yaml.
+#
+# config                             seed  export-name
+config/rl/rl_general_v3_mingru.yaml     0     general_rl_v3_mingru_s0
+config/rl/rl_general_v3_mingru.yaml     1     general_rl_v3_mingru_s1
+config/rl/rl_general_v3_mingru.yaml     2     general_rl_v3_mingru_s2
+config/rl/rl_general_v3_mingru.yaml     3     general_rl_v3_mingru_s3
+config/rl/rl_general_v3_mingru.yaml     4     general_rl_v3_mingru_s4

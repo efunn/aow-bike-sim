@@ -47,24 +47,24 @@ from aow_sim.build_model import load_params
 from aow_sim.control.general_env import _load_rl_config
 from rsa_policies import env_for, load_general, REPO
 
-CONFIG_FOR = {                      # a policy must be evaluated in ITS OWN env
-    "general_rl_glide_pitch_dt4e4": "rl_general_glide_pitch.yaml",
-    "general_rl_glide_pitch_og":    "rl_general_glide_pitch.yaml",
-    "general_rl_glide_pitch_smooth": "rl_general_glide_pitch_smooth.yaml",
-    "general_rl_glide_pitch_hub":   "rl_general_glide_pitch_hub.yaml",
-    "general_rl_glide_pitch_hub2":  "rl_general_glide_pitch_hub2.yaml",
-    "general_rl_glide_pitch_hub3":  "rl_general_glide_pitch_hub3.yaml",
-    "general_rl_smooth_diff_og":    "rl_general_smooth_diff.yaml",
+CONFIG_FOR = {     # paths under config/rl/; a policy must be evaluated in ITS OWN env
+    "general_rl_glide_pitch_dt4e4": "archive/rl_general_glide_pitch.yaml",
+    "general_rl_glide_pitch_og":    "archive/rl_general_glide_pitch.yaml",
+    "general_rl_glide_pitch_smooth": "archive/rl_general_glide_pitch_smooth.yaml",
+    "general_rl_glide_pitch_hub":   "archive/rl_general_glide_pitch_hub.yaml",
+    "general_rl_glide_pitch_hub2":  "archive/rl_general_glide_pitch_hub2.yaml",
+    "general_rl_glide_pitch_hub3":  "archive/rl_general_glide_pitch_hub3.yaml",
+    "general_rl_smooth_diff_og":    "archive/rl_general_smooth_diff.yaml",
     # Hold-only diagnostics: v_max 0, so they have NEVER seen a drive command.
     # Fine to kick (the kick is not a command), meaningless to drive.
-    "general_rl_hold":              "rl_general_hold.yaml",
-    "general_rl_hold_nohub_2":      "rl_general_hold_nohub.yaml",
+    "general_rl_hold":              "archive/rl_general_hold.yaml",
+    "general_rl_hold_nohub_2":      "archive/rl_general_hold_nohub.yaml",
 }
 
 
 def make(name):
     """(policy, env, action scale) for one export, built once and reused."""
-    cfg = _load_rl_config(REPO / "config" / CONFIG_FOR.get(name, "rl_general.yaml"))
+    cfg = _load_rl_config(REPO / "config" / "rl" / CONFIG_FOR.get(name, "rl_general.yaml"))
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     pol = load_general(name)
     env = env_for(pol, load_params(), cfg)

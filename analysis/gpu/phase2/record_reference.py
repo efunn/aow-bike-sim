@@ -14,7 +14,7 @@ Per physics substep, three snapshots of the fields the hooks read or write:
 
 plus, per policy step, the action, obs, reward, flags and the env's own
 scalars (command, heading, steer target, difficulty), and the hooks' internal
-state right after each reset. The v3 recipe only (config/rl_general_v3.yaml),
+state right after each reset. The v3 recipe only (config/rl/rl_general_v3.yaml),
 driven by the v3_s0 policy so the bike does what a trained bike does.
 
   python analysis/gpu/phase2/record_reference.py --episodes 2 --steps 250
@@ -59,7 +59,7 @@ def _hook_state(obj):
 
 
 def record(episodes, steps, seed, difficulty, policy):
-    cfg = _load_rl_config("config/rl_general_v3.yaml")
+    cfg = _load_rl_config("config/rl/rl_general_v3.yaml")
     env = GeneralEnv(None, cfg, seed=seed)
     pol = load_policy_npz(policy)
     sub, pol_rows, starts = {}, {}, []
@@ -168,7 +168,7 @@ if __name__ == "__main__":
     np.savez_compressed(
         a.out, **{f"sub_{k}": np.asarray(v) for k, v in sub.items()},
         **{f"pol_{k}": np.asarray(v) for k, v in rows.items()},
-        starts=np.array(starts, dtype=object), config="config/rl_general_v3.yaml",
+        starts=np.array(starts, dtype=object), config="config/rl/rl_general_v3.yaml",
         policy=a.policy)
     n = len(sub["pre_time"])
     print(f"{a.out}: {len(rows['obs'])} policy steps, {n} substeps, "

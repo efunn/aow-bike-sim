@@ -5,7 +5,7 @@ these check `layout()` itself -- the axial stack and its thrust bosses, the
 washer, the diamond-only guard, the L/R twins, the pose transforms, the
 clearances the layout was chosen for -- and that the generated FeatureScript
 lints.
-Invalidated by: config/righting_cad.yaml, the linkage config it names,
+Invalidated by: config/cad/righting_cad.yaml, the linkage config it names,
 steering_cad.yaml's hub and coupling blocks, the X330 envelope and mount
 tables, or the shared FeatureScript in cad.ahrs_fixture / cad.servo_mount.
 """
@@ -129,7 +129,7 @@ def test_the_washer_is_four_numbers(tmp_path, data, L):
 def test_only_a_diamond_is_drawn(tmp_path):
     """Two crank arms or two hinges is another module, not another number."""
     with pytest.raises(ValueError, match="not a diamond"):
-        variant(tmp_path, linkage__config="config/swing_linkage_stagger.yaml")
+        variant(tmp_path, linkage__config="config/linkage/archive/swing_linkage_stagger.yaml")
 
 
 def test_one_rod_size_sizes_every_metal_hole(tmp_path):
@@ -283,7 +283,7 @@ def test_the_knuckles_sit_beside_the_other_wings_coupler(data, L):
     (user, 2026-10-09: "make the toe block the collision"), meeting at ~129.9
     and held inside 131 under full torque (test_righting_v2). Swept to 131
     both ways, it keeps 1.5 mm (~1.7 at 130.5). A dogleg coupler is the
-    noted way to more travel (config/righting_blade.yaml)."""
+    noted way to more travel (config/linkage/righting_blade.yaml)."""
     Y = L["Y"]
     kr, kl = part(L, "knuckleR")["bbox"], part(L, "knuckleL")["bbox"]
     bz = data["s"]["stack"]["boss"]

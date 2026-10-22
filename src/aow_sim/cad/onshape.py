@@ -76,11 +76,11 @@ class OnshapeError(RuntimeError):
     pass
 
 
-DOC_CFG = "config/onshape.yaml"
+DOC_CFG = "config/cad/onshape.yaml"
 
 
 def tab_url(tab: str = "feature_studio", cfg: str = DOC_CFG) -> str:
-    """Browser URL for a named tab in config/onshape.yaml.
+    """Browser URL for a named tab in config/cad/onshape.yaml.
 
     Indirection through a name rather than an id because the two Part Studios
     and the Feature Studio are three 24-hex strings that differ in no visible
@@ -97,7 +97,7 @@ def tab_url(tab: str = "feature_studio", cfg: str = DOC_CFG) -> str:
 
 def feature_id(name: str, cfg: str = DOC_CFG) -> dict | None:
     """An inserted custom feature's {"id", "node"}, from the `features:`
-    block of config/onshape.yaml -- what `update_custom_feature` needs,
+    block of config/cad/onshape.yaml -- what `update_custom_feature` needs,
     without listing the tree to find it."""
     import yaml
     return (yaml.safe_load(Path(cfg).read_text()).get("features") or {}).get(name)
@@ -249,7 +249,7 @@ def create_feature_studio(name: str, cfg: str = DOC_CFG) -> tuple[str, str]:
     """Make a new Feature Studio tab; return (element id, browser URL). One call.
 
     Both generated studios that already exist were created by a POST typed at a
-    prompt and recorded only in a config/onshape.yaml comment. Same call, kept
+    prompt and recorded only in a config/cad/onshape.yaml comment. Same call, kept
     where the next person needing one will find it.
 
     The new tab arrives with a `FeatureScript <n>;` header of its own, and that
@@ -374,7 +374,7 @@ def update_custom_feature(part_studio_url: str, studio_url: str, feature: dict,
     message replaces the feature's whole parameter list.
 
     `feature` is {"id": featureId, "node": nodeId} as GET .../features gives
-    them (config/onshape.yaml `features:`).
+    them (config/cad/onshape.yaml `features:`).
 
     NOT NEEDED AFTER A PUSH in the same document -- the feature follows its
     studio on its own (see `insert_custom_feature`). What this is for:

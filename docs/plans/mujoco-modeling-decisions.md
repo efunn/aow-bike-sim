@@ -399,7 +399,7 @@ Design choices:
   potential-shaped yaw progress, roll^2 (upright), lateral^2, effort + jerk,
   time; completion bonus / fall penalty terminate. All RL parameters (PPO
   hyperparameters, action bounds, reward weights, randomization ranges) live in
-  `config/rl_flick.yaml` — separate from `bike_params.yaml`, like moves.
+  `config/rl/rl_flick.yaml` — separate from `bike_params.yaml`, like moves.
 
 Replay reuses the flick machinery in `DriveController` (obs build -> policy ->
 integrate steer -> apply, then the same mod-180 steer-origin handoff). Single

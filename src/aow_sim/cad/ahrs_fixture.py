@@ -47,7 +47,7 @@ roll axis height (the swept roll stage clears the yaw arm by
     python -m aow_sim.cad.ahrs_fixture --push fixture_features
     python -m aow_sim.cad.ahrs_fixture --shot          # render -> docs/cad/ahrs_fixture.png
 
-Numbers: config/ahrs_fixture_cad.yaml (TM151 and the fixture), plus the X330
+Numbers: config/cad/ahrs_fixture_cad.yaml (TM151 and the fixture), plus the X330
 envelope and mount interface cad.servo_mount already reads.
 """
 
@@ -64,7 +64,7 @@ import yaml
 from . import servo_mount as sm
 from ..params import _normalize, load_params
 
-FIXTURE_PARAMS = "config/ahrs_fixture_cad.yaml"
+FIXTURE_PARAMS = "config/cad/ahrs_fixture_cad.yaml"
 OUT_FS = "docs/cad/ahrs_fixture.fs"
 OUT_PNG = "docs/cad/ahrs_fixture.png"
 SPLIT_MARK = "// ==== UI LAYER BELOW -- dropped by --check ===="
@@ -553,7 +553,7 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
  *   python -m aow_sim.cad.ahrs_fixture --push fixture_features
  *
- * Numbers from config/ahrs_fixture_cad.yaml, config/servo_mounts.yaml and
+ * Numbers from config/cad/ahrs_fixture_cad.yaml, config/cad/servo_mounts.yaml and
  * bike_params_cad.yaml. Millimetres.
  *
  * WORLD FRAME: origin on the yaw horn's outer face, on the yaw axis; +Z up

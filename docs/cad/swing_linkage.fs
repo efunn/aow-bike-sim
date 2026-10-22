@@ -3,7 +3,7 @@ import(path : "onshape/std/geometry.fs", version : "3044.0");
 
 /* GENERATED, do not hand-edit: the next push replaces this studio
    wholesale. Regenerate with
-       python -m aow_sim.cad.swing_linkage --config config/swing_linkage_smaller.yaml
+       python -m aow_sim.cad.swing_linkage --config config/linkage/swing_linkage_smaller.yaml
 
    The co-rotating swing linkage, drawn as a sketch at a crank input you pick.
    Insert the feature once per pose you want to see -- 0, a third of the

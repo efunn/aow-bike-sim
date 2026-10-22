@@ -268,7 +268,7 @@ SPOKE_COVER_PROUD = 0.0003
 # half-dome (ROLLCAGE_DOME deep, the rings' radius across) on each end, a
 # SOLID cut flat across the bottom (a D in section, user) just under the
 # rings, its two bottom corners the rings' rounded ends. Viewing only, so these are
-# not params (bike_params moves plant_digest); config/bike_v2_cad.yaml's
+# not params (bike_params moves plant_digest); config/cad/bike_v2_cad.yaml's
 # rollcage depth / wall / opening_deg / dome are the source.
 ROLLCAGE_DEPTH = 0.015
 ROLLCAGE_WALL = 0.010
@@ -1016,7 +1016,7 @@ def wing_fit(p: dict) -> dict:
             "max_ratio_by": "pinion"}
 
 
-LINKAGE_CFG = Path(__file__).resolve().parents[2] / "config" / "wing_linkage_locking.yaml"
+LINKAGE_CFG = Path(__file__).resolve().parents[2] / "config" / "linkage" / "wing_linkage_locking.yaml"
 
 
 def derive_linkage_roof(p: dict, cfg: dict) -> dict:
@@ -1498,7 +1498,7 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
 # on 2026-09-02/03 is NOT recorded anywhere: the plan doc says that work lives
 # "only in docs/status.md", and status.md no longer carries it.
 SWING_LINKAGE_CFG = (Path(__file__).resolve().parents[2]
-                     / "config" / "swing_linkage_smaller.yaml")
+                     / "config" / "linkage" / "swing_linkage_smaller.yaml")
 
 
 class SwingLinkageSolver:
@@ -2031,12 +2031,12 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         sen.objname = "swing_crank_joint"
 
 
-SWING_CFG = Path(__file__).resolve().parents[2] / "config" / "swing_wings.yaml"
+SWING_CFG = Path(__file__).resolve().parents[2] / "config" / "linkage" / "swing_wings.yaml"
 
 
 def _add_swing_wings(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
     """Co-rotating wing pair (build_model(..., swing=True)); the THIRD righting
-    mechanism, after `arm` and the mirrored `wings`. See config/swing_wings.yaml
+    mechanism, after `arm` and the mirrored `wings`. See config/linkage/swing_wings.yaml
     for why the coupling sign is the whole difference.
 
     ONE SIGN separates this from `_add_wings`: the joint equality is
@@ -2160,15 +2160,15 @@ def swing_poses(cfg: dict, r_rear: float) -> dict:
     return out
 
 
-FLYWHEEL_CFG = Path(__file__).resolve().parents[2] / "config" / "flywheel.yaml"
-
 FLYWHEEL_AXIS = {"roll": [1.0, 0.0, 0.0], "yaw": [0.0, 0.0, 1.0]}
 
 
 def _add_flywheel(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
     """A reaction wheel on the chassis (build_model(..., flywheel=True)).
 
-    Config comes from `config/flywheel.yaml`, NOT `bike_params.yaml`, because
+    Config comes from the caller's `flywheel_cfg` (the one study that builds
+    this, analysis/flywheel.py, reads config/archive/flywheel.yaml), NOT
+    `bike_params.yaml`, because
     that file is hashed into `params_digest` and this study has not been
     decided. Same pattern as the wing linkage.
 
@@ -2784,8 +2784,10 @@ def build_spec(
     # Last, so the flywheel's actuator lands after every existing one and no
     # saved policy's action indices shift under it.
     if flywheel:
-        _add_flywheel(spec, chassis, p,
-                      yaml.safe_load(Path(flywheel_cfg or FLYWHEEL_CFG).read_text()))
+        if flywheel_cfg is None:
+            raise ValueError("flywheel=True needs flywheel_cfg (a one-off study's "
+                             "config; config/archive/flywheel.yaml is the one there is)")
+        _add_flywheel(spec, chassis, p, yaml.safe_load(Path(flywheel_cfg).read_text()))
     # The co-rotating pair is an ALTERNATIVE to `wings`/`linkage`, never an
     # addition -- building both would put four wings on the bike and
     # double-count the mass, the same trap the linkage note above describes.

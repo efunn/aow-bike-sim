@@ -107,7 +107,7 @@ def main():
 
     keys = args.policies or list(POLICIES)
     params = load_params()
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
 
     for key in keys:

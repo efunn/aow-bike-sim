@@ -108,7 +108,7 @@ def export(config: str, nworld: int, out: str, seed: int = 0, device=None,
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="config/rl_general_v3.yaml")
+    ap.add_argument("--config", default="config/rl/rl_general_v3.yaml")
     ap.add_argument("--nworld", type=int, default=4096)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="graphs/aow_bike")

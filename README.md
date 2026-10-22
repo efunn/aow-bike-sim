@@ -140,7 +140,7 @@ pip install -e '.[rl]'
 python -m aow_sim.train_general_rl          # -> moves/general_rl.{yaml,npz}
 ```
 
-The trainer keeps the best-scoring snapshot from a periodic deterministic eval and exports *that*. Hyperparameters, reward weights and domain randomization live in `config/rl_general*.yaml`; learning curves are `tensorboard --logdir runs/general_rl`.
+The trainer keeps the best-scoring snapshot from a periodic deterministic eval and exports *that*. Hyperparameters, reward weights and domain randomization live in `config/rl/rl_general*.yaml` (superseded ones in `config/rl/archive/`); learning curves are `tensorboard --logdir runs/general_rl`.
 
 **[docs/guide/training.md](docs/guide/training.md)** covers exporting a mid-run checkpoint, inspecting a policy, and recording video of trained policies.
 
@@ -157,7 +157,7 @@ The **CAD is generated from the same parameter file the simulator reads**: `aow_
 | path | what is in it |
 |---|---|
 | `config/bike_params.yaml` | every physical measurement, with units and provenance: `measured` / `tooth-count` / `datasheet` / `GUESS`. `GUESS` means "placeholder, still to be identified" |
-| `config/rl_*.yaml` | per-move training configs — algorithm, env, reward weights, domain randomization |
+| `config/rl/rl_*.yaml` | per-move training configs — algorithm, env, reward weights, domain randomization |
 | `src/aow_sim/` | the parametric model builder (`mjSpec`), procedural contact meshes, viewer, runners, offline optimizers and trainers |
 | `src/aow_sim/control/` | `drive.py` is the controller that runs everywhere, in sim and on the bike, and `general_spec.py` is the observation/action contract training and replay share. Alongside them: the multi-turn steering frame, shared state extraction, and the LQR baseline |
 | `src/aow_sim/hw/` | the onboard stack: Dynamixel bus, TM151 reader, velocity estimation, the 100 Hz control loop, the ground station. Imports without MuJoCo, scipy or torch |

@@ -3,7 +3,7 @@ tracking a live (velocity vector, heading) command (see general_env.py).
 Requires the `[rl]` extra; the base install replays the result with numpy.
 
   pip install -e '.[rl]'
-  python -m aow_sim.train_general_rl               # reads config/rl_general.yaml
+  python -m aow_sim.train_general_rl               # reads config/rl/rl_general.yaml
   python -m aow_sim.train_general_rl --resume      # continue from last checkpoint
   tensorboard --logdir runs/general_rl             # watch learning curves
 

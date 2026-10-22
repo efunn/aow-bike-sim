@@ -20,7 +20,7 @@
 # lower case, under the servo; wing R's ahead of the front bulkhead.
 
 linkage:
-  config: {value: config/swing_linkage_shared_rod.yaml, source: design}
+  config: {value: config/linkage/swing_linkage_shared_rod.yaml, source: design}
   # 1.25: the 2D sweep leaves 4.5 mm between each crank web and the rocker arm
   # sharing its plane at printed wall thicknesses. The stroke's current is the
   # same at any scale (planar scorer, 1.0-1.5).
@@ -199,7 +199,7 @@ wing:
   # panel_rear). The file's own `y:` span is the sim's and is not read.
   # stub_border, blade_ends and blade_clearance are `ends` only.
   blade: {value: outline, source: design (user)}
-  blade_file: {value: config/swing_explore/blade_v3.yaml, source: design (user; V3, as the sim's default since 2026-10-14)}
+  blade_file: {value: config/linkage/blade_v3.yaml, source: design (user; V3, as the sim's default since 2026-10-14)}
   # The blades' span along Y, module frame (both wings: the left blade is the
   # right one MIRRORED, not turned). CENTRED ON THE BIKE'S WHEELBASE (user,
   # 2026-10-11: "the wing stubs stay put, but the blades are moved somewhat

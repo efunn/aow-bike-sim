@@ -10,7 +10,7 @@ import(path : "onshape/std/geometry.fs", version : "3044.0");
  * Backticks elsewhere are fine and so is the bare command; only the two
  * together trip it. Measured 2026-08-25, one probe each.
  *
- * Numbers come from config/bike_params_cad.yaml, which cites
+ * Numbers come from config/cad/bike_params_cad.yaml, which cites
  * ROBOTIS's XC330-T181 drawing (e-manual, #drawings) for every measured one. The four well-profile
  * dimensions are marked GUESS there: the shape is from a description of the
  * existing dynamixel_wrench_with_idler part, not a measurement of it.

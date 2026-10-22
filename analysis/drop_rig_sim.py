@@ -9,7 +9,7 @@ drop can be read the way force_drop.py reads a real one and laid over it.
 
 THE ARM IS BUILT FROM TWO MEASUREMENTS, not from parts: the static force at
 the contact (the resting force) and the effective mass there (m_eff = I /
-r^2, config/drop_rig_bench.yaml arm.m_eff_g). Those two are what the
+r^2, config/bench/drop_rig_bench.yaml arm.m_eff_g). Those two are what the
 contact sees -- and MuJoCo's soft contact scales with the effective mass the
 solver compiles around it (static_contact_sim's docstring), so getting it
 right is not optional. The wheel's own mass is the bike's; the arm body

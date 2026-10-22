@@ -10,11 +10,11 @@ the other. Turn the other way and they swap.
     python analysis/swing_linkage.py --sweep        # reach + ratio vs crank
     python analysis/swing_linkage.py --video        # deploy left/right/left
     python analysis/swing_linkage.py --righting --video
-    python analysis/swing_linkage.py --optimize --save config/swing_opt.yaml
+    python analysis/swing_linkage.py --optimize --save config/linkage/swing_opt.yaml
     python analysis/swing_linkage.py --config <result>.yaml --videos --tag _mine
 
 Everything is the 2D front/back view: (y, z) in millimetres, from the FLOOR and
-the CENTRELINE, +y to the bike's left. Reads config/swing_linkage.yaml and
+the CENTRELINE, +y to the bike's left. Reads config/linkage/swing_linkage.yaml and
 writes analysis/plots/. Deliberately outside bike_params.yaml and the params
 digest, exactly like the mirrored study.
 
@@ -30,7 +30,7 @@ WHAT IT BUYS, AND WHAT IT COSTS.
     contact pairs; here the four-bar's rocker arc does it geometrically.
   - It must be told which side to go. The mirrored pair's side-agnosticism is
     given up, and the rule is not obvious -- see the 90 deg sign flip in
-    config/swing_wings.yaml.
+    config/linkage/swing_wings.yaml.
 
 SYMMETRY IS BY CONSTRUCTION, NOT BY SEARCH. One crank length, one coupler, one
 rocker, shared by both sides. The mirrored study carries per-side first links
@@ -91,7 +91,7 @@ from typing import NamedTuple
 import numpy as np
 import yaml
 
-CONFIG = Path(__file__).resolve().parents[1] / "config" / "swing_linkage.yaml"
+CONFIG = Path(__file__).resolve().parents[1] / "config" / "linkage" / "swing_linkage.yaml"
 
 GRAVITY = 9.81
 BALL_R_MM = 33.5          # road hockey ball radius. REFERENCE ONLY -- this
@@ -115,7 +115,7 @@ failing to close -- so a plain `.get(key)` cannot tell a miss from a legitimate
 # went wrong, twice.
 # STALE as of 2026-08-25: these are points from the older
 # `swing-wings-geom-mock` sketch. The live geometry is `wing-linkage-straight`,
-# whose driving variables config/swing_linkage.yaml now carries, but whose
+# whose driving variables config/linkage/swing_linkage.yaml now carries, but whose
 # POINT coordinates have not been re-read. So `--check`'s point comparison will
 # report MISMATCH; the symmetry half of that check is unaffected and still
 # meaningful. Re-trace before relying on the point half again.
@@ -2692,7 +2692,7 @@ _VARS = [
     # crank.
     ("rocker_length",          ("mechanism", "rocker_length"),          15.0,  90.0),
     # Sets the REST SETPOINT and nothing else that binds -- see the note in
-    # config/swing_linkage.yaml. Reported as a primary output.
+    # config/linkage/swing_linkage.yaml. Reported as a primary output.
     ("angle_between_cranks",   ("mechanism", "angle_between_cranks"),   20.0, 170.0),
     # Fairly free: the shaft can sit higher without trouble, so the range is
     # wide in both directions rather than pinned near the axle.

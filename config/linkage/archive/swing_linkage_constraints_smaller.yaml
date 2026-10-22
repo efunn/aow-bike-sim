@@ -1,7 +1,7 @@
 # A CONSTRAINTS-ONLY input to `analysis/swing_linkage.py --optimize`.
 #
 #     python analysis/swing_linkage.py \
-#         --config config/swing_linkage_constraints.yaml \
+#         --config config/linkage/archive/swing_linkage_constraints.yaml \
 #         --optimize --seed 1 --iters 400 --save config/my_result.yaml
 #
 # Copy it, edit the numbers, point --optimize at it. Nothing here is a link
@@ -69,7 +69,7 @@ limits:
                             # the 9.9 V pack cutoff. THE ONLY ROW --optimize can
                             # drop, with --skip-torque; every other row here is
                             # always scored.
-  transmission_deg: 20.0    # worst coupler-to-rocker angle over the first 85%
+  transmission_deg: 30.0    # worst coupler-to-rocker angle over the first 85%
                             # of the stroke. The last 15% is exempt on purpose:
                             # that is where a four-bar SHOULD approach its
                             # toggle, and the toggle is what makes the deployed
@@ -156,4 +156,4 @@ bounds:
   coupler_length:       [10.0, 140.0]
   rocker_length:        [10.0, 90.0]
   angle_between_cranks: [0.0, 170.0]
-  servo_offset:         [10.0, 30.0]
+  servo_offset:         [10.0, 50.0]

@@ -1,7 +1,7 @@
 """The front steer module: mock front wheel, fork, headset, the steer XC330's
 cases and horn hub, as ONE custom feature, `AOW steering`, in its own Feature
 Studio. Spec: docs/plans/steering-design.md. Numbers:
-config/steering_cad.yaml, plus the X330 envelope and mount interface
+config/cad/steering_cad.yaml, plus the X330 envelope and mount interface
 cad.servo_mount reads, plus bike_params_cad's steering.servo_clearance.
 
 MODULE FRAME: Z up the steering axis, Y forward, X right, origin on the front
@@ -57,8 +57,8 @@ from . import ahrs_fixture as af
 from . import servo_mount as sm
 from ..params import _normalize, load_params
 
-STEER_PARAMS = "config/steering_cad.yaml"
-X330_PARAMS = "config/x330_fixture_cad.yaml"
+STEER_PARAMS = "config/cad/steering_cad.yaml"
+X330_PARAMS = "config/cad/x330_fixture_cad.yaml"
 OUT_FS = "docs/cad/steering.fs"
 OUT_FS_V2 = "docs/cad/steering_v2.fs"
 OUT_PNG = "docs/cad/steering{}.png"
@@ -399,7 +399,7 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
  *   python -m aow_sim.cad.steering --push steering_features
  *
- * Numbers from config/steering_cad.yaml, config/servo_mounts.yaml and
+ * Numbers from config/cad/steering_cad.yaml, config/cad/servo_mounts.yaml and
  * bike_params_cad.yaml, every derived one computed in aow_sim.cad.steering's
  * layout() and carried here as ST. Millimetres.
  *

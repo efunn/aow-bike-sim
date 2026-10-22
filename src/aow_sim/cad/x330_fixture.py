@@ -52,7 +52,7 @@ print check.
     python -m aow_sim.cad.x330_fixture --shot x330_fixture_screwdriver --version SCREWDRIVER
     python -m aow_sim.cad.x330_fixture --shot --version COUPON   # the pin coupon's tab
 
-Numbers: config/x330_fixture_cad.yaml, plus the X330 envelope and mount
+Numbers: config/cad/x330_fixture_cad.yaml, plus the X330 envelope and mount
 interface cad.servo_mount reads.
 """
 
@@ -68,7 +68,7 @@ from . import ahrs_fixture as af
 from . import servo_mount as sm
 from ..params import _normalize, load_params
 
-FIXTURE_PARAMS = "config/x330_fixture_cad.yaml"
+FIXTURE_PARAMS = "config/cad/x330_fixture_cad.yaml"
 OUT_FS = "docs/cad/x330_fixture.fs"
 OUT_PNG = "docs/cad/x330_fixture_{}.png"
 SPLIT_MARK = af.SPLIT_MARK
@@ -179,7 +179,7 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
  *   python -m aow_sim.cad.x330_fixture --push x330_fixture_features
  *
- * Numbers from config/x330_fixture_cad.yaml, config/servo_mounts.yaml and
+ * Numbers from config/cad/x330_fixture_cad.yaml, config/cad/servo_mounts.yaml and
  * bike_params_cad.yaml. Millimetres.
  *
  * WORLD FRAME: origin on the horn's outer face, on the shaft axis; +X out of

@@ -13,7 +13,7 @@ beef.
 
 ## Decisions
 
-- **The diamond, scaled 1.25×** (`config/swing_linkage_shared_rod.yaml` about
+- **The diamond, scaled 1.25×** (`config/linkage/swing_linkage_shared_rod.yaml` about
   the rod). Scaling all four lengths keeps every angle, so the stroke's
   current is unchanged. The planar scorer gives 586 counts at 1.0, 1.15, 1.25,
   1.35 and 1.5, with the panel re-derived onto the same line each time. What

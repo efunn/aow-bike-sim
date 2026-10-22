@@ -2,7 +2,7 @@
 
 How to train, export, and inspect driving policies.
 
-Hyperparameters and reward weights live in `config/rl_general*.yaml`.
+Hyperparameters and reward weights live in `config/rl/rl_general*.yaml`.
 
 Training needs the `rl` extra:
 
@@ -34,7 +34,7 @@ Training is **not necessarily monotonic**, so the trainer keeps the best-scoring
 
 | flag | what it does |
 |---|---|
-| `--config PATH` | which `config/rl_general*.yaml` to use |
+| `--config PATH` | which `config/rl/rl_general*.yaml` to use |
 | `--timesteps N` | override the config's total |
 | `--resume` | continue from the last checkpoint |
 | `--seed N` | seed the run |
@@ -138,7 +138,7 @@ python analysis/eval_video.py --policies A B        # the same grid, as video
 Training likely runs on a separate computer, not your laptop. `scripts/rl.sh` is the launcher: it starts tensorboard *and* training under `nohup`/`setsid` so both outlive the ssh session, writes per-launch timestamped logs, and records pids under `runs/`.
 
 ```sh
-./scripts/rl.sh up general --config config/<cfg>.yaml \
+./scripts/rl.sh up general --config config/rl/<cfg>.yaml \
     --run-dir runs/<name> --export-name <name>
 ./scripts/rl.sh status | eta general | logs general
 ```

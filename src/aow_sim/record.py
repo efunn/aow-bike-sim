@@ -977,11 +977,11 @@ def main() -> None:
     ap.add_argument("--params", default=None,
                     help="bike_params.yaml to build from (default: the sim's)")
     ap.add_argument("--linkage-config", default=None,
-                    help="four-bar geometry, e.g. config/wing_linkage_w75.yaml "
+                    help="four-bar geometry, e.g. config/linkage/wing_linkage_w75.yaml "
                          "(default: the one build_model pins)")
     ap.add_argument("--linkage", action="store_true",
                     help="the four-bar wing mechanism instead of the geared "
-                         "pair (config/wing_linkage_locking.yaml)")
+                         "pair (config/linkage/wing_linkage_locking.yaml)")
     ap.add_argument("--inverted", action="store_true",
                     help="start the `right` script UPSIDE DOWN, so the "
                          "recording covers the roof rolling it onto its side "

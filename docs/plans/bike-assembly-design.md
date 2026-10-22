@@ -59,7 +59,7 @@ the parts that tie them together.
 
   The binding length is the righting's axial stack, servo cap to rod tip,
   113 mm. The 1.25x linkage scale does not change it. Set at rod 195,
-  wheelbase 300 (`config/bike_cad.yaml`).
+  wheelbase 300 (`config/cad/bike_cad.yaml`).
 - **Chassis = the modules' placeholders, united.** The drive's fixture
   block, the steering's mount plate (bench tab trimmed, an extension added
   above the upper case) and the righting's chassis plate already carry their
@@ -393,7 +393,7 @@ between +20 and +25 (not resolved finer).
 
 ## As built
 
-`python -m aow_sim.cad.bike` (config `config/bike_cad.yaml`), one feature
+`python -m aow_sim.cad.bike` (config `config/cad/bike_cad.yaml`), one feature
 `AOW bike` (dialog: steer angle, righting pose, envelopes on/off, ghost
 wings on/off) in the
 Feature Studio **aow-bike-whole features**, inserted in the Part Studio

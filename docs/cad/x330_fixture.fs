@@ -4,7 +4,7 @@ import(path : "onshape/std/geometry.fs", version : "3044.0");
 /* GENERATED, do not hand-edit: the next push overwrites the whole studio.
  *   python -m aow_sim.cad.x330_fixture --push x330_fixture_features
  *
- * Numbers from config/x330_fixture_cad.yaml, config/servo_mounts.yaml and
+ * Numbers from config/cad/x330_fixture_cad.yaml, config/cad/servo_mounts.yaml and
  * bike_params_cad.yaml. Millimetres.
  *
  * WORLD FRAME: origin on the horn's outer face, on the shaft axis; +X out of

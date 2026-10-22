@@ -1,6 +1,6 @@
 """The floor rig model: the full bike held by a yaw -> tilt -> slide -> roll -> pitch chain.
 
-WHAT INVALIDATES THIS FILE: `aow_sim.floor_rig`, `config/floor_rig.yaml`, or
+WHAT INVALIDATES THIS FILE: `aow_sim.floor_rig`, `config/bench/floor_rig.yaml`, or
 the `rig=` branch at the end of `build_model.build_spec` that appends the
 chain and welds it to the chassis.
 

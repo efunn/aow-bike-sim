@@ -45,8 +45,8 @@ in general, can reposition these to find the best layout, then design case/routi
 
 - **Tabs, not a new document** (user). Every v2 module and the v2 bike live
   as new tabs in the existing Onshape document, so inserted features follow
-  their studios without re-pinning versions. Ids in `config/onshape.yaml`.
-- **The righting's CAD blade is V3** (`config/swing_explore/blade_v3.yaml`).
+  their studios without re-pinning versions. Ids in `config/cad/onshape.yaml`.
+- **The righting's CAD blade is V3** (`config/linkage/blade_v3.yaml`).
   The sim stays on V2 for now (user: the CAD may yet change the blade).
 - **Wing to blade, for now** (user): draw the stubs only (the countersunk
   screw "rectangle bits", not extending into the wing), and the blade as the
@@ -129,7 +129,7 @@ existing `aow-bike-righting` tab.
     6, with nothing of the panel. Each prints with its countersunk outer
     face up, so it has no overhangs and needs no teardrop;
   - **a dummy blade:** the blade file's whole section
-    (`wing.blade_file` = `config/swing_explore/blade_v3.yaml`), extruded
+    (`wing.blade_file` = `config/linkage/blade_v3.yaml`), extruded
     along the panel's span (+-41). The file's own `y:` span is the sim's
     (v1 mid-wheelbase) and is not read.
 - **The stubs stand on the blade's inner face,** which is the panel's
@@ -158,7 +158,7 @@ existing `aow-bike-righting` tab.
 `python -m aow_sim.cad.bike_v2 --check --push bike_v2_features`. New tabs
 `aow-bike-whole-v2 features` and `aow-bike-whole-v2`, with `AOW bike v2`
 inserted (steer, righting pose and envelopes on/off in the dialog). Config:
-`config/bike_v2_cad.yaml`; tests: `tests/test_cad_bike_v2.py` (`cad`).
+`config/cad/bike_v2_cad.yaml`; tests: `tests/test_cad_bike_v2.py` (`cad`).
 
 - **Composition as v1** (`cad.bike.merge_layers`, the same transforms),
   built from scratch with none of v1's chassis, tray, carrier, cage, fit

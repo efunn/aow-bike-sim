@@ -42,7 +42,7 @@
 // applies it) and switched on here, so they reach this env's build only:
 //
 // AOW_SMOOTH_TEMPORAL: SmoothPPO's temporal term on the policy mean
-// (smooth_temporal.h), in PPO's loss. The CPU stack's weight (config/rl_general_v3.yaml, algo.smooth.temporal),
+// (smooth_temporal.h), in PPO's loss. The CPU stack's weight (config/rl/rl_general_v3.yaml, algo.smooth.temporal),
 // CHOSEN, not swept: one gradient-ratio point on SB3's trained MLP actor put
 // the term at ~1/4 of PPO's policy gradient (policy-smoothness-losses.md §4).
 // Not re-measured on this net. Remove the line to train without it.

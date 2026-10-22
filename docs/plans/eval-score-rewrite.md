@@ -589,7 +589,7 @@ at 20M); the eval resets clean at 0.5° with randomization off and survives 90%.
 Both numbers are right; they are not the same bike. Read `eval/survive_rate` as
 a clean-room figure.
 
-**The arm.** `config/rl_general_cmd_curriculum.yaml` replaces the mix with four
+**The arm.** `config/rl/archive/rl_general_cmd_curriculum.yaml` replaces the mix with four
 explicit weights (`cmd_families`), drops the lateral command entirely
 (`v_lat_frac: 0.0` — crab stays in the eval, deliberately unrepresented),
 widens `resample_s` to `[2.0, 6.0]`, and starts the curriculum at 0 with a pure
@@ -638,7 +638,7 @@ was never given a hold command at all.
 `curriculum.start` 0.15→0, `v_lat_frac` 0.4→0, `resample_s`, `ahrs_tau_s`
 2.0→0.19, `obs_pitch` without `w_pitch`), so one run cannot attribute the
 failure. The mechanism above fits the arithmetic but is not isolated.
-**Arm 2 (`config/rl_general_cmd_curriculum2.yaml`) is the one-line
+**Arm 2 (`config/rl/archive/rl_general_cmd_curriculum2.yaml`) is the one-line
 discriminator:** `hold_max: 0.40` makes difficulty 0 a 40% hold / 60% straight
 mix, so clearing the gate requires hub in both directions. If forward returns
 it is the hold stage; if not, the next cut is `curriculum.start` back to 0.15
@@ -660,7 +660,7 @@ so the velocity half is satisfied exactly and only the heading is abandoned.
 preference survives a swept turn as well as a step. Accepted for now: it is a
 training problem, not an eval one, and no arm is queued against it.
 
-**Queued: `config/rl_general_cmd_curriculum2b.yaml`** — `algo.seed` 0 → 1 and
+**Queued: `config/rl/archive/rl_general_cmd_curriculum2b.yaml`** — `algo.seed` 0 → 1 and
 nothing else. Every conclusion on this line has come from one run per arm, and
 `asymmetric-actor-critic.md` §7 argues the seed floor is the binding constraint
 on judging any change at all: if the spread across seeds is the size of the
@@ -669,7 +669,7 @@ effect, no single-run comparison means anything. `speed_ratio_fwd` −0.426 →
 separates those. It also exercises the new eval instrumentation end to end.
 
 ```sh
-./scripts/rl.sh up general --config config/rl_general_cmd_curriculum2b.yaml \
+./scripts/rl.sh up general --config config/rl/archive/rl_general_cmd_curriculum2b.yaml \
     --run-dir runs/general_rl_cmd_curriculum2b \
     --export-name general_rl_cmd_curriculum2b
 ```

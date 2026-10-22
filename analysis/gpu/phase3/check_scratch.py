@@ -96,7 +96,7 @@ def poison(a):
 
     out = {}
     for poisoned in (False, True):
-        env = GpuGeneralEnv("config/rl_general_v3.yaml", nworld=n, seed=0, device=dev,
+        env = GpuGeneralEnv("config/rl/rl_general_v3.yaml", nworld=n, seed=0, device=dev,
                             shared_curriculum_envs=32, curriculum_lead=0.1)
         sc = Poisoned(dev)
         env.scratch = sc

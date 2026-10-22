@@ -4,7 +4,7 @@
 # params_digest, which pins deploy/bundle.npz and every trained move, so adding
 # an exploratory block there would invalidate all of them to answer a question
 # that has not been decided yet. Same reasoning, and the same pattern, as
-# config/wing_linkage*.yaml -- see build_model.LINKAGE_CFG.
+# config/linkage/wing_linkage*.yaml -- see build_model.LINKAGE_CFG.
 #
 # Read only by build_model(..., flywheel=True). A default build never opens it.
 # Study: analysis/flywheel.py.

@@ -425,7 +425,7 @@ Worked through against the tests above:
     sim point is computed with the `GUESS` chassis mass. Set it from the
     weighed bike later.
 - **The rig now lives in MuJoCo (2026-09-25):** `aow_sim.floor_rig` +
-  `config/floor_rig.yaml`.
+  `config/bench/floor_rig.yaml`.
   - `build_spec(..., rig=cfg)` builds the full bike as usual, but hangs the
     chassis from a yaw → tilt → roll → pitch chain instead of a freejoint,
     so bike changes roll straight in.
@@ -477,7 +477,7 @@ Worked through against the tests above:
     (`floor_rig.place`, `qpos_for`). Floor tilt is off on the rig.
     Previously the respawn turned only the chassis, leaving the weld 470 mm
     out and the solver resetting every step.
-  - **Mode scaffolding:** `modes:` presets in `config/floor_rig.yaml`
+  - **Mode scaffolding:** `modes:` presets in `config/bench/floor_rig.yaml`
     (`free`, `no_slide`, `fake_weight`, `pinned_yaw`), selected with
     `--rig-mode`. `--rig-lock` / `--rig-free` override single axes, and
     `motors:` holds rig-motor torques, applied after the controller.
@@ -529,7 +529,7 @@ Worked through against the tests above:
     where its stop reacts; not tested.
   - About 8 points remain unexplained.
 - **Realism knobs and a roll servo (2026-09-25).** `link_mass_g`,
-  `friction`, `damping` and `servos` in `config/floor_rig.yaml`, all 0/null by
+  `friction`, `damping` and `servos` in `config/bench/floor_rig.yaml`, all 0/null by
   default; `--rig-mode guessed_mass` is a first GUESS (135 g, light
   friction), and `--rig-servo roll=fixed` (or `--rig-mode fixed_roll`) holds
   roll with an XC330 in current-based position mode, as `righting_servo.py`

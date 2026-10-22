@@ -3,7 +3,7 @@
 # aow_sim.cad.bike_v2. Millimetres, BIKE FRAME: origin on the rear axle, +Y
 # forward, +X right, +Z up (the floor at -51.2).
 #
-# CAD ONLY, as v1 (config/bike_cad.yaml): nothing here reaches the sim.
+# CAD ONLY, as v1 (config/cad/bike_cad.yaml): nothing here reaches the sim.
 #
 # Modules, each from its own generator and config, built fresh every time:
 #   drive     cad.drive, the fixture mock OFF

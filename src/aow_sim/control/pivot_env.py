@@ -33,7 +33,7 @@ from .randomize import DomainRandomizer
 def _load_rl_config(path=None) -> dict:
     import yaml
     from pathlib import Path
-    p = path or Path(__file__).resolve().parents[3] / "config" / "rl_pivot.yaml"
+    p = path or Path(__file__).resolve().parents[3] / "config" / "rl" / "rl_pivot.yaml"
     with open(p) as f:
         return yaml.safe_load(f)
 

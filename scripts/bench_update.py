@@ -1,7 +1,7 @@
 """Time the PPO update phase alone -- the part of a rollout that runs after
 collection, single-process, while all n_envs workers sit idle.
 
-  python scripts/bench_update.py                 # uses config/rl_general.yaml
+  python scripts/bench_update.py                 # uses config/rl/rl_general.yaml
   OMP_NUM_THREADS=8 python scripts/bench_update.py --batch 256,1024
 
 Two [128,128] nets (pi + vf) and Adam over an n_steps x n_envs buffer, which
@@ -39,7 +39,7 @@ def net(arch: list[int], out: int) -> torch.nn.Sequential:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--batch", default="", help="override batch sizes, comma-separated")
-    ap.add_argument("--config", default="config/rl_general.yaml")
+    ap.add_argument("--config", default="config/rl/rl_general.yaml")
     args = ap.parse_args()
 
     a = _load_rl_config(Path(args.config))["algo"]

@@ -112,7 +112,7 @@ def main() -> int:
     ap.add_argument("--config", type=Path, default=None,
                     help="swing-linkage config (default: the bike's "
                          "righting module, V2 -- bike_params righting.module; "
-                         "config/swing_linkage_smaller.yaml for V1)")
+                         "config/linkage/swing_linkage_smaller.yaml for V1)")
     ap.add_argument("--slew-dps", type=float, default=None,
                     help="ramp the crank goal at this rate instead of stepping it: "
                          "slow enough and the lift is quasi-static, so the "

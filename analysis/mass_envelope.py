@@ -39,11 +39,11 @@ from aow_sim.control.general_env import _load_rl_config
 from aow_sim.control.linearize import settle_upright
 from rsa_policies import env_for, load_general, REPO
 
-CONFIG_FOR = {
-    "general_rl_glide_pitch_dt4e4": "rl_general_glide_pitch.yaml",
-    "general_rl_glide_pitch_hub":   "rl_general_glide_pitch_hub.yaml",
-    "general_rl_glide_pitch_hub2":  "rl_general_glide_pitch_hub2.yaml",
-    "general_rl_glide_pitch_hub3":  "rl_general_glide_pitch_hub3.yaml",
+CONFIG_FOR = {   # paths under config/rl/
+    "general_rl_glide_pitch_dt4e4": "archive/rl_general_glide_pitch.yaml",
+    "general_rl_glide_pitch_hub":   "archive/rl_general_glide_pitch_hub.yaml",
+    "general_rl_glide_pitch_hub2":  "archive/rl_general_glide_pitch_hub2.yaml",
+    "general_rl_glide_pitch_hub3":  "archive/rl_general_glide_pitch_hub3.yaml",
 }
 
 
@@ -86,7 +86,7 @@ def lqr_trial(k, com_shift, tilt_deg=3.0, seconds=6.0):
 
 def rl_trial(name, k, com_shift, seconds=12.0):
     p = load_params()
-    cfg = _load_rl_config(REPO / "config" / CONFIG_FOR.get(name, "rl_general.yaml"))
+    cfg = _load_rl_config(REPO / "config" / "rl" / CONFIG_FOR.get(name, "rl_general.yaml"))
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

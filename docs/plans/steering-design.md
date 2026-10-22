@@ -80,7 +80,7 @@ Orientation and printing directions: Z-up, Y-forward X-right. Z-up is the steeri
   1.26. M2 heads Φ3.4 x 1.5 (measured) in 1.8-deep counterbores; M2 x 6
   engages 2.6 of the horn's 3.0. Hub and upper radius 9.0.
 - **PINS hub = the X330 fixture's latest horn attach**, read from
-  `config/x330_fixture_cad.yaml` so the two cannot drift: Φ1.5 pins 1.6
+  `config/cad/x330_fixture_cad.yaml` so the two cannot drift: Φ1.5 pins 1.6
   long, no root relief, Φ16.0 well with a 0.4 lead-in. The well's 45 deg
   undercut at its floor leaves **0.4 mm** of wall at the hub's Φ18 rim --
   under two perimeters, accepted because the wall rule is set by the SCREWS
@@ -110,7 +110,7 @@ Orientation and printing directions: Z-up, Y-forward X-right. Z-up is the steeri
 
 ## As built
 
-`python -m aow_sim.cad.steering` (config `config/steering_cad.yaml`), one
+`python -m aow_sim.cad.steering` (config `config/cad/steering_cad.yaml`), one
 feature `AOW steering` in the Feature Studio **aow-bike-steering features**,
 inserted in the Part Studio **aow-bike-steering** (`onshape.yaml` tabs
 `steering_features` / `steering`). Render: `docs/cad/steering.png`.

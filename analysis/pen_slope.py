@@ -437,7 +437,7 @@ def main():
     # whatever this is, and the scale reading is unaffected.
     params["sim"] = {**params["sim"], "floor_size": args.floor_size,
                      "floor_grid_m": args.grid_m}
-    cfg = _load_rl_config(REPO / "config" / "rl_general.yaml")
+    cfg = _load_rl_config(REPO / "config" / "rl" / "rl_general.yaml")
     cfg = {**cfg, "randomization": {**cfg["randomization"], "enabled": False}}
 
     pol = load_general(args.policy)
