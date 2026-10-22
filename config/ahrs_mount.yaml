@@ -1,27 +1,21 @@
-# The TM151's fixed orientation on the chassis: ITS AXES IN THE CHASSIS FRAME.
+# The TM151's orientation on the chassis: its axes in the chassis frame.
 #
-# From the v2 CAD (cad.bike_v2, 2026-10-19): the TM151 sits on the drive's
-# tabs, on the 45 deg drive face, USB up and back -- its +x (the pin header)
-# down and forward, +z (out of the housing's top) up and forward, +y left.
-# That is +45 deg about chassis y: (cos 22.5, 0, sin 22.5, 0). The sim
-# carries the same rotation as bike.ahrs.quat; tests/test_hw_ahrs.py pins
-# the two equal, so a re-seat changes both or neither.
-#
-# The CAD is the measurement here: the tabs fix the board on its own four M2
-# holes, and nothing on a bench would place it better. What the CAD cannot
-# know is how level the FLOOR is where the bike stands -- that is what
-# MountCalibration.capture is for (src/aow_sim/hw/ahrs.py), and it is kept
-# separate from this.
+# From the v2 CAD (cad.bike_v2): the TM151 sits on the drive's tabs on the
+# 45 deg drive face, USB up and back, its +x (the pin header) down and
+# forward, +z (out of the top) up and forward, +y left. That is +45 deg about
+# chassis y. The tabs locate it on its own four M2 holes, so the CAD is the
+# measurement. How level the floor is under the bike is a separate
+# correction, MountCalibration.capture in hw/ahrs.py.
 #
 # Applied as: chassis attitude = q_sensor * conj(q_mount), chassis vector =
-# R(q_mount) @ v_sensor (the TM151's quaternion is sensor -> earth, MuJoCo's
-# convention). Re-run `python -m aow_sim.export_deploy` after changing it:
-# the bike reads it from the bundle.
+# R(q_mount) @ v_sensor (the TM151's quaternion is sensor -> earth, as
+# MuJoCo's). The sim carries the same rotation as bike.ahrs.quat;
+# tests/test_hw_ahrs.py pins the two equal. The bike reads it from the deploy
+# bundle, so re-run `python -m aow_sim.export_deploy` after changing it.
 #
-# WHY IT IS NOT IN bike_params.yaml: it does not change the model, the LQR
-# design or a trained policy (the sim's sensor already reports in the
-# chassis frame), so folding it into the params digest would invalidate
-# every move for a change that cannot affect them.
+# Kept out of bike_params.yaml so it stays out of plant_digest: the sim's
+# sensor already reports in the chassis frame, so this cannot change a
+# trained policy.
 
 q_mount: [0.9238795325, 0.0, 0.3826834324, 0.0]   # w, x, y, z
-source: design                                    # the v2 CAD; was an identity GUESS
+source: design                                    # the v2 CAD

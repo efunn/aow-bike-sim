@@ -1,116 +1,51 @@
-# AOW bike model parameters — single source of truth for the MJCF builder.
+# The AOW bike in its current form: everything that trains and renders it.
+# The onboard settings are config/onboard.yaml; the analytic controllers,
+# never-built righting mechanisms, test rigs and the ball move are
+# config/studies/. params.load_params() merges both in.
 #
-# Units: meters, kilograms, degrees (suffix _deg), N·m, rpm. Coordinates:
-# +X forward, +Y left, +Z up; wheel axles along Y.
+# Units: metres, kilograms, degrees (suffix _deg), N m, rpm. Chassis frame:
+# origin on the rear axle, +X forward, +Y left, +Z up; wheel axles along Y.
 #
-# Measurable leaves are written as {value: ..., source: ...} where source is one of:
-#   measured    — caliper/scale measurement of the physical part
-#   tooth-count — exact ratio from counting gear/pulley teeth
-#   datasheet   — from ROBOTIS / SYD Dynamics documentation
-#   design      — a choice we make for the custom chassis (record intent, verify as-built)
-#   GUESS       — placeholder to be replaced; plausible for a 1:6-scale bike
-# Plain scalars are simulation/tuning knobs, not physical quantities.
+# Measurable values are written {value: ..., source: ...}, source one of:
+#   measured    -- measured on the part (scale, caliper, bench fit)
+#   tooth-count -- an exact ratio from counting teeth
+#   datasheet   -- from ROBOTIS / SYD Dynamics documentation
+#   design      -- a choice for the custom chassis, usually from the CAD
+#   GUESS       -- a placeholder to be replaced
+# Plain scalars are simulation or tuning knobs, not physical quantities.
 
 sim:
-  # 4.0e-4, was 2.0e-4 (2026-08-15). The old value was placeholder-validated in
-  # 2026-07 and never revisited. The CONTACT tolerates far more: in
-  # analysis/contact/contact_surrogates.py --study timestep, ride ripple, airborne
-  # fraction, peak normal force and rest penetration are flat from 5e-5 through
-  # 6e-4, and general_rl_smooth_stiff replays the whole 20-command eval grid at
-  # 0.764 -> 0.767 -> 0.760 across 2e-4 / 4e-4 / 6e-4 at survival 1.00.
-  #
-  # 6e-4 IS NOT SAFE, and the RL eval cannot see why. What binds is the LQR's
-  # finite-amplitude system ID, which fits one linear model per grid speed:
-  #
-  #   dt      worst fit R^2   where
-  #   2e-4        0.9748      +0.25 m/s
-  #   4e-4        0.9727      +0.25 m/s
-  #   6e-4        0.9408      +0.80 m/s   <- test_gain_schedule fails (floor 0.95)
-  #
-  # The damage lands almost entirely on +0.80 m/s, which was already the worst
-  # point in the schedule. 4e-4 leaves the fit indistinguishable from 2e-4 and
-  # still roughly halves wall-clock; 6e-4 buys ~30% more and degrades the
-  # reference baseline to do it, which is the wrong trade for a knob that buys
-  # nothing physical. Revisit if the LQR is ever retired or re-identified
-  # differently. 2e-3 falls outright in run_balance.
-  #
-  # WHAT IT INVALIDATED, all ACCEPTED: every policy in moves/ was trained at
-  # 2e-4 and is now an artifact of a different plant (check_move_digest says so
-  # on load); the deploy bundle was re-exported. Impact cases (righting
-  # sequence, fall/rest attitudes, inverted drops, the flick/flip trajopt set)
-  # were re-run rather than assumed -- docs/plans/aow-contact-approximations.md.
+  # 4e-4 s since 2026-08-15 (was 2e-4). The contact is insensitive to it: ride
+  # ripple, airborne fraction, peak normal force and rest penetration are flat
+  # from 5e-5 to 6e-4 s (analysis/contact/contact_surrogates.py --study
+  # timestep). 6e-4 dropped the LQR's system-ID fit below its test floor, which
+  # is why it stopped at 4e-4; 2e-3 falls over.
   timestep: 4.0e-4
   integrator: implicitfast
   cone: elliptic          # elliptic friction cones + Newton solver (MuJoCo default solver)
   impratio: 10.0
-  # 64, was 32 (2026-08-15). Tessellation of revolved contact meshes (rollers,
-  # front tire). At 32 the facet sagitta is 241 um on a 50 mm wheel, which is
-  # the same scale as the contact deflections -- so the PERFECTLY ROUND front
-  # tire was bouncing off its own polygon: 17.5% of a 0.5 m/s drive off the
-  # ground at a 0.26 mm ride swing, against 0.2% / 0.064 mm at 64 segments.
-  # That is pure numerics, unlike the rear wheel's 8-fold envelope ripple,
-  # which is measured real geometry (omni-wheel-protocol.md §1) and does not
-  # move with tessellation at all. Costs ~3% of step time; 128 costs 19% and
-  # buys almost nothing on top.
+  # Facets per revolved contact mesh (rollers, front tyre). At 32 the facet sag
+  # (241 um) matched the contact deflection and the round front tyre bounced off
+  # its own polygon (17.5 % of a 0.5 m/s drive airborne); at 64 it is 0.2 %.
+  # 64 costs ~3 % of step time, 128 costs 19 % for nothing more.
   mesh_segments: 64
   condim: 4               # 3 = sliding only; 4 adds torsional friction at the contact patch
-  # Contact [time constant s, damping ratio]. Was MuJoCo's default [0.02, 1]
-  # by omission, which let the rollers sink ~2.2 mm (a fifth of the roller
-  # radius) into the floor while holding station. Penetration scales with the
-  # square of the time constant, so this is ~16x stiffer. Raise it back toward
-  # 0.02 if the solver starts complaining rather than to soften a contact.
-  # SHIPS AT DAMPING 1.0 -- critical, so it cannot bounce. That is known to be
-  # wrong: contact-protocol.md P1 recorded the real wheel bouncing 2-3 times,
-  # which implies dampratio ~0.30. 0.5 was tried (picked from teleop feel plus
-  # the slowmo study, never measured) and reverted.
-  #
-  # THE FIT GETS WORSE AS THE CONTACT GETS MORE REALISTIC. Measured 2026-08-22,
-  # worst channel over the nine-speed LQR schedule:
-  #
-  #     dampratio    0.3      0.5      1.0 (this)     2.0
-  #     worst R^2   0.8148   0.9297     0.9412       0.9602
-  #
-  # Monotonic. So there is no setting that is both faithful and well-fitting,
-  # and MIN_FIT_R2 was lowered 0.98 -> 0.93 to stop asking for one; see the
-  # rationale on that constant in control/linearize.py. Do NOT raise the
-  # damping to recover the number -- that buys it by making the simulator less
-  # like the bike.
-  #
-  # Supersedes an earlier note here claiming 0.861 at dampratio 0.5, >=0.975 at
-  # 1.0, and 0.9893 currently. All three predate the velocity-PI drive servo,
-  # which moved the fit substantially; none of them reproduce.
-  #
-  # NEXT: measure the wheel's contact dynamics on the bench, then switch to the
-  # NEGATIVE solref formulation -- MuJoCo reads a negative pair as direct
-  # (-stiffness, -damping) rather than (timeconst, dampratio), which is the
-  # form a real system ID produces. Both entries here become measurements at
-  # that point and this whole comment is replaced.
+  # [time constant s, damping ratio]. The time constant is 4x shorter than
+  # MuJoCo's default 0.02, which let the rollers sink ~2.2 mm. The damping
+  # ratio 1.0 is known to be too high: the real wheel bounced 2-3 times on the
+  # bench (docs/measurements/contact-protocol.md P1), which implies ~0.3. 0.5
+  # was tried and reverted. Note the naming trap: damping ratio enters only the
+  # stiffness term, so lowering it makes the contact STIFFER. To be replaced by
+  # a bench fit.
   contact_solref: [0.005, 1.0]
-  # (dmin, dmax, width, midpoint, power). MuJoCo's stock default, written down
-  # explicitly because it was an INVISIBLE inherited choice: nothing in this
-  # repo ever set it, so every result to date silently assumed it.
-  #
-  # It is not negligible, and dmin confounds BOTH bench tests in
-  # docs/measurements/contact-protocol.md. Measured on this model:
-  #   dmin  0.9 -> 0.5    sink at bike weight 0.375 -> 0.647 mm (2.3x), and
-  #                       restitution 0.46 -> 0.56 at dampratio 0.3
-  #   dmax  0.95 -> 0.999 sink at 44 N 1.946 -> 1.709 mm, restitution flat
-  #   width 1e-4 -> 1e-2  sink at bike weight 0.278 -> 0.419 mm
-  # So the joint (timeconst, dampratio) identification is really a THREE
-  # parameter problem until dmin is pinned. The negative-solref convention
-  # does NOT change that: (-k, -b) is the same contact as (timeconst,
-  # dampratio) = (2/b, b / (2 sqrt k)), identical drops under three solimp
-  # settings including dmin 0.177 (tests/test_drop_rig_sim.py, 2026-10-04).
-  # The "6% instead of 2.3x" once quoted here for the same dmin sweep under
-  # (-8000, -60) compared a different contact -- that pair is (0.033, 0.34) --
-  # not a different form.
-  #
-  # `width` 1 mm is the same scale as the deflections being measured, which is
-  # why the contact is nonlinear across exactly the measurement range: secant
-  # stiffness runs 26.6 N/mm at bike weight down to 22.7 N/mm at 44 N. Pinning
-  # dmin = dmax does NOT fix that -- it makes it worse (ratio 0.85 -> 0.63),
-  # because the residual is geometric: faceted cones and a contact patch that
-  # grows as the wheel sinks.
+  # (dmin, dmax, width, midpoint, power): MuJoCo's default, written out because
+  # the result depends on it. Measured on this model:
+  #   dmin  0.9 -> 0.5     sink at bike weight 0.375 -> 0.647 mm
+  #   dmax  0.95 -> 0.999  sink at 44 N 1.946 -> 1.709 mm
+  #   width 1e-4 -> 1e-2   sink at bike weight 0.278 -> 0.419 mm
+  # so a bench fit of solref has to pin dmin too. The contact is also nonlinear
+  # over the measured range (26.6 N/mm at bike weight, 22.7 at 44 N), from the
+  # faceted cones and a patch that grows as the wheel sinks.
   contact_solimp: {value: [0.9, 0.95, 0.001, 0.5, 2.0], source: GUESS}
   friction_sliding: {value: 0.9, source: GUESS}      # wheel rubber on hard floor -> P0b pull test
   friction_torsional: {value: 0.005, source: GUESS}  # scales with contact patch size -> validation
@@ -141,79 +76,61 @@ omni_wheel:
     body_width: 0.008
 
 drivetrain:
-  # TEARDOWN: the wheel is a bevel DIFFERENTIAL. Two side ("ring") gears mesh all
-  # 8 planet axles mounted in the carrier (= hub). Input A/B = ring gear 1/2
-  # shafts, belt-driven directly (toy's motor pinions discarded). Hence:
-  #   hub (carrier) = (ring1_abs + ring2_abs)/2 ; model "ring" body = ring gear 1.
-  # Kinematics (rad per rad, signed):  [hub; ring_abs] = [[mix_hub_a, mix_hub_b],
-  #                                                       [mix_ring_a, mix_ring_b]] @ [input_a; input_b]
+  # The wheel is a bevel differential: two side ("ring") gears mesh the 8 planet
+  # axles, which are mounted in the carrier (the hub). Inputs A and B are the two
+  # ring-gear shafts, belt-driven. So hub = (ring1 + ring2) / 2, and the model's
+  # "ring" body is ring gear 1:
+  #   [hub; ring_abs] = [[mix_hub_a, mix_hub_b], [mix_ring_a, mix_ring_b]] @ [input_a; input_b]
   mix_hub_a: {value: 0.5, source: tooth-count}
   mix_hub_b: {value: 0.5, source: tooth-count}
   mix_ring_a: {value: 1.0, source: tooth-count}
   mix_ring_b: {value: 0.0, source: tooth-count}
-  # Roller axle spin per radian of ring-vs-hub relative rotation:
+  # Roller axle spin per radian of ring-vs-hub rotation:
   # (ring 48 / planet bevel 12) * (planet bevel 12 / roller gear 20) = 2.4.
-  # Sign flips if the wheel is mounted flipped — confirm at final assembly.
   k_roller: {value: 2.4, source: tooth-count}
-  # Input shaft speed / servo speed (pulley tooth counts; >1 = wheel side faster).
+  # Input shaft speed / servo speed, from the pulley tooth counts.
   belt_ratio: {value: 3.0, source: design}
-  # Input shafts are the two ring-gear shafts, coaxial with the rear axle, one
-  # per side. Lateral offset of the visual pulley from the wheel centerline —
-  # placeholder until the mount/pulley design is done.
+  # Where the input-shaft bodies sit either side of the wheel (5 g each, no
+  # contact). Not the real pulleys: those are bike.frame_parts.drive_pulley_*.
   input_pulley_offset: {value: 0.025, source: design}
-  # Reflected rotor+gearbox inertia seen at each input shaft (XC430 rotor through
-  # 159.59:1 internal gearing, then /belt_ratio^2). The IDEAL plant's only:
-  # on the default detailed plant DrivetrainSim replaces it with the MEASURED
-  # drivetrain_model.servo.rotor_inertia / belt_ratio^2 = 2.44e-4. Kept at
-  # 3.0e-4 as a modelling choice, like the four below: promoting 2.44e-4 here
-  # sped the ideal drive loop (armature / kv 18.7 -> 15.2 ms) and moved the
-  # LQR's design twin and every ideal-trained policy's plant (2026-10-02,
-  # tried and reverted). Was GUESS.
+  # Rotor + gearbox inertia seen at each input shaft, for the IDEAL drive plant
+  # only (the LQR's design plant, the flick/pivot/ball envs). The default
+  # detailed plant replaces it with drivetrain_model.servo.rotor_inertia.
+  # Kept at 3.0e-4 so those plants stay as they were trained.
   input_armature: {value: 3.0e-4, source: design}
-  # The IDEAL plant's drive-train losses, its only ones. A modelling choice,
-  # not a hardware claim, kept at their old values so the LQR's design twin
-  # and every ideal-trained policy keep exactly their plant. On the default
-  # DETAILED plant DrivetrainSim zeroes all four (2026-10-02): the servo's
-  # measured friction and inertia are a coast fit of the whole wheel in the
-  # air (analysis/servo/drivetrain_fit.py coast), hub bearing and geared rollers
-  # included, so they cannot be measured apart from it; and a roller inside
-  # its play is damped by drivetrain_model.roller_slop alone. Were GUESS.
+  # The ideal plant's drivetrain losses, kept for the same reason. The detailed
+  # plant zeroes all four: its servo friction and inertia are a fit of the whole
+  # wheel coasting in the air, hub bearing and rollers included, and a roller
+  # inside its play is damped by drivetrain_model.roller_slop.
   hub_joint_damping: {value: 1.0e-4, source: design}
   hub_joint_frictionloss: {value: 1.0e-3, source: design}
   roller_joint_damping: {value: 1.0e-6, source: design}
   roller_joint_frictionloss: {value: 1.0e-5, source: design}
 
-# THE DETAILED DRIVETRAIN -- the default plant since 2026-10-02 (was the
-# opt-in overlay config/drivetrain_model.yaml). Every `measured` number is a
-# fit to the Station A captures under traces/drivetrain/ (rear assembly, hand
-# held, wheel in the air, 2026-09-13); `python analysis/servo/drivetrain_fit.py`
-# re-derives them. Reasoning and what is open: docs/plans/drivetrain-model.md.
+# The detailed drivetrain, the default plant since 2026-10-02. The `measured`
+# values are fits to the bench captures in traces/drivetrain/ (rear assembly,
+# wheel in the air, 2026-09-13); analysis/servo/drivetrain_fit.py re-derives
+# them, and docs/plans/drivetrain-model.md has the reasoning.
 #
-#   servo        the XC430 firmware velocity loop and the motor behind it,
-#                replacing actuators.drive_kv / drive_ki and input_armature
-#   detent       the differential's tooth-pass resistance, every 7.5 deg of
-#                ring-vs-hub
-#   roller_slop  per-roller free play between the roller and the drive
+#   servo        the XC430's firmware velocity loop and motor; replaces
+#                actuators.drive_kv / drive_ki and drivetrain.input_armature
+#   detent       the differential's resistance once per tooth (7.5 deg)
+#   roller_slop  each roller's free play against the drive
 #
-# THE HOOK. servo and detent are applied by drivetrain_model.DrivetrainSim's
-# pre_step before EVERY mj_step; a loop that steps physics without it gets
-# drives that never move. drivetrain_model.attach_hooks gives a loop that and
-# the XC330 frictions in one call. drivetrain_model.base_params strips this
-# block: the IDEAL drive (drivetrain.input_armature + actuators.drive_kv/ki),
-# which is what the LQR is designed on, and what the flick/pivot/ball envs and
-# every policy exported without a `drivetrain_model:` record trained on.
+# servo and detent are applied by drivetrain_model.DrivetrainSim.pre_step
+# before every mj_step; a loop that skips it gets drives that never move
+# (drivetrain_model.attach_hooks sets that up with the XC330 frictions).
+# drivetrain_model.base_params strips this block to give the ideal plant.
 drivetrain_model:
-  # Physics steps per firmware update (sim knob). The velocity loop runs once
-  # every N steps and holds its torque between; the frictions still run every
-  # step. 1 = every 0.4 ms step.
+  # Physics steps per firmware update (sim knob). 1 = every 0.4 ms step; the
+  # frictions run every step regardless.
   update_every: 1
 
   servo:
     enabled: true
-    # FIRMWARE TABLE VALUES, i.e. what is written to the servo. Factory default.
-    # The open decision in drivetrain-measurements.yaml (P 100/200/400, I 1920
-    # or 3840) is a change HERE and nowhere else: the two scales below map any
-    # table value onto the loop, which is the point of fitting them per unit.
+    # Firmware register values, i.e. what is written to the servo: the factory
+    # defaults. Changing the firmware gains is a change here only; the two scales
+    # below map any register value onto the loop.
     velocity_p_gain: 100        # Velocity P Gain(78)
     velocity_i_gain: 1920       # Velocity I Gain(76)
     #
@@ -231,27 +148,23 @@ drivetrain_model:
     ki_per_unit: {value: 1.45e-3, source: measured}   # duty per rad, per I unit
     # Frame computing a command -> the servo's velocity reference moving.
     command_delay_s: {value: 0.004, source: measured}      # latency.velocity_trajectory_delay_ms
-    # EFFECTIVE, not a register: the lag inside the loop (encoder differencing
+    # Effective, not a register: the lag inside the loop (encoder differencing
     # plus filtering) that puts the ~20 Hz peak at P 400 and none at P 200. Fit
     # by closed-loop replay of the chirps; see the plan doc for what it misses.
     measurement_delay_s: {value: 0.004, source: measured}
     velocity_filter_s: {value: 0.012, source: measured}
     # Velocity Limit(44) = 460 x 0.229 rpm, read off both servos.
     velocity_limit_rad_s: {value: 11.03, source: datasheet}
-    # AT THE SERVO SHAFT. Rotor + gearbox + belt, loaded: 2.3-2.8e-3 from the
-    # PWM coast, 1.8-2.3e-3 from the P 400 chirps. The bare-shaft PWM tau_m of
-    # 14 ms implies 2.0e-3, so the drivetrain adds little. Becomes
-    # input_armature / belt_ratio^2.
+    # At the servo shaft [kg m2], rotor + gearbox + belt, loaded: 2.3-2.8e-3
+    # from the PWM coast, 1.8-2.3e-3 from the P 400 chirps; the bare shaft's
+    # 14 ms time constant implies 2.0e-3. Seen at the input shaft as
+    # rotor_inertia / belt_ratio^2.
     rotor_inertia: {value: 2.2e-3, source: measured}
-    # Per servo, at the servo shaft, and the SAME in common and diff mode
-    # (0.10-0.14 duty common, 0.10-0.13 diff, from the coast) -- so it sits at
-    # the input shafts, not in the hub or the rollers. Servo B's side is ~25 %
-    # stiffer in every capture; one value here, the asymmetry is outstanding.
-    # ~60x the hub_joint_frictionloss GUESS. Applied per input shaft as a
-    # STICKING friction (a stiff spring to an anchor that slides past the
-    # limit), not as a joint frictionloss: MuJoCo's soft friction constraint
-    # creeps on these joints and gives no static floor, and without one the
-    # detent below never stalls a 1 % creep at all.
+    # Per servo, at the servo shaft, and the same in common and differential mode
+    # (0.10-0.14 duty), so it sits at the input shafts. Servo B's side reads ~25 %
+    # higher in every capture; one value here. Applied as a sticking friction (a
+    # stiff spring to an anchor that slides past the limit), because MuJoCo's
+    # joint frictionloss creeps and has no static floor.
     coulomb_friction: {value: 0.15, source: measured}   # N.m
     # Sim knobs for that stick, at the input shaft: N.m/rad and N.m.s/rad.
     # 250 holds to ~2e-4 rad and keeps omega*dt ~0.4 on the rotor inertia.
@@ -260,17 +173,13 @@ drivetrain_model:
 
   detent:
     enabled: true
-    # A friction BUMP on ring-vs-hub, once per tooth. Friction and not a
-    # conservative hill, because at the 1 % creep the extra push sits at the same
-    # phase whichever way the drive is pushed: 0.09-0.12 duty above its floor in
-    # the direction-split fold (drivetrain_fit.py detent). At 3 % the fold shows
-    # little of either (a ~0.02 duty ripple). A quasi-static torque ramp would
-    # settle the shape.
+    # A friction bump on ring-vs-hub, once per tooth: friction rather than a
+    # conservative hill, because at 1 % creep the extra push sits at the same
+    # phase in both directions (drivetrain_fit.py detent).
     period_deg: {value: 7.5, source: tooth-count}   # ring-vs-hub, input shaft
     width_deg: {value: 2.5, source: measured}       # raised cosine, full width
-    # Peak extra friction on ring_spin, N.m. ~0.09 duty per servo above the
-    # ~0.12 baseline at the wall (breakaway 0.19-0.24 duty); x stall torque /
-    # belt, x2 for the two servos a diff move pushes with.
+    # Peak extra friction on ring_spin [N m]: ~0.09 duty per servo above the
+    # ~0.12 baseline, times stall torque / belt ratio, times 2 servos.
     friction: {value: 0.096, source: measured}
     # Phase is drawn per episode where there is an rng (training, the eval
     # env), else this. Nothing has measured where the wall sits.
@@ -284,88 +193,69 @@ drivetrain_model:
 
   roller_slop:
     enabled: true
-    # Per roller, roller-angle units, about k_roller * ring angle. The rigid
-    # equality coupling is replaced by a tendon with a weak centring spring and
-    # hard limits at the ends of the play.
+    # Per roller, in roller-angle units. The rigid roller coupling is replaced by
+    # a tendon with a weak centring spring and hard limits at the ends of the play.
     half_play_deg: {value: 7.8, source: measured}      # 15.6 deg p-p by hand
-    # "A roller often springs back to the middle of its play -- not every time"
-    # (roller_slop.hand_release). Nothing measures the size. At 1e-3 the spring
-    # is 1.4e-4 N.m at the wall, against ~0.05 N.m of ground torque on a loaded
-    # roller: a dead zone under load, a centring spring in the air.
+    # A roller often springs back to the middle of its play by hand, not every
+    # time; nothing has measured the spring. At 1e-3 it is a dead zone under load
+    # (1.4e-4 N m at the wall against ~0.05 N m of ground torque).
     centring_stiffness: {value: 1.0e-3, source: GUESS}  # N.m/rad
-    # CRITICAL against the roller's own spin inertia (2.31e-7 kg m2 in the
-    # compiled model, plus the joint's 1e-6 damping): 2 sqrt(k J) = 3.0e-5.
-    # By hand 2026-09-14, a flicked roller of any size, or one held at the end of
-    # its play and let go, returns to centre with no visible overshoot
-    # (roller_slop.hand_flick). At the old 2e-6 the sim rang for ~200 ms.
-    # tests/test_drivetrain_model.py pins the ratio, so a roller mass change
-    # that detunes it goes red.
+    # Critical damping against the roller's spin inertia (2.31e-7 kg m2):
+    # 2 sqrt(k J) = 3.0e-5. By hand, a flicked roller returns to centre with no
+    # visible overshoot. tests/test_drivetrain_model.py pins the ratio.
     damping: {value: 2.9e-5, source: GUESS}             # N.m.s/rad
-    # How hard the ends of the play are. 0.001 holds the play to within ~1.5
-    # deg under a 20 rad/s dithered diff; MuJoCo's default 0.02 let rollers
-    # overshoot by 50 deg. Must stay >= 2 x sim.timestep.
+    # How hard the ends of the play are: 0.001 holds them to ~1.5 deg under a
+    # 20 rad/s dithered diff. Must stay >= 2 x sim.timestep.
     wall_timeconst_s: 0.001
 
 bike:
-  # THE V2 BIKE AS BUILT (2026-10-19): wheelbase, rake and every placement
-  # below are read off the v2 CAD (cad.bike_v2, commit 6a73da8), positions
-  # from one Onshape eval of its bodies' centroids
-  # (traces/bike_v2_cad/mass_eval.txt). CAD bike frame -> this frame:
-  # x = CAD y, y = -CAD x, z = CAD z (both origin on the rear axle).
-  wheelbase: {value: 0.2005, source: design}   # the CAD's; was 0.200
-  # 20, was 15 (2026-10-19): the CAD's since 10-19. analysis/policy/steer_wobble.py
-  # (10-18): forward wobble roughly halves by 20 deg, the hold wobble grows.
+  # The v2 bike as built (2026-10-19): wheelbase, rake and every placement are
+  # read off the v2 CAD (cad.bike_v2), positions from one Onshape eval of its
+  # bodies' centroids (traces/bike_v2_cad/mass_eval.txt).
+  # CAD frame -> this frame: x = CAD y, y = -CAD x, z = CAD z.
+  wheelbase: {value: 0.2005, source: design}   # the CAD's
+  # analysis/policy/steer_wobble.py: forward wobble roughly halves going from
+  # 15 to 20 deg; the standing wobble grows.
   rake_deg: {value: 20.0, source: design}      # steering axis tilt back from vertical
   fork_offset: {value: 0.0, source: design}  # perpendicular distance steer axis -> front axle
   chassis:
-    # THE RESIDUAL: what no entry below names -- the cables and fasteners.
-    # Weighed by item 2026-10-21 (user), times the count on the bike:
-    #   5 JST servo cables x 5 g = 25, 2 USB 6" x 8 g = 16,
-    #   17 x 6-32 screw + nut at 1.2 g (10 weighed 12 g) = 20.4.
-    # NOT in it: 5 x 4-40 and 4 x M2 screw + nut (not weighed, a few g),
-    # and the rollcage's 4 and the wings' 4 6-32 (not fitted yet).
-    # Was 0.030 GUESS (fasteners, cables); 0.45 GUESS for the whole frame +
-    # wiring before the frame existed.
-    # The bike as weighed 2026-10-21 -- no blades, battery or rollcage --
-    # read 772 g; this model reads 791 for the same bike, with the printed
-    # parts still CAD estimates (wing hubs carry their stubs, ~11 g, not
-    # fitted).
+    # The residual: everything no entry below names, i.e. cables and fasteners.
+    # Weighed by item 2026-10-21, times the count on the bike:
+    #   5 JST servo cables x 5 g = 25, 2 USB 6" cables x 8 g = 16,
+    #   17 6-32 screws + nuts x 1.2 g = 20.4.
+    # Not in it: the 4-40 and M2 screws (not weighed, a few g), and the
+    # rollcage's and wings' 6-32s (not fitted yet).
+    # Check: the bike without blades, battery or rollcage weighed 772 g; the model
+    # reads 791 g for the same bike. About 11 g of that is the wing hubs' stubs
+    # (in the CAD, not on the bike); the rest is presumably the printed parts,
+    # still CAD estimates.
     mass: {value: 0.061, source: measured}
-    # SPREAD over the frame parts in proportion to their mass (screws sit in
-    # the printed parts, cables run between the servos and the Pi), so it
-    # draws as nothing of its own. false: its own box, below -- which stays
-    # either way, massless and invisible when spread, as the older studies'
-    # contact envelope.
+    # true: spread over the frame parts in proportion to their mass, so it draws
+    # as nothing of its own. false: its own box below. The box stays either way
+    # (massless when spread) as the older studies' contact envelope.
     spread: true
     box_size: [0.20, 0.04, 0.10]         # inertia primitive (full extents): the rails' span
     com_pos: [0.10, 0.0, 0.08]           # chassis-frame position of that primitive (origin = rear axle)
-  # EVERY RIGID PART ON THE CHASSIS. `mass` (or `servo:`, the mass from
-  # `servos:`) and its `geoms`, each a MuJoCo box or cylinder carrying
-  # `share` of the mass (default: an equal split): `pos` [m], `size` full
-  # extents [x, y, z] for a box, [radius, length] for a cylinder (its axis
-  # the local z), `quat` (w x y z, optional) its axes in the chassis frame.
-  # To fold in a weighing, change `mass` only.
+  # Every rigid part on the chassis: `mass` (or `servo:`, taking the mass from
+  # `servos:`) and its `geoms`, each a box, cylinder or prism carrying `share` of
+  # the mass (default: an equal split). `pos` [m]; `size` full extents
+  # [x, y, z] for a box, [radius, length] for a cylinder (axis along its local
+  # z); `quat` (w x y z, optional) its axes in the chassis frame. To fold in a
+  # weighing, change `mass` only.
   #
-  # The shapes come from one Onshape eval (traces/bike_v2_cad/shape_eval.txt,
-  # 2026-10-19): each part's tight box in the bike, drive (45 deg) or
-  # steering (20 deg) frame, whichever is smallest, CENTRED ON THE PART'S
-  # CENTROID so the mass sits where the CAD's does. A thin part (a rail
-  # slice, the Pi carrier, the power holder) keeps its outline and takes the
-  # thickness that holds its volume. The side rails are their CAD outline
-  # pieces extruded (type: prism, `outline` [x, z] in the side view, `across`
-  # [y0, y1], an exact-inertia mesh), mass by area; the pulleys discs; the
-  # belts their two straight runs. They shape the inertia (a printed part is
-  # a shell, a box solid: together the boxes are ~5 % of the bike's) and
-  # show where every gram is. Not a picture of the parts.
+  # Shapes are from one Onshape eval (traces/bike_v2_cad/shape_eval.txt): each
+  # part's tight box in the bike, drive (45 deg) or steering (20 deg) frame,
+  # centred on the part's centroid. The side rails are their CAD outlines
+  # extruded (prism: `outline` [x, z] in the side view, `across` [y0, y1]).
+  # They set the inertia; they are not a picture of the parts.
   #
-  # Printed parts: `mass` is cad.servo_mount.printed_mass (0.9 skin over the
-  # surface, 15 % infill, ASA 1.07) from the CAD's volume and area -- GUESS
-  # until weighed; the batch of the six printed below plus the Pi spacers
-  # reads 88.2 g against the slicer's 81 (traces/weigh_v2_printed.txt).
+  # Printed parts' masses are CAD estimates (cad.servo_mount.printed_mass:
+  # 0.9 mm skin, 15 % infill, ASA 1.07 g/cm3), GUESS until weighed. For the six
+  # below plus the Pi spacers the estimate is 88.2 g against the slicer's 81
+  # (traces/weigh_v2_printed.txt, which has a column for the scale).
   #
-  # Nothing that moves is here: the input pulleys' turning inertia is in
-  # drivetrain.input_armature (fitted), the steering's turning half in
-  # fork_mass, the righting's in righting.module.
+  # Nothing that moves is here: the pulleys' spin is drivetrain.input_armature,
+  # the steering's moving half fork_mass, the righting's righting.module.
   frame_parts:
     servo_drive_left:      # XC430 "A", horn on the left
       servo: xc430_w150
@@ -409,8 +299,8 @@ bike:
       mass: {value: 0.0198, source: GUESS}
       geoms:
         - {type: cylinder, pos: [0.0853, 0.0276, 0.0652], size: [0.0372, 0.0172], quat: [0.70711, -0.70711, 0.0, 0.0]}
-    drive_belt_left:      # not printed: GT2 belt, as its two straight runs (the wraps left out: its CoM ~18 mm back of the CAD belt's)
-      mass: {value: 0.015, source: measured}   # one belt weighed 2026-10-21 (user); was 0.004 GUESS
+    drive_belt_left:      # GT2 belt as its two straight runs (wraps left out: CoM ~18 mm back of the CAD belt's)
+      mass: {value: 0.015, source: measured}   # one belt weighed 2026-10-21
       geoms:
         - {type: box, pos: [0.0244, 0.0277, 0.0477], size: [0.1047, 0.009, 0.0015], quat: [0.90549, 0.0, -0.42437, 0.0], share: 0.5}
         - {type: box, pos: [0.0525, 0.0277, 0.011], size: [0.1047, 0.009, 0.0015], quat: [0.97719, 0.0, -0.21236, 0.0], share: 0.5}
@@ -418,8 +308,8 @@ bike:
       mass: {value: 0.0198, source: GUESS}
       geoms:
         - {type: cylinder, pos: [0.0652, -0.0276, 0.0853], size: [0.0372, 0.0172], quat: [0.70711, -0.70711, 0.0, 0.0]}
-    drive_belt_right:      # not printed: GT2 belt, as its two straight runs (the wraps left out: its CoM ~18 mm back of the CAD belt's)
-      mass: {value: 0.015, source: measured}   # one belt weighed 2026-10-21 (user); was 0.004 GUESS
+    drive_belt_right:      # GT2 belt as its two straight runs (wraps left out: CoM ~18 mm back of the CAD belt's)
+      mass: {value: 0.015, source: measured}   # one belt weighed 2026-10-21
       geoms:
         - {type: box, pos: [0.011, -0.0277, 0.0525], size: [0.1047, 0.009, 0.0015], quat: [0.84114, 0.0, -0.54082, 0.0], share: 0.5}
         - {type: box, pos: [0.0477, -0.0277, 0.0244], size: [0.1047, 0.009, 0.0015], quat: [0.94035, 0.0, -0.3402, 0.0], share: 0.5}
@@ -443,68 +333,49 @@ bike:
       mass: {value: 0.0077, source: GUESS}
       geoms:
         - {type: box, pos: [0.0349, 0.0149, 0.1045], size: [0.0677, 0.0033, 0.0455], quat: [0.92388, 0.0, -0.38268, 0.0]}
-  fork_mass: {value: 0.025, source: GUESS}   # steerer + fork, excluding front wheel
+  fork_mass: {value: 0.025, source: GUESS}   # steerer + fork; with the front wheel weighed 86 g together (2026-09-30), not split
   front_wheel:
-    # The wheel carried over from the original bike, measured 2026-10-05.
+    # The wheel from the original bike, measured 2026-10-05.
     radius: {value: 0.05125, source: measured}   # 102.5 mm diameter
     width: {value: 0.024, source: measured}
     shoulder_radius: {value: 0.007, source: measured}
-    # The real tread is a 10 mm flat. Modelled as a shallow crown so the
-    # contact moves smoothly with lean (docs/plans/mujoco-modeling-decisions.md).
+    # The real tread is a 10 mm flat, modelled as a shallow crown so the contact
+    # moves smoothly with lean (docs/plans/mujoco-modeling-decisions.md).
     crown_radius: {value: 0.080, source: GUESS}
     mass: {value: 0.060, source: GUESS}
   steering:
     gear_ratio: {value: 1.0, source: design}  # servo rotation per steer rotation; range is continuous 360°+
-    # HEADSET FRICTION, the printed bushing + thrust face, UNDER the XC330's
-    # gearbox friction (which the joint already has): a + b x |T|, T the
-    # axial load through the thrust face [N]. In the sim T is the headset's
-    # reaction along the steer axis (the `headset_force` sensor); airborne it
-    # reverses and the upper's skirt takes it, hence |T|.
-    # gearbox_friction.attach_steer applies it.
+    # Headset friction (the printed bushing and thrust face), on top of the
+    # XC330's gearbox friction: a + b x |T|, T the axial load through the thrust
+    # face [N] (the `headset_force` sensor in the sim). Applied by
+    # gearbox_friction.attach_steer.
     #
-    # From steering-design.md "First print", 2026-09-30, running friction
-    # at the output over four thrust loads, 86-368 g along a 15 deg axis:
-    # tau = 7.68 + 0.0518 x grams mN m (rms 0.4). The gearbox's running line
-    # passes 0.15 x load + 5.7 on, so the headset alone is
-    # (tau - 5.7) / 1.15 = 1.72 + 0.0450 x grams, and per NEWTON ALONG THE
-    # AXIS (x cos 15 of the weight): 4.75 mN m/N. At the bike's ~3.5 N the
-    # two together give the bench's 26.6.
-    #
-    # THE PRINTED SEAMS' PEAKS (to 47 mN m, two spots 180 deg apart) ARE NOT
-    # IN THIS, on purpose (user): the seam is fixable in printing. Running
-    # friction only; the static was ~1.5x on the one breakaway sweep (no
-    # load), not modelled. Measured on the first print -- a reprint moves it.
-    # The bushing's SIDE load is in b implicitly: on the bench the weight
-    # hung vertically off a 15 deg axis (side/axial = tan 15 = 0.27), and
-    # the bike at rest has nearly the same ratio (0.88 / 3.19 N = 0.28).
+    # From the first print's friction maps (steering-design.md, 2026-09-30):
+    # running friction over four loads, 86-368 g along a 15 deg axis, less the
+    # gearbox's own line. The printed seams' peaks (to 47 mN m, two spots 180 deg
+    # apart) are left out on purpose: the seam is fixable in printing. Running
+    # friction only; the static was ~1.5x on one unloaded sweep. A reprint moves
+    # it.
     headset_friction_nm: {value: 0.00172, source: measured}      # N m, a
     headset_friction_per_n: {value: 0.00475, source: measured}   # N m per N, b
   ahrs:                                       # SYD Dynamics TM151
-    # On the drive's tabs, USB up and back (v2 CAD). `pos` is the centre of
-    # the housing (footprint centre, mid-height): where `ahrs_site` -- the
-    # IMU sensors -- sits, and the point sim_ahrs.TM151_ACCEL_OFFSET_M is
-    # measured from. `quat` is the TM151's OWN axes in the chassis frame
-    # (datasheet: +x the pin header, +z out of the housing's top): +x down
-    # and forward, +z up and forward -- pitched 45 deg nose-down about y.
-    # The SITE stays on the chassis axes: on the bike the mount calibration
-    # (config/ahrs_mount.yaml) rotates the readings into that frame, so
-    # chassis-aligned is what the controllers see. The tilt reaches the sim
-    # through the box and through where the accelerometer sits in the part
+    # On the drive's tabs, USB up and back (v2 CAD). `pos` is the centre of the
+    # housing, where `ahrs_site` sits. `quat` is the TM151's own axes in the
+    # chassis frame (+x the pin header, +z out of the top): pitched 45 deg
+    # nose-down about y. The site stays on the chassis axes, because on the bike
+    # config/ahrs_mount.yaml rotates the readings into that frame; the tilt
+    # reaches the sim through where the accelerometer sits in the part
     # (sim_ahrs.tm151_to_site).
     pos: [0.0989, 0.0, 0.0842]
     quat: [0.92388, 0.0, 0.38268, 0.0]
     mass: {value: 0.019, source: datasheet}   # was 0.012 GUESS
     box_size: [0.040, 0.034, 0.0126]          # in its own axes: x along the 40
   payload:
-    # Untethered running gear -- see docs/plans/untethered-setup.md, entries
-    # as in frame_parts (pos, box_size, quat, mass). Omitted by
-    # build_model(payload=False) to recover the tethered bike. Placements are
-    # the v2 CAD's; all four sit in the drive frame (quat: box x across the
-    # bike, y up the belt, z up and back).
-    #
-    # The power module is OFF the centreline, on the left (the holder above
-    # is too): a lateral offset is a standing roll bias the controller must
-    # trim out continuously, so its mass is worth weighing early.
+    # The untethered running gear (docs/plans/untethered-setup.md), entries as in
+    # frame_parts. build_model(payload=False) leaves it out (the tethered bike).
+    # Placements are the v2 CAD's, all in the drive frame (quat: box x across the
+    # bike, y up the belt, z up and back). The power board and its holder sit left
+    # of the centreline, a standing roll bias the policy trims out.
     battery:                                  # 3S 1300 mAh LiPo, on the drive's back face
       pos: [0.02917, 0.0, 0.09387]
       mass: {value: 0.076, source: measured}  # bike_v2_cad.yaml; was 0.115 GUESS
@@ -512,7 +383,7 @@ bike:
       quat: [0.65328, 0.2706, -0.2706, -0.65328]
     pi:                                       # Raspberry Pi 3B+, the stand-in
       pos: [0.12035, 0.0, 0.11215]
-      mass: {value: 0.050, source: datasheet}   # approx. (bike_v2_cad.yaml)
+      mass: {value: 0.050, source: datasheet}   # approx.; Pi + U2D2 + carrier weighed 71 g together (model 71.6)
       box_size: [0.056, 0.020, 0.089]
       quat: [0.65328, 0.2706, -0.2706, -0.65328]
     u2d2:                                     # ROBOTIS U2D2, under the Pi
@@ -522,22 +393,18 @@ bike:
       quat: [0.65328, 0.2706, -0.2706, -0.65328]
     power_board:                              # the PCB with its components + the power switch
       pos: [0.0440, 0.0274, 0.1094]
-      # Weighed 2026-10-19 (user): 16 g, was 0.056 GUESS. The printed holder
-      # is frame_parts.power_holder; the wiring is in chassis.mass.
+      # Weighed 2026-10-19. Its printed holder is frame_parts.power_holder.
       mass: {value: 0.016, source: measured}
       box_size: [0.0126, 0.0265, 0.025]
       quat: [0.65328, 0.2706, -0.2706, -0.65328]
 
 servos:
-  # NOTE: the values below are the 12 V datasheet column, i.e. the TETHERED
-  # bike on its 12 V brick. Untethered on 3S the pack averages 11.1 V and sags
-  # to 9.9 V at cutoff, so the real numbers are the 11.1 V column or worse:
-  #   XC430-W150   1.4 N.m /  99 rpm   (vs 1.6 / 106 here)
-  #   XC330-T181   0.76 N.m / 104 rpm  (vs 0.80 / 113 here)
-  # That is ~12% less torque, compounding with the +23% payload mass for a
-  # ~30% authority reduction. Do not "fix" it by editing these values — the
-  # sim is a 12 V bike by definition; instead let randomization.actuator_frac
-  # cover the range during training. See docs/plans/untethered-setup.md.
+  # The 12 V datasheet column, i.e. the tethered bike. On a 3S pack (11.1 V
+  # nominal, 9.9 V at cutoff) the servos have ~12 % less torque:
+  #   XC430-W150   1.4 N m /  99 rpm at 11.1 V   (1.6 / 106 here)
+  #   XC330-T181   0.76 N m / 104 rpm at 11.1 V  (0.80 / 113 here)
+  # The sim stays a 12 V bike; training covers the range with
+  # randomization.actuator_frac.
   xc430_w150:   # 2x, AOW drive (values at 12 V per datasheet)
     stall_torque: {value: 1.6, source: datasheet}
     stall_current: {value: 1.4, source: datasheet}
@@ -546,159 +413,94 @@ servos:
     box_size: [0.034, 0.0285, 0.0465]   # D x W x H, axis along Y
     # placements: bike.frame_parts.servo_drive_left / _right
   xc330_t181:   # steering (values at 12 V per datasheet)
-    # KEPT AT THE DATASHEET, but the bench says it may be as low as ~0.6.
-    # X330 fixture, id 103, mode 3 at the steer's own gains (2026-09-26,
-    # docs/plans/pre-assembly-bench-checklist.md): every estimate of the stall
-    # torque per unit duty came out 0.62-0.69 N m -- friction-cancelling
-    # lift/lower pairs gave 0.69 (34 g) and 0.62 (137 g), a joint fit 0.62,
-    # the static lines 0.66 --
-    # while the torque-speed SHAPE (stall / kv ~ 12 rad/s under load), the
-    # no-load speed and the firmware's P scaling (2.849e-3, config 2.877e-3)
-    # all check out. The lever rig cannot separate friction from torque any
-    # better; measure it in place once the steering is on a bike test rig.
+    # Kept at the datasheet, though the X330 fixture (2026-09-26,
+    # docs/plans/pre-assembly-bench-checklist.md) put the stall torque per unit
+    # duty at 0.62-0.69 N m in every estimate, while the torque-speed shape,
+    # no-load speed and P scaling all matched. The lever rig cannot separate
+    # friction from torque; measure it in place on the bike.
     stall_torque: {value: 0.80, source: datasheet}
-    # Torque constant kt = stall_torque / stall_current is what actually sets
-    # the current a given LOAD draws, and kt does not depend on pack voltage --
-    # so a torque number from the sim converts to amps directly. See the power
-    # budget in docs/plans/untethered-setup.md, and `self_righting.py lift`,
-    # which uses it to price the righting stroke against the pack.
+    # kt = stall_torque / stall_current sets the current a given load draws and
+    # does not depend on pack voltage (used for the power budget in
+    # docs/plans/untethered-setup.md and `self_righting.py lift`).
     stall_current: {value: 0.88, source: datasheet}
     no_load_rpm: {value: 113.0, source: datasheet}
-    # CURRENT-BASED POSITION MODE (5), the righting servo's: motor torque
-    # k (|I| - I0) above a firmware drive edge, as the X330 fixture measured it
-    # (docs/plans/righting-servo-model.md). I0 from the PWM-edge sweep; k from
-    # the lift and fall lines over four loads, 8-59 mN m, 35-129 mA, IF
-    # friction is equal both ways. One 102 mN m point lifted 17 mA below the
-    # line, so k is if anything low above ~130 mA; nothing is measured past
-    # ~200 mA. (The datasheet's kt, stall_torque / stall_current, is 0.91.)
+    # Current-based position mode (5), the righting servo's: motor torque
+    # k (|I| - I0) above a firmware deadband, from the X330 fixture
+    # (docs/plans/righting-servo-model.md). Fitted over 8-59 mN m / 35-129 mA;
+    # nothing is measured past ~200 mA. (The datasheet's kt is 0.91.)
     current_deadband: {value: 0.0165, source: measured}      # A
     current_torque_gain: {value: 0.83, source: measured}     # N m / A
-    # GEARBOX FRICTION, both XC330s (righting crank and steer), as
-    # `fraction x load + constant`, load = the torque the gearbox passes on.
-    # Static from mode 5's four loads (mode 3 gave 0.53 and 7.0 mN m); running
-    # from mode 3's four speed lines. gearbox_friction.py applies it.
+    # Gearbox friction, both XC330s (righting crank and steer):
+    # fraction x load + constant, load = the torque the gearbox passes on.
+    # Static from mode 5's four loads, running from mode 3's four speed lines.
+    # Applied by gearbox_friction.py.
     friction_static_fraction: {value: 0.51, source: measured}
     friction_static_nm: {value: 0.0051, source: measured}
     friction_running_fraction: {value: 0.15, source: measured}
     friction_running_nm: {value: 0.0057, source: measured}
-    # Below this output speed the static pair applies. A modelling threshold,
-    # not a measurement: loaded slides ran 30-40 deg/s once going.
+    # Below this output speed the static pair applies. A modelling threshold:
+    # loaded slides ran 30-40 deg/s once going.
     friction_stick_speed: {value: 0.05, source: design}      # rad/s
     mass: {value: 0.023, source: datasheet}
     box_size: [0.026, 0.020, 0.034]
     # placement: bike.frame_parts.servo_steer (the righting's: righting.module.servo_case)
 
 actuators:
-  # Drive velocity servo, both gains AT THE INPUT SHAFTS (i.e. after
-  # belt_ratio, so divide a servo-output measurement by belt_ratio^2):
+  # The IDEAL drive plant's servo, both gains at the input shafts (after
+  # belt_ratio):
+  #   force = drive_ki * integral(ctrl - w) dt - drive_kv * w
+  # Only the ideal plant uses these (the LQR's design plant, the flick, pivot
+  # and ball envs, policies exported without a `drivetrain_model:` record). The
+  # default detailed plant replaces them with drivetrain_model.servo, fitted on
+  # the bench.
   #
-  #   force = drive_ki * integral(ctrl - w) dt  -  drive_kv * w
+  # Neither is measured. drive_kv is the bare motor's droop, stall_torque /
+  # no_load_speed / belt_ratio^2 = 1.6 / 11.098 / 9, which gives max force
+  # stall_torque / belt_ratio and an input_armature / kv time constant of
+  # 18.7 ms, the motor's own. drive_ki 0.6 is the Dynamixel X-series default
+  # KVI/KVP ratio at an assumed 1 kHz firmware loop; Ti = kv / ki = 26.7 ms.
+  drive_kv: 0.016016   # N m s/rad at the input shaft; see above
+  drive_ki: 0.6   # N m/rad
+  # The steering servo, at the steer joint (steering.gear_ratio 1.0, so the
+  # joint is the servo shaft). The XC330 runs in extended position mode (4),
+  # whose PID output is PWM duty, so it maps exactly onto MuJoCo's position
+  # actuator:
+  #   tau = [Kp * k3 * tau_stall] * err - [tau_stall / w_noload] * w
+  # kp is the firmware gain, kv the motor's back-EMF droop.
   #
-  # drive_kv on its own is a bare-motor droop line, and the derived value is
-  # stall_torque / no_load_speed / belt_ratio^2 = 1.6 / 11.098 / 9 = 0.016016.
-  # At that value the affine actuator reproduces the whole torque-speed line
-  # by itself (max force at max command = 0.5333 = stall_torque / belt_ratio
-  # exactly), and the bandwidth comes with it for free: input_armature / kv =
-  # 18.7 ms, which IS the motor's own electromechanical time constant. The
-  # "31x too stiff" and "31x too fast" defects in
-  # docs/plans/aow-contact-approximations.md section 6b are one number, not two --
-  # a separate drive_tau knob would double-count and is deliberately absent.
+  # kp and steer_armature were fitted together to open-loop sine sweeps of the
+  # steer XC330 at P 900, column and headset fitted, +-5 deg at 1-10 Hz
+  # (analysis/servo/steer_response.py, traces/bench/steer_response_261017-*.json;
+  # the sim side is analysis/policy/steer_pinned.py --sine --bare): within ~0.03
+  # gain / 3 deg of the bench at every frequency. A second unit, bare, agreed
+  # within 0.02. kp 2.3 is 11 % above the value derived from P 900
+  # (900 x 2.877e-3 x 0.80 = 2.07), unexplained.
   #
-  # drive_ki is the firmware's integral term, and it is what holds position
-  # against back-drive; drive_kv alone is open-loop voltage control and the
-  # bike cannot hold station on it.
+  # kv is held at the droop, 0.80 / 11.833, not fitted: the sweeps only fix
+  # kp / kv, and the no-load speed fixes kv (a fitted 0.055 let a saturated
+  # steer run at 14.5 rad/s against the 11.9 measured).
   #
-  # BOTH ARE STILL THE PLACEHOLDER PLANT. 0.5 / 0.0 is P-only and 31x
-  # over-capable, and every general_rl* policy has learned to use capability
-  # the hardware does not have. Do not promote the derived numbers by guess:
-  # docs/measurements/servo-protocol.md section 4 measures the real stiffness
-  # and the real integral time, and section 6 maps them onto the model form.
-  # Best guesses if you want to explore first: kv 0.016016, ki 0.6 (Dynamixel
-  # X-series default KVI/KVP at a 1 kHz loop) to 0.855 (Ti = tau_m).
-  # ARMED 2026-08-21. kv is the derived bare-motor droop, not a measurement --
-  # and it is a LOWER bound, because firmware KVP makes the real loop stiffer.
-  # ki 0.6 is the Dynamixel X-series default KVI/KVP ratio at an assumed 1 kHz
-  # firmware loop; the assumed loop period is the shakiest link in it, and
-  # servo-protocol.md §4's settling_time_s measures Ti (= kv/ki) directly.
-  # Both are `GUESS` in spirit; replace them with §4, do not refine by feel.
-  drive_kv: 0.016016   # was 0.5 (placeholder). = stall_torque/no_load/belt^2
-  drive_ki: 0.6        # was 0.0 (P-only). Ti = kv/ki = 26.7 ms
-  # Steering position servo, at the steer joint (steering.gear_ratio is 1.0,
-  # so the joint IS the servo shaft). The XC330 runs here in EXTENDED POSITION
-  # mode (4), whose PID output is PWM duty -- which makes the whole actuator an
-  # exact affine map onto MuJoCo's position actuator:
-  #
-  #   tau = duty*tau_stall - (tau_stall/w_noload)*w
-  #       = [Kp * k3 * tau_stall] * err  -  [tau_stall/w_noload] * w
-  #
-  # so kp is a firmware gain and kv is the motor's own back-EMF droop. Unlike
-  # the righting servo's kv, NOTHING here is inferred.
-  #
-  # kv 0.0676, was 0.05 (2026-09-16). 0.05 was a GUESS in spirit and the
-  # derived value is stall_torque/no_load_speed = 0.80/11.833. This is the
-  # same droop line drive_kv carries for the XC430s, and for the same reason.
-  #
-  # kp was LEFT AT 2.0 until the servo was characterised on the bench: the
-  # derived value at the factory Position P Gain of 900 is
-  # 900 * 2.877e-3 * 0.80 = 2.07. Characterised 2026-10-17, below.
-  # kp 2.3 AND steer_armature 5.5e-4, MEASURED 2026-10-17 as a pair: an
-  # open-loop sine sweep of the steer XC330 at P 900, steering column and
-  # headset installed (no fork or wheel, hanging), +-5 deg at 1-10 Hz
-  # (analysis/servo/steer_response.py, traces/bench/steer_response_261017-175708.json),
-  # fitted in the sim by the same protocol (analysis/policy/steer_pinned.py --sine
-  # --bare --steer-kp K --armature J): within ~0.03 gain / 3 deg of the bench
-  # at every frequency, where kp 2.0 with no armature gave 0.66 / -63 deg at
-  # 5 Hz (bench 0.81 / -69). The bench holds its gain longer and loses phase
-  # faster than the old model: a stiffer loop plus rotor inertia, which the
-  # steer never carried.
-  #
-  # kv IS HELD at the droop, NOT fitted. A first fit moved kv instead (0.055,
-  # kp 2.0, same quality) and failed test_steer_cannot_outrun_its_motor: a
-  # saturated steer then runs at stall/kv = 14.5 rad/s, against the 11.9
-  # measured by free spin. Small-signal sweeps fix only kp/kv (~36) and the
-  # inertia; the no-load speed fixes kv. kp 2.3 is 11 % above the derived
-  # 900 * 2.877e-3 * 0.80 = 2.07 -- inside the stall-torque and P-divisor
-  # uncertainty, unexplained.
-  #
-  # CONFIRMED on a second unit, bare (the righting XC330, id 104, off its
-  # module, swept in mode 4; traces/bench/steer_response_261017-190803.json):
-  # at +-5 deg within 0.02 of the steer-with-column run at every frequency, so
-  # the column adds nothing measurable and units agree. Same fit, kp 2.3 /
-  # 5.5e-4 (err 0.032; kp 2.0 best 0.102).
-  # CONFIRMED by constant-speed ramps on the same bare unit
-  # (traces/bench/steer_ramps_261017-192117.json): above 0.45 rad/s the steady
-  # lag is 2.50 mrad + 37.4 ms x w -- ~8 ms of read/write transport plus this
-  # kv/kp (29.4 ms), and kp x 2.50 mrad = 5.75 mN m, the running friction.
-  # BELOW ~0.25 rad/s THE SERVO IS NOT MODELLED, deliberately: there it holds
-  # its error within ~1 encoder count (1.53 mrad) with no droop and no
-  # friction offset, which by this arithmetic it should not be able to do,
-  # and +-1 deg sweeps show the same (0.99 / -4 deg at 1 Hz, model -26). It is
-  # a one-count effect on a bare servo; on the bike the wheel's scrub and the
-  # horn-to-wheel backlash will set small motions instead. A speed-scaled
-  # droop + friction reproduces it (steer_pinned.TwoRegime, a prototype);
-  # measure small motions on the assembled, loaded steering before using it.
+  # Not modelled: below ~0.25 rad/s the bare servo holds within ~1 encoder
+  # count with no droop or friction offset. On the bike the wheel's scrub and
+  # backlash will set small motions; measure them on the assembled steering.
   steer_kp: {value: 2.3, source: measured}
   steer_kv: 0.0676
-  # The XC330's rotor + gearbox inertia at the steer joint [kg m2]: ~13x the
-  # whole fork + wheel about the axis (4.1e-5 in the model). Was 0 (absent).
+  # The XC330's rotor + gearbox inertia at the steer joint [kg m2], from the
+  # same sweeps: ~13x the fork and wheel about the axis.
   steer_armature: {value: 5.5e-4, source: measured}
-  # WHERE THE TORQUE LIMIT SITS, which the affine map above does not say. The
-  # firmware clips the DUTY, then the motor subtracts its back-EMF:
-  #   duty: tau = clip(kp*err, +-stall) - kv*w      (mode 4, the real servo)
-  #   total: tau = clip(kp*err - kv*w, +-stall)      (MuJoCo's native clip)
-  # They agree until the P term saturates. Past it, `total` lets the steer
-  # outrun the motor: at the 45 deg lead bound it held 23.2 rad/s against an
-  # 11.8 no-load, which is the unwind regime of control/steer.py's rock test.
-  # `duty` builds it as a kp-only position actuator plus kv as joint damping,
-  # native MuJoCo, no per-step hook. `total` is kept so a pre-2026-09-21
-  # policy's training plant can still be built. Moves plant_digest, on purpose.
+  # Where the torque limit sits. The firmware clips the duty, then the motor
+  # subtracts its back-EMF:
+  #   duty:  tau = clip(kp*err, +-stall) - kv*w   (the real servo, mode 4)
+  #   total: tau = clip(kp*err - kv*w, +-stall)   (MuJoCo's native clip)
+  # They differ once the P term saturates: `total` let the steer reach
+  # 23.2 rad/s against an 11.8 no-load. `duty` builds a kp-only position
+  # actuator plus kv as joint damping. `total` is kept so a pre-2026-09-21
+  # policy's training plant can still be built.
   steer_clip: duty
-  # Frame that computes a steer goal -> the servo's own reference moving:
-  # 4.0 ms on both XC330s in mode 4 (servo-measurements.yaml,
-  # `xc330_command_delay`), the XC430's method, bus and landing included.
-  # FRAME-QUANTISED -- the true value lies in (2, 4] ms -- and the same figure
-  # the XC430 overlay carries. Built as MuJoCo's native actuator delay, so no
-  # per-step hook; mj_resetData clears the history.
+  # Frame that computes a steer goal -> the servo's reference moving: 4.0 ms on
+  # both XC330s in mode 4 (servo-measurements.yaml, `xc330_command_delay`),
+  # frame-quantised, so the true value is in (2, 4] ms. MuJoCo's native
+  # actuator delay.
   steer_command_delay_s: {value: 0.004, source: measured}
 
 control:
@@ -708,202 +510,109 @@ control:
   # Both are merged in by params.load_params().
   rate_hz: 200          # controller update rate; zero-order hold between updates
   moves_dir: moves      # optimized maneuver files (moves/<name>.yaml); see optimize_flick.py
-  # general_rl_smooth_diff_pi since 2026-08-25. general_rl DOES NOT REVERSE,
-  # which is why this pointer was flagged as needing a change for four status
-  # snapshots. It was never the one-line fix it was called: params_digest used
-  # to hash the whole file, so editing a policy NAME invalidated the deploy
-  # bundle and every trained export. After the plant/design split it moves
-  # neither digest, and this is finally free to change.
-  #
-  # 11M steps against the 4e-4 timestep and the velocity-PI servo. Better on
-  # track (0.832 vs 0.763) and vel_err (0.123 vs 0.291), and speed_ratio_rev
-  # 0.992 -- it actually reverses. WORSE on heading error, 26.9 deg against
-  # 2.5, on an eval grid that also changed. Not a free upgrade; if heading
-  # accuracy matters more than reverse for some job, general_rl is still there.
-  #
-  # Same obs/act contract as general_rl: obs_pitch/obs_wings/act_wings all off,
-  # 50 Hz, `full` action space, v_max 1.2. A drop-in.
-  #
-  # 2026-08-28: REPOINTED to general_rl_odo_ahrs. The pointer now tracks the
-  # BIKE rather than the simulator, which is the decision that had been open
-  # for five snapshots. general_rl_smooth_diff_pi is trained on MuJoCo truth
-  # and does not survive the sensors the bike will actually have -- 0.20 of the
-  # eval grid with a TM151 attitude, 0.15 with the onboard velocity estimate,
-  # against 1.00 on truth. general_rl_odo_ahrs trained against both and holds
-  # 1.00 (0.95 at the measured tau).
-  #
-  # smooth_diff_pi is NOT retired: it is the CEILING REFERENCE, 0.808 / 1.00 on
-  # truth, which is what "how much is on the table if the sensing were perfect"
-  # costs to know. Keep the number, retire the pointer. `--general
-  # general_rl_smooth_diff_pi` still gets it for one session.
-  #
-  # It moves NEITHER digest (measured) and moves nothing in the test suite
-  # (measured, 23/210 both ways).
-  #
-  # 2026-09-14: REPOINTED to general_rl_cmd_curriculum2b, the command-family
-  # curriculum line. It was chosen on 2026-09-11 and never landed: the session
-  # making the edit stopped on a digest scare, and only teleop's `--general`
-  # default moved, to seed 0 (curriculum2) instead. Sensor-trained like
-  # odo_ahrs (odometry counts + TM151 at tau 0.19), plus obs_pitch.
-  # docs/plans/seed-sweep-and-personalities.md: personality1, bit-identical to
-  # it, is the best of 12 seeds on every behaviour axis -- drives forward and
-  # reverse, finishes every heading command, holds station -- while `_score`
-  # ranks it 8th, because the score cannot see direction.
-  #
-  # Moves NEITHER digest that anything checks, measured: plant_digest stays
-  # e1ec36bfa670217e, design_digest 2db6c647ff3a2d59. Only the legacy
-  # whole-file params_digest moves (e1c0d88 -> 76e36770), and deploy/bundle.npz
-  # is judged on the two above -- hw.state.load_bundle accepts it unchanged.
-  #
-  # 2026-10-16: REPOINTED to general_puffer_fixes_72M, the GPU-trained MinGRU
-  # policy, and the first default trained on today's plant (plant_digest
-  # bc66ca20; general_rl_smooth_temporal was 9953690d). Sensor-trained
-  # (tm151_filter, odometry counts) on the detailed drivetrain. Retired moves
-  # live in moves/archive/ and still load by bare name.
-  general_move: general_puffer_fixes_72M    # which always-on policy teleop drives with, as
-                        #   moves/<name>.{yaml,npz}. Point it at a second
-                        #   export (e.g. general_rl_prev) to A/B two trained
-                        #   policies without renaming files; `run_drive
-                        #   --general NAME` overrides it for one session.
+  # The always-on general policy teleop and the bike drive with, as
+  # moves/<name>.{yaml,npz}; retired moves in moves/archive/ load by bare name.
+  # `run_drive --general NAME` overrides it for one session. Changing it moves
+  # neither digest. Why each pointer was chosen is in docs/status.md and the
+  # DEVLOG.
+  general_move: general_puffer_fixes_72M
   drive:
-    # The speed cap teleop and the bike's command path clamp to (the
-    # analytic controllers' other drive settings: config/studies/).
+    # The speed cap teleop and the bike's command path clamp to.
     v_max: 1.2          # m/s; ~70% of the 1.7 no-load ceiling (torque margin)
 
 righting:
-  # THE BIKE'S RIGHTING: `module`, the V2 diamond four-bar with its blades,
-  # and `rollcage`, its roof. The older study mechanisms (roof, bumpers,
-  # arm, wing pairs) are config/studies/righting_mechanisms.yaml.
+  # The bike's righting: `module`, the V2 four-bar with its blades, and
+  # `rollcage`, its roof. The study mechanisms are
+  # config/studies/righting_mechanisms.yaml.
   rollcage:
-    # THE V2 BIKE'S ROOF (2026-10-19), built in place of `roof` whenever the
-    # righting module is (the default bike); `roof` (config/studies/) stays
-    # for the older studies, whose wings it is derived around. Same contact geom
-    # (`roof`), same job.
-    #
-    # It models two rollcage rings (cad.bike_v2.rollcage: 270 deg, outer
-    # radius 68.7 = the blades' widest at rest, axis 100 mm above the rear
-    # axle, at the two ends), their elliptical half-dome caps (50 deep, tips
-    # at x -50 and +250.5) and the flexible sheet between them, as ONE
-    # CAPSULE: the rings' radius, its hemispherical tips put on the caps'.
-    # Where that is off: 2.6 mm inside the rings at their own stations (a
-    # hemisphere is fuller than the 50-deep caps everywhere else), and closed
-    # across the rings' 90 deg opening at the bottom -- which faces the floor
-    # only while the wheels carry the bike.
+    # The v2 rollcage (cad.bike_v2.rollcage): two 270 deg rings, outer radius
+    # 68.7 mm (the blades' widest at rest), axis 100 mm above the rear axle, with
+    # elliptical half-dome caps (50 deep, tips at x -50 and +250.5 mm) and a
+    # flexible sheet between them, modelled as one capsule. It sits 2.6 mm inside
+    # the rings at their own stations, and is closed across the rings' 90 deg
+    # opening at the bottom, which faces the floor only while the wheels carry
+    # the bike. The contact geom is named `roof`.
     radius: {value: 0.0687, source: design}
     height: {value: 0.100, source: design}       # its axis, above the rear axle
     x_start: {value: 0.0187, source: design}     # -0.050 + radius
     x_end: {value: 0.1818, source: design}       # 0.2505 - radius
-    # A SHELL's inertia (MuJoCo's shell inertia), not a solid's: the mass is
-    # all out at the radius, which the roll inertia feels.
+    # A shell's inertia, not a solid's: the mass sits at the radius.
     mass:
       cages: {value: 0.0685, source: GUESS}   # 2 x 34.3, CAD printed estimate
       caps: {value: 0.1085, source: GUESS}    # 2 x 54.2, CAD printed estimate
-      # The caps will be lighter (user, 2026-10-21): their design is not
-      # done. Left at the CAD's until it is.
-      # Not in the CAD. 0.5 mm polycarbonate over 270 deg of the groove's
-      # 66.2 radius, ~185 long: 35 g. Material and thickness both assumed.
+      # The caps will be lighter once designed (2026-10-21); the CAD's until then.
+      # The sheet is not in the CAD: 0.5 mm polycarbonate over 270 deg of a 66.2
+      # radius, ~185 long. Material and thickness both assumed.
       sheet: {value: 0.035, source: GUESS}
   module:
-    # V2, THE RIGHTING MODULE THE BIKE IS BUILT WITH: the diamond four-bar as
+    # The V2 righting module, built by default: the diamond four-bar as
     # aow_sim.cad.righting draws it (one crankpin, one wing rod), the blades of
-    # `blade_file` -- V3 since 2026-10-14 (user: "v3 wing should also be the
-    # default now for teleop and training"; the CAD already drew it), V2's
-    # config/linkage/righting_blade.yaml before -- the XC330 in current-based
-    # position mode. build_model builds it
-    # unless asked for another mechanism (or swing_linkage=False, the wingless
-    # bike every export before 2026-10-09 trained on).
+    # `blade_file` (V3 since 2026-10-14), and an XC330 in current-based position
+    # mode. swing_linkage=False builds the wingless bike every export before
+    # 2026-10-09 trained on.
     #
-    # The geometry is NOT copied here. `linkage_cad` names the CAD's own config,
-    # whose `linkage.config` at `linkage.scale` is the four-bar, and
-    # params.resolve_righting_module inlines it and the blade outline into the
-    # loaded params -- so plant_digest moves when either file does, and the sim
-    # and the CAD cannot drift apart.
+    # The geometry is not copied here: `linkage_cad` names the CAD's own config
+    # and `blade_file` the blade outline, and params.resolve_righting_module
+    # inlines both, so plant_digest moves when either file does.
     linkage_cad: {value: config/cad/righting_cad.yaml, source: design}
-    blade_file: {value: config/linkage/blade_v3.yaml, source: design}   # V3; V2 is config/linkage/righting_blade.yaml
-    # The couplers' mid-plane on the wing rod, ahead of the rear axle: the
-    # CAD's (the sim's wheelbase is the CAD's 200.5 since 2026-10-19).
+    blade_file: {value: config/linkage/blade_v3.yaml, source: design}   # V2 is config/linkage/righting_blade.yaml
+    # The couplers' mid-plane on the wing rod, ahead of the rear axle (the CAD's).
     # Module-frame fore/aft positions below are relative to it.
     station_x: {value: 0.1205, source: design}
-    # MASSES, all GUESS: printed parts at 1.07 g/cm3, 2 perimeters / 15 %
-    # infill (cad.servo_mount.printed_mass), steel at 7.85, from the CAD
-    # check's per-part volumes (traces/righting_check.txt, 2026-10-07);
-    # UNCALIBRATED, nothing printed. `at`: the group's centroid in the module
-    # frame, mm -- [out (+ = the right wing's side), up from the wing rod,
-    # fore] -- from the CAD sections, ignoring holes. Weigh the parts.
+    # Masses, all GUESS: CAD volumes (traces/righting_check.txt, 2026-10-07) as
+    # printed parts (cad.servo_mount.printed_mass) and steel at 7.85 g/cm3.
+    # Nothing weighed. `at`: the group's centroid in the module frame, mm --
+    # [out (+ = the right wing's side), up from the wing rod, fore].
     crank:     # both half cranks, horn hub, steel crankpin, washer
       mass: {value: 0.0112, source: GUESS}
     coupler:   # each
       mass: {value: 0.0023, source: GUESS}
-    wing_hub:  # each: rocker + knuckle + printed stub + steel rocker pin
+    wing_hub:   # each: rocker + knuckle + 2 printed stubs + steel rocker pin
       mass: {value: 0.0149, source: GUESS}
       at: [31.0, 17.1, -3.3]
-    blade:     # each, from its outline x span (660 mm2 x 82 mm), 2 perim / 15 %
-      mass: {value: 0.0286, source: GUESS}
-    # FIXED to the chassis, so not a moving mass: since 2026-10-19 one entry
-    # per part from the v2 evals (traces/bike_v2_cad/), `at` in the module
-    # frame like the groups above (mm), `size` full extents in the chassis
-    # frame [fore, across, up] (a cylinder: [radius, length]); the XC330 is
-    # `servo_case`. Was one 64.1 g box 19 mm behind the rod, the servo in it
-    # -- the servo sits 44 mm behind it.
+    blade:   # each
+      mass: {value: 0.0286, source: GUESS}   # V2's; the blade file's own mass wins (V3: 38.8 g)
+    # Fixed to the chassis, one entry per part from the v2 evals
+    # (traces/bike_v2_cad/): `at` in the module frame (mm), `size` full extents
+    # in the chassis frame [fore, across, up] (a cylinder: [radius, length]).
     fixed:     # printed parts at their CAD centroids; the steel wing rod a cylinder along the bike
       bulkhead: {mass: {value: 0.0054, source: GUESS}, at: [0.0, 22.6, 18.5], size: [0.01, 0.0247, 0.0588]}
       bridge: {mass: {value: 0.0066, source: GUESS}, at: [0.0, 53.6, 0.0], size: [0.047, 0.0344, 0.01]}
       lower_case: {mass: {value: 0.0116, source: GUESS}, at: [0.0, 20.0, -24.7], size: [0.0307, 0.0247, 0.0588]}
       upper_case: {mass: {value: 0.0078, source: GUESS}, at: [0.0, 19.0, -51.2], size: [0.0223, 0.0281, 0.051]}
       wing_rod: {mass: {value: 0.0104, source: GUESS}, at: [0.0, 0.0, 0.0], size: [0.003, 0.047], type: cylinder}
-    # The crank's XC330 case, mass from servos.xc330_t181 (datasheet).
-    # Module frame like `at` above (mm); `size` chassis-frame, shaft fore.
+    # The crank's XC330 case (its mass from servos.xc330_t181). `at` in the
+    # module frame (mm); `size` in the chassis frame, shaft forward.
     servo_case:
       at: [0.0, 17.6, -44.2]
       size: [0.023, 0.020, 0.034]
-    # The crank servo: the four-bar's own `limits.torque_nm` caps it, as for
-    # every swing-linkage config (build_model._add_swing_linkage).
+    # The crank servo; the four-bar's own `limits.torque_nm` caps it
+    # (build_model._add_swing_linkage).
     servo: xc330_t181
-    # Its position gains AT THE CRANK (N = 1: the servo drives the crank
-    # directly), the XC330's own firmware gains as the study arm's
-    # derivation gives them (k = 0.83; config/studies/righting_mechanisms.yaml,
-    # righting.arm). They and onboard.yaml's `righting` registers must move
-    # together, or the bike and the sim run different servos.
+    # Its position gains at the crank (the servo drives the crank directly): the
+    # XC330's firmware gains through the righting arm's derivation (k = 0.83;
+    # config/studies/righting_mechanisms.yaml, righting.arm). They and
+    # onboard.yaml's `righting` registers must move together.
     servo_kp: 1.48
     servo_kv: 0.0473
-    # The XC330's rotor + gearbox inertia seen at the crank. Nothing in the
-    # model carried one, and V2's crank alone is 2.5e-6 kg m2 (the wings reach
-    # it only through the loop's soft constraints), so the bare position
-    # actuator rang at 1200-1300 deg/s holding any angle but stow. >= 1e-5
-    # stops that; the value is the ORDER of the XC430's measured 2.2e-3 at its
-    # shaft (drivetrain_model.servo.rotor_inertia), for the smaller motor.
-    # Effect on the firmware model's full-rate stroke (0 -> 110 deg, bike held):
-    # 1e-4 0.183 s, 1e-3 0.194 s, 2e-3 0.210 s. Dies at: a crank coast-down,
-    # as drivetrain_fit.py coast did the XC430.
-    # MEASURED 2026-10-17 (was 1e-3, GUESS): the bare righting XC330's own
-    # sine sweep in mode 4, fitted as actuators.steer_armature (same servo
-    # model, same value -- see the note there). The crank is on the horn, so
-    # the rotor inertia IS the crank's.
+    # The XC330's rotor + gearbox inertia at the crank, measured 2026-10-17: the
+    # bare righting XC330's own sine sweep in mode 4, the same fit and value as
+    # actuators.steer_armature. The crank is on the horn, so the rotor inertia is
+    # the crank's. Without one the position actuator rang at 1200-1300 deg/s.
     crank_armature: {value: 5.5e-4, source: measured}
-    # THE LINKAGE'S OWN FRICTION, referred to the crank, ON TOP OF the XC330's
-    # gearbox friction (servos.xc330_t181, which the crank already carries):
-    #     f(theta) = linkage_friction_nm + linkage_friction_q2 * theta^2  [N m]
-    # theta = crank travel from stow [rad]. RIGHTING ONLY -- the steer is a
-    # different joint with its own headset term and does not see this.
+    # The linkage's own friction referred to the crank, on top of the XC330's
+    # gearbox friction (righting only; the steer has its own headset term):
+    #   f(theta) = linkage_friction_nm + linkage_friction_q2 * theta^2  [N m]
+    # theta = crank travel from stow [rad].
     #
-    # Measured 2026-10-17, V2 as built: stubs only, no blades, unloaded,
-    # clamped so nothing touches, horn screwed (analysis/mechanism/righting_sweep.py,
-    # traces/righting_sweep/). Present Current -> crank torque by this file's
-    # own laws: motor 0.83 x (I - 16.5 mA), less running gearbox friction
-    # 0.15 x load + 5.7 mN m; the half-difference of the two directions, so
-    # gravity and offsets cancel. Pooled over ramps of 15-120 deg/s at 28-37 C:
-    # rms 8 mN m against 19 for a constant; no trend with speed (one 240 deg/s
-    # run read +21 mN m, unexplained). Breakaway needs no separate curve: this
-    # plus the gearbox's STATIC law predicts 115 / 181 / 232 mA at 0 / 90 /
-    # 120 deg against 110-130 / 160-230 / 160-250 measured.
-    #
-    # The rise toward the ends is both wings' transmission angle falling
-    # together (73 deg at stow, 30 at 129: they share crankpin and rod, so the
-    # two are equal). NOT in the curve: a ~15 mN m bump at crank -60 (the right
-    # wing's folded toggle; the left's at +60 shows none -- a joint on that
-    # side), friction rising ~20 % with temperature over the session, and
-    # whatever the bike's weight adds to the pin loads (unloaded here).
-    # Re-measure after the full assembly; a cold repeat after a 5 min break-in
-    # read ~30 % HIGHER near stow (one run, after a re-assembly).
+    # Measured 2026-10-17 on V2 as built: stubs only, no blades, unloaded
+    # (analysis/mechanism/righting_sweep.py, traces/righting_sweep/). Present
+    # Current -> crank torque by this file's motor and gearbox laws, half the
+    # difference of the two directions so gravity cancels; ramps of 15-120 deg/s
+    # at 28-37 C, rms 8 mN m. The rise toward the ends is the transmission angle
+    # falling (73 deg at stow, 30 at 129). Not in it: a ~15 mN m bump at crank
+    # -60, a ~20 % rise with temperature, and the bike's weight on the pins.
+    # Re-measure on the assembled bike; a cold repeat read ~30 % higher near
+    # stow (one run).
     linkage_friction_nm: {value: 0.051, source: measured}
     linkage_friction_q2: {value: 0.0147, source: measured}   # N m / rad^2
