@@ -139,8 +139,11 @@ def test_the_split_did_not_move_the_plant_digest():
                           name config/cad/ and config/linkage/, and the
                           `source:` notes name the cad/ modules by their
                           new package path (aow_sim.cad.<name>)
+        6c0ad5cd33676eb5  2026-10-21  weighed by item: bike.chassis.mass (the
+                          cables and fasteners) 30 GUESS -> 61 g measured,
+                          bike.frame_parts.drive_belt_* 4 GUESS -> 15 g each
     """
-    assert plant_digest(load_params()) == "28946489e64c05de"
+    assert plant_digest(load_params()) == "6c0ad5cd33676eb5"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

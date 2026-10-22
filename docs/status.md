@@ -59,7 +59,8 @@ runs, the righting's fixed block its five parts (`bike.frame_parts`,
 `righting.module.fixed`); cosmetics to replace them are next. 1248 -> 1104 g, CoM (86.8, 0.0,
 66.4) -> (87.3, 0.5 left, 60.4) mm from the rear axle; inertia about the CoM
 UP despite the lighter bike (roll/pitch/yaw 2.97/6.25/4.34 -> 3.37/7.43/5.73
-e-3 kg m2), the 212 g rollcage at the radius. The power board weighed 16 g
+e-3 kg m2), the 212 g rollcage at the radius. Then (10-21) the cables, fasteners and belts
+weighed by item: 1104 -> 1157 g, CoM (87.3, 0.5, 60.4) -> (86.1, 0.5, 60.0). The power board weighed 16 g
 (was 56 GUESS). What moves is untouched: drive inputs, steer, wheels,
 the righting four-bar (its wing hubs read 11.5 g in the v2 CAD against 14.9
 listed). `bike_params_cad.yaml` is retired in practice (user): nothing in
@@ -166,14 +167,15 @@ The 15 registered reds are all the deprecated LQR and are only judged under
 `pytest -m lqr`. `prospective` (the endurance minute, skipped unless named)
 passes on the pointer: 0/18 falls.
 
-**Digests, 2026-10-21**: `plant_digest` 28946489e64c05de -- NO physics change
-from 0c0518e9 (the v2 bike as built, 10-19): the config/ reorg moved the
-paths in `righting.module.linkage_cad` / `blade_file` and the cad module
-names in `source:` notes. `design_digest` 5fe8c19379988031 (unchanged).
-`deploy/bundle.npz` re-exported 10-21; against the 10-19 bundle, kept as
-`deploy/bundle_plant-0c0518e9.npz`, only `params_digest` / `plant_digest`
-differ, every gain and fit bit-identical (worst LQR fit over the grid R^2
-0.984). Before 0c0518e9: 7893a119, the steer's kp 2.3 + armature, then
+**Digests, 2026-10-21**: `plant_digest` 6c0ad5cd33676eb5 -- the bike
+weighed by item: `chassis.mass` (cables + fasteners) 30 GUESS -> 61 g
+measured, the drive belts 4 GUESS -> 15 g each; the model is 53 g heavier
+(1157 g whole). `deploy/bundle.npz` re-exported (worst LQR fit R^2 0.985).
+Before it, 28946489e64c05de -- NO physics change from 0c0518e9 (the config/
+reorg moved paths only); its bundle, rebuilt from that commit's params, is
+`deploy/bundle_plant-28946489.npz`. `design_digest` 5fe8c19379988031
+(unchanged). 0c0518e9 is the v2 bike as built (10-19), its bundle
+`deploy/bundle_plant-0c0518e9.npz`. Before 0c0518e9: 7893a119, the steer's kp 2.3 + armature, then
 4b5355ed and bc66ca20; `deploy/bundle_plant-bc66ca20.npz` is untouched. NOT yet on the Pi, whose
 params and bundle are both still bc66ca20 (consistent). `config/ahrs_mount.yaml`
 is the CAD's 45 deg nose-down mount (source: design, pinned equal to
@@ -277,15 +279,16 @@ to V2 with the rest of the configs, for consistency only.
 
 ## The guesses
 
-**32 `source: GUESS` in `config/bike_params.yaml`** (10-19; most are the v2 masses, grouped in the table). Never promote one
+**32 `source: GUESS` lines in `config/bike_params.yaml`** (10-21; most are the v2 masses, grouped in the table). Never promote one
 quietly: promoting is a physical parameter change (the `CLAUDE.md`
 checklist).
 
 | parameter | value | what is known | dies at |
 |---|---|---|---|
-| `chassis.mass` (the residual) | 0.030 kg, spread over the frame parts by mass | fasteners, cables, glue: whatever no entry names | the whole bike, less every listed mass |
+| `chassis.mass` (the residual) | 0.061 kg measured, spread over the frame parts by mass | the cables and 6-32s weighed by item (10-21); the 4-40s and M2s not; the rollcage's and wings' 6-32s not fitted | -- (weighed; recount when the rollcage and wings go on) |
+| **the bike as weighed** (10-21: no blades, battery or rollcage) | 772 g; the model 791 | model 19 g heavy; ~11 g of it the wing hubs' stubs (in the CAD, not fitted) | the printed parts weighed |
 | `frame_parts` printed masses (12 parts) | 7.7-20.7 g each, ~146 g | CAD printed estimate; the batch reads 9 % over its slicer total | `traces/weigh_v2_printed.txt` |
-| `righting.rollcage` mass | 68.5 + 108.5 + 35 g | cages and caps CAD printed estimates; the sheet's material and thickness assumed | weigh them |
+| `righting.rollcage` mass | 68.5 + 108.5 + 35 g | cages and caps CAD printed estimates; the caps WILL be lighter (user, 10-21), their design not done; the sheet's material and thickness assumed | the caps' design, then weigh them |
 | `righting.module` masses (crank, coupler, wing_hub, blade, fixed) | 11.2 / 2.3 / 14.9 / 38.8 / 41.8 g (+ the 23 g XC330 on its own) | CAD check volumes (10-07), 2 perimeters / 15 % infill, steel pins | weigh the printed parts |
 | `fork_mass` + `front_wheel.mass` | 0.025 + 0.060 kg | **86 g together** (09-30), not split | a scale |
 | `front_wheel.crown_radius` | 80 mm | the real tread is a 10 mm flat; the crown stands in for the tire flattening under load | the dial test repeated with the wheel tilted 1-2 deg |
