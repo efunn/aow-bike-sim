@@ -17,7 +17,7 @@
 # pass straight through: `bench --torque`, `run --no-link --seconds 60`,
 # `bench --tag steer_check`.
 #
-# THE U2D2 PORT. run_bike defaults to control.onboard.dxl_port, a by-id path
+# THE U2D2 PORT. run_bike defaults to config/onboard.yaml's dxl_port, a by-id path
 # naming ONE adapter's serial. If that adapter is not the one plugged in and
 # exactly one FTDI adapter is, this passes that one as --port and says so.
 # Two adapters, or none, and it leaves run_bike to complain. `--port` given
@@ -72,8 +72,8 @@ port_fallback() {
   local want got
   want="$(python - <<'PY'
 import yaml
-p = yaml.safe_load(open("config/bike_params.yaml"))
-print(p["control"].get("onboard", {}).get("dxl_port", ""))
+p = yaml.safe_load(open("config/onboard.yaml"))
+print(p.get("dxl_port", ""))
 PY
 )"
   got="$(ssh ${SSH_OPTS[@]+"${SSH_OPTS[@]}"} "$PI" "test -e '$want' && echo present; ls /dev/serial/by-id/ 2>/dev/null | grep -i ftdi || true")"

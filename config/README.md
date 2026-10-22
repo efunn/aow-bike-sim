@@ -6,7 +6,8 @@ the full history; this index only says what each file is FOR.
 
 | folder | holds |
 |---|---|
-| `config/` | the plant: `bike_params.yaml` (every physical number, `source:` on each), `ahrs_mount.yaml` |
+| `config/` | the plant: `bike_params.yaml` (the bike in its current form, what trains and renders it; `source:` on every physical number), `ahrs_mount.yaml`; `onboard.yaml` (the Pi's devices, servo ids and registers; merged in at `control.onboard`) |
+| `studies/` | blocks that are not the current bike, merged in by `load_params` at their old paths and left out of `plant_digest`: `analytic_control.yaml` (PD, LQR, its drive, flip, pivot), `righting_mechanisms.yaml` (the never-built roof, bumpers, arm, wing pairs), `test_rigs.yaml` (testbed, training wheels), `ball.yaml` (the ball move) |
 | `rl/` | training configs, one per run lineage; `rl_<move>.yaml` is that move's default (`scripts/rl.sh`, the envs) |
 | `cad/` | inputs to `python -m aow_sim.cad.<name>`, and `onshape.yaml` (document and tab ids) |
 | `linkage/` | righting-mechanism geometry the model, teleop and CAD load |

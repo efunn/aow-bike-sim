@@ -33,7 +33,7 @@ import re
 from math import cos, radians, sin
 from pathlib import Path
 
-from ..params import DEFAULT_PARAMS, load_params
+from ..params import DEFAULT_PARAMS, load_params, load_raw_params
 
 CAD_PARAMS = "config/cad/bike_params_cad.yaml"
 # The 75 mm-envelope solve, not the 120 mm one the sim still builds.
@@ -103,9 +103,7 @@ def load_sources(path=None) -> dict:
     and exactly what this one must not lose. So values come from the normalized
     tree and provenance from the raw one.
     """
-    import yaml
-    with open(path or DEFAULT_PARAMS) as f:
-        return yaml.safe_load(f)
+    return load_raw_params(path)
 
 
 def src(raw: dict, dotted: str, default: str = "design") -> str:

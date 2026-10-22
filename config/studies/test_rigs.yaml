@@ -1,0 +1,15 @@
+# TEST RIGS, not the bike: the wheel on a stand (build_model variant=
+# "testbed": the drivetrain tests) and the training-wheel outriggers
+# (training_wheels=True: tests only). Moved out of bike_params.yaml
+# 2026-10-21; params.load_params() merges them back in at the same keys.
+
+testbed:
+  # Wheel-only system-ID rig: AOW + input shafts on a stand fixed to the world.
+  stand_clearance: 0.02   # axle height = outer_radius + this; >0 spins freely in air, 0 touches floor
+
+training_wheels:
+  # Optional outriggers for development/tests (not a physical part).
+  half_span: 0.10       # lateral distance from chassis centerline
+  radius: 0.008
+  pos_x: 0.06           # forward of rear axle
+  clearance: 0.002      # gap above floor when upright, so they never carry standing load

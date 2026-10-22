@@ -19,6 +19,21 @@ from pathlib import Path
 import yaml
 
 DEFAULT_PARAMS = Path(__file__).resolve().parents[2] / "config" / "bike_params.yaml"
+# The bike's onboard settings (servo ids, devices, registers), merged in at
+# control.onboard; and the studies' blocks (analytic controllers, never-built
+# righting mechanisms, test rigs, the ball move), merged in at their own
+# paths. Neither is the bike in its current form, which is all
+# bike_params.yaml holds since 2026-10-21. Both sit beside the DEFAULT file,
+# and are merged into any params file loaded.
+ONBOARD_PARAMS = DEFAULT_PARAMS.parent / "onboard.yaml"
+STUDIES_DIR = DEFAULT_PARAMS.parent / "studies"
+# Every path the studies files hold, outside `control` (already out of the
+# plant): plant_digest drops them, so editing a study never reads as a
+# different bike. tests/test_params_files.py pins this against the files.
+STUDY_PATHS = (("testbed",), ("training_wheels",), ("hockey",),
+               ("righting", "bike_width"), ("righting", "bike_height"),
+               ("righting", "roof"), ("righting", "bumper"),
+               ("righting", "arm"), ("righting", "wings"))
 
 
 def _normalize(node):
@@ -252,13 +267,42 @@ def blade_points(outline, segments: int = BLADE_CURVE_SEGMENTS) -> list:
     return out[-1:] + out[:-1]
 
 
+def _merge(base: dict, extra: dict) -> dict:
+    """Deep-merge `extra` into `base` (in place); `extra` wins on a leaf."""
+    for k, v in extra.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
 def load_params(path: str | Path | None = None,
-                blade: str | Path | None = None) -> dict:
+                blade: str | Path | None = None,
+                studies: bool = True) -> dict:
     """`blade`: another righting blade file in place of the module's own
-    (resolve_righting_module) -- a different plant, so a different digest."""
+    (resolve_righting_module) -- a different plant, so a different digest.
+
+    The onboard file is merged in at control.onboard and, unless
+    `studies=False`, every config/studies/*.yaml at its own paths. False is
+    the bike alone: what the default model must build from."""
+    return resolve_righting_module(
+        derive_righting(_normalize(load_raw_params(path, studies))), blade)
+
+
+def load_raw_params(path: str | Path | None = None, studies: bool = True) -> dict:
+    """The merged tree as written -- `{value:, source:}` wrappers kept, nothing
+    derived -- for readers that want a parameter's provenance or the onboard
+    registers verbatim."""
     with open(path or DEFAULT_PARAMS) as f:
-        return resolve_righting_module(
-            derive_righting(_normalize(yaml.load(f, Loader=_Loader))), blade)
+        p = yaml.load(f, Loader=_Loader)
+    if ONBOARD_PARAMS.exists():
+        p.setdefault("control", {})["onboard"] = yaml.load(
+            ONBOARD_PARAMS.read_text(), Loader=_Loader)
+    if studies:
+        for f in sorted(STUDIES_DIR.glob("*.yaml")):
+            _merge(p, yaml.load(f.read_text(), Loader=_Loader) or {})
+    return p
 
 
 def params_digest(params: dict) -> str:
@@ -281,7 +325,8 @@ def _hash(obj) -> str:
 
 
 def plant_digest(params: dict) -> str:
-    """Hash of the BIKE: every top-level key except `control`.
+    """Hash of the BIKE: every top-level key except `control`, and less the
+    studies' blocks (STUDY_PATHS) since 2026-10-21.
 
     Answers "was this trained or derived against the machine I am now running?"
     -- the only question a trained policy can be asked, because nothing under
@@ -299,7 +344,18 @@ def plant_digest(params: dict) -> str:
 
     See docs/plans/params-digest-split.md.
     """
-    return _hash({k: v for k, v in params.items() if k != "control"})
+    bike = {k: v for k, v in params.items() if k != "control"}
+    for path in STUDY_PATHS:              # the studies' blocks: not the bike
+        node = bike
+        for k in path[:-1]:
+            node = node.get(k) if isinstance(node, dict) else None
+        if isinstance(node, dict) and path[-1] in node:
+            if node is bike:
+                bike.pop(path[-1])
+            else:                         # copy on the way down, never mutate
+                bike[path[0]] = node = {**bike[path[0]]}
+                node.pop(path[-1])
+    return _hash(bike)
 
 
 # The control fields the LQR gain design actually reads -- linearize.py:145

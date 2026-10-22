@@ -182,8 +182,7 @@ def onboard_ports() -> tuple:
     """`control.onboard.{dxl,ahrs}_port` -- the bike's by-id paths, same USB."""
     try:
         import yaml
-        cfg = yaml.safe_load((ROOT / "config" / "bike_params.yaml").read_text())
-        ob = cfg["control"]["onboard"]
+        ob = yaml.safe_load((ROOT / "config" / "onboard.yaml").read_text())
         return ob.get("dxl_port"), ob.get("ahrs_port")
     except Exception:                        # noqa: BLE001 -- a default, not a rule
         return None, None

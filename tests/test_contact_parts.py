@@ -142,8 +142,15 @@ def test_the_split_did_not_move_the_plant_digest():
         6c0ad5cd33676eb5  2026-10-21  weighed by item: bike.chassis.mass (the
                           cables and fasteners) 30 GUESS -> 61 g measured,
                           bike.frame_parts.drive_belt_* 4 GUESS -> 15 g each
+        4327521f0ca7a1cb  2026-10-21  no physics: the studies' blocks (testbed,
+                          training_wheels, hockey, righting's roof / bumper /
+                          arm / wings and their bike_width / bike_height) moved
+                          to config/studies/ and out of the hash
+                          (params.STUDY_PATHS); righting.module gained its own
+                          servo_kp / kv, the wing pair's same numbers. The
+                          default model is bit-identical (test_params_files)
     """
-    assert plant_digest(load_params()) == "6c0ad5cd33676eb5"
+    assert plant_digest(load_params()) == "4327521f0ca7a1cb"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

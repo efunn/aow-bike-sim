@@ -1,0 +1,243 @@
+# THE BIKE'S ONBOARD SETTINGS: the Pi's devices, servo ids and registers,
+# the AHRS reader, the loop. Read by aow_sim.hw (run_bike, bike_bus, ...),
+# scripts/bike.sh and the bench tools, never by the simulator: nothing here
+# can reach a trained policy or a designed gain, and it moves NEITHER digest.
+# It changes with the hardware (a new servo, adapter or id), not the plant.
+#
+# params.load_params() merges it in at control.onboard, so code reads it as
+# params["control"]["onboard"]. Moved out of bike_params.yaml 2026-10-21.
+
+# WHERE THE TWO USB DEVICES ARE. `/dev/serial/by-id/` paths, not
+# `ttyUSB0`/`ttyACM0`: those are enumeration-order and would swap the
+# moment a second FTDI device appeared on the bus, which on this bike
+# means the AHRS reader opening the servo bus. The by-id name carries the
+# FTDI serial (FTB8HNE3) and the STM32's, so it is wrong loudly rather
+# than quietly.
+#
+# Here rather than only on the command line because they never change and
+# typing them every run is how `--no-preflight` ends up in the muscle
+# memory too. `--port` and `--ahrs-port` still override for one session,
+# which is what a swapped cable or a second U2D2 wants.
+dxl_port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTB8HNE3-if00-port0
+ahrs_port: /dev/serial/by-id/usb-STMicroelectronics_STM32_Virtual_ComPort_338139793235-if00
+# WHICH WAY EACH DRIVE SERVO TURNS for a positive input-shaft rotation.
+# MEASURED 2026-09-13 on the assembled rear drivetrain and recorded as
+# `signs.servo_sign_turning_hub_forward` in
+# docs/measurements/drivetrain-measurements.yaml: both horns face outboard,
+# so servo B is mirrored.
+#
+# THE MEASUREMENT EXISTED FOR FOUR DAYS AND NOTHING READ IT.
+# `analysis/servo/drivetrain_bench.py` defaults to `--signs 1 -1` and has always
+# been right; `hw/dynamixel.py` and `hw/odometry.py` assumed [1, 1], which
+# swaps the two modes outright -- a commanded common mode reaches the
+# hardware as a differential, and a real forward roll reads as pure roller
+# motion with v_lon near zero. Caught on the bench by rolling the wheel
+# forward by hand and watching the two servos report equal and OPPOSITE:
+# turned_a +13.962, turned_b -13.958, hub 0.002 rad. Signed, the same
+# numbers give hub 13.96 rad (2.22 turns) and ring 0.002.
+#
+# In `control.onboard` rather than `drivetrain:` on purpose. It is a fact
+# about the servo frame, and the simulator has no servos -- its drive
+# actuators act on the input shafts directly -- so no trained policy can
+# see it and it moves NEITHER digest. `BikeBus` is the only consumer,
+# because it is the only boundary between the two frames.
+servo_sign: [1, -1]
+# WHICH WAY THE STEER SERVO TURNS for a positive steer joint (the model's
+# +steer is LEFT: counter-clockwise seen from above, about the raked axis).
+# Observed 2026-10-21 on the assembled bike: steering left by hand showed
+# the mirror's wheel turning right, and with -1 it turns left. A
+# Dynamixel's positive is counter-clockwise seen FROM THE HORN, so -1 fits
+# a horn facing down onto the headset (steering-design.md; inferred, not
+# checked on the bike). Same story as servo_sign: the gap had
+# no sign at all, so read and command were both mirrored -- a policy told
+# to steer into a lean would have steered out of it. Applied in BikeBus
+# only, so it moves neither digest.
+steer_sign: -1           # source: measured -- hand-steer vs the mirror
+# The three servos the policy drives: drive_a, drive_b, steer. `--ids`
+# overrides for one session.
+#
+# 101-103, NOT 1-3. A Dynamixel ships as ID 1, so ID 1 on a bus means "a
+# servo nobody has configured" and is exactly the thing a bring-up should
+# refuse to talk to rather than assume. Numbering from 101 makes an
+# unconfigured unit inert instead of ambiguous. This block had no
+# `servo_ids` entry at all until 2026-09-16, so `run_bike` fell through to
+# its (1, 2, 3) default and every bench run died on
+# `read id=1 Model Number: rc=-3001`.
+servo_ids: [101, 102, 103]
+# Dynamixel id of the self-righting servo, or omit it for a three-servo
+# bench. It rides in the same SyncRead/SyncWrite as the other three but is
+# driven BY HAND, not by the policy -- four training runs established the
+# general policy should not drive the wings (docs/plans/self-righting.md).
+righting_id: 104        # was 4, which matched no servo on this bus
+# Goal Current(102) on the righting servo, in RAW REGISTER COUNTS, written
+# at every startup for the same reason the gains are: it is RAM, and it
+# comes up at Current Limit(38) -- 910 on this XC330-T181, i.e. no cap.
+# Uncapped current-based position mode is position mode with extra steps,
+# and the whole reason the righting servo runs in mode 5 is that it can be
+# driven into the floor and stall instead of levering the bike off it.
+#
+# 300 is a PLACEHOLDER, NOT TUNED FOR ANY BUILT MECHANISM. It was sized for
+# the geared single arm (4:1), which was never built; it needs re-deriving
+# for whichever mechanism is, once the bike's mass is known. For the
+# direct-drive swing linkage it is MARGINAL: the loop regulates BUS
+# current, so at stall tau = stall_torque * sqrt(I / stall_current), and 300
+# counts at ~1 mA/LSB is ~0.47 N.m at 12 V (not the 0.27 a phase-current
+# reading gives). In sim that lifts the bike at 12 V and not at 11.1.
+# Sim teleop starts from the linkage config's `limits.torque_nm` (0.55 N.m,
+# 416 counts) instead; see righting_servo.py.
+#
+# COUNTS, not mA, because the two sources disagree: ROBOTIS's e-manual
+# gives ~1 mA/LSB while the vendored model file declares 6.709e-4 with
+# unit_name "N/m". Station C (R6) in first-physical-test.md settles it;
+# until then the register's own number is the honest thing to write down.
+# The operator moves it live with [ and ] -- see hw/ground.py.
+righting_current: 300
+# WHERE THE CRANK'S REST POSE SITS ON THE SERVO, and which way it runs.
+# Read only by the station, to turn a servo angle into a drawn mechanism:
+# crank_travel = (righting_pos - righting_stow_deg) * righting_sign.
+#
+# 180 for the same reason steer_zero_deg is: it puts the servo in the
+# middle of its single-turn range with room to swing +-136.6 deg either
+# way, which is what makes the full co-rotating stroke reachable without
+# winding into extended position. hw/ground.py's STOW_RAD carries the same
+# number as its own default; the terminal station takes --stow-deg and
+# does not read this file.
+#
+# `righting_stow_deg` IS FORCED, not chosen, which is why it is `design`
+# and not a guess: the stroke is +-136.6 deg and the servo has one
+# 0-360 range to do it in, so the rest pose has to sit near the middle.
+# 180 +- 136.6 spans 43.4 .. 316.6 and fits; anything more than ~43 deg
+# off centre runs an end of the stroke off the range and into extended
+# position, where a power cycle loses the turn count. Same argument as
+# steer_zero_deg, and the same number by coincidence rather than by
+# sharing anything.
+righting_stow_deg: 180.0   # source: design -- the only value the range allows
+# WHICH WAY THE CRANK GOES for a positive servo angle. Follows how the
+# motor is installed, so it moves if the module is ever re-packed.
+#
+# Consequence of getting it wrong is small and entirely visual: the render
+# deploys the wings to the wrong side. Nothing flies on it (the station
+# reads it, the bike does not) and neither digest sees it.
+#
+# MEASURED 2026-10-17, V2 module, HORN FACING FORWARD: pushing the RIGHT
+# wing down by hand (torque off) took Present Position UP, -4 -> +114 deg
+# from stow. +1 = positive servo angle deploys the right wing = the
+# linkage's positive travel (side -1, tagged "right" in build_model), as
+# ROBOTIS's CCW-facing-the-horn convention predicts for a forward horn
+# and the crank's +x hinge axis. Flip the horn and this flips.
+righting_sign: 1           # source: measured -- right wing down = +, horn forward
+# The safety cut. NOT a recoverability boundary -- there is no such angle;
+# see FallGuard and analysis/policy/no_return.py. 60 deg is rl_general.yaml's
+# `fall_roll_deg`, i.e. the angle past which the policy never trained.
+# EXPECT TO MOVE IT: a bike that comes to rest on a wing or a wheel at
+# 30-45 deg never reaches 60 and would sit there driving.
+# HOW the AHRS gets its frames. false = the sensor free-runs and pushes
+# Ep_Combo, which is the designed path and what untethered-setup.md
+# specifies. true = ask for each one. Needed only while the unit's output
+# profile has Combo switched OFF, which is flash state and changeable only
+# from the vendor's Windows GUI -- neither the public C library nor the
+# one its own "Generate Code" exports has any setter (checked 2026-09-16).
+# Measured on the real unit at 200 Hz ODR: polled Combo runs at 204 Hz with
+# 4.91 ms mean latency, so it costs the loop nothing if it is ever needed.
+# At 50 Hz ODR it was 50 Hz / 20 ms and would NOT have been usable.
+#
+# FALSE since 2026-09-16: the Combo checkbox was ticked from a WINDOWS
+# machine and this time it stuck. The proof is a power cycle, not a
+# checkbox -- the unit was unplugged from that machine and plugged into
+# the Mac, which cuts its only source of power, and it came up streaming
+# Combo unprompted. Measured on that first plug-in, nothing transmitted to
+# it: cmd 43 at 198.3 Hz, gap mean 5.04 ms / p50 4.98 / p99 5.65 / max
+# 10.05, |accel| 9.872. The earlier attempt from the QEMU/Linux GUI
+# applied live and was gone at the next power cycle.
+#
+# COMBO ONLY now. Listened to passively on the Pi 2026-09-22: cmd 43 at
+# 200.1 Hz and nothing else, 14.6 kB/s. (On 09-16 it also streamed
+# status(22), rpy(35) and raw_gyro_acc_mag(41) at 200 Hz each, 33.7 kB/s,
+# which would not have fit a 460800 UART; those have since been untied.)
+# The FIRST frame after opening the port is the last one from the previous
+# session -- one stale frame per open, device clock 2-21 s behind.
+#
+# Poll mode still works and is the fallback if a unit turns up unconfigured:
+# 199 Hz with the device streaming nothing, 204 Hz alongside other
+# messages. Push measures slightly better (age-at-tick 4.3 ms mean /
+# 9.7 ms max, against 3.3 / 9.4 polled -- both with zero stale raises over
+# 300 ticks).
+ahrs_poll: false
+# Servo-shaft angle, in degrees, at which the front wheel points STRAIGHT
+# AHEAD. Measure once at assembly and write it here; it is a property of
+# how the servo is clamped to the fork and changes only when that does.
+#
+# NO HOMING ROUTINE IS NEEDED and no hard stop or index: the policy observes
+# the steer as sin/cos(2*delta), so it only needs the angle mod pi; the
+# XC330's encoder is absolute within a turn; and steering.gear_ratio is 1.0.
+# The multi-turn count that extended position mode loses at power-up is
+# exactly the part nothing depends on.
+#
+# 180, NOT 0 OR 360. The servo is oriented at assembly so that straight
+# ahead lands mid-range rather than on the wrap, which keeps a small
+# steer either side of centre from crossing 0/4095 in the raw count.
+# Extended position mode makes that mostly academic -- it counts turns
+# rather than wrapping, and the policy only needs the angle mod pi -- but
+# a zero that sits at the boundary is the kind of thing that is free to
+# avoid now and expensive to discover later.
+#
+# NOMINAL. The printed steer (2026-09-30) is assembled straight ahead at
+# 180. Any offset from it is rigging, which the final build will redo,
+# so no measured offset belongs here. A session that wants it exact uses
+# `--steer-zero capture`, which calls the current pose zero.
+steer_zero_deg: 180.0
+cut_roll_deg: 60.0
+# The re-arm pair is control/righting.py's hand-off criterion -- RECOVER_DEG
+# and HANDOFF_RATE -- for the same event, and both come from what
+# analysis/policy/no_return.py measured the policy can recover from (the weaker
+# LEFT side sets the 12). Do not tune these two without re-running that.
+rearm_roll_deg: 12.0        # must be below cut_roll_deg (hysteresis)
+rearm_roll_rate_dps: 171.9  # 3.0 rad/s: inside the window but still moving
+                            #   fast is a bike on its way past, not a hand-off
+rearm_dwell_s: 0.2
+# Firmware gains written at every startup, because Velocity I(76)/P(78) and
+# the position gains are all above address 63 -- RAM -- and return to their
+# power-on defaults on every power cycle. Setting them in Wizard does not
+# persist. The DRIVE entry is normally left out: the policy's own
+# moves/<name>.yaml carries the gain it trained at and that wins. This is
+# the fallback for a policy trained on the ideal drive plant, which has no
+# firmware loop in it and therefore no opinion.
+#
+# THE POSITION ENTRIES ARE THE FACTORY DEFAULTS, written down on purpose.
+# They are not a tuning choice -- they are an ASSERTION. `_configure_servos`
+# only rewrites Operating Mode when it differs, and the position gains only
+# reset when the mode is written, so a servo somebody poked in Wizard comes
+# up with whatever is in it and nothing notices. Listing them makes startup
+# read them back and raise (`_verify_gains`).
+#
+# Roles: drive (both hubs), drive_a, drive_b, steer, righting. A role with
+# no servo behind it is dropped, so this one block serves the three-servo
+# bench too.
+gains:
+  # Extended position mode (4). Factory P900/I0/D0, and D 0 is right here:
+  # the PID output is PWM duty, so the motor's back-EMF droop is still in
+  # the loop and damps it for free. See actuators.steer_kv, which IS that
+  # droop.
+  steer:
+    Position P Gain: 900
+    Position I Gain: 0
+    Position D Gain: 0
+  # Current-based position mode (5). Factory P700/I0/D1400. D IS LOAD
+  # BEARING here and is not a default worth drifting off: commanding
+  # current regulates the back-EMF droop away, so the plant has no damping
+  # of its own and the firmware's D term is all of it.
+  #
+  # I stays 0 on both. The steer has no standing load to integrate against,
+  # and on the righting servo an integrator winds up against the FLOOR at
+  # the end of the stroke -- stored energy in the one place it is least
+  # wanted.
+  #
+  # These map onto the simulator as bike_params.yaml's
+  # righting.module.servo_kp/kv (1.48 / 0.0473 at the servo shaft; the
+  # derivation is written out at righting.arm in
+  # config/studies/righting_mechanisms.yaml), and the two must move together
+  # or the bike and the simulator are running different servos.
+  righting:
+    Position P Gain: 700
+    Position I Gain: 0
+    Position D Gain: 1400

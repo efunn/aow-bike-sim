@@ -69,7 +69,7 @@ from aow_sim.hw.bench_log import (Capture, Segment, git_state,  # noqa: E402
 from aow_sim.hw.dynamixel import (MODE_CURRENT_POSITION,  # noqa: E402
                                   DynamixelBus, IndirectMap,
                                   describe_hardware_error)
-from aow_sim.params import DEFAULT_PARAMS  # noqa: E402
+from aow_sim.params import ONBOARD_PARAMS  # noqa: E402
 
 MODEL = "xc330_t181"
 TEST = "servo_breakaway"
@@ -81,8 +81,7 @@ OFFSET_MA = 50
 
 
 def righting_gains() -> dict:
-    raw = yaml.safe_load(Path(DEFAULT_PARAMS).read_text())
-    g = raw["control"]["onboard"]["gains"]["righting"]
+    g = yaml.safe_load(Path(ONBOARD_PARAMS).read_text())["gains"]["righting"]
     return {"p": int(g["Position P Gain"]), "d": int(g["Position D Gain"])}
 
 

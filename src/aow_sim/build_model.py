@@ -1719,7 +1719,8 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
     """
     b, m_, st = cfg["bike"], cfg["mechanism"], cfg["stroke"]
     sim = p["sim"]
-    w_ref = p["righting"]["wings"]           # mass/servo reused from there
+    # A study four-bar reuses the wing pair's mass and servo; the module has its own.
+    w_ref = p["righting"].get("wings") if module is None else None
     r_rear = p["omni_wheel"]["outer_radius"]
     px = (float(module["station_x"]) if module is not None
           else w_ref["pivot"][0])            # fore/aft station
@@ -1998,7 +1999,11 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         cfg.get("servo", "xc330_t181"), str) else p["servos"]["xc330_t181"]
     act = spec.add_actuator(name="swing")
     # N = 1: the actuator IS the crank. Same as the mirrored linkage above.
-    act.set_to_position(kp=w_ref["servo_kp"], kv=w_ref["servo_kv"])
+    # The module's own gains; a study four-bar -- or a params file from
+    # before 2026-10-21, when the module had none -- borrows the wing pair's.
+    g = (module if module is not None and "servo_kp" in module
+         else p["righting"]["wings"])
+    act.set_to_position(kp=g["servo_kp"], kv=g["servo_kv"])
     act.trntype = mujoco.mjtTrn.mjTRN_JOINT
     act.target = "swing_crank_joint"
     # THE CONFIG'S OWN TORQUE LIMIT, not the servo's stall torque. Every

@@ -71,7 +71,7 @@ from aow_sim.hw.bench_log import (Capture, Segment, git_state,  # noqa: E402
 from aow_sim.hw.dynamixel import (MODE_CURRENT_POSITION,  # noqa: E402
                                   MODE_POSITION, MODE_PWM, DynamixelBus,
                                   IndirectMap, describe_hardware_error)
-from aow_sim.params import DEFAULT_PARAMS  # noqa: E402
+from aow_sim.params import ONBOARD_PARAMS  # noqa: E402
 from servo_breakaway import (_FAILED, MODEL, READ_BLOCK, Tee, _try)  # noqa: E402
 import yaml  # noqa: E402
 
@@ -103,8 +103,7 @@ CAP = MODES["current"]
 
 
 def config_gains(role: str) -> dict:
-    raw = yaml.safe_load(Path(DEFAULT_PARAMS).read_text())
-    g = raw["control"]["onboard"]["gains"][role]
+    g = yaml.safe_load(Path(ONBOARD_PARAMS).read_text())["gains"][role]
     return {"p": int(g["Position P Gain"]), "i": int(g["Position I Gain"]),
             "d": int(g["Position D Gain"])}
 
