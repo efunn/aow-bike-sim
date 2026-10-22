@@ -132,6 +132,10 @@ def _fly(params, model, policy, regime, seed=0):
     ctl.reset(model, data)
     ctl._odometry_active = odo is not None
     ctl._ahrs_active = ahrs is not None
+    # as record.py and run_drive do: the plant carries the policy's recorded
+    # drivetrain, and DrivetrainSim.attach below flies it. Unset, engage
+    # printed "being flown on the ideal one", which was false.
+    ctl._drivetrain_active = KEY in params
     ctl.engage_general(data, name=name)
     ctl.set_command_polar(speed)
     # The detailed drivetrain's hook, when the plant has one. Only that: this
