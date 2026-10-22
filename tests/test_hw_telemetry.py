@@ -217,6 +217,39 @@ def test_the_shaft_angle_integrates_across_frames(built):
     assert d.qpos[adr.q["input_a_spin"]] == pytest.approx(10.0)
 
 
+def test_the_front_wheel_spins_backwards_when_the_bike_rolls_backwards():
+    """It was drawn from |v_world| until 2026-10-21, so rolling the bike
+    backwards by hand spun the mirror's front wheel FORWARDS. Signed along the
+    wheel's heading, in the body frame, so a bike facing any way agrees.
+    Tolerances are the packet's rounding (v_world to 1 mm/s)."""
+    p = load_params()
+    for yaw in (0.0, 1.2, -2.5):
+        q = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
+        fwd = [0.3 * np.cos(yaw), 0.3 * np.sin(yaw)]
+        still = dict(quat=q, gyro=[0.0, 0.0, 0.0], steer=0.0)
+        assert T.front_roll_speed(sample(v_world=fwd, **still), p) == pytest.approx(0.3, abs=1e-2)
+        back = [-v for v in fwd]
+        assert T.front_roll_speed(sample(v_world=back, **still), p) == pytest.approx(-0.3, abs=1e-2)
+    # a wheel steered round to 180 deg faces backwards: forward travel turns it back
+    s = sample(v_world=[0.3, 0.0], quat=[1, 0, 0, 0], gyro=[0, 0, 0], steer=np.pi)
+    assert T.front_roll_speed(s, p) == pytest.approx(-0.3, abs=1e-2)
+
+
+def test_a_turn_on_the_front_wheels_arc_rolls_it_at_the_arc_speed():
+    """Rear rolling straight at v with the wheel steered and the bike yawing at
+    the rate that steer implies: the front contact moves v / cos(theta) along
+    its heading -- a curve the old |v_world| could not draw."""
+    p = load_params()
+    rake = np.deg2rad(p["bike"]["rake_deg"])
+    L = p["bike"]["wheelbase"]
+    delta = 0.5
+    theta = np.arctan2(np.cos(rake) * np.sin(delta), np.cos(delta))
+    v = 0.2
+    s = sample(v_world=[v, 0.0], quat=[1, 0, 0, 0], steer=delta,
+               gyro=[0.0, 0.0, v * np.tan(theta) / L])
+    assert T.front_roll_speed(s, p) == pytest.approx(v / np.cos(theta), abs=1e-2)
+
+
 def test_a_missing_field_leaves_the_pose_alone_rather_than_zeroing_it(built):
     """A newer bike talking to an older station should degrade to a partly
     stale picture, not to a bike that snaps to the origin every frame."""

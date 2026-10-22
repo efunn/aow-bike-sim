@@ -595,6 +595,31 @@ def ground_the_bike(model, data, params: dict, adr=None) -> float:
 ground_the_wheels = ground_the_bike
 
 
+def front_roll_speed(tel: dict, params: dict) -> float:
+    """Signed speed of the front contact along the front wheel's heading
+    [m/s], + rolls the wheel forward. From the packet's `v_world`, `quat`,
+    `gyro` and `steer`; absent ones count as zero.
+
+    The front contact moves at the rear's velocity plus the yaw lever arm,
+    (v_lon, v_lat + yaw_rate * L) in the body frame, and the wheel rolls by
+    that velocity's component along its ground heading. The heading is
+    control.steer.wheel_heading, inlined because this module stays free of
+    the controller imports. A wheel steered past 90 deg faces backwards, so
+    forward travel turns it backwards -- which is what the real one does.
+    """
+    vx, vy = (float(x) for x in tel.get("v_world", (0.0, 0.0)))
+    w, x, y, z = (float(c) for c in tel.get("quat", (1.0, 0.0, 0.0, 0.0)))
+    yaw = math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
+    c, s = math.cos(yaw), math.sin(yaw)
+    v_lon, v_lat = c * vx + s * vy, -s * vx + c * vy
+    yaw_rate = float(tel.get("gyro", (0.0, 0.0, 0.0))[2])
+    v_lat += yaw_rate * float(params["bike"]["wheelbase"])
+    rake = math.radians(float(params["bike"]["rake_deg"]))
+    delta = float(tel.get("steer", 0.0))
+    theta = math.atan2(math.cos(rake) * math.sin(delta), math.cos(delta))
+    return v_lon * math.cos(theta) + v_lat * math.sin(theta)
+
+
 def apply_pose(model, data, tel: dict, adr: PoseAdr, params: dict,
                shaft_angle=(0.0, 0.0), rest_z: float | None = None,
                dt: float = 0.0, swing_pose=None) -> tuple:
@@ -662,13 +687,15 @@ def apply_pose(model, data, tel: dict, adr: PoseAdr, params: dict,
             data.qpos[q[name]] = val
             data.qvel[d[name]] = rate
 
-    # The front wheel has no encoder. Roll it from forward speed so it does not
-    # skid visibly -- a drawing, and the module docstring says so.
+    # The front wheel has no encoder. Roll it from the front contact's speed
+    # along the wheel's heading so it does not skid visibly -- a drawing, and
+    # the module docstring says so. SIGNED: this used |v_world| until
+    # 2026-10-21, so a backward roll spun the wheel forward.
     if "front_spin" in q:
         r = float(params["bike"]["front_wheel"]["radius"])
-        speed = float(np.linalg.norm(tel.get("v_world", (0.0, 0.0))))
-        data.qvel[d["front_spin"]] = speed / r if r else 0.0
-        data.qpos[q["front_spin"]] += (speed / r if r else 0.0) * dt_s
+        w = front_roll_speed(tel, params) / r if r else 0.0
+        data.qvel[d["front_spin"]] = w
+        data.qpos[q["front_spin"]] += w * dt_s
 
     # -- the righting mechanism ---------------------------------------------
     #
