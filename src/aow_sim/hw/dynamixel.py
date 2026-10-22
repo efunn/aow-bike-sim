@@ -26,8 +26,9 @@ from .control_table import (INDIRECT_ADDRESS_1, INDIRECT_DATA_1,  # noqa: F401
 PROTOCOL = 2.0
 
 # Firmware floor per model (table stem). Below it the part fails SILENTLY:
-# XC330 firmware 50 echoes indirect address writes back correctly and then
-# leaves the indirect data window all zeros. The XC430 numbers its firmware
+# XC330 firmware 50 has a smaller indirect address range (53 expanded it to
+# the X430's), so it echoes the indirect address writes back correctly and
+# then leaves the indirect data window all zeros. The XC430 numbers its firmware
 # separately; its 50 is fine. control_tables/README.md.
 MIN_FIRMWARE = {"xc330_t181": 53}
 
@@ -282,8 +283,9 @@ class IndirectMap:
         """Read the address pointers back and compare, byte for byte.
 
         A SyncWrite returns no status, so nothing confirms it landed. This
-        checks pointers only: firmware without indirect support echoes them
-        correctly anyway, which :data:`MIN_FIRMWARE` catches at discovery.
+        checks pointers only: firmware with the older, smaller indirect range
+        echoes them correctly anyway, which :data:`MIN_FIRMWARE` catches at
+        discovery.
         """
         for i in self.ids:
             want = self.address_bytes(i)

@@ -174,8 +174,11 @@ Measured 2026-09-01: id 104 on XC330 firmware 50 against id 103 on 53, same
 part number. Firmware 50 accepts every Indirect Address write and ECHOES THEM
 BACK CORRECTLY, then leaves the Indirect DATA window permanently zero: an
 address read-back passes, every frame is zeros, and no call returns an error.
-53 is the release that added indirect addressing, and the latest; no 51 or 52
-was published. `dynamixel.MIN_FIRMWARE` refuses anything lower at discovery.
+The X330s have always had indirect addressing; 53 expanded its address range
+to match the other X-series models (the X430s), presumably so one SyncRead /
+SyncWrite layout serves both. The map here is laid out for that range, so on
+50 it lands outside the older one. 53 is the latest; no 51 or 52 was
+published. `dynamixel.MIN_FIRMWARE` refuses anything lower at discovery.
 
 The XC430 numbers its firmware separately: XC430-W150 "firmware 50" is its
 latest build and indirect addressing works on it. Do not add a floor for it
