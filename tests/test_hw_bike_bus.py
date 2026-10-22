@@ -368,6 +368,49 @@ def test_a_commanded_common_mode_reaches_the_servos_as_opposite_goals():
     assert a == pytest.approx(-bb, rel=1e-9)
 
 
+def test_the_steer_sign_is_applied_on_read_and_on_write():
+    """The steer servo's positive is the model's NEGATIVE steer (left is +).
+    Observed 2026-10-21: hand-steering left drew the wheel turning right.
+    Read and write must flip together, and steer_zero stays in the servo's
+    frame, so a joint angle round-trips through both."""
+    b = BikeBus(load_params(), ids=(1, 2, 3), steer_sign=-1)
+    b.steer_zero = np.pi                     # the config's 180 deg
+    state = {"dt": 0.01, "servos": {
+        1: {"pos": 0.0, "vel": 0.0, "vel_reported": 0.0, "turned": 0.0},
+        2: {"pos": 0.0, "vel": 0.0, "vel_reported": 0.0, "turned": 0.0},
+        3: {"pos": np.pi + 0.3, "vel": 1.5, "vel_reported": 1.4, "turned": 0.0}}}
+    got = b.to_controller_units(state)
+    assert got["steer_pos"] == pytest.approx(-0.3 / b.steer_ratio)
+    assert got["steer_vel"] == pytest.approx(-1.5 / b.steer_ratio)
+    assert got["steer_vel_reported"] == pytest.approx(-1.4 / b.steer_ratio)
+
+    sent = {}
+
+    class FakeWriter:
+        def clearParam(self): sent.clear()
+        def addParam(self, i, data):
+            sent[i] = int.from_bytes(bytes(data), "little", signed=False)
+            return True
+        def txPacket(self): return 0
+
+    b._dxl._map, b._dxl._writer = b._build_map(), FakeWriter()
+    aid = {"drive_a": 0, "drive_b": 1, "steer": 2}
+    b.write_commands([0.0, 0.0, got["steer_pos"]], aid)   # hold where it is
+    assert b.last_goal[3] == pytest.approx(np.pi + 0.3)
+
+
+def test_the_configured_steer_sign_is_the_observed_one():
+    cfg = load_params()["control"]["onboard"]
+    assert cfg["steer_sign"] == -1, (
+        "if the steer servo is remounted, re-check: steer left by hand and "
+        "watch the mirror's wheel")
+
+
+def test_a_steer_sign_that_is_not_a_sign_is_refused():
+    with pytest.raises(ValueError):
+        BikeBus(load_params(), ids=(1, 2, 3), steer_sign=0.5)
+
+
 def test_the_shared_slots_mean_the_same_register_on_both_models():
     """Every register BikeBus puts in a slot shared by all servos (the
     READ_BLOCK, Torque Enable, Present Input Voltage) has one address and width

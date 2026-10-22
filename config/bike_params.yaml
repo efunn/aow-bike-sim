@@ -794,6 +794,17 @@ control:
     # see it and it moves NEITHER digest. `BikeBus` is the only consumer,
     # because it is the only boundary between the two frames.
     servo_sign: [1, -1]
+    # WHICH WAY THE STEER SERVO TURNS for a positive steer joint (the model's
+    # +steer is LEFT: counter-clockwise seen from above, about the raked axis).
+    # Observed 2026-10-21 on the assembled bike: steering left by hand showed
+    # the mirror's wheel turning right, and with -1 it turns left. A
+    # Dynamixel's positive is counter-clockwise seen FROM THE HORN, so -1 fits
+    # a horn facing down onto the headset (steering-design.md; inferred, not
+    # checked on the bike). Same story as servo_sign: the gap had
+    # no sign at all, so read and command were both mirrored -- a policy told
+    # to steer into a lean would have steered out of it. Applied in BikeBus
+    # only, so it moves neither digest.
+    steer_sign: -1           # source: measured -- hand-steer vs the mirror
     # The three servos the policy drives: drive_a, drive_b, steer. `--ids`
     # overrides for one session.
     #

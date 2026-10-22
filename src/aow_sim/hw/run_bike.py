@@ -474,7 +474,8 @@ class BikeRunner:
         self.bus = BikeBus(self.params, port=port, control_hz=control_hz,
                             ids=ids[:3], righting_id=righting, gains=gains,
                             righting_current=cfg.get("righting_current"),
-                            servo_sign=cfg.get("servo_sign", (1.0, 1.0)))
+                            servo_sign=cfg.get("servo_sign", (1.0, 1.0)),
+                            steer_sign=cfg.get("steer_sign", 1.0))
         # A PERSISTED CONSTANT BEATS A CAPTURE, and this is the bike's default.
         # The policy observes the steer as sin/cos(2*delta) -- pi-periodic,
         # because the wheel is front-back symmetric -- the servo's encoder is

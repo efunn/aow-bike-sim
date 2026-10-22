@@ -158,6 +158,7 @@ class BikeBus:
                  gains: dict | None = None,
                  righting_current: int | None = None,
                  servo_sign=(1.0, 1.0),
+                 steer_sign: float = 1.0,
                  models: dict | None = None):
         self.params = params
         # Servo-shaft angle the controller calls zero: None captures it at
@@ -174,6 +175,13 @@ class BikeBus:
         # everything upstream is in the input-shaft frame.
         self.servo_sign = (float(servo_sign[0]), float(servo_sign[1]))
         self.steer_ratio = float(params["bike"]["steering"]["gear_ratio"])
+        # Which way the steer servo turns for a POSITIVE steer joint (left):
+        # observed -1 (control.onboard.steer_sign). Like
+        # servo_sign, applied here and nowhere else; steer_zero stays in the
+        # servo's own frame.
+        if float(steer_sign) not in (1.0, -1.0):
+            raise ValueError("steer_sign must be 1 or -1")
+        self.steer_sign = float(steer_sign)
         self.port_name, self.baud = port, baud
         if velocity_source not in ("differenced", "reported"):
             raise ValueError("velocity_source must be 'differenced' or 'reported'")
@@ -573,11 +581,12 @@ class BikeBus:
             "turned_a": sv[self.id_a]["turned"] * self.belt_ratio * self.servo_sign[0],
             "turned_b": sv[self.id_b]["turned"] * self.belt_ratio * self.servo_sign[1],
             "steer_pos": ((sv[self.id_steer]["pos"] - (self.steer_zero or 0.0))
-                          / self.steer_ratio),
-            "steer_vel": sv[self.id_steer]["vel"] / self.steer_ratio,
+                          * self.steer_sign / self.steer_ratio),
+            "steer_vel": sv[self.id_steer]["vel"] * self.steer_sign / self.steer_ratio,
             "w_servo_a_reported": sv[self.id_a]["vel_reported"],
             "w_servo_b_reported": sv[self.id_b]["vel_reported"],
-            "steer_vel_reported": sv[self.id_steer]["vel_reported"] / self.steer_ratio,
+            "steer_vel_reported": (sv[self.id_steer]["vel_reported"]
+                                   * self.steer_sign / self.steer_ratio),
             "righting_pos": (sv[self.id_right]["pos"] if self.id_right else None),
             "health": {role: sv[i].get("health", {})
                        for i, role in self.roles.items()},
@@ -620,6 +629,7 @@ class BikeBus:
             goal[dxl_id] = w_servo
 
         steer_rad = clamp_extended(float(ctrl[aid["steer"]]) * self.steer_ratio
+                                   * self.steer_sign
                                    + (self.steer_zero or 0.0))
         raw[self.id_steer] = int(round(steer_rad * XC330_COUNTS_PER_RAD))
         goal[self.id_steer] = steer_rad
