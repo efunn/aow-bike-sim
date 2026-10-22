@@ -277,6 +277,34 @@ def _merge(base: dict, extra: dict) -> dict:
     return base
 
 
+# The XC330's mode-5 position PID, read as milliamps: A per (count x rad) of
+# Position P Gain, derived (4096/2pi)/(256*1000), 2.525e-3 measured on an
+# X330; and A s/rad per unit of Position D Gain, taking the D term per 1 ms
+# loop tick (a bare-shaft fit gives 0.25-0.7x it). righting_servo.py uses the
+# same two.
+XC330_K5 = (4096 / (2 * math.pi)) / (256 * 1000)
+XC330_KD_PER_UNIT = (1 / 16) * (256 * XC330_K5) * 1e-3
+
+
+def derive_servo_gains(p: dict) -> dict:
+    """The sim's servo gains from the firmware registers the bike writes:
+    actuators.steer_kp from actuators.steer_gains, and righting.module
+    servo_kp / servo_kv from righting.module.gains. A value already set (a
+    params file from before 2026-10-21, a sweep) is left alone. Mutates and
+    returns `p`."""
+    act = p.get("actuators") or {}
+    if "steer_gains" in act and "steer_kp" not in act:
+        act["steer_kp"] = (float(act["steer_gains"]["Position P Gain"])
+                           * float(act["steer_kp_per_unit"]))
+    mod = (p.get("righting") or {}).get("module")
+    if isinstance(mod, dict) and "gains" in mod and "servo_kp" not in mod:
+        k = float(p["servos"]["xc330_t181"]["current_torque_gain"])
+        mod["servo_kp"] = float(mod["gains"]["Position P Gain"]) * XC330_K5 * k
+        mod["servo_kv"] = (float(mod["gains"]["Position D Gain"])
+                           * XC330_KD_PER_UNIT * k)
+    return p
+
+
 def load_params(path: str | Path | None = None,
                 blade: str | Path | None = None,
                 studies: bool = True) -> dict:
@@ -286,8 +314,8 @@ def load_params(path: str | Path | None = None,
     The onboard file is merged in at control.onboard and, unless
     `studies=False`, every config/studies/*.yaml at its own paths. False is
     the bike alone: what the default model must build from."""
-    return resolve_righting_module(
-        derive_righting(_normalize(load_raw_params(path, studies))), blade)
+    return derive_servo_gains(resolve_righting_module(
+        derive_righting(_normalize(load_raw_params(path, studies))), blade))
 
 
 def load_raw_params(path: str | Path | None = None, studies: bool = True) -> dict:

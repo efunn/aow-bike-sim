@@ -1,6 +1,6 @@
 # The bike's onboard settings: the Pi's devices, servo ids and registers, the
 # AHRS reader and the loop. Read by aow_sim.hw (run_bike, bike_bus), the
-# mirror, scripts/bike.sh and the bench tools, never by the simulator, so it
+# mirror, scripts/bike.sh and the bench tools, never by the physics, so it
 # moves neither digest. It changes with the hardware, not the plant.
 # params.load_params() merges it in at control.onboard.
 
@@ -34,12 +34,12 @@ righting_id: 104
 # The point of current-based position mode is that the servo can stall
 # against the floor instead of levering the bike off it.
 #
-# 300 is a placeholder, sized for the geared single arm that was never built,
-# and too low to lift the bike in the sim. Teleop starts from the linkage's
-# `limits.torque_nm` instead (righting_servo.py); the mirror and the station
-# move it live with [ and ]. Counts rather than mA because the sources
-# disagree on the unit (ROBOTIS's e-manual ~1 mA/LSB, the vendored model
-# file 6.709e-4); first-physical-test.md Station C is the check.
+# 1 count = 1 mA. 300 is a placeholder, sized for the geared single arm that
+# was never built, and too low to lift the bike: by hand in teleop
+# (2026-09-26) 625 mA lifted it fully, and the sim's sweep
+# (analysis/mechanism/righting_current_sweep.py) needs ~600-650. Sim teleop
+# starts from the linkage's `limits.torque_nm` instead (righting_servo.py);
+# the mirror and the station move it live with [ and ].
 righting_current: 300
 # Where the crank's stow pose sits on the servo, and which way the crank
 # runs. Read only by the mirror, to draw the mechanism:
@@ -76,27 +76,11 @@ cut_roll_deg: 60.0
 rearm_roll_deg: 12.0        # must be below cut_roll_deg
 rearm_roll_rate_dps: 171.9  # 3.0 rad/s
 rearm_dwell_s: 0.2
-# Firmware gains, written at every startup: the velocity and position gains
-# are RAM and return to their defaults at power-up. The drive's come from the
-# policy's own moves/<name>.yaml record (this entry is the fallback, and is
-# normally left out). The position entries are the factory defaults, listed
-# so startup reads them back and raises if a servo was changed in Wizard
-# (`_verify_gains`). Roles: drive, drive_a, drive_b, steer, righting; a role
-# with no servo behind it is dropped.
-gains:
-  # Extended position mode (4), factory P900/I0/D0. D 0 is right: the output
-  # is PWM duty, so the motor's back-EMF already damps the loop
-  # (actuators.steer_kv in bike_params.yaml is that droop).
-  steer:
-    Position P Gain: 900
-    Position I Gain: 0
-    Position D Gain: 0
-  # Current-based position mode (5), factory P700/I0/D1400. Here D is the
-  # loop's only damping: commanding current removes the back-EMF droop. I is
-  # 0 on both servos: the steer has no standing load, and on the righting
-  # servo an integrator would wind up against the floor. These map onto
-  # bike_params.yaml's righting.module.servo_kp/kv; the two move together.
-  righting:
-    Position P Gain: 700
-    Position I Gain: 0
-    Position D Gain: 1400
+# Firmware gains are written at every startup, because they are RAM. The
+# steer and righting XC330s get the plant's registers (bike_params.yaml:
+# actuators.steer_gains, righting.module.gains), which the sim's gains are
+# derived from. The drives get the policy's own training gains from its
+# moves/<name>.yaml record. A `gains: {drive: {...}}` block here is the
+# fallback for a policy without one (one trained on the ideal drive plant);
+# without it the drives keep their power-on values. Every written register
+# is read back, and startup raises on a mismatch (`_verify_gains`).

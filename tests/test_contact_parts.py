@@ -149,8 +149,14 @@ def test_the_split_did_not_move_the_plant_digest():
                           (params.STUDY_PATHS); righting.module gained its own
                           servo_kp / kv, the wing pair's same numbers. The
                           default model is bit-identical (test_params_files)
+        6446d8fa5b925702  2026-10-21  the XC330s' firmware registers moved in
+                          from onboard.yaml (actuators.steer_gains,
+                          righting.module.gains); actuators.steer_kp and
+                          righting.module.servo_kp/kv now derived from them:
+                          2.3 -> 2.30004, 1.48 -> 1.4795, 0.0473 -> 0.04734
+                          (the old values were the same derivations, rounded)
     """
-    assert plant_digest(load_params()) == "4327521f0ca7a1cb"
+    assert plant_digest(load_params()) == "6446d8fa5b925702"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

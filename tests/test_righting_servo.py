@@ -61,9 +61,10 @@ def _stroke(m, d, servo, goal, seconds=0.4):
 
 @pytest.mark.pure
 def test_factory_gains_are_the_native_actuators(params):
-    """P 700 / D 1400 through k5 and the measured k reproduce servo_kp / kv."""
+    """P 700 / D 1400 through k5 and the measured k reproduce the study
+    mechanisms' servo_kp / kv, which were derived the same way by hand."""
     k = params["servos"]["xc330_t181"]["current_torque_gain"]
-    g = params["control"]["onboard"]["gains"]["righting"]
+    g = params["righting"]["module"]["gains"]
     wings = params["righting"]["wings"]
     assert g["Position P Gain"] * rs.K5 * k == pytest.approx(wings["servo_kp"], rel=5e-3)
     assert g["Position D Gain"] * rs.KD_PER_UNIT * k == pytest.approx(wings["servo_kv"], rel=5e-3)

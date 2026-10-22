@@ -43,7 +43,7 @@ worst point. Temperature is read every frame and the run stops at
 `--max-temp` (45 C; the servo's own limit is 70).
 
 Position gains are set to `--p-gain` / `--d-gain` (default: the bike's own
-righting gains, control.onboard.gains.righting) AFTER the mode write, which
+righting gains, righting.module.gains in bike_params) AFTER the mode write, which
 resets them, and everything is restored on exit.
 """
 
@@ -62,14 +62,13 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))     # this checkout's source, even from a worktree
 
-import yaml  # noqa: E402
 
 from aow_sim.hw.bench_log import (Capture, Segment, git_state,  # noqa: E402
                                   new_capture_dir, record)
 from aow_sim.hw.dynamixel import (MODE_CURRENT_POSITION,  # noqa: E402
                                   DynamixelBus, IndirectMap,
                                   describe_hardware_error)
-from aow_sim.params import ONBOARD_PARAMS  # noqa: E402
+from aow_sim.params import load_params  # noqa: E402
 
 MODEL = "xc330_t181"
 TEST = "servo_breakaway"
@@ -81,7 +80,7 @@ OFFSET_MA = 50
 
 
 def righting_gains() -> dict:
-    g = yaml.safe_load(Path(ONBOARD_PARAMS).read_text())["gains"]["righting"]
+    g = load_params()["righting"]["module"]["gains"]
     return {"p": int(g["Position P Gain"]), "d": int(g["Position D Gain"])}
 
 

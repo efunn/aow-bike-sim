@@ -107,13 +107,26 @@ def resolve_gains(params: dict, policy: str | None = None,
                   override=None, moves_dir="moves") -> tuple:
     """-> ({role: {register: value}}, note): what to write, and from where.
 
-    An explicit pin beats the policy's own training gain, which beats
-    `control.onboard.gains` -- the same order as teleop
-    (`drivetrain_model.teleop_overlay`), because a policy is specific to the
-    gain it trained at. Print `note`: it says which source won.
+    The steer and righting XC330s get the plant's own registers
+    (actuators.steer_gains, righting.module.gains), the ones the sim's gains
+    are derived from. For the drives an explicit pin beats the policy's own
+    training gain, which beats `control.onboard.gains.drive` -- the same order
+    as teleop (`drivetrain_model.teleop_overlay`), because a policy is specific
+    to the gain it trained at. Print `note`: it says which source won.
     """
     cfg = ((params.get("control") or {}).get("onboard") or {})
     gains = {role: dict(regs) for role, regs in (cfg.get("gains") or {}).items()}
+    moved = {"steer", "righting"} & set(gains)
+    if moved:
+        raise ValueError(
+            f"onboard gains for {sorted(moved)}: these are the plant's since "
+            "2026-10-21 -- actuators.steer_gains and righting.module.gains in "
+            "bike_params.yaml")
+    if (params.get("actuators") or {}).get("steer_gains"):
+        gains["steer"] = dict(params["actuators"]["steer_gains"])
+    module = (params.get("righting") or {}).get("module") or {}
+    if module.get("gains"):
+        gains["righting"] = dict(module["gains"])
 
     if override is not None:
         p_gain, i_gain = override

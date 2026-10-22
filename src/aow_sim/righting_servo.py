@@ -48,10 +48,9 @@ shaft barely slows: Goal PWM 0.4 runs at ~0.80 of full speed in mode 5, where
 duty 0.4 in PWM mode runs at 0.39 (`xc330_current_position`). What it does
 limit is unknown, so it is left at 885, the factory value.
 
-Gains are the FIRMWARE's, read from `control.onboard.gains.righting` -- the same
+Gains are the FIRMWARE's, read from `righting.module.gains` -- the same
 registers the bike writes at startup -- and converted to the PID's output in
-amps as bike_params.yaml's `righting.arm.servo_kp/kv` note derives them.
-Nothing here reads a key `plant_digest` hashes: `control` is outside it.
+amps as that block's note derives them. They are in `plant_digest`.
 
 What is NOT modelled, and why:
 
@@ -83,15 +82,14 @@ from __future__ import annotations
 import math
 
 from .gearbox_friction import GearboxFriction
+from .params import XC330_K5, XC330_KD_PER_UNIT
 
-#: A/(Kp.rad): the mode-5 position PID's output, read as milliamps. Derived
-#: (4096/2pi)/(256*1000); measured 2.525e-3 on an X330. See bike_params.yaml.
-K5 = (4096 / (2 * math.pi)) / (256 * 1000)
-#: A.s/rad per unit of Position D Gain: (D/16) * (256 k5) * 1 ms loop tick.
-#: The soft number -- the per-tick reading is an assumption, see bike_params.
-KD_PER_UNIT = (1 / 16) * (256 * K5) * 1e-3
-#: A per Goal Current count. The e-manual's ~1 mA/LSB; the vendored model file
-#: disagrees, and Station C (R6) in first-physical-test.md settles it.
+#: A/(Kp.rad) and A.s/rad per unit of Position P and D Gain: the mode-5
+#: position PID's output read as milliamps (params.XC330_K5 / _KD_PER_UNIT).
+K5 = XC330_K5
+KD_PER_UNIT = XC330_KD_PER_UNIT
+#: A per Goal Current count: 1.0 mA, the e-manual's unit for Goal Current and
+#: Present Current, and what every fit here (the 16.5 mA edge, k) assumed.
 AMPS_PER_COUNT = 1.0e-3
 #: Current Limit(38) on this XC330-T181 (bike_params.yaml, righting_current's
 #: note). Goal Current is clamped to it, as BikeBus.set_righting_current does.
@@ -155,7 +153,7 @@ class CurrentBasedPositionServo:
         self.w0 = float(srv["no_load_rpm"]) * 2 * math.pi / 60
         self.k = float(srv["current_torque_gain"])
         self.i0 = float(srv["current_deadband"])
-        g = {**params["control"]["onboard"]["gains"]["righting"], **(gains or {})}
+        g = {**params["righting"]["module"]["gains"], **(gains or {})}
         self.kp_a = float(g["Position P Gain"]) * K5            # A/rad
         self.kd_a = float(g["Position D Gain"]) * KD_PER_UNIT   # A.s/rad
         self.aid = None if actuator is None else model.actuator(actuator).id

@@ -71,9 +71,8 @@ from aow_sim.hw.bench_log import (Capture, Segment, git_state,  # noqa: E402
 from aow_sim.hw.dynamixel import (MODE_CURRENT_POSITION,  # noqa: E402
                                   MODE_POSITION, MODE_PWM, DynamixelBus,
                                   IndirectMap, describe_hardware_error)
-from aow_sim.params import ONBOARD_PARAMS  # noqa: E402
+from aow_sim.params import load_params  # noqa: E402
 from servo_breakaway import (_FAILED, MODEL, READ_BLOCK, Tee, _try)  # noqa: E402
-import yaml  # noqa: E402
 
 TEST = "servo_lift"
 # The Bus Watchdog here. servo_breakaway's 100 ms tripped twice on the Pi 3,
@@ -103,7 +102,9 @@ CAP = MODES["current"]
 
 
 def config_gains(role: str) -> dict:
-    g = yaml.safe_load(Path(ONBOARD_PARAMS).read_text())["gains"][role]
+    p = load_params()      # the plant's registers, as BikeBus writes them
+    g = (p["actuators"]["steer_gains"] if role == "steer"
+         else p["righting"]["module"]["gains"])
     return {"p": int(g["Position P Gain"]), "i": int(g["Position I Gain"]),
             "d": int(g["Position D Gain"])}
 

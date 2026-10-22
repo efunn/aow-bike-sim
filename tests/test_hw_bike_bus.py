@@ -498,3 +498,23 @@ def test_the_arm_span_is_one_short_read_on_both_models():
         lo = min(t[n].address for n in names)
         hi = max(t[n].address + t[n].size for n in names)
         assert (lo, hi - lo) == (64, 22)
+
+
+def test_the_xc330s_get_the_plants_own_registers():
+    """The steer and righting servos are written the registers the sim's gains
+    are derived from (bike_params.yaml), so the two cannot drift apart."""
+    p = load_params()
+    gains, _ = resolve_gains(p)
+    assert gains["steer"] == p["actuators"]["steer_gains"]
+    assert gains["righting"] == p["righting"]["module"]["gains"]
+    assert p["actuators"]["steer_kp"] == pytest.approx(
+        gains["steer"]["Position P Gain"] * p["actuators"]["steer_kp_per_unit"])
+
+
+def test_an_onboard_xc330_gain_is_refused():
+    """onboard.yaml held them until 2026-10-21; one left there would silently
+    beat the plant's, so it is an error instead."""
+    p = load_params()
+    p["control"]["onboard"]["gains"] = {"steer": {"Position P Gain": 800}}
+    with pytest.raises(ValueError, match="plant's"):
+        resolve_gains(p)

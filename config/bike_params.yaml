@@ -472,15 +472,17 @@ actuators:
   # whose PID output is PWM duty, so it maps exactly onto MuJoCo's position
   # actuator:
   #   tau = [Kp * k3 * tau_stall] * err - [tau_stall / w_noload] * w
-  # kp is the firmware gain, kv the motor's back-EMF droop.
+  # `steer_gains` are the firmware registers, written to the servo at startup
+  # (BikeBus); the sim's kp is Position P Gain x steer_kp_per_unit, derived by
+  # params.load_params as actuators.steer_kp. kv is the motor's back-EMF droop.
   #
-  # kp and steer_armature were fitted together to open-loop sine sweeps of the
+  # The per-unit scale and steer_armature were fitted together to open-loop sine sweeps of the
   # steer XC330 at P 900, column and headset fitted, +-5 deg at 1-10 Hz
   # (analysis/servo/steer_response.py, traces/bench/steer_response_261017-*.json;
   # the sim side is analysis/policy/steer_pinned.py --sine --bare): within ~0.03
   # gain / 3 deg of the bench at every frequency. A second unit, bare, agreed
-  # within 0.02. kp 2.3 is 11 % above the value derived from P 900
-  # (900 x 2.877e-3 x 0.80 = 2.07), unexplained.
+  # within 0.02. The fit, kp 2.3 at P 900, is 11 % above the derived
+  # k3 x tau_stall = 2.877e-3 x 0.80 per unit (2.07 at P 900), unexplained.
   #
   # kv is held at the droop, 0.80 / 11.833, not fitted: the sweeps only fix
   # kp / kv, and the no-load speed fixes kv (a fitted 0.055 let a saturated
@@ -489,7 +491,11 @@ actuators:
   # Not modelled: below ~0.25 rad/s the bare servo holds within ~1 encoder
   # count with no droop or friction offset. On the bike the wheel's scrub and
   # backlash will set small motions; measure them on the assembled steering.
-  steer_kp: {value: 2.3, source: measured}
+  steer_gains:
+    Position P Gain: 900      # factory default for mode 4
+    Position I Gain: 0
+    Position D Gain: 0        # the back-EMF droop already damps the loop
+  steer_kp_per_unit: {value: 2.5556e-3, source: measured}   # N m/rad per P unit: 2.3 at P 900
   steer_kv: 0.0676
   # The XC330's rotor + gearbox inertia at the steer joint [kg m2], from the
   # same sweeps: ~13x the fork and wheel about the axis.
@@ -595,12 +601,25 @@ righting:
     # The crank servo; the four-bar's own `limits.torque_nm` caps it
     # (build_model._add_swing_linkage).
     servo: xc330_t181
-    # Its position gains at the crank (the servo drives the crank directly): the
-    # XC330's firmware gains through the righting arm's derivation (k = 0.83;
-    # config/studies/righting_mechanisms.yaml, righting.arm). They and
-    # onboard.yaml's `righting` registers must move together.
-    servo_kp: 1.48
-    servo_kv: 0.0473
+    # The crank servo's firmware registers, current-based position mode (5),
+    # written to it at startup (BikeBus) and read by the sim's servo model
+    # (righting_servo.py). Factory P700/I0/D1400. D is the loop's only
+    # damping: commanding current removes the back-EMF droop. I stays 0: an
+    # integrator would wind up against the floor at the end of the stroke.
+    #
+    # params.load_params derives the native actuator's gains at the crank from
+    # them (righting.module.servo_kp / servo_kv), with the PID's output read as
+    # milliamps (k5 = (4096/2pi) / (256 x 1000) A per count-rad, 2.525e-3
+    # measured) and the measured torque per amp (servos.xc330_t181
+    # .current_torque_gain):
+    #   servo_kp = P x k5 x k            = 1.479
+    #   servo_kv = D x (16 k5 x 1 ms) x k = 0.0473
+    # The D term is taken per 1 ms loop tick; a bare-shaft fit put the real
+    # value at 0.25-0.7x that, so kv is right in order of magnitude only.
+    gains:
+      Position P Gain: 700
+      Position I Gain: 0
+      Position D Gain: 1400
     # The XC330's rotor + gearbox inertia at the crank, measured 2026-10-17: the
     # bare righting XC330's own sine sweep in mode 4, the same fit and value as
     # actuators.steer_armature. The crank is on the horn, so the rotor inertia is

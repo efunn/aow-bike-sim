@@ -167,7 +167,13 @@ The 15 registered reds are all the deprecated LQR and are only judged under
 `pytest -m lqr`. `prospective` (the endurance minute, skipped unless named)
 passes on the pointer: 0/18 falls.
 
-**Digests, 2026-10-21**: `plant_digest` 4327521f0ca7a1cb -- NO physics
+**Digests, 2026-10-21**: `plant_digest` 6446d8fa5b925702 -- the XC330s'
+firmware registers moved from `onboard.yaml` into the plant
+(`actuators.steer_gains`, `righting.module.gains`), with the sim's gains now
+derived from them: steer kp 2.3 -> 2.30004, righting kp/kv 1.48 / 0.0473 ->
+1.4795 / 0.04734 (the old values were the same derivations, rounded).
+`deploy/bundle.npz` re-exported; the 4327521f one kept as
+`deploy/bundle_plant-4327521f.npz`. Before it, 4327521f0ca7a1cb -- NO physics
 change from 6c0ad5cd: `bike_params.yaml` split into the bike, `onboard.yaml`
 and `config/studies/` (whose blocks `plant_digest` now leaves out); the
 default model is bit-identical and so is the bundle but for its digests
@@ -283,7 +289,7 @@ to V2 with the rest of the configs, for consistency only.
 
 ## The guesses
 
-**32 `source: GUESS` lines in `config/bike_params.yaml`** (10-21; most are the v2 masses, grouped in the table). Never promote one
+**5 `source: GUESS`, 23 `estimate`, 8 `model` in `config/bike_params.yaml`** (10-21). The CAD-volume masses are `estimate`, modelling choices (`crown_radius`, the ideal drive's losses) `model`; GUESS is left for unknown physics (contact `solimp` and friction, the roller centring spring, the rollcage sheet). Never promote one
 quietly: promoting is a physical parameter change (the `CLAUDE.md`
 checklist).
 
@@ -291,7 +297,7 @@ checklist).
 |---|---|---|---|
 | `chassis.mass` (the residual) | 0.061 kg measured, spread over the frame parts by mass | the cables and 6-32s weighed by item (10-21); the 4-40s and M2s not; the rollcage's and wings' 6-32s not fitted | -- (weighed; recount when the rollcage and wings go on) |
 | **the bike as weighed** (10-21: no blades, battery or rollcage) | 772 g; the model 791 | model 19 g heavy; ~11 g of it the wing hubs' stubs (in the CAD, not fitted) | the printed parts weighed |
-| `frame_parts` printed masses (12 parts) | 7.7-20.7 g each, ~146 g | CAD printed estimate; the batch reads 9 % over its slicer total | `traces/weigh_v2_printed.txt` |
+| `frame_parts` printed masses (12 parts) | 7.7-20.7 g each, ~146 g | CAD printed estimate; for the batch the estimate is 9 % over the slicer's total; nothing weighed | `traces/weigh_v2_printed.txt` |
 | `righting.rollcage` mass | 68.5 + 108.5 + 35 g | cages and caps CAD printed estimates; the caps WILL be lighter (user, 10-21), their design not done; the sheet's material and thickness assumed | the caps' design, then weigh them |
 | `righting.module` masses (crank, coupler, wing_hub, blade, fixed) | 11.2 / 2.3 / 14.9 / 38.8 / 41.8 g (+ the 23 g XC330 on its own) | CAD check volumes (10-07), 2 perimeters / 15 % infill, steel pins | weigh the printed parts |
 | `fork_mass` + `front_wheel.mass` | 0.025 + 0.060 kg | **86 g together** (09-30), not split | a scale |
