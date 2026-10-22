@@ -44,7 +44,7 @@ UP, from lying (on purpose or after a fall):
              crank to centre at `retract_dps`.
     riding   done.
 
-Every default here came from a sweep in `analysis/swing_sit.py`
+Every default here came from a sweep in `analysis/moves/swing_sit.py`
 (2026-10-16, default bike, ideal drivetrain), whose docstring has the
 numbers. Teleop: PageDown / PageUp, and auto-up after a fall.
 

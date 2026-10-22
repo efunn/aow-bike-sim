@@ -136,7 +136,7 @@ markers = [
     "contact: rides on the contact model. Run after any config/bike_params.yaml `sim:` change -- contact_solref, timestep, mesh_segments, impratio, condim. These are also the slow ones.",
     "geometry: rides on a dimension, a mass, or a gear ratio. Run after any other bike_params change.",
     "spec: pins a contract two sides have to agree on -- a control/*_spec.py obs/action layout, or the HardwareData shim. Change one side and this catches the other.",
-    "policy: replays a trained export from moves/. All of these go provisional whenever the plant moves; analysis/chatter.py is the fuller check.",
+    "policy: replays a trained export from moves/. All of these go provisional whenever the plant moves; analysis/policy/chatter.py is the fuller check.",
     "deploy: pins deploy/bundle.npz against the params digest. This is step 1 of the bike_params checklist in CLAUDE.md.",
     "boundary: the onboard import boundary -- the Pi installs no mujoco, scipy or torch. Run after touching imports under hw/.",
     "trainer: SmoothPPO (src/aow_sim/smooth_ppo.py), the smoothness terms on the policy mean. Its train() is a COPY of stable-baselines3's, so run this after touching it OR upgrading SB3: with every weight at 0 an update must stay bit-identical to stock PPO.",

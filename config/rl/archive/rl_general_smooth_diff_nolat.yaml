@@ -36,7 +36,7 @@
 # question is answered. See docs/plans/odometry-rewrite.md.
 #
 # WHAT TO COMPARE IT AGAINST. general_rl_smooth_diff_pi, on the same eval grid
-# (analysis/chatter.py). The interesting numbers are survive_rate, track and
+# (analysis/policy/chatter.py). The interesting numbers are survive_rate, track and
 # vel_err; crab_ratio_* and crab_head_err are expected to go to nothing and are
 # NOT a regression -- this policy is being asked not to crab.
 #
@@ -44,7 +44,7 @@
 #
 # WHY. rl_general_smooth.yaml raised w_smooth uniformly 0.005 -> 0.05 and
 # trained moves/general_rl_smooth_og. Measured over the 20-command eval grid
-# (analysis/chatter.py), mean squared per-step action change, against the
+# (analysis/policy/chatter.py), mean squared per-step action change, against the
 # three policies trained at 0.005:
 #
 #   channel   0.005 (og / general_rl / 1k)   0.05        response
@@ -80,9 +80,9 @@
 #   * diff still does not move -> it is worth more than 11% of the reward,
 #     which is a stronger version of the result already in hand.
 #
-# Compare with analysis/chatter.py (per-channel, the table above),
-# analysis/hold_spectrum.py (spectra + the contact/airborne ground truth) and
-# analysis/move_confusion.py. Note that general_rl_smooth_og also came out
+# Compare with analysis/policy/chatter.py (per-channel, the table above),
+# analysis/policy/hold_spectrum.py (spectra + the contact/airborne ground truth) and
+# analysis/policy/move_confusion.py. Note that general_rl_smooth_og also came out
 # with the WORST cross-axis leakage of any policy (crab commands scoot
 # forward at 0.34 m/s, symmetry gap 0.52) -- watch whether that follows the
 # smoothing or was particular to that run.

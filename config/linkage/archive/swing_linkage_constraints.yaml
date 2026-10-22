@@ -1,6 +1,6 @@
-# A CONSTRAINTS-ONLY input to `analysis/swing_linkage.py --optimize`.
+# A CONSTRAINTS-ONLY input to `analysis/mechanism/swing_linkage.py --optimize`.
 #
-#     python analysis/swing_linkage.py \
+#     python analysis/mechanism/swing_linkage.py \
 #         --config config/linkage/archive/swing_linkage_constraints.yaml \
 #         --optimize --seed 1 --iters 400 --save config/my_result.yaml
 #
@@ -11,7 +11,7 @@
 # full mechanisms that build_model can drive, carrying a searched geometry that
 # this file deliberately does not.
 #
-# Omitted keys fall back to the module defaults in analysis/swing_linkage.py,
+# Omitted keys fall back to the module defaults in analysis/mechanism/swing_linkage.py,
 # which are what the figures in docs/status.md were produced against.
 # Precedence: command-line flag > this file > module default.
 #
@@ -107,7 +107,7 @@ limits:
                             # LIVE under flat_deploy, which pins the deployed
                             # attitude and lets the parked one fall out. 30.9 is
                             # the largest lean the policy can still save
-                            # (analysis/no_return.py), plus 5.
+                            # (analysis/policy/no_return.py), plus 5.
   max_half_width_mm: null   # hard cap on the parked envelope. null = uncapped,
                             # which is honest: there is no width the bike must
                             # fit inside, only a protrusion worth minimising --

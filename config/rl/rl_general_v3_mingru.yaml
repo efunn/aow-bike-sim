@@ -8,7 +8,7 @@
 # estimation problems -- noisy counts and AHRS, the drivetrain's delays,
 # and adapting to the randomised mass / friction / actuator strength within
 # an episode. Baseline: queue_general_v3's five seeds, same grid
-# (analysis/per_command.py resets the memory per episode).
+# (analysis/policy/per_command.py resets the memory per episode).
 #
 # NOT A PURE A/B: this arm also trains with the reset fix (10-14,
 # build_model.reset_actuator_state -- the steer's 4 ms delay line no longer

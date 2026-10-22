@@ -553,7 +553,7 @@ Also worth having written down:
 - The layout data could travel as a JSON blob rather than as generated
   FeatureScript source.
 - The drive-servo mount is a proposal, not a decision — see
-  `analysis/servo_mount.py`, four tags: `cage`, `spine`, `sleeve`, `plate`.
+  `analysis/mechanism/servo_mount.py`, four tags: `cage`, `spine`, `sleeve`, `plate`.
 
 ---
 
@@ -650,7 +650,7 @@ workstream and it arrived immediately:
   because the two cases ended up parallel; the alternatives are tabled in the
   config.
 - **The self-righting linkage moved 75 → 130 mm** to clear the drive belts and
-  then the servo cases. **`analysis/linkage_through_belt.py` (2026-08-21) says
+  then the servo cases. **`analysis/mechanism/linkage_through_belt.py` (2026-08-21) says
   most of that is recoverable, and cheaply.** The belt is genuinely what binds
   today — belt-limited minimum station 123.5 mm, so ~6.5 mm of the 130 is
   margin — but delete the belts and the floor is 109.0, set by the mount
@@ -822,7 +822,7 @@ working untouched while the CAD file gets the real part.
 **`case_gap` 5 mm is not a manufacturing allowance.** The wing's inner-bottom
 corner swings DOWN before clearing the panel band sideways — 26.06 mm from the
 pivot at 38.5° from vertical, leaving the band at z 67.65, i.e. **3.95 mm below
-the stowed underside**. `analysis/wing_linkage.py --stick` reports 0.0 mm and
+the stowed underside**. `analysis/mechanism/wing_linkage.py --stick` reports 0.0 mm and
 is wrong for this: its 2D wing is a LINE at the outer face, so it has no inner
 corner to dip. Trust it for the mechanism, not for panel clearance.
 

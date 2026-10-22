@@ -22,7 +22,7 @@
 # are -1, where the mirrored pair's are +1. The pair is coupled with mirror=+1
 # (left = right), so mirroring the bike negates the observed angle. Copying the
 # wings' +1 would not raise -- it would silently corrupt every handedness
-# number in analysis/mirror_equivariance.py, on the one mechanism whose whole
+# number in analysis/policy/mirror_equivariance.py, on the one mechanism whose whole
 # job is to be side-dependent. Check that first if left/right diverge.
 #
 #   python -m aow_sim.train_general_rl --config config/rl_general_swing.yaml \\
@@ -121,7 +121,7 @@ reward:
   # Pitch was FREE: w_upright prices roll and nothing priced pitch, so a
   # wheelie cost nothing. Measured on general_rl_glide_og, the front wheel
   # reaches 79 mm of clearance at 23 deg nose-up on a plain accelerate
-  # command, and 11 deg at a pure hold (analysis/liftoff.py). 0.0 keeps every
+  # command, and 11 deg at a pure hold (analysis/policy/liftoff.py). 0.0 keeps every
   # policy trained before this identical; set it together with env.obs_pitch,
   # so the penalty is not charged against a state the policy cannot see.
   w_pitch: 0.0

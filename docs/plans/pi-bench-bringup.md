@@ -228,7 +228,7 @@ policy eventually wants the channel back.
 **Design note, because the framing matters.** "Cut the policy past the
 unrecoverable roll" is two different rules:
 
-* *Unrecoverability* is **not a roll angle.** `analysis/no_return.py` measured
+* *Unrecoverability* is **not a roll angle.** `analysis/policy/no_return.py` measured
   the no-return state at roll −3.2…13.6° with the rear contact already
   travelling in the catch direction — what has run out is crawl authority, not
   lean margin, and the bike still looks upright. The recoverable set is a curve
@@ -273,7 +273,7 @@ chosen**:
 
     RECOVER_DEG  = 12.0   # inside the policy's cold recoverable set on BOTH
                           #   sides at standstill -- 16.3 right, 11.8 left, so
-                          #   the weaker side sets it (analysis/no_return.py)
+                          #   the weaker side sets it (analysis/policy/no_return.py)
     HANDOFF_RATE = 3.0    # rad/s; inside the window but still moving fast is
                           #   a bike on its way past, not a hand-off
 
@@ -498,9 +498,9 @@ on 15 import errors, because there is no MuJoCo. Name the file:
 | # | measurement | how | gate |
 |---|---|---|---|
 | M1 | servos answer, indirect map sticks, firmware floor | see above | **7 passed** |
-| M2 | bus round trip vs baud and latency timer | `read_s` / `write_s` from a `DynamixelBus.capture`, at 1/2/3 Mbps × `latency_timer` 1 and 16, **4 servos in the block**. `analysis/drivetrain_bench.py idle --write` does this but takes only 2 ids — a 4-id sweep wants a small script | know the curve; expect latency 16 to cap near 30 Hz, which is the point of measuring it |
+| M2 | bus round trip vs baud and latency timer | `read_s` / `write_s` from a `DynamixelBus.capture`, at 1/2/3 Mbps × `latency_timer` 1 and 16, **4 servos in the block**. `analysis/servo/drivetrain_bench.py idle --write` does this but takes only 2 ids — a 4-id sweep wants a small script | know the curve; expect latency 16 to cap near 30 Hz, which is the point of measuring it |
 | M3 | tick jitter at rate | `run_bike` prints p99 and max at shutdown; `jitter_ms` is live in telemetry | **p99 < 1 ms at 100 Hz** — **MET 2026-09-16: mean 0.17, p99 0.93, max 2.91 ms over 60 s**, four servos and the AHRS both live |
-| M4 | AHRS rate and age at the control tick | `python analysis/tm151_record.py --port /dev/ttyACM0`, then age-of-data inside the loop | 200 Hz sustained, age < 10 ms |
+| M4 | AHRS rate and age at the control tick | `python analysis/sensing/tm151_record.py --port /dev/ttyACM0`, then age-of-data inside the loop | 200 Hz sustained, age < 10 ms |
 | M5 | `DriveController.step` on the Pi | time it around the call for a few thousand ticks | < 1 ms p99 |
 | M6 | throttling | `vcgencmd get_throttled` | `0x0` |
 | M7 | command-age p99 over the link | once the radio is in, log `link.age()` for minutes | sets `CMD_STALE_S`, which is a guess today (see the note at `run_bike.py:60`) |
@@ -770,15 +770,15 @@ quaternion signs against `hw/ahrs.py`'s stated conventions.
 >
 >     9690 bytes arrived but NO Ep_Combo frames (0 parse errors). The sensor is
 >     alive and streaming the wrong message. Enable Ep_Combo at 200 Hz in
->     ImuAssistant; `python analysis/tm151_serial.py` will name what it is
+>     ImuAssistant; `python analysis/sensing/tm151_serial.py` will name what it is
 >     sending instead
 >
-> `analysis/tm151_serial.py`'s `Decoder` is what named the three messages, and
+> `analysis/sensing/tm151_serial.py`'s `Decoder` is what named the three messages, and
 > it is the tool to re-check with after the reconfiguration.
 >
 > **ImuAssistant is Windows-only** — the datasheet's software table says
 > Windows 7/8/8.1/10/11 and nothing else. "Over USB from a PC" should have said
-> *Windows*: the Mac reads this sensor perfectly well (`analysis/tm151_record.py`
+> *Windows*: the Mac reads this sensor perfectly well (`analysis/sensing/tm151_record.py`
 > did), because READING it and CONFIGURING it are different jobs and only the
 > second needs the GUI. The vendored EasyProfile library has no configuration
 > commands either — `EasyObjectDictionary.h` defines request(12), ack(13),
@@ -807,7 +807,7 @@ quaternion signs against `hw/ahrs.py`'s stated conventions.
 > **What that does and does not invalidate.** `ahrs_tau_s` **0.19 s survives**:
 > at 50 Hz that is ~9.5 samples per tau over 1580 tau-lengths, far from Nyquist,
 > and the fit reported r² 0.999. What is bandwidth-limited is anything about
-> NOISE — the gyro peak-to-peak check in `analysis/tm151_check.py` saw a 25 Hz
+> NOISE — the gyro peak-to-peak check in `analysis/sensing/tm151_check.py` saw a 25 Hz
 > band, and a 50 Hz output decimated from 400 Hz can alias higher-frequency
 > content down into it. Re-measure the noise figures once Combo streams at
 > 200 Hz; do not re-litigate tau.
@@ -882,7 +882,7 @@ sign error anywhere in it is a bike that drives itself over on the first
 attempt while every test in the suite stays green.
 
 It costs nothing and needs no chassis. Do it before anything is bolted to
-anything. `analysis/drivetrain_bench.py jog` already exists to check the two
+anything. `analysis/servo/drivetrain_bench.py jog` already exists to check the two
 drive signs in isolation (`--signs`, documented as UNVERIFIED, from the CAD)
 — this is the same check with the policy and the sensor in the loop.
 
@@ -1712,7 +1712,7 @@ Neither digest moves on disk (the new keys are under `control`).
 `servo_sign_turning_hub_forward: [1, -1]` was measured on 2026-09-13 -- both
 horns face outboard -- and written into
 `docs/measurements/drivetrain-measurements.yaml`. Nothing under `src/` ever
-read it. `analysis/drivetrain_bench.py` defaults to `--signs 1 -1` and has
+read it. `analysis/servo/drivetrain_bench.py` defaults to `--signs 1 -1` and has
 always been right; `hw/dynamixel.py` and `hw/odometry.py` assumed [1, 1].
 
 That swaps the two modes outright. A commanded common mode reaches the

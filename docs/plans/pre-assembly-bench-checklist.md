@@ -398,13 +398,13 @@ Worked through against the tests above:
   - The same doc: keep mass on the centreline (a lateral offset is a
     standing roll bias) and near the rear axle (yaw inertia is what the
     pivot and flick moves fight).
-  - `analysis/mass_envelope.py --study com` shifts the chassis CoM height
+  - `analysis/policy/mass_envelope.py --study com` shifts the chassis CoM height
     and re-tests the LQR and a policy. Its default policy predates the
     current line; not re-run here.
   - Direction of each effect, reasoned rather than measured:
     - **Higher:** slower fall, more roll inertia.
     - **Lower:** easier self-righting, and less traction load transfer.
-  - **Measured in sim 2026-09-25, plant only** (`analysis/cog_placement.py`;
+  - **Measured in sim 2026-09-25, plant only** (`analysis/mechanism/cog_placement.py`;
     inertia about the CoG held at the model's; `GUESS` chassis mass; μ 0.9
     `GUESS`):
     - **Fall from 1° to 60°:** 497 / 574 / 671 ms at h 80 / 124 / 180 mm.
@@ -554,7 +554,7 @@ Worked through against the tests above:
     a 10-50 mA limit the horn turns by hand as freely as at 0 mA. Modelled
     for now as `servo_friction_ma: 100` (0.27 N m of Coulomb friction on an
     axis while a servo is on it), a GUESS.
-  - **Breakaway sweep RUN 2026-09-25** (`analysis/servo_breakaway.py`,
+  - **Breakaway sweep RUN 2026-09-25** (`analysis/servo/servo_breakaway.py`,
     capture `traces/servo_breakaway/260925-144920_servo_breakaway`; bare
     ids 103 + 104, 12 V, P/D 700/1400, 45 deg goal steps). The two units
     agree to the milliamp:
@@ -615,7 +615,7 @@ Worked through against the tests above:
     - Checked in Onshape, both in one call: no interference short of each
       stop, 1 deg past it only the stop parts touch, the lever balances,
       print check clean bar expected bridges.
-  - **First load runs, 2026-09-25** (`analysis/servo_lift.py`, id 103 on
+  - **First load runs, 2026-09-25** (`analysis/servo/servo_lift.py`, id 103 on
     the Pi, IDLER printed; captures in `traces/servo_lift/`):
     - Lever alone (`..._noload`): every try moved from 25 mA and held up to
       20 mA, both directions, 2 of 2 -- the bare servo's result exactly, so
@@ -1070,7 +1070,7 @@ question needs that split.
 **Gives:** whether `Present Current` at stall goes linearly with duty (phase
 current) or as its square (bus current). No torque is measured.
 
-**Procedure:** `analysis/servo_stall.py`, the same tool as the XL330 run
+**Procedure:** `analysis/servo/servo_stall.py`, the same tool as the XL330 run
 (`xl330_m288_current_modes`).
 - Pass `--kt 0.91`: XC330-T181, 0.80 N·m / 0.88 A. The default of 0.43 is the
   XL330's.
@@ -1311,7 +1311,7 @@ scale readings are not the weighing: they read wheel load, not part masses.
 ### 1–2. Contact
 
 To read through `contact-protocol.md` in the detailed pass. The protocol was
-re-checked against `analysis/contact_calibration.py` on 2026-09-08. Nothing
+re-checked against `analysis/contact/contact_calibration.py` on 2026-09-08. Nothing
 has been measured, and every field in the sheet is 0.0.
 
 **User, 2026-09-24 (second pass):** a test specified on a slope isn't

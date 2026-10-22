@@ -456,7 +456,7 @@ cmd_seeds() {
   echo "watch        -> RUN_TAG=$tag ./scripts/rl.sh logs $move"
   echo "progress     -> RUN_TAG=$tag ./scripts/rl.sh eta $move   (CURRENT seed, not the sweep)"
   echo "cancel ALL   -> RUN_TAG=$tag ./scripts/rl.sh stop $move"
-  echo "compare      -> python analysis/per_command.py --metrics v_ach \\"
+  echo "compare      -> python analysis/policy/per_command.py --metrics v_ach \\"
   echo "                  --policies ${name}${lo} ${name}$(( lo + 1 )) --tag seedsweep"
 }
 

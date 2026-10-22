@@ -3,7 +3,7 @@
 #   mjpython -m aow_sim.run_drive --teleop --hockey --play config/plays/ram.yaml
 #   End (fn+right): parks the ball 0.6 m ahead and plays
 #
-# Sim, 2026-10-16 (analysis/ball_play.py --ball-x 0.6 --angle 0 --lead 0,
+# Sim, 2026-10-16 (analysis/moves/ball_play.py --ball-x 0.6 --angle 0 --lead 0,
 # seed1_72M, truth, ideal drive): ball dead ahead -> 1.27 m/s, 2 cm off ->
 # 1.18, 4 cm off -> 0.71 and the bike FELL. The bike is at 1.2 m/s within
 # 0.25 m of rest, so 0.6 m is enough run-up.

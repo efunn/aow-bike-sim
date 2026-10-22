@@ -28,7 +28,7 @@ s1_step_response:
   # following a first-order law, and the fitted tau moves 9x with a FIRMWARE
   # GAIN. The bus + firmware round trip is ~2 ms, an order of magnitude short.
   tau_origin:
-    # REPRODUCE:  python analysis/servo_modes.py --port <port> --ids 101,102 lag-origin
+    # REPRODUCE:  python analysis/servo/servo_modes.py --port <port> --ids 101,102 lag-origin
     #
     # RUN-TO-RUN SPREAD IS REAL AND IS NOT SMALL. Two independent runs of the
     # same sweep: PWM mode 13.6/14.1 then 11.5/11.7 ms; KVP 1600 10.9/11.6 then
@@ -72,7 +72,7 @@ s2_reversal:
   # through belt_ratio 3 and reflected wheel inertia is what makes a reversal
   # expensive, so every number here is an UPPER BOUND. Re-run on the stage-1
   # drivetrain station before drawing any conclusion about the policies.
-  #   command:  python analysis/servo_reversal.py --port <port> \
+  #   command:  python analysis/servo/servo_reversal.py --port <port> \
   #                 --freqs 5 10 15 25 40 --save traces/servo/reversal_bare_260901.npz
   #   raw:      traces/servo/reversal_bare_260901.npz (gitignored, Dropbox-synced)
   rig: bare_shaft           # bare_shaft | drivetrain_station
@@ -123,7 +123,7 @@ s4_droop:
 # XC330-T181 (steering / self-righting part), no load, PWM mode, 2026-09-01.
 # Not part of the drive protocol -- recorded here because the rig was up.
 xc330_no_load:
-  # REPRODUCE:  python analysis/servo_modes.py --port <port> --ids 103,104 no-load
+  # REPRODUCE:  python analysis/servo/servo_modes.py --port <port> --ids 103,104 no-load
   # The script runs the consistency check itself and prints the verdict; it does
   # not require the reader to spot the non-monotonicity by eye.
   rig: bare_shaft
@@ -155,7 +155,7 @@ r5_control_mode_comparison:
   # Plain position (Operating Mode 3) vs current-based position (5), BOTH units,
   # bare shaft, firmware 53, 2026-09-01. Square wave centred at 180 deg.
   #
-  # REPRODUCE:  python analysis/servo_modes.py --port <port> --ids 103,104 modes
+  # REPRODUCE:  python analysis/servo/servo_modes.py --port <port> --ids 103,104 modes
   # Re-run 2026-09-01 through the promoted script: mode 5 D0 gave 16.07/15.68/
   # 16.79/16.25 against 16.14/15.97/16.79/16.53, and mode 5 D1400 gave
   # 1.19/1.23/1.01/0.96 against 1.19/1.19/1.01/0.92. This study repeats tightly,
@@ -234,7 +234,7 @@ xc330_current_position:
   # inputs of src/aow_sim/righting_servo.py. One run, but the units agree.
   #
   # REPRODUCE (on the Pi -- the script no longer imports mujoco):
-  #   python analysis/servo_modes.py --port <port> --ids 103,104 current-position
+  #   python analysis/servo/servo_modes.py --port <port> --ids 103,104 current-position
   date: 2026-09-21
   rig: bare_shaft
   ids: [103, 104]
@@ -274,10 +274,10 @@ xc330_lever_lift:
   # "moved" = 1 deg. 2026-09-25/26. The measurements righting_servo.py and
   # gearbox_friction.py are built on; docs/plans/righting-servo-model.md.
   #
-  # REPRODUCE (on the Pi): python analysis/servo_lift.py --mass-g M --radius-mm R
+  # REPRODUCE (on the Pi): python analysis/servo/servo_lift.py --mass-g M --radius-mm R
   # then `servo_lift.py fit <dirs>` -- which applies servo_lift.CORRECTIONS
   # (the heavy weight is 137 g; the captures' meta says 117). Sim against these
-  # numbers: python analysis/servo_lift_sim.py.
+  # numbers: python analysis/servo/servo_lift_sim.py.
   date: 2026-09-26
   rig: x330_fixture_lever
   ids: [103]
@@ -306,7 +306,7 @@ xc330_command_delay:
   # Bare shafts, 12.0 V, 500 Hz, 6 s per mode, 2026-09-21.
   #
   # REPRODUCE (on the Pi):
-  #   python analysis/servo_modes.py --port <port> --ids 103,104 command-delay
+  #   python analysis/servo/servo_modes.py --port <port> --ids 103,104 command-delay
   date: 2026-09-21
   rig: bare_shaft
   delay_ms:
@@ -346,8 +346,8 @@ xl330_m288_current_modes:
   part: XL330-M288-T          # model number 1200, firmware 53
   vin_V: 5.2                  # NOT the bike's 12 -- this part is a 5 V servo
   reproduce:
-    - python analysis/servo_stall.py   --port <port> --id 150 --direction cw
-    - python analysis/servo_cascade.py --port <port> --id 150 --stop-deg 70
+    - python analysis/servo/servo_stall.py   --port <port> --id 150 --direction cw
+    - python analysis/servo/servo_cascade.py --port <port> --id 150 --stop-deg 70
 
   # ---- 1. the current controller in isolation (Operating Mode 0) ----------
   current_loop:
@@ -360,7 +360,7 @@ xl330_m288_current_modes:
     unit_confirmed_mA: 1.0
     # 12-30 ms, but on a FREE shaft at 5 ms sampling, so the current rise is
     # entangled with the shaft accelerating and it is 2.4-6 samples. Order of
-    # magnitude only. analysis/servo_step.py is the proper version and has not
+    # magnitude only. analysis/servo/servo_step.py is the proper version and has not
     # produced an answer yet -- see `outstanding`.
     rise_time_63pct_ms: [12, 30]
 
@@ -463,7 +463,7 @@ xl330_m288_current_modes:
   outstanding:
     - ONE RUN for the position-mode constants; the stall sweep has two, in
       opposite directions. Everything wants a replicate on a rigid rig.
-    - CURRENT-LOOP STEP RESPONSE unresolved. analysis/servo_step.py is written
+    - CURRENT-LOOP STEP RESPONSE unresolved. analysis/servo/servo_step.py is written
       and gated but has not produced an answer. At 2 ms sampling tau came out
       8-12 ms with no amplitude trend (argues linear) while the fitted delay
       grew 2.2 -> 4.3 ms with amplitude (argues rate-limited), on first-order

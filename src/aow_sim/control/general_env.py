@@ -1271,7 +1271,7 @@ class GeneralEnv(gym.Env):
         v_err2 = (v_cl - vb_lon) ** 2 + lat_scored * (v_ct - vb_lat) ** 2
         v_err2_inst = (v_cl - s.v_lon) ** 2 + lat_scored * (v_ct - s.v_lat) ** 2
         # The FULL 2-D error, always, whatever is being scored. `vel_err` is how
-        # policies get compared across runs (analysis/chatter.py), so its
+        # policies get compared across runs (analysis/policy/chatter.py), so its
         # meaning must not change with a training flag -- otherwise a nolat
         # policy would look better than a crabbing one purely by measuring less.
         v_err2_full = (v_cl - s.v_lon) ** 2 + (v_ct - s.v_lat) ** 2
@@ -1295,7 +1295,7 @@ class GeneralEnv(gym.Env):
                   # nothing priced pitch, so a wheelie cost the policy
                   # nothing. Measured on general_rl_glide_og, the front wheel
                   # reaches 79 mm of clearance at 23 deg nose-up under a plain
-                  # accelerate command (analysis/liftoff.py). Same quadratic
+                  # accelerate command (analysis/policy/liftoff.py). Same quadratic
                   # form as w_upright; 0.0 by default, so every config that
                   # predates it is unchanged.
                   - rw.get("w_pitch", 0.0) * s.pitch ** 2

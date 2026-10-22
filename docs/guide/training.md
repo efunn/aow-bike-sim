@@ -77,7 +77,7 @@ python -m aow_sim.train_general_rl --run-dir runs/my_experiment \
 
 ## Inspecting a policy
 
-There are two different things you might mean by "run it and look": `rollout_move` drives **one scripted sequence** and plots the trace; `analysis/per_command.py` runs **the eval grid**: the twenty commands the trainer scores itself on. The grid is the one to reach for when comparing policies.
+There are two different things you might mean by "run it and look": `rollout_move` drives **one scripted sequence** and plots the trace; `analysis/policy/per_command.py` runs **the eval grid**: the twenty commands the trainer scores itself on. The grid is the one to reach for when comparing policies.
 
 ### `rollout_move`: one sequence, in detail
 
@@ -123,15 +123,15 @@ Needs the `viz` extra (`imageio` + `imageio-ffmpeg`); `dev` includes it.
 Re-run the comparison in one process instead:
 
 ```sh
-python analysis/per_command.py --policies A B C     # the eval grid, one bar per policy
-python analysis/eval_video.py --policies A B        # the same grid, as video
+python analysis/policy/per_command.py --policies A B C     # the eval grid, one bar per policy
+python analysis/policy/eval_video.py --policies A B        # the same grid, as video
 ```
 
 **The eval grid is twenty commands**: hold, standstill quarter-turn and about-face, sprint, turn at speed, top speed, reverse, reverse turn, pure crab, glide-and-about-face, and the mirror image of every mirrorable command. It lives in `train_general_rl._EVAL_CMDS`, and the mirroring matters, because policies can (and do) learn handedness.
 
 `per_command.py` plots the commands **individually**, grouped by family with mirrored pairs adjacent, so handedness reads straight off the chart. A command the policy fell on is hatched (and its results suspect).
 
-`analysis/` holds one-off studies that ask a question of existing artifacts and change nothing. A figure worth keeping goes in `analysis/plots/`, and must be reproducible at the name it is tracked under.
+`analysis/` holds one-off studies that ask a question of existing artifacts and change nothing. Scripts are grouped by kind (`analysis/<category>/`); a figure worth keeping goes in that category's `plots/`, and must be reproducible at the name it is tracked under.
 
 ## Training somewhere else
 

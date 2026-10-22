@@ -115,7 +115,7 @@ isolated from the chaotic divergence that merely moving the 12 g sensor causes:
     unchanged and unchecked.
 
 TAU WAS A GUESS AND IS NOW MEASURED -- 0.19 +- 0.01 s, from 300 s of a real
-TM151 sitting still (`analysis/tm151_check.py`, exponential fit r2 0.999). The
+TM151 sitting still (`analysis/sensing/tm151_check.py`, exponential fit r2 0.999). The
 guess was 2.0 s, so the SHAPE was right and the timescale was 10x wrong.
 
 `TAU_ORIENT_S` IS NOW THE MEASUREMENT, 0.19. It was held at 2.0 for a while on
@@ -127,7 +127,7 @@ That repricing is now measured rather than feared, and it is small: across
 five policies a 10x move in tau costs at most 0.102 of score, and the policy
 that never trained against an AHRS at all flips MORE eval episodes across tau
 (four) than the one accused of specialising to it (one). The correlation time
-is not a live risk -- see `analysis/ahrs_tau.py` and docs/status.md, "The tau
+is not a live risk -- see `analysis/sensing/ahrs_tau.py` and docs/status.md, "The tau
 question, answered". So the constant is now simply the number the part has.
 
 NOTHING WAS RETRAINED FOR THIS. The four AHRS policies stand as exported and
@@ -251,13 +251,13 @@ GRAVITY = 9.81
 
 # Correlation time of the orientation error, seconds. MEASURED: 0.19 +- 0.01
 # from 300 s of a real TM151 at rest, exponential fit r2 0.999
-# (`analysis/tm151_check.py`). Still not a datasheet number, and still a
+# (`analysis/sensing/tm151_check.py`). Still not a datasheet number, and still a
 # RESTING one -- the dynamic value is unmeasured.
 #
 # The shape of the cost was predicted before it was measured and held up: too
 # short and the error is effectively white, which the controller averages
 # away; too long and it is a constant offset, which it trims out; the damage
-# is a shallow bump in between. `analysis/ahrs_tau.py` measures the whole
+# is a shallow bump in between. `analysis/sensing/ahrs_tau.py` measures the whole
 # curve. It was 2.0 (a guess) until 2026-08-28.
 TAU_ORIENT_S = 0.19
 
@@ -267,7 +267,7 @@ TAU_BIAS_S = 100.0
 
 # -- "tm151_filter": the TM151 as its own fusion filter ----------------------
 #
-# MEASURED on the yaw-roll fixture, 2026-09-23/24 (`analysis/ahrs_fixture.py`,
+# MEASURED on the yaw-roll fixture, 2026-09-23/24 (`analysis/sensing/ahrs_fixture.py`,
 # docs/status.md "AHRS fixture"). The noise levels above add random,
 # slowly-varying noise (a Gauss-Markov process) to the true
 # attitude with independent noise; the real part is better described as a

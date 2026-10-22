@@ -32,19 +32,19 @@ What implementing it found, beyond the plan below:
   910 limit, and under the 785 that `limits.torque_nm` converts to (that
   figure is a design budget, not the stroke's true need). The user's read:
   the mechanism wants more mechanical advantage.
-  Reproduced headless by `analysis/righting_current_sweep.py` (fallen, crank
+  Reproduced headless by `analysis/mechanism/righting_current_sweep.py` (fallen, crank
   goal stepped as teleop's 9/4, wheels passive): first upright at 630 counts
   at 12 V and 11.1 V, 650 at 9.9 V, both sides; ~0.51 N m of motor torque at
   the threshold against the 0.74 the Current Limit gives.
 - Braking at speed does not match: see righting_servo.py's docstring.
-- Calibration (`analysis/servo_lift_sim.py`): lift within 1-5 mA of the bench
+- Calibration (`analysis/servo/servo_lift_sim.py`): lift within 1-5 mA of the bench
   on the four fitted loads (208 vs 189 on the 236 g one), fall within 3-4.
 - Plant digest 8d8b25a809ea2f1a -> 9f162dc4727110e2; bundle re-exported
   (worst fit R^2 0.960); red set unchanged (3 accepted).
 The measurements are in `docs/plans/pre-assembly-bench-checklist.md`
 ("Loaded runs", "RELEASE test",
 "PWM sweep"), the captures in `traces/servo_lift/`, the script
-`analysis/servo_lift.py` (`fit` reproduces the lines below).
+`analysis/servo/servo_lift.py` (`fit` reproduces the lines below).
 
 ## What the bench says (XC330-T181, id 103, mode 5, 12 V, P700/D1400)
 
@@ -253,15 +253,15 @@ to ~190 mA.
    suite (it moves a digest); read the red-set verdict.
 
    The CALIBRATION check -- does the sim reproduce the bench table -- is
-   analysis, not a test: a new `analysis/servo_lift_sim.py` that runs the
+   analysis, not a test: a new `analysis/servo/servo_lift_sim.py` that runs the
    fixture's sweeps in sim and prints sim vs bench per load. Rerun it after
    any re-fit. Separate from `servo_lift.py` because that one runs on the
    Pi, where nothing may import mujoco.
 
 6. **Re-derive, do not carry forward**, then drive it:
-   - `analysis/self_righting.py lift` ("300 counts lifts the bike"), the
+   - `analysis/mechanism/self_righting.py lift` ("300 counts lifts the bike"), the
      teleop starting cap (`limits.torque_nm` -> counts),
-     `analysis/servo_modes.py`'s mode comparison, and the floor rig's
+     `analysis/servo/servo_modes.py`'s mode comparison, and the floor rig's
      `stiff_roll` / `fixed_roll` presets (their counts were chosen under
      the sqrt law). If 300 counts no longer lifts the bike, that is a
      design finding, not a test to loosen.
@@ -312,7 +312,7 @@ Consequences, all in sim:
   the crank while moving (785), not as motor torque. **Teleop, 12 V:** 525
   counts lifts it a little, 605 partway, **625 rights it fully** -- the
   mechanism wants more mechanical advantage. Headless:
-  `analysis/righting_current_sweep.py` gives 630 at 12 V and 11.1 V, 650 at
+  `analysis/mechanism/righting_current_sweep.py` gives 630 at 12 V and 11.1 V, 650 at
   the 9.9 V cutoff, of the 910 limit.
 - **Self-righting linkage: explored, PARKED, to be decided later**
   (2026-09-27; `righting-linkage-margin.md`). The previous study's load model
@@ -324,7 +324,7 @@ Consequences, all in sim:
   a rising wing that ends out on the far side 471 (its own class, unstudied).
   The short levers roughly double pin loads, and every design's worst lift
   load is the instant the servo starts (a Goal Current ramp cuts it). Nothing
-  is chosen, and no config pointer moved. `analysis/swing_stepthrough.py`
+  is chosen, and no config pointer moved. `analysis/mechanism/swing_stepthrough.py`
   steps any of them side by side.
 - The steering is weaker against a load: `(stall - f0)/(1 + c)` usable, ~0.52
   N m breaking away at the datasheet 0.80 (bench stall 0.62-0.69, kept at 0.80).

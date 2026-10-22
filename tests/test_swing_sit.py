@@ -2,7 +2,7 @@
 
 The state machine only, against hand-fed roll, rate and crank -- no model.
 Whether the sequence is GENTLE, and whether it gets the bike up, is the
-flown question: analysis/swing_sit.py, and test_teleop's
+flown question: analysis/moves/swing_sit.py, and test_teleop's
 test_swing_lie_down_get_up_and_auto_up for the teleop wiring.
 
 Pinned: nothing moves until the bike has stopped; the down phases run in

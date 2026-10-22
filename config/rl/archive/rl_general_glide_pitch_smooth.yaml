@@ -9,7 +9,7 @@
 # 0.005, which that file's own header calls "no constraint at all" (~2% of the
 # per-step reward at full chatter). So arm 2 was trained with chatter
 # effectively unpriced, and it shows -- measured over 8 s of hold with
-# analysis/wheel_slowmo.py:
+# analysis/contact/wheel_slowmo.py:
 #
 #   policy                        pen pk   airborne  peak force  roller rpm
 #   general_rl_smooth_diff_og      0.47mm       41%     5.13 xW         784
@@ -29,9 +29,9 @@
 # be partly LOAD-BEARING: the real HC-802 toy does chatter to stay up, and
 # rl_general_smooth.yaml's header already flags that hold quality getting worse
 # is the failure mode to look for. Compare against arm 2 on:
-#   analysis/chatter.py        per-channel d^2 and saturation
-#   analysis/wheel_slowmo.py   pen/airborne/force, the hardware-survival view
-#   analysis/liftoff.py        that w_pitch's gains are not given back
+#   analysis/policy/chatter.py        per-channel d^2 and saturation
+#   analysis/contact/wheel_slowmo.py   pen/airborne/force, the hardware-survival view
+#   analysis/policy/liftoff.py        that w_pitch's gains are not given back
 # and on hold drift + survive_rate in the eval, not on score alone.
 #
 #   python -m aow_sim.train_general_rl \
@@ -71,7 +71,7 @@
 #    averages to nothing. Arm 1 reached 23 deg nose-up with the front wheel
 #    79 mm off the floor on a plain accelerate command, and 11 deg at a pure
 #    hold, against 6.7 and 2.7 for general_rl_smooth_diff_og
-#    (analysis/liftoff.py; corr(front gap, pitch) = 0.999, so the gap IS the
+#    (analysis/policy/liftoff.py; corr(front gap, pitch) = 0.999, so the gap IS the
 #    pitch and not a hop). At 2.0 a 23 deg wheelie costs 0.32/step, ~11% of
 #    the ~3.0 per-step maximum: priced, not forbidden.
 #
@@ -86,7 +86,7 @@
 # records `obs_layout` and replay compares it element-wise.
 #
 # WHAT TO WATCH. crab_ratio_left/right (displacement-based) is still the
-# headline. Add the liftoff check: analysis/liftoff.py should show `at peak`
+# headline. Add the liftoff check: analysis/policy/liftoff.py should show `at peak`
 # pitch falling from 23 deg toward general_rl_smooth_diff_og's 6.7. If crab
 # is still flat AND pitch is now controlled, the wriggle hypothesis is dead
 # and the honest next step is the open-loop gait sweep, not another arm.

@@ -25,7 +25,7 @@ export const SWING_KEEPOUT = [
 ];
 
 // -------------------------------------------------------------------------
-// the four-bar, ported from analysis/swing_linkage.py
+// the four-bar, ported from analysis/mechanism/swing_linkage.py
 //
 // Lengths are plain numbers in MILLIMETRES throughout this layer and only
 // become ValueWithUnits at the sketch. Angles are the other way round: they

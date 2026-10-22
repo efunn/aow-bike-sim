@@ -4,7 +4,7 @@
 # Every number names the capture it came from. Captures live under
 # traces/drivetrain/ (gitignored, Dropbox-synced) and re-print their own quick
 # look with:
-#     python analysis/drivetrain_bench.py summary traces/drivetrain/<capture>
+#     python analysis/servo/drivetrain_bench.py summary traces/drivetrain/<capture>
 # The deeper tables (detent shape, chirp gain/phase, load model) were computed
 # in-session from those captures, not by the script; the method is stated per
 # section so they can be re-derived.
@@ -26,7 +26,7 @@ meta:
   temperature_C: [27, 43]        # Present Temperature range over the session
   bus: "U2D2, 3 Mbps, FastSyncRead at 500 Hz (tick dt 2.0 ms), macOS after adjust-ftdi-latency"
   dates: [2026-09-12, 2026-09-13]
-  tool: analysis/drivetrain_bench.py
+  tool: analysis/servo/drivetrain_bench.py
   caveats:
     - hand held, so every result includes whatever the holding hand absorbed
     - wheel in the air, no ground contact load
@@ -114,7 +114,7 @@ reversal_vs_gain:
 
 chirp_vs_gain:
   captures: {kvp100: 260913-001455_chirp, kvp400: 260913-013646_chirp, kvp200: 260913-014930_chirp}
-  figure: analysis/plots/drivetrain_chirp_gain.png   # python analysis/drivetrain_chirp_plot.py
+  figure: analysis/servo/plots/drivetrain_chirp_gain.png   # python analysis/servo/drivetrain_chirp_plot.py
   amplitude: 0.15                  # of no-load speed, 1.67 rad/s at the servo
   method: >
     Log sweep. Sine fit in windows of 3 periods, velocity from a +-1 frame
@@ -213,7 +213,7 @@ diff_detent:
   stop_phase_in_cycle_deg: {plus_1pct: [5.21, 5.55], minus_1pct: [7.31, 6.81], plus_3pct: [6.63, 6.90], minus_3pct: [6.63, 6.43]}
   pooled_run1: {stops: 187, best_period_deg: 7.52, R: 0.77, chance: 0.07}
   breakaway_duty_per_servo: [0.19, 0.24]
-  figure: analysis/plots/drivetrain_creep_stickiness.png   # python analysis/drivetrain_creep_plot.py
+  figure: analysis/servo/plots/drivetrain_creep_stickiness.png   # python analysis/servo/drivetrain_creep_plot.py
   through_speed: >
     Folded onto the 7.5 deg cycle as average speed THROUGH each part of the
     tooth (travel per pass / time spent there), both runs pooled: slow over

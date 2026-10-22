@@ -5,7 +5,7 @@ bike_params, so a re-fit leaves these green. A servo holding a load must lift it
 only above `(tau - f0)/(1 + c)` of motor torque's worth of load, and give way
 only above `(tau + f0)/(1 - c)` -- the two fitted lines -- which is only true
 if the friction row the module reads IS this dof's, and its limit reaches the
-solver. Whether the constants match the bench is analysis/servo_lift_sim.py.
+solver. Whether the constants match the bench is analysis/servo/servo_lift_sim.py.
 """
 
 import copy

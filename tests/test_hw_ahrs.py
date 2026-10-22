@@ -150,11 +150,11 @@ def _frame(cmd: int, payload_len: int) -> bytes:
 # the default and the designed path.
 
 def test_the_request_frame_is_byte_identical_to_the_vendor_builder():
-    """`analysis/tm151_serial.request` is the reference, written from the
+    """`analysis/sensing/tm151_serial.request` is the reference, written from the
     EasyProfile C source. hw/ cannot import it (analysis/ is not installed on
     the bike), so the bytes are re-derived -- and checked, not trusted."""
     import sys
-    sys.path.insert(0, "analysis")
+    sys.path.insert(0, "analysis/sensing")
     from tm151_serial import request
 
     from aow_sim.hw.ahrs import EP_CMD_COMBO, build_request

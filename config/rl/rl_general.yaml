@@ -74,7 +74,7 @@ reward:
   # Pitch was FREE: w_upright prices roll and nothing priced pitch, so a
   # wheelie cost nothing. Measured on general_rl_glide_og, the front wheel
   # reaches 79 mm of clearance at 23 deg nose-up on a plain accelerate
-  # command, and 11 deg at a pure hold (analysis/liftoff.py). 0.0 keeps every
+  # command, and 11 deg at a pure hold (analysis/policy/liftoff.py). 0.0 keeps every
   # policy trained before this identical; set it together with env.obs_pitch,
   # so the penalty is not charged against a state the policy cannot see.
   w_pitch: 0.0

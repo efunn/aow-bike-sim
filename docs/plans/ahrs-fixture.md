@@ -1,13 +1,13 @@
 # AHRS fixture: the TM151's dynamic error
 
-Status: **parked** (2026-09-24): no new mounts; the fixture comes back only if the bike's AHRS misbehaves. Code: `analysis/ahrs_fixture.py`, CAD `aow_sim.cad.ahrs_fixture`. The model it produced is the opt-in `ahrs_level: tm151_filter`.
+Status: **parked** (2026-09-24): no new mounts; the fixture comes back only if the bike's AHRS misbehaves. Code: `analysis/sensing/ahrs_fixture.py`, CAD `aow_sim.cad.ahrs_fixture`. The model it produced is the opt-in `ahrs_level: tm151_filter`.
 
 ## Log, 2026-09-23 to 09-24 (from status.md)
 
 *Moved verbatim from `docs/status.md` on 2026-10-02, when that file was rewritten as a short navigation layer. "Above", "below", "Health" and numbered "What to do next" items refer to status.md as it was then (`git show d0dffeb:docs/status.md`).*
 
 **AHRS fixture (2026-09-23), for the DYNAMIC error the standing falls hinge
-on, and for where the AHRS may go.** `analysis/ahrs_fixture.py`: yaw servo 151
+on, and for where the AHRS may go.** `analysis/sensing/ahrs_fixture.py`: yaw servo 151
 carrying roll servo 152 carrying the TM151, encoders as truth, on the Pi.
 `session` (15.5 min) runs rest, fast steps, chirps, a replay of the sim's own
 standing flights, yaw-only replay and random sway behind one ident prologue;
@@ -156,10 +156,10 @@ on the other side) is its test -- same size, opposite sign.
   (inside `rest`; harmless there). Whether the onboard reader has the same
   stall is unchecked.
 
-    python analysis/ahrs_fixture.py analyse traces/ahrs_fixture/260923-221539_session_loaded_p1500d1000
-    python analysis/ahrs_fixture.py repeat traces/ahrs_fixture/260923-221539_session_loaded_p1500d1000 \
+    python analysis/sensing/ahrs_fixture.py analyse traces/ahrs_fixture/260923-221539_session_loaded_p1500d1000
+    python analysis/sensing/ahrs_fixture.py repeat traces/ahrs_fixture/260923-221539_session_loaded_p1500d1000 \
         traces/ahrs_fixture/260923-224528_session_loaded_p1500d1000_repeat
-    python analysis/ahrs_fixture.py filter-model traces/ahrs_fixture/260923-224528_session_loaded_p1500d1000_repeat
+    python analysis/sensing/ahrs_fixture.py filter-model traces/ahrs_fixture/260923-224528_session_loaded_p1500d1000_repeat
 
 Also: **the TM151's clock runs 0.3% fast**; the Combo gyro is in rad/s; the
 Pi logged undervoltage on a different supply brick that session and none on

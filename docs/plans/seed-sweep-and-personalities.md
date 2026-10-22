@@ -313,8 +313,8 @@ neither digest.
 
 Reproduce anything here:
 
-    python analysis/per_command.py --summary --policies personality0 ... personality11
-    python analysis/per_command.py --metrics v_ach t_head_s --tag all12 --policies ...
+    python analysis/policy/per_command.py --summary --policies personality0 ... personality11
+    python analysis/policy/per_command.py --metrics v_ach t_head_s --tag all12 --policies ...
 
 `per_command.py` defaults to `--encoder counts --ahrs tm151 --ahrs-tau 0.19`,
 so both commands run against the sensors. See §9 for why that is worth saying
@@ -381,7 +381,7 @@ competent set (2, tied with `personality0`) alongside its forward drive, its
 policy that does not creep backwards while holding station). Nothing here
 changes the recommendation to leave `control.general_move` where it is.
 
-**Stale artefact**: `analysis/plots/per_command_v_ach_personalities_all12.png`
+**Stale artefact**: `analysis/policy/plots/per_command_v_ach_personalities_all12.png`
 predates the 09-11 fix in its fall hatching only — the `v_ach` bars it plots are
 the quantity §2 and §4 are built on and those are unchanged. Kept, not
 regenerated.

@@ -5,7 +5,7 @@
 #   _fps = frames per second (int). 0 / 0.0 means "not yet measured".
 # This file is for raw data entry only. When a section is complete, read the
 # matching entry off the tables in contact-protocol.md (or re-run
-# analysis/contact_calibration.py with your numbers) and update
+# analysis/contact/contact_calibration.py with your numbers) and update
 # `sim.contact_solref` (p0/p1) or `sim.friction_sliding` (p0b) in
 # config/bike_params.yaml.
 

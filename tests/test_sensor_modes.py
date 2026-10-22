@@ -26,7 +26,7 @@ serial, which is a third of the `contact` marker's whole budget for one file.
 The subset (hold, forward, reverse, 90 degree turn) reproduces every number
 this file asserts and separates the modes by more than the thresholds' margin,
 so it is a REGRESSION GUARD rather than a measurement. The measurement is
-`analysis/chatter.py` and the tables in docs/status.md; do not re-derive
+`analysis/policy/chatter.py` and the tables in docs/status.md; do not re-derive
 policy standings from here.
 
 THE GUARD'S THRESHOLD is a ceiling over a measured value, deliberately slack.
@@ -74,7 +74,7 @@ def params():
 def _subset(v_max: float):
     """hold, forward, reverse, 90-degree turn -- indices 0, 3, 7, 1 of the
     full grid, so a row here is directly comparable to the same row of
-    `analysis/chatter.py` rather than being a differently-scaled command."""
+    `analysis/policy/chatter.py` rather than being a differently-scaled command."""
     # Imported here, not at the top: train_general_rl pulls in torch, SB3 and
     # cv2 (~0.55 s), and pytest imports every test file on every run --
     # `-m pure` included -- whether or not it selects anything in it.

@@ -15,7 +15,7 @@ printed in ASA except the rods, which are metal stock.
 ## linkage geometry (imported)
 
 - The four-bar comes from a **linkage config**, the same files the sim and
-  `analysis/swing_stepthrough.py` read: `linkage.config` in
+  `analysis/mechanism/swing_stepthrough.py` read: `linkage.config` in
   `config/cad/righting_cad.yaml` (now `config/linkage/swing_linkage_shared_rod.yaml`).
   - From it: crank, coupler and rocker lengths, the servo shaft height, the
     stroke, and the panel's line at rest.

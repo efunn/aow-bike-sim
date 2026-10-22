@@ -311,9 +311,9 @@ def test_stowed_wings_clear_the_recoverable_set(params, wing_model):
     """Stowed, the wings are the lowest outboard thing on the bike, so they
     decide the lean at which something other than a tyre touches down. That
     has to stay outside the policy's recoverable set (up to 30.9 deg, see
-    analysis/no_return.py) or a savable lean turns into a scrape.
+    analysis/policy/no_return.py) or a savable lean turns into a scrape.
 
-    Same construction as analysis/self_righting.py's `landscape`: hold the bike
+    Same construction as analysis/mechanism/self_righting.py's `landscape`: hold the bike
     clear of the floor at each roll angle and ask which geom is nearest it,
     rather than rotating about a fixed axle and hoping the wheel stays put."""
     d = mujoco.MjData(wing_model)

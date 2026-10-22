@@ -4,7 +4,7 @@ Pins the IMPLEMENTATION, not the calibration: every expectation is derived
 from the constants in bike_params (current_deadband, current_torque_gain, the
 friction block), so a re-fit leaves these green and only broken code turns
 them red. Whether the constants reproduce the bench is analysis:
-analysis/servo_lift_sim.py.
+analysis/servo/servo_lift_sim.py.
 
 What is pinned: torque linear in the current demand above the drive edge and
 zero below it; braking by plugging, as measured; Present Current reading the

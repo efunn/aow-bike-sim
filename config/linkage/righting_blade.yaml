@@ -3,7 +3,7 @@
 # since then V3 (config/linkage/blade_v3.yaml), and this one is
 # `run_drive --blade config/linkage/righting_blade.yaml`. Was built by build_model's
 # default righting module, via params.resolve_righting_module, and
-# `analysis/swing_stepthrough.py` sweeps it against the CAD's parts. Was
+# `analysis/mechanism/swing_stepthrough.py` sweeps it against the CAD's parts. Was
 # config/linkage/blade_toe.yaml, an example; promoted 2026-10-09.
 #
 # The toes are the mechanism's END STOP: the two wings' toes meet at crank

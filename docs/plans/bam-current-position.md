@@ -46,7 +46,7 @@ XC330-T181 in `docs/plans/pre-assembly-bench-checklist.md`, not on an XL330.
 
 The X330 fixture (`aow_sim.cad.x330_fixture`, IDLER) takes either servo --
 same case -- with a two-armed lever, a 10-32 mass slot to 44 mm each side,
-and `analysis/servo_lift.py` already runs modes 3, 5 and 16 on it with the
+and `analysis/servo/servo_lift.py` already runs modes 3, 5 and 16 on it with the
 safety that dropped loads taught (catch, lower before torque off, GC off).
 Differences from BAM's pendulum, to solve before recording:
 

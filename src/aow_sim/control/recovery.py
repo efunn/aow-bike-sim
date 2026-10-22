@@ -13,7 +13,7 @@ numpy: `righting.py` pulls in mujoco and `build_model`, which nothing under
 `hw/` may touch, and that is the only reason this is a third file instead of a
 function in the one that came first.
 
-THE NUMBERS ARE MEASURED, NOT CHOSEN. `analysis/no_return.py` bisects the
+THE NUMBERS ARE MEASURED, NOT CHOSEN. `analysis/policy/no_return.py` bisects the
 largest lean `general_rl` still walks away from, from the settled state, in the
 two signals the AHRS actually reports. At standstill:
 

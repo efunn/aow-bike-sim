@@ -22,9 +22,9 @@
 > work is still not pulled down, and `status.md` no longer has it either, so
 > anything not in this file is currently only in the git history.
 >
-> Tools: `analysis/wing_linkage.py`, `analysis/swing_linkage.py`,
-> `analysis/swing_demo.py`, `src/aow_sim/cad/swing_linkage.py`. Figures in
-> `analysis/plots/`. Station C of `first-physical-test.md` is the bench protocol
+> Tools: `analysis/mechanism/wing_linkage.py`, `analysis/mechanism/swing_linkage.py`,
+> `analysis/mechanism/swing_demo.py`, `src/aow_sim/cad/swing_linkage.py`. Figures in
+> `analysis/mechanism/plots/`. Station C of `first-physical-test.md` is the bench protocol
 > for measuring τ(θ) on the real thing.
 
 The current design uses a gear train to rotate the wings around a point near the base of the bike. Here, we explore the possibility of using a linkage mechanism (in effect, a 4-bar linkage for each wing, both driven by the same servo) to drive the wings instead. They still rotate around a similar point near the base of the bike.
@@ -98,7 +98,7 @@ everything else moves.
 
 ### 2. Mechanism geometry — the OPTIMISER searches these
 
-`analysis/wing_linkage.py::_VARS`, nine variables:
+`analysis/mechanism/wing_linkage.py::_VARS`, nine variables:
 
     wing_pivot_offset      ground_clearance       servo_offset
     wing_attach_offset y   wing_attach_offset z
@@ -130,14 +130,14 @@ being told to. **The asymmetry is an output, not an input.**
 
 ```sh
 # 1. kinematics only -- can both wings reach 90 deg in one monotonic stroke?
-python analysis/wing_linkage.py --optimize --iters 400
+python analysis/mechanism/wing_linkage.py --optimize --iters 400
 
 # 2. add statics -- minimise peak servo torque among designs that pass (1)
-python analysis/wing_linkage.py --optimize --torque --iters 400 \
+python analysis/mechanism/wing_linkage.py --optimize --torque --iters 400 \
     --save config/linkage/archive/wing_linkage_optimized.yaml
 
 # 3. or optimise for a SELF-LOCKING deployed pose instead (the current pick)
-python analysis/wing_linkage.py --optimize --lock --iters 400 \
+python analysis/mechanism/wing_linkage.py --optimize --lock --iters 400 \
     --save config/linkage/wing_linkage_locking.yaml
 ```
 
@@ -150,32 +150,32 @@ own numeric test and was caught by a picture**:
 
 ```sh
 C=config/linkage/wing_linkage_locking.yaml
-python analysis/wing_linkage.py --config $C --panels     # stow vs deploy
-python analysis/wing_linkage.py --config $C --righting   # bike pushing itself up
-python analysis/wing_linkage.py --config $C --torque     # servo torque, both sides
-python analysis/wing_linkage.py --config $C --forces     # pin loads for sizing
-python analysis/wing_linkage.py --config $C --righting --video
+python analysis/mechanism/wing_linkage.py --config $C --panels     # stow vs deploy
+python analysis/mechanism/wing_linkage.py --config $C --righting   # bike pushing itself up
+python analysis/mechanism/wing_linkage.py --config $C --torque     # servo torque, both sides
+python analysis/mechanism/wing_linkage.py --config $C --forces     # pin loads for sizing
+python analysis/mechanism/wing_linkage.py --config $C --righting --video
 ```
 
 `--tag` suffixes the default filename, which is what keeps one config's figures
-from overwriting another's. The tracked set in `analysis/plots/` is exactly:
+from overwriting another's. The tracked set in `analysis/mechanism/plots/` is exactly:
 
 ```sh
-python analysis/wing_linkage.py                                   # baseline config,
-python analysis/wing_linkage.py --deploy                          #   untagged
-python analysis/wing_linkage.py --panels
-python analysis/wing_linkage.py --torque
-python analysis/wing_linkage.py --righting
-python analysis/wing_linkage.py --righting --video
-python analysis/wing_linkage.py --video
+python analysis/mechanism/wing_linkage.py                                   # baseline config,
+python analysis/mechanism/wing_linkage.py --deploy                          #   untagged
+python analysis/mechanism/wing_linkage.py --panels
+python analysis/mechanism/wing_linkage.py --torque
+python analysis/mechanism/wing_linkage.py --righting
+python analysis/mechanism/wing_linkage.py --righting --video
+python analysis/mechanism/wing_linkage.py --video
 
 O=config/linkage/archive/wing_linkage_optimized.yaml
-python analysis/wing_linkage.py --config $O --tag _opt            # torque-optimised
-python analysis/wing_linkage.py --config $O --deploy --tag _opt
+python analysis/mechanism/wing_linkage.py --config $O --tag _opt            # torque-optimised
+python analysis/mechanism/wing_linkage.py --config $O --deploy --tag _opt
 
-python analysis/wing_linkage.py --config $C --panels --tag _lock  # the current pick
-python analysis/wing_linkage.py --config $C --torque --tag _lock
-python analysis/wing_linkage.py --config $C --video  --tag _lock
+python analysis/mechanism/wing_linkage.py --config $C --panels --tag _lock  # the current pick
+python analysis/mechanism/wing_linkage.py --config $C --torque --tag _lock
+python analysis/mechanism/wing_linkage.py --config $C --video  --tag _lock
 ```
 
 Every tracked figure has to be reproducible **at the name it is tracked under**.
@@ -267,8 +267,8 @@ are the dates the work was done.
 ### The SWING mechanisms — co-rotating, and the reason they exist
 
 Two new mechanisms and a study, all from 2026-08-25. `config/linkage/swing_wings.yaml`
-(geared), `config/linkage/swing_linkage*.yaml` (four-bar), `analysis/swing_linkage.py`,
-`analysis/swing_demo.py`. Figures at `analysis/plots/swing_linkage_*`. The
+(geared), `config/linkage/swing_linkage*.yaml` (four-bar), `analysis/mechanism/swing_linkage.py`,
+`analysis/mechanism/swing_demo.py`. Figures at `analysis/mechanism/plots/swing_linkage_*`. The
 four-bar variants: the hand-drawn `swing_linkage.yaml` (BUILT), `_opt` and
 `_margin` from the first searches, and `_compact` / `_vertical` from
 2026-09-03 — see the standing note at the end of this section.
@@ -308,7 +308,7 @@ Two forms, and they are alternatives to each other and to everything in
   the wing joint. The rocker arc bounds the rising wing geometrically rather
   than by a configured stroke limit.
 
-`analysis/swing_linkage.py` is the design tool, built so a practical problem
+`analysis/mechanism/swing_linkage.py` is the design tool, built so a practical problem
 (something too weak, a calibration issue) can be expressed as a constraint and
 re-searched. It reports a HARD feasibility table — every constraint pass/fail
 with margins — separately from the objective, because the objective is a
@@ -407,7 +407,7 @@ is the as-drawn value against the -27.08 the study actually uses.
 The four-bar is solved in FeatureScript, so it is a SECOND implementation of the
 circle-circle branch rule. `--check` is what keeps the two honest: one billable
 call runs the port on Onshape and diffs every joint, crank tip, panel foot and
-panel top against `analysis/swing_linkage.py` at seven crank inputs on both
+panel top against `analysis/mechanism/swing_linkage.py` at seven crank inputs on both
 sides. All 56 agree to the printed digit, and the sketch builds 17 edges.
 Nothing has been pushed to a studio yet -- it needs its own Feature Studio tab,
 since a push overwrites one wholesale and `cad.layout` and `cad.servo_mount` own
@@ -420,14 +420,14 @@ than its body.
 
 **The reasoning is not here.** Every constraint, every metric that was wrong
 once, the four-bar identities the closed forms rest on, and the objective's
-rung structure live in `analysis/swing_linkage.py`'s docstrings, beside the code
+rung structure live in `analysis/mechanism/swing_linkage.py`'s docstrings, beside the code
 they govern. `config/linkage/archive/swing_linkage_constraints.yaml` is the annotated input
 schema. This section carries only what moves.
 
 ### The wing LINKAGE — a second mechanism, and a real alternative
 
-`docs/plans/wing-linkage-design-and-optimization.md`, `analysis/wing_linkage.py`,
-`config/linkage/wing_linkage*.yaml`. Figures in `analysis/plots/wing_linkage_*`, with
+`docs/plans/wing-linkage-design-and-optimization.md`, `analysis/mechanism/wing_linkage.py`,
+`config/linkage/wing_linkage*.yaml`. Figures in `analysis/mechanism/plots/wing_linkage_*`, with
 `--tag _opt` / `_lock` marking which config drew each one.
 
 A four-bar per wing, both on one servo, as an alternative to the gear train.
@@ -468,7 +468,7 @@ geared pair has no such ceiling — there, more torque is simply more margin.
 
 #### What the optimiser taught, mostly by cheating
 
-Every constraint in `analysis/wing_linkage.py` exists because a search walked
+Every constraint in `analysis/mechanism/wing_linkage.py` exists because a search walked
 through the gap where it wasn't, and **every wrong answer passed its own
 numeric test and was caught by looking at a picture**:
 
@@ -514,7 +514,7 @@ rather than being rewritten.
 Consequences now wired into the code:
 
 - `build_model.SWING_LINKAGE_CFG` points at `_smaller`, so teleop,
-  `analysis/swing_linkage.py` and `cad.swing_linkage` finally agree. They did
+  `analysis/mechanism/swing_linkage.py` and `cad.swing_linkage` finally agree. They did
   not: the CAD path built `_smaller` while the other two drove the bare
   `swing_linkage.yaml`.
 - `run_drive --swing-linkage` takes an optional config path for the other

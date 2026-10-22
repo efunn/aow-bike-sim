@@ -3,7 +3,7 @@
 #
 # Reproduce from the CONSTRAINTS file, which is the honest input -- it carries
 # the limits and none of the answer:
-#     python analysis/swing_linkage.py \
+#     python analysis/mechanism/swing_linkage.py \
 #         --config config/linkage/archive/swing_linkage_constraints.yaml \
 #         --optimize --seed 1 --iters 400 --save <out>.yaml
 # Seeds 1-7 of 8 return 66.326 to five decimals. SEED 0 DOES NOT: it stalls on

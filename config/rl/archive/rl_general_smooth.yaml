@@ -2,7 +2,7 @@
 # two are a clean A/B -- rl_general.yaml is untouched and stays the baseline.
 #
 # WHY. Measured on the three policies trained from the baseline config, under a
-# pure hold command (analysis/hold_spectrum.py):
+# pure hold command (analysis/policy/hold_spectrum.py):
 #
 #   * every action channel chatters bang-bang between its bounds, with AC RMS
 #     of 0.72-0.89 of full scale against a mean of ~0.00;
@@ -21,8 +21,8 @@
 #
 # The concern to watch is that hold quality gets WORSE, not better -- if the
 # chatter is doing real balance work, smoothing it costs survival. Compare with
-# analysis/hold_spectrum.py and the hold_quality block of
-# analysis/move_confusion.py, not with eval/score alone.
+# analysis/policy/hold_spectrum.py and the hold_quality block of
+# analysis/policy/move_confusion.py, not with eval/score alone.
 #
 #   python -m aow_sim.train_general_rl --config config/rl_general_smooth.yaml \
 #       --run-dir runs/general_rl_smooth --export-name general_rl_smooth

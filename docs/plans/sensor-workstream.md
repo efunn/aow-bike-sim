@@ -49,7 +49,7 @@ with the front wheel 79 mm off the floor** on a plain accelerate command.
 
 **Two tools were built to see this, and both earn their keep.**
 
-- `analysis/liftoff.py` — supersedes the airborne-*percentage* columns in
+- `analysis/policy/liftoff.py` — supersedes the airborne-*percentage* columns in
   `hold_spectrum.py` and `chatter.py`, which are actively misleading. Binary
   "is the wheel touching" counts the rear omni's own ~0.6 mm envelope ripple
   identically to a visible wheelie: the rear reads 40–60% "airborne" while
@@ -58,7 +58,7 @@ with the front wheel 79 mm off the floor** on a plain accelerate command.
   gap *distribution* in mm, and separates pitch from hop by comparing measured
   pitch, implied pitch, and common lift. `corr(front gap, pitch) = 0.999`
   confirmed arm 1's liftoff was pitch, not hopping.
-- `analysis/pen.py` — the top-down ground track per command, which is what the
+- `analysis/policy/pen.py` — the top-down ground track per command, which is what the
   operator actually sees. A mean velocity cannot represent "it draws a slow
   squiggly repeated S"; a squiggle whose lobes cancel and a straight line have
   the same mean.
@@ -146,7 +146,7 @@ mtime.
 | `general_rl_nolat` | 0.780 / 1.00 | 0.742 / 1.00 | never observes `v_lat`; 12M, remote |
 
 One grid, 20 commands, identical seeds, randomization off
-(`analysis/chatter.py --force-odometry`). Both digests current
+(`analysis/policy/chatter.py --force-odometry`). Both digests current
 (`plant_digest e1ec36bfa670217e`).
 
 `odo` gives up 0.036 of score on truth and keeps all of it on the estimate. It
@@ -194,7 +194,7 @@ scoots forward at +0.366 m/s against −0.214.
 
 #### The real TM151, measured (2026-08-27)
 
-300 s stationary on a desk at 50 Hz, via `analysis/tm151_record.py` →
+300 s stationary on a desk at 50 Hz, via `analysis/sensing/tm151_record.py` →
 `tm151_check.py`. First real-hardware numbers in the project:
 
 | quantity | measured | `sim_ahrs` | |
@@ -224,7 +224,7 @@ matters") turned out to overstate a 1-in-20 effect. Kept as written because it
 is the record of a correction, and the correction was itself corrected.
 
 `sim_ahrs.TAU_ORIENT_S` is 2.0 s, a guess. The real part measures **0.19 s**
-(300 s at rest, exponential fit r² 0.999 — see `analysis/tm151_check.py`).
+(300 s at rest, exponential fit r² 0.999 — see `analysis/sensing/tm151_check.py`).
 Re-evaluating at the measured value:
 
 | policy | tau 2.0 (guess) | tau 0.19 (measured) |
@@ -249,7 +249,7 @@ RANDOMISE tau rather than pick one — the dynamic tau is unmeasured anyway, and
 The existing TM171 row (0.689 against 0.537) was measured on `general_rl_odo`,
 which never trained against an AHRS — it prices the part for a policy caught
 unprepared. Priced instead for the policy we would actually fly, on the full
-2×2 (`analysis/chatter.py --policies general_rl_odo_ahrs --encoder counts`):
+2×2 (`analysis/policy/chatter.py --policies general_rl_odo_ahrs --encoder counts`):
 
 | `general_rl_odo_ahrs` | tau 2.0 (**trained on**) | tau 0.19 (**measured**) |
 |---|---|---|
@@ -349,7 +349,7 @@ this reproduces bit for bit (asserted,
 #### The tau question, answered (2026-08-28)
 
 Both configured follow-ups landed. One grid for all five policies —
-`analysis/ahrs_tau.py`, 20 commands, identical seeds, randomization off,
+`analysis/sensing/ahrs_tau.py`, 20 commands, identical seeds, randomization off,
 `--encoder counts --ahrs tm151`:
 
 | policy | trained at tau | eval tau 2.0 | eval tau 0.19 | spread |
@@ -444,7 +444,7 @@ are re-scored at the new default. Three consequences to know:
   a range and never read the default at all.
 - `general_env` no longer hardcodes `2.0` as its fallback; it reads
   `TAU_ORIENT_S`.
-- `analysis/chatter.py --ahrs-tau` defaults to `TAU_ORIENT_S` too, so **a
+- `analysis/policy/chatter.py --ahrs-tau` defaults to `TAU_ORIENT_S` too, so **a
   chatter table taken after 2026-08-28 is at tau 0.19 unless it says
   otherwise, and every table in this file dated before that is at 2.0.**
   Where both are quoted the column headers say which.
@@ -461,7 +461,7 @@ of survival.
 `general_rl_odo` predates the `odometry_encoder` field, so a grid that does
 not force the encoder silently scores it on `ideal` and it comes out at 0.649
 / 1.00 at tau 0.19 — apparently the best policy in the set. It is being run on
-a different bike. `analysis/ahrs_tau.py` takes `--encoder` and defaults it to
+a different bike. `analysis/sensing/ahrs_tau.py` takes `--encoder` and defaults it to
 `counts` for exactly this reason, and prints which encoder produced the table.
 
 **Still open, and not answered by any of this:** 0.19 s is a RESTING figure.
@@ -504,7 +504,7 @@ this re-bases nothing and every metrics block already in `moves/*.yaml` stays
 comparable. Five families that PARTITION the grid, ~20 numbers against the
 ~160 of the full metric × command matrix. **Implemented** —
 `train_general_rl.FAMILIES` and `_by_family`, reported by
-`analysis/chatter.py` and written into every future export's metrics block.
+`analysis/policy/chatter.py` and written into every future export's metrics block.
 The argument is item **F** of `docs/plans/eval-score-rewrite.md`.
 
 | family | n | what it is |
@@ -563,12 +563,12 @@ edit and moves neither digest.
 **The 180° turnaround is not a limit of the bike**, and an earlier version of
 this file said it was — see "The ideal-sensor reference" below.
 
-Eight figures per arm, one per metric, in `analysis/plots/`:
-[heading median](../analysis/plots/per_command_head_err_med.png) and
-[time to heading](../analysis/plots/per_command_t_head_s.png) for the four
+Eight figures per arm, one per metric, in `analysis/policy/plots/`:
+[heading median](../../analysis/policy/plots/per_command_head_err_med.png) and
+[time to heading](../../analysis/policy/plots/per_command_t_head_s.png) for the four
 AHRS policies; the same two with `_ideal` for the truth pair
-([heading](../analysis/plots/per_command_head_err_med_ideal.png),
-[t_head](../analysis/plots/per_command_t_head_s_ideal.png)). Every figure
+([heading](../../analysis/policy/plots/per_command_head_err_med_ideal.png),
+[t_head](../../analysis/policy/plots/per_command_t_head_s_ideal.png)). Every figure
 stamps its own sensor configuration, because two runs differing only in
 `--ahrs` are otherwise identical in every label. **The charts are what made
 the family structure visible** — the aggregates could not have shown it.
@@ -610,7 +610,7 @@ the old policies, and eight configs in the `glide_pitch` / `pitch_smooth_diff`
 family carry `obs_pitch: true`.
 
 **THE MECHANISM: without pitch, the manoeuvre ends the episode.**
-`analysis/reverse_flip.py` sets up the case the eval grid cannot — reverse
+`analysis/policy/reverse_flip.py` sets up the case the eval grid cannot — reverse
 until the speed is established, then snap the heading 180°, which is what the
 teleop `8` key does. Peak pitch over the manoeuvre:
 
@@ -694,7 +694,7 @@ by being far from both.
 
 #### What the pitch channel is actually for (2026-08-29)
 
-`analysis/pitch_ablation.py` takes the one policy that CAN do the reversal and
+`analysis/policy/pitch_ablation.py` takes the one policy that CAN do the reversal and
 perturbs only its pitch pair, everything else at MuJoCo truth:
 
 | pitch pair | −0.50 | −0.84 | −1.02 | −1.20 m/s | eval grid |
@@ -764,7 +764,7 @@ not know whether observing alone would have sufficed.
 
 #### The ideal-sensor reference — what the eval looks like with no sensors
 
-`analysis/per_command.py --policies general_rl_smooth_diff_pi
+`analysis/policy/per_command.py --policies general_rl_smooth_diff_pi
 general_rl_pitch_smooth_diff_pi --ahrs none --encoder ideal --tag ideal`. Both
 are truth-trained, both carry the current `plant_digest`, and with `--ahrs
 none` and no `obs_odometry` the controller reads MuJoCo truth for velocity AND
@@ -1033,7 +1033,7 @@ target; today 9 of 18 (11 before the 09-22 yaw-drift fix moved the AHRS rng stre
 <= 15 s), and a bench RMS for the TM151 -- the model uses the datasheet's
 "<1.5 deg" bound as its RMS.
 
-**What makes it fall** (`analysis/ahrs_fall_cause.py`, 2026-09-22, 64 seeds):
+**What makes it fall** (`analysis/sensing/ahrs_fall_cause.py`, 2026-09-22, 64 seeds):
 the ROLL orientation error, and nothing else to speak of -- roll-only error
 36 -> 24/64 falls, everything-but-roll 3/64. ALL 36 falls go LEFT (-roll).
 Not one tick: the bike is savable on clean sensors until 0.3-0.8 s before the
@@ -1056,7 +1056,7 @@ and a failed one over-steers ~100 deg. But that average trigger does not
 CAUSE falls: injected at up to 3x, a clean bike never falls (0/60), and on
 top of the normal error it moves which windows fall without raising the rate
 (7.0% control, 7.0-8.3% injected, 470 paired windows). Figures:
-`analysis/plots/ahrs_fall_cause_excursions.png` (group means) and
+`analysis/sensing/plots/ahrs_fall_cause_excursions.png` (group means) and
 `..._excursion_examples.png` (three single events per group).
 
 **It is this policy, not the sensor model.** The same standing flight across
@@ -1101,7 +1101,7 @@ drivetrain model is not yet confirmed against the built bike**, not because
 these lose. P 400 buzzes the rear wheel ~3× harder at 8–32 Hz (`chatter.py
 --plant`). Teleop builds a policy's own drivetrain from its record
 (`--general general_rl_drivetrain_p100_1`). Reproduce the table with
-`analysis/drivetrain_eval.py --variants ideal full full_p400`.
+`analysis/policy/drivetrain_eval.py --variants ideal full full_p400`.
 
 The table below predates the curriculum line and is kept for the sensor
 argument it makes. The split that matters is not one good policy against the rest — it is

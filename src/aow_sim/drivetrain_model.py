@@ -117,7 +117,7 @@ def from_env_config(params: dict, env: dict) -> dict:
 
     Idempotent, so the trainer can resolve once up front (for the digest and
     the export) and every env resolve the same config again. A caller forcing
-    a plant (analysis/drivetrain_eval.py) sets the env key, not the params.
+    a plant (analysis/policy/drivetrain_eval.py) sets the env key, not the params.
     """
     spec = env.get(KEY, True)
     base = base_params(params)
@@ -422,7 +422,7 @@ class DrivetrainSim:
         # (drivetrain.hub_joint_* / roller_joint_*) are the IDEAL plant's
         # losses. On this one they are zeroed: the servo's measured friction
         # and inertia come from coasting the whole wheel in the air
-        # (analysis/drivetrain_fit.py coast), hub bearing and geared rollers
+        # (analysis/servo/drivetrain_fit.py coast), hub bearing and geared rollers
         # included, so keeping them would count those twice; and a roller's
         # motion inside its play is damped by the slop tendon alone.
         joints = []

@@ -3,7 +3,7 @@
 #
 # Reproduce (this file is its own seed -- the one key that differs from
 # config/linkage/swing_linkage.yaml is mechanism.wing_angle_mode: vertical_rest):
-#     python analysis/swing_linkage.py --config config/linkage/archive/swing_linkage_vertical.yaml \
+#     python analysis/mechanism/swing_linkage.py --config config/linkage/archive/swing_linkage_vertical.yaml \
 #         --optimize --seed 1 --iters 400 --save <out>.yaml
 # All five of seeds 1-5 return this to 0.01 mm. Run several rather than trusting
 # one -- differential evolution is chaotic in the objective.

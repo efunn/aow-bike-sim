@@ -24,9 +24,9 @@
 #
 # WHAT TO LOOK FOR:
 #
-#   python analysis/chatter.py --policies general_rl_odo_ahrs_tau019 \
+#   python analysis/policy/chatter.py --policies general_rl_odo_ahrs_tau019 \
 #       --encoder counts --ahrs tm151 --ahrs-tau 0.19    # beat 0.570 / 0.95
-#   python analysis/chatter.py --policies general_rl_odo_ahrs_tau019 \
+#   python analysis/policy/chatter.py --policies general_rl_odo_ahrs_tau019 \
 #       --encoder counts --ahrs tm151 --ahrs-tau 2.0     # expect to LOSE here
 #
 # The second row is expected to be worse and that is FINE: 0.19 is the number
@@ -165,7 +165,7 @@ env:
   odometry_encoder: counts   # 4096 counts/rev, differenced, 25 ms RateFilter
   ahrs_level: tm151          # the part we own, at its DYNAMIC accuracy
   # THE ONE CHANGE FROM rl_general_odo_ahrs.yaml. 0.19 s measured on a real
-  # TM151, 300 s at rest, exponential fit r2 0.999 (analysis/tm151_check.py).
+  # TM151, 300 s at rest, exponential fit r2 0.999 (analysis/sensing/tm151_check.py).
   # The guess it replaces was 2.0 -- 10x slower. sim_ahrs.TAU_ORIENT_S stays at
   # 2.0 on purpose: it is a training CONTRACT for the older exports, and this
   # key overrides it per-run without repricing them.

@@ -5,11 +5,11 @@
 > Second pass: The showcase moves, each with what
 > exists, what is missing, and the first tests -- most of which have now RUN,
 > results inline under each section. New this pass: the ramp test
-> (`analysis/ramp_test.py`), timed command plays in teleop
-> (`control/command_play.py`, `config/plays/`, `analysis/ball_play.py`), lie
+> (`analysis/moves/ramp_test.py`), timed command plays in teleop
+> (`control/command_play.py`, `config/plays/`, `analysis/moves/ball_play.py`), lie
 > down / get up / auto-up on the swing module (`control/swing_sit.py`,
-> teleop PageDown / PageUp, `analysis/swing_sit.py`), and the wheelie launch
-> (`analysis/wheelie_launch.py`). Ordered easiest first. Evidence tags as in
+> teleop PageDown / PageUp, `analysis/moves/swing_sit.py`), and the wheelie launch
+> (`analysis/moves/wheelie_launch.py`). Ordered easiest first. Evidence tags as in
 > `general-rl-improvements.md`: **[measured]**, **[read]** (code read),
 > **[reasoned]**. Open questions for the user are marked **(user)**.
 
@@ -44,7 +44,7 @@ Your notes:
 (`run_drive.FLOOR_TILT_STEPS`, `--slope-bearing`). It tilts the FLOOR, not
 gravity, so world Z stays vertical and the policy sees the standing roll offset
 a real AHRS would on a cross-slope (`build_model.py`, the floor block).
-`analysis/pen_slope.py` tilts gravity instead, so its SENSING is wrong on a
+`analysis/policy/pen_slope.py` tilts gravity instead, so its SENSING is wrong on a
 cross-slope (its own docstring says so). Use teleop or the floor tilt for
 anything about the policy's behaviour.
 - yea if the normal bike drives fine on level ground, I'll try a slope and
@@ -156,7 +156,7 @@ geom per world has NOT been checked.
 across.
 - yeah you can formalize this test
 
-**Formalized: `analysis/ramp_test.py`. [measured, 2026-10-16]**
+**Formalized: `analysis/moves/ramp_test.py`. [measured, 2026-10-16]**
 - **The course.** A box ramp rising from the flat floor at x = 1 m, so it has
   a real bottom edge. One play: drive up at 0.5 m/s, hold facing up (4 s),
   turn across and hold (4 s), turn to face down and hold (3 s), drive down
@@ -247,7 +247,7 @@ the sweep.
   - Teleop: `--play config/plays/<name>.yaml` (repeatable). End (fn+right)
     plays the next one; any driving key (arrows, 1/3, 5, /) aborts.
   - Shipped: `config/plays/ram.yaml` and `wheel_swing.yaml`.
-- **The sweep. [measured: `analysis/ball_play.py`, seed1_72M, truth,
+- **The sweep. [measured: `analysis/moves/ball_play.py`, seed1_72M, truth,
   `--hockey` model, ball 3 m ahead, bike from rest]**
   - **A straight ram is the strongest shot.** The ball leaves at 1.20 m/s
     (the bike's speed), with the bike upright.
@@ -278,7 +278,7 @@ teleop example.**
   - `ball: [x, y]` parks the `--hockey` ball in the bike's frame when the
     play starts.
   - An optional 5th key column is the crank goal in degrees.
-- **The three shots. [measured, `analysis/ball_play.py --play`, seed1_72M,
+- **The three shots. [measured, `analysis/moves/ball_play.py --play`, seed1_72M,
   truth, ideal drive]**
 
     play              ball at (m)       ball m/s   notes
@@ -531,7 +531,7 @@ three steps:
    recoverable set, holding the module where it is.
 3. Retract: only after the policy has held it for a while.
 
-`analysis/self_righting.py` and `record.py` drive it. How fast and smooth it
+`analysis/mechanism/self_righting.py` and `record.py` drive it. How fast and smooth it
 is with V3 and today's policy has not been measured here. That is the first
 number to take, and "fast+smooth" needs a target against it **(user)**.
 - Yeah I don't have this in teleop at the moment (auto up), was doing manual
@@ -583,7 +583,7 @@ The side it falls to has to be chosen. Two ways:
   2. The policy takes over inside `recovery.ready_for_policy` (12 deg,
      3 rad/s).
   3. The blade retracts 1 s later.
-- **Measured [`analysis/swing_sit.py`; seed1_72M and fixes_52M; truth and
+- **Measured [`analysis/moves/swing_sit.py`; seed1_72M and fixes_52M; truth and
   tm151_filter tau 2 alike]:**
 
     down        5.9 s, peak 97-100 deg/s, chassis 7-12 N, still at 79-80 deg
@@ -629,7 +629,7 @@ The side it falls to has to be chosen. Two ways:
   and back up. That is 8 tries each for fixes_52M truth, fixes_52M under
   the AHRS model and seed1_72M under the AHRS model, half of them pressed
   while driving and turning.
-  - `analysis/swing_sit.py` (now on each policy's own drivetrain): down
+  - `analysis/moves/swing_sit.py` (now on each policy's own drivetrain): down
     5.8 s at <= 102 deg/s, 7-12 N; up, riding 3.3 s; auto-up 2.8 s.
   - `test_teleop` gained the fixes_52M detailed-drive case. That case
     passes, but the old failure was 2 in 6, so one passing run would
@@ -711,7 +711,7 @@ hardware changes (traction, gearing, CoM) before any policy.
 - and does making the bike heavier on the rear help (surely)?
 
 **Ran it, 2026-10-16: the nose lifts, and traction decides it.
-[measured: `analysis/wheelie_launch.py`, default params, ideal drivetrain]**
+[measured: `analysis/moves/wheelie_launch.py`, default params, ideal drivetrain]**
 - **Setup.** Roll is pinned by projecting the chassis onto the pitch plane
   each step (y, roll and yaw zeroed). Both drive inputs are commanded to full
   speed, open loop.

@@ -41,9 +41,9 @@
 # WHAT TO LOOK FOR: both taus, as before, and the bar is the SPECIALISED
 # policy, not the failed one --
 #
-#   python analysis/chatter.py --policies general_rl_odo_ahrs_rand2 \
+#   python analysis/policy/chatter.py --policies general_rl_odo_ahrs_rand2 \
 #       --encoder counts --ahrs tm151 --ahrs-tau 2.0     # beat 0.672 / 1.00
-#   python analysis/chatter.py --policies general_rl_odo_ahrs_rand2 \
+#   python analysis/policy/chatter.py --policies general_rl_odo_ahrs_rand2 \
 #       --encoder counts --ahrs tm151 --ahrs-tau 0.19    # beat 0.570 / 0.95
 #
 # LAUNCH (on the remote box, after committing and pushing):

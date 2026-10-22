@@ -35,7 +35,7 @@
 #
 # WHAT TO LOOK FOR, once all six are back:
 #
-#   python analysis/drivetrain_eval.py --variants full full_p400 --by-family \
+#   python analysis/policy/drivetrain_eval.py --variants full full_p400 --by-family \
 #       --policies general_rl_drivetrain_p100_0 ... general_rl_drivetrain_p400_2
 #
 #   * the seed spread inside an arm BEFORE any difference between arms. On the
@@ -45,7 +45,7 @@
 #   * each arm on ITS OWN gains (p100 on `full`, p400 on `full_p400`): does
 #     P 400 train to anything at all, and does it beat P 100?
 #   * each arm on the OTHER gain: how gain-specific is a trained policy?
-#   * the pen (analysis/pen_slope.py --drivetrain --servo-gains ...).
+#   * the pen (analysis/policy/pen_slope.py --drivetrain --servo-gains ...).
 #
 # The moves yaml records the resolved drivetrain, so every analysis script
 # rebuilds this plant from the policy itself, and so does teleop

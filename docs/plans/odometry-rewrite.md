@@ -190,8 +190,8 @@ lag. That is why the eval score moves the "wrong" way.
 
 ### The pen says the drift is the POLICY, not the encoder
 
-`analysis/pen_odometry.py --policy general_rl_odo --encoder ideal counts`,
-holding station 12 s (`analysis/plots/pen_odometry_odo_encoder.png`):
+`analysis/sensing/pen_odometry.py --policy general_rl_odo --encoder ideal counts`,
+holding station 12 s (`analysis/sensing/plots/pen_odometry_odo_encoder.png`):
 
 | encoder | mode | final drift | path length |
 |---|---|---|---|
@@ -562,7 +562,7 @@ ESTIMATE during training) -- and both survive it. So the estimator did not
 have to be fixed to be flown.
 
 Eval grid, 20 commands, identical seeds, randomization off
-(`analysis/chatter.py`). The left block is each policy on the signal it was
+(`analysis/policy/chatter.py`). The left block is each policy on the signal it was
 TRAINED on; the right block is every policy on the ESTIMATE, which is the
 deployment question:
 

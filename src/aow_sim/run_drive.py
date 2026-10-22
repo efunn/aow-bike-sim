@@ -397,7 +397,7 @@ def main() -> None:
                          "(or PATH). Records the operator's INTENT and the "
                          "bike's response at the control rate, plus every key "
                          "press with its timestamp — review it with "
-                         "`python analysis/teleop_review.py <path>`")
+                         "`python analysis/moves/teleop_review.py <path>`")
     ap.add_argument("--rig", nargs="?", const="default", default=None,
                     metavar="CONFIG",
                     help="hold the bike in the FLOOR RIG (aow_sim.floor_rig): "
@@ -468,7 +468,7 @@ def main() -> None:
                          "tau. Do not expect to FEEL the difference: the "
                          "measured effect is one episode in twenty on the "
                          "eval grid and nothing at all by hand (see "
-                         "analysis/ahrs_tau.py). This exists so the banner "
+                         "analysis/sensing/ahrs_tau.py). This exists so the banner "
                          "can tell the truth about what is flying, not "
                          "because tau is a live risk.")
     ap.add_argument("--ahrs-gate", type=float, default=None, metavar="FRACTION",
@@ -708,7 +708,7 @@ def main() -> None:
                          "untouched), floor and every wheel contact: (timeconst, "
                          "dampratio), or negative (-stiffness, -damping) -- the "
                          "same contact model either way, per unit of the mass "
-                         "at each contact (analysis/drop_rig_sim.py). Moves "
+                         "at each contact (analysis/contact/drop_rig_sim.py). Moves "
                          "plant_digest")
     ap.add_argument("--solimp", default=None, metavar="D0,D1,W,M,P",
                     help="override sim.contact_solimp in memory: dmin, dmax, "
@@ -1079,7 +1079,7 @@ _SLOPE_G = 9.81
 # (`stand_clearance`, the wings' `clearance`, the righting reach numbers).
 #
 # Lives here rather than in the analysis script so the teleop feel and
-# analysis/pen_slope.py's numbers cannot drift apart.
+# analysis/policy/pen_slope.py's numbers cannot drift apart.
 def tilt_gravity(model, along_deg: float, across_deg: float):
     """Point gravity down a plane sloping `along` toward +X, `across` toward +Y.
 
@@ -1184,7 +1184,7 @@ _SPAWN_KEY = 257            # GLFW ENTER. policy_menu.KEY_ENTER is the same
 # 0.57 deg is a 1% garage slab and 1.15 deg is 2%; DEGREES AND PERCENT DIFFER
 # BY ~2x, so both are spelled. 5 and 10 are where this actually bites: at 2%
 # a trained policy rejects essentially all of it, at 10 deg a left turn falls
-# in five of eight downhill directions (analysis/pen_slope.py --rose).
+# in five of eight downhill directions (analysis/policy/pen_slope.py --rose).
 FLOOR_TILT_STEPS = [0.0, 2.0, 5.0, 10.0]
 # What main() adds to params["sim"] for the spawn dial. They change which spare
 # floors get COMPILED, not the bike, so a policy's digest check must not see
@@ -2266,7 +2266,7 @@ def _rec_write(rec, path, params, gen_name, mode):
     dur = rec["rows"][-1][0] - rec["rows"][0][0]
     print(f"\nwrote {path}  ({len(rec['rows'])} rows, {len(ev)} key events, "
           f"{dur:.1f} s)")
-    print(f"  review it:  python analysis/teleop_review.py {path}")
+    print(f"  review it:  python analysis/moves/teleop_review.py {path}")
     return path
 
 
@@ -3169,7 +3169,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 "cmd": stow_rad, "target": stow_rad,
                 # A repeatable shove, so knocking the bike over is one key
                 # rather than a mouse gesture. Same lateral force pulse
-                # analysis/self_righting.py falls the bike with; 8 N for 0.35 s
+                # analysis/mechanism/self_righting.py falls the bike with; 8 N for 0.35 s
                 # is comfortably past the recoverable set at any speed.
                 # Set the moment 9 or 4 is pressed: the operator has taken
                 # the wings back from a policy that drives them. Without this
@@ -3212,7 +3212,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
 
     # LIE DOWN / GET UP on the swing module (control/swing_sit.py). Only with
     # the servo model: the sequence leans on its Goal Current (limp at the end
-    # of the lie-down) and was tuned against it (analysis/swing_sit.py).
+    # of the lie-down) and was tuned against it (analysis/moves/swing_sit.py).
     # PageDown lies down, PageUp gets up; after a fall it gets up by itself
     # unless --no-auto-up. A deliberate lie-down stays down until PageUp.
     sit = None

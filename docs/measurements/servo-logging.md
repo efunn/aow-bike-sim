@@ -35,7 +35,7 @@ Maps in use:
 
 | map | read | write | total |
 |---|---|---|---|
-| drivetrain bench (`analysis/drivetrain_bench.py`) | Tick, Position, Velocity, PWM, Load, Voltage, Temperature, Error, Bus Watchdog = 19, + the goal read back (4 / 2) | Goal Velocity 4 / Goal PWM 2 | 27 / 23 |
+| drivetrain bench (`analysis/servo/drivetrain_bench.py`) | Tick, Position, Velocity, PWM, Load, Voltage, Temperature, Error, Bus Watchdog = 19, + the goal read back (4 / 2) | Goal Velocity 4 / Goal PWM 2 | 27 / 23 |
 | onboard today (`BikeBus.READ_BLOCK`) | Tick, Position, Velocity = 10 | goal 4 | 14 |
 | onboard proposed | + PWM, Error = 13 | goal 4 | 17 |
 

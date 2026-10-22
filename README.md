@@ -161,7 +161,7 @@ The **CAD is generated from the same parameter file the simulator reads**: `aow_
 | `src/aow_sim/` | the parametric model builder (`mjSpec`), procedural contact meshes, viewer, runners, offline optimizers and trainers |
 | `src/aow_sim/control/` | `drive.py` is the controller that runs everywhere, in sim and on the bike, and `general_spec.py` is the observation/action contract training and replay share. Alongside them: the multi-turn steering frame, shared state extraction, and the LQR baseline |
 | `src/aow_sim/hw/` | the onboard stack: Dynamixel bus, TM151 reader, velocity estimation, the 100 Hz control loop, the ground station. Imports without MuJoCo, scipy or torch |
-| `analysis/` | one-off studies that ask a question of existing artifacts and change nothing. Tracked figures land in `analysis/plots/` |
+| `analysis/` | one-off studies that ask a question of existing artifacts and change nothing. Grouped by kind (`policy/`, `moves/`, `sensing/`, `contact/`, `servo/`, `mechanism/`, `gpu/`); tracked figures land in that folder's `plots/` |
 | `moves/` | trained policies: `*.yaml` plus `*.npz` weights |
 | `scripts/` | launchers and generators, including the one that rebuilds the clips above |
 | `tests/` | compilation, coupling-ratio, envelope and behaviour tests. Every file carries a marker saying what invalidates it — `pytest --markers` |

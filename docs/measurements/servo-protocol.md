@@ -23,7 +23,7 @@ was believed twice.** It read `drive_kv: 0.5`, "no bandwidth limit exists", and
 commit b0a97a3 on **2026-08-22** ("model: enable the velocity-PI drive plant —
 kv 0.016016, ki 0.6"), which `docs/status.md` records correctly; only this file
 was left behind. The stale 31x claim was then read off this page and repeated in
-`analysis/servo_reversal.py` and `servo-measurements.yaml` before anyone checked
+`analysis/servo/servo_reversal.py` and `servo-measurements.yaml` before anyone checked
 it against the config. Per CLAUDE.md: state belongs in `status.md`, and a number
 in a protocol doc is state.
 

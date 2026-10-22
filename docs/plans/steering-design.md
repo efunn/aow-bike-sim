@@ -173,10 +173,10 @@ The Pi's `~/aow-bike-sim` was refreshed from this checkout on 2026-09-30
 (it has no git; copy tracked files across, never `--delete`):
 
 ```sh
-ssh -t efun@aowbike.local 'cd ~/aow-bike-sim && ~/venv/bin/python analysis/steer_friction.py --port /dev/ttyUSB0 --note "upside down, no load"'
-ssh -t efun@aowbike.local 'cd ~/aow-bike-sim && ~/venv/bin/python analysis/servo_breakaway.py --port /dev/ttyUSB0 --ids 103 --note "steer installed, upside down"'
+ssh -t efun@aowbike.local 'cd ~/aow-bike-sim && ~/venv/bin/python analysis/servo/steer_friction.py --port /dev/ttyUSB0 --note "upside down, no load"'
+ssh -t efun@aowbike.local 'cd ~/aow-bike-sim && ~/venv/bin/python analysis/servo/servo_breakaway.py --port /dev/ttyUSB0 --ids 103 --note "steer installed, upside down"'
 rsync -av efun@aowbike.local:'~/aow-bike-sim/traces/{steer_friction,servo_breakaway}' traces/
-python analysis/steer_friction.py summary traces/steer_friction/<dir> --plot
+python analysis/servo/steer_friction.py summary traces/steer_friction/<dir> --plot
 ```
 
 The steering turns 2 full turns each way (the breakaway's kinetic phase
@@ -396,7 +396,7 @@ gearbox: a + b x |T|.
 > XC330 is still 103 and must become 104 before the two share a bus.
 >
 > **Headset friction was measured the same day** (`servo_breakaway.py` and
-> the new `analysis/steer_friction.py`, same unit bare on 09-25):
+> the new `analysis/servo/steer_friction.py`, same unit bare on 09-25):
 >
 > | | bare | installed |
 > |---|---|---|
@@ -439,7 +439,7 @@ gearbox: a + b x |T|.
 > - **Provisional:** all policies were trained without the headset, so
 >   they are provisional until retrained with it.
 >   `run_drive --no-headset` is the in-memory A/B.
-> - **The load in flight** (`analysis/headset_load.py`): the LQR holding
+> - **The load in flight** (`analysis/policy/headset_load.py`): the LQR holding
 >   still on truth gives a flat 3.10 +- 0.03 N axial and 0.95 N side. The RL policy
 >   holds the same mean but shakes it 0-10 N (p99 14.6 N over the grid) with
 >   its action dither: ~30% near 12 Hz, ~58% above 60 Hz. That is chatter,

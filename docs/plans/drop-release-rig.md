@@ -4,7 +4,7 @@ Status: **built and run** (first run 2026-10-03: front wheel, 65 drops;
 findings in `docs/status.md`, contact calibration). The arm as built:
 pivot to the wheel's contact **205 mm**, pivot to the follower **124 mm**
 (lever 1.65), the axle 6.5 mm above the pivot -- `config/bench/drop_rig_bench.yaml`
-`arm`, which `force_drop.py` and `analysis/drop_rig_sim.py` read. The side
+`arm`, which `force_drop.py` and `analysis/contact/drop_rig_sim.py` read. The side
 view and the arm/hinge rows below are the 10-02 sketch where they differ
 from the build; the hinge itself was rigged by hand. Replaces hand drops
 for the contact drop test (`contact-protocol.md` §P1). The hand drops on

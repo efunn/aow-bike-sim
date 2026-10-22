@@ -524,7 +524,7 @@ def test_past_the_assembly_limit_the_mechanism_holds_rather_than_jumps(swung):
     Chosen over a shortened one because x0.7 fails in the constructor instead
     (it cannot close at rest either), which tests a different thing. Not
     hypothetical: `crank_length` and `coupler_length` are free variables of the
-    optimiser in analysis/swing_linkage.py, and `assembly_limit` exists there
+    optimiser in analysis/mechanism/swing_linkage.py, and `assembly_limit` exists there
     to find exactly this."""
     import copy
 

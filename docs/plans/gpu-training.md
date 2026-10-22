@@ -871,7 +871,7 @@ So ~55 min of A40 training to 52M reaches what a v3 seed reaches in
 seeds; four changes at once, so which of them mattered is not separable
 from this run.
 
-**Chatter** (`analysis/chatter.py`, one grid, identical seeds) [measured]:
+**Chatter** (`analysis/policy/chatter.py`, one grid, identical seeds) [measured]:
 
 | | v3_s0 | v3_s1 | fixes_52M | fixes_72M |
 |---|---|---|---|---|
@@ -889,7 +889,7 @@ Muon, the batch size and the advantage normalisation are all candidates.
 Crab was never trained (`v_lat_frac 0`). Teleop (user, 2026-10-15): "looks
 pretty smooth". Not yet run: the standing-endurance `prospective` test.
 
-**What the MinGRU memory does** (`analysis/mingru_memory.py`, the eval
+**What the MinGRU memory does** (`analysis/policy/mingru_memory.py`, the eval
 grid, 5000 steps) [measured], beside the CPU arm's first seed
 (`general_rl_v3_mingru_s0`, `config/rl/rl_general_v3_mingru.yaml`):
 
@@ -1256,7 +1256,7 @@ Curves, the two runs on steps, training wall time and bike time per world
 `python analysis/gpu/phase3/compare_curves.py --tag style_4k_vs_16k
 "run 1: 4k x 64, add=analysis/gpu/phase3/results_5090_style/train.log"
 "run 2: 16k x 16, mult, lead 0.4=analysis/gpu/phase3/results_5090_mult/train.log"`
--> `analysis/plots/gpu_curves_style_4k_vs_16k.png`. The panel's
+-> `analysis/gpu/plots/gpu_curves_style_4k_vs_16k.png`. The panel's
 "difficulty" is the mean difficulty that episodes ENDING that epoch were
 PLAYED at (`last_diff`), so it lags the shared value by up to one episode
 (750 steps x worlds: 3.1M samples at 4k, 12.3M at 16k) and is not

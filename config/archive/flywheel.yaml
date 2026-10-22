@@ -7,7 +7,7 @@
 # config/linkage/wing_linkage*.yaml -- see build_model.LINKAGE_CFG.
 #
 # Read only by build_model(..., flywheel=True). A default build never opens it.
-# Study: analysis/flywheel.py.
+# Study: analysis/mechanism/flywheel.py.
 
 # Which body axis the wheel spins about:
 #   yaw   body +Z -- reaction torque about yaw. Agility (pivot/flick), and the

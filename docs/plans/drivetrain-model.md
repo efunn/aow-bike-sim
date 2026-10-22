@@ -26,7 +26,7 @@ gains, yes, with a cost. At any stiffer gain, no.** Eval grid, 20 commands,
 | full, P 400 / I 3840 | 0.058 / 0.20 | 0.047 / 0.15 |
 | full, P 400, loop lag removed (diagnostic) | 0.173 / 0.40 | 0.294 / 0.60 |
 
-    python analysis/drivetrain_eval.py --variants ideal servo servo+detent full slop \
+    python analysis/policy/drivetrain_eval.py --variants ideal servo servo+detent full slop \
         full_p200 full_p400 full_p400_i3840 full_p400_nolag
 
 `general_rl_cmd_curriculum2b`, the current training line, on the same grid:
@@ -126,7 +126,7 @@ where 2e-6 rang for ~200 ms — and a test pins the ratio.
 
 ## Does the model reproduce the bench?
 
-`python analysis/drivetrain_fit.py replay` runs every recorded command stream
+`python analysis/servo/drivetrain_fit.py replay` runs every recorded command stream
 through the MuJoCo **testbed** (wheel on a stand, in the air) with the overlay
 — the implementation itself, not a copy of its equations — and computes
 identical metrics on both:
@@ -171,11 +171,11 @@ with the detent off, the sim never stalls at all.
    thing, so training can randomise each side's friction independently
    (`randomization.drive_friction_side_frac`, off by default).
 
-       python analysis/drivetrain_fit.py replay --friction 0.16 0.21
+       python analysis/servo/drivetrain_fit.py replay --friction 0.16 0.21
 
 ### The creep test, rebuilt
 
-`python analysis/drivetrain_creep_replay.py` → `analysis/plots/drivetrain_creep_replay.png`:
+`python analysis/servo/drivetrain_creep_replay.py` → `analysis/servo/plots/drivetrain_creep_replay.png`:
 the bench's creep time series (capture `260913-013834_creep`, same 20 ms
 differencing as `drivetrain_creep_plot.py`) against the testbed replay under
 each plant, plus a sim-only roller push and flick.
@@ -277,7 +277,7 @@ Checked 2026-09-14 by a 2000-step smoke run through export.
 | full | 750 | 0.922 |
 | roller slop alone | 829 | 1.019 |
 
-    python analysis/drivetrain_eval.py --bench 3000 --policies general_rl_odo_ahrs \
+    python analysis/policy/drivetrain_eval.py --bench 3000 --policies general_rl_odo_ahrs \
         --variants ideal servo servo+detent full slop
 
 **~8 % slower, all of it the per-step Python loop**; the slop tendons are free

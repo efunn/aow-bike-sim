@@ -102,7 +102,7 @@ STATES = ("engaged", "cut", "standby")
 # RE-ARM: NOT defined here. `control/recovery.py` owns the criterion and
 # `control/righting.py`'s sequencer ends its lift phase on the same call, so
 # there is one definition of "ready for the policy" and not two that drift.
-# The numbers come from analysis/no_return.py. An earlier version of this file
+# The numbers come from analysis/policy/no_return.py. An earlier version of this file
 # had 30 deg / 60 deg/s of its own invention; 30 is outside the policy's
 # recoverable set on its weak side by a factor of three.
 CUT_ROLL_DEG = 60.0
@@ -146,7 +146,7 @@ class FallGuard:
     """Cut the policy out when the bike is on its side; let it back in.
 
     WHAT THIS IS NOT. It is not a detector for "unrecoverable". Unrecoverability
-    is not a roll angle at all: `analysis/no_return.py` measures the point of no
+    is not a roll angle at all: `analysis/policy/no_return.py` measures the point of no
     return at roll -3.2...13.6 deg with the bike still looking upright, because
     what has run out there is crawl authority, not lean margin. The recoverable
     set is a curve in (roll, roll rate) and it moves with forward speed. A
@@ -847,7 +847,7 @@ class BikeRunner:
             return (f"{r.bytes_in} bytes arrived but NO Ep_Combo frames "
                     f"({r.errors} parse errors). The sensor is alive and "
                     f"streaming the wrong message. Enable Ep_Combo at 200 Hz "
-                    f"in ImuAssistant; `python analysis/tm151_serial.py` will "
+                    f"in ImuAssistant; `python analysis/sensing/tm151_serial.py` will "
                     f"name what it is sending instead")
         return (f"{r.frames} Ep_Combo frames decoded but the latest is stale -- "
                 f"the reader is falling behind, not the sensor")

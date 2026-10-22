@@ -20,7 +20,7 @@
 # right plants the left wing too, which turns the bike into a tripod.
 #
 # A CO-ROTATING FOUR-BAR EXISTS, and it is the better mechanism. See
-# config/linkage/swing_linkage.yaml and analysis/swing_linkage.py.
+# config/linkage/swing_linkage.yaml and analysis/mechanism/swing_linkage.py.
 #
 # An earlier version of this note said the four-bar "CANNOT be re-coupled this
 # way". What was actually measured is narrower and still true: RE-PHASING the
@@ -59,7 +59,7 @@ pivot: [0.075, 0.030, 0.0]   # [x, |y|, z] chassis frame, origin = rear axle.
 #             here, against 84 mm at 30 deg);
 #   clearance smaller keeps the resting foot higher, so it grounds at a larger
 #             roll -- 60 deg grounds at 42.1 deg, still clear of the 30.9 deg
-#             recoverable set (analysis/no_return.py);
+#             recoverable set (analysis/policy/no_return.py);
 #   far wing  THE BINDING ONE. At 30 deg the far foot sits at +39 mm at
 # the strike pose -- i.e. it has crossed the centreline and is inside the
 # chassis. Starting further outboard is what buys the stroke: at 60 deg the far
@@ -98,7 +98,7 @@ plate:
 mass: 0.020            # [kg] per wing, same as the geared pair's
 
 # Reduction from servo to wing. NOT 4:1. The geared pair's 4:1 came from a
-# QUASI-STATIC torque reading (analysis/self_righting.py::_lift ramps at
+# QUASI-STATIC torque reading (analysis/mechanism/self_righting.py::_lift ramps at
 # 0.7 rad/s "so the reading is the quasi-static torque and not an impulse"),
 # which is the worst case by construction. Measured dynamically instead --
 # step-command the stroke from the fallen pose with the servo's real force

@@ -251,7 +251,7 @@ at the worst speed (v = -0.50).
 old value and are provisional in the digest's sense, but the change makes the
 simulator MORE like the bike, not less — so retraining is the fix and reverting
 is not. `general_rl_cmd_curriculum2b` has not been re-evaluated on the new
-plant; do that with `analysis/per_command.py` before reading anything into a
+plant; do that with `analysis/policy/per_command.py` before reading anything into a
 hardware run.
 
 `deploy/bundle.npz` matches both. A failing digest check is the mechanism

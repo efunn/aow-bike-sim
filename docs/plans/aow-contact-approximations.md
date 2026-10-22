@@ -18,7 +18,7 @@ This is that deferred survey, run 2026-08-15. The motivating worry was that we
 might be leaving a 10× speedup on the table, and that policies might be
 learning contact behaviour specific to 8 discrete rollers and their gaps.
 
-Everything below is reproducible: `python analysis/contact_surrogates.py`.
+Everything below is reproducible: `python analysis/contact/contact_surrogates.py`.
 Numbers are from an M4 laptop, single-threaded, on a loaded-carriage rig that
 drives the omni wheel alone at ~1 m/s under 0.60 kg — the rear-axle share of
 the bike. The rig's rear-wheel contact-loss numbers agree with the whole bike
@@ -82,7 +82,7 @@ it does not test a genuinely smooth wheel, because no smooth wheel can crab.
 Only 1–2 of the 8 rollers can touch the floor at once, which makes "can the
 other 6–7 be made cheap?" the obvious question. Ablation says no, and the reason
 is worth writing down because it is a property of the engine, not of the wheel.
-`analysis/contact_surrogates.py --study ablate`; the `ghost` modes keep the
+`analysis/contact/contact_surrogates.py --study ablate`; the `ghost` modes keep the
 roller bodies but stop them colliding and let a torus carry the contact, so the
 contact is held identical while the machinery varies.
 
@@ -225,8 +225,8 @@ Remaining caveats:
 ## 2b. `timestep` and `contact_solref` are the same decision
 
 The timestep is not independent of the contact model. Two couplings, one hard
-and silent, one soft and gradual. Reproduce with `analysis/contact_surrogates.py
---study refsafe`; to watch it, `analysis/wheel_slowmo.py --compare 4e-4,3e-3
+and silent, one soft and gradual. Reproduce with `analysis/contact/contact_surrogates.py
+--study refsafe`; to watch it, `analysis/contact/wheel_slowmo.py --compare 4e-4,3e-3
 --slowmo 5` stacks two timesteps in one clip on a shared frame clock and a
 shared clearance scale.
 
@@ -350,7 +350,7 @@ Rolling at ~1 m/s:
 | capsules-8 | 0.632 | 39.8% | 7.55 |
 | torus (no crab) | 0.104 | 30.2% | 5.33 |
 
-Read the two columns together, per `analysis/liftoff.py`: cones-24 breaks
+Read the two columns together, per `analysis/policy/liftoff.py`: cones-24 breaks
 contact as often as cones-8 but swings 0.13 mm doing it rather than 0.84 mm.
 
 Two things follow.
@@ -428,9 +428,9 @@ Investigated 2026-08-21, after the rear wheel looked impractical in preview
 clips. **Nothing landed** -- the config is unchanged and the digest is still
 `7af0ce42dfc91154` -- but the defect is real and precisely located, so this is
 the writeup rather than a diff. Reproduce the visual with
-`analysis/wheel_slowmo.py --drive-tau 0.04`, which is override-only.
+`analysis/contact/wheel_slowmo.py --drive-tau 0.04`, which is override-only.
 
-**It is not hopping.** Measured with `analysis/liftoff.py`, which supersedes the
+**It is not hopping.** Measured with `analysis/policy/liftoff.py`, which supersedes the
 airborne-% columns for exactly this reason, the rear wheel's vertical gap is p99
 0.9-1.5 mm and max 2.5 mm -- envelope-ripple scale. What looks violent is
 ROTATIONAL. Commanded to stand still for 15 s, `general_rl_smooth_diff_og`:
@@ -573,7 +573,7 @@ prep for a port rather than a CPU optimisation.
    whatever it lands on**: the two are one decision, not two (§2b). (§5)
 4. **Widen the randomizer's dampratio band above 1.0.** It currently samples
    only the bouncy half of the plausible range. (§5)
-5. **Done: `analysis/chatter.py` handles any policy width.** It divided a
+5. **Done: `analysis/policy/chatter.py` handles any policy width.** It divided a
    4-channel wings action by a hard-coded 3-vector of bounds and died on the
    broadcast. Now each policy is normalized by its own
    `ActionBounds.to_list()[:act_dim]`, a zero bound is rejected rather than
@@ -594,7 +594,7 @@ Moved verbatim 2026-09-08.
 
 `docs/plans/aow-contact-approximations.md` (2026-08-15) closes the "fast
 approximation models deferred" item in `mujoco-modeling-decisions.md`.
-Reproduce with `python analysis/contact_surrogates.py`.
+Reproduce with `python analysis/contact/contact_surrogates.py`.
 
 - **No contact surrogate is worth building.** Swapping the 16 cone meshes for
   primitives buys 10–20%; deleting the whole roller multibody buys 1.7–2.0×

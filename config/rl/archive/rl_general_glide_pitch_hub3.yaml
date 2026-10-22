@@ -25,8 +25,8 @@
 #
 # MEASURE WITH, in this order -- the first is the question, the second is the
 # constraint, the eval score is neither and moved <0.03 across all three arms:
-#   analysis/wheel_slowmo.py --policies <name> --no-video --seconds 8
-#   analysis/kick_recovery.py --policies <name> --seeds 8
+#   analysis/contact/wheel_slowmo.py --policies <name> --no-video --seconds 8
+#   analysis/policy/kick_recovery.py --policies <name> --seeds 8
 #
 # ---------------------------------------------------------------------------
 algo:

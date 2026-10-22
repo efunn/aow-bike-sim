@@ -1146,7 +1146,7 @@ def _add_wing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
     wing_lo = to_bike(0.0, b["ground_clearance"])[1]
     # `bike_height` is the roof CREST, so the stowed panel tops out a roof
     # radius below it -- at the roof axis, where its tips sit tangent to the
-    # rolling surface. Must match analysis/wing_linkage.py::Linkage exactly:
+    # rolling surface. Must match analysis/mechanism/wing_linkage.py::Linkage exactly:
     # this read `bike_height` directly for a while, which built a MuJoCo wing
     # a half-span longer than the one the 2D study was optimising.
     wing_hi = to_bike(0.0, b["bike_height"] - b["bike_width"] / 2.0)[1]
@@ -1493,7 +1493,7 @@ def _add_wings(spec: mujoco.MjSpec, chassis, p: dict) -> None:
 
 # `_smaller`, not the bare `swing_linkage.yaml`, because that is the design
 # the CAD path builds -- `cad.swing_linkage.CONFIG` -- and CAD is downstream of
-# the decision. The two disagreed: teleop and analysis/swing_linkage.py drove
+# the decision. The two disagreed: teleop and analysis/mechanism/swing_linkage.py drove
 # one geometry while the part being made was another. Which config actually won
 # on 2026-09-02/03 is NOT recorded anywhere: the plan doc says that work lives
 # "only in docs/status.md", and status.md no longer carries it.
@@ -1533,7 +1533,7 @@ class SwingLinkageSolver:
     config's own units for positions and returns joint angles that are correct
     in the model without any conversion at all.
 
-    Sibling of `analysis/swing_linkage.py`'s `SwingLinkage`, which answers
+    Sibling of `analysis/mechanism/swing_linkage.py`'s `SwingLinkage`, which answers
     design questions (reach, transmission, clearance) about the same geometry
     and is deliberately not imported: `analysis/` is not on the path, and a
     study that changes when someone asks it a new question is the wrong
@@ -1673,7 +1673,7 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
     at its station. Without it, a study config: the flat box panel and the
     `righting.wings` masses, as V1 was always built.
 
-    The driveable counterpart to analysis/swing_linkage.py, which until now was
+    The driveable counterpart to analysis/mechanism/swing_linkage.py, which until now was
     a planar study with no model behind it -- the optimised geometries could be
     looked at but not driven, trained on, or collided.
 
@@ -1754,7 +1754,7 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
     # `wing_angle_mode: vertical_rest` DERIVES the panel bearing so the panels
     # stand vertical at rest, exactly as `wing_z_min` below is derived so the
     # panel bottom sits at ground clearance. Reproduced here rather than read
-    # from the file for the same reason: analysis/swing_linkage.py resolves it
+    # from the file for the same reason: analysis/mechanism/swing_linkage.py resolves it
     # too, and a hand-written config that has not been through that study's
     # `--save` carries the UNRESOLVED `wing_angle_from_rocker` -- so a builder
     # that only read the number would model a splayed mechanism while the study
@@ -2167,7 +2167,7 @@ def _add_flywheel(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict) -> None:
     """A reaction wheel on the chassis (build_model(..., flywheel=True)).
 
     Config comes from the caller's `flywheel_cfg` (the one study that builds
-    this, analysis/flywheel.py, reads config/archive/flywheel.yaml), NOT
+    this, analysis/mechanism/flywheel.py, reads config/archive/flywheel.yaml), NOT
     `bike_params.yaml`, because
     that file is hashed into `params_digest` and this study has not been
     decided. Same pattern as the wing linkage.
@@ -2344,7 +2344,7 @@ def _add_world(spec: mujoco.MjSpec, p: dict) -> None:
     #
     # Absent by default -> exactly one level floor, byte-identical to before.
     # `floor_tilt_deg` is the single-floor spelling and stays supported: it is
-    # what analysis/pen_slope.py sets, and when this grew into a LIST for the
+    # what analysis/policy/pen_slope.py sets, and when this grew into a LIST for the
     # teleop dial, dropping it would have left that script silently building
     # LEVEL floors and drawing figures that looked fine and meant nothing.
     steps = sim.get("floor_tilt_steps")
@@ -2363,7 +2363,7 @@ def _add_world(spec: mujoco.MjSpec, p: dict) -> None:
         spec.worldbody.add_geom(
             # The first keeps the bare name `floor`: it is what every other
             # module looks up (record.py's camera framing, the contact_parts
-            # priority split, analysis/floor_sweep.py), and those must not have
+            # priority split, analysis/contact/floor_sweep.py), and those must not have
             # to know how many floors exist.
             name="floor" if live else f"floor_tilt{idx}",
             type=mujoco.mjtGeom.mjGEOM_PLANE,

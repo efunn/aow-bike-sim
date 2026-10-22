@@ -32,7 +32,7 @@ bike:
 
 # =====================================================================
 # TIER 2 -- THE OPTIMISER SEARCHES THESE. Values here are a starting point
-# and the last saved result, not a design. See analysis/wing_linkage.py::_VARS
+# and the last saved result, not a design. See analysis/mechanism/wing_linkage.py::_VARS
 # and docs/plans/wing-linkage-design-and-optimization.md.
 #
 # NOTE `ground_clearance` above is also searched, despite living under `bike:`.

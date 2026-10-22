@@ -9,7 +9,7 @@ are both paced in episodes, not steps).
         "run 1, 4k x 64=analysis/gpu/phase3/results_5090_style/train.log" \\
         "run 2, 16k x 16=analysis/gpu/phase3/results_5090_mult/train.log"
 
-Writes analysis/plots/gpu_curves_<tag>.png. The last panels of a finished
+Writes analysis/gpu/plots/gpu_curves_<tag>.png. The last panels of a finished
 run ("To go 0ms") are PufferLib's end-of-run evaluation, not training, and
 are dropped. A panel in which no episode ended has no episode metrics:
 those points are left out, not drawn as zero. The world count is read from
@@ -103,7 +103,7 @@ def main():
     axes[0, 0].legend(fontsize=8)
     fig.suptitle(f"PufferLib training panels: {a.tag}")
     fig.tight_layout()
-    out = Path(__file__).resolve().parents[3] / "analysis" / "plots" / f"gpu_curves_{a.tag}.png"
+    out = Path(__file__).resolve().parents[3] / "analysis" / "gpu" / "plots" / f"gpu_curves_{a.tag}.png"
     fig.savefig(out, dpi=110)
     print(out)
     for label, d in runs:

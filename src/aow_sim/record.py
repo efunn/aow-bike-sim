@@ -100,7 +100,7 @@ _SCRIPTS = {
     #
     # NOTE these are not seeded to match `_eval_episodes` (seed 10_000 + k), so
     # a tile is the eval COMMAND from a settled standstill, not byte-for-byte
-    # the scored episode. `analysis/eval_video.py` is the tool that reproduces
+    # the scored episode. `analysis/policy/eval_video.py` is the tool that reproduces
     # the scored episode exactly.
     "eval_hold": [
         (0.0, "hold station", lambda c, p, vm: c.set_command_polar(0.0, 0.0, psi_cmd=p)),
@@ -968,7 +968,7 @@ def main() -> None:
     ap.add_argument("--mirror", action="store_true",
                     help="fall and right on the OTHER side. The policy's "
                          "recovery is asymmetric (16.3 deg right vs 11.8 left "
-                         "per analysis/no_return.py), so a mechanism that "
+                         "per analysis/policy/no_return.py), so a mechanism that "
                          "works one way is not verified until both are run")
     ap.add_argument("--recover-deg", type=float, default=None,
                     help="override the hand-off roll window [deg]. A QUESTION, "

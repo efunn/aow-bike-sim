@@ -5,7 +5,7 @@
 #
 # WHY. general_rl_odo_ahrs trained against a TM151 at ahrs_tau_s 2.0 and holds
 # survival 1.00 on the eval grid at that value. The real part measures 0.19 s
-# (300 s at rest, exponential fit r2 0.999, analysis/tm151_check.py) and at the
+# (300 s at rest, exponential fit r2 0.999, analysis/sensing/tm151_check.py) and at the
 # measured value the same policy gives back half its gain, 0.672 / 1.00 ->
 # 0.570 / 0.95. It learned the timescale, not just the noise.
 #
@@ -32,9 +32,9 @@
 #   * survival across the WHOLE tau axis, not at one point. The test this run
 #     has to pass is the one general_rl_odo_ahrs fails:
 #
-#       python analysis/chatter.py --policies general_rl_odo_ahrs_rand \
+#       python analysis/policy/chatter.py --policies general_rl_odo_ahrs_rand \
 #           --encoder counts --ahrs tm151 --ahrs-tau 2.0    # 0.672 / 1.00 to beat
-#       python analysis/chatter.py --policies general_rl_odo_ahrs_rand \
+#       python analysis/policy/chatter.py --policies general_rl_odo_ahrs_rand \
 #           --encoder counts --ahrs tm151 --ahrs-tau 0.19   # 0.570 / 0.95 to beat
 #
 #     A policy that is merely as good at both ends and worse in absolute terms

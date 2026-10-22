@@ -5,7 +5,7 @@
 # What it is for (docs/plans/pre-assembly-bench-checklist.md, "Bench test
 # for it"): back-drive slip torque with torque OFF, and lift-the-mass
 # Goal Current with torque ON, to split the ~22 mA breakaway that
-# analysis/servo_breakaway.py measured into deadband and gearbox friction.
+# analysis/servo/servo_breakaway.py measured into deadband and gearbox friction.
 # Masses: a 10-32 screw and washers slid along a slot in either arm, out
 # to 44 mm from the shaft; 0.3 N m there is ~700 g.
 #

@@ -131,7 +131,7 @@ longer runs off. A steady ~0.1 m/s offset coasts at conf 0 and clears when
 the wheel straightens.
 
 **2. The same test in sim**
-(`analysis/odo_tilt_hold.py`: `control.general_move`'s own sensors, TM151 filter,
+(`analysis/sensing/odo_tilt_hold.py`: `control.general_move`'s own sensors, TM151 filter,
 counts encoder, detailed drivetrain). Drives were commanded to 0, and a
 "hand" PD held position and yaw and drove roll through +-20 deg twice each
 way (achieved +-19.8, tracking 0.6 deg RMS), then 10 s still and upright.
@@ -160,7 +160,7 @@ decays it. The bike repeat does not need the bike perfectly upright, only
 still: gravity removal handles any steady tilt.
 
 **3. How far the policies steer**
-(`analysis/odo_steer_use.py`: per_command.py's 20-command grid, same cfg and
+(`analysis/sensing/odo_steer_use.py`: per_command.py's 20-command grid, same cfg and
 seeds, each policy on its own training sensors). Steer is folded to the wheel
 heading in [0, 90] deg, the angle the confidence uses.
 
@@ -196,7 +196,7 @@ seeds, then this steer-use count on both. That is a GPU run, so it waits until
 GPU training resumes after the bike build.
 
 **4. Every lateral estimator against truth, on the eval grid**
-(`analysis/odo_compare.py`). `general_puffer_fixes_72M` drove per_command's 20
+(`analysis/sensing/odo_compare.py`). `general_puffer_fixes_72M` drove per_command's 20
 commands on its own sensors and plant (TM151 filter, counts, detailed
 drivetrain), seeing the shipped estimator; 0 of 20 fell. At each 100 Hz tick
 the alternatives were computed from the same readings and compared to truth:
@@ -282,7 +282,7 @@ axle and the axle itself differ by roll_rate x 51 mm sideways. So if the
 mismatch mattered, the error against the origin would correlate with roll
 rate at about 51 mm per rad.
 
-**In sim it does not** (`analysis/odo_refpoint.py`). `control.general_move` was flown on its own sensors
+**In sim it does not** (`analysis/sensing/odo_refpoint.py`). `control.general_move` was flown on its own sensors
 (TM151 filter, counts encoder, seed 0) for 4.8 s per regime. Error RMS in
 mm/s against each point, with the error's slope against roll rate:
 

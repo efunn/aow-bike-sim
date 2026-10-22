@@ -1,6 +1,6 @@
-# From: python analysis/swing_synthesis.py --pivot-x 0 --keep-panel --stagger-couplers --stagger-rockers --one-pin --tag _shared
+# From: python analysis/mechanism/swing_synthesis.py --pivot-x 0 --keep-panel --stagger-couplers --stagger-rockers --one-pin --tag _shared
 # 586 counts at 9.9 V on the planar scorer (reference 669), margin 1.40x, travel 128 deg.
-# Sim check: python analysis/righting_current_sweep.py --config config/linkage/swing_linkage_shared_rod.yaml --supply 9.9
+# Sim check: python analysis/mechanism/righting_current_sweep.py --config config/linkage/swing_linkage_shared_rod.yaml --supply 9.9
 bike:
   wheel_radius: 51.2
   bike_width: 80.0

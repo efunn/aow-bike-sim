@@ -1,13 +1,13 @@
 """The AHRS fixture's analysis, against a synthetic rig whose answer is known.
 
-`analysis/ahrs_fixture.py` scores the TM151 against two servo encoders, and
+`analysis/sensing/ahrs_fixture.py` scores the TM151 against two servo encoders, and
 everything it reports rests on three fitted things: the joint axes in the
 sensor frame, the sensor's delay, and the device-to-host clock map. A sign or
 a transpose wrong in any of them still produces plausible-looking degrees, so
 this builds a rig with a skewed mount, a tilted base, a known delay, arrival
 jitter and a known injected error, and checks each comes back.
 
-Invalidated by: the analysis in `analysis/ahrs_fixture.py`, or
+Invalidated by: the analysis in `analysis/sensing/ahrs_fixture.py`, or
 `tm151_serial.py`'s quaternion convention (sensor -> earth).
 """
 
@@ -16,7 +16,7 @@ import sys
 import numpy as np
 import pytest
 
-sys.path.insert(0, "analysis")
+sys.path.insert(0, "analysis/sensing")
 import ahrs_fixture as fx  # noqa: E402
 
 pytestmark = pytest.mark.analysis

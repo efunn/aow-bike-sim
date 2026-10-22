@@ -14,7 +14,7 @@
 sim:
   # 4.0e-4, was 2.0e-4 (2026-08-15). The old value was placeholder-validated in
   # 2026-07 and never revisited. The CONTACT tolerates far more: in
-  # analysis/contact_surrogates.py --study timestep, ride ripple, airborne
+  # analysis/contact/contact_surrogates.py --study timestep, ride ripple, airborne
   # fraction, peak normal force and rest penetration are flat from 5e-5 through
   # 6e-4, and general_rl_smooth_stiff replays the whole 20-command eval grid at
   # 0.764 -> 0.767 -> 0.760 across 2e-4 / 4e-4 / 6e-4 at survival 1.00.
@@ -175,7 +175,7 @@ drivetrain:
   # and every ideal-trained policy keep exactly their plant. On the default
   # DETAILED plant DrivetrainSim zeroes all four (2026-10-02): the servo's
   # measured friction and inertia are a coast fit of the whole wheel in the
-  # air (analysis/drivetrain_fit.py coast), hub bearing and geared rollers
+  # air (analysis/servo/drivetrain_fit.py coast), hub bearing and geared rollers
   # included, so they cannot be measured apart from it; and a roller inside
   # its play is damped by drivetrain_model.roller_slop alone. Were GUESS.
   hub_joint_damping: {value: 1.0e-4, source: design}
@@ -186,7 +186,7 @@ drivetrain:
 # THE DETAILED DRIVETRAIN -- the default plant since 2026-10-02 (was the
 # opt-in overlay config/drivetrain_model.yaml). Every `measured` number is a
 # fit to the Station A captures under traces/drivetrain/ (rear assembly, hand
-# held, wheel in the air, 2026-09-13); `python analysis/drivetrain_fit.py`
+# held, wheel in the air, 2026-09-13); `python analysis/servo/drivetrain_fit.py`
 # re-derives them. Reasoning and what is open: docs/plans/drivetrain-model.md.
 #
 #   servo        the XC430 firmware velocity loop and the motor behind it,
@@ -313,7 +313,7 @@ bike:
   # (traces/bike_v2_cad/mass_eval.txt). CAD bike frame -> this frame:
   # x = CAD y, y = -CAD x, z = CAD z (both origin on the rear axle).
   wheelbase: {value: 0.2005, source: design}   # the CAD's; was 0.200
-  # 20, was 15 (2026-10-19): the CAD's since 10-19. analysis/steer_wobble.py
+  # 20, was 15 (2026-10-19): the CAD's since 10-19. analysis/policy/steer_wobble.py
   # (10-18): forward wobble roughly halves by 20 deg, the hold wobble grows.
   rake_deg: {value: 20.0, source: design}      # steering axis tilt back from vertical
   fork_offset: {value: 0.0, source: design}  # perpendicular distance steer axis -> front axle
@@ -636,8 +636,8 @@ actuators:
   # kp 2.3 AND steer_armature 5.5e-4, MEASURED 2026-10-17 as a pair: an
   # open-loop sine sweep of the steer XC330 at P 900, steering column and
   # headset installed (no fork or wheel, hanging), +-5 deg at 1-10 Hz
-  # (analysis/steer_response.py, traces/bench/steer_response_261017-175708.json),
-  # fitted in the sim by the same protocol (analysis/steer_pinned.py --sine
+  # (analysis/servo/steer_response.py, traces/bench/steer_response_261017-175708.json),
+  # fitted in the sim by the same protocol (analysis/policy/steer_pinned.py --sine
   # --bare --steer-kp K --armature J): within ~0.03 gain / 3 deg of the bench
   # at every frequency, where kp 2.0 with no armature gave 0.66 / -63 deg at
   # 5 Hz (bench 0.81 / -69). The bench holds its gain longer and loses phase
@@ -779,7 +779,7 @@ control:
     # so servo B is mirrored.
     #
     # THE MEASUREMENT EXISTED FOR FOUR DAYS AND NOTHING READ IT.
-    # `analysis/drivetrain_bench.py` defaults to `--signs 1 -1` and has always
+    # `analysis/servo/drivetrain_bench.py` defaults to `--signs 1 -1` and has always
     # been right; `hw/dynamixel.py` and `hw/odometry.py` assumed [1, 1], which
     # swaps the two modes outright -- a commanded common mode reaches the
     # hardware as a differential, and a real forward roll reads as pure roller
@@ -879,7 +879,7 @@ control:
     # and the crank's +x hinge axis. Flip the horn and this flips.
     righting_sign: 1           # source: measured -- right wing down = +, horn forward
     # The safety cut. NOT a recoverability boundary -- there is no such angle;
-    # see FallGuard and analysis/no_return.py. 60 deg is rl_general.yaml's
+    # see FallGuard and analysis/policy/no_return.py. 60 deg is rl_general.yaml's
     # `fall_roll_deg`, i.e. the angle past which the policy never trained.
     # EXPECT TO MOVE IT: a bike that comes to rest on a wing or a wheel at
     # 30-45 deg never reaches 60 and would sit there driving.
@@ -941,7 +941,7 @@ control:
     cut_roll_deg: 60.0
     # The re-arm pair is control/righting.py's hand-off criterion -- RECOVER_DEG
     # and HANDOFF_RATE -- for the same event, and both come from what
-    # analysis/no_return.py measured the policy can recover from (the weaker
+    # analysis/policy/no_return.py measured the policy can recover from (the weaker
     # LEFT side sets the 12). Do not tune these two without re-running that.
     rearm_roll_deg: 12.0        # must be below cut_roll_deg (hysteresis)
     rearm_roll_rate_dps: 171.9  # 3.0 rad/s: inside the window but still moving
@@ -1169,7 +1169,7 @@ righting:
   # build_model(righting=True, wings=True) swaps it for the wing pair. Keeping
   # them exclusive is not tidiness -- the arm's mass and geometry would pollute
   # every wing torque and rest-attitude reading, and the whole point of the
-  # tools in analysis/self_righting.py is that the two sets of numbers are
+  # tools in analysis/mechanism/self_righting.py is that the two sets of numbers are
   # comparable. `bumper` is shared by both.
   #
   # Frame for z: metres above the REAR AXLE, like every other chassis-frame
@@ -1237,8 +1237,8 @@ righting:
     # the radius (50 mm was worse than either 45 or 60), which is exactly why
     # this is now derived rather than tuned. Re-run both tests after any change
     # to the envelope:
-    #     python analysis/self_righting.py invert --wings
-    #     python analysis/self_righting.py rest   --wings
+    #     python analysis/mechanism/self_righting.py invert --wings
+    #     python analysis/mechanism/self_righting.py rest   --wings
     mass: {value: 0.045, source: design}    # shell only -- see the CoG note above
   rollcage:
     # THE V2 BIKE'S ROOF (2026-10-19), built in place of `roof` whenever the
@@ -1393,7 +1393,7 @@ righting:
     #     lowest outboard thing on the bike after the wheels, so it decides the
     #     roll angle at which something other than a tyre touches down. At
     #     z = -30 that is 27 deg -- INSIDE the recoverable set (up to 30.9 deg,
-    #     analysis/no_return.py), so a lean the policy could still save would
+    #     analysis/policy/no_return.py), so a lean the policy could still save would
     #     drag a wing on the floor. z = -20 puts it at 40 deg, clear of both the
     #     recoverable set and any riding lean.
     #
@@ -1551,7 +1551,7 @@ righting:
     # different joint with its own headset term and does not see this.
     #
     # Measured 2026-10-17, V2 as built: stubs only, no blades, unloaded,
-    # clamped so nothing touches, horn screwed (analysis/righting_sweep.py,
+    # clamped so nothing touches, horn screwed (analysis/mechanism/righting_sweep.py,
     # traces/righting_sweep/). Present Current -> crank torque by this file's
     # own laws: motor 0.83 x (I - 16.5 mA), less running gearbox friction
     # 0.15 x load + 5.7 mN m; the half-difference of the two directions, so

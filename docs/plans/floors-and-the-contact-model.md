@@ -44,7 +44,7 @@ Consequences worth carrying:
   cannot separate them; P0 and P1 must be solved jointly.
 - `contact_solimp.dmin` is a **third** unknown on top of that pair.
 - **Always label a solref by its SINK in mm**, never by the raw pair. Sink is
-  unambiguous; the pair is not. `analysis/floor_sweep.py` does this and sorts
+  unambiguous; the pair is not. `analysis/contact/floor_sweep.py` does this and sorts
   its rows by it for the same reason.
 
 **The fix is the negative form.** `solref = [-stiffness, -damping]` is read by
@@ -59,7 +59,7 @@ positive pair.**
 
 Reconstructed from git 2026-09-09. Sink is the rear wheel with the bike at
 rest on its own weight (~5.8 N on the rear), the whole bike settled
-(`analysis/contact_calibration.rest_sink`, 2026-10-01). The "stiffer" factors
+(`analysis/contact/contact_calibration.rest_sink`, 2026-10-01). The "stiffer" factors
 are the formula's `k`. The sink moves less than `k`, because `solimp`
 stiffens the contact with depth.
 
@@ -136,7 +136,7 @@ argument — it is a measurement question, and the floor tests answer it.
 
 ## 3. What the sim currently says about floors
 
-`python analysis/floor_sweep.py` — sweeps friction × contact and runs the full
+`python analysis/contact/floor_sweep.py` — sweeps friction × contact and runs the full
 20-command eval grid at each point. Read-only; touches no config and no
 `moves/`. Measured 2026-09-09, `general_rl_odo_ahrs`, mu 0.9:
 
@@ -169,9 +169,9 @@ grippier floor converts more of its sawing into travel. The whole-grid score
 cannot see this: `hold` is 1 command of 20 through a geometric mean. Use
 `--by-family`.
 
-    python analysis/floor_sweep.py
-    python analysis/floor_sweep.py --mu 0.5 0.9 1.4 2.0 --dampratio 1.0 --by-family
-    python analysis/floor_sweep.py --timeconst 0.005 0.020 --dampratio 0.3 1.0 2.0
+    python analysis/contact/floor_sweep.py
+    python analysis/contact/floor_sweep.py --mu 0.5 0.9 1.4 2.0 --dampratio 1.0 --by-family
+    python analysis/contact/floor_sweep.py --timeconst 0.005 0.020 --dampratio 0.3 1.0 2.0
 
 Read all of it as *how the current policy copes*, not as what is achievable:
 **nothing has ever trained over the contact axis.** `solref_frac` and
@@ -352,8 +352,8 @@ bench tests inform.
   Correct and current; re-verified 2026-09-08.
 - `docs/measurements/contact-measurements.yaml` — the single-surface sheet.
 - `docs/measurements/floor-measurements.yaml` — the per-surface set.
-- `analysis/floor_sweep.py` — friction × contact against the eval grid.
-- `analysis/contact_calibration.py` — static and drop curves; read a bench
+- `analysis/contact/floor_sweep.py` — friction × contact against the eval grid.
+- `analysis/contact/contact_calibration.py` — static and drop curves; read a bench
   number straight off a table instead of bisecting by retraining.
 - `docs/plans/aow-contact-approximations.md` — the surrogate survey.
 - The floor sweep table and its corrections: the last section below (moved
@@ -371,7 +371,7 @@ bench tests inform.
    floor.** It depends on no measurement, which is the point — so it is the one
    thing a long run grid should do before the bike exists.
 
-   **Re-measured 2026-09-11, `analysis/floor_sweep.py`, `general_rl_odo_ahrs`,
+   **Re-measured 2026-09-11, `analysis/contact/floor_sweep.py`, `general_rl_odo_ahrs`,
    score / survival over the 20-command grid, mu 0.9. The 09-09 column is kept
    beside it because it was acted on and because the two disagree in ways that
    change the conclusions — it was taken with NO AHRS in the observation, which

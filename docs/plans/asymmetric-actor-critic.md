@@ -124,8 +124,8 @@ But the *env* still has to know, because it emits the wider vector. Pass it as
 a **constructor kwarg** — `GeneralEnv(params, cfg, privileged=False)` — rather
 than having the env read `cfg["algo"]`:
 
-- every existing call site is untouched (`analysis/chatter.py`,
-  `analysis/ahrs_tau.py`, `_eval`, `drive.py`'s replay path);
+- every existing call site is untouched (`analysis/policy/chatter.py`,
+  `analysis/sensing/ahrs_tau.py`, `_eval`, `drive.py`'s replay path);
 - `algo:` stays a section the env never reads, which is true today;
 - the eval and replay paths keep the flat 15-wide env by construction, which
   is what they want.
@@ -316,7 +316,7 @@ are the throwaways.)
 command, `chatter.py` runs with randomization off, 20 commands, one episode
 each — so there is no eval sampling noise. What has never been measured is the
 **training** seed spread: what the *same config* trained twice scores on that
-same fixed grid. `analysis/ahrs_tau.py`'s header already names "the seed-noise
+same fixed grid. `analysis/sensing/ahrs_tau.py`'s header already names "the seed-noise
 floor" as the number it would want. **[measured]**
 
 Differences of 0.05–0.10 in `score` are read as real throughout the standings

@@ -3,7 +3,7 @@
 The omni wheel's rollers are one flat colour and are surfaces of revolution, so a
 spinning roller and a stationary one look identical. Painting stripes along
 each cone gives the eye something to track, which is the whole reason
-`analysis/wheel_slowmo.py` is legible at all.
+`analysis/contact/wheel_slowmo.py` is legible at all.
 
 This lives in `src/` rather than in that script because teleop draws it too
 (run_drive's `wheel` camera). One implementation, so a stripe count or a

@@ -4,7 +4,7 @@
 #
 # WHY. The differential is the ONLY actuator for both roll balance and lateral
 # crawl, and under a pure hold command it is already p95-saturated by balance
-# alone (analysis/chatter.py). A sustained pure crab is therefore not
+# alone (analysis/policy/chatter.py). A sustained pure crab is therefore not
 # physically available at standstill, and measured crab tracking is 0.1-0.2 of
 # commanded at EVERY magnitude, down to 0.05 m/s.
 #

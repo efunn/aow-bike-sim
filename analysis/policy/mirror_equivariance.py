@@ -1,0 +1,148 @@
+"""How left-right asymmetric is a general_rl policy, against a null.
+
+The plant is mirror-symmetric (axle_cant_deg 0, roller cone pairs mirrored
+about the wheel mid-plane) and the command distribution is symmetric, so an
+unbiased policy should satisfy
+
+    a(M . obs) = M_a . a(obs)
+
+for the sagittal reflection M. The residual IS the policy's handedness, and it
+needs no alignment between nets -- each net is compared against its own
+mirrored self, so unit orderings never enter.
+
+The number is only interpretable against the UNTRAINED baseline this also
+computes: a random net has no reason to be equivariant, so it marks the "no
+symmetry learned at all" end of the scale, and 0% marks perfect symmetry.
+
+  python analysis/policy/mirror_equivariance.py
+
+Read-only: loads moves/*.npz and writes nothing.
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+
+import numpy as np
+
+from aow_sim.control.flick import MOVES_DIR
+from aow_sim.control.general_spec import (OBS_DIM, OBS_DIM_WINDOWED,
+                                          OBS_MIRROR_PARITY)
+from aow_sim.control.policy import load_policy_npz
+
+# Labelled by the move file each one loads from. Override with --policies;
+# the default list is append-only so old numbers stay comparable across runs
+# of this script.
+POLICIES = {n: n for n in ("general_rl_og", "general_rl", "general_rl_1k",
+                           "general_rl_smooth_og",
+                           "general_rl_smooth_diff_og",
+                           "general_rl_smooth_stiff",
+                           "general_rl_smooth_bouncy_lat")}
+
+# Parity comes from the spec, not from an index literal repeated here. The old
+# hardcoded list was the silent-failure hazard in this file: adding an entry to
+# build_obs would leave these numbers looking perfectly plausible and wrong,
+# with nothing to raise. OBS_MIRROR_PARITY is asserted against OBS_NAMES at
+# import, so a layout change fails there instead.
+FLIP_OBS = OBS_MIRROR_PARITY
+FLIP_ACT = np.array([-1.0, 1.0, -1.0])          # [steer_rate, hub, diff]
+
+
+def sample_states(n, rng, obs_dim=None):
+    """Plausible states with a spread of commands. NOT the on-policy
+    distribution -- but mirror error is a PAIRED comparison (the same states,
+    reflected), so a distribution mismatch hits both sides equally.
+
+    Width follows the policy: 15 without a velocity window, 17 with one."""
+    o = np.zeros((n, obs_dim or OBS_DIM))
+    o[:, 0] = rng.normal(0, 0.05, n)
+    o[:, 1] = rng.normal(0, 0.3, n)
+    o[:, 2] = rng.normal(0, 0.3, n)
+    st = rng.normal(0, 0.4, n)
+    o[:, 3], o[:, 4] = np.sin(2 * st), np.cos(2 * st)
+    o[:, 5] = rng.normal(0, 0.5, n)
+    o[:, 6] = rng.uniform(-0.5, 1.2, n)
+    o[:, 7] = rng.normal(0, 0.15, n)
+    o[:, 8] = rng.uniform(-0.5, 1.2, n)
+    o[:, 9] = rng.uniform(-0.48, 0.48, n)
+    pe = rng.uniform(-np.pi, np.pi, n)
+    o[:, 10], o[:, 11] = np.sin(pe), np.cos(pe)
+    o[:, 12:15] = rng.normal(0, 0.3, (n, 3))
+    if o.shape[1] >= OBS_DIM_WINDOWED:
+        # v_bar is a low-pass of v_lon/v_lat, so it lives near them rather
+        # than being independent noise.
+        o[:, 15] = o[:, 6] + rng.normal(0, 0.10, n)
+        o[:, 16] = o[:, 7] + rng.normal(0, 0.05, n)
+    return o
+
+
+def mirror_error(pol, O) -> float:
+    """Mean |a(M o) - M_a a(o)|, normalized per action channel so steer, hub
+    and diff contribute comparably despite their different units."""
+    # Independent observations, not a trajectory: a memory policy is reset
+    # before each, so this measures its response from an EMPTY memory.
+    def act(X):
+        out = []
+        for x in X:
+            pol.reset()
+            out.append(pol.action(x))
+        return np.array(out)
+    base = act(O)
+    # Slicing is safe precisely because the un-windowed layout is a strict
+    # PREFIX of the windowed one -- see control/general_spec.py.
+    err = np.abs(act(O * FLIP_OBS[:O.shape[1]]) - base * FLIP_ACT).mean(0)
+    return float((err / (np.abs(base).mean(0) + 1e-9)).mean() * 100)
+
+
+def random_like(pol, seed):
+    r = copy.copy(pol)
+    g = np.random.default_rng(seed)
+    r.layers = [(g.normal(0, np.sqrt(2.0 / W.shape[1]), W.shape), np.zeros_like(b))
+                for W, b in pol.layers]
+    if hasattr(pol, "enc"):         # a memory policy: its front end too
+        r.enc, r.mem = [(g.normal(0, np.sqrt(2.0 / W.shape[1]), W.shape),
+                         np.zeros_like(b)) for W, b in (pol.enc, pol.mem)]
+        r.reset()
+    return r
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--n", type=int, default=3000, help="states to average over")
+    ap.add_argument("--nulls", type=int, default=5, help="random nets for the null")
+    ap.add_argument("--policies", nargs="+", metavar="NAME",
+                    help="move names to compare (default: the built-in list)")
+    args = ap.parse_args()
+
+    policies = {n: n for n in args.policies} if args.policies else POLICIES
+    # Skip names with no .npz rather than dying: the default list is shared
+    # across machines that do not all hold every export.
+    policies = {k: v for k, v in policies.items()
+                if (MOVES_DIR / f"{k}.npz").exists()}
+    if not policies:
+        raise SystemExit("none of the requested policies exist in moves/")
+
+    pols = {k: load_policy_npz(MOVES_DIR / f"{k}.npz") for k in policies}
+    # Policies need not share a width: one trained with a velocity window
+    # carries two extra entries. Same seed per width, so the comparison stays
+    # paired within a width and the numbers stay comparable across runs.
+    O = {d: sample_states(args.n, np.random.default_rng(0), d)
+         for d in sorted({p.obs_dim for p in pols.values()})}
+
+    print("mirror-equivariance error   (0% = perfectly symmetric)\n")
+    for k, name in policies.items():
+        p = pols[k]
+        print(f"  trained  {name:26} {mirror_error(p, O[p.obs_dim]):5.0f}%")
+    ref = next(iter(pols.values()))
+    nulls = [mirror_error(random_like(ref, 100 + i), O[ref.obs_dim])
+             for i in range(args.nulls)]
+    print(f"\n  UNTRAINED null  (n={args.nulls})      "
+          f"{np.mean(nulls):5.0f}%   [{min(nulls):.0f}, {max(nulls):.0f}]")
+    print("\nTraining moves the policies well below the untrained null, so some"
+          "\nsymmetry IS learned -- but none lands near 0%, and the ordering is"
+          "\nthe handedness you can feel in teleop.")
+
+
+if __name__ == "__main__":
+    main()

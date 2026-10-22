@@ -1,4 +1,4 @@
-"""analysis/drop_rig_sim.py: the drop rig in MuJoCo is the bench's rig.
+"""analysis/contact/drop_rig_sim.py: the drop rig in MuJoCo is the bench's rig.
 
 What the contact sees is the static force and the effective mass at the
 wheel (MuJoCo's soft contact scales with the latter), so those are pinned
@@ -13,7 +13,7 @@ import mujoco
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis" / "contact"))
 import drop_rig_sim as rig  # noqa: E402
 
 pytestmark = pytest.mark.analysis

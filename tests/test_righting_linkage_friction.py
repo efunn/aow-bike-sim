@@ -5,7 +5,7 @@ same term in the Warp kernel (gpu/gearbox.py).
 
 Pins the IMPLEMENTATION: every expectation is derived from the params, so a
 re-fit leaves these green. Whether the curve matches the bench is
-analysis/righting_sweep.py and the parameter's own note (measured 2026-10-17).
+analysis/mechanism/righting_sweep.py and the parameter's own note (measured 2026-10-17).
 
 The stroke test is the point of the model: at a Goal Current sized, from the
 params alone, to carry the linkage only to ~60 deg, the frictionless crank

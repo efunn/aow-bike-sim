@@ -40,7 +40,7 @@ and the 10-14 env fixes had all landed without this file catching up.
 
 | # | do | why now | doc |
 |---|---|---|---|
-| 1 | **Contact calibration**: stiffen the force sensor's mount (resolder or glue) and check it with a rigid-block drop; then the drop rig with added mass at the wheel (front, then rear), a joint `solref` + `solimp` fit with the dial (P0) data, and the P0b pull test and tread print (friction) | First rig run (10-03, front, 65 drops): the rig's load path reads ~7-30x softer than the dial says the wheel alone is, and the base rings at ~170-180 Hz -- probably the sensor mount, so fits so far describe the rig, not the tire. MuJoCo's contact is per unit mass (same bounce at any mass), so a fit reaches the bike only through each wheel's effective mass | `drop-release-rig.md`, `measurements/contact-protocol.md`, `analysis/drop_rig_sim.py` |
+| 1 | **Contact calibration**: stiffen the force sensor's mount (resolder or glue) and check it with a rigid-block drop; then the drop rig with added mass at the wheel (front, then rear), a joint `solref` + `solimp` fit with the dial (P0) data, and the P0b pull test and tread print (friction) | First rig run (10-03, front, 65 drops): the rig's load path reads ~7-30x softer than the dial says the wheel alone is, and the base rings at ~170-180 Hz -- probably the sensor mount, so fits so far describe the rig, not the tire. MuJoCo's contact is per unit mass (same bounce at any mass), so a fit reaches the bike only through each wheel's effective mass | `drop-release-rig.md`, `measurements/contact-protocol.md`, `analysis/contact/drop_rig_sim.py` |
 | 2 | **Print the rear drive**, then fit the blades to the righting module | The bushing and end-play results are in (09-30); the module is built (10-16) | `drive-design.md`, `righting-design.md`, `aow-bike-whole-v2.md` |
 | 3 | **Finish the drivetrain station**: firmware Velocity P and I, the D5 torque-scale check, fit the five drivetrain `GUESS`es | The sim cannot pick the gain (policies tie at P 100 / P 400; P 400 buzzes ~3x harder). Decide on the bike | `drivetrain-model.md`, `drivetrain-measurements.yaml` |
 | 4 | **The style bit: find the pivot** (GPU training PAUSED, user 10-18: the bike is being built, policies get tried on it first) | Run 1 (add) refused in-place turns; run 2 (mult, 10-18) turns but STEERS, and stops 20-33 deg short on the big ones. Refusing is fixed, the pivot is not found. Also: 16k x horizon 16 trains in 18 min (4k: 29) but its bit-off hold creeps (-0.02..-0.05 m/s; run 1 ~0) -- decide whether that is acceptable before using 16k again | `wishlist.md`, `gpu-training.md` |
@@ -72,7 +72,7 @@ checkout (no `--delete`, `bench/` left alone); the 100 Hz loop runs torque-off
 with the GPU MinGRU pointer (p99 jitter 0.56 ms).
 
 Righting module V2, first powered runs (10-17; stubs only, clamped free,
-horn now screwed; `analysis/righting_sweep.py`, captures in
+horn now screwed; `analysis/mechanism/righting_sweep.py`, captures in
 `traces/righting_sweep/`). Kinetic friction at 15 deg/s, as (I+ - I-)/2:
 ~90 mA near stow, ~110-120 at +-15-75, ~140 at +-75-90, ~170-190 at
 +-90-120 (bare XC330 ~22). Breakaway by goal creep: 110-130 near stow,
@@ -99,12 +99,12 @@ records in `traces/bike/261017-17*`). 100 Hz, no dropped frames; fall cut and
 auto re-arm work. With the AHRS held level the policy SAWS THE STEER: 5.2 Hz,
 growing 1 -> 8 deg rms over ~15 s, in its own command (the servo follows).
 Not roll; the velocity estimate carries it too. In the sim, pinned upright
-(`analysis/steer_pinned.py`), the same policy is quiet (0.02 deg) and only
+(`analysis/policy/steer_pinned.py`), the same policy is quiet (0.02 deg) and only
 limit-cycles (0.43 deg, 4.9 Hz) once BOTH (a) the steer servo is given the
 bench's response and (b) the policy sees the steer rate as the Pi forms it.
 (a): open-loop sweep of the XC330 at P 900 with the steering column and
 headset installed (no fork or wheel, hanging)
-(`analysis/steer_response.py`, `traces/bench/steer_response_261017-175708.json`):
+(`analysis/servo/steer_response.py`, `traces/bench/steer_response_261017-175708.json`):
 gain/phase 0.81/-69 deg at 5 Hz against the sim's 0.66/-63. Repeated on the
 bare righting XC330 (mode 4, `steer_response_261017-190803.json`): within
 0.02 at +-5 deg, so the column adds nothing and the units agree. NOW IN THE
@@ -142,7 +142,7 @@ fixture (parked 09-24), the self-righting linkage choice (parked 09-27).
 | **Hardware / onboard** | Pi 3 bench proven: tick jitter p99 < 1 ms with four servos energised. 2.4 GHz house wifi (decided: a router, no AP). The SBC that ships: open | Chassis, pack | `pi-bench-bringup.md`, `untethered-setup.md` |
 | **CAD** | Steer printed and print-checked; the righting module printed (blades not on). **v2 (`aow-bike-whole-v2.md`, then `aow-bike-whole-v2-complete.md` from 10-16, `aow-bike-whole-v2-touchups.md` from 10-19). The CAD's rake is 20 deg since 10-19 (keeping the wheelbase); the sim's is still 15 (row 6); frozen v1 keeps 15.** Drive: fixture mock off, the user's chainstay finishing folded in; **its case sides are now the bike's SIDE RAILS** (10-16): each grows forward to the steering's side pad and down to the righting's bridge (now as wide as the gap between the rails), one 6-32 a side at each, ending fore and aft in a CAGE TONGUE (10-19) inside each rollcage ring and a full-width tab a side holding the TM151 on its own M2 holes, USB up. The steering and the righting slide out of the rails downward (ridges along the slide, grooves open at the rail's edge). Steering v2: servo out the FRONT, pads 3.65 to take the rail, ONE upper <-> lower screw, at the FRONT since 10-19 (its nut block's underside 20 deg from level; lower case ~12.2 g ASA). Righting: stubs and the V3 spline blade, centred; bridge lugs for the rails. Snug 6-32 nut slots (6.45 x 2.7, GUESS) in the v2 modules. **The power holder** (`cad.power`, 10-16): one printed panel on the left between the battery and the rail (printed -X), the power board on standoffs outboard of it square to the drive (XT30 up and back), the switch panel-mounted in a gusseted shelf round the XT30; one strap round the battery near the switch (over its top, under its bottom, up the panel's outer face inside the switch). Two 6-32 into the LEFT rail only, on two left-only case-side ears fore and aft of the board (nut in the panel, the aft screw cut to 8); it slides in from the back + top (the drive's -Z), clear of the Pi carrier; its aft edge reaches back to the aft lug only in an ear at the bottom (10-19). Both rear tongues carry a battery stop (behind it and along its side). **The rollcages** (10-19, `cad.bike_v2.rollcage`): one part, at the rear and turned 180 deg at the front; a 270 deg ring the blades' width (137.4) at z 100, 15 deep, printed Y-outboard; a bayonet for an elliptical half-dome cap (three 15 deg V-grooves, clockwise on; the cap's inside a 60 deg cone); a groove for the flexible sheet (1.0 to 0.5 over 3); a bar a side whose socket slides Y-inboard over the rail's tongue, its chin chamfered short of the bed, one 6-32 along Y (head outboard, under the cap; 3/8 in). The holder now comes out only after the rear ring. The checks now probe every rail screw hole open through the mating part's ridge (the holder's and steering v2's ridges had plugged theirs: fixed, 10-16). No tray: the battery is where it was. **The Pi + U2D2 carrier** (`cad.pi_carrier`, 10-16): a plate over the front face, the Pi's PCB's footprint exactly, 1 off the rails' top edges; the U2D2 under it between the drive pulleys on two M2 (its JSTs in front of the AHRS's housing; their generous keep-out still meets it 6 mm into the lift), the Pi over it on four separate printed spacers, 4-40 self-tapping into the plate. Its three screws and the holder's fore one go through; only the holder's aft is cut down (short of the battery). Three 6-32 into the rails: one on the LEFT front ear (run on forward), one a side low in the rails' lower arms above the righting's bridge; it lifts out straight up. The v2 bike: `--check` clean at rest, steered, every pose, and with the Pi carrier lifted 3..15 mm (84 bodies, 10-19). v1 (`cad.bike`) is frozen (as-built nut slots, no rails) and still builds | Print-fit the snug nut slots and the M2 tabs; print-fit the holder's cut screws and nuts, and the Pi carrier's spacers, pilots and nuts; room for a screwdriver at the Pi carrier's low screws past the blades (unchecked); the strap (over the servo wires' exit); print-fit the bayonet (0.2), the cage sockets (0.15) and the cap's cone; the sheet's radius (66.2, GUESS) and the sheet itself (not modelled; the blades sit across it); the user's mocks in `aow-bike-whole-v2` (rolled back, not deleted); the straps (`aow-bike-whole-v2-complete.md`); delete the drive's four hand features; CoM not computed; wing-to-blade (not yet, user) | `aow-bike-whole-v2-touchups.md`, `aow-bike-whole-v2-complete.md`, `aow-bike-whole-v2.md`, `cad-onshape-workflow.md` |
 | **Self-righting** | V2 linkage with the **V3 blade** is the default (10-14, user): level at 116.98 deg (commanded 116.9), lying at 85 deg, 566 counts in the sim (10-14); `righting_current_sweep.py` at the real +-117 stroke (it read V1's 136.6 until 10-17): 530 counts frictionless, **600 with the linkage friction** (10-17), toe stop at ~130. V2's blade is `--blade config/linkage/righting_blade.yaml`; a blade file may carry its own `mass` and `crank_travel_deg`. **Lie down / get up / auto-up** (10-16): `control/swing_sit.py`, teleop PageDown / PageUp, and by itself after a fall (`--no-auto-up`); a fall after the hand-off folds the blade and re-arms the auto-up. Sim only: down 5.8 s at <= 102 deg/s, up 3.3 s; 24/24 in teleop | Weigh the printed parts; a crank coast-down for the XC330's reflected inertia; fly lie-down / get-up on the bike | `righting-linkage-margin.md`, `righting-servo-model.md`, `wishlist.md` |
-| **Contact bench** | Drop rig built and run (10-03): release-to-impact timed, analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/drop_rig_sim.py --fit`. AHRS mode drawn (10-06): a jam-on follower tip and an 11-cam wave kit, nothing printed. `force_drop.py --ahrs` (10-07) logs the TM151 and the servo with the drops, one clock. On the bar the TM151 steps within ~0.07 deg of the cam's; the arm is not rigid, so stations do not share a rotation | Print the wave cams + the tip, then `bench/wave_run.py` (sustained acceleration); power for the force sensor on the Pi (three USB devices reboot-loop it); a local truth per station; the sensor epoxied down; the arm's parts weighed | `drop-release-rig.md`, `contact-measurements.yaml` |
+| **Contact bench** | Drop rig built and run (10-03): release-to-impact timed, analysed at the contact through the arm (lever 205/124, m_eff 89 g fitted -- to re-derive from the weighed parts). MuJoCo twin `analysis/contact/drop_rig_sim.py --fit`. AHRS mode drawn (10-06): a jam-on follower tip and an 11-cam wave kit, nothing printed. `force_drop.py --ahrs` (10-07) logs the TM151 and the servo with the drops, one clock. On the bar the TM151 steps within ~0.07 deg of the cam's; the arm is not rigid, so stations do not share a rotation | Print the wave cams + the tip, then `bench/wave_run.py` (sustained acceleration); power for the force sensor on the Pi (three USB devices reboot-loop it); a local truth per station; the sensor epoxied down; the arm's parts weighed | `drop-release-rig.md`, `contact-measurements.yaml` |
 
 ---
 
@@ -219,7 +219,7 @@ after.
   the filter's own 0.19 / 1.0 s is built in.
 - **A MinGRU policy latches state at reset.** On `fixes_52M`, 7 of 9
   slow units are written in the first steps after a reset and held for the
-  episode, so a bogus first observation can persist (`analysis/mingru_memory.py`,
+  episode, so a bogus first observation can persist (`analysis/policy/mingru_memory.py`,
   `gpu-training.md`). Replay must reset the hidden state per engage.
 - **Why `fixes_72M` drops a swing-sit hand-off on the base params** that
   `fixes_52M` catches: one trace, not chased (it recovered on its own
@@ -271,7 +271,7 @@ the bike's module; it does not transfer. `rl_general_nodiff.yaml` was moved
 to V2 with the rest of the configs, for consistency only.
 
 **Do not compare `metrics:` blocks across `moves/*.yaml`**; re-run
-`analysis/per_command.py` (`CLAUDE.md`).
+`analysis/policy/per_command.py` (`CLAUDE.md`).
 
 ---
 
@@ -292,7 +292,7 @@ checklist).
 | `contact_solimp` | MuJoCo stock | hand drops: the real contact is softer at first touch and stiffer at peak than any `solref` gives | the drop rig + bench fit |
 | `friction_sliding` | 0.9 | nothing | P0b pull test |
 | `friction_torsional` | 0.005 | deferred; the risk is setting it high | later |
-| `drivetrain_model.roller_slop.centring_stiffness` / `.damping` | 1e-3 / 2.9e-5 | the only damping of a roller inside its +-7.8 deg play (zeta 0.95). Sensitivity (10-02, `analysis/slop_sensitivity.py`): stiffness x0.1 or no slop moves `smooth_temporal` <= 0.005; **x10 drops it 0.818 -> 0.598**. The hand note "springs back, not every time" points SOFT, the harmless side | qualitative first: does a released roller snap back (stiff) or drift / stick (soft)? |
+| `drivetrain_model.roller_slop.centring_stiffness` / `.damping` | 1e-3 / 2.9e-5 | the only damping of a roller inside its +-7.8 deg play (zeta 0.95). Sensitivity (10-02, `analysis/policy/slop_sensitivity.py`): stiffness x0.1 or no slop moves `smooth_temporal` <= 0.005; **x10 drops it 0.818 -> 0.598**. The hand note "springs back, not every time" points SOFT, the harmless side | qualitative first: does a released roller snap back (stiff) or drift / stick (soft)? |
 | `righting_sign` | +1 | a build decision; the render only | mounting the motor |
 | `hockey.ball.radius` / `.mass` | 33.5 mm / 60 g | used by teleop's `--hockey` and the plays | the ball |
 
@@ -320,7 +320,7 @@ and the endurance test rebuild that policy's plant from it.
     contact_solref: [0.005, 1.0]     # positive: (timeconst_s, dampratio)
     contact_solimp: [0.9, 0.95, 0.001, 0.5, 2.0]   # MuJoCo stock, GUESS
 
-- Settled on the bike (`analysis/contact_calibration.py`): rear 0.148 mm at
+- Settled on the bike (`analysis/contact/contact_calibration.py`): rear 0.148 mm at
   its own 5.8 N, 0.57 mm at 44 N; front 0.049 mm at 4.2 N.
 - **Critically damped, so it cannot bounce.** The real front wheel does.
 - **Not a stiffness in N/m**: the sink scales with the masses compiled around

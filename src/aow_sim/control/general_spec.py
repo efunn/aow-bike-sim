@@ -138,7 +138,7 @@ OBS_NAMES = OBS_NAMES_BASE + ("v_bar_lon", "v_bar_lat", "pitch", "pitch_rate",
 # filtered quantity mirrors exactly like its source: v_bar_lon follows v_lon
 # (+1), v_bar_lat follows v_lat (-1). Getting these wrong does not raise --
 # it silently corrupts every handedness number in
-# analysis/mirror_equivariance.py, which is why they live here and not there.
+# analysis/policy/mirror_equivariance.py, which is why they live here and not there.
 OBS_MIRROR_PARITY = np.array([
     -1, -1, -1,        # roll, roll_rate, yaw_rate
     -1, +1, -1,        # sin2steer, cos2steer, steer_rate
@@ -170,7 +170,7 @@ OBS_MIRROR_PARITY = np.array([
                        #   enough -- it needs a negation, not a permutation --
                        #   but it must be -1. Copying the wings' +1 here would
                        #   not raise; it would silently make every handedness
-                       #   number in analysis/mirror_equivariance.py wrong, on
+                       #   number in analysis/policy/mirror_equivariance.py wrong, on
                        #   a mechanism whose whole job is to be side-dependent.
     +1,                # style -- a mode bit (0/1, a knob later), not a
                        #   direction: the mirrored bike is asked the same thing.
@@ -247,7 +247,7 @@ def policy_env_overrides(pol) -> dict:
     `policy_flags` covers the OBSERVATION blocks; this adds the ACTION-side and
     cap settings, so building an env that matches a policy is one call instead
     of a hand-written dict at each call site. There were three such dicts
-    (analysis/rsa_policies.env_for and two in analysis/wheel_slowmo), each
+    (analysis/policy/rsa_policies.env_for and two in analysis/contact/wheel_slowmo), each
     listing `act_wings` and `wing_max_deg` by hand, and when `act_swing` was
     added all three silently kept building a 3-action env for a 4-action
     policy -- the obs width matched, so nothing raised.
@@ -271,7 +271,7 @@ def policy_env_overrides(pol) -> dict:
     already described, on the sensor it did not list. The AHRS corrupts roll,
     roll_rate and yaw_rate IN PLACE, so the width is untouched and the
     observation is the right shape with the wrong signal. Every script that
-    built an env through `analysis/rsa_policies.env_for` and did not patch the
+    built an env through `analysis/policy/rsa_policies.env_for` and did not patch the
     cfg itself therefore evaluated `general_rl_odo_ahrs` -- a policy NAMED for
     the AHRS -- on MuJoCo attitude. Measured on the 20-command grid, the gain
     from dropping the error model is +0.019 of score for `general_rl_odo_ahrs`

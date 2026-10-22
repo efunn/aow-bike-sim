@@ -370,7 +370,7 @@ def _add_linkage(add, add_horn, add_case_holes, params: dict, raw: dict, d3: dic
                  "pivot. Stowed pose.")
 
     # Swept path of each crank arm tip over the full stroke. `crank_tip` in
-    # analysis/wing_linkage.py is servo + L*[cos(a0 + travel), sin(a0 + travel)]
+    # analysis/mechanism/wing_linkage.py is servo + L*[cos(a0 + travel), sin(a0 + travel)]
     # in the (y, z) plane, so travel ADDS to the start angle — the arc runs
     # a0 -> a0 + servo_travel_deg. Three points are enough for a sketch arc.
     travel = float(st["servo_travel_deg"])

@@ -26,7 +26,7 @@
 # test_every_orientation_channel_in_the_obs_comes_from_the_sensor, which now
 # asserts the sign and not only the source.
 #
-# WHY w_pitch: 2.0 NOW, measured rather than matched. analysis/pitch_ablation.py
+# WHY w_pitch: 2.0 NOW, measured rather than matched. analysis/policy/pitch_ablation.py
 # takes the one policy that CAN do the reversal and perturbs only its pitch
 # pair, everything else at truth:
 #
@@ -104,9 +104,9 @@
 # WHAT TO LOOK FOR: both taus, as before, and the bar is the SPECIALISED
 # policy, not the failed one --
 #
-#   python analysis/chatter.py --policies general_rl_odo_ahrs_rand2 \
+#   python analysis/policy/chatter.py --policies general_rl_odo_ahrs_rand2 \
 #       --encoder counts --ahrs tm151 --ahrs-tau 2.0     # beat 0.672 / 1.00
-#   python analysis/chatter.py --policies general_rl_odo_ahrs_rand2 \
+#   python analysis/policy/chatter.py --policies general_rl_odo_ahrs_rand2 \
 #       --encoder counts --ahrs tm151 --ahrs-tau 0.19    # beat 0.570 / 0.95
 #
 # LAUNCH (on the remote box, after committing and pushing):
@@ -271,7 +271,7 @@ reward:
   sigma_psi_deg: 25.0    # heading tolerance scale
   w_upright: 0.5
   # THE SECOND LINE THIS ARM CHANGES. Prices the wheelie that ends the
-  # episode, which analysis/reverse_flip.py measures directly. REQUIRES
+  # episode, which analysis/policy/reverse_flip.py measures directly. REQUIRES
   # obs_pitch, set above -- charging for state the policy cannot see is a
   # known defect.
   w_pitch: 2.0

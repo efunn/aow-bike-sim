@@ -3,7 +3,7 @@
 For the load test in docs/plans/pre-assembly-bench-checklist.md: known masses
 hung on the lever measure the back-drive slip torque with torque OFF and the
 Goal Current that lifts them with torque ON -- splitting the ~22 mA
-breakaway `analysis/servo_breakaway.py` measured into deadband and friction.
+breakaway `analysis/servo/servo_breakaway.py` measured into deadband and friction.
 Generates ONE custom feature, `X330 fixture`, into its own Feature Studio,
 with TWO VERSIONS picked in its dialog -- each with the friction the real
 roll mechanism would have, and no more:

@@ -338,7 +338,7 @@ def test_the_default_sign_is_inert():
 def test_the_configured_sign_is_the_measured_one():
     cfg = load_params()["control"]["onboard"]
     assert list(cfg["servo_sign"]) == [1, -1], (
-        "if the build changes, re-measure with `analysis/drivetrain_bench.py "
+        "if the build changes, re-measure with `analysis/servo/drivetrain_bench.py "
         "jog` and update BOTH this and drivetrain-measurements.yaml")
 
 

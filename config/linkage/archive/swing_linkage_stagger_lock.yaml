@@ -1,6 +1,6 @@
-# From: python analysis/swing_synthesis.py --stagger-couplers --end-toggle --tag _staggered_toggle
+# From: python analysis/mechanism/swing_synthesis.py --stagger-couplers --end-toggle --tag _staggered_toggle
 # 604 counts at 9.9 V on the planar scorer (reference 669), margin 1.35x, travel 144 deg.
-# Sim check: python analysis/righting_current_sweep.py --config config/linkage/archive/swing_linkage_stagger_lock.yaml --supply 9.9
+# Sim check: python analysis/mechanism/righting_current_sweep.py --config config/linkage/archive/swing_linkage_stagger_lock.yaml --supply 9.9
 bike:
   wheel_radius: 51.2
   bike_width: 80.0

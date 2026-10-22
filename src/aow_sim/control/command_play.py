@@ -37,7 +37,7 @@ Two optional extras:
       - [0.8, 0.0, 0.0, 0]     # stop
 
 Teleop: `--play config/plays/<name>.yaml` (repeatable), End starts the next
-one, any driving key aborts. `analysis/ball_play.py` flies one headless.
+one, any driving key aborts. `analysis/moves/ball_play.py` flies one headless.
 Pure numpy + yaml, so it can run anywhere the policy does.
 """
 from __future__ import annotations

@@ -99,7 +99,7 @@ class MountCalibration:
     `q_mount` is the SENSOR'S AXES IN THE CHASSIS FRAME (w, x, y, z): what
     the CAD gives (config/ahrs_mount.yaml; the v2 bike's is 45 deg
     nose-down about y). The TM151's quaternion is sensor -> earth, MuJoCo's
-    convention (analysis/ahrs_fixture.py, checked on the fixture), so
+    convention (analysis/sensing/ahrs_fixture.py, checked on the fixture), so
 
         R_earth_sensor = R_earth_chassis @ R_mount
         chassis attitude = q_sensor * conj(q_mount)       (right side)
@@ -315,7 +315,7 @@ def build_request(cmd: int = EP_CMD_COMBO, to_id: int = 0) -> bytes:
     The only frame this module ever TRANSMITS, and it exists for `poll=True`
     below. Ep_Request's payload is the 4-byte header bitfield, the requested
     command, and three pad bytes. Same construction as
-    `analysis/tm151_serial.request`, re-implemented here because `analysis/`
+    `analysis/sensing/tm151_serial.request`, re-implemented here because `analysis/`
     is not installed on the bike.
     """
     payload = struct.pack("<IB3x",

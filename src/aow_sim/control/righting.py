@@ -1,6 +1,6 @@
 """Standing the bike back up: the fall-to-balancing phase machine.
 
-`analysis/no_return.py` established that a fall cannot be caught — 0.13 s from
+`analysis/policy/no_return.py` established that a fall cannot be caught — 0.13 s from
 "visibly falling" to flat — so the mechanism acts AFTER the bike is down, and
 what it needs is a sequence rather than a controller:
 
@@ -22,7 +22,7 @@ the ONE thing that differs between them falls out as a single argument:
            that was
                 -> `direction = +1`, fixed
 
-Used by analysis/self_righting.py (the numbers) and aow_sim.record (the video).
+Used by analysis/mechanism/self_righting.py (the numbers) and aow_sim.record (the video).
 This module owns no geometry: it drives whatever actuator/joint it is handed.
 """
 
@@ -46,7 +46,7 @@ from .linearize import settle_upright
 from .recovery import HANDOFF_RATE, RECOVER_DEG, ready_for_policy  # noqa: F401
 
 # Where the FOUR-BAR's servo torque peaks, in bike roll. Measured from
-# analysis/wing_linkage.py --torque: 0.54 N.m at roll 53-57 deg, with the
+# analysis/mechanism/wing_linkage.py --torque: 0.54 N.m at roll 53-57 deg, with the
 # mechanism strong at both ends of the stroke and weak between them.
 LINKAGE_PEAK_ROLL_DEG = 55.0
 LINKAGE_EASE_BAND_DEG = 35.0
@@ -210,7 +210,7 @@ class RightingSequencer:
         # controller swap.
         #
         # Off by default because it is wrong for a FALL TEST -- a policy sawing
-        # the bars against the floor is not a fall, and analysis/self_righting
+        # the bars against the floor is not a fall, and analysis/mechanism/self_righting
         # deliberately cuts it once the fall is committed. It is right for
         # anything that has to look and behave like the real bike, where
         # nothing actually switches the policy off.
@@ -222,7 +222,7 @@ class RightingSequencer:
         self._fixed_direction = direction
         # Overridable so a study can ask "how close does the mechanism get?"
         # without editing the module constant. RECOVER_DEG is not a tuning
-        # knob — it is what analysis/no_return.py measured the POLICY can
+        # knob — it is what analysis/policy/no_return.py measured the POLICY can
         # recover from — so raising it here is a question, not a fix.
         self.recover_deg = RECOVER_DEG if recover_deg is None else recover_deg
         self.phase = "lift"

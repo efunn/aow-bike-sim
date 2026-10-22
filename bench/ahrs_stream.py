@@ -3,7 +3,7 @@
 force_drop.py --ahrs starts one of these beside the force sensor's Stream.
 A child process reads the port (like force_calibrate._read, and for the same
 reason: in a thread it would share the GIL with the servo's reads) and
-decodes with analysis/tm151_serial.Decoder, so every frame survives, not the
+decodes with analysis/sensing/tm151_serial.Decoder, so every frame survives, not the
 newest only as in hw/ahrs.AhrsReader, which serves a control loop.
 
 TWO CLOCKS PER ROW. host_s is time.perf_counter() when the read that carried
@@ -31,7 +31,7 @@ import threading
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis" / "sensing"))
 from tm151_serial import Decoder  # noqa: E402
 
 STM32_VID = 0x0483        # STMicroelectronics: the TM151's USB vendor (bike_params' by-id name)

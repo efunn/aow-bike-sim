@@ -58,7 +58,7 @@ from . import servo_mount as sm
 from ..params import _normalize, load_params
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "analysis"))
+sys.path.insert(0, str(ROOT / "analysis" / "mechanism"))
 import swing_synthesis as ss                    # noqa: E402
 
 PARAMS = "config/cad/wing_linkage_metal_cad.yaml"

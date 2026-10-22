@@ -70,7 +70,7 @@
 #
 # TO POSE A NEW QUESTION, START FROM config/linkage/archive/swing_linkage_constraints.yaml --
 # same schema, INPUT rows only, nothing the search decides. Everything omitted
-# falls back to the module defaults in analysis/swing_linkage.py.
+# falls back to the module defaults in analysis/mechanism/swing_linkage.py.
 
 bike:
   wheel_radius: 51.2        # rear omni outer radius [mm]; sketch v=0 sits here

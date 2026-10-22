@@ -1,6 +1,6 @@
 """The swing linkage as a driveable Onshape sketch feature.
 
-`analysis/swing_linkage.py` answers questions about the co-rotating four-bar
+`analysis/mechanism/swing_linkage.py` answers questions about the co-rotating four-bar
 pair; this puts the same geometry into CAD as a CUSTOM FEATURE with a crank
 input you can turn. Insert it several times on one plane at different inputs
 and the overlay IS the motion study -- no animation, no assembly, no mates.
@@ -66,10 +66,10 @@ from .servo_mount import _block_end, _strip_comments
 
 ROOT = Path(__file__).resolve().parents[3]
 # `SwingLinkage` lives in analysis/, which is not a package. Same sys.path
-# trick analysis/linkage_through_belt.py uses to reach analysis.wing_linkage,
+# trick analysis/mechanism/linkage_through_belt.py uses to reach analysis.wing_linkage,
 # and preferable to a third copy of the derivations: build_model already
 # carries a partial one and its own comment says flat_deploy is beyond it.
-sys.path.insert(0, str(ROOT / "analysis"))
+sys.path.insert(0, str(ROOT / "analysis" / "mechanism"))
 from swing_linkage import SwingLinkage          # noqa: E402
 
 CONFIG = "config/linkage/swing_linkage_smaller.yaml"
@@ -170,7 +170,7 @@ import(path : "onshape/std/geometry.fs", version : "$ver.0");
 export const SWING_KEEPOUT = $keepout;
 
 // -------------------------------------------------------------------------
-// the four-bar, ported from analysis/swing_linkage.py
+// the four-bar, ported from analysis/mechanism/swing_linkage.py
 //
 // Lengths are plain numbers in MILLIMETRES throughout this layer and only
 // become ValueWithUnits at the sketch. Angles are the other way round: they

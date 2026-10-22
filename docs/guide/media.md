@@ -52,7 +52,7 @@ must not need any of them.
 
 **These are not seeded to match `_eval_episodes`** (which uses `10_000 + k`), so
 a tile is the eval *command* from a settled standstill, not byte-for-byte the
-scored episode. `analysis/eval_video.py` is the tool that reproduces the scored
+scored episode. `analysis/policy/eval_video.py` is the tool that reproduces the scored
 episode exactly.
 
 One caveat on the 180: `command_to_body` uses `wrap_pi(psi_cmd - psi)`, so +180
@@ -193,7 +193,7 @@ no network — which is the trade for not committing them.
 
 | what | command |
 |---|---|
-| Two policies side by side over the whole eval grid | `python analysis/eval_video.py --policies A B --tag <name>` |
+| Two policies side by side over the whole eval grid | `python analysis/policy/eval_video.py --policies A B --tag <name>` |
 | Crab — sideways travel with the heading held | `python -m aow_sim.record --script crab --general <policy>` |
 | Self-righting, from a fallen start | `python -m aow_sim.record --script right` |
 | Pen drawings — shows commanded control legibly | `python -m aow_sim.record --script o` (also `s`, `t`) |

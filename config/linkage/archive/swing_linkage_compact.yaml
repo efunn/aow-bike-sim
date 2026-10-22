@@ -1,7 +1,7 @@
 # The COMPACT swing linkage -- the narrowest FEASIBLE geometry found.
 #
 # Reproduce exactly:
-#     python analysis/swing_linkage.py --config config/linkage/swing_linkage.yaml \
+#     python analysis/mechanism/swing_linkage.py --config config/linkage/swing_linkage.yaml \
 #         --optimize --seed 0 --iters 400 --save config/linkage/archive/swing_linkage_compact.yaml
 # Seeds 0, 2, 3 and 4 all return this to 0.05 mm.
 #

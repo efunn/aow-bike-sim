@@ -12,7 +12,7 @@ All numbers are SIM, for the live geometry `config/linkage/swing_linkage_smaller
 
 ## What the current four-bar needs
 
-`analysis/righting_current_sweep.py`, bike on its side, crank goal stepped as
+`analysis/mechanism/righting_current_sweep.py`, bike on its side, crank goal stepped as
 teleop does, wheels passive, 12 V:
 
 | | counts to reach upright |
@@ -29,7 +29,7 @@ far side.
 
 ## Step 1: the load, and the best any transmission could do
 
-`analysis/righting_ideal_profile.py`, figure `analysis/plots/righting_ideal_profile.png`
+`analysis/mechanism/righting_ideal_profile.py`, figure `analysis/mechanism/plots/righting_ideal_profile.png`
 (`--plot`). The stroke run quasi-statically (10 deg/s, 910 counts), recording
 the torque each coupler puts on its wing's hinge -- the loop equality's force
 projected onto the hinge. That is the load the bike presents to ANY
@@ -83,7 +83,7 @@ need.
 | flat, 270 | 0.196 | 253 | 3.78x | 0.53 | 3.37x | 0.69 |
 | flat, 360 | 0.148 | 195 | 5.00x | 0.65 | 4.45x | 0.83 |
 
-    python analysis/righting_ideal_profile.py --plot
+    python analysis/mechanism/righting_ideal_profile.py --plot
 
 What it says:
 
@@ -108,7 +108,7 @@ What it says:
 
 ### The previous round's torque model was backwards -- FIXED in place
 
-`analysis/swing_linkage.py`'s `torque_at` / `torque_curve` / `peak_torque`
+`analysis/mechanism/swing_linkage.py`'s `torque_at` / `torque_curve` / `peak_torque`
 scored every candidate against a load shaped backwards for this mechanism.
 Its kinematics were right (ratio 0.465 vs the sim's 0.46 at the start, a 0.676
 peak in both), but it carried the mirrored study's `roll = 90 - wing` (which
@@ -156,7 +156,7 @@ Still in output-torque units at the crank: `limits.torque_nm` 0.55 is a crank
 torque, and the motor needs `1.15 tau + 5.7 mN m` of it moving (~785 counts).
 Step 2 scores counts directly.
 
-**Not checked:** `analysis/wing_linkage.py`, the MIRRORED mechanism's study,
+**Not checked:** `analysis/mechanism/wing_linkage.py`, the MIRRORED mechanism's study,
 has its own copy of the old constants and load case. It is not the live
 mechanism; its load model was not compared against a sim.
 
@@ -266,7 +266,7 @@ printed one is convex.
 Checkable in the sim later: the fall set with the crank's constraint torque
 recorded, per panel shape.
 
-## Step 3: synthesis -- `analysis/swing_synthesis.py`
+## Step 3: synthesis -- `analysis/mechanism/swing_synthesis.py`
 
 Searches the four-bar lengths, the angle between the crank arms and the servo
 height; for each candidate the panel's bearing and offset off the rocker are
@@ -296,16 +296,16 @@ the same design's servo at 20, 26 or 41 mm). Now the planar number sits
 25-45 counts above the sim, in the same order. The diamond comes out at the
 config's lower bounds (crank 12 mm, servo 10 mm above the axle).
 
-SIM is `analysis/swing_stepthrough.py --sim`: the sweep's own fallen/trial,
+SIM is `analysis/mechanism/swing_stepthrough.py --sim`: the sweep's own fallen/trial,
 goal stepped, bisected to 10 counts. Each config's header carries the command
 that made it and its sim check. The stepthrough page it writes
-(`analysis/plots/swing_stepthrough.html`) steps any two of them side by side
+(`analysis/mechanism/plots/swing_stepthrough.html`) steps any two of them side by side
 through the stroke, reading the same files the sim does.
 
-    python analysis/swing_synthesis.py --stagger-couplers --tag _staggered \
+    python analysis/mechanism/swing_synthesis.py --stagger-couplers --tag _staggered \
         --save config/linkage/archive/swing_linkage_stagger.yaml
-    python analysis/righting_current_sweep.py --config config/linkage/archive/swing_linkage_stagger.yaml --supply 9.9
-    python analysis/swing_stepthrough.py --sim
+    python analysis/mechanism/righting_current_sweep.py --config config/linkage/archive/swing_linkage_stagger.yaml --supply 9.9
+    python analysis/mechanism/swing_stepthrough.py --sim
 
 - **The couplers passing each other is what binds `_smaller`.** In one plane
   (the study's default, one plane per member TYPE) nothing does better than

@@ -82,7 +82,7 @@ class MLPPolicy:
         units of each channel's bound. `action` is exactly this, clipped and
         scaled. Kept separate because SB3's Gaussian is unsquashed, so the
         mean can sit well past the bound and the clip hides by how much --
-        `analysis/chatter.py` reports it."""
+        `analysis/policy/chatter.py` reports it."""
         return self._head(self._normalize(obs))
 
     def _normalize(self, obs) -> np.ndarray:

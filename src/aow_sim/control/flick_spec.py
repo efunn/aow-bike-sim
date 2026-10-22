@@ -48,7 +48,7 @@ class ActionBounds:
         hold-without-the-hub diagnostic pins the rear wheel. The naive divide
         is then 0/0, and it has now bitten in FOUR separate places: the
         exporter (ZeroDivisionError after training finished, losing the move
-        yaml), analysis/chatter.py, analysis/wheel_slowmo.py's HUD (NaN ->
+        yaml), analysis/policy/chatter.py, analysis/contact/wheel_slowmo.py's HUD (NaN ->
         int(NaN) killed a render 600 frames in), and drive.py's replay path,
         i.e. teleop. A disabled channel is already 0 in physical units, so
         dividing by 1 leaves it 0, which is the right answer everywhere.

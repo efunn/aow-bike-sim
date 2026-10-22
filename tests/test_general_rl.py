@@ -1011,7 +1011,7 @@ def test_vel_filter_alpha_is_rate_independent():
 
 def test_base_layout_is_a_prefix_of_every_optional_layout():
     """Every positional index into the base observation stays valid whatever
-    optional blocks are on. analysis/mirror_equivariance.py slices FLIP_OBS on
+    optional blocks are on. analysis/policy/mirror_equivariance.py slices FLIP_OBS on
     exactly this."""
     from aow_sim.control.general_spec import (OBS_MIRROR_PARITY, OBS_NAMES,
                                               obs_dim_for, obs_layout)
@@ -1180,7 +1180,7 @@ def test_policy_env_overrides_carries_the_ahrs():
     the contract the rest of this file leans on, cannot see the difference.
     That is the same hole `obs_zero_lat` and `obs_odometry` are carried for,
     and it went unplugged for the AHRS until 2026-09-11: every analysis script
-    that built an env through `analysis/rsa_policies.env_for` without patching
+    that built an env through `analysis/policy/rsa_policies.env_for` without patching
     its own config evaluated `general_rl_odo_ahrs` on MuJoCo attitude.
 
     A policy that declares nothing must come back "none", or every export
@@ -1268,7 +1268,7 @@ def test_the_policys_ahrs_wins_over_the_config():
     reverse_flip.py and tests/test_sensor_modes.py); all of them now set the
     field ON THE POLICY, which is the route `--encoder` has always taken.
 
-    If this ever inverts, `analysis/ahrs_tau.py` is the script that breaks
+    If this ever inverts, `analysis/sensing/ahrs_tau.py` is the script that breaks
     worst and least visibly: it sweeps tau, and a policy-loses rule would pin
     every cell to the policy's training tau and print a flat table as a
     finding.

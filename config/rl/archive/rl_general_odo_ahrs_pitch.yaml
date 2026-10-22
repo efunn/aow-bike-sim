@@ -54,7 +54,7 @@
 # because the whole-grid eval median cannot see a failure in 3 of 20 commands.
 #
 # THE MECHANISM, and it is not "pitch helps". WITHOUT PITCH THE MANOEUVRE ENDS
-# THE EPISODE. analysis/reverse_flip.py sets up the case the eval grid cannot
+# THE EPISODE. analysis/policy/reverse_flip.py sets up the case the eval grid cannot
 # -- reverse until the speed is established, then snap the heading 180, which
 # is what the teleop `8` key does -- and records the peak pitch:
 #
@@ -177,9 +177,9 @@
 # WHAT TO LOOK FOR: both taus, as before, and the bar is the SPECIALISED
 # policy, not the failed one --
 #
-#   python analysis/chatter.py --policies general_rl_odo_ahrs_rand2 \
+#   python analysis/policy/chatter.py --policies general_rl_odo_ahrs_rand2 \
 #       --encoder counts --ahrs tm151 --ahrs-tau 2.0     # beat 0.672 / 1.00
-#   python analysis/chatter.py --policies general_rl_odo_ahrs_rand2 \
+#   python analysis/policy/chatter.py --policies general_rl_odo_ahrs_rand2 \
 #       --encoder counts --ahrs tm151 --ahrs-tau 0.19    # beat 0.570 / 0.95
 #
 # LAUNCH (on the remote box, after committing and pushing):

@@ -359,7 +359,7 @@ class SimSteerRate:
     instead (`GeneralEnv._obs`, obs[5]), so on the bike the steer channel alone
     ran on a lag the policy never saw. Bench, 2026-10-17: with roll pinned the
     policy sawed the steer at 5.2 Hz; in a pinned sim it did so only once this
-    lag AND the bench-fitted servo were both in (analysis/steer_pinned.py).
+    lag AND the bench-fitted servo were both in (analysis/policy/steer_pinned.py).
 
     encoder "joint" is the old exact signal (every policy before this);
     "counts" is the Pi's. The steer is extended-position (multi-turn), so its

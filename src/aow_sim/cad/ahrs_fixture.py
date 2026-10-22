@@ -1,6 +1,6 @@
 """The yaw-roll AHRS fixture: every printed part, placed, joined and checked.
 
-What `analysis/ahrs_fixture.py` runs on. Generates ONE custom feature,
+What `analysis/sensing/ahrs_fixture.py` runs on. Generates ONE custom feature,
 `AHRS fixture`, into its own Feature Studio; inserted into the `ahrs_fixture`
 Part Studio it builds the printed parts round the hardware envelopes:
 

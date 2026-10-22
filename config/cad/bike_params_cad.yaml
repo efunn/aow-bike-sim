@@ -62,7 +62,7 @@
 sim:
   # 4.0e-4, was 2.0e-4 (2026-08-15). The old value was placeholder-validated in
   # 2026-07 and never revisited. The CONTACT tolerates far more: in
-  # analysis/contact_surrogates.py --study timestep, ride ripple, airborne
+  # analysis/contact/contact_surrogates.py --study timestep, ride ripple, airborne
   # fraction, peak normal force and rest penetration are flat from 5e-5 through
   # 6e-4, and general_rl_smooth_stiff replays the whole 20-command eval grid at
   # 0.764 -> 0.767 -> 0.760 across 2e-4 / 4e-4 / 6e-4 at survival 1.00.
@@ -394,7 +394,7 @@ bike:
   wheelbase: {value: 0.20, source: design}
   # steering axis tilt back from vertical. 20 since 2026-10-19 (user,
   # docs/plans/aow-bike-whole-v2-touchups.md: "steer tube angle/rake increased
-  # to 20deg (keep wheelbase)"; analysis/steer_wobble.py, commit d2df2ce). The
+  # to 20deg (keep wheelbase)"; analysis/policy/steer_wobble.py, commit d2df2ce). The
   # SIMULATOR's bike_params.yaml stays at 15 until the as-built pass.
   rake_deg: {value: 20.0, source: design}
   # v1 (aow-bike-whole, aow-bike-steering: frozen, printed) was drawn at 15;
@@ -806,7 +806,7 @@ righting:
   # build_model(righting=True, wings=True) swaps it for the wing pair. Keeping
   # them exclusive is not tidiness -- the arm's mass and geometry would pollute
   # every wing torque and rest-attitude reading, and the whole point of the
-  # tools in analysis/self_righting.py is that the two sets of numbers are
+  # tools in analysis/mechanism/self_righting.py is that the two sets of numbers are
   # comparable. `bumper` is shared by both.
   #
   # Frame for z: metres above the REAR AXLE, like every other chassis-frame
@@ -874,8 +874,8 @@ righting:
     # the radius (50 mm was worse than either 45 or 60), which is exactly why
     # this is now derived rather than tuned. Re-run both tests after any change
     # to the envelope:
-    #     python analysis/self_righting.py invert --wings
-    #     python analysis/self_righting.py rest   --wings
+    #     python analysis/mechanism/self_righting.py invert --wings
+    #     python analysis/mechanism/self_righting.py rest   --wings
     mass: {value: 0.045, source: design}    # shell only -- see the CoG note above
   # BUMPER RETIRED 2026-08-22. The pads sat at |y| 40-52 mm, OUTBOARD of the
   # 75 mm envelope the case now sets (|y| <= 37.5), so they were the widest
@@ -986,8 +986,8 @@ righting:
     # the wings recover from ~30 deg rolls comfortably enough to act as a
     # crutch. Re-run these if the PANEL or the pivot HEIGHT changes -- those do
     # move the footprint -- but not for a fore/aft station change:
-    #     python analysis/self_righting.py invert --wings
-    #     python analysis/self_righting.py rest   --wings
+    #     python analysis/mechanism/self_righting.py invert --wings
+    #     python analysis/mechanism/self_righting.py rest   --wings
     pivot: {value: [0.130, 0.030, 0.0], source: design}  # [x, |y|, z]; mirrored in y
     # pivot HEIGHT is the parameter this design turns on, and -0.020 (20 mm
     # below the rear axle = 31 mm off the floor) is what `lift --wings --sweep`
@@ -1006,7 +1006,7 @@ righting:
     #     lowest outboard thing on the bike after the wheels, so it decides the
     #     roll angle at which something other than a tyre touches down. At
     #     z = -30 that is 27 deg -- INSIDE the recoverable set (up to 30.9 deg,
-    #     analysis/no_return.py), so a lean the policy could still save would
+    #     analysis/policy/no_return.py), so a lean the policy could still save would
     #     drag a wing on the floor. z = -20 puts it at 40 deg, clear of both the
     #     recoverable set and any riding lean.
     #
@@ -1081,7 +1081,7 @@ righting:
     #          rather than down through it -- at 10 deg of travel the lower
     #          corner is already outboard of the panel. Measured clearance is
     #          0.0 mm of uncoverable band:
-    #              python analysis/wing_linkage.py --config <linkage> --video --stick
+    #              python analysis/mechanism/wing_linkage.py --config <linkage> --video --stick
     #   upper  the wing's silhouette continued REARWARD, from the wing's
     #          leading edge back to `case_rear_x`. Unconstrained, because the
     #          hinge axis is X: the wing can never reach behind its own
@@ -1099,7 +1099,7 @@ righting:
     # pivot at 38.5 deg from vertical, and it leaves the band (|y| 37.5) at
     # z = 67.65, i.e. 3.95 mm BELOW the stowed underside. 5 mm covers it.
     #
-    # analysis/wing_linkage.py --stick reports 0.0 mm here and is WRONG for
+    # analysis/mechanism/wing_linkage.py --stick reports 0.0 mm here and is WRONG for
     # this: its 2D model is a LINE at the outer face, so it has no inner corner
     # to dip. Trust it for the mechanism, not for panel clearance.
     case_gap:       {value: 0.005, source: design}

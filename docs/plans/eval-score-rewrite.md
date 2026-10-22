@@ -158,7 +158,7 @@ which preserves the separation between "what selects" and "what diagnoses".
 
 ### B. A disturbance arm  — REORDERED TO FIRST after the in-distribution finding
 
-`analysis/kick_recovery.py` already measures it. It needs to become a SELECTION
+`analysis/policy/kick_recovery.py` already measures it. It needs to become a SELECTION
 criterion rather than a report.
 
 This is now the leading candidate, not merely the highest-value one. It is the
@@ -227,7 +227,7 @@ actually about) and a poor one for peak contact load.
 **The internal filter is unknown and that is a solved genre of problem here,
 twice over.** `hw/dynamixel.py` already declines to trust `Present
 Velocity(128)` because someone characterised it as "roughly a 50 ms boxcar" and
-re-estimated velocity from position instead; and `analysis/tm151_check.py`
+re-estimated velocity from position instead; and `analysis/sensing/tm151_check.py`
 turned a guessed 2.0 s orientation tau into a measured 0.19 (r2 0.999) from a
 300 s capture. Same move: command a known step, log Load at 100 Hz, fit.
 Recording `Present PWM` in the same block is the cheap control -- if Load is
@@ -297,7 +297,7 @@ conclusion drawn from "rand2 holds heading better" came from that column.
 block under `metrics`, five families that PARTITION the grid, ~20 numbers
 against the ~160 of the full metric x command matrix. Top-level `n_eval`,
 `survive_rate`, `track`, `track_geo` are untouched, so **this did not re-base
-`_score` and was not blocked on the decision below.** `analysis/chatter.py`
+`_score` and was not blocked on the decision below.** `analysis/policy/chatter.py`
 prints one table per family; every future export carries the block, and
 policies exported before it get one by re-running the eval.
 
@@ -474,7 +474,7 @@ Seed 0 is **handed**: it noses through a left turn and reverses out of the
 mirrored right one. Seed 1 noses through both. Both sit essentially still on
 `hold`, so this is not a competence difference.
 
-    python analysis/per_command.py --policies general_rl_cmd_curriculum2 \
+    python analysis/policy/per_command.py --policies general_rl_cmd_curriculum2 \
         general_rl_cmd_curriculum2b --metrics v_ach --tag seed0_vs_seed1
 
 `v_ach` is now a metric in `per_command.METRICS`. It is in `SIGNED` alongside
@@ -692,7 +692,7 @@ reported as one that does not.
 never masked for evaluation, so five of twenty commands were scored against an
 obstacle the metrics never mention — deterministic per command, arbitrary as to
 which. Now zeroed in both `train_general_rl._eval_cfg` and
-`analysis/per_command._cfg_for` (shared by `eval_video.py`, so the clips and
+`analysis/policy/per_command._cfg_for` (shared by `eval_video.py`, so the clips and
 the bar charts match the metrics). **Outstanding: every eval number recorded
 before today includes it.**
 

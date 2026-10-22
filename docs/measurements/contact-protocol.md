@@ -7,7 +7,7 @@
 > in place, the withdrawn "timeconst 0.020 is ruled out" claim is marked
 > withdrawn, and **the negative `solref` convention is written down as THE PLAN
 > rather than an option**. Its §P0 table was re-checked against
-> `analysis/contact_calibration.py` on 2026-09-08 and agrees to within the
+> `analysis/contact/contact_calibration.py` on 2026-09-08 and agrees to within the
 > timestep change (3.60 vs 3.78, 0.37 vs 0.389, 1.95 vs 1.982 mm). **Those
 > model numbers were all from a posed curve that is not a resting state, and
 > were replaced 2026-10-01** by a settled whole-bike curve (§P0 table): 0.57 mm
@@ -78,7 +78,7 @@ against the 4x and 11.1x the formula predicts. Under load the ratio shrinks
 **Neither form of `solref` is a stiffness in N/m.** At rest, MuJoCo's sink at a
 given force scales with the masses compiled around the contact
 (`body_invweight0`). On a wheel-on-a-slide rig at 44 N
-(`analysis/static_contact_sim.py`, 2026-10-01), the front tire sank 0.447 /
+(`analysis/contact/static_contact_sim.py`, 2026-10-01), the front tire sank 0.447 /
 0.072 / 0.010 mm with a 0.01 / 0.5 / 4 kg carriage, and 0.660 / 0.142 / 0.020
 with a negative solref. On the bike, doubling the `GUESS` chassis mass raised
 the rear load 42% but its sink only 31%. So fit on the bike's own model, and
@@ -120,13 +120,13 @@ the bench session rather than after.
 | `timeconst` | damping **and** stiffness | both, jointly | weight + caliper |
 | `dampratio` | stiffness only (`1/dampratio^2`) | both, jointly | drop + slow-mo |
 
-Model-side companion: `analysis/contact_calibration.py` computes both curves,
+Model-side companion: `analysis/contact/contact_calibration.py` computes both curves,
 so a bench number can be read straight off a table instead of bisected by
 retraining.
 
 ```sh
-python analysis/contact_calibration.py
-python analysis/contact_calibration.py --load-kg 4.5 --drop-mm 35
+python analysis/contact/contact_calibration.py
+python analysis/contact/contact_calibration.py --load-kg 4.5 --drop-mm 35
 ```
 
 ---
@@ -390,14 +390,14 @@ value. Splitting only earns its keep when the surface changes.
 
 1. Put raw readings in `contact-measurements.yaml`.
 2. Read the matching `timeconst` / `dampratio` off the tables above, or re-run
-   `analysis/contact_calibration.py` with your load and drop height. For P0b
+   `analysis/contact/contact_calibration.py` with your load and drop height. For P0b
    mu is the slope of pull force against wheel load.
 3. Update `sim.contact_solref` and/or `sim.friction_sliding` in
    `config/bike_params.yaml`, and change the friction `source:` off `GUESS`.
 4. Regenerate the deploy bundle — it is pinned to a params digest and
    `hw.state` raises rather than silently flying stale gains:
    `python -m aow_sim.export_deploy`.
-5. Re-check that trained policies still survive: `python analysis/chatter.py`
+5. Re-check that trained policies still survive: `python analysis/policy/chatter.py`
    (the eval-grid table at the top). Changing `0.02` → `0.005` cost nothing —
    all five policies stayed at survive 1.00 and two improved — but that is not
    guaranteed for a change that also makes the floor bouncy.

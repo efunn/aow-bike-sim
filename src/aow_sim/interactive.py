@@ -32,7 +32,7 @@ def steps_per_frame(timestep: float, slowmo: float = 1.0, fps: float = 60.0) -> 
     and 4e-4 timestep) every frame is already a single physics step, and
     further slowdown can only come from longer frames, so the frame rate starts
     falling instead. That is the ceiling worth asking for, the same one
-    analysis/wheel_slowmo.py documents for its offline renders.
+    analysis/contact/wheel_slowmo.py documents for its offline renders.
     """
     return max(1, int(round(1 / fps / timestep / max(1e-3, slowmo))))
 

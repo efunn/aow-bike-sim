@@ -146,7 +146,7 @@ existing `aow-bike-righting` tab.
 - **v1's `cad.bike` is frozen on `ends` and the linkage stroke**
   (`cad.bike.righting_v1`). V3's toe reaches v1's front tyre sweep at
   wheelbase 200.5, and v1 is not being re-fitted.
-- **Side effect, not acted on:** `analysis/swing_stepthrough.py` reads the
+- **Side effect, not acted on:** `analysis/mechanism/swing_stepthrough.py` reads the
   CAD's blade as its default design, so a re-run now sweeps V3 there. Its
   label still says "the CAD's dummy U blade". Left alone, since it is the
   sim-side study.

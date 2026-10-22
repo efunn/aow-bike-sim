@@ -117,12 +117,12 @@ def test_the_split_did_not_move_the_plant_digest():
         4b5355ed44d6ca8c  2026-10-17  righting.module.linkage_friction_nm /
                           _q2: the V2 linkage's measured pin friction on the
                           crank, 51 + 14.7 theta^2 mN m, under the gearbox's
-                          (analysis/righting_sweep.py, stubs only, unloaded)
+                          (analysis/mechanism/righting_sweep.py, stubs only, unloaded)
         7893a119b19f17d6  2026-10-17  actuators.steer_kp 2.0 -> 2.3, steer_armature
                           0 -> 5.5e-4 kg m2 (kv held at the no-load droop) and
                           righting.module.crank_armature 1e-3 GUESS -> 5.5e-4:
                           open-loop sine sweeps of the steer XC330 (column on)
-                          and the bare righting XC330 (analysis/steer_response.py)
+                          and the bare righting XC330 (analysis/servo/steer_response.py)
         0c0518e9225f399e  2026-10-19  the v2 bike as built: wheelbase 0.2005,
                           rake 20 (was 15), every frame part placed from the
                           v2 CAD (bike.frame_parts; servos on the centreline,

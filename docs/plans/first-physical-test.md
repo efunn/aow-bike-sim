@@ -271,7 +271,7 @@ Build the mount to take both a plain disc and the wheel — that is a fixture
 decision to make before cutting metal, not after.
 
 **Run 2026-09-12/13 on the rear assembly, hand-held, wheel in the air**, with
-`analysis/drivetrain_bench.py`; numbers in
+`analysis/servo/drivetrain_bench.py`; numbers in
 `docs/measurements/drivetrain-measurements.yaml`. D1, D2 and D4 done. D3 done
 by hand, so the hold stiffness is in duty units, not N·m. D5 and D6 not run.
 Beyond the table: the belt ratio (counted), a Velocity P gain sweep with a
@@ -379,7 +379,7 @@ the drivetrain will do. `rig: bare_shaft` is a field in
 
 #### Stage 0b, the reversal test — envelope 15 Hz
 
-`analysis/servo_reversal.py`, both drive servos simultaneously. At full
+`analysis/servo/servo_reversal.py`, both drive servos simultaneously. At full
 amplitude:
 
 | f | achieved/commanded | via `Present Velocity` | pwm p95 |
@@ -398,7 +398,7 @@ docstring had only a simulation-derived guess for it.
 
 #### Where the lag comes from — the firmware, and we own the knob
 
-`analysis/servo_modes.py lag-origin`. PWM mode (Operating Mode 16) removes the
+`analysis/servo/servo_modes.py lag-origin`. PWM mode (Operating Mode 16) removes the
 velocity loop entirely, then a Velocity P Gain sweep moves tau 9x:
 
 | | tau |
@@ -432,7 +432,7 @@ to say.
 
 #### Control modes are structurally different, not one with a clamp
 
-`analysis/servo_modes.py modes`, both XC330s, 2x2 against the derivative gain
+`analysis/servo/servo_modes.py modes`, both XC330s, 2x2 against the derivative gain
 because **writing Operating Mode RESETS the position gains** to per-mode
 defaults (mode 3 -> P900/D0, mode 5 -> P700/D1400). The first comparison did
 not know that and compared the gains as much as the modes.
@@ -482,7 +482,7 @@ XC430's own "firmware 50" is a different numbering and is fine.
   answers. Nothing about the trained policies should be concluded before it.
 - R6 stall calibration before any current number is quantitative.
 - Steer channel: every `general_rl*` export flips the steer action sign 15-32
-  times/s while the joint achieves 1-20% of no-load. `analysis/chatter.py` now
+  times/s while the joint achieves 1-20% of no-load. `analysis/policy/chatter.py` now
   reports both columns. Not yet diagnosed, and not yet priced against the
   15 Hz envelope above.
 

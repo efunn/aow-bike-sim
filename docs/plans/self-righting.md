@@ -21,11 +21,11 @@ parameter set; every dimension in the `righting` block of
 Two tools:
 
 ```sh
-python analysis/no_return.py                    # where recovery stops being possible
-python analysis/self_righting.py profile        # what a fallen bike rests on
-python analysis/self_righting.py rest           # ...checked against real falls
-python analysis/self_righting.py lift           # what the arm has to be
-python analysis/self_righting.py sequence       # fall -> right -> hand off -> retract
+python analysis/policy/no_return.py                    # where recovery stops being possible
+python analysis/mechanism/self_righting.py profile        # what a fallen bike rests on
+python analysis/mechanism/self_righting.py rest           # ...checked against real falls
+python analysis/mechanism/self_righting.py lift           # what the arm has to be
+python analysis/mechanism/self_righting.py sequence       # fall -> right -> hand off -> retract
 ```
 
 and one model switch, `build_model(..., righting=True)`, which makes the
@@ -38,8 +38,8 @@ Part 4 adds a second, better mechanism — a mirrored **wing pair** on one servo
 — selected by `wings=True` and by `--wings` on every subcommand above:
 
 ```sh
-python analysis/self_righting.py lift --wings --sweep   # pivot height + gear fit
-python analysis/self_righting.py sequence --wings
+python analysis/mechanism/self_righting.py lift --wings --sweep   # pivot height + gear fit
+python analysis/mechanism/self_righting.py sequence --wings
 python -m aow_sim.record --script right                 # video, rear view
 python -m aow_sim.run_drive --teleop --wings            # 9 extend, 4 retract, . shove
 ```
@@ -62,7 +62,7 @@ python -m aow_sim.run_drive --teleop --wings            # 9 extend, 4 retract, .
 
 ## 1. The point of no return
 
-`analysis/no_return.py`. The bike has no statically stable roll region — the
+`analysis/policy/no_return.py`. The bike has no statically stable roll region — the
 contact patch is a line, so the CoM is over the support at exactly one angle.
 "Point of no return" is a boundary in the *(roll, roll rate)* phase plane, and
 it moves with forward speed, because a rolling bike can steer under its own
@@ -97,7 +97,7 @@ authority appears; left-hand recovery does not improve at all. That is not
 physics, it is the policy: the LQR run of the same sweep is symmetric to the
 last digit (12.0/12.0 at ‑1 rad/s, 8.1/8.1 at 0), so the model is
 mirror-symmetric and `general_rl` simply has not learned the left side as
-well. It is the same asymmetry `analysis/mirror_equivariance.py` looks for,
+well. It is the same asymmetry `analysis/policy/mirror_equivariance.py` looks for,
 here costing ~30–50% of the recoverable set. **Worth a training fix before it
 is worth a mechanism.**
 
@@ -156,13 +156,13 @@ largest boundary value anywhere is 30.9°, and that at a roll rate of ‑1 rad/s
 (i.e. already returning). A pure `|roll| > 35°` trigger would also be safe;
 the rate term just stops it firing on a hard lean that is on its way back.
 
-![recoverable set](../../analysis/plots/no_return.png)
+![recoverable set](../../analysis/policy/plots/no_return.png)
 
 ---
 
 ## 2. What a fallen bike rests on
 
-`analysis/self_righting.py profile` rotates the bike about +X, drops it onto
+`analysis/mechanism/self_righting.py profile` rotates the bike about +X, drops it onto
 the floor at each angle and reports CoM height — a purely geometric roll-plane
 energy landscape, milliseconds per candidate, so side geometry can be swept
 before anything is simulated. `rest` then checks it against real falls.
@@ -233,7 +233,7 @@ holds the bike a few degrees further over but a millimetre higher.
 This is the geometry now in `righting.bumper`. It is deliberately the smallest
 change that does the job; the sweep is there to re-run if the chassis changes.
 
-![energy landscape](../../analysis/plots/righting_profile.png)
+![energy landscape](../../analysis/mechanism/plots/righting_profile.png)
 
 ### What is still unmodelled
 
@@ -288,7 +288,7 @@ configured 80 mm / 30 mm arm needs **0.249 N·m at the servo, 38% of the
 Mass cost of the whole mechanism: 63 g (servo 23 g, arm + foot 20 g, two pads
 20 g) on a 1016 g bike, +6%.
 
-![righting stroke](../../analysis/plots/righting_lift.png)
+![righting stroke](../../analysis/mechanism/plots/righting_lift.png)
 
 The torque trace is flat at 0.20–0.25 N·m across the stroke with a small spike
 at first contact — no bad spot to design around. The interesting part of that
@@ -305,7 +305,7 @@ fell to 81 deg; handed over at t = 1.11 s; final roll 1.8 deg, arm at 0 deg
 upright and balancing
 ```
 
-![sequence](../../analysis/plots/righting_sequence.png)
+![sequence](../../analysis/mechanism/plots/righting_sequence.png)
 
 Two numbers here moved after this section was first written, and neither is a
 change to the arm itself. It now falls to **81°** rather than 100° because the
@@ -650,8 +650,8 @@ bit-identical outcomes — the bike just rocks along the ridge and settles back)
 New tool:
 
 ```sh
-python analysis/self_righting.py invert --wings           # drop it upside down
-python analysis/self_righting.py invert --wings --compare # ...with/without the roof
+python analysis/mechanism/self_righting.py invert --wings           # drop it upside down
+python analysis/mechanism/self_righting.py invert --wings --compare # ...with/without the roof
 python -m aow_sim.record --script right --inverted        # and on video
 ```
 

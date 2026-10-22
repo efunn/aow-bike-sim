@@ -52,7 +52,7 @@ arm:
   r_contact_mm: 205
   # The wheel axle sits this far ABOVE the pivot: the bar (5.75 mm tall,
   # centred 3.875 mm above the axle) rests on a 15 mm collar on the pivot
-  # (user). analysis/drop_rig_sim.py builds the arm with it.
+  # (user). analysis/contact/drop_rig_sim.py builds the arm with it.
   axle_above_pivot_mm: 6.5
   # The cam's labelled heights (0.5/1/1.5/2) are not exact, their differences
   # are (user): one offset, subtracted at the follower before the lever.

@@ -23,7 +23,7 @@ Evidence tags as in `general-rl-improvements.md`:
 
 ## 1. What the chatter is, measured 2026-10-01
 
-Eval grid as `analysis/chatter.py` (20 commands, identical seeds,
+Eval grid as `analysis/policy/chatter.py` (20 commands, identical seeds,
 randomization off), each policy on the sensors it declares. §1.1 is a
 `chatter.py` table. §1.2 and §1.3 came from scratch probes that are **not
 tracked**.
@@ -279,7 +279,7 @@ LipsNet / LipsNet++ change the network, so they change the npz export and
 
 ### 5.1 Results, 2026-10-01 **[measured]**, ONE SEED EACH
 
-`analysis/chatter.py` over the four exports and the pointer, 20-command grid,
+`analysis/policy/chatter.py` over the four exports and the pointer, 20-command grid,
 each on its own drivetrain; standing endurance is the `prospective` test's
 bar (18 seeds x 60 s, pass <= 4 falls), flown on each policy's own drivetrain.
 

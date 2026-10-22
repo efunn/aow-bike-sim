@@ -13,14 +13,14 @@
 #
 # Pitch is the half worth keeping if it is free: the servo-plant change made
 # wheelies WORSE (front gap max 35 -> 53 mm, pitch max 10.1 -> 15.4 deg,
-# corr 0.999 so a genuine wheelie, analysis/liftoff.py), and nothing in the
+# corr 0.999 so a genuine wheelie, analysis/policy/liftoff.py), and nothing in the
 # smooth_diff reward prices pitch at all.
 #
 # Per-channel w_smooth: `diff` priced separately from steer and hub.
 #
 # WHY. rl_general_smooth.yaml raised w_smooth uniformly 0.005 -> 0.05 and
 # trained moves/general_rl_smooth_og. Measured over the 20-command eval grid
-# (analysis/chatter.py), mean squared per-step action change, against the
+# (analysis/policy/chatter.py), mean squared per-step action change, against the
 # three policies trained at 0.005:
 #
 #   channel   0.005 (og / general_rl / 1k)   0.05        response
@@ -56,9 +56,9 @@
 #   * diff still does not move -> it is worth more than 11% of the reward,
 #     which is a stronger version of the result already in hand.
 #
-# Compare with analysis/chatter.py (per-channel, the table above),
-# analysis/hold_spectrum.py (spectra + the contact/airborne ground truth) and
-# analysis/move_confusion.py. Note that general_rl_smooth_og also came out
+# Compare with analysis/policy/chatter.py (per-channel, the table above),
+# analysis/policy/hold_spectrum.py (spectra + the contact/airborne ground truth) and
+# analysis/policy/move_confusion.py. Note that general_rl_smooth_og also came out
 # with the WORST cross-axis leakage of any policy (crab commands scoot
 # forward at 0.34 m/s, symmetry gap 0.52) -- watch whether that follows the
 # smoothing or was particular to that run.
