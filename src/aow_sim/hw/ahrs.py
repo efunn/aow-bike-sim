@@ -175,7 +175,7 @@ class AhrsSample:
     def __init__(self, quat, gyro, accel, t, qos=QOS_UNKNOWN):
         self.quat = quat      # (w,x,y,z), chassis frame
         self.gyro = gyro      # [wx,wy,wz] rad/s, chassis frame
-        self.accel = accel    # [ax,ay,az] m/s^2, chassis frame, gravity included
+        self.accel = accel    # [ax,ay,az] m/s^2, chassis frame, specific force: +g UP at rest
         self.t = t            # time.monotonic() at parse
         self.qos = qos        # the sensor's OWN verdict on itself; see QOS_*
 
@@ -251,7 +251,15 @@ def parse_combo(payload: bytes):
     if not (0.5 < n < 2.0):        # a valid unit quaternion, loosely
         return None
     gyro = np.array([wx, wy, wz], dtype=float) * 1e-5          # rad/s
-    accel = np.array([ax, ay, az], dtype=float) * 1e-5 * G_TO_MS2
+    # NEGATED: the TM151 reports the GRAVITY VECTOR, -1 g on z when level --
+    # not the specific force an accelerometer usually reports, and not what
+    # MuJoCo's sensor (and so every estimator trained in sim) reads, +g UP.
+    # Measured 2026-10-21 over five recorded bench runs: z -8.0 .. -9.8 at
+    # rest, and ay = -9.7..-9.9 * sin(roll) over rolls to +-100 deg. Until
+    # then the estimator's `a_y - g sin(roll)` DOUBLED gravity instead of
+    # removing it: tilt the bike at full steer (front-wheel confidence 0) and
+    # the lateral estimate ran off at 2 g sin(roll), 3.4 m/s^2 at 10 deg.
+    accel = -np.array([ax, ay, az], dtype=float) * 1e-5 * G_TO_MS2
     return quat / n, gyro, accel, _sys & 0x7
 
 

@@ -83,8 +83,24 @@ def test_decodes_values_with_correct_scaling():
     quat, w, a, qos = got
     assert np.allclose(quat, q, atol=1e-6)
     assert np.allclose(w, gyro, atol=1e-5), "gyro is 1e-5 rad/s per LSB"
-    # accel arrives in g and must leave in m/s^2
-    assert np.allclose(a, (0.0, 0.0, G_TO_MS2), atol=1e-4)
+    # accel arrives in g as the gravity vector and must leave in m/s^2 as
+    # specific force: the sign flips (see the next test)
+    assert np.allclose(a, (0.0, 0.0, -G_TO_MS2), atol=1e-4)
+
+
+def test_a_level_still_unit_leaves_as_specific_force_up():
+    """The TM151 reports the gravity vector, -1 g on z when level (every
+    recorded bench run, 2026-10-21). The estimator, and MuJoCo's sensor that
+    training reads, want specific force: +g UP. Unflipped, the estimator's
+    gravity removal doubled gravity instead, and a tilt at full steer ran the
+    lateral estimate off at 2 g sin(roll)."""
+    roll = np.deg2rad(10.0)
+    # what the part sends, tilted 10 deg: the gravity vector in its frame
+    raw = (0.0, -np.sin(roll), -np.cos(roll))
+    _q, _w, a, _qos = parse_combo(make_combo_payload(accel=raw))
+    assert a[2] > 9.0, "level-ish reads +g up"
+    # and the estimator's own gravity removal now cancels to ~0
+    assert a[1] - G_TO_MS2 * np.sin(roll) == pytest.approx(0.0, abs=1e-3)
 
 
 def test_negative_values_survive_signedness():
@@ -95,7 +111,7 @@ def test_negative_values_survive_signedness():
     quat, w, a, _qos = got
     assert np.allclose(quat, q, atol=1e-6)
     assert np.allclose(w, (-1.5, -0.001, 2.0), atol=1e-5)
-    assert np.allclose(a, np.array((-1.0, 0.5, -0.25)) * G_TO_MS2, atol=1e-4)
+    assert np.allclose(a, -np.array((-1.0, 0.5, -0.25)) * G_TO_MS2, atol=1e-4)
 
 
 def test_qos_is_the_low_three_bits_of_sysstate():
