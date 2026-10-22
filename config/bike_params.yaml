@@ -11,7 +11,11 @@
 #   tooth-count -- an exact ratio from counting teeth
 #   datasheet   -- from ROBOTIS / SYD Dynamics documentation
 #   design      -- a choice for the custom chassis, usually from the CAD
-#   GUESS       -- a placeholder to be replaced
+#   estimate    -- computed indirectly (a CAD volume as printed, a difference
+#                  of weighings), not measured on the part itself
+#   model       -- a modelling choice standing in for physics the model does
+#                  not represent; not a property of the bike
+#   GUESS       -- an unknown physical value, a placeholder to be replaced
 # Plain scalars are simulation or tuning knobs, not physical quantities.
 
 sim:
@@ -97,15 +101,15 @@ drivetrain:
   # only (the LQR's design plant, the flick/pivot/ball envs). The default
   # detailed plant replaces it with drivetrain_model.servo.rotor_inertia.
   # Kept at 3.0e-4 so those plants stay as they were trained.
-  input_armature: {value: 3.0e-4, source: design}
+  input_armature: {value: 3.0e-4, source: model}
   # The ideal plant's drivetrain losses, kept for the same reason. The detailed
   # plant zeroes all four: its servo friction and inertia are a fit of the whole
   # wheel coasting in the air, hub bearing and rollers included, and a roller
   # inside its play is damped by drivetrain_model.roller_slop.
-  hub_joint_damping: {value: 1.0e-4, source: design}
-  hub_joint_frictionloss: {value: 1.0e-3, source: design}
-  roller_joint_damping: {value: 1.0e-6, source: design}
-  roller_joint_frictionloss: {value: 1.0e-5, source: design}
+  hub_joint_damping: {value: 1.0e-4, source: model}
+  hub_joint_frictionloss: {value: 1.0e-3, source: model}
+  roller_joint_damping: {value: 1.0e-6, source: model}
+  roller_joint_frictionloss: {value: 1.0e-5, source: model}
 
 # The detailed drivetrain, the default plant since 2026-10-02. The `measured`
 # values are fits to the bench captures in traces/drivetrain/ (rear assembly,
@@ -203,7 +207,7 @@ drivetrain_model:
     # Critical damping against the roller's spin inertia (2.31e-7 kg m2):
     # 2 sqrt(k J) = 3.0e-5. By hand, a flicked roller returns to centre with no
     # visible overshoot. tests/test_drivetrain_model.py pins the ratio.
-    damping: {value: 2.9e-5, source: GUESS}             # N.m.s/rad
+    damping: {value: 2.9e-5, source: model}             # N.m.s/rad
     # How hard the ends of the play are: 0.001 holds them to ~1.5 deg under a
     # 20 rad/s dithered diff. Must stay >= 2 x sim.timestep.
     wall_timeconst_s: 0.001
@@ -250,7 +254,7 @@ bike:
   # They set the inertia; they are not a picture of the parts.
   #
   # Printed parts' masses are CAD estimates (cad.servo_mount.printed_mass:
-  # 0.9 mm skin, 15 % infill, ASA 1.07 g/cm3), GUESS until weighed. For the six
+  # 0.9 mm skin, 15 % infill, ASA 1.07 g/cm3), estimates until weighed. For the six
   # below plus the Pi spacers the estimate is 88.2 g against the slicer's 81
   # (traces/weigh_v2_printed.txt, which has a column for the scale).
   #
@@ -266,7 +270,7 @@ bike:
       geoms:
         - {type: box, pos: [0.0567, 0.0, 0.0768], size: [0.0465, 0.034, 0.0285], quat: [0.92388, 0.0, -0.38268, 0.0]}
     drive_case_left:      # the left side rail: its CAD outline pieces (cad.drive.rail_layout), extruded across the plate (x 16..20.6 mm), mass by area
-      mass: {value: 0.0207, source: GUESS}
+      mass: {value: 0.0207, source: estimate}
       geoms:
         - {type: prism, share: 0.3431, across: [0.0160, 0.0206],   # outline
            outline: [[0.08256, 0.04190], [0.08600, 0.03860], [0.15000, 0.03860], [0.15554, 0.05632], [0.16635, 0.06025], [0.18500, 0.06704], [0.18500, 0.07480], [0.19950, 0.07480], [0.19950, 0.08350], [0.17900, 0.08350], [0.16206, 0.07204], [0.15000, 0.07160], [0.10511, 0.06304], [0.10440, 0.06375]]}
@@ -279,7 +283,7 @@ bike:
         - {type: prism, share: 0.0194, across: [0.0160, 0.0206],   # back ear
            outline: [[0.02471, 0.06679], [0.03285, 0.07492], [0.02471, 0.08305], [0.01658, 0.07492]]}
     drive_case_right:      # the right side rail: its CAD outline pieces (cad.drive.rail_layout), extruded across the plate (x 16..20.6 mm), mass by area
-      mass: {value: 0.0195, source: GUESS}
+      mass: {value: 0.0195, source: estimate}
       geoms:
         - {type: prism, share: 0.3733, across: [-0.0206, -0.0160],   # outline
            outline: [[0.08256, 0.04190], [0.08600, 0.03860], [0.15000, 0.03860], [0.15554, 0.05632], [0.16635, 0.06025], [0.18500, 0.06704], [0.18500, 0.07480], [0.19950, 0.07480], [0.19950, 0.08350], [0.17900, 0.08350], [0.16206, 0.07204], [0.15000, 0.07160], [0.10511, 0.06304], [0.10440, 0.06375]]}
@@ -288,15 +292,15 @@ bike:
         - {type: prism, share: 0.5679, across: [-0.0206, -0.0160],   # case side
            outline: [[0.04741, 0.02924], [0.07131, 0.02924], [0.10511, 0.06304], [0.06304, 0.10511], [0.02924, 0.07131], [0.02924, 0.04741]]}
     drive_chainstay_left:
-      mass: {value: 0.0063, source: GUESS}
+      mass: {value: 0.0063, source: estimate}
       geoms:
         - {type: box, pos: [0.0235, 0.0323, 0.0235], size: [0.077, 0.0217, 0.019], quat: [0.92388, 0.0, -0.38268, 0.0]}
     drive_chainstay_right:
-      mass: {value: 0.0063, source: GUESS}
+      mass: {value: 0.0063, source: estimate}
       geoms:
         - {type: box, pos: [0.0235, -0.0323, 0.0235], size: [0.077, 0.0217, 0.019], quat: [0.92388, 0.0, -0.38268, 0.0]}
     drive_pulley_left:      # the servo's pulley, a disc across the bike: its MASS (its spin is in input_armature)
-      mass: {value: 0.0198, source: GUESS}
+      mass: {value: 0.0198, source: estimate}
       geoms:
         - {type: cylinder, pos: [0.0853, 0.0276, 0.0652], size: [0.0372, 0.0172], quat: [0.70711, -0.70711, 0.0, 0.0]}
     drive_belt_left:      # GT2 belt as its two straight runs (wraps left out: CoM ~18 mm back of the CAD belt's)
@@ -305,7 +309,7 @@ bike:
         - {type: box, pos: [0.0244, 0.0277, 0.0477], size: [0.1047, 0.009, 0.0015], quat: [0.90549, 0.0, -0.42437, 0.0], share: 0.5}
         - {type: box, pos: [0.0525, 0.0277, 0.011], size: [0.1047, 0.009, 0.0015], quat: [0.97719, 0.0, -0.21236, 0.0], share: 0.5}
     drive_pulley_right:      # the servo's pulley, a disc across the bike: its MASS (its spin is in input_armature)
-      mass: {value: 0.0198, source: GUESS}
+      mass: {value: 0.0198, source: estimate}
       geoms:
         - {type: cylinder, pos: [0.0652, -0.0276, 0.0853], size: [0.0372, 0.0172], quat: [0.70711, -0.70711, 0.0, 0.0]}
     drive_belt_right:      # GT2 belt as its two straight runs (wraps left out: CoM ~18 mm back of the CAD belt's)
@@ -318,22 +322,24 @@ bike:
       geoms:
         - {type: box, pos: [0.1697, -0.0, 0.1067], size: [0.034, 0.02, 0.023], quat: [0.98481, 0.0, -0.17365, 0.0]}
     steer_case_lower:      # the steering's STATIC half (cad.steering stages)
-      mass: {value: 0.0121, source: GUESS}
+      mass: {value: 0.0121, source: estimate}
       geoms:
         - {type: box, pos: [0.1752, -0.0, 0.084], size: [0.0499, 0.0344, 0.0425], quat: [0.98481, 0.0, -0.17365, 0.0]}
     steer_case_upper:
-      mass: {value: 0.0079, source: GUESS}
+      mass: {value: 0.0079, source: estimate}
       geoms:
         - {type: box, pos: [0.1685, 0.0, 0.1136], size: [0.0516, 0.0281, 0.0223], quat: [0.98481, 0.0, -0.17365, 0.0]}
     pi_carrier:      # a plate over the drive's front face; with its four printed spacers (0.3 g)
-      mass: {value: 0.0126, source: GUESS}
+      mass: {value: 0.0126, source: estimate}
       geoms:
         - {type: box, pos: [0.1138, 0.0007, 0.0998], size: [0.0022, 0.056, 0.0953], quat: [0.92388, 0.0, -0.38268, 0.0]}
     power_holder:      # a panel on the left, between the battery and the rail
-      mass: {value: 0.0077, source: GUESS}
+      mass: {value: 0.0077, source: estimate}
       geoms:
         - {type: box, pos: [0.0349, 0.0149, 0.1045], size: [0.0677, 0.0033, 0.0455], quat: [0.92388, 0.0, -0.38268, 0.0]}
-  fork_mass: {value: 0.025, source: GUESS}   # steerer + fork; with the front wheel weighed 86 g together (2026-09-30), not split
+  # The fork and front wheel weighed 86 g together (2026-09-30). The fork is
+  # its CAD estimate, the wheel the rest (rounded).
+  fork_mass: {value: 0.025, source: estimate}   # steerer + fork, without the wheel
   front_wheel:
     # The wheel from the original bike, measured 2026-10-05.
     radius: {value: 0.05125, source: measured}   # 102.5 mm diameter
@@ -341,8 +347,8 @@ bike:
     shoulder_radius: {value: 0.007, source: measured}
     # The real tread is a 10 mm flat, modelled as a shallow crown so the contact
     # moves smoothly with lean (docs/plans/mujoco-modeling-decisions.md).
-    crown_radius: {value: 0.080, source: GUESS}
-    mass: {value: 0.060, source: GUESS}
+    crown_radius: {value: 0.080, source: model}
+    mass: {value: 0.060, source: estimate}
   steering:
     gear_ratio: {value: 1.0, source: design}  # servo rotation per steer rotation; range is continuous 360°+
     # Headset friction (the printed bushing and thrust face), on top of the
@@ -368,7 +374,7 @@ bike:
     # (sim_ahrs.tm151_to_site).
     pos: [0.0989, 0.0, 0.0842]
     quat: [0.92388, 0.0, 0.38268, 0.0]
-    mass: {value: 0.019, source: datasheet}   # was 0.012 GUESS
+    mass: {value: 0.019, source: datasheet}
     box_size: [0.040, 0.034, 0.0126]          # in its own axes: x along the 40
   payload:
     # The untethered running gear (docs/plans/untethered-setup.md), entries as in
@@ -378,7 +384,7 @@ bike:
     # of the centreline, a standing roll bias the policy trims out.
     battery:                                  # 3S 1300 mAh LiPo, on the drive's back face
       pos: [0.02917, 0.0, 0.09387]
-      mass: {value: 0.076, source: measured}  # bike_v2_cad.yaml; was 0.115 GUESS
+      mass: {value: 0.076, source: measured}
       box_size: [0.022, 0.058, 0.030]
       quat: [0.65328, 0.2706, -0.2706, -0.65328]
     pi:                                       # Raspberry Pi 3B+, the stand-in
@@ -440,7 +446,7 @@ servos:
     friction_running_nm: {value: 0.0057, source: measured}
     # Below this output speed the static pair applies. A modelling threshold:
     # loaded slides ran 30-40 deg/s once going.
-    friction_stick_speed: {value: 0.05, source: design}      # rad/s
+    friction_stick_speed: {value: 0.05, source: model}      # rad/s
     mass: {value: 0.023, source: datasheet}
     box_size: [0.026, 0.020, 0.034]
     # placement: bike.frame_parts.servo_steer (the righting's: righting.module.servo_case)
@@ -538,8 +544,8 @@ righting:
     x_end: {value: 0.1818, source: design}       # 0.2505 - radius
     # A shell's inertia, not a solid's: the mass sits at the radius.
     mass:
-      cages: {value: 0.0685, source: GUESS}   # 2 x 34.3, CAD printed estimate
-      caps: {value: 0.1085, source: GUESS}    # 2 x 54.2, CAD printed estimate
+      cages: {value: 0.0685, source: estimate}   # 2 x 34.3, CAD printed estimate
+      caps: {value: 0.1085, source: estimate}    # 2 x 54.2, CAD printed estimate
       # The caps will be lighter once designed (2026-10-21); the CAD's until then.
       # The sheet is not in the CAD: 0.5 mm polycarbonate over 270 deg of a 66.2
       # radius, ~185 long. Material and thickness both assumed.
@@ -559,28 +565,28 @@ righting:
     # The couplers' mid-plane on the wing rod, ahead of the rear axle (the CAD's).
     # Module-frame fore/aft positions below are relative to it.
     station_x: {value: 0.1205, source: design}
-    # Masses, all GUESS: CAD volumes (traces/righting_check.txt, 2026-10-07) as
+    # Masses, all estimates: CAD volumes (traces/righting_check.txt, 2026-10-07) as
     # printed parts (cad.servo_mount.printed_mass) and steel at 7.85 g/cm3.
     # Nothing weighed. `at`: the group's centroid in the module frame, mm --
     # [out (+ = the right wing's side), up from the wing rod, fore].
     crank:     # both half cranks, horn hub, steel crankpin, washer
-      mass: {value: 0.0112, source: GUESS}
+      mass: {value: 0.0112, source: estimate}
     coupler:   # each
-      mass: {value: 0.0023, source: GUESS}
+      mass: {value: 0.0023, source: estimate}
     wing_hub:   # each: rocker + knuckle + 2 printed stubs + steel rocker pin
-      mass: {value: 0.0149, source: GUESS}
+      mass: {value: 0.0149, source: estimate}
       at: [31.0, 17.1, -3.3]
     blade:   # each
-      mass: {value: 0.0286, source: GUESS}   # V2's; the blade file's own mass wins (V3: 38.8 g)
+      mass: {value: 0.0286, source: estimate}   # V2's; the blade file's own mass wins (V3: 38.8 g)
     # Fixed to the chassis, one entry per part from the v2 evals
     # (traces/bike_v2_cad/): `at` in the module frame (mm), `size` full extents
     # in the chassis frame [fore, across, up] (a cylinder: [radius, length]).
     fixed:     # printed parts at their CAD centroids; the steel wing rod a cylinder along the bike
-      bulkhead: {mass: {value: 0.0054, source: GUESS}, at: [0.0, 22.6, 18.5], size: [0.01, 0.0247, 0.0588]}
-      bridge: {mass: {value: 0.0066, source: GUESS}, at: [0.0, 53.6, 0.0], size: [0.047, 0.0344, 0.01]}
-      lower_case: {mass: {value: 0.0116, source: GUESS}, at: [0.0, 20.0, -24.7], size: [0.0307, 0.0247, 0.0588]}
-      upper_case: {mass: {value: 0.0078, source: GUESS}, at: [0.0, 19.0, -51.2], size: [0.0223, 0.0281, 0.051]}
-      wing_rod: {mass: {value: 0.0104, source: GUESS}, at: [0.0, 0.0, 0.0], size: [0.003, 0.047], type: cylinder}
+      bulkhead: {mass: {value: 0.0054, source: estimate}, at: [0.0, 22.6, 18.5], size: [0.01, 0.0247, 0.0588]}
+      bridge: {mass: {value: 0.0066, source: estimate}, at: [0.0, 53.6, 0.0], size: [0.047, 0.0344, 0.01]}
+      lower_case: {mass: {value: 0.0116, source: estimate}, at: [0.0, 20.0, -24.7], size: [0.0307, 0.0247, 0.0588]}
+      upper_case: {mass: {value: 0.0078, source: estimate}, at: [0.0, 19.0, -51.2], size: [0.0223, 0.0281, 0.051]}
+      wing_rod: {mass: {value: 0.0104, source: estimate}, at: [0.0, 0.0, 0.0], size: [0.003, 0.047], type: cylinder}
     # The crank's XC330 case (its mass from servos.xc330_t181). `at` in the
     # module frame (mm); `size` in the chassis frame, shaft forward.
     servo_case:
