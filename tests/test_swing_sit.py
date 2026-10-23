@@ -11,7 +11,8 @@ chosen blade (diff sign against balance.lat_gain) and is held until it
 does; a bike going over the OTHER way is handed back to the policy; the
 lift hands to the policy only inside recovery.ready_for_policy; the blade
 eases off before it folds, and folds only with the bike upright; a lift
-that never gets there lets go; and the fall detector needs the bike down
+that never gets there lets go, and tries again after `retry_s` unless the
+lie-down was the operator's; and the fall detector needs the bike down
 AND nearly still for its whole dwell.
 """
 import numpy as np
@@ -133,6 +134,31 @@ def test_a_lift_that_never_gets_there_lets_go():
     t, phases, _ = run(seq, seq.lift_timeout_s + seq.limp_s + 0.1, 0.0,
                        roll=np.deg2rad(-70))
     assert phases == ["lift", "limp", "lying"]
+
+
+def test_a_failed_lift_tries_again_and_a_chosen_lie_down_does_not():
+    """After a lift times out it lies for `retry_s`, then lifts again -- on
+    the side it is lying on THEN. A lie-down the operator asked for stays
+    down. retry_s None is the old behaviour: wait for the operator."""
+    seq = SwingSit(DEPLOY)
+    seq.get_up(0.0, roll=np.deg2rad(-80))
+    t, phases, cmds = run(seq, seq.lift_timeout_s + seq.limp_s + seq.retry_s + 0.1,
+                          0.0, roll=np.deg2rad(70))
+    assert phases == ["lift", "limp", "lying", "lift"]
+    assert seq.side == 1.0                   # it rolled over: lift the other side
+    assert cmds[-1].crank > 0.0 and not cmds[-1].policy
+
+    seq = SwingSit(DEPLOY, retry_s=None)
+    seq.get_up(0.0, roll=np.deg2rad(-80))
+    _, phases, _ = run(seq, seq.lift_timeout_s + seq.limp_s + 3.0, 0.0,
+                       roll=np.deg2rad(-70))
+    assert phases == ["lift", "limp", "lying"]
+
+    seq = SwingSit(DEPLOY)
+    seq.lie_down(0.0, roll=0.0)
+    seq.phase = "lying"                      # a finished, chosen lie-down
+    _, phases, _ = run(seq, 3.0, 0.0, roll=np.deg2rad(-75))
+    assert phases == ["lying"]
 
 
 def test_fall_detector_needs_down_and_still_for_its_dwell():

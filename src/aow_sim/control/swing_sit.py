@@ -44,6 +44,15 @@ UP, from lying (on purpose or after a fall):
              crank to centre at `retract_dps`.
     riding   done.
 
+A LIFT THAT TIMES OUT goes limp and lies, then tries again after `retry_s`
+(None: waits for the operator, as before 2026-10-23). The auto-up only fires
+from `riding`, so without this a failed get-up stayed down until a key --
+seen after repeated knockdowns left the bike rolled onto its cage, where the
+lift jackknifes the blade against the shell and pushes the bike the wrong
+way; a second press usually worked. Over 20 knockdowns in a row (the web
+demo's sim, 3 N shoves, some doubled) all 20 were up in 4.2-7.8 s, 3 on a
+retry. A lie-down the operator asked for is not retried: it stays lying.
+
 Every default here came from a sweep in `analysis/moves/swing_sit.py`
 (2026-10-16, default bike, ideal drivetrain), whose docstring has the
 numbers. Teleop: PageDown / PageUp, and auto-up after a fall.
@@ -96,7 +105,7 @@ class SwingSit:
                  lift_policy: bool = False, lift_dps: float | None = 120.0,
                  recover_deg: float = RECOVER_DEG,
                  fallen_deg: float = 60.0, fallen_s: float = 0.5,
-                 still_rate: float = 2.0):
+                 still_rate: float = 2.0, retry_s: float | None = 1.0):
         self.deploy = float(deploy_rad)
         self.lean = np.deg2rad(lean_deg)
         self.deploy_s, self.kick = deploy_s, kick
@@ -105,6 +114,8 @@ class SwingSit:
         self.retract_after, self.recover_deg = retract_after, recover_deg
         self.fallen_rad, self.fallen_s = np.deg2rad(fallen_deg), fallen_s
         self.still_rate = still_rate
+        self.retry_s = retry_s
+        self._retry = False         # lying after a failed lift: try again
         self.lean_on, self.kick_max_s = np.deg2rad(lean_on_deg), kick_max_s
         self.abort = np.deg2rad(abort_deg)
         self.release, self.release_rate = np.deg2rad(release_deg), np.deg2rad(release_dps)
@@ -138,6 +149,7 @@ class SwingSit:
         the bike already leans, right if level)."""
         self.side = float(side if side is not None else (np.sign(roll) or 1.0))
         self.aborted = False
+        self._retry = False
         self._go("stop", t)
 
     def get_up(self, t: float, roll: float) -> None:
@@ -145,6 +157,7 @@ class SwingSit:
         self.side = float(np.sign(roll) or 1.0)
         self._lift_from = None
         self._down_since = None     # the next auto-up waits its own fallen_s
+        self._retry = False
         self._go("lift", t)
 
     def _abort(self, t, crank):
@@ -211,7 +224,11 @@ class SwingSit:
                 self._go("lying", t)
             return Command(0.0, current=frac, policy=False)
         if self.phase == "lying":
-            return Command(crank, current=0.0, policy=False)
+            if not (self._retry and dt >= self.retry_s):
+                return Command(crank, current=0.0, policy=False)
+            self.get_up(t, roll)    # the side it lies on NOW
+            dt = 0.0
+            s = self.side
         if self.phase == "lift":
             if self._lift_from is None:
                 self._lift_from = crank
@@ -224,9 +241,10 @@ class SwingSit:
                 self._hold = goal                    # the blade stays put
                 return Command(goal)
             if dt > self.lift_timeout_s:
-                # Did not come up: let go and lie there. The operator (or the
-                # next auto-up) tries again.
+                # Did not come up: let go and lie there, and try again from
+                # `lying` after `retry_s` (module docstring).
                 self._go("limp", t)
+                self._retry = self.retry_s is not None
             return Command(goal, policy=self.lift_policy)
         if self.phase in ("balance", "retract") and abs(roll) > self.fallen_rad \
                 and not self._fell:
