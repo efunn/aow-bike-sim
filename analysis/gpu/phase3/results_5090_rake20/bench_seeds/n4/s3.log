@@ -1,0 +1,86 @@
+aow_bike: loaded /root/aow/graphs/seedbench_s3.wrp, 4096 worlds
+AOW_GRAD pg 2.0384e-01 smooth 3.7493e-03 ratio 0.0184
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ PufferLib 5.0               🐡 GPU: 100%   VRAM:   3.9/31G    RAM:  0.9G     │
+│                                                                              │
+│ Env            aow_bike    Evaluate     38s 08  99%    Losses      -0.003    │
+│ Params            51.8K      Model       113ms   0%    policy      -0.008    │
+│ Steps            262.1K      Env        37s 97  98%    value        0.046    │
+│ SPS                6.8K      Copy          0ms   0%    entropy      4.233    │
+│ Epoch                 1    Train         296ms   0%    old_kl       0.009    │
+│ Uptime        38s 398ms      Model       296ms   0%    kl           0.009    │
+│ To go     0d 3h 14m 33s      Misc          0ms   0%    clipfrac     0.119    │
+│                                                                              │
+│ score                         0.739   perf                          0.739    │
+│ episode_return              -11.194   episode_length               21.696    │
+│ fall_rate                     1.000   track                         0.739    │
+│ difficulty                    0.000                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+AOW_GRAD pg 2.0156e-01 smooth 3.6555e-03 ratio 0.0181
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ PufferLib 5.0              🐡  GPU: 100%   VRAM:   3.9/31G    RAM:  0.9G     │
+│                                                                              │
+│ Env            aow_bike    Evaluate     19s 08  98%    Losses      -0.003    │
+│ Params            51.8K      Model         2ms   0%    policy      -0.011    │
+│ Steps            524.3K      Env        19s 07  98%    value        0.051    │
+│ SPS               13.7K      Copy          0ms   0%    entropy      4.247    │
+│ Epoch                 2    Train         298ms   1%    old_kl       0.010    │
+│ Uptime        57s 499ms      Model       298ms   1%    kl           0.010    │
+│ To go     0d 1h 36m 27s      Misc          0ms   0%    clipfrac     0.138    │
+│                                                                              │
+│ score                         0.754   perf                          0.754    │
+│ episode_return               -9.047   episode_length               22.529    │
+│ fall_rate                     1.000   track                         0.754    │
+│ difficulty                    0.000                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+AOW_GRAD pg 1.9911e-01 smooth 3.2478e-03 ratio 0.0163
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ PufferLib 5.0             🐡   GPU: 100%   VRAM:   3.9/31G    RAM:  0.9G     │
+│                                                                              │
+│ Env            aow_bike    Evaluate     19s 07  98%    Losses      -0.031    │
+│ Params            51.8K      Model        15ms   0%    policy      -0.016    │
+│ Steps            786.4K      Env        19s 06  98%    value        0.008    │
+│ SPS               13.7K      Copy          0ms   0%    entropy      4.204    │
+│ Epoch                 3    Train         306ms   1%    old_kl       0.014    │
+│ Uptime     1m 16s 596ms      Model       306ms   1%    kl           0.013    │
+│ To go      0d 1h 36m 7s      Misc          0ms   0%    clipfrac     0.183    │
+│                                                                              │
+│ score                         0.760   perf                          0.760    │
+│ episode_return               -8.062   episode_length               22.813    │
+│ fall_rate                     1.000   track                         0.760    │
+│ difficulty                    0.000                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+AOW_GRAD pg 1.9104e-01 smooth 3.1753e-03 ratio 0.0166
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ PufferLib 5.0            🐡    GPU: 100%   VRAM:   3.9/31G    RAM:  0.9G     │
+│                                                                              │
+│ Env            aow_bike    Evaluate     19s 10  98%    Losses      -0.038    │
+│ Params            51.8K      Model         9ms   0%    policy      -0.022    │
+│ Steps              1.0M      Env        19s 09  98%    value        0.007    │
+│ SPS               13.7K      Copy          0ms   0%    entropy      4.226    │
+│ Epoch                 4    Train         317ms   1%    old_kl       0.017    │
+│ Uptime     1m 35s 723ms      Model       317ms   1%    kl           0.016    │
+│ To go     0d 1h 35m 57s      Misc          0ms   0%    clipfrac     0.229    │
+│                                                                              │
+│ score                         0.779   perf                          0.779    │
+│ episode_return               -5.216   episode_length               23.549    │
+│ fall_rate                     1.000   track                         0.779    │
+│ difficulty                    0.000                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+AOW_GRAD pg 1.9484e-01 smooth 3.1871e-03 ratio 0.0164
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ PufferLib 5.0           🐡     GPU: 100%   VRAM:   3.9/31G    RAM:  0.9G     │
+│                                                                              │
+│ Env            aow_bike    Evaluate     19s 08  98%    Losses      -0.037    │
+│ Params            51.8K      Model         2ms   0%    policy      -0.022    │
+│ Steps              1.3M      Env        19s 07  98%    value        0.007    │
+│ SPS               13.7K      Copy          0ms   0%    entropy      4.162    │
+│ Epoch                 5    Train         317ms   1%    old_kl       0.017    │
+│ Uptime     1m 54s 824ms      Model       317ms   1%    kl           0.017    │
+│ To go     0d 1h 35m 30s      Misc          0ms   0%    clipfrac     0.227    │
+│                                                                              │
+│ score                         0.788   perf                          0.788    │
+│ episode_return               -3.433   episode_length               24.061    │
+│ fall_rate                     1.000   track                         0.788    │
+│ difficulty                    0.000                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯

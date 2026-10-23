@@ -1,0 +1,8 @@
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.2
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA GeForce RTX 5090" (31 GiB, sm_120, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.18.0
+{"stem": "graphs/aow_bike_4096", "actions": "random", "nworld": 4096, "steps": 100, "device": "NVIDIA GeForce RTX 5090", "falls": 16632, "episode_ends": 16632, "reward_per_step": -0.0007, "ended_len_mean": 21.7, "ended_return_mean": -5.69, "ended_track_mean": 0.775, "ended_difficulty_mean": 0.0, "max_steps": 750}

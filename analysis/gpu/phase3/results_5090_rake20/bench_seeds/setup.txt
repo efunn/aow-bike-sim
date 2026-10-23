@@ -1,0 +1,19 @@
+NVIDIA GeForce RTX 5090, 3105 MHz, 32607 MiB
+s1: seed = 43 total_agents = 4096 graph = /root/aow/graphs/seedbench_s1 
+s2: seed = 44 total_agents = 4096 graph = /root/aow/graphs/seedbench_s2 
+s3: seed = 45 total_agents = 4096 graph = /root/aow/graphs/seedbench_s3 
+s4: seed = 46 total_agents = 4096 graph = /root/aow/graphs/seedbench_s4 
+s5: seed = 47 total_agents = 4096 graph = /root/aow/graphs/seedbench_s5 
+s6: seed = 48 total_agents = 4096 graph = /root/aow/graphs/seedbench_s6 
+s7: seed = 49 total_agents = 4096 graph = /root/aow/graphs/seedbench_s7 
+s8: seed = 50 total_agents = 4096 graph = /root/aow/graphs/seedbench_s8 
+n2 mid-run: 100 %, 2007 MiB
+n4 mid-run: 100 %, 4010 MiB
+n8 mid-run: 100 %, 8015 MiB
+mps4 mid-run: 100 %, 4048 MiB
+mps8 mid-run: 100 %, 8035 MiB
+[2026-10-23 11:05:01.535 Control  3349] NEW UI
+[2026-10-23 11:05:01.535 Control  3349] Cmd:quit
+[2026-10-23 11:05:01.535 Control  3349] Try shutting down server 3371, backoff is disabled
+[2026-10-23 11:05:01.567 Control  3349] Server 3371 exited with status 0
+[2026-10-23 11:05:01.567 Control  3349] Exit with status 0

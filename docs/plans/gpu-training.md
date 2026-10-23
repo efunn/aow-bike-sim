@@ -1276,6 +1276,91 @@ went to ~0.1 by 40M. One seed each. Underlying cost of more worlds: the
 curriculum is paced per bike lifetime, and at 16k ten 0.1 stairs are
 ~123M steps.
 
+**The v2 plant, no style bit (ran 2026-10-23)** [measured]. The first
+policy trained on the bike as built: plant 6446d8fa (rake 20, CAD masses
+1157 g, the measured steer kp 2.3 + rotor inertia, the AHRS 45 deg
+nose-down), against the pointer's bc66ca20. Default `CONFIG`
+(`rl_general_v3.yaml`, 17 wide, Pi-style steer rate), 4096 worlds x
+horizon 64, `TRAIN_S=3600` (the ini's 80M ends it).
+`results_5090_rake20/`. A secure 5090 in EUR-NO-1 pulled pythonhosted at
+~280 KB/s and github at 40 KB/s (curl, 40 s) and was terminated before
+any copy (~$0.08); EU-RO-1 gave 53 MB/s. Setup to training ~1.5 min with
+the sm_120 cache; 80M in 1724 s at 50-54k steps/s.
+
+| epoch | steps | len | fall | difficulty | entropy | kl |
+|---|---|---|---|---|---|---|
+| 25 | 6.6M | 338 | 0.937 | 0.000 | 3.35 | 0.175 (KL HIGH) |
+| 50 | 13.1M | 714 | 0.128 | 0.154 | 2.81 | 0.022 |
+| 125 | 32.8M | 685 | 0.191 | 0.819 | 2.00 | 0.035 |
+| 200 | 52.4M | 741 | 0.037 | 1.000 | 1.66 | 0.039 |
+| 305 | 80.0M | 742 | 0.028 | 0.667 | 1.27 | 0.033 |
+
+Converted 52M, 72M, 80M (`general_puffer_rake20_*`) and judged on the v2
+plant with the pointer beside them (`per_command.txt`, `standstill.txt`,
+`steer_wobble.txt` in the results dir): all four 0/20 falls, 7/9 turns
+forward, 2/2 straight, hold -0.02..-0.03 m/s, in-place spins steered
+(wheel/yaw 0.95-1.10). Standstill max |v|: fixes_72M 0.17-0.21 m/s,
+52M 0.13-0.16, 72M 0.14-0.17, 80M 0.18-0.21. Steer wobble amplitude
+[deg] (`analysis/policy/steer_wobble.py`, 3 seeds):
+
+| | fixes_72M | rake20_52M | rake20_72M | rake20_80M |
+|---|---|---|---|---|
+| hold | 6.7 | 4.9 | 5.4 | 6.4 |
+| straight +0.8 | 1.3 | 4.3 | 4.9 | 5.2 |
+| straight +1.2 | 2.5 | 17.1 | 9.9 | 5.9 |
+| turn +1.2, 1.2 rad/s | 1.9 | 16.9 | 3.1 | 1.3 |
+
+So the retrained policy is NOT smoother: at top speed it wobbles more
+than the pointer flown on the same plant, shrinking with training (17 ->
+10 -> 6 deg). It also overshoots 1.2 m/s (achieved 1.24-1.26; the
+pointer 1.20). One seed: whether that is the plant or this seed is open.
+The user, in teleop: "seems fine, don't see a huge difference".
+
+**Several runs on one card: MPS (bench, same pod, 2026-10-23)**
+[measured]. `analysis/gpu/phase3/bench_seeds.sh`: N independent 4096-world
+runs at once, each with its own graph (`export_graph --seed k`) and its
+own copy of `~/puffer` (ini seed 42+k), 120 s each, steps/s from 45 s on
+(`results_5090_rake20/bench_seeds/`):
+
+| at once | total steps/s | each |
+|---|---|---|
+| 1 (the run above) | ~51k | 51k |
+| 2 / 4 / 8, plain | 57k / 54k / 55k | 28k / 14k / 7k |
+| 4, MPS | 116k | 29k |
+| 8, MPS | 127k | 16k |
+
+Plain processes time-slice the card, so they gain nothing. Under MPS
+(`nvidia-cuda-mps-control -d`, started inside the container without
+trouble) kernels from different runs share the SMs: 4 runs give 2.3x a
+single run's throughput, 8 only ~10 % more than 4. So **4 runs under MPS
+is the sweet spot**: 4 x 80M in ~46 min against 29 min for one. Each run
+has its own graph and ini, so the four may differ in anything those
+carry -- the env config (reward weights, randomization, curriculum) and
+the trainer ini (seed, learning rate, entropy, horizon). A config that
+changes the obs width needs its own `install.sh` build (OBS_SIZE is
+compiled in); the copies share one build.
+
+**The runbook as a script (2026-10-23; not yet run end to end).**
+`scripts/gpu.sh` drives steps 2-7 above from this checkout against any
+ssh-reachable root shell with an NVIDIA GPU (CUDA >= 13 driver; only the
+RunPod image is tested): `check HOST PORT` (CUDA, pypi and github speed),
+`up HOST PORT [SEEDS=4 CONFIG=... ...]` (bundle, the newest Warp cache,
+launch detached), `watch HOST PORT` (every run's checkpoint rows until
+ALL_DONE), `pull HOST PORT TAG` (to `results_TAG/`), `export TAG [52 72
+80]` (the checkpoints nearest those millions of steps, to
+`general_puffer_TAG[_s<k>]_<N>M`; an existing name is skipped). Creating
+and terminating the pod stay outside it. `SEEDS=N` (N > 1) makes
+`pod_launch.sh` run `run_seeds.sh` instead of `run_pod.sh`: N graphs
+(env seed ENV_SEED+k-1), N trainer copies (PufferLib seed
+PUFFER_SEED+k-1, so run 1 is a one-run launch's pair), MPS on, each
+trained to the ini's 80M, `results/seed_<k>/` each with its checkpoints,
+ini, graph json and watch.log. A one-run launch now also leaves the graph
+json and ini in `results/checkpoints/`, so `export` reads both layouts.
+Checked here: syntax, the argument guard, and `export` on this run's
+results in both layouts (the 80M weights byte-identical to the export
+above; the test exports were `*smoke*` and are deleted). `run_seeds.sh`
+has NOT run on a GPU yet; its first use is the next run.
+
 ### Phase 4 -- algorithm parity
 
 - **Network.** 5.0 has NO built-in MLP [read, `algo.cu` @ ea7f989]:

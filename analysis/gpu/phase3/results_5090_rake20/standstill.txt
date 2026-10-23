@@ -1,0 +1,28 @@
+general_puffer_fixes_72M
+  seed 0: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.11 m from start  mean |hub| 0.05
+  seed 1: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.12 m from start  mean |hub| 0.04
+  seed 2: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.10 m from start  mean |hub| 0.04
+  seed 3: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.11 m from start  mean |hub| 0.04
+  seed 4: ok    5.0 s  max |v| 0.21 m/s  >0.3 m/s at  never  end 0.10 m from start  mean |hub| 0.04
+  seed 5: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.11 m from start  mean |hub| 0.05
+general_puffer_rake20_52M
+  seed 0: ok    5.0 s  max |v| 0.13 m/s  >0.3 m/s at  never  end 0.09 m from start  mean |hub| 0.04
+  seed 1: ok    5.0 s  max |v| 0.15 m/s  >0.3 m/s at  never  end 0.08 m from start  mean |hub| 0.04
+  seed 2: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.08 m from start  mean |hub| 0.04
+  seed 3: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.08 m from start  mean |hub| 0.04
+  seed 4: ok    5.0 s  max |v| 0.13 m/s  >0.3 m/s at  never  end 0.09 m from start  mean |hub| 0.04
+  seed 5: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.08 m from start  mean |hub| 0.04
+general_puffer_rake20_72M
+  seed 0: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.12 m from start  mean |hub| 0.05
+  seed 1: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.11 m from start  mean |hub| 0.05
+  seed 2: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.12 m from start  mean |hub| 0.04
+  seed 3: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.11 m from start  mean |hub| 0.04
+  seed 4: ok    5.0 s  max |v| 0.14 m/s  >0.3 m/s at  never  end 0.12 m from start  mean |hub| 0.05
+  seed 5: ok    5.0 s  max |v| 0.15 m/s  >0.3 m/s at  never  end 0.10 m from start  mean |hub| 0.04
+general_puffer_rake20_80M
+  seed 0: ok    5.0 s  max |v| 0.20 m/s  >0.3 m/s at  never  end 0.14 m from start  mean |hub| 0.05
+  seed 1: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.14 m from start  mean |hub| 0.06
+  seed 2: ok    5.0 s  max |v| 0.21 m/s  >0.3 m/s at  never  end 0.14 m from start  mean |hub| 0.05
+  seed 3: ok    5.0 s  max |v| 0.19 m/s  >0.3 m/s at  never  end 0.13 m from start  mean |hub| 0.05
+  seed 4: ok    5.0 s  max |v| 0.20 m/s  >0.3 m/s at  never  end 0.14 m from start  mean |hub| 0.05
+  seed 5: ok    5.0 s  max |v| 0.19 m/s  >0.3 m/s at  never  end 0.13 m from start  mean |hub| 0.05
