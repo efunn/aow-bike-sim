@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AOW Bike Sim</title>
+<meta name="description" content="A self-balancing bike with an omni rear wheel, driven by a trained RL policy, simulated live in MuJoCo.">
+<style>
+  :root {
+    --sky: #e9edf2;
+    --ground: #d9dde3;
+    --grid-minor: #c9ced6;
+    --grid-major: #b3bac4;
+    --ink: #1d232b;
+    --ink-soft: #5b6573;
+    --panel: rgba(255, 255, 255, 0.82);
+    --panel-edge: rgba(29, 35, 43, 0.12);
+    --accent: #f47516;
+    --cmd: #1c8f3f;
+    --impact: #d42a1f;
+    --key: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --sky: #161a20;
+      --ground: #1f242b;
+      --grid-minor: #2a3038;
+      --grid-major: #39414c;
+      --ink: #e6e9ee;
+      --ink-soft: #9aa4b2;
+      --panel: rgba(22, 26, 32, 0.8);
+      --panel-edge: rgba(230, 233, 238, 0.14);
+      --key: #262c35;
+      --cmd: #3a9d55;
+      --impact: #e0473b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --sky: #161a20;
+    --ground: #1f242b;
+    --grid-minor: #2a3038;
+    --grid-major: #39414c;
+    --ink: #e6e9ee;
+    --ink-soft: #9aa4b2;
+    --panel: rgba(22, 26, 32, 0.8);
+    --panel-edge: rgba(230, 233, 238, 0.14);
+    --key: #262c35;
+    --cmd: #3a9d55;
+    --impact: #e0473b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: var(--sky);
+    color: var(--ink);
+    font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  .panel {
+    position: fixed;
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: 8px;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  #status {
+    position: fixed; inset: 0; display: grid; place-items: center;
+    color: var(--ink-soft); pointer-events: none; padding: 16px; text-align: center;
+  }
+  body.ready #status:empty { display: none; }
+
+  #hud {
+    top: 12px; left: 12px; padding: 8px 10px;
+    display: grid; grid-template-columns: auto auto; gap: 1px 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  #hud dt { color: var(--ink-soft); }
+  #hud dd { margin: 0; text-align: right; }
+  #hud-slow { grid-column: 1 / -1; color: var(--accent); }
+
+  #keys {
+    bottom: 12px; left: 50%; transform: translateX(-50%);
+    padding: 8px 14px 10px; color: var(--ink-soft); font-size: 12px;
+    display: grid; grid-template-columns: repeat(4, auto); gap: 4px 22px;
+    white-space: nowrap;
+  }
+  #keys section { display: grid; gap: 3px; align-content: start; }
+  #keys h3 {
+    margin: 0 0 1px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--ink);
+  }
+  #focus-hint { grid-column: 1 / -1; justify-self: center; margin-bottom: 2px; }
+  @media (max-width: 760px) { #keys { grid-template-columns: repeat(2, auto); } }
+  kbd {
+    display: inline-block; min-width: 1.6em; padding: 0 4px; margin: 0 1px;
+    border: 1px solid var(--panel-edge); border-bottom-width: 2px; border-radius: 4px;
+    background: var(--key); color: var(--ink); font: inherit; text-align: center;
+  }
+  #focus-hint { color: var(--accent); }
+  body.focused #focus-hint { display: none; }
+
+  #touch { display: none; }
+  @media (pointer: coarse) {
+    #keys { display: none; }
+    #touch {
+      display: flex; justify-content: space-between; align-items: end;
+      position: fixed; bottom: 16px; left: 16px; right: 16px; pointer-events: none;
+    }
+    #touch .pad { display: grid; gap: 6px; pointer-events: none; }
+    #touch button { pointer-events: auto; }
+  }
+  #drive { grid-template-columns: repeat(3, 50px); grid-template-rows: 50px 50px; }
+  #acts { grid-template-columns: repeat(2, 64px); grid-template-rows: repeat(3, 34px); }
+  #touch button {
+    border: 1px solid var(--panel-edge); border-radius: 10px;
+    background: var(--panel); color: var(--ink);
+    font-family: inherit; font-weight: 600; font-size: 18px; line-height: 1;
+    touch-action: none; -webkit-tap-highlight-color: transparent;
+  }
+  #acts button { font-size: 12px; }
+  #touch button:active { border-color: var(--accent); }
+
+  body:not(.ready) .panel, body:not(.ready) #touch, body.no-hud .panel { display: none; }
+  [hidden] { display: none !important; }
+
+  @media (max-width: 480px) {
+    #hud { top: 8px; left: 8px; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="status">Loading…</div>
+
+<dl id="hud" class="panel" hidden>
+  <dt>command</dt><dd id="hud-cmd">–</dd>
+  <dt>speed</dt><dd id="hud-speed">–</dd>
+  <dt>estimate lon / lat</dt><dd id="hud-est">–</dd>
+  <dt>heading lead</dt><dd id="hud-lead">–</dd>
+  <dt>lean</dt><dd id="hud-roll">–</dd>
+  <dt>pitch</dt><dd id="hud-pitch">–</dd>
+  <dt>steer</dt><dd id="hud-steer">–</dd>
+  <dt>crank</dt><dd id="hud-crank">–</dd>
+  <dt>phase</dt><dd id="hud-phase">–</dd>
+  <dt>sim</dt><dd id="hud-rate">–</dd>
+  <dd id="hud-slow" hidden>running slower than real time</dd>
+</dl>
+
+<div id="keys" class="panel">
+  <div id="focus-hint">Click to drive</div>
+  <section><h3>Drive</h3>
+    <div><kbd>↑</kbd><kbd>↓</kbd> speed</div>
+    <div><kbd>←</kbd><kbd>→</kbd> turn</div>
+    <div><kbd>Q</kbd><kbd>E</kbd> snap 90°</div></section>
+  <section><h3>Disturb</h3>
+    <div><kbd>space</kbd> knock over</div>
+    <div><kbd>⇧</kbd><kbd>space</kbd> nudge</div>
+    <div><kbd>B</kbd> throw ball</div></section>
+  <section><h3>Balance</h3>
+    <div><kbd>X</kbd> lie down / get up</div>
+    <div><kbd>Z</kbd><kbd>C</kbd> lean left / right</div></section>
+  <section><h3>View</h3>
+    <div>drag to look</div>
+    <div><kbd>T</kbd> telemetry</div>
+    <div><kbd>R</kbd> reset</div></section>
+</div>
+
+<div id="touch">
+  <div id="drive" class="pad">
+    <button data-action="snapLeft" aria-label="turn 90 degrees left">⟲</button>
+    <button data-hold="up" aria-label="faster">↑</button>
+    <button data-action="snapRight" aria-label="turn 90 degrees right">⟳</button>
+    <button data-hold="left" aria-label="turn left">←</button>
+    <button data-hold="down" aria-label="slower">↓</button>
+    <button data-hold="right" aria-label="turn right">→</button>
+  </div>
+  <div id="acts" class="pad">
+    <button data-action="shove">Knock</button>
+    <button data-action="ball">Ball</button>
+    <button data-action="wingLeft">◀ Lean</button>
+    <button data-action="wingRight">Lean ▶</button>
+    <button data-action="sit">Lie / up</button>
+    <button data-action="reset">Reset</button>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

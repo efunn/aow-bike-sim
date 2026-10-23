@@ -1,0 +1,12 @@
+{
+  "name": "aow-bike-web",
+  "private": true,
+  "type": "module",
+  "description": "check.mjs only; the site itself loads MuJoCo from a CDN. Pinned to the MuJoCo the model is exported from: an .mjb loads only in its own version.",
+  "scripts": {
+    "check": "node check.mjs"
+  },
+  "devDependencies": {
+    "@mujoco/mujoco": "3.10.0"
+  }
+}
