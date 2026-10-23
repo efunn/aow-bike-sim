@@ -542,7 +542,7 @@ def main():
                     help="force every policy onto ONE encoder model; \"\" "
                          "leaves each on its own declaration, which is not "
                          "comparable across a set that mixes them")
-    ap.add_argument("--ahrs", default="tm151",
+    ap.add_argument("--ahrs", default="tm151_filter",
                     choices=("none", "tm151_static", "tm151", "tm171",
                              "tm151_filter"),
                     help="force every policy onto ONE attitude error model, "
