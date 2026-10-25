@@ -992,6 +992,37 @@ here, and the low channels are the farthest from a microwave oven's
 
 What is left on the Pi's side: DHCP, 0.6 s (a static IP would cut it).
 
+### The AHRS only enumerates on the ethernet-side sockets (2026-10-24)
+
+The 3B+ has two hub chips: a 4-port hub (two sockets) feeding a 3-port hub
+(ethernet + the two sockets beside the jack). `lsusb -t` shows the tree.
+
+| socket | port | AHRS |
+|---|---|---|
+| ethernet stack, upper | `1-1.1.2` | enumerates, 4th attempt, ~12 s |
+| ethernet stack, lower | `1-1.1.3` | enumerates, 4th attempt, ~12 s |
+| other stack, upper / lower | `1-1.3` / `1-1.2` | never |
+
+The U2D2 (high-speed) enumerates first time in any of them. Same cable
+throughout, failures identical with the U2D2 unplugged. As wired now: AHRS
+`1-1.1.3`, U2D2 `1-1.2` (the two lower sockets, for the case). Both paths
+are by-id, so the socket does not matter to the software.
+
+The AHRS signals attach but answers every request `-32` until roughly 12 s
+after power-on. The kernel tries 4 times and power-cycles the port between
+tries 2 and 3. On the outer hub that cycle is real (the U2D2 drops with it),
+so the AHRS restarts and runs out of tries ~1.5 s later. On the inner hub it
+is a no-op (LED unchanged, U2D2 stays), and the AHRS is ready by try 4.
+Inferred from six dmesg captures, not measured directly.
+
+No kernel setting fixes it: the try count is fixed, a longer timeout does not
+apply to an immediate `-32`, and `usbcore.old_scheme_first=1` was tried and
+changed nothing. The likely fix is on the sensor: the unit was still in
+**static boot** at bring-up (10-30 s cold start vs 3.2 s auto boot, Phase 0
+above), and ~12 s sits inside that window. Untested. Setting auto boot in
+ImuAssistant, then retrying an outer socket, would show it. For the final
+board: do not put the AHRS behind a hub that really power-cycles its ports.
+
 ## 8. Still open after this session
 
 * **Steer homing at power-up** (§2.6). Blocks the fork going on, not the
