@@ -118,8 +118,11 @@ def _set(params, path, value):
     return out
 
 
-def sim(policy, seconds, seed, overrides=(), steer_rate="counts"):
-    """The run's policy standing on a zero command, sampled at FS."""
+def sim(policy, seconds, seed, overrides=(), steer_rate="counts", on_step=None):
+    """The run's policy standing on a zero command, sampled at FS.
+
+    `on_step(model, data, ctl, drive)` runs after every physics step (drivetrain_slowmo.py
+    renders from it), so a caller sees exactly this loop rather than a copy."""
     warnings.filterwarnings("ignore")
     import mujoco
     import yaml
@@ -210,6 +213,8 @@ def sim(policy, seconds, seed, overrides=(), steer_rate="counts"):
         for g in gearbox:
             g.pre_step(data)
         mujoco.mj_step(model, data)
+        if on_step is not None:
+            on_step(model, data, ctl, drive)
     a = np.array(rows)[int(FS):]                 # drop the first second
     return {lab: a[:, i] for i, (lab, _) in enumerate(SIGNALS)}
 
