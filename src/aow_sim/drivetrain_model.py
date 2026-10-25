@@ -34,6 +34,14 @@ has its own evidence:
                light and the soft friction constraint lets it creep at
                0.13-0.3 rad/s under the full bump at any solref, so a 1 % diff
                creep never stalled at all. Stick-slip is the whole point.
+               Optional HILL (`detent.hill_nm`, default 0, so off): an
+               angle-only torque on the same coordinate,
+                   -hill_nm sin(2 pi (phi - phase) / period + hill_phase),
+               which pushes the same way at a given angle whichever way the
+               shaft turns (friction flips with the direction; this does
+               not), so it gives back over a notch what it takes. The 10-24
+               static map of the reassembled bike (physical-bike-tests.md,
+               test 3) read ~+-0.09 duty of it per 7.5 deg, ~0.1 N m here.
   roller_slop  Each rigid roller equality becomes a tendon
                (roller_spin_i - k_roller * ring_spin) with a weak centring
                spring and hard limits at the ends of the measured play. Pure
@@ -506,6 +514,9 @@ class DrivetrainSim:
             self.phase = math.radians(float(d.get("phase_deg", 0.0)))
             self.k_stick = float(d["stick_stiffness"])
             self.c_stick = float(d["stick_damping"])
+            self.hill = float(d.get("hill_nm", 0.0))
+            self.hill_phase = math.radians(float(d.get("hill_phase_deg", 0.0)))
+            self.hill_force = 0.0
             # ring-vs-hub = ring_abs - hub, both linear in the inputs; the
             # same coefficients map a force on it back onto the inputs.
             dt = params["drivetrain"]
@@ -649,6 +660,11 @@ class DrivetrainSim:
             else:
                 self._anchor = phi
             self.detent_force = q
+            if self.hill:
+                h = -self.hill * math.sin(2.0 * math.pi * (phi - self.phase)
+                                          / self.period + self.hill_phase)
+                self.hill_force = h
+                q += h
             fric[0] += ga * q
             fric[1] += gb * q
         if self.servo or self.detent:

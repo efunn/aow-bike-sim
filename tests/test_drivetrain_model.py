@@ -10,6 +10,7 @@ and the detent turns a slow diff move into stick-slip, which is the reason it
 exists (without it the replayed creep grid never stalls at all).
 """
 
+import copy
 import math
 
 import mujoco
@@ -363,3 +364,54 @@ def test_drive_randomization_when_asked(params):
         assert 0.7 <= ra <= 1.3 and 0.7 <= rb <= 1.3
         sided |= abs(ra - rb) > 1e-6
     assert sided, "the two sides are drawn independently"
+
+
+def _with_hill(params, hill, phase_deg=0.0, without=("roller_slop",)):
+    p = dm.with_drivetrain(params, without=without)
+    p = copy.deepcopy(p)
+    p[dm.KEY]["detent"]["hill_nm"] = hill
+    p[dm.KEY]["detent"]["hill_phase_deg"] = phase_deg
+    return p
+
+
+def test_a_zero_hill_is_the_detent_as_before(params):
+    """hill_nm 0 (the default, absent from the config) changes nothing,
+    bit for bit."""
+    v = 0.01 * 11.1 * params["drivetrain"]["belt_ratio"]
+    runs = []
+    for p in (dm.with_drivetrain(params, without=("roller_slop",)),
+              _with_hill(params, 0.0)):
+        m = build_model(p, variant="testbed")
+        d = mujoco.MjData(m)
+        runs.append(_run(m, d, dm.DrivetrainSim.attach(m, p), v, -v, 1.0))
+    assert np.array_equal(runs[0], runs[1])
+
+
+def test_the_hill_depends_on_angle_alone_and_gives_back_what_it_takes(params):
+    """Same torque at the same ring-vs-hub angle whatever the velocity, and
+    zero on average over one period: angle-only, unlike friction."""
+    p = _with_hill(params, 0.1)
+    p[dm.KEY]["detent"]["friction"] = 0.0        # the hill alone
+    m = build_model(p, variant="testbed")
+    d = mujoco.MjData(m)
+    sim = dm.DrivetrainSim.attach(m, p)
+    sim.reset(d)
+    qa, qb = sim.in_q
+    da, db = sim.in_d
+    n = 64
+    forces = {}
+    for w in (+3.0, -3.0):
+        row = []
+        for k in range(n):
+            phi = sim.phase + sim.period * k / n
+            # put ring-vs-hub at phi along the diff direction (ga, gb)
+            g2 = sim.ga ** 2 + sim.gb ** 2
+            d.qpos[qa], d.qpos[qb] = sim.ga * phi / g2, sim.gb * phi / g2
+            d.qvel[da], d.qvel[db] = sim.ga * w, sim.gb * w
+            d.time = 1.0 + k
+            sim.pre_step(d)
+            row.append(sim.hill_force)
+        forces[w] = np.array(row)
+    assert np.allclose(forces[3.0], forces[-3.0]), "the hill must not see velocity"
+    assert abs(forces[3.0].mean()) < 1e-9
+    assert np.isclose(np.abs(forces[3.0]).max(), 0.1, rtol=0.01)
