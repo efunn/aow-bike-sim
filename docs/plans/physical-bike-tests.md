@@ -35,14 +35,71 @@ What 10-24 settled: the 8-9 Hz shake is the bike's, not the policy's (test
 has reproduces it (2), and the drivetrain is stiff from servo to roller
 (filmed, test 3). The pieces measured since, none yet in the sim together:
 
-1. **Floor sim twin with the measured roller centring spring**:
-   `run_vs_sim.py <run> --set drivetrain_model.roller_slop.centring_stiffness=0.01`
-   (and `.damping=5e-5`), alone, then with the calibrated detent below.
-   The shake runs the sideways drive through the whole slop every cycle,
-   so this is the strongest untried lead. Look for a mode moving toward
-   8-9 Hz, not just more shake.
-2. **The detent as a SAWTOOTH angle-only push (10-24 reading, not yet in
-   the model).** With the drivetrain shown stiff (film), the P 4000 map's
+**Items 1 and 2 DONE 10-24 (evening): neither makes the 9 Hz.** Model
+options added (`drivetrain_model.py`, all off by default, bit-identical to
+before on the testbed and the whole bike): `detent.hill_shape: sawtooth`
+(+ `hill_flip_deg`), `detent.kinetic_fraction`, `detent.friction_minus_scale`,
+`detent.hill_offset_nm`.
+The best-effort detent, from the P 4000 map where it can say:
+
+| `--set drivetrain_model.detent.` | value | from |
+|---|---|---|
+| `friction` | 0.12 N m | map, diff minus common: ~0.25 - ~0.115 duty, x 1.067 N m/duty |
+| `width_deg` | 1000 | the map's friction is flat across the notch (a cos^2 that wide is) |
+| `hill_shape`, `hill_nm` | sawtooth, 0.12 | map angle-only, +-0.10 duty |
+| `kinetic_fraction` | 0.15 | **GUESS, fitted** to the filmed creep's jump sizes |
+
+Filmed creep replayed (`replay_jumps.py`, 261024-221037), singles/doubles:
+
+| | + | - |
+|---|---|---|
+| bike | 25 / 13 | 5 / 21 |
+| model as is | 49 / 0 | 48 / 0 |
+| flat friction + sawtooth, kinetic 1 | 48 / 0 | 45 / 0 (at every size tried) |
+| best effort (table above) | 23 / 13 | 23 / 12 |
+| + `friction_minus_scale` 1.3 | 23 / 13 | 22 / 12 |
+| + `hill_offset_nm` 0.015 / 0.05 | 23 / 13 | 23 / 12, 24 / 12 |
+
+So: flat static friction with kinetic = static never coasts into a
+double; a kinetic fraction ~0.15-0.2 gives the bike's MIX with no
+per-notch variation (the bike's doubles come in runs, not at fixed notches:
++ and - double at different places). THE HANDEDNESS IS NOT EXPLAINED. The
+map's static asymmetry (out +0.198 / back -0.227 duty, so - needs ~0.015
+N m more) reads the same as handed friction (`friction_minus_scale`) or a
+sawtooth with unequal ends (`hill_offset_nm`, a constant angle-only push);
+at the measured size neither moves the replay (1.3 / 0.015: one jump
+changes), and only an unmeasured 1.45-1.6 scale pushes - toward doubles
+(15/16 at 1.6, bike 5/21). An earlier draft of this note credited the 1.3
+scale with the - side's mix; the symmetric sawtooth gives the same mix.
+A map taken at another ring angle (rotate the wheel ~90 deg) would split
+the two readings if the bias is gravity on an unbalanced ring or roller.
+The + side is chaotic in kinetic and hill: 0.2 vs 0.15 flips it between
+mixed and all-singles. Centred on a bump friction instead, the sawtooth's
+flip position gives handedness (friction 0.21, hill 0.04, flip 15-60
+cycle-deg early: + singles, - doubles), but the map's friction is flat.
+
+Floor twin, 7-12 Hz roll rate in deg/s (bike 24.5 on 191558, 21.9 on
+174349), two seeds each where shown:
+
+| variant | 191558 (rake20) | 174349 (fixes_72M) |
+|---|---|---|
+| model as is | 4.1, 3.7 | 3.2, 3.4 |
+| roller centring 0.01 / 5e-5 | 3.6 | 3.5 |
+| roller centring 0.007, 0.011 | 3.8, 3.7 | 3.6, 3.5 |
+| best-effort detent (with the 1.3 scale) | 4.7 | 4.9 |
+| both | 4.4, 4.5 | 4.9, 4.7 |
+| both, kinetic 1 | 5.3 | 5.0 |
+
+`traces/bike/<run>/spectra_sawtooth.png`: the bike's roll rate and drive
+commands have a resonance at 8-10 Hz, 50-100x the sim's power there; the
+sim has no peak there in any variant, the detent only lifts a 6-8 Hz
+shoulder ~2x. The measured roller spring does nothing visible. Contact
+(item 3) is now the lead, with these in.
+
+1. ~~**Floor sim twin with the measured roller centring spring**~~ (done,
+   above).
+2. ~~**The detent as a SAWTOOTH angle-only push**~~ (done, above; the
+   reading that led to it:) With the drivetrain shown stiff (film), the P 4000 map's
    (out + back)/2 is the angle-only push wherever both passes have a
    reading: it rises steadily from ~-0.09 to ~+0.10 duty over ~5.5 deg,
    then flips back within ~2 deg, inside the stretch both passes jump
@@ -66,6 +123,52 @@ has reproduces it (2), and the drivetrain is stiff from servo to roller
    ring-vs-hub; compare the buzz frequency with the sideways roller speed
    in a floor record. Untested idea.
 5. Then the retrain batch, section 8.
+6. **Idea, unverified: the detent may be DETERMINISTIC, so the sim need
+   not randomise it.** The sim draws the detent phase per episode
+   (`DrivetrainSim.reset(rng)`; "nothing has measured where the wall
+   sits", bike_params). It has now been located: in the raw drive-encoder
+   frame (ring-vs-hub = 1.5 (P101 + P102), `drivetrain_trace.py
+   bench_detent`) the three hung creeps of 10-24 put the sawtooth flip at
+   0.35, 0.55 and 0.45 deg mod 7.5 (202227, 210446, 221037_creep_film;
+   over two hours and two creep speeds). One servo turn moves ring-vs-hub
+   1.5 x 360 = 540 deg = 72 notches, so a power-up turn-count reset keeps
+   the phase. If that holds, the detent is a fixed function of the
+   encoders the Pi already reads: the twin could place it from the run's
+   start encoders instead of a draw, and a policy could even be told it.
+   The user (10-25): the belt ratio is exact, the belts cannot skip, and
+   the XC430's absolute single-turn angle survives resets -- which closes
+   the ways the phase could move. It is one angle, not a combination:
+   the detent sees only ring-vs-hub = (a - b)/2 (the hub's rolling does
+   not move it), i.e. 1.5 (theta101 + theta102) mod 7.5 deg, and each
+   servo turn adds a whole 72 notches, so even the single-turn readings
+   give it. What it does NOT remove: backlash between each servo and the
+   ring, a direction-dependent offset (+ and - jumps start ~2.6 deg
+   apart); the floor runs cannot confirm the phase (their rests spread
+   evenly). The catch is the policy: it cannot use a phase it cannot see.
+   A fixed phase in training WITHOUT a new observation would only make
+   every episode start at the same notch, something to overfit to, so the
+   per-episode draw stays right for today's policies. Using it needs a
+   notch-phase obs (sin/cos of 2 pi phi / 7.5 deg, computable on the Pi
+   from Present Position), a `general_spec` layout change on both sides,
+   and a retrain. Cheap without any of that: start the twin
+   (`run_vs_sim`) at the bike run's own phase instead of a draw.
+7. **The detent is barely visible in the FLOOR runs' PWM (10-25).**
+   `analysis/servo/floor_detent.py`: the diff-mode duty averaged by notch
+   phase in the hung creep's encoder frame, split by direction, over both
+   floor engages (174349, 191558). Moving, it is flat: angle-only part
+   under 0.04 duty p-p, at the noise, against the hung map's +-0.1
+   sawtooth; out/back +-0.27-0.31 (friction plus whatever the balance
+   asks). Held still, it steps at the flip by -0.08 / -0.05 duty, the
+   sign the hung map has (-0.2 there). So the floor data says the detent
+   is there and at the hung creep's phase, but cannot size it under load.
+8. **Test: creep and map with the rollers LOADED.** The bike held upright
+   on the floor (a hand or a jig on the chassis, the rear roller carrying
+   its share of the weight, the policy off), then the 10-24 bench set:
+   `drivetrain_bench.py creep` at 0.5-1 % diff both ways (filmed if the
+   tape still shows) and `map` at P 4000. Gives the loaded detent
+   (friction, sawtooth size, its phase against the hung one: backlash
+   shows as a shift) and how a loaded roller's slop sits in it, which is
+   what the floor twin flies. Also settles item 6's backlash question.
 
 ## The tool
 
@@ -619,8 +722,13 @@ were for a bike that did not exist. Now:
   A/B swap, in one change (either alone breaks the sideways sign).
 - The drivetrain as re-measured in test 3: Coulomb (coast: ~0.16-0.18
   common, 0.114 diff per servo, the sides now equal), the detent as
-  calibrated against the jump sizes, the roller centring spring (~1e-2
-  N m/rad against the 1e-3 GUESS); the mount from test 5 if it is ever run.
+  calibrated against the jump sizes (the best-effort set in Next: flat
+  friction, sawtooth; its kinetic fraction 0.15 is a fitted GUESS;
+  `traces/drivetrain/drivetrain_sawtooth_1024.yaml` holds it with the
+  roller spring), the roller centring spring (~1e-2 N m/rad against the
+  1e-3 GUESS; x10 cut `smooth_temporal`'s chatter score 0.818 -> 0.598 in
+  `slop_sensitivity.py`, so check chatter after); the mount from test 5
+  if it is ever run.
 - Train with `steer_rate_encoder: counts` (the pointer did not).
 
 Each moves the plant digest, so every policy becomes provisional at once;
