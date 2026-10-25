@@ -16,7 +16,7 @@
 
 meta:
   rig: rear_assembly_hand_held   # 2x XC430-W150 -> 45T/15T belts -> differential -> omni wheel, wheel in the air
-  servo_ids: [101, 102]          # A, B
+  servo_ids: [101, 102]          # A, B on this bench; on the assembled bike 102 is A (2026-10-24, onboard.yaml)
   firmware: 50                   # XC430 numbering, the latest build; unrelated to the XC330's 50
   factory_gains: {velocity_p: 100, velocity_i: 1920}
   profile_velocity: 0

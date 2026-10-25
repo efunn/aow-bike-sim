@@ -336,8 +336,12 @@ def test_the_default_sign_is_inert():
 
 
 def test_the_configured_sign_is_the_measured_one():
+    # Per servo, not per role: the sign belongs to the horn, and the roles
+    # swapped on the assembled bike (2026-10-24, onboard.yaml) while each
+    # servo's mounting did not.
     cfg = load_params()["control"]["onboard"]
-    assert list(cfg["servo_sign"]) == [1, -1], (
+    per_id = dict(zip(cfg["servo_ids"][:2], cfg["servo_sign"]))
+    assert per_id == {101: 1, 102: -1}, (
         "if the build changes, re-measure with `analysis/servo/drivetrain_bench.py "
         "jog` and update BOTH this and drivetrain-measurements.yaml")
 

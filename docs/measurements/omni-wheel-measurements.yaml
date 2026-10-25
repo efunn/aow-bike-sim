@@ -70,8 +70,16 @@ section_4_gear_train:
     roller_gear_teeth: 20                # int
     # -> k_roller = (48/12) * (12/20) = 2.4  roller rev per ring rev, both relative to hub
     # note: spin direction changes if wheel is flipped (just put 1 here for now, will test more)
-    spin_direction_sign: 1               # int — +1 or -1, from the hand-turn observation
-    sign_observation: ""                 # str — what you held / turned / saw
+    spin_direction_sign: -1              # int — +1 or -1, from the hand-turn observation
+    sign_observation: >                  # str — what you held / turned / saw
+      2026-10-24, assembled bike held upright on the floor, one drive servo
+      forward at a time: the LEFT input (servo 101, ring gear 1 side) rolls the
+      wheel forward and slides the rear LEFT; the right input slides it right.
+      The model with k_roller +2.4 and ring gear 1 = input A = left slides it
+      right, so the sign is -1. NOT yet in bike_params (k_roller still +2.4,
+      every policy trained on it); config/onboard.yaml swaps drive_a/drive_b
+      to compensate. At the next retrain: k_roller -2.4 and revert that swap,
+      together.
   differential:
     hub_constraint: "hub (carrier) = (ring1_abs + ring2_abs) / 2"   # structural, no teeth involved
     # -> config/bike_params.yaml drivetrain mixing (input A/B = ring gear 1/2 shafts, 1:1):

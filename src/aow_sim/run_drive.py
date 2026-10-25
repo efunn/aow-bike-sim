@@ -570,10 +570,12 @@ def main() -> None:
                          "if nothing else asks for it. e.g. 400:3840")
     ap.add_argument("--drive-friction", default=None, metavar="A[:B]",
                     help="the drive servos' Coulomb friction in N.m at the "
-                         "input shaft, one number for both or A:B per side "
-                         "(servo 101 : 102), PINNED for the session over the "
+                         "input shaft, one number for both or A:B per ROLE "
+                         "(drive_a : drive_b -- on the assembled bike servo "
+                         "102 : 101, the RIGHT then the left; onboard.yaml), "
+                         "PINNED for the session over the "
                          "policy's training value (bike_params: 0.15). The "
-                         "bench coast-downs fit 0.16:0.21 "
+                         "09-13 bench coast-downs fit 0.16:0.21 as 101:102 "
                          "(docs/plans/drivetrain-model.md). Implies the "
                          "drivetrain if nothing else asks for it. "
                          "e.g. 0.16:0.21")

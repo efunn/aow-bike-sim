@@ -7,14 +7,15 @@
 # The two USB devices, as /dev/serial/by-id/ paths (ttyUSB0 / ttyACM0 follow
 # enumeration order and can swap). --port and --ahrs-port override them for
 # one session.
-dxl_port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTB8HNE3-if00-port0
+dxl_port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTB8HMQ3-if00-port0
 ahrs_port: /dev/serial/by-id/usb-STMicroelectronics_STM32_Virtual_ComPort_338139793235-if00
 # Which way each drive servo turns for a positive input-shaft rotation.
 # Measured 2026-09-13 on the rear drivetrain
 # (docs/measurements/drivetrain-measurements.yaml): both horns face outboard,
-# so servo B is mirrored. Applied in BikeBus, the one boundary between the
-# servo frame and the model's.
-servo_sign: [1, -1]
+# so the two are mirrored: the LEFT servo (101) +1, the RIGHT (102) -1.
+# Applied in BikeBus, the one boundary between the servo frame and the model's.
+# Per ROLE [drive_a, drive_b], so it swaps with servo_ids below.
+servo_sign: [-1, 1]
 # Which way the steer servo turns for a positive steer (the model's +steer is
 # left, counter-clockwise from above). Observed 2026-10-21: hand-steering left
 # showed the mirror's wheel turning right until this was -1. A horn facing
@@ -24,7 +25,17 @@ steer_sign: -1           # source: measured -- hand-steer vs the mirror
 # The three servos the policy drives: drive_a, drive_b, steer (--ids
 # overrides). 101-103 rather than 1-3: a new Dynamixel ships as ID 1, so an
 # ID 1 on the bus is an unconfigured unit, which bring-up refuses.
-servo_ids: [101, 102, 103]
+#
+# drive_a is the RIGHT servo (102), not the left. Measured 2026-10-24 on the
+# assembled bike, held upright on the floor, one servo forward at a time: the
+# left servo (101) rolls the wheel forward and slides the rear LEFT; the
+# model's drive_a alone slides it RIGHT (the omni rollers follow
+# ring-vs-hub, i.e. (a - b) / 2). The plant's error is the sign of k_roller
+# (omni-wheel-measurements.yaml, spin_direction_sign); fixing it there moves
+# the plant digest, so it waits for a retrain -- and this swap must be
+# reverted in the same change. Records before
+# 2026-10-24 have 101 as drive_a; each run's meta `roles` says which.
+servo_ids: [102, 101, 103]
 # The self-righting servo; omit it for a three-servo bench. It shares the
 # SyncRead/SyncWrite but is driven by hand, not by the policy
 # (docs/plans/self-righting.md).

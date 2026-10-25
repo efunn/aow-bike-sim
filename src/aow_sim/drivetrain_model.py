@@ -486,8 +486,10 @@ class DrivetrainSim:
             # detent and for the same reason: a MuJoCo frictionloss on these
             # joints creeps (solreffriction 0.02) and gives no static floor,
             # and without one the detent never stalls a 1 % creep.
-            # One number, or [side a, side b]: servo 102's side measures ~25 %
-            # stiffer, and a pair is how that asymmetry gets into the plant.
+            # One number, or [side a, side b]: servo 102's side measured ~25 %
+            # stiffer on the 09-13 bench, and a pair is how that asymmetry gets
+            # into the plant. a/b are ROLES: on the assembled bike drive_a is
+            # servo 102, the right side (onboard.yaml, 2026-10-24).
             fc = s["coulomb_friction"]
             fc = (fc, fc) if isinstance(fc, (int, float)) else tuple(fc)
             self.fc_in = (float(fc[0]) / self.belt, float(fc[1]) / self.belt)
