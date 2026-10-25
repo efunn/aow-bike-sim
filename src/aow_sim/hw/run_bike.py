@@ -57,6 +57,7 @@ from collections import deque
 
 from ..params import load_params
 from ..control.drive import DriveController
+from ..control.flick import move_path
 from ..control.recovery import HANDOFF_RATE, RECOVER_DEG, ready_for_policy
 from . import telemetry
 from .bench_log import RunRecorder, new_capture_dir
@@ -432,8 +433,17 @@ class BikeRunner:
                  steer_zero=None, allow_guess_mount: bool = False,
                  record: bool = True, tag: str | None = None,
                  link_wait: float = 0.0, pack_warn_v: float = PACK_WARN_V,
-                 pack_cut_v: float = PACK_CUT_V):
+                 pack_cut_v: float = PACK_CUT_V, move: str | None = None,
+                 hold: bool = False):
         self.params = load_params()
+        # HOLD MODE (--hold): every servo torqued, drives at zero velocity,
+        # steer held where it is, and the policy never engages. For the tests
+        # that want the bike locked rather than balancing (a traction pull, a
+        # drop with the drives stiff). Enter / Y re-captures the pose and
+        # holds it; Backspace goes limp.
+        self.hold = bool(hold)
+        self._holding = False
+        self._hold_steer = 0.0
         self.pack = PackMonitor(pack_warn_v, pack_cut_v)
         self.bundle_path = bundle_path
         self.record, self.tag = bool(record), tag
@@ -460,7 +470,14 @@ class BikeRunner:
         self.require_link = bool(require_link)
         # WHICH policy, resolved HERE rather than at engage time, because the
         # firmware gains have to follow it and they are written before torque.
-        self.gen_name = self.params["control"].get("general_move", "general_rl")
+        # `move` (--move) overrides control.general_move for one session, so
+        # flying another policy is not an edit to bike_params on the Pi.
+        self.gen_name = move or self.params["control"].get("general_move",
+                                                           "general_rl")
+        # Checked here, before torque: a typo would otherwise fail only at
+        # the first engage, after the firmware gains fell back to factory.
+        if move and not move_path(move, suffix=".npz").exists():
+            raise SystemExit(f"--move {move}: no {move_path(move, suffix='.npz')}")
         gains, self.gain_note = resolve_gains(self.params, self.gen_name,
                                               override=servo_gains)
         # control_hz reaches the bus, and that is not cosmetic: RateFilter
@@ -694,8 +711,11 @@ class BikeRunner:
         -- it is a separate bus transaction, so sending it every tick would put
         an operator-scale knob on the control path.
         """
-        self._rearm_from(c.get("rearm_n"))
-        self._stop_from(c.get("stop_n"))
+        if self.hold:
+            self._hold_from(c.get("rearm_n"), c.get("stop_n"))
+        else:
+            self._rearm_from(c.get("rearm_n"))
+            self._stop_from(c.get("stop_n"))
         if not self.bus.id_right:
             return
         if "righting_rad" in c:
@@ -703,6 +723,69 @@ class BikeRunner:
         want = c.get("righting_current")
         if want is not None and want != self._righting_current:
             self._righting_current = self.bus.set_righting_current(int(want))
+
+    def _stow_if_unset(self) -> None:
+        """At an engage, send the wings to stow if nobody has commanded them.
+
+        Without this the righting servo holds wherever torque found it, and
+        the bike is started lying on a wing: run 261024-191558 flew 84 s with
+        the crank 21.8 deg off stow and no goal ever sent. At the ENGAGE, not
+        at startup, because at startup the bike is lying on that wing and
+        retracting it there would shove the bike over. Once the station has
+        sent a goal it owns the wings and this does nothing."""
+        if not self.bus.id_right or self.bus._righting_goal is not None:
+            return
+        cfg = ((self.params.get("control") or {}).get("onboard") or {})
+        stow = np.radians(float(cfg.get("righting_stow_deg", 180.0)))
+        self.bus.set_righting(stow)
+        self._event("righting", f"wings to stow ({np.degrees(stow):.0f} deg): "
+                                "none commanded yet")
+
+    def _hold_on(self) -> None:
+        """Lock all three policy servos at the pose they are in now."""
+        if self._pack_low or self._servo_fault:
+            self._event("hold", "hold refused: "
+                        + ("pack cut" if self._pack_low else "servo fault"))
+            return
+        self._hold_steer = float(self.data.qpos[self.ctl._sj])
+        if self.torque:
+            self.bus.arm(self.bus.policy_ids)
+        self._holding = True
+        self._event("hold", f"HOLD: drives at 0, steer held at "
+                    f"{np.degrees(self._hold_steer):+.1f} deg"
+                    + ("" if self.torque else " (no torque: still limp)"))
+
+    def _hold_cut(self) -> None:
+        """A pack cut or a servo fault ends a hold, as it ends an engage.
+        Needed because `guard.cut_now()` only drops torque from ENGAGED, and
+        a hold is never engaged."""
+        if self._holding and (self._pack_low or self._servo_fault):
+            if self.torque:
+                self.bus.torque(False, self.bus.policy_ids)
+            self._holding = False
+            self._event("cut", "HOLD released: "
+                        + ("pack cut" if self._pack_low else "servo fault"))
+
+    def _hold_from(self, rearm_n, stop_n) -> None:
+        """--hold's keys, press counts judged as `_rearm_from` judges them:
+        engage re-captures and holds, disengage goes limp."""
+        peer = self.link.peer
+        for n, attr, act in ((rearm_n, "_rearm_seen", "hold"),
+                             (stop_n, "_stop_seen", "limp")):
+            if n is None:
+                continue
+            seen = getattr(self, attr)
+            if seen is not None and seen[0] == peer and n != seen[1] \
+                    and not self._link_lost:
+                if act == "hold":
+                    self._hold_on()
+                else:
+                    if self.torque:
+                        self.bus.torque(False, self.bus.policy_ids)
+                    self._holding = False
+                    self._event("standby", "LIMP: drives and steer off "
+                                "(--hold; Enter / Y holds again)")
+            setattr(self, attr, (peer, n))
 
     def _rearm_from(self, n) -> None:
         """Consent arrives as a COUNT of presses (`OperatorState.rearms`); a
@@ -747,6 +830,9 @@ class BikeRunner:
         """A standing warning, or None: the pack below warn but not yet cut
         (once cut, `hold` says it). The level behind the one-off PACK LOW
         message, which the station shows for 5 s and then drops."""
+        if getattr(self, "hold", False):
+            return ("HOLD MODE: policy disabled; servos "
+                    + ("locked" if self._holding else "limp"))
         if self.pack.warned and not self._pack_low:
             return (f"pack low: {self.pack.v:.1f} V < {self.pack.warn_v:.1f} V"
                     f" ({self.pack.cut_v:.1f} V min)")
@@ -962,6 +1048,7 @@ class BikeRunner:
                                "once upright and still")
         elif event == "rearm":
             self._engage(fresh_read=False)   # this tick already sensed
+            self._stow_if_unset()
             # ONLY WITH --torque. This armed unconditionally until 2026-09-18,
             # so `r` after a cut ENERGISED a --no-torque session -- the one
             # mode whose whole promise is that nothing can move.
@@ -1165,10 +1252,11 @@ class BikeRunner:
         # the policy waits for the operator's engage (Enter / Y), through the
         # same gate as a re-arm (upright, still, consent). --no-link has no
         # operator to ask, so it engages at once as before.
-        standby = self.require_link
+        standby = self.require_link or self.hold
         print(f"pack {voltage:.1f} V — general policy {self.gen_name} at "
               f"{1/self.dt:.0f} Hz, "
-              + ("STANDBY: Enter / Y on the station engages" if standby
+              + ("HOLD MODE: policy never engages" if self.hold
+                 else "STANDBY: Enter / Y on the station engages" if standby
                  else "engaging (--no-link)"))
         print(f"  {self.gain_note}")
         print(f"  pack: warn below {self.pack.warn_v:.1f} V, cut below "
@@ -1184,6 +1272,10 @@ class BikeRunner:
             self.guard.standby()
         if self.torque and voltage < self.pack.cut_v:
             print(f"pack {voltage:.1f} V is below the cut -- NOT arming")
+        elif self.hold:
+            if self.torque and self.bus.id_right:
+                self.bus.arm((self.bus.id_right,))
+            self._hold_on()
         elif self.torque and standby:
             # Only the righting servo: it holds the wings and takes the
             # triggers in standby. The policy's three wait for the engage.
@@ -1191,6 +1283,7 @@ class BikeRunner:
                 self.bus.arm((self.bus.id_right,))
         elif self.torque:
             self.bus.arm()                   # <- the first torque of the run
+            self._stow_if_unset()            # --no-link: this IS the engage
         else:
             # EVERY OTHER PART OF THE TICK STILL RUNS. Goal writes are simply
             # discarded by a servo with torque off (measured, see
@@ -1243,6 +1336,7 @@ class BikeRunner:
                 break
             self._watch_link()
             self._watch_errors()
+            self._hold_cut()
 
             # The fall guard runs on the SENSED state and before the
             # controller, so a tick that starts on the bike's side never
@@ -1258,6 +1352,15 @@ class BikeRunner:
                 t_w = time.perf_counter()
                 self.bus.write_commands(self.data.ctrl, self.aid)
                 write_s = time.perf_counter() - t_w
+            elif self._holding:
+                c, a = self.data.ctrl, self.aid
+                c[a["drive_a"]] = c[a["drive_b"]] = 0.0
+                c[a["steer"]] = self._hold_steer
+                t_w = time.perf_counter()
+                self.bus.write_commands(c, a)
+                write_s = time.perf_counter() - t_w
+            else:
+                self.bus.write_righting()
 
             # EVERY TICK since 2026-09-16, was every other one. The old
             # comment here said building a dict the link would not send was
@@ -1350,6 +1453,7 @@ class BikeRunner:
             "gains_applied": self.bus.gains_applied,
             "steer_zero_rad": self.bus.steer_zero,
             "torque": self.torque,
+            "hold": self.hold,
             "states": list(STATES),
             # The whole config the run was taken under, so a param that moved
             # afterwards cannot quietly reinterpret it.
@@ -1639,6 +1743,15 @@ def main() -> None:
                          "tick goes to traces/bike/<stamp>_run[_tag]/ on the "
                          "Pi -- a bench_log capture, see RunRecorder")
     ap.add_argument("--tag", help="suffix for the record's directory name")
+    ap.add_argument("--hold", action="store_true",
+                    help="lock the servos instead of balancing: drives hold "
+                         "zero velocity, steer holds its angle, the policy "
+                         "never engages. Enter / Y re-captures and holds, "
+                         "Backspace goes limp. With --bench, add --torque")
+    ap.add_argument("--move", metavar="NAME",
+                    help="the general policy to fly this session, a moves/ "
+                         "name (e.g. general_puffer_rake20_80M). Default: "
+                         "control.general_move. Its firmware gains follow it")
     ap.add_argument("--pack-warn", type=float, default=PACK_WARN_V,
                     metavar="V", help=f"warn below V (default {PACK_WARN_V})")
     ap.add_argument("--pack-cut", type=float, default=PACK_CUT_V, metavar="V",
@@ -1666,6 +1779,7 @@ def main() -> None:
                record=not args.no_record, tag=args.tag,
                link_wait=args.link_wait,
                pack_warn_v=args.pack_warn, pack_cut_v=args.pack_cut,
+               move=args.move, hold=args.hold,
     ).run(preflight=not args.no_preflight)
 
 

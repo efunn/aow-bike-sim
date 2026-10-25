@@ -610,6 +610,18 @@ class BikeBus:
         next SyncWrite; None (the startup state) leaves it out entirely."""
         self._righting_goal = None if goal_rad is None else float(goal_rad)
 
+    def write_righting(self) -> None:
+        """The righting goal ALONE, for the ticks with no `write_commands`
+        (standby, cut). Until 2026-10-24 those ticks wrote nothing, so the
+        wings ignored the station everywhere but under the policy -- the one
+        state the righting servo is documented as live in was standby."""
+        if not self.id_right or self._righting_goal is None:
+            return
+        right_rad = clamp_extended(self._righting_goal)
+        self.last_goal = {self.id_right: right_rad}
+        self._dxl.write_frame({self.id_right: int(round(right_rad * XC330_COUNTS_PER_RAD))},
+                              encode=False)
+
     def set_righting_current(self, counts: int) -> int:
         """Goal Current(102) on the righting servo, its torque cap, in RAW
         counts, clamped to Current Limit; returns the value written.

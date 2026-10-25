@@ -563,8 +563,12 @@ from aow_sim.hw import run_bike as RB
 class _Bus:
     policy_ids = (1, 2, 3)
 
-    def __init__(self):
+    def __init__(self, id_right=None):
         self.calls = []
+        self.id_right, self._righting_goal = id_right, None
+
+    def set_righting(self, goal):
+        self._righting_goal = goal
 
     def torque(self, on, ids=None):
         self.calls.append(("torque", on, ids))
@@ -589,6 +593,8 @@ def _runner(torque=True, age=0.0):
                         _event=lambda kind, text: said.append((kind, text)))
     r._engage = lambda fresh_read=True: r.bus.calls.append(("engage", fresh_read))
     r._hold_reason = lambda: RB.BikeRunner._hold_reason(r)
+    r.params = {"control": {"onboard": {"righting_stow_deg": 180.0}}}
+    r._stow_if_unset = RB.BikeRunner._stow_if_unset.__get__(r)
     return r
 
 
@@ -1244,3 +1250,85 @@ def test_only_a_wire_failure_is_ridden_out():
     RB.BikeRunner._read_servos(r)
     with pytest.raises(RuntimeError, match="refused"):
         RB.BikeRunner._read_servos(r)
+
+
+# --- --hold: servos locked, no policy -------------------------------------
+
+def _holder(torque=True):
+    r = _runner(torque=torque)
+    r.hold, r._holding, r._hold_steer = True, False, 0.0
+    r.guard.standby()                           # as run() leaves it
+    r.ctl = SimpleNamespace(_sj=7)
+    r.data = SimpleNamespace(qpos=np.zeros(8))
+    r._rearm_seen = r._stop_seen = (r.link.peer, 0)
+    for name in ("_hold_on", "_hold_cut"):
+        setattr(r, name, getattr(RB.BikeRunner, name).__get__(r))
+    return r
+
+
+def test_hold_locks_at_the_current_steer_and_engage_recaptures_it():
+    r = _holder()
+    r.data.qpos[7] = 0.3
+    r._hold_on()
+    assert r._holding and r._hold_steer == 0.3
+    assert ("arm", r.bus.policy_ids) in r.bus.calls
+    r.data.qpos[7] = -1.2                       # the steer moved
+    RB.BikeRunner._hold_from(r, 1, 0)           # Enter / Y -> re-capture
+    assert r._hold_steer == -1.2
+    assert r.guard.state != "engaged", "a hold never hands over to the policy"
+
+
+def test_disengage_in_hold_goes_limp_and_engage_holds_again():
+    r = _holder()
+    r._hold_on()
+    RB.BikeRunner._hold_from(r, 0, 1)           # Backspace
+    assert not r._holding
+    assert ("torque", False, r.bus.policy_ids) in r.bus.calls
+    RB.BikeRunner._hold_from(r, 1, 1)           # Enter / Y
+    assert r._holding
+
+
+def test_a_pack_cut_releases_a_hold_and_blocks_a_new_one():
+    """`guard.cut_now()` only drops torque from ENGAGED; a hold is never
+    engaged, so the cut has to be handled for it separately."""
+    r = _holder()
+    r._hold_on()
+    r._pack_low = True
+    r._hold_cut()
+    assert not r._holding
+    assert r.bus.calls[-1] == ("torque", False, r.bus.policy_ids)
+    r._hold_on()
+    assert not r._holding
+    assert r.said[-1][1].startswith("hold refused")
+
+
+def test_hold_without_torque_arms_nothing():
+    r = _holder(torque=False)
+    r._hold_on()
+    assert not [c for c in r.bus.calls if c[0] == "arm"]
+
+
+# --- the wings at an engage -----------------------------------------------
+
+def test_an_engage_sends_uncommanded_wings_to_stow():
+    """Run 261024-191558 flew 84 s with the crank 21.8 deg off stow: the bike
+    is started lying on a wing and no goal was ever sent, so the servo held
+    where torque found it."""
+    r = _runner(torque=True)
+    r.bus = _Bus(id_right=4)
+    RB.BikeRunner._on_guard_event(r, "rearm")
+    assert r.bus._righting_goal == pytest.approx(math.pi)
+
+
+def test_an_engage_leaves_wings_the_station_has_commanded():
+    r = _runner(torque=True)
+    r.bus = _Bus(id_right=4)
+    r.bus.set_righting(2.5)
+    RB.BikeRunner._on_guard_event(r, "rearm")
+    assert r.bus._righting_goal == 2.5
+
+
+def test_no_righting_servo_no_stow():
+    r = _runner(torque=True)
+    RB.BikeRunner._on_guard_event(r, "rearm")
+    assert r.bus._righting_goal is None

@@ -522,3 +522,27 @@ def test_an_onboard_xc330_gain_is_refused():
     p["control"]["onboard"]["gains"] = {"steer": {"Position P Gain": 800}}
     with pytest.raises(ValueError, match="plant's"):
         resolve_gains(p)
+
+
+def test_the_righting_goal_goes_out_alone_when_nothing_else_is_written():
+    """Standby and cut ticks have no `write_commands`. Until 2026-10-24 they
+    wrote nothing at all, so the wings ignored the station everywhere but
+    under the policy. `write_righting` is that tick's SyncWrite: the
+    righting servo's goal, nobody else's."""
+    b = BikeBus(load_params(), ids=(1, 2, 3), righting_id=4)
+    sent = {}
+
+    class FakeWriter:
+        def clearParam(self): sent.clear()
+        def addParam(self, i, data):
+            sent[i] = int.from_bytes(bytes(data), "little", signed=True)
+            return True
+        def txPacket(self): return 0
+
+    b._dxl._map, b._dxl._writer = b._build_map(), FakeWriter()
+    b.write_righting()
+    assert sent == {}, "never commanded: nothing goes out"
+    b.set_righting(1.0)
+    b.write_righting()
+    assert list(sent) == [4]
+    assert sent[4] == round(1.0 * XC330_COUNTS_PER_RAD)

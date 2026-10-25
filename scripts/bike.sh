@@ -3,6 +3,7 @@
 #
 #   ./scripts/bike.sh sync                 # code + deploy/ to the Pi; deletes nothing there
 #   ./scripts/bike.sh bench                # run_bike --bench: torque OFF, mount accepted
+#   ./scripts/bike.sh hold                 # every servo torqued and LOCKED, no policy
 #   ./scripts/bike.sh run [run_bike args]  # run_bike with whatever flags you give it
 #   ./scripts/bike.sh mirror [args]        # the MuJoCo station, here (run in your own Terminal)
 #   ./scripts/bike.sh status               # is run_bike up, which ports, is the bundle in step
@@ -179,6 +180,10 @@ case "$cmd" in
     "$0" status
     ;;
   bench) run_bike --bench "$@" ;;
+  # --hold: drives at zero velocity, steer at its angle, wings live, the
+  # policy never engages. Enter / Y on the station re-captures, Backspace
+  # goes limp. For a traction pull or a drop with the drives stiff.
+  hold)  run_bike --bench --torque --hold "$@" ;;
   run)   run_bike "$@" ;;
   mirror) exec mjpython -m aow_sim.run_drive --mirror "$PI_NAME" "$@" ;;
   status)
