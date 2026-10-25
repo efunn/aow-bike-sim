@@ -11,6 +11,13 @@ copy of its equations.
     python analysis/servo/drivetrain_fit.py                    # every section
     python analysis/servo/drivetrain_fit.py controller coast detent
     python analysis/servo/drivetrain_fit.py replay --caps 260913-013646_chirp
+    python analysis/servo/drivetrain_fit.py --session 261025   # a later session's captures
+
+`--session PREFIX` swaps every section's captures for the ones under
+traces/drivetrain/ whose names start with PREFIX, by kind (the name's
+suffix): reversal/chirp/step for `controller`, the last coast for `coast`,
+creep for `detent`, chirp/reversal/creep for `replay`. Without it the
+sections read the 2026-09-13 bench set the config was fitted to.
 
   controller  Present PWM regressed on (v_ref - LPF(w), integral(v_ref) - theta)
               per firmware gain setting, over a grid of command delay and
@@ -22,6 +29,11 @@ copy of its equations.
               DIRECTION: the conservative part is what the two directions share
               in sign, the dissipative part what flips with it.
   replay      the closed-loop check described above.
+  map         the static push against angle from `drivetrain_bench.py map`:
+              each held step's duty at rest, out and back, split into friction
+              ((out - back) / 2) and the part that depends on angle alone
+              ((out + back) / 2), with each one's strongest period. Taken at
+              rest, so the creep's stick-slip sawtooth is not in it.
 
 Reads traces/drivetrain/ (gitignored, Dropbox-synced). Writes nothing.
 """
@@ -51,6 +63,19 @@ CONTROLLER_CAPS = ("260913-001336_reversal", "260913-011952_reversal",
 REPLAY_CAPS = ("260913-001455_chirp", "260913-014930_chirp",
                "260913-013646_chirp", "260913-134255_chirp",
                "260913-011952_reversal", "260913-133208_creep")
+
+
+def _session(prefix, *kinds):
+    """Capture names under TRACES starting with `prefix`, of these kinds."""
+    names = sorted(p.name for p in TRACES.iterdir()
+                   if p.name.startswith(prefix) and p.name.rsplit("_", 1)[-1] in kinds)
+    if not names:
+        raise SystemExit(f"--session {prefix}: no {'/'.join(kinds)} capture in {TRACES}")
+    return tuple(names)
+
+
+def _caps(args, default, *kinds):
+    return _session(args.session, *kinds) if getattr(args, "session", None) else default
 
 
 def _load(name):
@@ -89,9 +114,9 @@ def _lp(x, dt, tau):
 
 # -- controller --------------------------------------------------------------
 
-def controller(_args):
+def controller(args):
     data = []
-    for name in CONTROLLER_CAPS:
+    for name in _caps(args, CONTROLLER_CAPS, "reversal", "chirp", "step"):
         cap = _load(name)
         kinds = np.array([s["info"].get("kind", "") for s in cap.meta["segments"]])
         for sid in cap.ids:
@@ -152,9 +177,9 @@ def controller(_args):
 
 # -- coast -------------------------------------------------------------------
 
-def coast(_args):
+def coast(args):
     from scipy.optimize import least_squares
-    cap = _load("260913-001639_coast")
+    cap = _load(_caps(args, ("260913-001639_coast",), "coast")[-1])
     segs, sg = cap.meta["segments"], cap.arrays["segment"]
 
     def sim(p, duty, on, dt):
@@ -198,11 +223,11 @@ def coast(_args):
 
 # -- detent ------------------------------------------------------------------
 
-def detent(_args):
+def detent(args):
     period, nb = 7.5, 15
     print(f"detent: diff push (duty per servo, in the push direction) folded onto "
           f"{period} deg of ring-vs-hub, {nb} bins")
-    for name in ("260913-012157_creep", "260913-013834_creep"):
+    for name in _caps(args, ("260913-012157_creep", "260913-013834_creep"), "creep"):
         cap = _load(name)
         sa, sb = cap.meta["signs"]
         A, B = cap.ids
@@ -358,16 +383,52 @@ def replay(args):
                 print(f"    creep {inf['mode']} {inf['frac']:+.2f} {gain:<10s} " + " | ".join(cells))
 
 
-SECTIONS = {"controller": controller, "coast": coast, "detent": detent, "replay": replay}
+def static_map(args):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from drivetrain_bench import map_profile
+    for name in _caps(args, (), "map"):
+        cap = _load(name)
+        print(f"map {name}: duty at rest, + = the + direction of each mode")
+        for mode in ("diff", "common"):
+            prof = map_profile(cap, mode)
+            if not len(prof[1]) or not len(prof[-1]):
+                continue
+            o_, b_ = (prof[d][np.argsort(prof[d][:, 0])] for d in (1, -1))
+            lo, hi = max(o_[0, 0], b_[0, 0]), min(o_[-1, 0], b_[-1, 0])
+            g = np.arange(lo, hi, 0.25)
+            o, b = np.interp(g, *o_.T), np.interp(g, *b_.T)
+            fr, an = (o - b) / 2, (o + b) / 2
+
+            def period(x):
+                x = x - x.mean()
+                X = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+                c = np.fft.rfftfreq(len(x), 0.25)
+                m = (c > 1 / max(hi - lo, 1.0)) & (c < 1 / 1.5)
+                return 1 / c[m][np.argmax(X[m])] if m.any() else float("nan")
+            print(f"  {mode:6s} {hi - lo:5.1f} deg covered | friction mean {fr.mean():.3f} "
+                  f"(p-p {np.ptp(fr):.3f}, period {period(fr):4.1f} deg) | angle-only "
+                  f"p-p {np.ptp(an):.3f} sd {an.std():.3f} (period {period(an):4.1f} deg)")
+            step = max(1, len(g) // 30)
+            print("    angle " + " ".join(f"{x:6.1f}" for x in g[::step]))
+            print("    fric  " + " ".join(f"{x:6.3f}" for x in fr[::step]))
+            print("    angle-only " + " ".join(f"{x:+6.3f}" for x in (an - an.mean())[::step]))
+
+
+SECTIONS = {"controller": controller, "coast": coast, "detent": detent, "replay": replay,
+            "map": static_map}
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("sections", nargs="*", choices=list(SECTIONS) + [[]],
-                    default=list(SECTIONS))
-    ap.add_argument("--caps", nargs="+", default=list(REPLAY_CAPS),
-                    help="captures for `replay`")
+                    default=["controller", "coast", "detent", "replay"])
+    ap.add_argument("--caps", nargs="+", default=None,
+                    help="captures for `replay` (default: the 09-13 set, or "
+                         "--session's)")
+    ap.add_argument("--session", metavar="PREFIX",
+                    help="fit the captures whose names start with PREFIX "
+                         "(e.g. a date, 261025) instead of the 09-13 bench set")
     ap.add_argument("--no-slop", action="store_true",
                     help="replay without roller slop")
     ap.add_argument("--update-every", type=int, default=0, metavar="N",
@@ -376,7 +437,10 @@ def main():
                     metavar="N.M", help="coulomb_friction per servo, one value "
                     "or servo 101 then 102")
     args = ap.parse_args()
-    for s in args.sections or SECTIONS:
+    sections = args.sections or ("controller", "coast", "detent", "replay")
+    if args.caps is None and "replay" in sections:
+        args.caps = list(_caps(args, REPLAY_CAPS, "chirp", "reversal", "creep"))
+    for s in sections:
         SECTIONS[s](args)
         print()
 
