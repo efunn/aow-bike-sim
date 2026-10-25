@@ -1186,3 +1186,61 @@ def test_a_disengage_press_stands_the_bike_down_and_limps_the_policy():
     assert r.said[-1][0] == "standby"
     RB.BikeRunner._stop_from(r, 2)                  # already down: no torque call
     assert r.bus.calls == [("torque", False, (1, 2, 3))]
+
+
+def _reading_runner(script):
+    """A runner whose bus answers from `script`: a state dict, or an
+    exception to raise. Only what `_read_servos` touches."""
+    from aow_sim.hw.dynamixel import BusReadError  # noqa: F401
+    said, answers = [], iter(script)
+
+    def read_state():
+        a = next(answers)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    bus = SimpleNamespace(read_state=read_state, to_controller_units=lambda s: s)
+    return SimpleNamespace(bus=bus, _last_servos=None, _bad_reads=0,
+                           _bad_reads_total=0, _read_ok=True, said=said,
+                           _event=lambda kind, text: said.append((kind, text)))
+
+
+def test_one_bad_read_holds_the_last_state_and_says_so():
+    """One corrupt status packet (rc=-3002, seen on the bike 2026-10-24) used
+    to end the session. Now it repeats the last good state at the nominal
+    period, marks the tick not-ok for the record, and the next good read
+    clears the run of failures."""
+    from aow_sim.hw.dynamixel import BusReadError
+    good1, good2 = {"dt": 0.010, "steer_pos": 0.1}, {"dt": 0.020, "steer_pos": 0.2}
+    r = _reading_runner([good1, BusReadError("SyncRead failed: rc=-3002"), good2])
+    assert RB.BikeRunner._read_servos(r) is good1 and r._read_ok
+    held = RB.BikeRunner._read_servos(r)
+    assert held == {**good1, "dt": None} and not r._read_ok
+    assert r.said[-1][0] == "bus" and "rc=-3002" in r.said[-1][1]
+    assert RB.BikeRunner._read_servos(r) is good2 and r._read_ok
+    assert (r._bad_reads, r._bad_reads_total) == (0, 1)
+
+
+def test_a_failing_bus_still_stops_the_session():
+    """More than BAD_READS_MAX in a row is a bus problem, not a packet, and a
+    failure before any good read has nothing to hold: both raise."""
+    from aow_sim.hw.dynamixel import BusReadError
+    bad = BusReadError("SyncRead failed: rc=-3001")
+    r = _reading_runner([{"dt": 0.01}] + [bad] * (RB.BAD_READS_MAX + 1))
+    RB.BikeRunner._read_servos(r)
+    for _ in range(RB.BAD_READS_MAX):
+        RB.BikeRunner._read_servos(r)
+    with pytest.raises(BusReadError, match="in a row"):
+        RB.BikeRunner._read_servos(r)
+    with pytest.raises(BusReadError):
+        RB.BikeRunner._read_servos(_reading_runner([bad]))
+
+
+def test_only_a_wire_failure_is_ridden_out():
+    """A configuration error is still a RuntimeError that is not a
+    BusReadError, and must not be swallowed as a bad packet."""
+    r = _reading_runner([{"dt": 0.01}, RuntimeError("SyncWrite refused id 3")])
+    RB.BikeRunner._read_servos(r)
+    with pytest.raises(RuntimeError, match="refused"):
+        RB.BikeRunner._read_servos(r)

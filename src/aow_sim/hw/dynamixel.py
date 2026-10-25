@@ -25,6 +25,13 @@ from .control_table import (INDIRECT_ADDRESS_1, INDIRECT_DATA_1,  # noqa: F401
 
 PROTOCOL = 2.0
 
+
+class BusReadError(RuntimeError):
+    """A frame's read failed on the wire (a corrupt or missing status
+    packet), as opposed to a configuration error. Separate so a caller can
+    ride out one without catching every RuntimeError: seen on the assembled
+    bike as `rc=-3002` (COMM_RX_CORRUPT) partway through a run, 2026-10-24."""
+
 # Firmware floor per model (table stem). Below it the part fails SILENTLY:
 # XC330 firmware 50 has a smaller indirect address range (53 expanded it to
 # the X430's), so it echoes the indirect address writes back correctly and
@@ -598,11 +605,11 @@ class DynamixelBus:
         rc = (self._reader.fastSyncRead() if self._fast
               else self._reader.txRxPacket())
         if rc != 0:
-            raise RuntimeError(f"SyncRead failed: rc={rc}")
+            raise BusReadError(f"SyncRead failed: rc={rc}")
         imap, reader, out = self._map, self._reader, {}
         for i, plan in self._read_plan.items():
             if not reader.isAvailable(i, imap.read_addr, imap.read_len):
-                raise RuntimeError(f"no data for id {i}")
+                raise BusReadError(f"no data for id {i}")
             row = {}
             for label, addr, reg in plan:
                 raw = reader.getData(i, addr, reg.size)

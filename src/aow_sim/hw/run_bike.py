@@ -63,6 +63,7 @@ from .bench_log import RunRecorder, new_capture_dir
 from .ahrs import (QOS_LIMITED, QOS_MIN_SERVICE, QOS_NAMES, QOS_UNKNOWN,
                    AhrsReader, MountCalibration)
 from .bike_bus import CONTROL_HZ_DEFAULT, BikeBus, resolve_gains
+from .dynamixel import BusReadError
 from .odometry import VelocityEstimator, body_to_world
 from .state import HardwareData, load_ahrs_mount, load_bundle
 
@@ -73,6 +74,11 @@ PACK_WARN_V = 10.5        # 3.5 V/cell on 3S -> say so, once
 PACK_CUT_V = 9.9          # 3.3 V/cell -> cut and hold. Pack total — see note
 PACK_TAU_S = 2.0          # low-pass on the per-tick max servo reading
 LINK_WAIT_S = 30.0        # how long to wait for the ground station before giving up
+# Consecutive failed servo reads ridden out by holding the last state. One
+# corrupt status packet used to end the session (rc=-3002 on the assembled
+# bike, 2026-10-24); three in a row (30 ms at 100 Hz, well inside
+# CMD_STALE_S) is a failing bus rather than a bad packet, and stops it.
+BAD_READS_MAX = 3
 # Where the onboard record goes: traces/ is gitignored and Dropbox-synced on
 # the laptop, and the drivetrain bench captures already live beside it.
 RECORD_ROOT = Path(__file__).resolve().parents[3] / "traces" / "bike"
@@ -530,6 +536,10 @@ class BikeRunner:
         self._late: list = []
         self._roll = self._roll_rate = self._yaw = 0.0
         self._dt_meas = self.dt
+        self._last_servos = None          # the last good read, for _read_servos
+        self._bad_reads = 0               # in a row
+        self._bad_reads_total = 0
+        self._read_ok = True              # this tick's read; the record's `ok`
         self._righting_current = None
         # Preflight findings whose KIND may be accepted without disarming the
         # rest of preflight. See _report_preflight.
@@ -562,7 +572,7 @@ class BikeRunner:
         back to the nominal period on the first tick (no previous stamp) or if
         the delta looks implausible.
         """
-        s = self.bus.to_controller_units(self.bus.read_state())
+        s = self._read_servos()
         a = self.ahrs.latest()
 
         dt = s["dt"] if s["dt"] and 0.2 * self.dt < s["dt"] < 5 * self.dt else self.dt
@@ -598,6 +608,32 @@ class BikeRunner:
         self._qos = a.qos
         self._accel = a.accel
         self._health = s["health"]
+
+    def _read_servos(self) -> dict:
+        """One servo read in controller units, riding out a bad frame.
+
+        A failed read (`BusReadError`) repeats the last good state with the
+        nominal period -- velocities held, positions frozen for a tick, which
+        the next good read's Realtime Tick delta spans -- and says so. More
+        than BAD_READS_MAX in a row, or a failure before any good read,
+        stops the session as before."""
+        try:
+            s = self.bus.to_controller_units(self.bus.read_state())
+        except BusReadError as e:
+            self._bad_reads += 1
+            self._bad_reads_total += 1
+            self._read_ok = False
+            if self._last_servos is None or self._bad_reads > BAD_READS_MAX:
+                raise BusReadError(f"{self._bad_reads} bad servo read(s) in a "
+                                   f"row, last: {e}") from e
+            self._event("bus", f"bad servo read ({e}): holding the last state "
+                               f"({self._bad_reads} in a row, "
+                               f"{self._bad_reads_total} this run)")
+            return {**self._last_servos, "dt": None}
+        self._bad_reads = 0
+        self._read_ok = True
+        self._last_servos = s
+        return s
 
     def _estimate(self) -> None:
         """This tick's sensor sample -> `self.est` -> the velocity in `data`.
@@ -1325,7 +1361,10 @@ class BikeRunner:
                      voltage: float) -> None:
         c, a = self.data.ctrl, self.aid
         st = self.guard.state
-        self.rec.add(t_host, dict(self.bus.last_raw), cmd=self.bus.last_goal,
+        # A ridden-out bad read is recorded as one (`ok` False, raw blank),
+        # not as the stale registers it held.
+        raw = dict(self.bus.last_raw) if self._read_ok else None
+        self.rec.add(t_host, raw, cmd=self.bus.last_goal,
                      read_s=self.bus.last_read_s, write_s=write_s, bike={
             "t": self.data.time,
             "state": STATES.index(st) if st in STATES else -1,
@@ -1357,7 +1396,8 @@ class BikeRunner:
         finally:
             if self.rec is not None:
                 try:
-                    d = self.rec.close(stopped_by=self._stopped_by)
+                    d = self.rec.close(stopped_by=self._stopped_by,
+                                       bad_reads=self._bad_reads_total)
                     _say(f"record: {self.rec.n} ticks -> {d}")
                 except Exception as e:       # noqa: BLE001 -- never mask the stop
                     _say(f"record: close failed ({e}); rows.bin left in "
