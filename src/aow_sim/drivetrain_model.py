@@ -42,6 +42,28 @@ has its own evidence:
                not), so it gives back over a notch what it takes. The 10-24
                static map of the reassembled bike (physical-bike-tests.md,
                test 3) read ~+-0.09 duty of it per 7.5 deg, ~0.1 N m here.
+               `detent.hill_shape: sawtooth` is the shape that map read once
+               the film showed no stretch: one straight ramp per period,
+               falling from +hill_nm just past the friction peak to -hill_nm
+               just before the next, and a flip back at the peak. It pushes
+               AWAY from the peak on both sides, so the shaft is repelled from
+               the detent and rests only midway between two. The flip is a
+               jump (`hill_flip_deg` 0, the default) or a straight line over
+               that many degrees; a smooth flip would be the only part of the
+               cycle that attracts, and the bike shows no such resting point.
+               `hill_phase_deg` moves either shape by that fraction of a
+               period (360 = one notch); at 0 both repel from the peak.
+               Two friction options, both 1 (off) by default:
+               `kinetic_fraction` is sliding friction over sticking -- once
+               the stick breaks it slides at that fraction until the spring
+               relaxes below it, which is what lets a released shaft coast
+               past the next notch (the map measures sticking only);
+               `friction_minus_scale` is the friction against - motion over
+               that against + (the P 4000 map: ~1.15 total, - needs more).
+               `hill_offset_nm` (0) is a constant angle-only push on top,
+               i.e. a sawtooth with unequal ends (+A+c / -A+c). A static map
+               cannot tell it from `friction_minus_scale`: both read as
+               (out + back)/2 != 0. They differ while sliding.
   roller_slop  Each rigid roller equality becomes a tendon
                (roller_spin_i - k_roller * ring_spin) with a weak centring
                spring and hard limits at the ends of the measured play. Pure
@@ -516,7 +538,13 @@ class DrivetrainSim:
             self.c_stick = float(d["stick_damping"])
             self.hill = float(d.get("hill_nm", 0.0))
             self.hill_phase = math.radians(float(d.get("hill_phase_deg", 0.0)))
+            self.hill_saw = {"sine": False, "sawtooth": True}[d.get("hill_shape", "sine")]
+            self.hill_flip = math.radians(float(d.get("hill_flip_deg", 0.0)))
+            self.hill_offset = float(d.get("hill_offset_nm", 0.0))
             self.hill_force = 0.0
+            self.kinetic = float(d.get("kinetic_fraction", 1.0))
+            self.minus_scale = float(d.get("friction_minus_scale", 1.0))
+            self._sliding = False
             # ring-vs-hub = ring_abs - hub, both linear in the inputs; the
             # same coefficients map a force on it back onto the inputs.
             dt = params["drivetrain"]
@@ -576,6 +604,7 @@ class DrivetrainSim:
             self._anchor = (self.ga * float(data.qpos[self.in_q[0]])
                             + self.gb * float(data.qpos[self.in_q[1]]))
             self.detent_force = 0.0
+            self._sliding = False
         data.qfrc_applied[self.in_d[0]] = 0.0
         data.qfrc_applied[self.in_d[1]] = 0.0
         self._t_last = float(data.time)
@@ -652,19 +681,44 @@ class DrivetrainSim:
                 limit = self.fmax * c * c
                 vphi = ga * float(qvel[self.in_d[0]]) + gb * float(qvel[self.in_d[1]])
                 q = -self.k_stick * (phi - self._anchor) - self.c_stick * vphi
+                if q > 0.0:                 # resisting - motion
+                    limit *= self.minus_scale
+                if self._sliding:
+                    limit *= self.kinetic
                 if q > limit or q < -limit:
-                    # Slipping: kinetic = static, and the anchor is dragged so
-                    # the spring sits exactly at the limit.
+                    # Slipping: the anchor is dragged so the spring sits
+                    # exactly at the limit (kinetic once sliding).
+                    if not self._sliding:
+                        self._sliding = True
+                        limit *= self.kinetic
                     q = limit if q > 0.0 else -limit
                     self._anchor = phi + q / self.k_stick
+                else:
+                    self._sliding = False
             else:
                 self._anchor = phi
+                self._sliding = False
             self.detent_force = q
-            if self.hill:
+            if self.hill and self.hill_saw:
+                # Same frame as the friction's x: the flip at the peak.
+                P = self.period
+                xh = ((phi - self.phase - self.hill_phase * P / (2.0 * math.pi))
+                      % P - 0.5 * P)
+                w = self.hill_flip
+                if w > 0.0 and abs(xh) < 0.5 * w:
+                    # Straight through the flip, meeting the ramp at its edges.
+                    h = self.hill * (2.0 * xh / w) * (1.0 - w / P)
+                else:
+                    h = self.hill * ((1.0 if xh > 0.0 else -1.0) - 2.0 * xh / P)
+                self.hill_force = h
+                q += h
+            elif self.hill:
                 h = -self.hill * math.sin(2.0 * math.pi * (phi - self.phase)
                                           / self.period + self.hill_phase)
                 self.hill_force = h
                 q += h
+            if self.hill_offset:
+                q += self.hill_offset
             fric[0] += ga * q
             fric[1] += gb * q
         if self.servo or self.detent:

@@ -415,3 +415,127 @@ def test_the_hill_depends_on_angle_alone_and_gives_back_what_it_takes(params):
     assert np.allclose(forces[3.0], forces[-3.0]), "the hill must not see velocity"
     assert abs(forces[3.0].mean()) < 1e-9
     assert np.isclose(np.abs(forces[3.0]).max(), 0.1, rtol=0.01)
+
+
+def _hill_at(p, offsets, w=3.0):
+    """hill_force at ring-vs-hub = phase + offset (radians), shaft at w."""
+    m = build_model(p, variant="testbed")
+    d = mujoco.MjData(m)
+    sim = dm.DrivetrainSim.attach(m, p)
+    sim.reset(d)
+    qa, qb = sim.in_q
+    da, db = sim.in_d
+    g2 = sim.ga ** 2 + sim.gb ** 2
+    out = []
+    for k, x in enumerate(offsets):
+        phi = sim.phase + x
+        d.qpos[qa], d.qpos[qb] = sim.ga * phi / g2, sim.gb * phi / g2
+        d.qvel[da], d.qvel[db] = sim.ga * w, sim.gb * w
+        d.time = 1.0 + k
+        sim.pre_step(d)
+        out.append(sim.hill_force)
+    return sim, np.array(out)
+
+
+def test_the_sawtooth_hill_repels_from_the_friction_peak(params):
+    """hill_shape sawtooth: flips at the friction peak (phase + period/2),
+    pushing away from it on both sides; one falling ramp elsewhere, so the
+    only rest is midway between peaks; angle-only and zero on average."""
+    p = _with_hill(params, 0.1)
+    p[dm.KEY]["detent"]["friction"] = 0.0
+    p[dm.KEY]["detent"]["hill_shape"] = "sawtooth"
+    P = math.radians(p[dm.KEY]["detent"]["period_deg"]["value"]
+                     if isinstance(p[dm.KEY]["detent"]["period_deg"], dict)
+                     else p[dm.KEY]["detent"]["period_deg"])
+    e = 1e-4
+    _, h = _hill_at(p, [0.5 * P - e, 0.5 * P + e, 0.0, P - e])
+    assert h[0] == pytest.approx(-0.1, abs=1e-3), "just before the peak: pushed back"
+    assert h[1] == pytest.approx(+0.1, abs=1e-3), "just past it: pushed on"
+    assert abs(h[2]) < 1e-3, "midway between peaks: no push"
+    xs = P * (np.arange(256) + 0.5) / 256
+    _, fwd = _hill_at(p, xs, +3.0)
+    _, back = _hill_at(p, xs, -3.0)
+    assert np.allclose(fwd, back)
+    assert abs(fwd.mean()) < 1e-9
+    steps = np.diff(fwd)
+    assert np.sum(steps > 0) == 1, "falls everywhere but the one flip"
+
+
+def test_a_finite_sawtooth_flip_is_a_straight_line_that_meets_the_ramp(params):
+    p = _with_hill(params, 0.1)
+    p[dm.KEY]["detent"]["friction"] = 0.0
+    p[dm.KEY]["detent"]["hill_shape"] = "sawtooth"
+    p[dm.KEY]["detent"]["hill_flip_deg"] = 2.0
+    sim, _ = _hill_at(p, [0.0])
+    w = math.radians(2.0)
+    xs = 0.5 * sim.period + np.linspace(-0.6 * w, 0.6 * w, 241)
+    _, h = _hill_at(p, xs)
+    assert np.max(np.abs(np.diff(h))) < 0.1 * 4 * (xs[1] - xs[0]) / w, "no jump"
+    assert h[120] == pytest.approx(0.0, abs=1e-9)
+
+
+def _flat_friction(params, **detent):
+    p = _with_hill(params, 0.0)
+    p[dm.KEY]["detent"].update(friction=0.1, width_deg=1000.0, **detent)
+    return p
+
+
+def _push(p, offsets):
+    """detent_force with ring-vs-hub stepped through phase + offsets, at rest."""
+    m = build_model(p, variant="testbed")
+    d = mujoco.MjData(m)
+    sim = dm.DrivetrainSim.attach(m, p)
+    qa, qb = sim.in_q
+    g2 = sim.ga ** 2 + sim.gb ** 2
+    out = []
+    for k, x in enumerate(offsets):
+        phi = sim.phase + x
+        d.qpos[qa], d.qpos[qb] = sim.ga * phi / g2, sim.gb * phi / g2
+        d.qvel[:] = 0.0
+        d.time = 1.0 + k
+        if k == 0:
+            sim.reset(d)
+        sim.pre_step(d)
+        out.append(sim.detent_force)
+    return np.array(out)
+
+
+def test_kinetic_fraction_slides_below_the_sticking_limit_then_resticks(params):
+    """Once the stick breaks the friction drops to kinetic_fraction of it, and
+    holds there while sliding; backing off re-sticks at the full limit."""
+    # 1000 N m/rad stick spring: 0.1 N m breaks after 1e-4 rad.
+    fwd = list(np.linspace(0.0, 1e-3, 21))
+    back = list(1e-3 - np.linspace(0.0, 1.5e-4, 7)[1:])
+    f = _push(_flat_friction(params, kinetic_fraction=0.4), fwd + back)
+    n = len(fwd)
+    assert np.abs(f[:n]).max() <= 0.1 * 1.001
+    assert f[n - 1] == pytest.approx(-0.04, rel=2e-3), "sliding at the kinetic level"
+    assert f[n:].max() > 0.04 * 1.5, "stuck again: the full limit holds it"
+    same = _push(_flat_friction(params), fwd)
+    assert same[-1] == pytest.approx(-0.1, rel=2e-3), "kinetic 1 is the old model"
+
+
+def test_friction_minus_scale_scales_only_the_friction_against_minus_motion(params):
+    xs = np.linspace(0.0, 1e-3, 21)
+    p = _flat_friction(params, friction_minus_scale=1.3)
+    assert _push(p, xs)[-1] == pytest.approx(-0.1, rel=2e-3)
+    assert _push(p, -xs)[-1] == pytest.approx(+0.13, rel=2e-3)
+
+
+def test_hill_offset_is_a_constant_angle_only_push(params):
+    """hill_offset_nm shifts the sawtooth by a constant: ends +A+c and -A+c,
+    mean c, the same whichever way the shaft turns."""
+    p = _with_hill(params, 0.1)
+    p[dm.KEY]["detent"].update(friction=0.0, hill_shape="sawtooth", hill_offset_nm=0.02)
+    xs = math.radians(7.5) * (np.arange(256) + 0.5) / 256
+    sim, fwd = _hill_at(p, xs, +3.0)
+    _, back = _hill_at(p, xs, -3.0)
+    # hill_force is the sawtooth alone; the offset lands in the applied force
+    assert np.allclose(fwd, back) and abs(fwd.mean()) < 1e-9
+    m = build_model(p, variant="testbed")
+    d = mujoco.MjData(m)
+    s = dm.DrivetrainSim.attach(m, p)
+    s.reset(d)
+    s.pre_step(d)
+    total = d.qfrc_applied[s.in_d[0]] / s.ga
+    assert total == pytest.approx(s.hill_force + 0.02, abs=1e-9)
