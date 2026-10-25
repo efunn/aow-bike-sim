@@ -1,0 +1,304 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diff Detent Traces</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<!-- Written by analysis/policy/drivetrain_trace.py --page; edit this template, not the page. -->
+<style>
+/* A bench-notebook strip chart: two columns (sim | bike), each a short roll trace over a tall wrapped roller trace. */
+:root {
+  --bg: #f5f6f4; --panel: #ffffff; --ink: #1d2226; --muted: #646d73; --rule: #d6dbd9; --grid: #e7eae8;
+  --top: #9aa4a8; --trough: #c4cbcd; --noslop: #1d2226; --cmd: #2a6fc9; --loaded: #d0532a; --focus: #2a6fc9;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; --grid: #262c30;
+    --top: #6c777d; --trough: #434c52; --noslop: #e3e7e9; --cmd: #6aa5f0; --loaded: #f07a50; --focus: #6aa5f0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; --grid: #262c30;
+  --top: #6c777d; --trough: #434c52; --noslop: #e3e7e9; --cmd: #6aa5f0; --loaded: #f07a50; --focus: #6aa5f0; color-scheme: dark;
+}
+body {
+  margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 14px;
+  padding: 20px max(16px, env(safe-area-inset-right, 0px)) 32px max(16px, env(safe-area-inset-left, 0px));
+}
+.wrap { max-width: 1500px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: grid; gap: 6px; }
+h1 { font-family: var(--f-display); font-weight: 600; font-size: 26px; margin: 0; letter-spacing: 0.01em; }
+.sub, .note { color: var(--muted); line-height: 1.5; margin: 0; max-width: 110ch; }
+.note { font-size: 12.5px; }
+code { font-family: var(--f-mono); font-size: 12.5px; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; padding: 10px 14px;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; }
+.controls label { display: inline-flex; gap: 7px; align-items: center; }
+.k { font-family: var(--f-display); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; color: var(--muted); }
+select, input[type=checkbox], input[type=range] { accent-color: var(--cmd); font: inherit; }
+select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; max-width: 100%; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.swatch { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; }
+.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+@media (max-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.col { min-width: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 12px 10px; display: grid; gap: 6px; }
+.colhead { display: flex; gap: 6px 12px; align-items: baseline; min-width: 0; }
+.colhead select { flex: 1 1 0; min-width: 0; text-overflow: ellipsis; }
+.col h2 { font-family: var(--f-display); font-weight: 600; font-size: 16px; margin: 0; }
+.meta { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.scrub { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center;
+  font-family: var(--f-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.scrub input { width: 100%; }
+.ptitle { font-family: var(--f-display); font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 4px; }
+/* the parts of uPlot's stylesheet this page uses (only its script comes from the CDN) */
+.uplot, .uplot *, .uplot *::before, .uplot *::after { box-sizing: border-box; }
+.uplot { font-family: var(--f-mono); font-size: 11px; line-height: 1.4; width: min-content; max-width: 100%; }
+.uplot canvas { display: block; position: relative; width: 100%; height: 100%; }
+.u-wrap { position: relative; user-select: none; }
+.u-over, .u-under { position: absolute; }
+.u-under { overflow: hidden; }
+.u-axis { position: absolute; }
+.u-select { background: color-mix(in srgb, var(--cmd) 14%, transparent); position: absolute; pointer-events: none; }
+.u-cursor-x, .u-cursor-y { position: absolute; left: 0; top: 0; pointer-events: none; will-change: transform; }
+.u-hz .u-cursor-x { height: 100%; border-right: 1px dashed var(--muted); }
+.u-hz .u-cursor-y { width: 100%; border-bottom: 1px dashed var(--muted); }
+.u-cursor-pt { position: absolute; top: 0; left: 0; border-radius: 50%; border: 0 solid; pointer-events: none; will-change: transform; background-clip: padding-box !important; }
+.u-axis.u-off, .u-select.u-off, .u-cursor-x.u-off, .u-cursor-y.u-off, .u-cursor-pt.u-off { display: none; }
+.u-off { opacity: 0.4; }
+.u-legend { font-size: 12px; display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 2px; font-variant-numeric: tabular-nums; color: var(--ink); }
+.u-legend tr { display: inline-flex; gap: 6px; align-items: center; }
+.u-legend th { font-weight: 400; display: inline-flex; gap: 6px; align-items: center; }
+.u-legend .u-marker { width: 14px; height: 3px; display: inline-block; }
+.u-legend td { min-width: 6ch; }
+.missing { padding: 24px; border: 1px dashed var(--rule); border-radius: 6px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Diff Detent Traces</h1>
+    <p class="sub">A policy standing on a zero command. The roller angle is wrapped to one roller revolution; the black line is where the rollers would be with no slop (k_roller × ring-vs-hub). Solid grey lines are the detent line, one per notch (7.5° of ring); dashed grey lines are midway. What the solid line means depends on the detent: a friction bump is where the shaft sticks, a sawtooth flip pushes it away.</p>
+  </header>
+
+  <div class="controls" role="group" aria-label="View controls">
+    <label><span class="k">Window</span>
+      <select id="win">
+        <option value="1">1 s</option><option value="2" selected>2 s</option><option value="5">5 s</option>
+        <option value="10">10 s</option><option value="20">20 s</option><option value="0">everything</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="showCmd" checked> <span class="swatch" style="border-color:var(--cmd);border-top-style:dashed"></span> commanded</label>
+    <label><input type="checkbox" id="showLoaded" checked> <span class="swatch" style="border-color:var(--loaded)"></span> roller on the floor (sim)</label>
+    <label><input type="checkbox" id="showTrough" checked> <span class="swatch" style="border-color:var(--trough);border-top-style:dashed"></span> midway lines</label>
+    <span class="note">Drag across a plot to zoom; double-click to return to the window.</span>
+  </div>
+
+  <div class="cols">
+    <section class="col" id="col-sim" aria-label="Simulation"></section>
+    <section class="col" id="col-bike" aria-label="Bike"></section>
+  </div>
+
+  <p class="note" id="foot"></p>
+</div>
+
+<script id="data" type="application/json">/*DATA*/</script>
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
+<script>
+(function () {
+  const raw = document.getElementById("data").textContent;
+  if (raw.trim() === "/*" + "DATA*/") {      // split so the generator's substitution skips it
+    document.querySelector(".cols").innerHTML = '<div class="missing">This is the template. Render the page with <code>python analysis/policy/drivetrain_trace.py --page</code>.</div>';
+    return;
+  }
+  if (typeof uPlot === "undefined") {
+    document.querySelector(".cols").innerHTML = '<div class="missing">The plotting library (uPlot, from cdn.jsdelivr.net) did not load. This page needs a network connection the first time.</div>';
+    return;
+  }
+  const D = JSON.parse(raw);
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  document.getElementById("foot").innerHTML = D.foot;
+  // ONE fixed roll range for every dataset, so the columns compare directly
+  // and zooming never rescales it: +-(99.9th percentile of |roll|), rounded up
+  const rollAbs = [];
+  [...Object.values(D.sims), ...Object.values(D.bikes)].forEach((S) =>
+    S.roll.forEach((v) => v !== null && rollAbs.push(Math.abs(v))));
+  rollAbs.sort((a, b) => a - b);
+  const ROLL = Math.ceil(rollAbs[Math.floor(0.999 * (rollAbs.length - 1))] || 1);
+
+  // Wrap a series to [0, 360) and list where its line must break: a wrap,
+  // or for the loaded roller a hand-off to another roller (a jump over
+  // 60 deg). Every sample is kept as logged; the line is drawn by its own
+  // path that lifts the pen at a break or a missing value, so no point is
+  // added, dropped or interpolated. (Clipping the stretch between two
+  // samples, uPlot's `gaps`, left full-height slivers: at 100 Hz a wrap is
+  // a ~3 px wide, near-vertical segment and its stroke overhangs the clip.)
+  function wrapped(y, handoff) {
+    const w = y.map((v) => v === null ? null : ((v % 360) + 360) % 360);
+    const breaks = new Set();
+    for (let i = 1; i < w.length; i++) {
+      if (w[i - 1] === null || w[i] === null) continue;
+      const d = Math.abs(w[i] - w[i - 1]);
+      if (d > 180 || (handoff && Math.min(d, 360 - d) > 60)) breaks.add(i);
+    }
+    return { w, breaks };
+  }
+
+  function brokenLine(breaks) {
+    return (u, sidx, i0, i1) => {
+      const xs = u.data[0], ys = u.data[sidx], stroke = new Path2D();
+      let pen = false;
+      for (let i = i0; i <= i1; i++) {
+        const y = ys[i];
+        if (y === null) { pen = false; continue; }
+        if (breaks.has(i)) pen = false;
+        const px = u.valToPos(xs[i], "x", true), py = u.valToPos(y, "y", true);
+        pen ? stroke.lineTo(px, py) : stroke.moveTo(px, py);
+        pen = true;
+      }
+      const { left, top, width, height } = u.bbox, clip = new Path2D();
+      clip.rect(left, top, width, height);
+      return { stroke, fill: null, clip, band: null, gaps: null, flags: 0 };
+    };
+  }
+
+  const show = { cmd: true, loaded: true, trough: true };
+  const fmt = (dp, unit) => (u, v) => v == null ? "–" : v.toFixed(dp) + unit;
+
+  function axis(label) {
+    return { stroke: () => css("--muted"), font: "11px " + css("--f-mono"), label,
+      labelFont: "500 11px " + css("--f-display"), labelSize: 18,
+      grid: { stroke: () => css("--grid"), width: 1 }, ticks: { stroke: () => css("--rule"), width: 1 } };
+  }
+
+  function detentHook(S) {
+    return (u) => {
+      const ctx = u.ctx, { left, top, width, height } = u.bbox, lw = devicePixelRatio;
+      ctx.save(); ctx.beginPath(); ctx.rect(left, top, width, height); ctx.clip();
+      const line = (val, color, dash) => {
+        const y = Math.round(u.valToPos(val, "y", true)) + 0.5;
+        ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.setLineDash(dash);
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + width, y); ctx.stroke();
+      };
+      for (let v = S.top - 360; v <= 720; v += D.notch) {
+        if (v >= 0 && v <= 360) line(v, css("--top"), []);
+        const m = v + D.notch / 2;
+        if (show.trough && m >= 0 && m <= 360) line(m, css("--trough"), [4 * lw, 3 * lw]);
+      }
+      ctx.restore();
+    };
+  }
+
+  const cols = {};
+
+  function column(key, el, sets) {
+    const c = { key, el, sets, plots: [] };
+    const opts = Object.entries(sets).map(([id, s]) => `<option value="${id}">${s.label}</option>`).join("");
+    el.innerHTML =
+      `<div class="colhead"><h2>${key === "sim" ? "Sim" : "Bike"}</h2>` +
+      `<select id="${key}-sel" aria-label="${key} selection">${opts}</select></div>` +
+      `<div class="meta" id="${key}-meta"></div>` +
+      `<div class="scrub"><span>start</span><input type="range" id="${key}-pos" step="0.01" aria-label="${key} window start"><span id="${key}-pos-v"></span></div>` +
+      `<div class="ptitle">roll, deg (one fixed scale for every run)</div><div id="${key}-roll"></div>` +
+      `<div class="ptitle">roller angle, wrapped to one revolution, deg</div><div id="${key}-rol"></div>`;
+    c.sel = el.querySelector(`#${key}-sel`);
+    c.pos = el.querySelector(`#${key}-pos`);
+    c.posV = el.querySelector(`#${key}-pos-v`);
+    c.sel.addEventListener("change", () => load(c, c.sel.value));
+    c.pos.addEventListener("input", () => apply(c));
+    cols[key] = c;
+    return c;
+  }
+
+  function load(c, id) {
+    const S = c.sets[id];
+    c.S = S;
+    c.plots.forEach((p) => p.destroy());
+    const t = S.t, n = t.length;
+    c.tMin = t[0]; c.tMax = t[n - 1];
+    c.pos.min = c.tMin; c.pos.max = c.tMax;
+    // a range input's value defaults to its midpoint: start a fresh column at the beginning
+    c.pos.value = c.started ? Math.max(c.tMin, Math.min(+c.pos.value, c.tMax)) : c.tMin;
+    c.started = true;
+    c.el.querySelector(`#${c.key}-meta`).innerHTML = S.meta + ` · ${(c.tMax - c.tMin).toFixed(1)} s`;
+    const width = c.el.querySelector(`#${c.key}-roll`).clientWidth || 600;
+    const cursor = { sync: { key: c.key, setSeries: false }, drag: { x: true, y: false } };
+    const uRoll = new uPlot({
+      width, height: 150, cursor, legend: { show: true },
+      scales: { x: { time: false }, y: { range: [-ROLL, ROLL] } },
+      axes: [axis("time, s"), Object.assign(axis(""), {
+        splits: () => { const st = ROLL <= 4 ? 1 : ROLL <= 10 ? 2 : 5, out = [];
+          for (let v = -Math.floor(ROLL / st) * st; v <= ROLL; v += st) out.push(v); return out; } })],
+      series: [{ label: "t", value: fmt(3, " s") }, { label: "roll", stroke: () => css("--noslop"), width: 1.4, value: fmt(2, "°") }],
+    }, [t, S.roll], c.el.querySelector(`#${c.key}-roll`));
+    const lines = [["no slop", S.noslop, false], ["commanded", S.cmd, false]];
+    if (S.loaded) lines.push(["roller on the floor", S.loaded, true]);
+    const style = {
+      "no slop": { stroke: () => css("--noslop"), width: 1.6 },
+      "commanded": { stroke: () => css("--cmd"), width: 1.3, dash: [6, 3], show: show.cmd },
+      "roller on the floor": { stroke: () => css("--loaded"), width: 2.2, show: show.loaded },
+    };
+    const series = [{ label: "t", value: fmt(3, " s") }], data = [t];
+    for (const [label, y, handoff] of lines) {
+      const { w, breaks } = wrapped(y, handoff);
+      series.push(Object.assign({ label, value: fmt(1, "°"), paths: brokenLine(breaks) }, style[label]));
+      data.push(w);
+    }
+    const uRol = new uPlot({
+      width, height: 380, cursor, legend: { show: true },
+      scales: { x: { time: false }, y: { range: [0, 360] } },
+      axes: [axis("time, s"), Object.assign(axis(""), { splits: () => [0, 45, 90, 135, 180, 225, 270, 315, 360] })],
+      series, hooks: { drawClear: [detentHook(S)] },
+    }, data, c.el.querySelector(`#${c.key}-rol`));
+    c.plots = [uRoll, uRol];
+    c.uRol = uRol;
+    const sync = uPlot.sync(c.key);
+    c.plots.forEach((p) => sync.sub(p));
+    // one x range for both panels after a drag-zoom in either
+    let busy = false;
+    c.plots.forEach((p) => {
+      p.hooks.setScale = [(u, k) => {
+        if (k !== "x" || busy) return;
+        busy = true;
+        c.plots.forEach((q) => q !== u && q.setScale("x", { min: u.scales.x.min, max: u.scales.x.max }));
+        busy = false;
+      }];
+      p.over.addEventListener("dblclick", () => apply(c));
+    });
+    apply(c);
+  }
+
+  function apply(c) {
+    const w = +document.getElementById("win").value;
+    const a = w ? Math.max(c.tMin, Math.min(+c.pos.value, c.tMax - w)) : c.tMin;
+    const b = w ? Math.min(a + w, c.tMax) : c.tMax;
+    c.pos.disabled = !w;
+    c.posV.textContent = w ? `${a.toFixed(2)}–${b.toFixed(2)} s` : "all";
+    c.plots.forEach((p) => p.setScale("x", { min: a, max: b }));
+  }
+
+  const sim = column("sim", document.getElementById("col-sim"), D.sims);
+  const bike = column("bike", document.getElementById("col-bike"), D.bikes);
+  sim.sel.value = D.default.sim; bike.sel.value = D.default.bike;
+  load(sim, D.default.sim); load(bike, D.default.bike);
+
+  document.getElementById("win").addEventListener("change", () => Object.values(cols).forEach(apply));
+  document.getElementById("showCmd").addEventListener("change", (e) => {
+    show.cmd = e.target.checked; Object.values(cols).forEach((c) => c.uRol.setSeries(2, { show: show.cmd }));
+  });
+  document.getElementById("showLoaded").addEventListener("change", (e) => {
+    show.loaded = e.target.checked; Object.values(cols).forEach((c) => c.S.loaded && c.uRol.setSeries(3, { show: show.loaded }));
+  });
+  document.getElementById("showTrough").addEventListener("change", (e) => {
+    show.trough = e.target.checked; Object.values(cols).forEach((c) => c.uRol.redraw(false));
+  });
+  const ro = new ResizeObserver(() => Object.values(cols).forEach((c) => {
+    const w = c.el.querySelector(`#${c.key}-roll`).clientWidth;
+    c.plots.forEach((p) => p.setSize({ width: w, height: p.height }));
+  }));
+  Object.values(cols).forEach((c) => ro.observe(c.el));
+  const redraw = () => Object.values(cols).forEach((c) => c.plots.forEach((p) => p.redraw(false)));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw);
+  new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>
