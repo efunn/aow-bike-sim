@@ -7,6 +7,7 @@ dof order -- and then SHUFFLED per substep, since MJWarp's order is not fixed.
   python analysis/gpu/phase2/check_gearbox.py
 """
 import argparse
+import pathlib
 
 import numpy as np
 import warp as wp
@@ -21,7 +22,10 @@ def main(ref_path):
     wp.config.quiet = True
     wp.init()
     r = np.load(ref_path, allow_pickle=True)
-    env = GeneralEnv(None, _load_rl_config(str(r["config"])))
+    cfg = pathlib.Path(str(r["config"]))
+    if not cfg.exists():          # recorded before the configs moved (2026-10-21)
+        cfg = pathlib.Path("config/rl") / cfg.name
+    env = GeneralEnv(None, _load_rl_config(str(cfg)))
     c = gg.const_from(env._gearbox[0])
     n = len(r["sub_pre_time"])
     rng = np.random.default_rng(0)

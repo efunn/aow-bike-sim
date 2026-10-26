@@ -1,7 +1,10 @@
 """`drivetrain_model.DrivetrainSim.pre_step` as a Warp kernel, one thread per
 world: the XC430 velocity loop (command and measurement delays, the velocity
 filter, PI with back-calculation anti-windup), the sticking Coulomb friction
-on each input shaft, and the differential's detent.
+on each input shaft, and the differential's detent: the friction bump, its
+kinetic fraction and handed scale, and the optional hill (sine or sawtooth,
+with its flip ramp and constant offset) -- every detent option the Python
+class has since 2026-10-25.
 
 The Python class is the reference (analysis/gpu/phase2 checks this against a
 recorded GeneralEnv run); this mirrors it line for line, in float32.
@@ -39,6 +42,13 @@ class DriveConst:
     c_stick: float
     ga: float
     gb: float
+    hill: float         # detent.hill_nm; 0 = no hill
+    hill_phase: float   # rad
+    hill_saw: int       # 1 = sawtooth, 0 = sine
+    hill_flip: float    # rad
+    hill_offset: float  # N m
+    kinetic: float      # sliding friction over sticking
+    minus_scale: float  # friction against - motion over against +
     cmd_a: int        # ctrl index of drive_a (commanded input-shaft speed)
     cmd_b: int
     motor_a: int      # ctrl index of drive_a_motor (torque)
@@ -68,6 +78,7 @@ class DriveState:
         self.phase = z(nworld)          # per-world: drawn at reset
         self.anchor = z(nworld)
         self.detent_force = z(nworld)
+        self.sliding = z(nworld, dt=int)   # the detent friction is slipping
 
 
 def const_from(sim) -> DriveConst:
@@ -76,8 +87,10 @@ def const_from(sim) -> DriveConst:
         raise NotImplementedError("the port covers servo + detent at update_every 1")
     c = DriveConst()
     for k in ("h", "belt", "stall", "w0", "kp", "ki", "vlim", "alpha", "k_in",
-              "c_in", "period", "width", "fmax", "k_stick", "c_stick", "ga", "gb"):
+              "c_in", "period", "width", "fmax", "k_stick", "c_stick", "ga", "gb",
+              "hill", "hill_phase", "hill_flip", "hill_offset", "kinetic", "minus_scale"):
         setattr(c, k, float(getattr(sim, k)))
+    c.hill_saw = int(bool(sim.hill_saw))
     c.nc, c.nm = int(sim.nc), int(sim.nm)
     c.cmd_a, c.cmd_b = (int(i) for i in sim.cmd_id)
     c.motor_a, c.motor_b = (int(i) for i in sim.motor_id)
@@ -109,6 +122,7 @@ def load_state(state: DriveState, world: int, py: dict) -> None:
     put(state.phase, py["phase"])
     put(state.anchor, py["_anchor"])
     put(state.detent_force, py["detent_force"])
+    put(state.sliding, int(py.get("_sliding", False)))
 
 
 @wp.func
@@ -163,7 +177,8 @@ def pre_step(c: DriveConst,
              s_wf: wp.array2d(dtype=float), s_fa: wp.array2d(dtype=float),
              s_duty: wp.array2d(dtype=float), fc_in: wp.array2d(dtype=float),
              supply: wp.array(dtype=float), phase: wp.array(dtype=float),
-             anchor: wp.array(dtype=float), detent_force: wp.array(dtype=float)):
+             anchor: wp.array(dtype=float), detent_force: wp.array(dtype=float),
+             sliding: wp.array(dtype=int)):
     world = wp.tid()
     kc = k_c[world]
     kc1 = (kc + 1) % c.nc
@@ -199,15 +214,44 @@ def pre_step(c: DriveConst,
         limit = c.fmax * cs * cs
         vphi = c.ga * va + c.gb * vb
         q = -c.k_stick * (phi - anchor[world]) - c.c_stick * vphi
+        if q > 0.0:                 # resisting - motion
+            limit = limit * c.minus_scale
+        if sliding[world] == 1:
+            limit = limit * c.kinetic
         if q > limit or q < -limit:
+            # slipping: the anchor dragged so the spring sits at the limit
+            # (kinetic once sliding)
+            if sliding[world] == 0:
+                sliding[world] = 1
+                limit = limit * c.kinetic
             if q > 0.0:
                 q = limit
             else:
                 q = -limit
             anchor[world] = phi + q / c.k_stick
+        else:
+            sliding[world] = 0
     else:
         anchor[world] = phi
+        sliding[world] = 0
     detent_force[world] = q
+    if c.hill != 0.0:
+        if c.hill_saw == 1:
+            # same frame as the friction's x: the flip at the peak
+            P = c.period
+            xh = phi - phase[world] - c.hill_phase * P / (2.0 * wp.pi)
+            xh = xh - P * wp.floor(xh / P) - 0.5 * P
+            w = c.hill_flip
+            if w > 0.0 and wp.abs(xh) < 0.5 * w:
+                q = q + c.hill * (2.0 * xh / w) * (1.0 - w / P)
+            else:
+                sg = float(-1.0)
+                if xh > 0.0:
+                    sg = 1.0
+                q = q + c.hill * (sg - 2.0 * xh / P)
+        else:
+            q = q - c.hill * wp.sin(2.0 * wp.pi * (phi - phase[world]) / c.period + c.hill_phase)
+    q = q + c.hill_offset
     qfrc_applied[world, c.da] = fa_ + c.ga * q
     qfrc_applied[world, c.db] = fb_ + c.gb * q
 
@@ -215,5 +259,6 @@ def pre_step(c: DriveConst,
 def launch_pre_step(c: DriveConst, s: DriveState, qpos, qvel, ctrl, qfrc_applied):
     wp.launch(pre_step, dim=qpos.shape[0], inputs=[
         c, qpos, qvel, ctrl, qfrc_applied, s.k_c, s.k_m, s.cmd, s.th, s.w, s.ref,
-        s.wf, s.fa, s.duty, s.fc_in, s.supply, s.phase, s.anchor, s.detent_force],
+        s.wf, s.fa, s.duty, s.fc_in, s.supply, s.phase, s.anchor, s.detent_force,
+        s.sliding],
         device=qpos.device)

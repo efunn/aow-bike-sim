@@ -156,6 +156,7 @@ def reset_worlds(c: ResetConst, cc: gcmd.CmdConst, done: wp.array(dtype=int),
                  s_wf: wp.array2d(dtype=float), s_fa: wp.array2d(dtype=float),
                  s_duty: wp.array2d(dtype=float), phase: wp.array(dtype=float),
                  anchor: wp.array(dtype=float), detent_force: wp.array(dtype=float),
+                 sliding: wp.array(dtype=int),
                  # odometry state
                  o_prev_ok: wp.array(dtype=int), o_rcount: wp.array(dtype=int),
                  o_lon: wp.array(dtype=float), o_lat: wp.array(dtype=float),
@@ -305,6 +306,7 @@ def reset_worlds(c: ResetConst, cc: gcmd.CmdConst, done: wp.array(dtype=int),
     phase[world] = ph
     anchor[world] = c.ga * qpos[world, c.qa] + c.gb * qpos[world, c.qb]
     detent_force[world] = 0.0
+    sliding[world] = 0
 
     # -- gearbox: the build-time static value --
     frictionloss[world, c.gb_dof] = c.gb_static

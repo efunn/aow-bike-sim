@@ -189,7 +189,7 @@ class GpuGeneralEnv:
             self.psi, self.raw_prev, self.next_resample, self.diff, self.v_cmd_w,
             self.psi_cmd, self.style, self.latch_obs, self.latch_true,
             s.k_c, s.k_m, s.cmd, s.th, s.w, s.ref, s.wf, s.fa, s.duty, s.phase,
-            s.anchor, s.detent_force,
+            s.anchor, s.detent_force, s.sliding,
             o.prev_ok, o.rcount, o.v_lon, o.v_lat,
             a.orient_err, a.gyro_bias, a.yaw_drift, a.yaw_sign, a.accel_tilt, a.u_ok,
             a.w_prev_ok, a.rate_s, a.acc_dev, a.rms, a.tau_orient, a.tau_motion],

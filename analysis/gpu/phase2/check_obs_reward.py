@@ -5,6 +5,7 @@ kernel's state comes in recorded), so the whole run is one launch.
   python analysis/gpu/phase2/check_obs_reward.py
 """
 import argparse
+import pathlib
 
 import numpy as np
 import warp as wp
@@ -17,7 +18,10 @@ def main(ref_path):
     wp.config.quiet = True
     wp.init()
     r = np.load(ref_path, allow_pickle=True)
-    env = GeneralEnv(None, _load_rl_config(str(r["config"])))
+    cfg = pathlib.Path(str(r["config"]))
+    if not cfg.exists():          # recorded before the configs moved (2026-10-21)
+        cfg = pathlib.Path("config/rl") / cfg.name
+    env = GeneralEnv(None, _load_rl_config(str(cfg)))
     c = gor.const_from(env)
     starts = list(r["starts"])
     S = env.substeps
