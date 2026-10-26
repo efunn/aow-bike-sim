@@ -14,7 +14,7 @@ drop rig or the subsystem stations.
 | balance | 14-50 s engages, mostly ended by hand; it fell a few times during the turning sessions (17:23-17:32) and once on its tether, and not in the 50 s no-input engage |
 | pivots | heading followed the station: commanded -23 -> 67 deg, flown -35 -> 68 deg |
 | standstill | about 1 m of net travel in the 50 s no-input engage (by eye), i.e. ~0.02 m/s. The odometry's 0.07 m/s median \|v\| is mostly the shake, not drift |
-| shake | a ~9 Hz oscillation in the steer target, both drive commands, roll and yaw rate; the sim has 5-25x less in that band (below) |
+| shake | a ~9 Hz oscillation in the steer target, both drive commands, roll and yaw rate; the sim has 5-25x less in that band (below). **Gone under the v4 retrain (10-26, test 9)**: roll rate 7-12 Hz 16.4 -> 4.0 deg/s against the pointer flown minutes later |
 | policy | the pointer, `general_puffer_fixes_72M`: plant bc66ca20 (before the v2 bike), steer rate from the exact joint velocity (`steer_rate_encoder` absent = `joint`), while the Pi forms it from differenced counts |
 
 **Fixed on the way, both config-only:**
@@ -1522,9 +1522,102 @@ were for a bike that did not exist. Now:
 
 Each moves the plant digest, so every policy becomes provisional at once;
 batch them. Tracked with the wheel play and the GPU status of each in
-`next-retrain.md` (10-26).
+`next-retrain.md` (10-26). **Trained 10-26** (`rl_general_v4.yaml`): the
+sawtooth overlay with the roller spring, the wheel play fit, the Pi's steer
+rate. Left out on purpose: `k_roller` + the swap revert (so old and new
+policies fly on one `onboard.yaml`) and the Coulomb (0.15 kept), the mount.
+
+### 9. Fly the v4 retrain  [DONE 10-26: the 9 Hz is gone]
+
+`general_puffer_a40_v4_80M` (trained with the sawtooth detent, the roller
+spring and the wheel play fit; `next-retrain.md`) and the pointer, back to
+back on the same floor, no inputs, each ended by the swing-sit lie-down:
+runs 261026-154111 (v4, 73 s engaged) and 261026-154338 (pointer, 55 s).
+`run_vs_sim.py` on each, the bike column (engaged stretch less 0.5 s at
+each end):
+
+| 7-12 Hz RMS | pointer 174349 (10-24) | pointer 154338 | **v4 154111** |
+|---|---|---|---|
+| roll rate, deg/s | 21.9 | 16.4 | **4.0** |
+| yaw rate, deg/s | 18.4 | 19.7 | 7.9 |
+| steer target, deg | 1.73 | 1.40 | 0.115 |
+| drive A / B command, rad/s | 4.1 / 5.8 | 3.1 / 4.9 | 0.37 / 0.63 |
+| roll-rate peak, Hz | 9.6 | 10.0 | 5.3 |
+
+Roll rate by band (Welch, 2.56 s segments), and the odometry:
+
+| | 0.5-2 Hz | 2-7 Hz | 7-12 Hz | median \|v\|, m/s | net travel |
+|---|---|---|---|---|---|
+| pointer 174349 | 7.7 | 13.3 | 21.0 | 0.074 | 0.61 m in 50 s |
+| pointer 154338 | 10.1 | 12.2 | 15.7 | 0.077 | 0.24 m in 55 s |
+| v4 154111 | 6.5 | 13.1 | 3.9 | 0.055 | 0.85 m in 73 s |
+
+- **The shake was the policy's training, not a property of the bike.** The
+  same hardware, minutes apart, 4x less roll rate and 8-12x less steer and
+  drive command in the band. Test 1's rake20 did not train on the play;
+  this one did. What is left below 7 Hz is the pointer's own (2-7 Hz equal),
+  now the biggest thing in the spectrum.
+- **The sim with the play now overstates it; without the play it matches.**
+  v4's twin (`run_vs_sim --seed N`, `--set wheel_play={}` for none), 7-12 Hz
+  RMS, seeds 0 / 1 / 2:
+
+  | | roll rate, deg/s | yaw rate, deg/s | drive A cmd, rad/s |
+  |---|---|---|---|
+  | bike 154111 | 4.0 | 7.9 | 0.37 |
+  | sim, its training plant (detent + play) | 7.8 / 7.6 / 8.1 | 9.0 / 8.5 / 9.5 | 0.99 / 0.92 / 0.82 |
+  | sim, same without the play | 3.2 / 3.3 / 3.3 | 3.9 / 4.1 / 3.9 | 0.37 / 0.38 / 0.32 |
+
+  The pointer on the play fit gives 15.1 against its bike's 16.4, so the
+  fit holds for the policies it was fitted on (the pointer and the MLP,
+  174349 / 225207) and not for one trained against it. Not tested, why:
+  three closed-loop runs of two policies do not pin play, spring and
+  damping apart, and a wall-and-spring hinge rings where real play with
+  friction in it may not. Next: refit with 154111 as a third constraint.
+- **Drift, one sample each:** the odometry puts v4 at 0.85 m net in 73 s
+  against the pointer's 0.24 in 55 s; `standstill.py` in the sim had v4
+  drifting less. Not settled by one run each; test 6 is the measurement.
+- **The swing-sit across a policy swap** (user: used at the start and end of
+  the runs, the first time with a different policy each side). The records:
+  v4 lay down at the end of its run (engaged -> sit -> lying -> cut), and the
+  pointer's process, started next, got it up from there, stopped PROPPED and
+  took the Enter hand-off (engaged at roll 1.9 deg) -- the first hand-off
+  from propped on the bike -- then lay it down again. Lie-downs clean on both:
+  peak roll rate 80 (v4) and 67 deg/s (pointer) through the hand-off.
+- **v4's own engage** is from standby in its record (no sit or propped state
+  in that process), leaning 5.4 deg: caught, with the steer to full lock both
+  ways (+-45 deg), roll -7.5..+8.3 deg and 116 deg/s in the first second.
+
+The page: `analysis/policy/plots/drivetrain_traces.html` has both runs
+(v4 beside its own plant, one sim; the pointer's three as before).
 
 ## Not tests, but now worth watching
+
+**10-26 evening, three sessions on the v4 pointer** (261026-162523,
+-163044, -163421), driving around. What the records show:
+
+- **A steer ~180 deg off is fine for the policy and was not for the
+  get-up.** In 163044 the bike fell at 34 s; propped (steer limp) the fork
+  swung from +100 to +181 deg, and the policy engaged at +196 and flew
+  68 s around +180: it sees the steer as sin/cos(2 delta), so that is
+  straight. The NEXT process (163421) read +201 at power-up, and the
+  get-up held the steer at `data.ctrl`, 0 in a fresh process, so the servo
+  drove the wheel ~200 deg back to 0 at the get-up's start. FIXED: the
+  sequence now holds the steer where it reads (`run_bike._sit_step`,
+  `test_hw_swing_sit.py`).
+- **The first get-up in 163421 fell back**: the lift (from crank +39 deg,
+  back-driven past stow while the process was down) stalled at crank -96
+  against its -110 goal with the bike at roll -16, outside the 12 deg
+  recover gate; after the 3 s `lift_timeout_s` the sequence let go
+  (current faded over 1 s, the crank sent to the rest pose 25 deg the
+  other way) and the bike dropped to -80 in 0.3 s. The auto-retry 1 s
+  later reached crank -102, roll -11.7, and propped. Both lifts went the
+  right way. Open: a lift that ends 4 deg outside the gate.
+- **Screen dim = link lost.** At 144.6 s in 163044 the station stopped
+  sending; the 1 s link cut fired at 145.5 and the bike went over onto a
+  blade (roll -36). Packets came back at 154 s, but no press after that
+  moved anything to the end of the record (204 s; further dropouts at
+  181.7 and 203.3). Why is not in the record -- run_bike's event lines
+  ("LINK BACK from ...", "... ignored -- ...") print only in its terminal.
 
 - `run_bike` rides out up to 3 bad servo reads in a row (`BAD_READS_MAX`;
   one `rc=-3002` ended a session on 10-24). The record's meta counts them

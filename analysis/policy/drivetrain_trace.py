@@ -196,7 +196,10 @@ def main():
     ap.add_argument("--page-runs", nargs="+", type=Path,
                     default=[REPO / "traces" / "bike" / r for r in
                              ("261024-174349_run", "261024-191558_run",
-                              "261025-225207_run")])
+                              "261025-225207_run", "261026-154111_run_v4_80M",
+                              "261026-154338_run_fixes_72M")])
+    ap.add_argument("--page-default", default="261026-154111_run_v4_80M",
+                    help="the bike run the page opens on (beside its policy's last sim)")
     ap.add_argument("--play", type=Path, default=None, metavar="YAML",
                     help="page only: a third sim option, the training drivetrain with "
                          "this file's `wheel_play:` block (build_model's optional play)")
@@ -521,13 +524,14 @@ def build_page(a, k, cols):
     Series are unwrapped roller degrees; the page wraps them."""
     import json
     import yaml
+    from aow_sim.control.flick import MOVES_DIR
     notch = 7.5 * k
     bench = bench_detent(a.bench_creep)
     r2 = lambda x: [None if not np.isfinite(v) else round(float(v), 2) for v in x]
     # time to the ms: the bike's samples are 7-15 ms apart, so 2 decimals
     # merged neighbours into repeated time points (199 on 174349)
     r3 = lambda x: [round(float(v), 3) for v in x]
-    bikes, sims, runs = {}, {}, {}
+    bikes, sims, runs, last = {}, {}, {}, {}
     for run in a.page_runs:
         pol, t0, dur = _longest_engage(run)
         bike = bike_trace(run, bench, t0, dur)
@@ -542,7 +546,20 @@ def build_page(a, k, cols):
             "noslop": r2(k * bike["phi"]), "cmd": r2(k * bike["cmd"])}
         runs[pol] = max(runs.get(pol, 0.0), dur)
     for pol, dur in runs.items():
-        for title, ov in cols:
+        # A policy that TRAINED on wheel play (its move records it, and
+        # run_vs_sim.sim flies it so) has one plant: the overlay and the
+        # play columns would rebuild it three times over. Its other column
+        # is that plant with the play taken out (wheel_play={} is none).
+        spec = yaml.safe_load((MOVES_DIR / f"{pol}.yaml").read_text()) or {}
+        if spec.get("wheel_play"):
+            shape = spec[dm.KEY].get("detent", {}).get("hill_shape", "sine")
+            own = [(f"its training plant ({shape} detent + wheel play, trained in)", cols[0][1]),
+                   (f"its training plant without the wheel play ({shape} detent only)",
+                    cols[0][1] + [("wheel_play", "{}")])]
+        else:
+            own = cols
+        last[pol] = own[0][0] if spec.get("wheel_play") else own[-1][0]
+        for title, ov in own:
             tr, r = fly(pol, ov, 1.0, dur, a.seed)
             step = max(1, int(round(0.01 / tr.model.opt.timestep)))
             on = r["on"][::step]
@@ -567,7 +584,7 @@ def build_page(a, k, cols):
                 "noslop": r2(np.degrees(k * r["phi_enc"][::step])),
                 "cmd": r2(np.degrees(k * r["ref_rec"][::step])), "loaded": r2(loaded)}
             print(f"  sim {pol} / {title}: {dur:.0f} s")
-    first = a.page_runs[0].name
+    first = a.page_default if a.page_default in bikes else a.page_runs[0].name
     pol0 = bikes[first]["label"].split("(")[1].rstrip(")")
     new = a.new.relative_to(REPO) if a.new.is_absolute() else a.new
     notes = [
@@ -610,6 +627,9 @@ def build_page(a, k, cols):
             "2.56 s Hann segments, a 3-bin running mean, log power over five decades, "
             "0-25 Hz; the dot is the peak above 4 Hz (below it is balance sway). The "
             "rate because the angle itself is mostly sway below 3 Hz.",
+            "<b>Roll and yaw badges.</b> Two each, of the RATE (first differences; yaw "
+            "taken the short way round its &plusmn;180&deg; wrap): this column's window "
+            "against the other's, and the whole run. No command to compare.",
             "<b>Lock the two time sliders.</b> Moving one column's start moves the other "
             "by the same offset from its own start; the phase sliders stay separate.",
             "<b>Commanded (dashed blue), roller panel.</b> Where the drive is being pulled: "
@@ -657,7 +677,7 @@ def build_page(a, k, cols):
         ]),
     ]
     data = json.dumps({"notch": notch, "k": k, "sims": sims, "bikes": bikes, "notes": notes,
-                       "default": {"sim": f"{pol0}|{cols[-1][0]}", "bike": first}},
+                       "default": {"sim": f"{pol0}|{last[pol0]}", "bike": first}},
                       separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
     tag = '<script id="data" type="application/json">'
     page = PAGE_TEMPLATE.read_text(encoding="utf-8")

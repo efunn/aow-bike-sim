@@ -84,6 +84,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 .phase input { writing-mode: vertical-lr; direction: rtl; width: 22px; height: 330px; margin: 0; }
 .lkey { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); align-items: flex-end; }
 .badges { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 2px; }
+.badges.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .badge { display: grid; gap: 2px; justify-items: end; min-width: 0; }
 .badge canvas { width: 100%; height: 70px; background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; display: block; }
 .badge span { font-family: var(--f-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -219,9 +220,12 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
   const show = { cmd: true, loaded: true };
   const fmt = (dp, unit) => (u, v) => v == null ? "–" : v.toFixed(dp) + unit;
 
+  // an unlabelled (y) axis reserves no label strip and only the tick text's
+  // width (uPlot's default is 50 px plus the label's 18)
   function axis(label) {
     return { stroke: () => css("--muted"), font: "11px " + css("--f-mono"), label,
-      labelFont: "500 11px " + css("--f-display"), labelSize: 18,
+      labelFont: "500 11px " + css("--f-display"), labelSize: label ? 18 : 0,
+      ...(label ? {} : { size: 36 }),
       grid: { stroke: () => css("--grid"), width: 1 }, ticks: { stroke: () => css("--rule"), width: 1 } };
   }
 
@@ -293,8 +297,13 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
   // whole run (fixed)
   // the two channels that carry badges: the rollers (no-slop line, its
   // command, the sim's roller on the floor) and the steer (joint, target)
-  // `raw`: the series is already a rate (no first differences)
-  const CH = { roller: { pos: "noslop", cmd: "cmd", loaded: "loaded", p: "", name: "pos" },
+  // `raw`: the series is already a rate (no first differences); `wrap`: an
+  // angle wrapped to +-180 (each difference taken the short way round).
+  // Roll and yaw have no command, so two badges: the columns' windows, and
+  // the whole run
+  const CH = { roll: { pos: "roll", cmd: null, loaded: null, p: "r", name: "rate", two: true },
+               yaw: { pos: "yaw", cmd: null, loaded: null, p: "y", name: "rate", two: true, wrap: true },
+               roller: { pos: "noslop", cmd: "cmd", loaded: "loaded", p: "", name: "pos" },
                steer: { pos: "steer", cmd: "steer_cmd", loaded: null, p: "s", name: "pos" },
                diff: { pos: "dv", cmd: "dv_cmd", loaded: null, p: "d", name: "meas", raw: true } };
   function spectra(S, lo, hi, ch) {
@@ -305,12 +314,17 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     // balance sway below 3 Hz, f^2 down on the shake
     const pick = (y) => { const a = y.slice(i0, i1).filter((v) => v !== null), r = [];
       if (ch.raw) return a.slice(1);
-      for (let i = 1; i < a.length; i++) r.push(a[i] - a[i - 1]); return r; };
+      for (let i = 1; i < a.length; i++) {
+        let d = a[i] - a[i - 1];
+        if (ch.wrap) d = ((d + 180) % 360 + 360) % 360 - 180;
+        r.push(d);
+      }
+      return r; };
     const yN = pick(S[ch.pos]);
     if (i0 < 0 || yN.length < 32) return null;
     const dts = []; for (let i = i0 + 1; i < i1; i++) dts.push(t[i] - t[i - 1]);
     dts.sort((a, b) => a - b); const dt = dts[dts.length >> 1];
-    const yC = pick(S[ch.cmd]);
+    const yC = ch.cmd ? pick(S[ch.cmd]) : [];
     // the sim's roller on the floor: its rate, with each hand-off to another
     // roller (a jump over 60 deg in one sample) taken out rather than counted
     let yL = null;
@@ -410,16 +424,18 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       const yr = yRange(ch);
       // a new selection moves the shared scale, so every badge redraws
       Object.values(cols).forEach((x) => { if (!x.uRol) return;
-        ownBadge(x, ch, "psd", x.uRol.scales.x.min, x.uRol.scales.x.max, "window", yr);
         ownBadge(x, ch, "psdall", -Infinity, Infinity, "all", yr);
-        compareBadge(x, ch, "psdpos", "position", yr); compareBadge(x, ch, "psdcmd", "command", yr); });
+        compareBadge(x, ch, "psdpos", "position", yr);
+        if (ch.two) return;
+        ownBadge(x, ch, "psd", x.uRol.scales.x.min, x.uRol.scales.x.max, "window", yr);
+        compareBadge(x, ch, "psdcmd", "command", yr); });
     }
   }
-  const badgeRow = (key, p, what) =>
-    `<div class="badges">` + [["psd", `${what} spectrum over the visible window`],
-      ["psdpos", `${what} position spectrum against the other column's window`],
+  const badgeRow = (key, p, what, two) =>
+    `<div class="badges${two ? " two" : ""}">` + [["psd", `${what} spectrum over the visible window`],
+      ["psdpos", `${what} spectrum against the other column's window`],
       ["psdcmd", `${what} command spectrum against the other column's window`],
-      ["psdall", `${what} spectrum over the whole run`]].map(([id, l]) =>
+      ["psdall", `${what} spectrum over the whole run`]].filter(([id]) => !two || id === "psdpos" || id === "psdall").map(([id, l]) =>
       `<div class="badge"><canvas id="${key}-${p}${id}" aria-label="${key} ${l}"></canvas><span id="${key}-${p}${id}-v"></span></div>`).join("") + `</div>`;
 
   const cols = {};
@@ -432,8 +448,14 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       `<select id="${key}-sel" aria-label="${key} selection">${opts}</select></div>` +
       `<div class="meta" id="${key}-meta"></div>` +
       `<div class="scrub"><span>start</span><input type="range" id="${key}-pos" step="0.01" aria-label="${key} window start"><span id="${key}-pos-v"></span></div></div>` +
-      `<div class="ptitle">roll, deg (one fixed scale for every run)</div><div id="${key}-roll"></div>` +
-      `<div class="ptitle">yaw less the commanded heading, deg</div><div id="${key}-yaw"></div>` +
+      `<div class="ptitle">roll, deg (one fixed scale for every run)</div>` +
+      `<div class="lkey"><span>roll-rate spectra 0-25 Hz, peaks above 4 Hz: window, this column (bright) · the other (dim) · whole run</span></div>` +
+      badgeRow(key, "r", "roll-rate", true) +
+      `<div id="${key}-roll"></div>` +
+      `<div class="ptitle">yaw less the commanded heading, deg</div>` +
+      `<div class="lkey"><span>yaw-rate spectra 0-25 Hz, peaks above 4 Hz: window, this column (bright) · the other (dim) · whole run</span></div>` +
+      badgeRow(key, "y", "yaw-rate", true) +
+      `<div id="${key}-yaw"></div>` +
       `<div class="ptitle">steer, deg (target dashed)</div>` +
       `<div class="lkey"><span>steer-rate spectra 0-25 Hz, peaks above 4 Hz: window · joint and target, this column (bright) · the other (dim) · whole run</span></div>` +
       badgeRow(key, "s", "steer-rate") +

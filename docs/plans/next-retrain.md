@@ -95,13 +95,21 @@ and is judged here in C MuJoCo, as every GPU run is.
    against 174349 -- the 7-12 Hz band and the badges on
    `drivetrain_traces.html`. The bar: shakes markedly less than the pointer
    does on the same plant (15.1 deg/s roll rate 7-12 Hz RMS with the play
-   fit), without giving up falls or standstill.
-5. Fly it on the bike against the pointer, no inputs, 50 s.
+   fit), without giving up falls or standstill. **Sim: 7.8 deg/s** on its
+   own plant (`run_vs_sim` on the bike run below), half the pointer's.
+   `chatter.py` not run.
+5. **Flown 2026-10-26, against the pointer back to back**
+   (`physical-bike-tests.md`, test 9): roll rate 7-12 Hz **4.0 deg/s against
+   the pointer's 16.4**, steer target and drive commands 8-12x down in the
+   band, peak 10.0 -> 5.3 Hz; 2-7 Hz unchanged. The bar is cleared on the
+   bike. Not yet: a second run for the drift (0.85 m in 73 s by the odometry, the pointer 0.24 in 55 s), the
+   steer wobble at speed, making it the pointer.
 
 ## Choices on the way
 
 - **Where the wheel play lives once adopted.** Today an env key and a
-  traces file. If a play-trained policy becomes the pointer, the play is
+  traces file. If a play-trained policy becomes the pointer (v4 now has the
+  bike result to justify it), the play is
   part of the bike and belongs in `bike_params.yaml` (`source: model`,
   "fit to floor runs 174349 / 225207"): plant_digest moves, `export_deploy`,
   and the qpos addresses `DeployModel` carries shift (the re-export covers
@@ -117,5 +125,9 @@ and is judged here in C MuJoCo, as every GPU run is.
   artifact, withdrawn.)
 - The bike sways ~2x more than the sim below 3 Hz (roll rate, diff, steer
   target), unexplained by any play tried.
+- **The play fit overstates v4's shake 2x** (`physical-bike-tests.md`,
+  test 9): 7.6-8.1 deg/s at 7-12 Hz against the bike's 4.0; without the
+  play 3.2-3.3. Refit with the v4 run before the play goes into
+  `bike_params.yaml`.
 - The sawtooth's kinetic fraction 0.15 is a fitted GUESS; the slow check
   above shows it keeps the flat friction slipping almost always once moving.
