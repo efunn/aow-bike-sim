@@ -1,15 +1,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Diff Detent Traces</title>
+<title>Drivetrain Traces</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <!-- Written by analysis/policy/drivetrain_trace.py --page; edit this template, not the page. -->
 <style>
 /* A bench-notebook strip chart: two columns (sim | bike), each short roll, steer and yaw traces over a tall wrapped roller trace.
-   Each column's selector and scrub bar stick to the top while its plots scroll under them. */
+   The view controls stick to the top, and each column's selector and scrub bar stick under them, while the plots scroll. */
 :root {
   --bg: #f5f6f4; --panel: #ffffff; --ink: #1d2226; --muted: #646d73; --rule: #d6dbd9; --grid: #e7eae8;
-  --top: #9aa4a8; --trough: #c4cbcd; --noslop: #1d2226; --cmd: #2a6fc9; --loaded: #d0532a; --focus: #2a6fc9;
+  --top: #9aa4a8; --noslop: #1d2226; --cmd: #2a6fc9; --loaded: #d0532a; --focus: #2a6fc9;
   --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
   --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -17,12 +17,12 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; --grid: #262c30;
-    --top: #6c777d; --trough: #434c52; --noslop: #e3e7e9; --cmd: #6aa5f0; --loaded: #f07a50; --focus: #6aa5f0; color-scheme: dark;
+    --top: #6c777d; --noslop: #e3e7e9; --cmd: #6aa5f0; --loaded: #f07a50; --focus: #6aa5f0; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; --grid: #262c30;
-  --top: #6c777d; --trough: #434c52; --noslop: #e3e7e9; --cmd: #6aa5f0; --loaded: #f07a50; --focus: #6aa5f0; color-scheme: dark;
+  --top: #6c777d; --noslop: #e3e7e9; --cmd: #6aa5f0; --loaded: #f07a50; --focus: #6aa5f0; color-scheme: dark;
 }
 body {
   margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 14px;
@@ -34,9 +34,12 @@ h1 { font-family: var(--f-display); font-weight: 600; font-size: 26px; margin: 0
 .sub, .note { color: var(--muted); line-height: 1.5; margin: 0; max-width: 110ch; }
 .note { font-size: 12.5px; }
 code { font-family: var(--f-mono); font-size: 12.5px; }
+.bar { position: sticky; top: 0; z-index: 6; background: var(--bg); margin: 0 -4px; padding: 6px 4px 0; }
 .controls { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; padding: 10px 14px;
   background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; }
 .controls label { display: inline-flex; gap: 7px; align-items: center; }
+.winlab input { width: 150px; }
+.winv { font-family: var(--f-mono); font-size: 12px; min-width: 8ch; font-variant-numeric: tabular-nums; }
 .k { font-family: var(--f-display); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; color: var(--muted); }
 select, input[type=checkbox], input[type=range] { accent-color: var(--cmd); font: inherit; }
 select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; max-width: 100%; }
@@ -45,7 +48,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 @media (max-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr); } }
 .col { min-width: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 12px 10px; display: grid; gap: 6px; }
-.stick { position: sticky; top: 0; z-index: 5; background: var(--panel); display: grid; gap: 6px;
+.stick { position: sticky; top: var(--bar-h, 0px); z-index: 5; background: var(--panel); display: grid; gap: 6px;
   margin: -12px -12px 0; padding: 12px 12px 8px; border-bottom: 1px solid var(--rule); border-radius: 6px 6px 0 0; }
 .colhead { display: flex; gap: 6px 12px; align-items: baseline; min-width: 0; }
 .colhead select { flex: 1 1 0; min-width: 0; text-overflow: ellipsis; }
@@ -75,34 +78,51 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 .u-legend th { font-weight: 400; display: inline-flex; gap: 6px; align-items: center; }
 .u-legend .u-marker { width: 14px; height: 3px; display: inline-block; }
 .u-legend td { min-width: 6ch; }
+.rolrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: start; }
+.phase { display: grid; justify-items: center; gap: 4px; padding-top: 6px;
+  font-family: var(--f-mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.phase input { writing-mode: vertical-lr; direction: rtl; width: 22px; height: 330px; margin: 0; }
+.lkey { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); align-items: flex-end; }
+.badges { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 2px; }
+.badge { display: grid; gap: 2px; justify-items: end; min-width: 0; }
+.badge canvas { width: 100%; height: 70px; background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; display: block; }
+.badge span { font-family: var(--f-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.notes { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 16px; }
+.notes summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.notes h3 { font-family: var(--f-display); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); margin: 14px 0 0; }
+.notes ul { margin: 6px 0 4px; padding-left: 18px; display: grid; gap: 7px; max-width: 95ch; line-height: 1.5; }
+.notes b { font-weight: 600; }
 .missing { padding: 24px; border: 1px dashed var(--rule); border-radius: 6px; color: var(--muted); }
 </style>
 
 <div class="wrap">
   <header>
-    <h1>Diff Detent Traces</h1>
-    <p class="sub">A policy standing on a zero command. Roll, steer (its target dashed) and yaw (heading, about the run's median) share each column's time axis. The roller angle is wrapped to one roller revolution; the black line is where the rollers would be with no slop (k_roller × ring-vs-hub). Solid grey lines are the detent line, one per notch (7.5° of ring); dashed grey lines are midway. What the solid line means depends on the detent: a friction bump is where the shaft sticks, a sawtooth flip pushes it away.</p>
+    <h1>Drivetrain Traces</h1>
+    <p class="sub">A policy holding a fixed heading command at zero commanded speed: its floor twin on the left, the bike on the right. Roll, yaw, steer and the rollers share each column's time axis; the roller angle is wrapped to one roller revolution. <span class="swatch" style="border-color:var(--noslop)"></span> lines are the measured values: the servo encoders and the AHRS on the bike, the joints in the sim. More detail at the bottom of the page.</p>
   </header>
 
-  <div class="controls" role="group" aria-label="View controls">
-    <label><span class="k">Window</span>
-      <select id="win">
-        <option value="1">1 s</option><option value="2" selected>2 s</option><option value="5">5 s</option>
-        <option value="10">10 s</option><option value="20">20 s</option><option value="0">everything</option>
-      </select>
+  <div class="bar" id="bar"><div class="controls" role="group" aria-label="View controls">
+    <label class="winlab"><span class="k">Window</span>
+      <input type="range" id="win" min="0" max="5" step="1" value="1" list="win-ticks" aria-label="Window length" aria-valuetext="2 s">
+      <datalist id="win-ticks"><option value="0"></option><option value="1"></option><option value="2"></option><option value="3"></option><option value="4"></option><option value="5"></option></datalist>
+      <span id="win-v" class="winv">2 s</span>
     </label>
     <label><input type="checkbox" id="showCmd" checked> <span class="swatch" style="border-color:var(--cmd);border-top-style:dashed"></span> commanded (drive, steer target)</label>
     <label><input type="checkbox" id="showLoaded" checked> <span class="swatch" style="border-color:var(--loaded)"></span> roller on the floor (sim)</label>
-    <label><input type="checkbox" id="showTrough" checked> <span class="swatch" style="border-color:var(--trough);border-top-style:dashed"></span> midway lines</label>
+    <label><input type="checkbox" id="lockT"> lock the two time sliders</label>
     <span class="note">Drag across a plot to zoom; double-click to return to the window.</span>
-  </div>
+  </div></div>
 
   <div class="cols">
     <section class="col" id="col-sim" aria-label="Simulation"></section>
     <section class="col" id="col-bike" aria-label="Bike"></section>
   </div>
 
-  <p class="note" id="foot"></p>
+  <details class="notes">
+    <summary>More info</summary>
+    <div id="notes"></div>
+  </details>
 </div>
 
 <script id="data" type="application/json">/*DATA*/</script>
@@ -120,7 +140,11 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
   }
   const D = JSON.parse(raw);
   const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  document.getElementById("foot").innerHTML = D.foot;
+  document.getElementById("notes").innerHTML = D.notes.map(([h, items]) =>
+    `<h3>${h}</h3><ul>${items.map((n) => `<li>${n}</li>`).join("")}</ul>`).join("");
+  const bar = document.getElementById("bar");
+  new ResizeObserver(() => document.documentElement.style.setProperty("--bar-h", bar.offsetHeight + "px")).observe(bar);
+  const NOTCHES = Math.round(360 / D.notch);   // whole notches in one roller turn
   // ONE fixed roll range for every dataset, so the columns compare directly
   // and zooming never rescales it: +-(99.9th percentile of |roll|), rounded up
   const rollAbs = [];
@@ -136,7 +160,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     a.sort((x, y) => x - y);
     return Math.ceil(a[Math.floor(0.999 * (a.length - 1))] || 1);
   }
-  const STEER = fixedRange(["steer", "steer_cmd"]), YAW = fixedRange(["yaw"]);
+  const STEER = fixedRange(["steer", "steer_cmd"]), YAW = fixedRange(["yaw"]), DV = fixedRange(["dv", "dv_cmd"]);
   // roll keeps its finer ticks; steer and yaw get at most two a side
   const splitsFor = (R) => () => { const st = R <= 4 ? 1 : R <= 10 ? 2 : 5, out = [];
     for (let v = -Math.floor(R / st) * st; v <= R; v += st) out.push(v); return out; };
@@ -161,8 +185,21 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     return { w, breaks };
   }
 
-  function brokenLine(breaks) {
+  // the column's roller lines, wrapped after turning them by the phase
+  // slider's whole notches (so the detent lines land on themselves)
+  function rewrap(c) {
+    const k = +c.ph.value, off = k * D.notch;
+    c.phV.textContent = `+${off.toFixed(0)}°`;
+    c.rolBreaks = []; c.rolData = [c.S.t];
+    for (const [, y, handoff] of c.rolLines) {
+      const { w, breaks } = wrapped(y.map((v) => v === null ? null : v + off), handoff);
+      c.rolData.push(w); c.rolBreaks.push(breaks);
+    }
+  }
+
+  function brokenLine(c, i) {
     return (u, sidx, i0, i1) => {
+      const breaks = c.rolBreaks[i];
       const xs = u.data[0], ys = u.data[sidx], stroke = new Path2D();
       let pen = false;
       for (let i = i0; i <= i1; i++) {
@@ -179,7 +216,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     };
   }
 
-  const show = { cmd: true, loaded: true, trough: true };
+  const show = { cmd: true, loaded: true };
   const fmt = (dp, unit) => (u, v) => v == null ? "–" : v.toFixed(dp) + unit;
 
   function axis(label) {
@@ -197,14 +234,193 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
         ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.setLineDash(dash);
         ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + width, y); ctx.stroke();
       };
-      for (let v = S.top - 360; v <= 720; v += D.notch) {
+      for (let v = S.top - 360; v <= 720; v += D.notch)
         if (v >= 0 && v <= 360) line(v, css("--top"), []);
-        const m = v + D.notch / 2;
-        if (show.trough && m >= 0 && m <= 360) line(m, css("--trough"), [4 * lw, 3 * lw]);
-      }
       ctx.restore();
     };
   }
+
+  // ---- the roller panel's spectrum badge: Welch over the visible window ----
+  function fft(re, im) {                       // in place, length a power of 2
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const a = -2 * Math.PI / len, wr = Math.cos(a), wi = Math.sin(a);
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+        for (let k = 0; k < len / 2; k++) {
+          const p = i + k, q = p + len / 2;
+          const tr = re[q] * cr - im[q] * ci, ti = re[q] * ci + im[q] * cr;
+          re[q] = re[p] - tr; im[q] = im[p] - ti; re[p] += tr; im[p] += ti;
+          [cr, ci] = [cr * wr - ci * wi, cr * wi + ci * wr];
+        }
+      }
+    }
+  }
+  // Welch, Hann, half overlap, each segment linearly detrended; the samples
+  // are taken as evenly spaced at their median interval (the bike's jitter
+  // is a few ms on 10)
+  function welch(y, dt) {
+    const L = y.length;
+    let N = 256; while (N > L && N > 64) N >>= 1;
+    const seg = Math.min(N, L), step = Math.max(1, seg >> 1), P = new Float64Array(N / 2 + 1);
+    let k = 0;
+    for (let s0 = 0; s0 + seg <= L; s0 += step, k++) {
+      const re = new Float64Array(N), im = new Float64Array(N);
+      let sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (let i = 0; i < seg; i++) { const v = y[s0 + i]; sx += i; sy += v; sxx += i * i; sxy += i * v; }
+      const b = (seg * sxy - sx * sy) / (seg * sxx - sx * sx || 1), a0 = (sy - b * sx) / seg;
+      for (let i = 0; i < seg; i++)
+        re[i] = (y[s0 + i] - a0 - b * i) * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (seg - 1)));
+      fft(re, im);
+      for (let f = 0; f <= N / 2; f++) P[f] += re[f] * re[f] + im[f] * im[f];
+    }
+    // a 3-bin running mean: a short window has one or two segments, and the
+    // raw periodogram ripples bin to bin
+    const Q = Array.from(P, (v) => v / Math.max(k, 1));
+    const sm = Q.map((v, f) => f === 0 || f === Q.length - 1 ? v : (Q[f - 1] + v + Q[f + 1]) / 3);
+    return { P: sm, df: 1 / (N * dt), segs: k };
+  }
+  const FMAX = 25;
+  // four badges per column: its visible window; the two columns' windows
+  // compared by POSITION (the no-slop line, and the sim's roller on the
+  // floor) and by COMMAND, this column's bright and the other's dim; the
+  // whole run (fixed)
+  // the two channels that carry badges: the rollers (no-slop line, its
+  // command, the sim's roller on the floor) and the steer (joint, target)
+  // `raw`: the series is already a rate (no first differences)
+  const CH = { roller: { pos: "noslop", cmd: "cmd", loaded: "loaded", p: "", name: "pos" },
+               steer: { pos: "steer", cmd: "steer_cmd", loaded: null, p: "s", name: "pos" },
+               diff: { pos: "dv", cmd: "dv_cmd", loaded: null, p: "d", name: "meas", raw: true } };
+  function spectra(S, lo, hi, ch) {
+    const t = S.t;
+    let i0 = t.findIndex((v) => v >= lo), i1 = t.length;
+    for (let i = t.length - 1; i >= 0; i--) if (t[i] <= hi) { i1 = i + 1; break; }
+    // the roller's RATE (deg/s, first differences): the angle itself is all
+    // balance sway below 3 Hz, f^2 down on the shake
+    const pick = (y) => { const a = y.slice(i0, i1).filter((v) => v !== null), r = [];
+      if (ch.raw) return a.slice(1);
+      for (let i = 1; i < a.length; i++) r.push(a[i] - a[i - 1]); return r; };
+    const yN = pick(S[ch.pos]);
+    if (i0 < 0 || yN.length < 32) return null;
+    const dts = []; for (let i = i0 + 1; i < i1; i++) dts.push(t[i] - t[i - 1]);
+    dts.sort((a, b) => a - b); const dt = dts[dts.length >> 1];
+    const yC = pick(S[ch.cmd]);
+    // the sim's roller on the floor: its rate, with each hand-off to another
+    // roller (a jump over 60 deg in one sample) taken out rather than counted
+    let yL = null;
+    if (ch.loaded && S[ch.loaded]) { yL = pick(S[ch.loaded]).map((v) => Math.abs(v) > 60 ? 0 : v); if (yL.length < 32) yL = null; }
+    return { noslop: welch(yN, dt), cmd: yC.length >= 32 ? welch(yC, dt) : null,
+             loaded: yL ? welch(yL, dt) : null };
+  }
+  function drawBadge(cv, lab, sets, caption, yr) {
+    const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+    if (!sets.length) { lab.textContent = caption([]); return; }
+    const pad = { l: 4, r: 4, t: 4, b: 14 }, w = W - pad.l - pad.r, h = H - pad.t - pad.b;
+    const fx = (f) => pad.l + w * f / FMAX;
+    // one log scale per channel for every badge in both columns (yRange), so
+    // heights compare across badges and columns
+    const [bot, top] = yr;
+    const fy = (v) => pad.t + h * (top - Math.min(top, Math.max(Math.log10(Math.max(v, 1e-30)), bot))) / (top - bot || 1);
+    ctx.font = "9px " + css("--f-mono"); ctx.fillStyle = css("--muted"); ctx.strokeStyle = css("--grid"); ctx.lineWidth = 1;
+    for (let f = 0; f <= FMAX; f += 5) {
+      const x = Math.round(fx(f)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + h); ctx.stroke();
+      ctx.textAlign = f === 0 ? "left" : f === FMAX ? "right" : "center"; ctx.fillText(String(f), x, H - 3);
+    }
+    const peaks = [];
+    // draw the dim ones first so the bright line sits on top
+    for (const { r, col, dash, alpha, peak } of [...sets].sort((a, b) => (a.alpha || 1) - (b.alpha || 1))) {
+      ctx.globalAlpha = alpha || 1;
+      ctx.strokeStyle = col; ctx.lineWidth = 1.3; ctx.setLineDash(dash || []); ctx.beginPath();
+      let pen = false;
+      r.P.forEach((v, f) => { const hz = f * r.df; if (hz < 0.5 || hz > FMAX) return;
+        const x = fx(hz), y = fy(v); pen ? ctx.lineTo(x, y) : ctx.moveTo(x, y); pen = true; });
+      ctx.stroke(); ctx.setLineDash([]);
+      if (peak) {                                  // the peak above 4 Hz: below it is balance sway
+        let best = -1;
+        r.P.forEach((v, f) => { const hz = f * r.df; if (hz >= 4 && hz <= FMAX && (best < 0 || v > r.P[best])) best = f; });
+        peaks.push([peak, best * r.df]);
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(fx(best * r.df), fy(r.P[best]), 2.5, 0, 2 * Math.PI); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    lab.textContent = caption(peaks);
+  }
+  // the shared scale: the loudest whole-run spectrum of either column on
+  // this channel, half a decade of headroom for a window's burst, five
+  // decades down (whole-run spectra cached per dataset)
+  function wholeRun(S, ch) {
+    S._sp = S._sp || {};
+    if (!(ch.p in S._sp)) S._sp[ch.p] = spectra(S, -Infinity, Infinity, ch);
+    return S._sp[ch.p];
+  }
+  function yRange(ch) {
+    let top = -Infinity;
+    for (const x of Object.values(cols)) {
+      const sp = x.S && wholeRun(x.S, ch);
+      if (!sp) continue;
+      for (const r of [sp.noslop, sp.cmd, sp.loaded]) if (r) r.P.forEach((v, f) => {
+        const hz = f * r.df; if (hz >= 0.5 && hz <= FMAX && v > 0) top = Math.max(top, Math.log10(v)); });
+    }
+    top = isFinite(top) ? top + 0.5 : 1;
+    return [top - 5, top];
+  }
+  const hz = (peaks, k) => { const p = peaks.find(([n]) => n === k); return p ? p[1].toFixed(1) : "–"; };
+  function ownBadge(c, ch, id, lo, hi, what, yr) {
+    id = ch.p + id;
+    const sp = isFinite(lo) ? spectra(c.S, lo, hi, ch) : wholeRun(c.S, ch), sets = [];
+    if (sp) {
+      sets.push({ r: sp.noslop, col: css("--noslop"), peak: "own" });
+      if (show.cmd && sp.cmd) sets.push({ r: sp.cmd, col: css("--cmd"), dash: [4, 3] });
+    }
+    drawBadge(c.el.querySelector(`#${c.key}-${id}`), c.el.querySelector(`#${c.key}-${id}-v`), sets,
+      (pk) => sp ? `${what} ${hz(pk, "own")} Hz` : "too short", yr);
+  }
+  function compareBadge(c, ch, id, what, yr) {
+    id = ch.p + id;
+    const o = Object.values(cols).find((x) => x !== c);
+    const win = (x) => x && x.uRol ? spectra(x.S, x.uRol.scales.x.min, x.uRol.scales.x.max, ch) : null;
+    const a = win(c), b = win(o), sets = [];
+    const own = { alpha: 1 }, dim = { alpha: 0.32 };
+    if (what === "position") {
+      if (b) sets.push({ r: b.noslop, col: css("--noslop"), ...dim, peak: "other" });
+      if (a) sets.push({ r: a.noslop, col: css("--noslop"), ...own, peak: "own" });
+      // the roller on the floor is the sim's only; bright in the sim column
+      const simSp = c.key === "sim" ? a : b;
+      if (show.loaded && simSp && simSp.loaded)
+        sets.push({ r: simSp.loaded, col: css("--loaded"), ...(c.key === "sim" ? own : dim) });
+    } else {
+      if (b && b.cmd) sets.push({ r: b.cmd, col: css("--cmd"), ...dim, peak: "other" });
+      if (a && a.cmd) sets.push({ r: a.cmd, col: css("--cmd"), ...own, peak: "own" });
+    }
+    const name = (x) => x.key === "sim" ? "sim" : "bike";
+    drawBadge(c.el.querySelector(`#${c.key}-${id}`), c.el.querySelector(`#${c.key}-${id}-v`), sets,
+      (pk) => `${what === "position" ? ch.name : "cmd"} ${hz(pk, "own")} · ${hz(pk, "other")}`, yr);
+  }
+  function drawPsd(c) {
+    for (const ch of Object.values(CH)) {
+      const yr = yRange(ch);
+      // a new selection moves the shared scale, so every badge redraws
+      Object.values(cols).forEach((x) => { if (!x.uRol) return;
+        ownBadge(x, ch, "psd", x.uRol.scales.x.min, x.uRol.scales.x.max, "window", yr);
+        ownBadge(x, ch, "psdall", -Infinity, Infinity, "all", yr);
+        compareBadge(x, ch, "psdpos", "position", yr); compareBadge(x, ch, "psdcmd", "command", yr); });
+    }
+  }
+  const badgeRow = (key, p, what) =>
+    `<div class="badges">` + [["psd", `${what} spectrum over the visible window`],
+      ["psdpos", `${what} position spectrum against the other column's window`],
+      ["psdcmd", `${what} command spectrum against the other column's window`],
+      ["psdall", `${what} spectrum over the whole run`]].map(([id, l]) =>
+      `<div class="badge"><canvas id="${key}-${p}${id}" aria-label="${key} ${l}"></canvas><span id="${key}-${p}${id}-v"></span></div>`).join("") + `</div>`;
 
   const cols = {};
 
@@ -217,14 +433,37 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       `<div class="meta" id="${key}-meta"></div>` +
       `<div class="scrub"><span>start</span><input type="range" id="${key}-pos" step="0.01" aria-label="${key} window start"><span id="${key}-pos-v"></span></div></div>` +
       `<div class="ptitle">roll, deg (one fixed scale for every run)</div><div id="${key}-roll"></div>` +
-      `<div class="ptitle">steer, deg (target dashed)</div><div id="${key}-steer"></div>` +
-      `<div class="ptitle">yaw, deg about the run's median</div><div id="${key}-yaw"></div>` +
-      `<div class="ptitle">roller angle, wrapped to one revolution, deg</div><div id="${key}-rol"></div>`;
+      `<div class="ptitle">yaw less the commanded heading, deg</div><div id="${key}-yaw"></div>` +
+      `<div class="ptitle">steer, deg (target dashed)</div>` +
+      `<div class="lkey"><span>steer-rate spectra 0-25 Hz, peaks above 4 Hz: window · joint and target, this column (bright) · the other (dim) · whole run</span></div>` +
+      badgeRow(key, "s", "steer-rate") +
+      `<div id="${key}-steer"></div>` +
+      `<div class="ptitle">drive diff velocity, input-shaft rad/s (a − b; command dashed)</div>` +
+      `<div class="lkey"><span>diff-velocity spectra 0-25 Hz, peaks above 4 Hz: window · measured (Present Velocity) and commanded, this column (bright) · the other (dim) · whole run</span></div>` +
+      badgeRow(key, "d", "diff-velocity") +
+      `<div id="${key}-dv"></div>` +
+      `<div class="ptitle">roller angle, wrapped to one revolution, deg</div>` +
+      `<div class="lkey"><span><span class="swatch" style="border-color:var(--top)"></span> detent line, one per notch (7.5° of ring)</span>` +
+      `<span>· roller-rate spectra 0-25 Hz, peaks above 4 Hz: window · position and command, this column (bright) · the other (dim) · whole run</span></div>` +
+      badgeRow(key, "", "roller-rate") +
+      `<div class="rolrow"><div id="${key}-rol"></div>` +
+      `<label class="phase"><span>phase</span><input type="range" id="${key}-ph" min="0" max="${NOTCHES - 1}" step="1" value="0" aria-label="${key} roller phase, whole notches"><span id="${key}-ph-v">+0°</span></label></div>`;
     c.sel = el.querySelector(`#${key}-sel`);
     c.pos = el.querySelector(`#${key}-pos`);
     c.posV = el.querySelector(`#${key}-pos-v`);
     c.sel.addEventListener("change", () => load(c, c.sel.value));
-    c.pos.addEventListener("input", () => apply(c));
+    c.pos.addEventListener("input", () => {
+      apply(c);
+      // locked: the other column keeps the same offset from its own start
+      const o = Object.values(cols).find((x) => x !== c);
+      if (document.getElementById("lockT").checked && o && o.S) {
+        o.pos.value = o.tMin + (+c.pos.value - c.tMin);
+        apply(o);
+      }
+    });
+    c.ph = el.querySelector(`#${key}-ph`);
+    c.phV = el.querySelector(`#${key}-ph-v`);
+    c.ph.addEventListener("input", () => { rewrap(c); c.uRol.setData(c.rolData, false); c.uRol.redraw(true); });
     cols[key] = c;
     return c;
   }
@@ -256,6 +495,14 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
         { label: "steer", stroke: () => css("--noslop"), width: 1.4, value: fmt(2, "°") },
         { label: "target", stroke: () => css("--cmd"), width: 1.3, dash: [6, 3], show: show.cmd, value: fmt(2, "°") }],
     }, [t, S.steer, S.steer_cmd], c.el.querySelector(`#${c.key}-steer`));
+    const uDv = new uPlot({
+      width, height: 150, cursor, legend: { show: true },
+      scales: { x: { time: false }, y: { range: [-DV, DV] } },
+      axes: [axis("time, s"), Object.assign(axis(""), { splits: coarse(DV) })],
+      series: [{ label: "t", value: fmt(3, " s") },
+        { label: "measured", stroke: () => css("--noslop"), width: 1.2, value: fmt(1, " rad/s") },
+        { label: "commanded", stroke: () => css("--cmd"), width: 1.2, dash: [6, 3], show: show.cmd, value: fmt(1, " rad/s") }],
+    }, [t, S.dv, S.dv_cmd], c.el.querySelector(`#${c.key}-dv`));
     const uYaw = new uPlot({
       width, height: 150, cursor, legend: { show: true },
       scales: { x: { time: false }, y: { range: [-YAW, YAW] } },
@@ -269,20 +516,20 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       "commanded": { stroke: () => css("--cmd"), width: 1.3, dash: [6, 3], show: show.cmd },
       "roller on the floor": { stroke: () => css("--loaded"), width: 2.2, show: show.loaded },
     };
-    const series = [{ label: "t", value: fmt(3, " s") }], data = [t];
-    for (const [label, y, handoff] of lines) {
-      const { w, breaks } = wrapped(y, handoff);
-      series.push(Object.assign({ label, value: fmt(1, "°"), paths: brokenLine(breaks) }, style[label]));
-      data.push(w);
-    }
+    c.rolLines = lines;
+    rewrap(c);
+    const series = [{ label: "t", value: fmt(3, " s") }];
+    lines.forEach(([label], i) =>
+      series.push(Object.assign({ label, value: fmt(1, "°"), paths: brokenLine(c, i) }, style[label])));
+    const data = c.rolData;
     const uRol = new uPlot({
-      width, height: 380, cursor, legend: { show: true },
+      width: c.el.querySelector(`#${c.key}-rol`).clientWidth || width, height: 380, cursor, legend: { show: true },
       scales: { x: { time: false }, y: { range: [0, 360] } },
       axes: [axis("time, s"), Object.assign(axis(""), { splits: () => [0, 45, 90, 135, 180, 225, 270, 315, 360] })],
       series, hooks: { drawClear: [detentHook(S)] },
     }, data, c.el.querySelector(`#${c.key}-rol`));
-    c.plots = [uRoll, uSteer, uYaw, uRol];
-    c.uRol = uRol; c.uSteer = uSteer;
+    c.plots = [uRoll, uSteer, uDv, uYaw, uRol];
+    c.uRol = uRol; c.uSteer = uSteer; c.uDv = uDv;
     const sync = uPlot.sync(c.key);
     c.plots.forEach((p) => sync.sub(p));
     // one x range for both panels after a drag-zoom in either
@@ -296,11 +543,15 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       }];
       p.over.addEventListener("dblclick", () => apply(c));
     });
+    uRol.hooks.setScale.push((u, k) => k === "x" && drawPsd(c));
     apply(c);
   }
 
+  // the window slider's notches, in seconds (0 = everything)
+  const WINS = [1, 2, 5, 10, 20, 0];
+  const winS = () => WINS[+document.getElementById("win").value];
   function apply(c) {
-    const w = +document.getElementById("win").value;
+    const w = winS();
     const a = w ? Math.max(c.tMin, Math.min(+c.pos.value, c.tMax - w)) : c.tMin;
     const b = w ? Math.min(a + w, c.tMax) : c.tMax;
     c.pos.disabled = !w;
@@ -313,23 +564,26 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
   sim.sel.value = D.default.sim; bike.sel.value = D.default.bike;
   load(sim, D.default.sim); load(bike, D.default.bike);
 
-  document.getElementById("win").addEventListener("change", () => Object.values(cols).forEach(apply));
+  document.getElementById("win").addEventListener("input", (e) => {
+    const w = winS(), txt = w ? `${w} s` : "all";
+    document.getElementById("win-v").textContent = txt; e.target.setAttribute("aria-valuetext", txt);
+    Object.values(cols).forEach(apply);
+  });
   document.getElementById("showCmd").addEventListener("change", (e) => {
     show.cmd = e.target.checked; Object.values(cols).forEach((c) => {
-      c.uRol.setSeries(2, { show: show.cmd }); c.uSteer.setSeries(2, { show: show.cmd }); });
+      c.uRol.setSeries(2, { show: show.cmd }); c.uSteer.setSeries(2, { show: show.cmd });
+      c.uDv.setSeries(2, { show: show.cmd }); drawPsd(c); });
   });
   document.getElementById("showLoaded").addEventListener("change", (e) => {
-    show.loaded = e.target.checked; Object.values(cols).forEach((c) => c.S.loaded && c.uRol.setSeries(3, { show: show.loaded }));
-  });
-  document.getElementById("showTrough").addEventListener("change", (e) => {
-    show.trough = e.target.checked; Object.values(cols).forEach((c) => c.uRol.redraw(false));
+    show.loaded = e.target.checked; Object.values(cols).forEach((c) => { c.S.loaded && c.uRol.setSeries(3, { show: show.loaded }); drawPsd(c); });
   });
   const ro = new ResizeObserver(() => Object.values(cols).forEach((c) => {
     const w = c.el.querySelector(`#${c.key}-roll`).clientWidth;
-    c.plots.forEach((p) => p.setSize({ width: w, height: p.height }));
+    const wr = c.el.querySelector(`#${c.key}-rol`).clientWidth;
+    c.plots.forEach((p) => p.setSize({ width: p === c.uRol ? wr : w, height: p.height }));
   }));
   Object.values(cols).forEach((c) => ro.observe(c.el));
-  const redraw = () => Object.values(cols).forEach((c) => c.plots.forEach((p) => p.redraw(false)));
+  const redraw = () => Object.values(cols).forEach((c) => { c.plots.forEach((p) => p.redraw(false)); drawPsd(c); });
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw);
   new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 })();

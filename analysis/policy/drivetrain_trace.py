@@ -11,9 +11,8 @@ swapped in), one column each, three rows:
 
   roll       chassis roll angle [deg].
   (page only) steer: the steer joint [deg] and its target, the policy's
-             steer ctrl, dashed; yaw: the chassis heading from its
-             quaternion [deg], unwrapped, about the run's median (sim: the
-             free joint, bike: the AHRS quaternion as run_bike had it).
+             steer ctrl, dashed; yaw: the heading less the commanded
+             heading [deg], both the controller's own (`_heading_err`).
   roller     every roller's spin angle, wrapped to ONE ROLLER REVOLUTION,
              in roller degrees. The black line is where the rollers would
              be with no slop, k_roller x ring-vs-hub (`ring_spin` is
@@ -105,20 +104,63 @@ class Tracer:
         d = self.drive
         ref = (d.belt * (d.ga * d._ref[0] + d.gb * d._ref[1])
                if d is not None and d.servo else np.nan)
+        # what the servos would report, for the bike's own reconstruction
+        # (fly): each input shaft's angle and speed, the duty, the command
+        if d is not None and d.servo:
+            regs = (*(data.qpos[q] for q in d.qadr), *(data.qvel[v] for v in d.dadr),
+                    d.duty[0], d.duty[1], *(data.ctrl[i] for i in d.cmd_id))
+        else:
+            regs = (np.nan,) * 8
         self.rows.append((t, roll, data.qpos[self.q_ring],
                           *(data.qpos[q] for q in self.q_rol), on, ref,
                           data.qpos[self.q_steer], data.ctrl[self.a_steer],
-                          math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))))
+                          ctl._psi - ctl._gen_psi_cmd, *regs))
+
+
+# The servo registers the bike logs, in their own units (hw/control_table):
+# Present PWM 1/885 duty, Present Velocity 0.229 rpm, Present Position
+# 4096 counts a turn; the XC330 steer 4096 a turn at the joint (gear 1.0).
+PWM_UNIT, VEL_UNIT, POS_UNIT = 1.0 / 885.0, 0.0239691227, 2 * math.pi / 4096
+PRESENT_VELOCITY_BOXCAR_S = 0.050     # the firmware's own smoothing (rate_filter.py)
+
+
+def _q(x, unit):
+    return np.round(np.asarray(x) / unit) * unit
+
+
+def registers(tr, a):
+    """The sim as the bike logs it: the drive's ring-vs-hub from quantised
+    encoders, the firmware reference RECONSTRUCTED from quantised PWM,
+    Present Velocity and position exactly as bike_trace does it, the diff
+    velocity measured (Present Velocity) and commanded, the steer at XC330
+    resolution. Full physics rate; the caller samples it at 100 Hz like the
+    bike's log. Present Velocity is the shaft speed through a 50 ms boxcar."""
+    d = tr.drive
+    xa, xb, va, vb, da, db, ca, cb = (a[:, 8 + N + i] for i in range(8))
+    h = float(tr.model.opt.timestep)
+    n = max(1, int(round(PRESENT_VELOCITY_BOXCAR_S / h)))
+    box = lambda v: np.convolve(v, np.ones(n) / n)[:len(v)]          # causal
+    th = [_q(x / d.belt, POS_UNIT) for x in (xa, xb)]                 # servo rad
+    w = [_q(box(v / d.belt), VEL_UNIT) for v in (va, vb)]             # servo rad/s
+    duty = [_q(x, PWM_UNIT) for x in (da, db)]
+    vref = [c / d.belt for c in (ca, cb)]
+    ref = [th[i] + (duty[i] - d.kp * (vref[i] - w[i])) / d.ki for i in (0, 1)]
+    return {"phi_enc": d.belt * (d.ga * th[0] + d.gb * th[1]),
+            "ref_rec": d.belt * (d.ga * ref[0] + d.gb * ref[1]),
+            "dv": d.belt * (w[0] - w[1]), "dv_cmd": ca - cb}
 
 
 def fly(policy, overrides, start, seconds, seed):
     tr = Tracer(start, seconds)
     R.sim(policy, start + seconds + 0.01, seed, overrides, on_step=tr)
     a = np.array(tr.rows)
+    from aow_sim.control.steer import XC330_COUNTS_PER_RAD
     return tr, {"t": a[:, 0], "roll": a[:, 1], "ring": a[:, 2],
                 "roller": a[:, 3:3 + N], "on": a[:, 3 + N].astype(int),
                 "ref": a[:, 4 + N], "steer": np.degrees(a[:, 5 + N]),
-                "steer_cmd": np.degrees(a[:, 6 + N]), "yaw": _yaw_about_median(a[:, 7 + N])}
+                "steer_q": np.degrees(_q(a[:, 5 + N], 1.0 / XC330_COUNTS_PER_RAD)),
+                "steer_cmd": np.degrees(a[:, 6 + N]), "yaw": _heading_err(a[:, 7 + N]),
+                **registers(tr, a)}
 
 
 def _breaks(y, jump=180.0):
@@ -153,7 +195,11 @@ def main():
                          "drivetrain and on --new, picked by dropdown")
     ap.add_argument("--page-runs", nargs="+", type=Path,
                     default=[REPO / "traces" / "bike" / r for r in
-                             ("261024-174349_run", "261024-191558_run")])
+                             ("261024-174349_run", "261024-191558_run",
+                              "261025-225207_run")])
+    ap.add_argument("--play", type=Path, default=None, metavar="YAML",
+                    help="page only: a third sim option, the training drivetrain with "
+                         "this file's `wheel_play:` block (build_model's optional play)")
     ap.add_argument("--tag", default="")
     ap.add_argument("--out-dir", type=Path, default=REPO / "traces" / "drivetrain_slowmo")
     a = ap.parse_args()
@@ -168,6 +214,10 @@ def main():
     cols = [("its training drivetrain", shared),
             (f"{'+'.join(a.parts)} from {a.new.stem}", shared + swap)]
     if a.page:
+        if a.play:
+            play = yaml.safe_load(a.play.read_text())["wheel_play"]
+            cols.append((f"its training drivetrain + wheel play from {a.play.stem}",
+                         shared + [("wheel_play", yaml.safe_dump(play, default_flow_style=True))]))
         build_page(a, k, cols)
         return
     runs = [fly(policy, ov, a.start, a.seconds, a.seed) for _, ov in cols]
@@ -412,7 +462,7 @@ def bike_trace(run_dir, bench, t_from, seconds):
     role = {int(k): v for k, v in c.meta["roles"].items()}
     belt = float(params["drivetrain"]["belt_ratio"])
     ctrl = c.bike("ctrl")
-    ref = {}
+    ref, vin = {}, {}
     for sid in bench["ids"]:
         g = c.meta["gains_applied"][str(sid)]
         kp = float(srv["kp_per_unit"]) * g["Velocity P Gain"]
@@ -422,27 +472,23 @@ def bike_trace(run_dir, bench, t_from, seconds):
         duty = F._fill(c.value("Present PWM", sid))
         w_s = F._fill(c.value("Present Velocity", sid))
         ref[sid] = F._fill(c.position_rad(sid)) + (duty - kp * (v_ref - w_s)) / ki
+        vin[role[sid]] = sign[role[sid]] * w_s * belt      # input-shaft rad/s, per ROLE
     (A, B), (sa, sb) = bench["ids"], bench["signs"]
     cmd_phi = np.degrees(F.BELT * (sa * ref[A] - sb * ref[B]) / 2)
     return {"t": t[m], "phi": ph[m], "cmd": cmd_phi[m], "tb": tb[mb], "roll": np.degrees(c.bike("roll")[mb]),
             **_steer_about_straight(np.degrees(c.bike("steer")[mb]), np.degrees(ctrl[mb, 2])),
-            "yaw": _yaw_about_median(_quat_yaw(c.bike("quat")[mb])),
+            "yaw": _heading_err(c.bike("psi")[mb] - c.bike("cmd_psi")[mb]),
+            "dv": (vin["drive_a"] - vin["drive_b"])[mb], "dv_cmd": (ctrl[:, 0] - ctrl[:, 1])[mb],
             "rests": np.array(rests), "R": _circ(np.array(rests) % 7.5)[1],
             "policy": c.meta.get("policy", "?")}
 
 
-def _quat_yaw(q):
-    """Heading [rad] of (w, x, y, z) rows, z-up."""
-    w, x, y, z = np.asarray(q).T
-    return np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-
-
-def _yaw_about_median(yaw_rad):
-    """Unwrapped heading [deg] less its median: the page shows how the bike
-    turns over the run, not which way the room faces (22-29 deg p-p on the
-    two floor runs' longest engages)."""
-    y = np.degrees(np.unwrap(yaw_rad))
-    return y - np.median(y)
+def _heading_err(d_rad):
+    """Heading less the commanded heading [deg], wrapped to +-180: the
+    controller's own estimate (`ctl._psi`, the bike's `psi`) against its
+    command (`_gen_psi_cmd`, `cmd_psi`), so the error the policy sees as
+    sin/cos psi_err. The command holds still over an engage with no input."""
+    return np.degrees(np.angle(np.exp(1j * np.asarray(d_rad))))
 
 
 def _steer_about_straight(steer, target):
@@ -474,6 +520,7 @@ def build_page(a, k, cols):
     longest engage) on each drivetrain in `cols`, at 100 Hz like the bike.
     Series are unwrapped roller degrees; the page wraps them."""
     import json
+    import yaml
     notch = 7.5 * k
     bench = bench_detent(a.bench_creep)
     r2 = lambda x: [None if not np.isfinite(v) else round(float(v), 2) for v in x]
@@ -491,6 +538,7 @@ def build_page(a, k, cols):
             "top": (k * bench["flip"]) % notch,
             "t": r3(bike["t"]), "roll": r2(bike["roll"]),
             "steer": r2(bike["steer"]), "steer_cmd": r2(bike["steer_cmd"]), "yaw": r2(bike["yaw"]),
+            "dv": r2(bike["dv"]), "dv_cmd": r2(bike["dv_cmd"]),
             "noslop": r2(k * bike["phi"]), "cmd": r2(k * bike["cmd"])}
         runs[pol] = max(runs.get(pol, 0.0), dur)
     for pol, dur in runs.items():
@@ -507,29 +555,109 @@ def build_page(a, k, cols):
                 "meta": f"floor twin, seed {a.seed} · detent: "
                         + ("sawtooth flip (pushes away) over flat friction" if saw
                            else "friction bump (the shaft sticks on the line)")
-                        + " · commanded = the firmware's own reference",
+                        + " · logged as the bike logs it; commanded rebuilt from its registers",
                 "top": (k * math.degrees(drv.phase + 0.5 * drv.period)) % notch,
                 "t": r3(r["t"][::step]), "roll": r2(r["roll"][::step]),
-                "steer": r2(r["steer"][::step]), "steer_cmd": r2(r["steer_cmd"][::step]),
+                # as the bike logs it: encoder counts, the reference rebuilt
+                # from quantised registers (registers()), 100 Hz samples
+                "steer": r2(_steer_about_straight(r["steer_q"][::step], r["steer_cmd"][::step])["steer"]),
+                "steer_cmd": r2(_steer_about_straight(r["steer_q"][::step], r["steer_cmd"][::step])["steer_cmd"]),
+                "dv": r2(r["dv"][::step]), "dv_cmd": r2(r["dv_cmd"][::step]),
                 "yaw": r2(r["yaw"][::step]),
-                "noslop": r2(np.degrees(k * r["ring"][::step])),
-                "cmd": r2(np.degrees(k * r["ref"][::step])), "loaded": r2(loaded)}
+                "noslop": r2(np.degrees(k * r["phi_enc"][::step])),
+                "cmd": r2(np.degrees(k * r["ref_rec"][::step])), "loaded": r2(loaded)}
             print(f"  sim {pol} / {title}: {dur:.0f} s")
     first = a.page_runs[0].name
     pol0 = bikes[first]["label"].split("(")[1].rstrip(")")
-    foot = ("Sim: <code>run_vs_sim.sim</code>, the floor twin standing on a zero command; its commanded "
-            "line is the servo firmware's position reference (the integral of the velocity command). "
-            "Bike: the drive encoders, wrapped the same way; its commanded line is that reference "
-            "recovered per sample from Present PWM through the firmware law, "
-            "e = (duty − Kp (v_ref − w)) / Ki, which on the sim tracks the true one at r 0.996 "
-            "(median 1 roller degree). The bike's detent lines are placed by the hung creep "
-            f"<code>{a.bench_creep}</code> in the same encoder frame, not fitted: one servo turn moves "
-            "ring-vs-hub 540° = 72 notches, so a power-up turn reset keeps the phase. Sim and bike "
-            "share notch geometry, not a time axis. Rendered by "
-            "<code>python analysis/policy/drivetrain_trace.py --new "
-            f"{a.new.relative_to(REPO) if a.new.is_absolute() else a.new} --page</code>.")
-    data = json.dumps({"notch": notch, "k": k, "sims": sims, "bikes": bikes, "foot": foot,
-                       "default": {"sim": f"{pol0}|{cols[1][0]}", "bike": first}},
+    new = a.new.relative_to(REPO) if a.new.is_absolute() else a.new
+    notes = [
+        ("What is plotted", [
+            "<b>The flight.</b> No input: speed command zero, heading command held where the "
+            "engage started. The sim is <code>run_vs_sim.sim</code>, the floor twin flying the "
+            "same policy on its own sensors; the bike column is the run's longest engage.",
+            "<b>Roll, steer.</b> Roll and the steer joint, on one fixed scale for every run. The "
+            "bike's steer carries the extended-position turn count; it is shifted by the one "
+            "multiple of 180&deg; that puts its median near straight (straight repeats every 180&deg;).",
+            "<b>Yaw.</b> The controller's heading estimate less its heading command, wrapped to "
+            "&plusmn;180&deg;: the error the policy sees as sin/cos psi_err.",
+            "<b>The sim is logged the way the bike is.</b> Every sim series that has a "
+            "register on the bike is built from that register as the bike would log it, at "
+            "100 Hz: the drive encoders (4096 counts a turn, through the 3:1 belt), Present "
+            "Velocity (0.229 rpm steps, the shaft speed through the firmware's ~50 ms "
+            "boxcar), Present PWM (1/885 duty), the XC330 steer (4096 a turn). The truth "
+            "(the joints, the firmware's own reference) is not plotted, so a difference "
+            "between the columns is a difference in the bikes, not in the logging.",
+            "<b>Roller angle.</b> Every roller's spin angle wrapped to one roller revolution. The "
+            "ink line is where the rollers would be with no slop, k_roller &times; ring-vs-hub "
+            "from the drive encoders (both columns). The orange roller on the floor is the "
+            "sim's joint: the bike has no sensor for it. The phase slider beside it turns the "
+            "wrap by whole notches, so the detent lines stay put.",
+            "<b>Drive diff velocity.</b> Input-shaft rad/s, drive a less drive b: measured "
+            "from Present Velocity (both columns), commanded from the logged command (the "
+            "policy's output through the hub/diff mix).",
+            "<b>Spectrum badges.</b> Under each roller key, four power spectra of the "
+            "roller RATE (first differences): whatever this plot shows (the commanded "
+            "line dashed); POSITION, this column's window (bright) against the other "
+            "column's (dim), with the sim's roller on the floor in orange (hand-offs "
+            "between rollers taken out); COMMAND, the same for the commanded line; and "
+            "the whole run. The steer panel carries the same four for the steer joint "
+            "(position) and its target (command), the diff-velocity panel for the measured "
+            "and commanded velocity themselves (no differencing). All eight badges of a "
+            "channel share one log scale across both columns, so heights compare. The "
+            "roller command is rebuilt from Present PWM in both columns, and the rebuild "
+            "amplifies the PWM's step noise above ~20 Hz: compare it column to column, "
+            "not against the position. Welch with "
+            "2.56 s Hann segments, a 3-bin running mean, log power over five decades, "
+            "0-25 Hz; the dot is the peak above 4 Hz (below it is balance sway). The "
+            "rate because the angle itself is mostly sway below 3 Hz.",
+            "<b>Lock the two time sliders.</b> Moving one column's start moves the other "
+            "by the same offset from its own start; the phase sliders stay separate.",
+            "<b>Commanded (dashed blue), roller panel.</b> Where the drive is being pulled: "
+            "the servo firmware's position reference, which it does not report. Rebuilt per "
+            "sample in BOTH columns from the logged registers through the firmware law, "
+            "e = (duty &minus; Kp (v_ref &minus; w)) / Ki: on the sim it tracks the true "
+            "reference at r 0.993 (median 1.1 roller degrees; spikes where the duty "
+            "saturates). A shaft parked on a line with the command beyond it is being held "
+            "there.",
+        ]),
+        ("The detent lines", [
+            "<b>Grey: one line per notch</b>, 7.5&deg; of ring, %.0f&deg; of roller." % notch,
+            "<b>Friction bump</b> (each policy's training drivetrain): the gearbox is stickier on "
+            "the line, so a shaft that stops tends to stop there. 48&nbsp;% of the floor twin's "
+            "rests fall within 1&deg; of it." ,
+            "<b>Sawtooth flip</b> (the <code>%s</code> overlay): the notch torque pushes the shaft "
+            "AWAY from the line, toward the point midway between two lines, where the push "
+            "stops; a flat friction on top resists both ways. With friction as big as the "
+            "push, rests barely favour that midway point (26&nbsp;%%, even is 27)." % new,
+            "<b>On the bike</b> the lines are placed by the hung creep "
+            "<code>%s</code> in the same encoder frame, not fitted: one servo turn moves "
+            "ring-vs-hub 540&deg; = 72 notches, so a power-up turn reset keeps the phase." % a.bench_creep,
+        ]),
+        ("Reading sim against bike", [
+            "<b>Notch geometry is shared, time is not.</b> Same seed in every sim column, not "
+            "the same trajectory, and nothing aligns a sim second with a bike second.",
+            "<b>Roller on the floor</b> (orange) is the sim's only: which roller touches comes "
+            "from contacts, which the bike does not record.",
+        ]),
+    ]
+    if a.play:
+        doc = yaml.safe_load(a.play.read_text())
+        notes.append(("Wheel play", [
+            "<b>%s</b> (<code>%s</code>): build_model's optional <code>wheel_play</code>, "
+            "limited hinges between a part and what it carries. %s"
+            % (cols[-1][0], a.play, doc.get("note", "")),
+            "<b>Values.</b> <code>%s</code>" % json.dumps(doc["wheel_play"]),
+        ]))
+    play_arg = f" --play {a.play}" if a.play else ""
+    notes += [
+        ("Reproduce", [
+            "<code>python analysis/policy/drivetrain_trace.py --new %s --page%s</code> "
+            "(runs: <code>--page-runs</code>; template: "
+            "<code>analysis/policy/templates/drivetrain_traces.html</code>)." % (new, play_arg),
+        ]),
+    ]
+    data = json.dumps({"notch": notch, "k": k, "sims": sims, "bikes": bikes, "notes": notes,
+                       "default": {"sim": f"{pol0}|{cols[-1][0]}", "bike": first}},
                       separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
     tag = '<script id="data" type="application/json">'
     page = PAGE_TEMPLATE.read_text(encoding="utf-8")
