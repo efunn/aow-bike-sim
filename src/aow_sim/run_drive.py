@@ -826,6 +826,11 @@ def main() -> None:
                 args.swing_linkage = True
             print(f"{startup}: drives the {mod.upper()} four-bar, "
                   f"{swing_tip_mass*1e3:g} g at each tip, as trained")
+        # A policy trained with wheel play flies with its own, unless
+        # --wheel-play names another. Compiled once, like the drivetrain.
+        if _mv.get("wheel_play") and not args.wheel_play:
+            params = {**params, "wheel_play": _mv["wheel_play"]}
+            print(f"WHEEL PLAY from {startup}'s training record: {_mv['wheel_play']}")
         drive_friction = None
         if args.drive_friction:
             fc = [float(x) for x in args.drive_friction.split(":")]

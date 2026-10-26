@@ -65,3 +65,39 @@ def test_the_stays_swing_the_rear_about_their_root():
     parent = lambda b: m.body(int(m.body_parentid[m.body(b).id])).name
     assert parent("rear_axle_play") == "rear_stays_play"
     assert parent("aow_hub") == "rear_axle_play"
+
+
+def test_an_rl_config_resolves_and_records_its_play(tmp_path):
+    """`env.wheel_play` (drivetrain_model.from_env_config): absent leaves the
+    params' own, a path and its dict resolve alike and idempotently, false
+    strips it; the move yaml records it and a loaded policy carries it back
+    into the env overrides, so replay builds the plant it trained on."""
+    import yaml
+    from aow_sim.control.general_env import _load_rl_config
+    from aow_sim.control.general_spec import policy_env_overrides
+    from aow_sim.drivetrain_model import from_env_config
+    from aow_sim.params import plant_digest
+    from aow_sim.train_general_rl import move_doc
+
+    p = load_params()
+    assert from_env_config(p, {}) == from_env_config(p, {"wheel_play": None})
+    assert "wheel_play" not in from_env_config(p, {})
+    f = tmp_path / "play.yaml"
+    f.write_text(yaml.safe_dump({"note": "x", "wheel_play": PLAY}))
+    by_path = from_env_config(p, {"wheel_play": str(f)})
+    assert by_path == from_env_config(p, {"wheel_play": PLAY})
+    assert by_path["wheel_play"] == PLAY
+    assert from_env_config(by_path, {"wheel_play": str(f)}) == by_path
+    assert plant_digest(by_path) != plant_digest(p)
+    assert "wheel_play" not in from_env_config(by_path, {"wheel_play": False})
+    # a policy trained without play is judged on whatever the caller built
+    assert from_env_config(by_path, {"wheel_play": None})["wheel_play"] == PLAY
+
+    cfg = _load_rl_config("config/rl/rl_general_v4.yaml")
+    doc = move_doc("x_smoke", from_env_config(p, cfg["env"]), cfg, {})
+    assert doc["wheel_play"] == cfg["env"]["wheel_play"]
+
+    class Pol:
+        wheel_play = doc["wheel_play"]
+    assert policy_env_overrides(Pol())["wheel_play"] == doc["wheel_play"]
+    assert policy_env_overrides(object())["wheel_play"] is None

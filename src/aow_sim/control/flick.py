@@ -329,6 +329,8 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         pol.steer_rate_encoder = str(d.get("steer_rate_encoder", "joint"))
         # The resolved drivetrain overlay it trained on; None = ideal drives.
         pol.drivetrain_model = d.get("drivetrain_model")
+        # The wheel play it trained with; None = none (or before the field).
+        pol.wheel_play = d.get("wheel_play")
         # The attitude error model this policy trained against. Same contract
         # role as the two lines above and the same invisible failure: the AHRS
         # corrupts roll/roll_rate/yaw_rate IN PLACE, so a policy evaluated

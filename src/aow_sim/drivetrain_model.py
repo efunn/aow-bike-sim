@@ -148,7 +148,16 @@ def from_env_config(params: dict, env: dict) -> dict:
     Idempotent, so the trainer can resolve once up front (for the digest and
     the export) and every env resolve the same config again. A caller forcing
     a plant (analysis/policy/drivetrain_eval.py) sets the env key, not the params.
+
+    Also `wheel_play` (build_model's optional play; `params.with_wheel_play`):
+    absent leaves `params`' own, so every config before 2026-10-26 builds
+    what it built.
     """
+    from .params import with_wheel_play
+    return with_wheel_play(_drivetrain_from_env(params, env), env.get("wheel_play"))
+
+
+def _drivetrain_from_env(params: dict, env: dict) -> dict:
     spec = env.get(KEY, True)
     base = base_params(params)
     if spec is None or spec is False:
@@ -238,8 +247,15 @@ def policy_record(name: str, moves_dir=None):
 
 def policy_params(params: dict, name: str, moves_dir=None) -> dict:
     """`params` on the drivetrain `moves/NAME.yaml` trained on: its recorded
-    overlay, or the IDEAL drive for an export without one."""
-    return from_env_config(params, {KEY: policy_record(name, moves_dir)})
+    overlay, or the IDEAL drive for an export without one; and its recorded
+    wheel play, if any."""
+    from .control.flick import move_path
+    try:
+        play = (yaml.safe_load(move_path(name, moves_dir).read_text()) or {}).get("wheel_play")
+    except FileNotFoundError:
+        play = None
+    return from_env_config(params, {KEY: policy_record(name, moves_dir),
+                                    "wheel_play": play})
 
 
 def teleop_base(record, drivetrain=None, without=(), gains=None,

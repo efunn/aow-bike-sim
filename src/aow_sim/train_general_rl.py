@@ -344,6 +344,10 @@ def move_doc(name: str, params, cfg, trained: dict) -> dict:
            # on the plant it trained on after config/drivetrain_model.yaml has
            # moved on. Invisible to obs_layout, like the sensors above.
            "drivetrain_model": params.get("drivetrain_model"),
+           # The wheel play it trained with (build_model's optional
+           # `wheel_play:`), resolved; null = none, every export before
+           # 2026-10-26. Same reason as the drivetrain: replay rebuilds it.
+           "wheel_play": params.get("wheel_play"),
            "obs_pitch": bool(cfg["env"].get("obs_pitch", False)),
            "obs_wings": bool(cfg["env"].get("obs_wings", False)),
            "act_wings": bool(cfg["env"].get("act_wings", False)),

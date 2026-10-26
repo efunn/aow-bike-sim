@@ -316,7 +316,11 @@ def policy_env_overrides(pol) -> dict:
                 # The plant, not a sensor, but the same invisible failure: an
                 # env built without it runs a detailed-drivetrain policy on the
                 # ideal drives. None = ideal, every export before 2026-09-14.
-                drivetrain_model=getattr(pol, "drivetrain_model", None))
+                drivetrain_model=getattr(pol, "drivetrain_model", None),
+                # Its wheel play. None leaves the caller's params alone (no
+                # play unless it put some there, as run_vs_sim --set does),
+                # so a policy trained without play can be judged with it.
+                wheel_play=getattr(pol, "wheel_play", None))
 
 
 def obs_layout_for(pol) -> tuple:

@@ -143,6 +143,8 @@ def sim(policy, seconds, seed, overrides=(), steer_rate="counts", on_step=None):
     if spec.get(drivetrain_model.KEY):
         design = design_all(params, build_model(params))
         params = {**params, drivetrain_model.KEY: spec[drivetrain_model.KEY]}
+    if spec.get("wheel_play"):          # the play it trained with; --set still wins
+        params = {**params, "wheel_play": spec["wheel_play"]}
     for path, value in overrides:
         params = _set(params, path, _yaml.safe_load(value))
     model = build_model(params)

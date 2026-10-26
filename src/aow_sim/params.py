@@ -318,6 +318,30 @@ def load_params(path: str | Path | None = None,
         derive_righting(_normalize(load_raw_params(path, studies))), blade))
 
 
+def with_wheel_play(params: dict, spec) -> dict:
+    """`params` with the `wheel_play:` block (build_model's optional play)
+    that `spec` names: ABSENT or None leaves `params` as it is (bike_params
+    has no play, so that is none unless a caller put one there); False strips
+    it; a path is that file's `wheel_play:` block (or the whole file); a dict
+    is itself, as an export records it. Idempotent once resolved, so the
+    trainer and each env can resolve the same config. Relative paths are
+    from the repo root (traces/ is not in the GPU pod's tarball: put the
+    block inline in a config that goes there)."""
+    if spec is None:
+        return params
+    if spec is False:
+        return {k: v for k, v in params.items() if k != "wheel_play"}
+    if isinstance(spec, (str, Path)):
+        f = Path(spec)
+        if not f.is_absolute() and not f.exists():
+            f = DEFAULT_PARAMS.parents[1] / f
+        doc = yaml.safe_load(f.read_text()) or {}
+        spec = doc.get("wheel_play", doc)
+    if not isinstance(spec, dict):
+        raise ValueError(f"wheel_play: a path, a dict, false or absent, not {spec!r}")
+    return {**params, "wheel_play": json.loads(json.dumps(spec))}
+
+
 def load_raw_params(path: str | Path | None = None, studies: bool = True) -> dict:
     """The merged tree as written -- `{value:, source:}` wrappers kept, nothing
     derived -- for readers that want a parameter's provenance or the onboard

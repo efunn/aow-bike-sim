@@ -3,6 +3,10 @@ for comparison, in GeneralEnv: falls, return, tracking. A smoke test of the
 whole port, not a parity check -- the engines' contacts differ (phase 1).
 
   python analysis/gpu/phase2/fly_policy.py --nworld 8 --steps 250
+  python analysis/gpu/phase2/fly_policy.py --config config/rl/rl_general_v4.yaml
+
+Also reports the GPU side's peak constraint rows per world and contacts in all
+against GpuGeneralEnv's njmax 128 / nconmax 32 (sampled at policy steps).
 """
 import argparse
 import time
@@ -26,6 +30,7 @@ def fly_gpu(policy, nworld, steps, seed):
     obs = g.reset().numpy()
     act = wp.zeros((nworld, 3), dtype=float)
     rets, falls, ends, rews = np.zeros(nworld), 0, 0, []
+    peak = [0, 0]
     t = time.perf_counter()
     for k in range(steps):
         act.assign(_act(pol, obs))
@@ -39,7 +44,9 @@ def fly_gpu(policy, nworld, steps, seed):
         rews.append(r)
         falls += int(term.sum())
         ends += int((term | trunc).sum())
+        peak = [max(peak[0], int(g.d.nefc.numpy().max())), max(peak[1], int(g.d.nacon.numpy().max()))]
     dt = time.perf_counter() - t
+    print(f"  GPU peak nefc {peak[0]} / 128, contacts {peak[1]} in all, against 32 x {nworld}")
     return falls, ends, np.mean(rews), dt
 
 
@@ -65,7 +72,9 @@ if __name__ == "__main__":
     ap.add_argument("--nworld", type=int, default=8)
     ap.add_argument("--steps", type=int, default=250)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--config", default=CONFIG)
     a = ap.parse_args()
+    CONFIG = a.config
     wp.config.quiet = True
     wp.init()
     f, e, mr, dt = fly_gpu(a.policy, a.nworld, a.steps, a.seed)
