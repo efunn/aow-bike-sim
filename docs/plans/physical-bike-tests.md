@@ -784,6 +784,83 @@ sat -34 to +24 deg off stow across the runs, never commanded, and the
 quietest stow (+4 deg, 174349) shook the same. (Since 10-24 an engage sends
 uncommanded wings to stow.)
 
+**An MLP, no memory (10-25, run 261025-225207).** `general_rl_v3_s1`: CPU
+PPO, 128x128, same plant digest (bc66ca20), AHRS level, odometry, firmware
+gains, drivetrain overlay and obs layout as the pointer; only the policy
+differs (and it trained before the 10-14 env fixes, so its prev_* entries
+were one step stale in training). Engages 8.4-20.1 s (fell, misplaced) and
+31.3-83.8 s (clean, no input). `run_vs_sim.py`, the clean one, 7-12 Hz RMS
+bike / sim:
+
+| signal | v3_s1 bike / sim | pointer 174349 | rake20 191558 |
+|---|---|---|---|
+| roll rate, deg/s | 15.6 / 3.1 | 21.9 | 24.5 |
+| yaw rate, deg/s | 21.2 / 3.8 | 18.4 | 20.4 |
+| steer target, deg | 1.38 / 0.12 | 1.73 | 2.03 |
+| drive A / B cmd, rad/s | 6.2 / 5.6 against 0.64 / 0.83 | 4.1 / 5.8 | 4.9 / 6.0 |
+| >10 Hz, drive A / B, rad/s | 5.8 / 5.5 | 2.7 / 3.8 | 2.8 / 3.7 |
+
+It shakes as hard, but the PEAK MOVED. Welch, 1024 points, 5-20 Hz, the
+peak and its half-power span:
+
+| run | policy | roll rate | yaw rate | drive A |
+|---|---|---|---|---|
+| 174349 | fixes_72M (MinGRU) | 8.9 (8.1-10.3) | 8.9 (8.1-9.7) | 8.9 (8.1-10.3) |
+| 191558 | rake20_80M (MinGRU) | 7.9 (7.4-9.1) | 7.9 (7.4-9.0) | 8.8 (7.2-9.0) |
+| 225207, clean | v3_s1 (MLP) | 11.2 (10.8-11.3) | 11.2 (10.8-11.3) | 11.0 (10.8-11.3) |
+| 225207, first 11 s | v3_s1 | 11.2 | 11.2 | 11.2 |
+
+Both v3_s1 sections agree, and its peak is narrower than the MinGRU
+policies'. A frequency that follows the policy is a CLOSED-LOOP
+oscillation: a structural mode, or a sensor ringing at its own frequency,
+would stay put whatever flies it (the pluck tests, item 9, found nothing
+at 9 Hz either). Read: the bike's loop has less phase margin than the
+sim's, and each policy crosses -180 deg at its own frequency. Where the
+extra lag is (the AHRS path, the Pi's loop, the actuators under load) this
+does not say. Of the delays, only the drive and steer servos' were swept
+in the sim (12, 24 ms, table in test 2); a delay on the AHRS / observation
+side was not. A delay that makes the sim ring at ~9 Hz under fixes_72M AND
+~11 Hz under v3_s1 would be the finding; one frequency alone would not.
+
+**What drives the diff (10-26, scratch replay).** The MLP has no memory,
+so its observation can be rebuilt from the record (quat, gyro, v_world,
+steer through the Pi's RateFilter, psi and its command, its own previous
+action) and the policy run on it open-loop: the replayed diff matches
+the recorded one at **r 0.9998**, rms error 0.36 against 18 rad/s. So
+the Pi computes exactly what the policy says on what the bike measured;
+the spikes are not an implementation error between sensing and command.
+The diff sits at its +-40 rad/s bound on 8 % of policy ticks.
+
+At 10.5-12 Hz the inputs are one motion, seen by independent sensors:
+coherence roll rate (AHRS) / steer rate (steer encoder) 0.96, roll rate
+/ v_lat (drive encoders + AHRS) 0.91, roll rate / yaw rate 0.92. Sensor
+noise would not be coherent across them; this is the bike moving.
+Linearised (finite-difference Jacobian x 9-13 Hz input), the diff's
+9-13 Hz content comes from roll rate (~40 %) and yaw (~40 %, net of
+yaw_rate and v_lat, which the odometry builds from it: coherence 1.00),
+with steer rate -11 % (it opposes). The policy is saturating, so the
+linear sum explains only r 0.70.
+
+From the diff command to the motion, bike against its sim twin (120 s,
+cross-spectra; closed-loop, so read at the oscillation as P = y/u):
+
+| Hz | diff -> roll rate, bike / sim | diff -> yaw rate, bike / sim |
+|---|---|---|
+| 3 | 2.07 at +80 / 2.18 at +70 | 2.20 at -100 / 2.64 at -102 |
+| 5 | 2.35 at +51 / 2.32 at +59 | (coherence 0.25) / 2.89 at -118 |
+| 11 | **1.30 at -20** / 2.29 at +63 | **1.71 at +65** / 2.77 at -118 |
+| 13 | 1.07 at -21 / 2.16 at +69 | 1.30 at +59 / 2.63 at -112 |
+
+(gain in deg/s per rad/s of diff, phase in deg.) Below ~5 Hz the bike
+answers the diff as the sim does. At 11 Hz roll rate lags the sim by
+~80 deg at 0.57x the gain, and yaw rate is nearly inverted. A pure delay
+would shift both outputs by the same phase, so this is plant dynamics
+the model lacks above ~7 Hz, not only lag. The bike's steer also moves
+with the shake (diff -> steer rate coherence 0.95; the sim's 0.08). The
+inventory of compliance (user, 10-26) points at the front end: steerer
+clearance plus the front axle's rotation, against a chassis, wings and
+rollcage that are stiff.
+
 What was planned:
 
 `general_puffer_rake20_80M` (and 72M) trained on 6446d8fa, the plant the
@@ -898,6 +975,120 @@ engage, roll rate climbing to 500 deg/s. Most of the vertical accel is
 above 12 Hz (0.6-0.9 m/s2 RMS in 12-50 Hz): vibration, the same buzz as
 the 40-48 Hz pitch content. Plot: `traces/bike/261024-174349_run/pitch_hop.png`
 (scratch, not reproducible by a tracked script).
+
+**Wheel play reproduces it (10-26).** `wheel_play:` in build_model, absent
+from bike_params (so plant_digest and the deploy bundle do not move): a
+massless body with limited hinges between a part and what it carries,
+sized from free play measured by hand as total sideways travel at the
+ground (user, 10-26): front wheel on its axle 2.5 mm (yaw + camber,
++-1.4 deg), headset clearance 2.5 mm (fork tilt, +-0.49 deg about the
+fork top, 0.145 m above the contact), rear wheel on its axle 2.5 mm
+(+-1.4 deg). Centring spring 0.01 N m/rad, damping 1e-3, walls at
+solref 2 ms: GUESSES. One `run_vs_sim.py --no-plot --set
+'wheel_play={...}'` each, seed 0, each run's own policy. 7-12 Hz roll
+rate RMS (deg/s) at the peak (Hz):
+
+| play | fixes_72M (bike 21.9 at 9.6) | v3_s1 MLP (bike 15.6 at 11.1) |
+|---|---|---|
+| none | 3.2 at 4.3 | 3.1 at 2.3 |
+| rear axle | 3.6 at 4.3 | 3.5 at 3.7 |
+| front axle | 9.9 at 6.2 | 16.5 at 9.6 |
+| headset | 9.4 at 6.6 | 12.5 (no peak) |
+| **front axle + headset** | **21.2 at 7.4** (seed 1: 23.3) | **40.1 at 9.8** (seed 1: 37.5) |
+| same, centring 0.1 | 22.9 at 7.6 | 39.4 at 9.2 |
+| front + rear | 23.5 at 6.6 | 48.4 at 8.4 |
+| all three doubled (5 mm) | 19.7 at 5.5 | 32.4 at 6.6 |
+
+The front's two play joints together make the sim shake at the bike's
+size, and the MLP shakes FASTER than the MinGRU, as on the bike (9.8
+against 7.4; bike 11.1 against 8.9-9.6). The first sim change of
+anything tried here to move the 7-12 Hz band by more than ~1.4x. The
+rear's play alone does nothing. Still off: the sim's frequencies sit
+1.3-2 Hz low, and more play lowers them further, so the bike's play is
+probably smaller or its walls stiffer than guessed; the sim's yaw rate
+in the band stays at a third of the bike's (6.8 against 18.4, pointer);
+and the MLP overshoots the bike's size 2.6x. Next: sweep travel and wall
+stiffness for the frequency, then the yaw. Every row is one seed except
+where noted.
+
+**Rough fit (10-26), `traces/drivetrain/wheel_play_fit_1026.yaml`.** 32
+grid points, both runs at once; score = squared log ratios of the 7-12
+Hz RMS of roll rate, yaw rate, drive A and steer target, plus the peak's
+error in Hz squared. Free play alone cannot fit: the frequency barely
+moves with travel or wall stiffness (pointer 6.9-8.0 Hz, MLP 8.9-10.0),
+and the two policies want opposite sizes. A centring SPRING inside the
+play moves the frequency (k 1 -> 30 N m/rad: 8.2 -> 16.3 Hz, pointer),
+and the rear axle's play raises the yaw. Best: front axle 1.0 mm,
+headset 1.5 mm, rear axle 2.5 mm, each k 4 N m/rad, walls 2 ms --
+compliance more than slop, which fits "with a good finger/thumb
+torque". rake20 (run 191558) was held out of the fit:
+
+| 7-12 Hz | fixes_72M bike / fit | v3_s1 bike / fit | rake20 bike / no play / fit |
+|---|---|---|---|
+| roll rate, deg/s | 21.8 / 15.1 | 14.7 / 20.5 | 23.7 / 3.8 / 14.1 |
+| yaw rate, deg/s | 18.2 / 11.0 | 19.8 / 13.7 | 19.8 / 4.9 / 10.8 |
+| drive A, rad/s | 4.05 / 3.59 | 5.82 / 9.01 | 4.74 / 0.59 / 3.78 |
+| steer target, deg | 1.73 / 1.27 | 1.32 / 1.57 | 1.95 / 0.10 / 1.11 |
+| peak, Hz | 8.9 / 9.6 | 11.2 / 10.9 | 7.9 / 5.3 / 9.8 |
+
+On the held-out policy the fit lifts every band 4-11x toward the bike,
+to 55-80 % of it, but puts its peak at 9.8 Hz against the bike's 7.9: the
+bike's two MinGRUs differ by 1 Hz and the fit does not reproduce that.
+Yaw stays at 55-70 % throughout. One seed per point; a rough fit, on
+the page (`drivetrain_traces.html`) as a sim option. A fourth group,
+`rear_stays` (the chainstays' side-to-side and up-and-down flex, hinged
+at the midpoint of their front ends, 51 mm ahead of and above the axle)
+was added the same day; teleop takes any of it with `--wheel-play YAML`.
+
+**Refit with the chainstays (10-26),
+`traces/drivetrain/wheel_play_fit_1026_stays.yaml`.** 12 more points over
+the stays' travel and spring, with and without the rear axle's play. No
+better on the fitted runs (score 1.54 against 1.52, within one seed),
+and the stays stand in for the rear axle play rather than adding to it.
+It does generalise better to the held-out run:
+
+| 7-12 Hz | rake20 bike | axle-only fit | stays fit |
+|---|---|---|---|
+| roll rate, deg/s | 23.7 | 14.1 | 14.8 |
+| yaw rate, deg/s | 19.8 | 10.8 | 12.7 |
+| drive A, rad/s | 4.74 | 3.78 | 3.95 |
+| peak, Hz | 7.9 | 9.8 | **8.6** |
+
+Front axle 1.0 mm and headset 1.5 mm at 4 N m/rad, stays 4.0 mm at 10.
+NOT ADOPTED: the stays do not flex that much (user, 10-26), so the
+axle-only fit (`wheel_play_fit_1026.yaml`: front axle, headset, rear
+axle) stays the one on the page and in the teleop command, the rear
+axle being the play that is plainly there. `rear_stays` stays available
+for a suspension study; the stays are not as omnidirectional as the
+steerer, so expect `travel_mm_vertical` to carry it and the lateral
+hinge to stay small. Yaw is still 55-75 % of the bike's either way.
+
+**Logged alike, the sim matches on the drive too (10-26).** A first
+reading of the page's spectrum badges said the fitted sim's roller rate
+peaks at 4.3 Hz where the bike's is at 9.0: WRONG, an artifact of
+comparing the sim's exact joint angle with the bike's 4096-count
+encoders, and the sim's true firmware reference with the bike's one
+rebuilt from Present PWM. `drivetrain_trace.py` now logs the sim
+through the bike's registers (encoder counts, Present Velocity as a
+50 ms boxcar in 0.229 rpm steps, PWM in 1/885 duty, the XC330 steer
+counts, 100 Hz) and rebuilds its reference the bike's way. Then the
+whole-run roller-rate peak is 9.8 Hz (sim) against 9.0 (bike), and band
+RMS, 174349 against the fitted sim:
+
+| | 7-12 Hz bike / sim | 12-25 Hz | 25-49 Hz |
+|---|---|---|---|
+| roller rate (encoders), deg/s | 223 / 183 | 85 / 91 | 44 / 34 |
+| roller command (rebuilt), deg/s | 1000 / 692 | 540 / 530 | 1071 / 980 |
+| diff velocity measured, rad/s | 2.3 / 1.8 | 0.6 / 0.5 | 0.1 / 0.1 |
+| diff command, rad/s | 9.7 / 8.7 | 3.5 / 4.8 | 3.8 / 4.0 |
+| steer target, deg/s | 97 / 76 | 42 / 44 | 41 / 31 |
+| **steer joint (encoder), deg/s** | **55 / 26** | 14 / 10 | **15 / 4.3** |
+
+The one channel that stays apart is the steer servo's own shaft: 2x the
+sim's at the shake and 3.5x above 25 Hz, while its target matches. The
+bike's steer shaft moves more for the same command: a softer or laggier
+servo loop under load, or the fork's play loading the shaft back --
+the steer model is the next thing to look at.
 
 ### 2b. Hung off the rollcage, policy flying  [DONE 10-24: the 9 Hz needs the floor]
 
@@ -1238,7 +1429,9 @@ scrub on the floor, which only an on-floor test has. `steer_friction.py` maps th
 
 ### 5. The AHRS mount  [low priority]
 
-Still a `GUESS` in config, accepted at every start by `--bench`. The "2-3
+`source: design` since the v2 bike (the TM151 on its own holes, the CAD's
++45 deg); preflight accepts it since 10-25, which before that blocked
+anything not `measured` and was passed by `--bench`. The "2-3
 deg held upright" once written here was a hand-held standby reading, which
 is not upright, so it is no evidence. What the balancing records give
 instead: the median roll the AHRS reads while the bike balances itself is
@@ -1246,6 +1439,40 @@ instead: the median roll the AHRS reads while the bike balances itself is
 no-input one). That is mount offset plus any sideways CoM offset, which the
 policy cannot tell apart and neither can this. Worth a jig only if the
 drift turns out to follow it.
+
+**Why no jig can settle roll.** A reversal (read, turn the bike 180 deg
+about vertical on the same marks, read again: half the sum is the mount,
+half the difference the floor) needs the support to repeat the chassis's
+attitude to the accuracy wanted, ~0.17 mm per 100 mm of base for 0.1 deg.
+Pitch has a base, the two wheel contacts. Roll has none: whatever props
+the bike sets its roll, and the upright that matters is where it BALANCES
+(CoM over the contact line), which no prop gives. So roll is known no
+better than the CAD sets it, and the AHRS is the finest level on the bike.
+
+**Backup, not queued: train over the mount error instead.** Estimate the
+error as a budget and randomise it per episode. What training already has:
+`sim_ahrs` draws a fixed accelerometer misalignment per power-on, uniform
++-0.5 deg per axis (`MISALIGN_DEG`, the TM151 datasheet's "< 0.5 deg"),
+and under `tm151_filter` that tilts the filter's gravity reference, so
+every policy since 10-09 has seen a roll and pitch offset of up to 0.5
+deg. What it lacks is the build's share, all of it unmeasured:
+
+| term | how to estimate |
+|---|---|
+| the sensor's own axes against its case | datasheet, already in (0.5 deg) |
+| the TM151's holes against the tabs | print hole-position error over the hole spacing (CAD) |
+| the tabs' face against the drive frame | print flatness / warp over the face's length |
+| the drive module against the chassis datum | assembly stack, screws and press fits |
+| the wheels' contact line against the chassis | already randomised elsewhere? check `randomization:` before adding |
+
+Sum them (root-sum-square for independent errors, straight sum for a
+bound), and widen the draw to that. Two cautions from the 08-28 attempt
+(`sensor-workstream.md`, "Randomising the AHRS error parameters"): keep
+the floor at the datasheet value rather than a log-uniform spread whose
+median sits below the bike, and judge the result with `chatter.py`, which
+`_score` alone missed. The balancing records' +0.6 to +1.6 deg median roll
+is an upper bound on the mount's share (it includes any CoM offset), so a
+range that does not reach ~1.5 deg is narrower than the evidence allows.
 
 ### 6. Standstill drift, measured  [the target floor, a camera]
 
@@ -1294,7 +1521,8 @@ were for a bike that did not exist. Now:
 - Train with `steer_rate_encoder: counts` (the pointer did not).
 
 Each moves the plant digest, so every policy becomes provisional at once;
-batch them.
+batch them. Tracked with the wheel play and the GPU status of each in
+`next-retrain.md` (10-26).
 
 ## Not tests, but now worth watching
 
