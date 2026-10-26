@@ -247,7 +247,14 @@ shoulder ~2x. The measured roller spring does nothing visible. Contact
      ```
 
    - **Run 10-25 (261025-194827 / 194902 mix, 194945 diff; 194827 let
-     the bike roll a little).**
+     the bike roll a little).** The fork was held, but NOT straight
+     (found later 10-25, `shutdown.steer_hold`): 24 counts (2.1 deg) off
+     in all three, and 28 (2.5 deg) in 200325. `--hold-steer` wrote the
+     straight goal before torque on, and a goal written with torque off
+     is dropped (control_tables/README.md), so the steer held wherever
+     it was. Only 191638 (90 -> 0) and 200407 (28 -> 0) moved to
+     straight; 192127 / 192222 / 192925 started within 9 counts. Fixed:
+     torque on, then a raised-cosine move to straight, the goal read back.
      - **Common does not change the diff response.** The two mix runs
        repeat to ~0.02 and a few degrees. Diff, from position: 0.33-0.35 at
        -45 to -58 over 7-10 Hz with or without common, as the 192925 sweep
@@ -538,6 +545,192 @@ shoulder ~2x. The measured roller spring does nothing visible. Contact
        detent release clicks ringing a ~44 Hz structural mode, which
        flight's large roller strokes hit all the time. The 9 Hz pitch is
        small both ways (7-12 Hz: 0.5-0.9 deg/s held, ~1.0 in flight).
+
+9. **Test: what rings? A guided pluck test (`analysis/servo/tap_test.py`,
+   queued 10-25).** The bike responds at 9 Hz 1.5-2.5x harder than the
+   twin (item 8), the flight records' yaw-vs-roll phase jumps ~90 deg
+   between 6 and 7 Hz (test 2), and the user names two flex points: the
+   axle and the steerer tube (the fork itself is fairly rigid). A pluck
+   rings the whole structure and the AHRS hears it wherever it sits. The
+   script prompts each spot (Enter, three plucks ~3 s apart, Enter): a
+   baseline, the steerer sideways, each tyre sideways, the rollcage
+   sideways and fore-aft, each wing tip, a knuckle on the frame. Servos
+   locked as in flight (drives at velocity 0, steer straight), or
+   `--limp`. Held as for item 8: wheels down, one finger on the rollcage.
+   It prints each spot's strongest 3-60 Hz gyro peak over the baseline's,
+   and its 6-10 Hz power over the baseline's.
+
+   ```sh
+   python analysis/servo/tap_test.py --note "upright on floor, one finger on rollcage"
+   python analysis/servo/tap_test.py --limp --tag limp --note "..."
+   ```
+
+   **Run 10-25 (traces/bench/tap_261025-210730; `tap_test.py --report`
+   reprints it).** Drives held (the operator heard them buzz); the steer
+   torqued but held 8.3 deg off straight (below); the wings were limp, which the script did not then
+   touch, so a flick moved the wing rather than ringing it: the wing
+   spots are left out. 2-4 plucks found per spot, AHRS 192 Hz.
+   Ring-down peaks, 2-30 Hz, as power over that axis's largest:
+
+   | spot | roll | yaw |
+   |---|---|---|
+   | steerer | 2.9 (1.00), **7.1 (0.47)** | **7.2 (1.00)**, 9.3 (0.52) |
+   | front_axle | 3.5, 4.7, 6.2 (0.23) | 2.9, 4.6, 6.2 (0.75) |
+   | rear_axle | 2.7 (1.00), 6.2 (0.06) | **6.2 (1.00)**, 2.8-3.3 (0.53) |
+   | cage_side | 3.0 (1.00), 6.2 (0.31) | **6.2 (1.00)**, 7.4-8.5 (0.54-0.62) |
+   | cage_fore_aft | 3.7, 6.6 (0.48) | 2.8, 5.7-6.5 (0.92-0.98) |
+   | frame_knock | 2.8 (1.00) | 2.6, 4.1, 5.6 (0.66) |
+
+   - **Nothing rings at 9 Hz.** No spot's largest ring is between 8 and
+     11 Hz; the nearest is the steerer's yaw at 9.3 (0.52 of its 7.2).
+   - **A ~6.2 Hz ring, mostly YAW, from almost every spot**: the largest
+     yaw ring for the rear axle and the rollcage sideways, 0.75-0.98 for
+     the front axle and fore-aft. (The wings did not swing, by eye.) The same frequency
+     wherever plucked, so a mode of the bike as held, not of one part.
+     The flight records' yaw-vs-roll phase jumps ~90 deg between 6 and
+     7 Hz (test 2): this is a candidate for it. Plucking the steerer
+     gives 7.1-7.2 instead, in roll and yaw both.
+   - **Roll rings at 2.5-3.7 Hz everywhere**: the whole bike rocking,
+     on the finger hold and the tyres (the twin's hand at k 5 gives 2.3).
+   - **Pitch: not excited** (<= 2 deg/s at the plucks); no reading.
+   - Damping: the log-decrement estimates scatter around zero, some
+     negative; not quoted.
+   - **The steer held 8.3 deg off straight.** It started at 95 counts
+     and ended at 94 (`steer_hold.present_after`), the goal 0; torque was
+     on (the operator). The straight goal was written before torque on
+     and dropped (item 8's correction above), so it held where it was.
+     The steerer's 7.1-7.2 is with a torqued fork 8.3 deg off. Fixed in
+     `drivetrain_bench._steer_hold_on`, which `tap_test` uses; `tap_test`
+     also reads each held servo back after the settle (torque, goal,
+     shaft, Bus Watchdog, error), stops to ask if one is > 2 deg off,
+     reads torque and error again at the end, and holds the wings as
+     flown, its goals written after torque on too.
+
+   The twin plucked the same way (`held_twin.py pluck --k 1.8 5`, 1 N,
+   push 0.5 s, let go, servos locked) has no ring common to the spots:
+   yaw 4.8 (steerer), 7.4 / 12.5 (front axle), a broad 3.8-6.9 (rear
+   axle), 3.6 (cage side, k 5). Its force and hold only stand in for
+   the hand's, so this says the 6.2 is not obviously there; it is not
+   a careful absence.
+
+   **Is the 6.2 Hz the rear rollers?** (the operator's guess, 10-25). A
+   rough number for it, inferred, not measured: the drives' hold spring
+   (2.69 duty/rad at I 1920, x 0.62-0.69 N m per duty, ~1.8 N m/rad per
+   servo), both servos at 0.0756 m of sideways contact travel per servo
+   rad, is ~630 N/m at the rear contact; through the 0.2005 m wheelbase
+   that is ~25 N m/rad of yaw, against the twin's 0.021 kg m^2 of yaw
+   inertia about the front contact: **~5.5 Hz**. But the operator saw
+   the drives not move at all, and the ring's ~0.9 mm at the rear sits
+   inside the rollers' +-7.8 deg play (~1.4 mm), where only the weak
+   centring spring holds. Either the servos moved under ~1 deg (the
+   estimate says ~0.7 deg), or the spring is somewhere else (tyre or
+   roller rubber, the axle). `tap_test` now logs every held servo's
+   shaft during the plucks (`servos.npz`) and prints the rollers'
+   ring-vs-hub p-p and spectrum at each pluck. Next run, wings held:
+
+   ```sh
+   python analysis/servo/tap_test.py --spots rear_axle cage_side steerer --plucks 4 --note "locked, I 1920"
+   python analysis/servo/tap_test.py --spots rear_axle cage_side steerer --plucks 4 --drive-gains 100:960 --tag i960 --note "locked, I 960"
+   ```
+
+   If it is the drives' hold spring, halving I moves it by ~1/sqrt(2)
+   (6.2 -> ~4.4 Hz) and the rollers ring with the gyro; a rubber or
+   axle mode stays put.
+
+   **Run 10-25 (tap_261025-213003 at I 1920, 213210_i960 at I 960;
+   3 plucks asked, 4-5 found per spot).** Every hold checked: the steer
+   ramped 263 -> 0 counts and held 0 (both runs), the wings held 0.0 deg
+   off, all four servos torqued with no error at the end. Shafts logged
+   at 145 Hz, no read errors. Yaw ring-down peaks (largest = 1.00):
+
+   | spot | yaw, I 1920 | yaw, I 960 | rollers ring-vs-hub p-p | steer p-p |
+   |---|---|---|---|---|
+   | rear_axle | **7.1** (1.00) | **6.7** (1.00) | 0.03 / 0.01 deg | 0.00 / 0.00 |
+   | cage_side | **6.2** (1.00) | **6.3** (1.00) | 0.04 / 0.00 | 0.09 / 0.09 |
+   | steerer | 5.4 (1.00), 6.6 (0.89) | 4.3 (1.00), 9.0 (0.72) | 0.03 / 0.04 | 0.00 / 0.04 |
+
+   - **It is not the drives' hold spring.** Halving I left the ring at
+     6.2-7.1 Hz (that spring would put it near 4.4), and the drive
+     shafts moved 0.00-0.04 servo deg p-p, under one encoder count
+     (0.088 deg), as the operator saw. The steer shaft did not move
+     either (<= 0.09).
+   - So the 6-7 Hz yaw ring's spring is downstream of every servo:
+     the rollers inside their play (invisible to the encoders), roller
+     or tyre rubber, the axle, the steerer tube. The estimate above
+     (~5.5 Hz) assumed the servos were the spring and is dropped.
+   - **What the two plucks do (the operator):** both the rear-axle and
+     the rollcage-sideways push take the rollers to one END of their
+     play, and the release lets them go. So the ring starts from the
+     slop's wall and runs through the play, the one place the encoders
+     cannot see. The hand-measured centring spring (~1e-2 N m/rad per
+     roller, unloaded, 10-24 video) through the 10.5 mm roller radius
+     and the wheelbase is only ~90 N/m sideways and ~2-3 Hz of yaw
+     (inferred), too soft for 6-7 Hz on its own. Open: a stiffer loaded
+     roller, a spring at the front contact while the rear is free in its
+     play, or backlash dynamics (whose frequency moves with amplitude).
+     The twin plucked with 1e-3 and 1e-2 springs (scratch, 1 and 4 N)
+     gives no clean ring either way, so it does not decide it.
+   - **Per pluck (`--report` now prints it; 0.7-60 Hz, strongest yaw
+     peak 4-30 Hz):** the rear-axle and rollcage plucks large enough to
+     read (yaw peak 10-27 deg/s) ring at 6.0-6.6 Hz (210730), 7.1-8.6
+     (213003, I 1920) and 6.3-7.8 (213210, I 960). So the ring is 6-8.6
+     Hz and wanders by ~1-2 Hz between plucks of about the same size,
+     which a fixed linear mode would not; plucks under ~6 deg/s are too
+     small to read. The summed-spectrum peaks above hide that spread.
+   - **Next, the pluck's size through the play** (spots `rear_part`,
+     `rear_end`): part of the free play and let go before the end, then
+     to the end of it. Backlash should ring at a different frequency
+     for the two; a spring mode should not.
+
+     ```sh
+     python analysis/servo/tap_test.py --spots rear_part rear_end --plucks 5 --note "locked, rear part vs end of play"
+     ```
+
+     **Run 10-25 (tap_261025-214929; holds checked: steer 1.2 deg off,
+     wings 0.0).** With a third spot the operator added,
+     `whole_wheelbase`: the wheels kept down and the frame twisted, front
+     and rear together, loading the roller play and the fork / steerer /
+     front wheel at once. 7 plucks found per spot. Per pluck:
+
+     | spot | yaw peak, deg/s | ring, Hz |
+     |---|---|---|
+     | rear_part | 2.8-7.8 | 4.3-10.7, scattered |
+     | rear_end | 9.5-20.4 | **5.9-7.8** in 5 of 7 (10.1, 18.9) |
+     | whole_wheelbase | 16.5-42.0 | **4.0-5.3** in 5 of 7 (9.6, 12.1) |
+
+     - **The end-of-play ring repeats: 6-7 Hz,** the fourth run with it
+       (summed: 6.0, 6.7).
+     - **Part of the play does not decide it.** Every part-play pluck is
+       under 8 deg/s, where a single pluck's ring cannot be read (the
+       floor is ~6); its summed spectrum is flat between 4.4 and 6.2. A
+       part-play pluck is at most ~1.4 mm at the contact, so it cannot
+       be made bigger: the amplitude test needs a quieter reading, not a
+       harder push.
+     - **Twisting the whole wheelbase rings LOWER, 4-5 Hz,** at twice the
+       size. Front and rear compliance in series would be softer than
+       either alone, which fits; it is a different push, so it is not an
+       amplitude test of the same ring.
+     - Shafts again still: drives 0.00-0.07 servo deg p-p; the steer
+       moved 0.26 deg in the twist, 0.00-0.09 otherwise.
+     - **What the 6-7 Hz implies for the model** (inferred): pivoting
+       about the front contact with the twin's 0.021 kg m^2, 6.5 Hz needs
+       ~35 N m/rad of yaw stiffness, ~900 N/m sideways at the rear
+       contact, all of it beyond the servos; the hand-measured centring
+       spring gives ~90 N/m per roller, ~10x short. **But the twin does
+       not follow that picture:** plucked (scratch, 1 N) with the roller
+       centring at 1e-2, 5e-2 and 1e-1 N m/rad it gives no clean yaw
+       ring at any (rear-axle yaw peaks spread 5.4-10.6 Hz, and 2.8 Hz
+       at 1e-1), so the pivot-about-the-front estimate is not how the
+       twin moves, and "raise the spring 10x" is not supported. The
+       measured spring (0.007-0.011) and the detent were already flown
+       in the floor twin (10-24 evening, above): no 8-10 Hz peak. No
+       slop-model change follows from the plucks yet; the part that
+       rings has to be found first.
+   - The steerer's own peak moves between runs (5.4, 4.3; 7.1-7.2 when
+     it sat 8.3 deg off), so it is not a clean ring of its own.
+   - The rear-axle ring sits a little higher with the fork held
+     straight (6.7-7.1) than at 8.3 deg off (6.2); with 1.5 s windows
+     the bins are ~0.7 Hz wide, so that is at the edge of resolution.
 
 ## The tool
 

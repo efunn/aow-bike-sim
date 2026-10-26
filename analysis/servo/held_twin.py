@@ -8,6 +8,7 @@ inverting BikeBus.write_commands (drive_a = 102, onboard signs, steer sign).
     python analysis/servo/held_twin.py diff 261025-200407_chirp --k 2 10
     python analysis/servo/held_twin.py steer traces/bench/steer_ground_261025-200807.json --k 2 5 10
     python analysis/servo/held_twin.py static traces/bench/steer_static_261025-203535.json --k 5
+    python analysis/servo/held_twin.py pluck --k 1.8 5     # tap_test's spots, servos locked
 
 `--k` is the hand's roll stiffness in N m/rad (damping at zeta 0.5 about the
 floor line). Below ~1.6 (m g h) the bike falls over and the row is
@@ -261,10 +262,85 @@ def static(path, ks):
                       f"| roll p-p {np.ptp(rl):.1f}, yaw p-p {np.ptp(yw):.1f}")
 
 
+# tap_test's spots: (body, point offset from its frame [m], force direction).
+# Push for 0.3 s ramped, 0.2 s held, then let go at once, three times.
+PLUCKS = {
+    "steerer": ("steer", (0, 0, 0.06), (0, 1, 0)),
+    "front_axle": ("front_wheel", (0, 0, 0.05), (0, 1, 0)),
+    "rear_axle": ("aow_hub", (0, 0, 0.05), (0, 1, 0)),
+    "cage_side": ("chassis", (0, 0, 0.15), (0, 1, 0)),
+    "cage_fore_aft": ("chassis", (0, 0, 0.15), (1, 0, 0)),
+    "wing_left": ("swing_wing_left", (0, 0, 0), (0, 0, 1)),
+}
+PLUCK_N = 1.0
+
+
+def pluck(ks):
+    """The pluck test in the twin: servos locked (drives at 0, steer at its
+    start), the hand as in `fly`, a push-and-release at each spot. Prints the
+    ring-down spectrum's peaks per axis, as tap_test's ring-down read-out."""
+    mujoco = __import__("mujoco")
+    for k in ks:
+        print(f"\ntwin, hand k {k:g}, pluck {PLUCK_N:g} N; peaks 2-30 Hz (power, of the largest)")
+        for spot, (body, off, dirn) in PLUCKS.items():
+            _, m, d, drive, gear = build()
+            b = m.body(body).id
+            ch = m.body("chassis").id
+            aid = m.actuator("steer").id
+            steer0 = float(d.ctrl[aid])
+            mujoco.mj_forward(m, d)
+            tot, h = m.body_subtreemass[ch], d.subtree_com[ch][2]
+            c = 2 * 0.5 * np.sqrt(k * (tot * h * h + m.body_inertia[ch][0]))
+            dt = m.opt.timestep
+            T = 1.0 + 3 * 2.0
+            gy, ts = [], []
+            for step in range(int(T / dt)):
+                t = step * dt
+                d.ctrl[:] = 0.0
+                d.ctrl[aid] = steer0
+                q = d.qpos[3:7]
+                roll = np.arctan2(2 * (q[0] * q[1] + q[2] * q[3]), 1 - 2 * (q[1] ** 2 + q[2] ** 2))
+                d.xfrc_applied[:] = 0.0
+                d.xfrc_applied[ch, 3:6] = -(k * roll + c * d.qvel[3]) * d.xmat[ch].reshape(3, 3)[:, 0]
+                tp = (t - 1.0) % 2.0 if t >= 1.0 else 9.0
+                F = PLUCK_N * (tp / 0.3 if tp < 0.3 else 1.0 if tp < 0.5 else 0.0)
+                if F:
+                    R = d.xmat[b].reshape(3, 3)
+                    pt = d.xpos[b] + R @ np.array(off, float)
+                    f = R @ (F * np.array(dirn, float))
+                    d.xfrc_applied[b, :3] += f
+                    d.xfrc_applied[b, 3:] += np.cross(pt - d.xipos[b], f)
+                drive.pre_step(d)
+                for g in gear:
+                    g.pre_step(d)
+                mujoco.mj_step(m, d)
+                if step % int(round(1 / (200 * dt))) == 0:
+                    ts.append(t); gy.append(np.degrees(d.qvel[3:6]))
+            ts, gy = np.array(ts), np.array(gy)
+            n = 2048
+            fr = np.fft.rfftfreq(n, 1 / 200)
+            acc = np.zeros((3, len(fr)))
+            for r in range(3):
+                t_rel = 1.0 + 2.0 * r + 0.5 + 0.03
+                w = (ts >= t_rel) & (ts < t_rel + 1.45)
+                for ax in range(3):
+                    x = gy[w, ax] - gy[w, ax].mean()
+                    acc[ax] += np.abs(np.fft.rfft(x * np.hanning(len(x)), n)) ** 2
+
+            def peaks(S, lo=2.0, hi=30):
+                sel = np.flatnonzero((fr >= lo) & (fr <= hi))
+                pk = [i for i in sel[1:-1] if S[i] > S[i - 1] and S[i] > S[i + 1]]
+                pk = sorted(pk, key=lambda i: -S[i])[:4]
+                return "  ".join(f"{fr[i]:4.1f}({S[i] / S[sel].max():.2f})" for i in sorted(pk))
+            amp = np.abs(gy[ts > 1.0]).max(axis=0)
+            print(f"  {spot:14s} roll: {peaks(acc[0])}   | yaw: {peaks(acc[2])}   "
+                  f"| max deg/s r/p/y {amp[0]:.1f}/{amp[1]:.1f}/{amp[2]:.1f}")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=("diff", "steer", "static"))
-    ap.add_argument("src")
+    ap.add_argument("what", choices=("diff", "steer", "static", "pluck"))
+    ap.add_argument("src", nargs="?")
     ap.add_argument("--k", type=float, nargs="+", default=[2.0])
     ap.add_argument("--steer-offset", type=float, default=None, metavar="DEG",
                     help="steer: fork offset from straight the twin starts at "
@@ -274,5 +350,7 @@ if __name__ == "__main__":
         diff(a.src, a.k)
     elif a.what == "static":
         static(a.src, a.k)
+    elif a.what == "pluck":
+        pluck(a.k)
     else:
         steer(a.src, a.k, a.steer_offset)
