@@ -169,6 +169,375 @@ shoulder ~2x. The measured roller spring does nothing visible. Contact
    (friction, sawtooth size, its phase against the hung one: backlash
    shows as a shift) and how a loaded roller's slop sits in it, which is
    what the floor twin flies. Also settles item 6's backlash question.
+   The steer is held straight by its own servo, `--hold-steer` (extended
+   position at the flight gains, restored afterwards; it refuses a fork
+   more than 45 deg off straight). Hold the chassis upright in roll but
+   let the rear swing: the rollers must be free to roll it sideways, or
+   the creep becomes a stall against floor friction. While it is set up,
+   a loaded diff chirp at the flight gains measures the servo + floor
+   response through 9 Hz directly, the link the closed-loop floor records
+   cannot separate (10-25: from position, the bike's rollers lag their
+   command ~115 deg at 9 Hz on the floor, the twin's ~65):
+
+   ```sh
+   P=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTB8HMQ3-if00-port0
+   B="--port $P --ids 101 102 --signs 1 -1 --hold-steer"
+   python analysis/servo/drivetrain_bench.py creep $B --gains 100:1920 --note "upright on floor, rollers loaded"
+   python analysis/servo/drivetrain_bench.py map --position-gains 4000:0:0 --hold 0.6 $B --note "upright on floor, rollers loaded, P4000"
+   python analysis/servo/drivetrain_bench.py chirp --modes diff --f0 2 --f1 20 --seconds 15 --gains 100:1920 $B --note "upright on floor, rollers loaded"
+   ```
+
+   **Run 10-25 (261025-191638_creep, 192127_map, 192222_chirp).** The
+   steer held: it ended 0-7 counts (<= 0.6 deg) from straight in all three.
+   - Map at P 4000: loaded is the hung map. Diff friction 0.219 duty
+     (hung 0.213), the same 7.5 deg sawtooth, angle-only p-p 0.365 (0.329),
+     at the same phase; common 0.129 (0.111). The floor adds almost no
+     static resistance with the rear free to swing.
+   - Creep (`replay_jumps.py`): loading makes the stick-slip FINER. Bike
+     singles / doubles, loaded against hung 202227: +1 % 19/2 (8/8),
+     -1 % 11/5 (3/8), +3 % 42/13 (3/33), -3 % 20/22 (3/30). The - way
+     still doubles more. The sim, in the air, is all singles at 1 %.
+   - Diff chirp, +-1.67 rad/s at the servo, from position: gain 0.25-0.28
+     at 2-5 Hz (-22 to -34 deg), 0.13 at 9 Hz (-49), coherence falling below
+     0.5 above 8.5 Hz and gone by 11. The sim testbed fed the same stream
+     sticks harder (0.18 at 6 Hz, 0.03 at 9). Both are friction-bound: at
+     9 Hz the response is ~0.2 deg of shaft, two encoder counts. The bike's
+     own 9 Hz band in 174349 is 1.55 rad/s RMS (sinusoid ~2.2), on top of
+     a 2.5 RMS command that keeps the servo moving, so this chirp, with
+     nothing else moving, measures a different regime. Not yet the
+     loaded 9 Hz response; it needs a larger amplitude.
+   - **Rerun at +-4.4 rad/s (`--amp 0.4`, 4-14 Hz, 261025-192925_chirp):
+     the loaded servo is NOT slow.** Coherence 0.99 over 4-12 Hz.
+
+     | diff, cmd -> velocity from position | 6 Hz | 9 Hz | 12 Hz |
+     |---|---|---|---|
+     | bike, held upright, loaded | 0.35 -43 | 0.35 -49 | 0.33 -69 |
+     | sim testbed, same stream | 0.50 -62 | 0.31 -78 | 0.18 -85 |
+     | bike in flight, 174349 (closed loop, 100 Hz) | 0.36 -77 | 0.31 -102 | 0.32 -97 |
+     | twin in flight (10-25 loop breakdown) | | 0.5 -65 | |
+
+     Held, the bike's rollers lag the model's by ~30 deg LESS at 9 Hz, at
+     about the same gain. So the 10-25 suspect "servo plus floor load lags
+     more on the bike" is cleared for the servo against a held bike. The
+     flight record's extra ~53 deg (~16 ms at 9.4 Hz) is somewhere else.
+     The candidates are the following; none is measured.
+     - **Bookkeeping.** The record pairs tick k's command, written after the
+       read, the AHRS and the policy, with tick k's position, read first.
+       That adds at most the in-tick write offset, under ~8 ms (<= ~27 deg).
+       Not logged: `rec.add` keeps the write's duration, not its start.
+     - **The free bike's dynamic load.** It is absent with the chassis
+       held. The twin flies that load and does not show the extra lag.
+     - **The flight waveform.** The command is a 50 Hz staircase with common
+       mode and steer motion on top.
+   - **Next: common and diff together, a stepped sine.** In the six floor
+     runs, common's 7-12 Hz command is 0.26-0.44 of diff's by RMS (0.16-0.40
+     coherent) and LEADS it by 21-63 deg (fixes_72M ~35; rake20 63). That is
+     in the bench's frame, the same per-servo goals as `cmd`. `chirp --mix
+     RATIO PHASE` drives that combination, and `--steps N --dwell S` holds
+     each of N log-spaced frequencies for whole cycles. The quick look prints
+     a per-step lock-in from position, diff and common separately. Run the
+     pure-diff steps as the control. `--ahrs` also records every AHRS sample
+     (chassis frame, the bundle's mount, `ahrs.npz` on the capture's clock),
+     which asks whether the pitch shake appears with the fork held and only
+     the rear wheel driving:
+
+     ```sh
+     python analysis/servo/drivetrain_bench.py chirp --mix 0.3 35 --amp 0.4 --f0 4 --f1 14 --steps 12 --dwell 2 --gains 100:1920 $B --ahrs --note "upright on floor, rollers loaded, mix 0.3@+35"
+     python analysis/servo/drivetrain_bench.py chirp --modes diff --amp 0.4 --f0 4 --f1 14 --steps 12 --dwell 2 --gains 100:1920 $B --ahrs --note "upright on floor, rollers loaded, diff steps"
+     ```
+
+   - **Run 10-25 (261025-194827 / 194902 mix, 194945 diff; 194827 let
+     the bike roll a little).**
+     - **Common does not change the diff response.** The two mix runs
+       repeat to ~0.02 and a few degrees. Diff, from position: 0.33-0.35 at
+       -45 to -58 over 7-10 Hz with or without common, as the 192925 sweep
+       gave. Common is 0.11-0.21 at 4-5 Hz (a poor fit, residual 0.4: the
+       wheel against the floor), then 0.28-0.32 at -32 to -50 over 8-10 Hz.
+     - **The AHRS is clean in the window**: 198 Hz, QoS 5. Its only gaps
+       (~200 ms) come after the capture ends, at the frame conversion.
+     - **Above ~7 Hz the rollers turn but the rear barely moves sideways.**
+       The hand held roll, by the procedure, and left yaw free. Free
+       rolling with the front contact as the pivot gives 21.6 deg/s of yaw
+       per servo rad/s of diff (3 x 2.4 x 10.5 mm / 0.2005 m). Measured
+       yaw against that, by lock-in on the measured diff velocity, in all
+       three runs:
+
+       | step | yaw / free rolling | lateral accel the rear would need |
+       |---|---|---|
+       | 4-5 Hz | 0.8-1.2 | ~0.4 g |
+       | 7 Hz | 0.24-0.49 | ~0.5 g |
+       | 9-14 Hz | 0.12-0.20 | 0.6-0.9 g |
+
+       The phase slides steadily through the band. Its absolute value
+       depends on sign conventions that are not checked here, so read
+       only the trend.
+
+       Gyro per diff COMMAND at 9-10 Hz:
+
+       | | roll | yaw | pitch |
+       |---|---|---|---|
+       | held, mix / diff only | 0.6-0.8 / 1.5-1.65 | 0.9-1.4 / 1.1-1.3 | 0.20-0.27 / 0.15-0.22 |
+       | flight, diff alone | 13.5 / 13.8 | 10.8 / 11.0 | 0.41 / 0.39 |
+       | flight, diff and steer together | 7.7 / 8.3 | 5.9 / 1.1 | 0.28 / 0.42 |
+
+       Rows are 174349 / 191558. The fit with steer is poorly conditioned:
+       diff and steer are 93-97 % coherent at 9.4 Hz in flight. Still,
+       flight yaw at 9 Hz is mostly the STEER's, and the rear's own share
+       (1-6) brackets the held bike's ~1.1. That is ~0.15 of free rolling
+       at the servo's 0.33 gain. Roll is not comparable, held by hand.
+
+       What stops the rear above 7 Hz: the leading candidate is the
+       **roller slop**. The rollers' ~+-7.8 deg of play (the 10-24 film)
+       is 15.6 deg p-p of roller angle. A backlash of that width, nothing
+       fitted, gives the fundamental's fraction from the measured roller
+       stroke (ring-vs-hub x 2.4):
+
+       | step | roller stroke amp | yaw / free rolling | backlash +-7.8 |
+       |---|---|---|---|
+       | 4 Hz | 32-34 deg | 1.1-1.2 | 0.85 |
+       | 7-9 Hz | 10-14 | 0.14-0.49 | 0.31-0.54 |
+       | 11-14 Hz | 6-9 | 0.12-0.18 | 0-0.11 |
+
+       It has the shape. The measured ratio falls ~1-2 Hz earlier,
+       though, and keeps a ~0.13 floor that pure backlash does not, so it
+       may not be the whole story. Other candidates:
+       - **Slip.** The lateral acceleration needed passes ~0.5 g where
+         the ratio falls; the weight share and roller mu are not measured.
+       - **A linear roll-off.**
+
+       AMPLITUDE separates all three at a fixed frequency: with slop the
+       ratio RISES with stroke, with slip it FALLS, and a linear roll-off
+       stays put. Test: the diff steps at `--amp 0.2` and `--amp 0.6`. The
+       model has the slop (`drivetrain_model.roller_slop`), so if the slop
+       is confirmed, the next question is whether the floor twin's rear
+       shows the same drop.
+   - **Next, the converse: steer swept on the ground, rear held.**
+     `steer_response.py --hold-drives --ahrs`. Both drives sit at
+     velocity mode, goal 0, P 100 / I 1920, as they fly; their mode and
+     gains come back after. The steer is first moved smoothly to straight
+     (180 mod 180; refused beyond 45 deg; since 10-25, the 200807 sweep
+     ran ~3.3 deg off), then runs one faded tone at a time around it. At
+     each tone it reports the shaft's gain and phase, how far the drives
+     drifted, and the gyro per steer goal. In flight the 9 Hz steer goal
+     is ~+-2.4-2.6 deg (7-12 Hz band, both floor runs) and the shaft
+     ~+-1.4-1.6, hence 2.5 and 5. NO Enter prompt: torque comes on at
+     launch.
+
+     ```sh
+     python analysis/servo/steer_response.py --port $P --id 103 --amp-deg 2.5 5 --freqs 4 5 6 7 8 9 10 11 12 14 --hold-drives --ahrs --out traces/bench/steer_ground_$(date +%y%m%d-%H%M%S).json --note "upright on floor, drives held"
+     ```
+
+   - **Amplitude test (10-25: 261025-200325 at `--amp 0.2`, 194945 at
+     0.4, 200407 at 0.6): the drop is SLOP, not slip.** Yaw / free
+     rolling by step:
+
+     | Hz | 0.2 | 0.4 | 0.6 | lateral g at 0.6 |
+     |---|---|---|---|---|
+     | 4 | 0.30 | 1.10 | 0.95 | 0.75 |
+     | 6.3 | 0.03 | 0.64 | 1.02 | 0.82 |
+     | 7.9 | 0.01 | 0.14 | 1.15 | 0.89 |
+     | 8.9 | - | 0.14 | **1.53** | 0.92 |
+     | 9.95 | - | 0.18 | **1.52** | 0.98 |
+     | 11.2 | - | 0.12 | 0.27 | 1.30 |
+     | 14 | - | 0.14 | 0.09 | 1.58 |
+
+     At each frequency the ratio RISES with stroke. Slip would make it
+     fall; at 0.6 the rear follows fully while the rolling would need
+     0.8-1.0 g. "-": the servo barely moved (gain <= 0.06), so the ratio
+     is noise. The +-7.8 deg backlash tracks the 0.2 and 0.4 rows.
+
+     NEW at 0.6: the ratio peaks at ~1.5 at 9-10 Hz, its phase sliding
+     ~80 deg from 7 to 11 Hz, then collapses at 11 Hz. Two readings,
+     not separated:
+     - **A yaw mode near the shake frequency.** Yaw above free rolling
+       means the front moves the other way.
+     - **Slip onset**, where the needed lateral acceleration passes
+       ~1.3 g.
+
+     Servo diff gain, from position, at 9 Hz: 0.09 / 0.35 / 0.32 for
+     0.2 / 0.4 / 0.6.
+   - **Steer on the ground, drives held (10-25,
+     `traces/bench/steer_ground_261025-200807.json` + `_ahrs.npz`).**
+     - **The drives did not move.** Not one count (0.26 deg of
+       ring-vs-hub) at any tone boundary over 60 s. As expected: the
+       geared XC430 is hard to backdrive from the ground. The script
+       reads only between tones.
+     - **The shaft against its goal:**
+
+       | | 5 Hz | 9 Hz | 14 Hz |
+       |---|---|---|---|
+       | +-2.5 | 0.62 -86 | 0.33 -124 | 0.18 -173 |
+       | +-5 | 0.72 -82 | 0.43 -123 | 0.25 -175 |
+
+       Bare on the bench (10-17), the shaft gave 0.83, -87 at 5.2 Hz, so
+       the ground costs gain more than phase at 5 Hz. The flight
+       closed-loop steer was 0.5-0.6 at -137 to -156 over 6-12 Hz.
+     - **Gyro per steer.** At 9 Hz, per steer GOAL: roll 2.8-3.0, yaw
+       2.4-2.6, pitch 0.21 deg/s per deg. Per SHAFT degree that is roll
+       6.6-9.1, yaw 6.0-7.3. The flight's steer share (the two-input
+       fit above, per measured steer degree) is roll 10-11 and yaw 9-17,
+       the same order; that fit is poorly conditioned.
+
+   - **Pitch at 9 Hz: front and rear about equally.** Each held test's
+     pitch per input at 8-10 Hz, times that input's 7-12 Hz RMS in flight
+     (174349 / 191558):
+
+     | source | pitch per input | flight input | predicts |
+     |---|---|---|---|
+     | rear, diff only | 0.17-0.18 | 1.55-1.63 rad/s | 0.27-0.29 deg/s |
+     | rear, diff + common | 0.26 | same | ~0.41 |
+     | front, steer | 0.20-0.22 /deg | 1.69-1.86 deg | 0.34-0.41 |
+     | flight, measured | | | 0.94-0.95 |
+
+     Together 0.55-0.8 depending on phase. Neither wheel dominates by
+     size.
+
+     **By PHASE, the flight's 9 Hz pitch is the rear WITH its forward
+     drive.** Each held test's complex response, weighted by the flight's
+     own steer/diff relation, against flight pitch per diff command (all
+     in written servo-unit goals and chassis-frame gyro):
+
+     | phase vs flight diff cmd, 8.6 / 9.4 / 10.2 Hz | |
+     |---|---|
+     | front (steer) alone | -1 / -12 / -23 (191558 -20 at 9.4) |
+     | rear, diff only (amp 0.4; 0.6) | -82 / -83 / -86 (-70 / -67 / -75) |
+     | rear, diff + common (mix 0.3 @ +35) | -169 / -170 / -171 |
+     | flight, measured, 174349 | -173 / -171 / -162 (coherence 0.35-0.53) |
+     | flight, measured, 191558 | -134 at 9.4 (coherence 0.46) |
+
+     Only the rear with common has the flight's phase, at 0.20-0.29 of
+     the measured 0.33-0.41 magnitude. The steer's share arrives almost
+     opposite to it: added, the two cancel to 0.07-0.12, and the flight
+     shows no such cancellation. So in flight the steer's pitch is not
+     what the held test measured: there the rear was LOCKED, in flight
+     it is free. Superposition of the held tests does not hold.
+
+     **Steering geometry is NOT this pitch.**
+     - **Static, in the model.** Turning the fork either way lifts the
+       nose, an even function of steer: -0.004 deg at +-5, -0.018 at
+       +-10, -0.028 at +-20, i.e. ~0.17e-3 deg/deg^2. A 9 Hz steer about
+       straight would pitch the chassis at 18 Hz.
+     - **On the bench, the even part is the same order.** In the steer
+       test the bike's pitch at 2f is ~10x smaller than at f. Fitted
+       against the shaft angle squared at the 4-8 Hz tones it is
+       0.36-1.0e-3 deg/deg^2, at a phase of -65 to -152. That is
+       dynamic: the chassis is not quasi-static at 8-16 Hz, so the
+       static SIGN on the real bike is unmeasured.
+     - **The bike's pitch at f is not geometry.** An off-centre fork turns
+       the even effect linear. The sweep ran about 3.3 deg off straight
+       (180 is centre): steer_response sweeps around wherever the shaft
+       starts and never centres it first. The twin makes ~0.00
+       deg/s of pitch per steer deg centred and 0.01 from 3.3 deg, against
+       the bike's 0.19-0.22, so the conclusion holds either way. The twin
+       has the geometry; the bike's first-order pitch comes from something
+       the twin lacks (not identified).
+     - **To get the static sign and size: slow sweeps to the flight's
+       range.** In the six floor runs the steer's 5-95th percentile is
+       about +-13-28 deg and its p99 reaches +-36; three runs sit 6-8 deg
+       to one side on median (171115, 172337, 191558). Since 10-25
+       `steer_response` prints the AHRS attitude's nose-up pitch against
+       the shaft angle from straight for tones <= 0.5 Hz, binned by 5 deg,
+       out and back separately:
+
+       ```sh
+       python analysis/servo/steer_response.py --port $P --id 103 --amp-deg 30 40 --freqs 0.1 0.2 --seconds 25 --fade 4 --hold-drives --ahrs --out traces/bench/steer_static_$(date +%y%m%d-%H%M%S).json --note "upright on floor, drives held, slow sweep"
+       ```
+
+       It takes 100 s, peaking at 50 deg/s. The model's answer to compare:
+       nose UP ~0.028 deg at 20 deg.
+
+       **Run 10-25 (`traces/bench/steer_static_261025-203535`).** Centred
+       from -7.8 deg. The shaft tracked 0.98-0.99 out to +-38.8 deg. As
+       the user saw, the fork drags the bike round the held rear wheel:
+       yaw 4.9-6.8 deg p-p, which the twin matches (5.2-7.0). Fit nose-up
+       pitch = a + b steer + c steer^2 + d roll + e roll^2
+       (`held_twin.py static ... --k 5`); "even" is c x 35^2:
+
+       | tone | bike even | twin even | bike b (deg/deg) | twin b |
+       |---|---|---|---|---|
+       | +-30 @ 0.1 Hz | -0.035 | +0.012 | -1.8e-3 | 0 |
+       | +-30 @ 0.2 Hz | -0.101 | +0.003 | -1.4e-3 | 0 |
+       | +-40 @ 0.1 Hz | -0.101 | -0.000 | -0.8e-3 | 0 |
+       | +-40 @ 0.2 Hz | -0.074 | -0.016 | -0.0e-3 | 0 |
+
+       - **The real bike noses DOWN by ~0.07-0.1 deg at +-35**, either
+         way. The twin is nearly flat (+0.01 inside +-30, -0.02 at 40).
+       - **The bike also has an odd part the twin lacks.** About 0.05
+         deg nose-up at 30 deg of LEFT steer, in three of four tones.
+       - **The hold is ONE FINGER on the rear rollcage** (the user, 10-25),
+         a balancing touch, so the bike's 2.8-4.2 deg of roll p-p is the
+         roll needed to keep it up. The twin's k 5 roll spring is stiffer
+         (0.3-0.7). At k 1.8, about the least that keeps it up, the twin
+         rolls 1.3-3.8 deg p-p and its even part becomes:
+         - +-30 tones: -0.007 to +0.008, still flat (bike -0.035 to -0.10);
+         - +-40 tones: -0.047 to -0.063 (bike -0.07 to -0.10).
+
+         So the twin's +-40 nose-down is mostly the roll it is allowed.
+         The bike's +-30 nose-down and its odd part are not in the twin
+         at any hand stiffness tried.
+       - **Caveats.** Residuals 0.024-0.033 deg. The roll term's sign is
+         not stable across tones: a nuisance fit, not a correction.
+
+       Size against 9 Hz: static pitch per steer degree, at a fork up to
+       8 deg off centre (the flight medians), is at most ~2.8e-3 deg/deg.
+       With the flight's 9 Hz shaft RMS (~1.0-1.1 deg) that is <= ~0.16-
+       0.18 deg/s. The bench's dynamic 9 Hz steer pitch at flight
+       amplitudes is 0.36-0.40, and flight's total is 0.95. So the static
+       shape is at most a minor share; the steer's 9 Hz pitch is mostly
+       dynamic.
+
+     Uncertainties: flight pitch is only ~0.5 coherent with the diff.
+     The flight record pairs each tick's gyro, read first, with that
+     tick's command, written after the policy; that is worth +-20-30 deg
+     at 9.4 Hz, against ~1 ms on the bench.
+   - **The held twin (10-25, `analysis/servo/held_twin.py`).** The floor
+     model with fixes_72M's drivetrain overlay and the steer gearbox
+     hooks. The bench commands replayed (ctrl by inverting
+     `BikeBus.write_commands`), and the hand as a roll-only spring-damper
+     (k 2 and 10 N m/rad; 0.5 is under m g h and falls). The real hold
+     is one finger on the rear rollcage, a balancing touch, so the low k
+     is nearer. At 9 Hz,
+     bike / twin:
+
+     | | bike | twin |
+     |---|---|---|
+     | diff servo, amp 0.4 | 0.35 -53 | 0.29-0.31 -70 |
+     | yaw / free rolling, amp 0.4, 7 Hz | 0.24 | 0.68-1.46 |
+     | yaw / free rolling, amp 0.4, >= 10 Hz | 0.12-0.18 | 0.00-0.02 |
+     | yaw / free rolling, amp 0.6, peak | 1.53 at 8.9-10 Hz | 1.0-1.5 at 7.9 Hz |
+     | yaw / free rolling, amp 0.6, 11 Hz | 0.27 | 0.60-0.88 |
+     | pitch per diff cmd | 0.13-0.22 | 0.00-0.06 |
+     | steer shaft +-2.5 / +-5 | 0.33 -124 / 0.43 -123 | 0.20 -122 / 0.39 -112 |
+     | roll per steer SHAFT deg | 6.6-9.1 | 2.8-3.3 |
+     | yaw per steer shaft deg | 6.0-7.3 | 4.2-4.7 |
+     | pitch per steer goal deg | 0.21 | ~0.00 |
+
+     What it says:
+     - **Rear.** The twin's slop is the same backlash, but its drop
+       comes ~1-2 Hz later and goes to zero; the bike keeps a ~0.15 floor.
+       At a large stroke the twin has a yaw peak too, at ~8 Hz rather
+       than the bike's 9-10, and it does not collapse at 11 Hz.
+     - **Front: the bigger gap.** Per degree of steer shaft the real bike
+       rolls ~2.5x and yaws ~1.5x what the twin does, whatever the hand
+       stiffness. The twin's small-amplitude steer is stickier (0.20
+       against 0.33).
+     - **Pitch: the twin makes almost none** from either wheel; the bike
+       makes 0.2 deg/s per unit from each. Rigid against something
+       compliant (tyre, frame, headset): not identified.
+
+     - **The 38-48 Hz pitch buzz IS there with the fork held and only the
+       rear driving.** The diff-only run peaks at 44.1 Hz, at the sensor's
+       full 200 Hz, which rules out the flight log's 100 Hz folding a
+       52-56 Hz line down. Pitch rate, 35-55 Hz RMS: 0.10-0.12 deg/s before
+       torque, 2.7-4.4 at the 4 Hz steps, 0.2-0.5 at 11-14 Hz; flight
+       2.4-2.5. It follows the stroke's size, not its speed. A
+       ring-vs-hub p-p of 27 deg goes with 2.7-4.4, 6-8 deg with
+       0.2-0.5, at about the same peak speed. Notch crossings per
+       second do not separate the steps (a shaft dithering on one notch
+       edge counts every time): correlation 0.57. A guess, not measured:
+       detent release clicks ringing a ~44 Hz structural mode, which
+       flight's large roller strokes hit all the time. The 9 Hz pitch is
+       small both ways (7-12 Hz: 0.5-0.9 deg/s held, ~1.0 in flight).
 
 ## The tool
 

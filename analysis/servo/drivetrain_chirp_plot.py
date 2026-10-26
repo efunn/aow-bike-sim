@@ -95,8 +95,8 @@ def sweep(cap: Capture) -> dict:
     out = {}
     for k, s in enumerate(cap.segments):
         info = s["info"]
-        if info.get("kind") != "chirp":
-            continue
+        if info.get("kind") != "chirp" or info["mode"] not in ("common", "diff"):
+            continue                     # `--mix` sweeps: no single mode to plot
         sl, mode = cap.segment_slice(k), info["mode"]
         other = "diff" if mode == "common" else "common"
         t = th[sl] - th[sl][0]
