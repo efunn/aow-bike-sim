@@ -45,13 +45,17 @@ righting_id: 104
 # The point of current-based position mode is that the servo can stall
 # against the floor instead of levering the bike off it.
 #
-# 1 count = 1 mA. 300 is a placeholder, sized for the geared single arm that
-# was never built, and too low to lift the bike: by hand in teleop
-# (2026-09-26) 625 mA lifted it fully, and the sim's sweep
-# (analysis/mechanism/righting_current_sweep.py) needs ~600-650. Sim teleop
-# starts from the linkage's `limits.torque_nm` instead (righting_servo.py);
-# the mirror and the station move it live with [ and ].
-righting_current: 300
+# 1 count = 1 mA. 785 is what sim teleop starts the crank at: the linkage's
+# `limits.torque_nm`, 0.55 N.m at the crank, through
+# CurrentBasedPositionServo.counts_for_output (2026-10-26; was 300, a
+# placeholder from the geared single arm that was never built, too low to
+# lift the bike). By hand in teleop (2026-09-26) 625 mA lifted it fully, and
+# the sim's sweep (analysis/mechanism/righting_current_sweep.py) needs
+# ~600-650. On the bike (10-26) it lifts the bike from lying to propped in
+# 1.25 s, every time (runs 261026-04*). The swing-sit sequence scales from
+# this (limp ramps it to 0 and restores it); the mirror and the station
+# move it live with [ and ] (pad: d-pad up/down), 20 counts a press.
+righting_current: 785   # source: model -- teleop's starting cap
 # Where the crank's stow pose sits on the servo, and which way the crank
 # runs. Read only by the mirror, to draw the mechanism:
 #   crank_travel = (righting_pos - righting_stow_deg) * righting_sign
