@@ -720,6 +720,12 @@ def main() -> None:
                          "(bike.steering.headset_friction_*) in memory, for an "
                          "A/B against the plant without it; the gearbox's "
                          "friction stays. Moves plant_digest")
+    ap.add_argument("--wheel-play", default=None, metavar="YAML",
+                    help="build_model's optional wheel play, in memory: a file "
+                         "holding a `wheel_play:` block (e.g. traces/drivetrain/"
+                         "wheel_play_fit_1026.yaml) -- the front axle, headset, "
+                         "rear axle and chainstays as limited hinges. Moves "
+                         "plant_digest")
     ap.add_argument("--front-wheel", default=None,
                     metavar="flat|old|D,W,SHOULDER,CROWN",
                     help="override the front tire in memory (bike_params.yaml "
@@ -768,6 +774,12 @@ def main() -> None:
         steering = {k: v for k, v in params["bike"]["steering"].items()
                     if not k.startswith("headset_friction")}
         params = {**params, "bike": {**params["bike"], "steering": steering}}
+    if args.wheel_play:
+        import yaml
+        doc = yaml.safe_load(Path(args.wheel_play).read_text()) or {}
+        play = doc.get("wheel_play", doc)
+        print(f"WHEEL PLAY from {args.wheel_play} (in memory): {play}")
+        params = {**params, "wheel_play": play}
     # Compile the spare floors so the spawn dial has something to switch to.
     # In-memory only -- `bike_params.yaml` is untouched, so neither digest
     # moves. The extras are inert until `activate_floor` picks one, and the

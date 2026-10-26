@@ -295,6 +295,90 @@ LUG_HALF_THICK = 0.004
 LUG_BOSS_RADIUS = 0.0045
 
 
+# WHEEL PLAY (`wheel_play:`), optional and ABSENT from bike_params.yaml, so the
+# default model and plant_digest are unchanged; `run_vs_sim.py --set
+# 'wheel_play={...}'` switches it on. Free play measured by hand (2026-10-26)
+# as TOTAL sideways travel at the ground, across the play:
+#
+#   wheel_play:
+#     front_axle: {travel_mm: 2.5}   # the front wheel on its axle: yaw + camber
+#     headset:    {travel_mm: 2.5}   # steerer clearance: the fork tilts sideways
+#     rear_axle:  {travel_mm: 2.5}   # the omni wheel on its axle: yaw + camber
+#     rear_stays: {travel_mm: 2.5}   # the chainstays flexing: the wheel swings
+#                                    # sideways and up/down about the stays' root
+#
+# Each group is a massless body with limited hinges, inserted between a part
+# and what it carries, so everything downstream of the servos rides on it
+# (the slop is downstream: the drive and steer shafts did not move in the
+# pluck tests). travel_mm -> a half-angle through the group's lever arm to
+# the ground: the wheel radius for an axle, the headset's height for the
+# headset, the contact's distance from the hinge line for the stays. An axle's
+# yaw play takes the same half-angle as its camber play, unmeasured (a loose
+# axle tilts in its bearing about both axes alike); `travel_mm_<hinge>` sets
+# one hinge on its own (rear_stays: `travel_mm_lateral`, `travel_mm_vertical`).
+# The stays' root is the midpoint of the two chainstays' front ends, from the
+# drive_chainstay_* frame parts (the end away from the axle boss).
+# Optional per group: centring_stiffness [N m/rad], damping [N m s/rad],
+# wall_timeconst_s (the ends' solref time constant) -- the roller slop's
+# structure, at wheel scale.
+WHEEL_PLAY_DEFAULTS = {"centring_stiffness": 0.01, "damping": 1e-3,
+                       "wall_timeconst_s": 0.002}
+
+
+def _play_body(parent, name: str, cfg: dict | None, lever: float, axes, pos=(0.0, 0.0, 0.0)):
+    """`parent`, or a body under it with one limited hinge per axis in `axes`
+    ({suffix: axis}) through `pos`, when `cfg` asks for play. `lever` is the
+    arm to the ground, one for all hinges or {suffix: arm}. Returns the body
+    the carried part attaches to."""
+    if not cfg or not float(cfg.get("travel_mm", 0.0)):
+        return parent
+    c = {**WHEEL_PLAY_DEFAULTS, **cfg}
+    body = parent.add_body(name=name)
+    # a hinge needs the body to have inertia of its own; the carried part's
+    # dominates, this only keeps the compiler happy
+    body.explicitinertial = True
+    body.mass = 1e-4
+    body.inertia = [1e-9, 1e-9, 1e-9]
+    for suffix, axis in axes.items():
+        arm = lever[suffix] if isinstance(lever, dict) else lever
+        half = 0.5e-3 * float(c.get(f"travel_mm_{suffix}", c["travel_mm"])) / arm
+        j = body.add_joint(name=f"{name}_{suffix}", type=mujoco.mjtJoint.mjJNT_HINGE,
+                           axis=list(axis), pos=list(pos))
+        j.limited = mujoco.mjtLimited.mjLIMITED_TRUE
+        j.range = [-np.degrees(half), np.degrees(half)]   # DEGREES: spec.compiler.degree is on
+        j.solref_limit = [float(c["wall_timeconst_s"]), 1.0]
+        j.stiffness = [float(c["centring_stiffness"]), 0, 0]
+        j.damping = [float(c["damping"]), 0, 0]
+    return body
+
+
+def _stays_hinges(p: dict):
+    """The chainstays' flex as two hinges through their root, in the rear axle
+    frame: (root, {hinge: arm to the ground contact}, {hinge: axis}).
+    `vertical` (about y) swings the axle up and down, `lateral` (about the
+    in-plane normal to the stay) swings it sideways."""
+    ends = []
+    for side in ("left", "right"):
+        g = p["bike"]["frame_parts"][f"drive_chainstay_{side}"]["geoms"][0]
+        R = np.zeros(9)
+        mujoco.mju_quat2Mat(R, np.asarray(g.get("quat", [1, 0, 0, 0]), float))
+        half = 0.5 * (R.reshape(3, 3) @ [g["size"][0], 0.0, 0.0])
+        c = np.asarray(g["pos"], float)
+        # the end away from the axle boss (the axle is this frame's origin)
+        ends.append(max((c + half, c - half), key=np.linalg.norm))
+    root = 0.5 * (ends[0] + ends[1])
+    d = -root / np.linalg.norm(root)                       # root -> axle
+    lateral = np.cross(d, [0.0, 1.0, 0.0])
+    lateral /= np.linalg.norm(lateral)
+    contact = np.array([0.0, 0.0, -p["omni_wheel"]["outer_radius"]])
+
+    def arm(axis):
+        v = contact - root
+        return float(np.linalg.norm(v - (v @ axis) * axis))
+    axes = {"lateral": tuple(lateral), "vertical": (0.0, 1.0, 0.0)}
+    return root, {k: arm(np.asarray(a)) for k, a in axes.items()}, axes
+
+
 def _add_roller_quarters(spec: mujoco.MjSpec, axle, i: int, side: int,
                          roller: dict, segments: int, pos, quat, radial) -> None:
     """One roller cone drawn as four quarters, light and dark grey alternating,
@@ -436,7 +520,14 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
         sim["mesh_segments"],
     ).flatten()
 
-    hub = parent.add_body(name="aow_hub")
+    play = p.get("wheel_play") or {}
+    stays = parent
+    if (play.get("rear_stays") or {}).get("travel_mm"):
+        root, levers, axes = _stays_hinges(p)
+        stays = _play_body(parent, "rear_stays_play", play["rear_stays"], levers, axes, pos=root)
+    axle = _play_body(stays, "rear_axle_play", play.get("rear_axle"),
+                      ow["outer_radius"], {"yaw": (0, 0, 1), "camber": (1, 0, 0)})
+    hub = axle.add_body(name="aow_hub")
     hub.add_joint(
         name="hub_spin",
         type=mujoco.mjtJoint.mjJNT_HINGE,
@@ -2695,7 +2786,13 @@ def build_spec(
         fw["radius"], fw["width"], fw["crown_radius"], p["sim"]["mesh_segments"],
         shoulder_radius=fw.get("shoulder_radius"),
     ).flatten()
-    front = steer.add_body(name="front_wheel")
+    play = p.get("wheel_play") or {}
+    # the headset's lever: its pivot (the fork top) above the ground contact
+    head = _play_body(steer, "headset_play", play.get("headset"),
+                      float(fork_top[2]) + r_front, {"tilt": offset_dir}, pos=fork_top)
+    hub_f = _play_body(head, "front_axle_play", play.get("front_axle"), r_front,
+                       {"yaw": (0, 0, 1), "camber": (1, 0, 0)})
+    front = hub_f.add_body(name="front_wheel")
     front.add_joint(name="front_spin", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0])
     front.add_geom(
         name="front_tire",
