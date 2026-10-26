@@ -75,6 +75,15 @@ eats escape sequences (ssh through something odd, tmux misconfigured).
               not even with --auto-rearm                  (also r)
     Backspace DISENGAGE: policy out, its three servos limp, righting
               servo still holding -- back to standby
+    z / u     LIE DOWN / GET UP on the swing module, run ON THE BIKE
+              (control/swing_sit.py, as teleop's PageDown / PageUp). Lie
+              down works with the policy riding, or with the bike resting
+              on a blade (propped, or powered up that way: no policy at
+              all). Get up works from lying or any cut / standby, and STOPS
+              PROPPED on a blade with the drives limp -- Enter then hands
+              it to the policy, which folds the blade. Both hand the wings to the
+              sequence: the station's own righting goal is dropped, and 9/4
+              or the triggers take them back once it is lying or propped
     q         quit -- and quitting stops the heartbeat: a second later the
               bike cuts (policy servos limp) and WAITS for a station. It no
               longer exits; restart a station and press r to re-arm
@@ -217,11 +226,21 @@ class OperatorState:
         self.rearms = 0
         # The disengage, the same way: one per press, the bike acts on a change.
         self.stops = 0
+        # Lie down / get up (control/swing_sit.py, run on the bike): counts
+        # again, one per press.
+        self.lie_downs = 0
+        self.get_ups = 0
         # A LEVEL, like everything in the packet: which controller the
         # operator wants. `controller_actual` is the bike's answer.
         self.controller = "policy"
         self.controller_actual = None
         self.quit = False
+        # The bike's `state`, from telemetry. "sit" means the swing-sit
+        # sequence is running on the bike and owns the wings: 9/4 and the
+        # triggers are ignored then, or the goal they set would land the
+        # moment it finished. "lying" and "propped" are resting, and take
+        # them back.
+        self.state_actual = None
         # The bike's own heading, from telemetry. None until the first packet.
         # `/` needs it to do what teleop's `/` does; without it that key
         # degrades to "zero the velocity" rather than lying about the heading.
@@ -260,6 +279,7 @@ class OperatorState:
                     self.v = 0.0
         if telemetry.get("controller") is not None:
             self.controller_actual = str(telemetry["controller"])
+        self.state_actual = telemetry.get("state", self.state_actual)
         if self.righting_current is None:
             got = telemetry.get("righting_current")
             if got is not None:
@@ -281,7 +301,7 @@ class OperatorState:
             # has told us where the bike points.
             if self.psi_actual is not None:
                 self.psi = _wrap(self.psi_actual)
-        elif ch in "94" and self.travel is not None:
+        elif ch in "94" and self.travel is not None and not self.sitting:
             # To the NEXT STOP of -1 / 0 / +1 that way. `pos` is fractional
             # after a trigger slew (`slew_righting`), and +-1 from there would
             # land between stops -- or, rounded, jump past the nearer one.
@@ -300,15 +320,35 @@ class OperatorState:
             self.rearms += 1                 # engage / re-arm
         elif ch in ("\x7f", "\x08", "BACKSPACE"):
             self.stops += 1                  # disengage: policy out
+        elif ch in ("z", "LIE_DOWN", "u", "GET_UP"):
+            # THE SEQUENCE OWNS THE WINGS FROM HERE: drop this station's goal
+            # so the packet stops carrying one, or the bike would snap the
+            # crank back to it the moment the sequence let go. 9/4 and the
+            # triggers start again from where the servo is.
+            self.righting, self.pos = None, 0
+            # And stop, re-aimed as `/` does: the bike holds still while the
+            # sequence runs, and inherits this command when it ends.
+            self.v = 0.0
+            if self.psi_actual is not None:
+                self.psi = _wrap(self.psi_actual)
+            if ch in ("z", "LIE_DOWN"):
+                self.lie_downs += 1
+            else:
+                self.get_ups += 1
         elif ch in ("q", "\x03"):          # q or ctrl-C
             self.quit = True
+
+    @property
+    def sitting(self) -> bool:
+        """The swing-sit sequence is running on the bike (see state_actual)."""
+        return self.state_actual == "sit"
 
     def slew_righting(self, delta: float, measured: float | None = None) -> None:
         """Move the righting goal by `delta` [rad of servo shaft], clamped
         to the stroke. The first slew starts from `measured` -- the servo's
         encoder -- when there is no goal yet, so taking control of a servo
         that is somewhere else does not snap it to the stow angle first."""
-        if self.travel is None:
+        if self.travel is None or self.sitting:
             return
         if self.righting is None:
             self.righting = self.stow if measured is None else float(measured)
@@ -335,6 +375,8 @@ class OperatorState:
             out["righting_current"] = self.righting_current
         out["rearm_n"] = self.rearms
         out["stop_n"] = self.stops
+        out["lie_n"] = self.lie_downs
+        out["up_n"] = self.get_ups
         out["controller"] = self.controller
         return out
 

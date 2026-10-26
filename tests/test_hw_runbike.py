@@ -386,7 +386,7 @@ def test_the_viewer_and_the_terminal_share_one_command_model():
     from aow_sim.run_drive import MIRROR_KEYS
     from aow_sim.hw.ground import OperatorState
     handled = {"UP", "DOWN", "LEFT", "RIGHT", "/", " ", "9", "4", "[", "]",
-               "r", "q", "ENTER", "BACKSPACE"}
+               "r", "q", "ENTER", "BACKSPACE", "LIE_DOWN", "GET_UP"}
     assert set(MIRROR_KEYS.values()) <= handled, (
         f"unhandled: {set(MIRROR_KEYS.values()) - handled}")
     # and every one of them actually moves the state
@@ -394,10 +394,10 @@ def test_the_viewer_and_the_terminal_share_one_command_model():
         op = OperatorState(travel_rad=1.0)
         op.sync({"state": "engaged", "psi": 0.3})   # the bike has said where
         before = (op.v, op.psi, op.pos, op.righting_current, op.rearms,
-                  op.stops, op.quit)
+                  op.stops, op.lie_downs, op.get_ups, op.quit)
         op.key(name)
         after = (op.v, op.psi, op.pos, op.righting_current, op.rearms,
-                 op.stops, op.quit)
+                 op.stops, op.lie_downs, op.get_ups, op.quit)
         if name not in (" ", "/"):        # stop from a standstill is a no-op
             assert before != after, f"{name!r} changed nothing"
 
@@ -917,8 +917,9 @@ def test_a_latched_error_is_rebooted_away_at_startup():
 
 # --- the packed command (hw/telemetry.encode_command) ----------------------
 
-def test_the_command_is_fourteen_bytes_and_round_trips():
-    """v3 (2026-10-20) added `stop_n`, the disengage count: 13 -> 14 B."""
+def test_the_command_is_sixteen_bytes_and_round_trips():
+    """v3 (2026-10-20) added `stop_n`, the disengage count: 13 -> 14 B; v4
+    (2026-10-26) `lie_n` / `up_n`: 16 B."""
     from aow_sim.hw import telemetry as T
     op = OperatorState(travel_rad=2.4)
     op.v, op.psi = 0.37, 1.234
@@ -926,7 +927,7 @@ def test_the_command_is_fourteen_bytes_and_round_trips():
     op.key("BACKSPACE"), op.key("BACKSPACE")
     pkt = op.packet()
     wire = T.encode_command(pkt)
-    assert len(wire) == T.COMMAND_BYTES == 14
+    assert len(wire) == T.COMMAND_BYTES == 16
     assert T.decode_command(wire)["stop_n"] == pkt["stop_n"] == 2
     assert pkt["controller"] == "lqr" and T.decode_command(wire)["controller"] == "lqr"
     got = T.decode_command(wire)

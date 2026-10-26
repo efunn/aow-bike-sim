@@ -1,6 +1,6 @@
 """The bike <-> ground-station packets: one schema, both directions, no mujoco.
 
-Bike -> station is JSON (`build`, below). Station -> bike is 12 packed bytes
+Bike -> station is JSON (`build`, below). Station -> bike is 16 packed bytes
 (`encode_command` / `decode_command`).
 
 WHY THIS IS ITS OWN MODULE. The encoder runs on the Pi inside the control
@@ -344,17 +344,19 @@ def status_text(tel: dict) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# The OTHER direction: station -> bike, as 12 packed bytes.
+# The OTHER direction: station -> bike, as 16 packed bytes (v4).
 #
 #   byte  0      version (COMMAND_VERSION)
 #   byte  1      rearm_n, uint8 -- a press COUNT, wraps at 256; the bike acts
 #                on a change, so the wrap is harmless
-#   byte  2      controller, uint8 -- CONTROLLERS index: 0 policy, 1 lqr (v2)
-#   bytes 3-6    v_cmd_world x, y     int16  [mm/s]    +-32.7 m/s
-#   bytes 7-8    psi_cmd, WRAPPED     int16  [1e-4 rad]  +-pi fits in +-31416;
+#   byte  2      stop_n, uint8 -- disengage presses, the same way (v3)
+#   byte  3      controller, uint8 -- CONTROLLERS index: 0 policy, 1 lqr (v2)
+#   bytes 4-5    lie_n, up_n, uint8 -- lie-down / get-up presses (v4)
+#   bytes 6-9    v_cmd_world x, y     int16  [mm/s]    +-32.7 m/s
+#   bytes 10-11  psi_cmd, WRAPPED     int16  [1e-4 rad]  +-pi fits in +-31416;
 #                ABSENT = the station does not know the bike's heading yet
-#   bytes 9-10   righting_rad         int16  [1e-3 rad]  +-32.7 rad, ~5 turns
-#   bytes 11-12  righting_current     int16  [raw counts]
+#   bytes 12-13  righting_rad         int16  [1e-3 rad]  +-32.7 rad, ~5 turns
+#   bytes 14-15  righting_current     int16  [raw counts]
 #
 # v2 (2026-09-22) added the controller byte. A v1 datagram (12 B, no
 # controller) still decodes -- with no `controller` key, which the bike reads
@@ -377,11 +379,15 @@ def status_text(tel: dict) -> tuple[str, str]:
 
 # v3 (2026-10-20): `stop_n`, the operator's disengage presses, as a count like
 # `rearm_n`. v2 and v1 still decode, with no disengage in them.
-COMMAND_VERSION = 3
-_CMD = __import__("struct").Struct("<BBBBhhhhh")
+# v4 (2026-10-26): `lie_n` and `up_n`, lie-down and get-up presses for the
+# swing-sit sequence (control/swing_sit.py, run on the bike), counts again --
+# bytes 4 and 5, so everything after them moves up two.
+COMMAND_VERSION = 4
+_CMD = __import__("struct").Struct("<BBBBBBhhhhh")
+_CMD_V3 = __import__("struct").Struct("<BBBBhhhhh")
 _CMD_V2 = __import__("struct").Struct("<BBBhhhhh")
 _CMD_V1 = __import__("struct").Struct("<BBhhhhh")
-COMMAND_BYTES = _CMD.size          # 14
+COMMAND_BYTES = _CMD.size          # 16
 ABSENT = -32768
 # What the operator can ask the bike to fly. The index is the wire value.
 CONTROLLERS = ("policy", "lqr")
@@ -397,7 +403,7 @@ def _i16(x: float) -> int:
 
 
 def encode_command(pkt: dict) -> bytes:
-    """`OperatorState.packet()` (a dict) -> the 12-byte datagram."""
+    """`OperatorState.packet()` (a dict) -> the datagram."""
     import math
     vx, vy = pkt.get("v_cmd_world", (0.0, 0.0))
     psi = pkt.get("psi_cmd")
@@ -408,6 +414,8 @@ def encode_command(pkt: dict) -> bytes:
     ctl = CONTROLLERS.index(pkt.get("controller", "policy"))
     return _CMD.pack(COMMAND_VERSION, int(pkt.get("rearm_n", 0)) & 0xFF,
                      int(pkt.get("stop_n", 0)) & 0xFF, ctl,
+                     int(pkt.get("lie_n", 0)) & 0xFF,
+                     int(pkt.get("up_n", 0)) & 0xFF,
                      _i16(vx * 1e3), _i16(vy * 1e3),
                      ABSENT if psi is None else _i16(psi * 1e4),
                      ABSENT if r is None else _i16(r * 1e3),
@@ -415,7 +423,7 @@ def encode_command(pkt: dict) -> bytes:
 
 
 def decode_command(data: bytes) -> dict:
-    """The 12-byte datagram -> the same dict shape the bike always read, so
+    """The datagram -> the same dict shape the bike always read, so
     nothing downstream of the socket changed. Raises CommandFormatError."""
     if data[:1] == b"{":
         raise CommandFormatError(
@@ -423,14 +431,17 @@ def decode_command(data: bytes) -> dict:
             "format. Update the station (this repo, same commit as the bike).")
     ver = data[0] if data else None
     stop = None                       # v1/v2 carried no disengage
+    lie = up = None                   # v1-v3 carried no swing-sit
     if ver == 1 and len(data) == _CMD_V1.size:
         _, n, vx, vy, psi, r, cur = _CMD_V1.unpack(data)
         ctl = None                    # v1 carried no controller request
     elif ver == 2 and len(data) == _CMD_V2.size:
         _, n, ctl, vx, vy, psi, r, cur = _CMD_V2.unpack(data)
+    elif ver == 3 and len(data) == _CMD_V3.size:
+        _, n, stop, ctl, vx, vy, psi, r, cur = _CMD_V3.unpack(data)
     elif ver == COMMAND_VERSION and len(data) == COMMAND_BYTES:
-        _, n, stop, ctl, vx, vy, psi, r, cur = _CMD.unpack(data)
-    elif ver in (1, 2, COMMAND_VERSION):
+        _, n, stop, ctl, lie, up, vx, vy, psi, r, cur = _CMD.unpack(data)
+    elif ver in (1, 2, 3, COMMAND_VERSION):
         raise CommandFormatError(f"{len(data)} B is not a v{ver} command")
     else:
         raise CommandFormatError(
@@ -440,6 +451,8 @@ def decode_command(data: bytes) -> dict:
     out = {"v_cmd_world": [vx * 1e-3, vy * 1e-3], "rearm_n": n}
     if stop is not None:
         out["stop_n"] = stop
+    if lie is not None:
+        out["lie_n"], out["up_n"] = lie, up
     if ctl is not None:
         out["controller"] = CONTROLLERS[ctl]
     if psi != ABSENT:

@@ -1798,7 +1798,10 @@ MIRROR_KEYS = {265: "UP", 264: "DOWN", 263: "LEFT", 262: "RIGHT",
                # the bike down. The viewer also resets its sim on Backspace,
                # which in the mirror only redraws one frame from qpos0 before
                # telemetry overwrites it.
-               257: "ENTER", 259: "BACKSPACE"}
+               257: "ENTER", 259: "BACKSPACE",
+               # LIE DOWN / GET UP: PageDown / PageUp, teleop's keys
+               # (_KEY_LIE_DOWN, _KEY_GET_UP). The sequence runs on the bike.
+               267: "LIE_DOWN", 266: "GET_UP"}
 
 
 # macOS virtual keycodes for the arrows (Carbon kVK_* constants).
@@ -2037,6 +2040,9 @@ TELEOP_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
                    "DPAD_UP": _KEY_PELT_UP, "DPAD_DOWN": _KEY_PELT_DOWN}
 MIRROR_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
                    "BACK": ord("8"), "Y": 257, "B": 259,   # engage / disengage
+                   # X lies down as in teleop; B is taken (disengage), so
+                   # get-up is START.
+                   "X": _KEY_LIE_DOWN, "START": _KEY_GET_UP,
                    "DPAD_UP": ord("]"), "DPAD_DOWN": ord("[")}
 _TRIGGER_DEAD = 0.05
 # Full trigger, deg/s: twice swing_sit's lift rate (user, 2026-10-19). Analog,
@@ -2535,7 +2541,19 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         if name in ("UP", "DOWN", "LEFT", "RIGHT"):
             return          # the ramps own these; a discrete step is applied below
         if name is not None:
+            if name in ("9", "4") and op.sitting:
+                print("  busy: the bike's lie-down / get-up owns the wings")
             op.key(name)
+            if name in ("LIE_DOWN", "GET_UP"):
+                # The bike says what it did (or why not) in its event log.
+                v_lat[0] = 0.0
+                ax_v.clear()
+                ax_lat.clear()
+                print("lie down sent — the bike runs it; 9/4 / triggers take "
+                      "the wings back once it is lying"
+                      if name == "LIE_DOWN" else
+                      "get up sent — the bike stops PROPPED on a blade, drives "
+                      "limp; Enter / Y hands it to the policy")
             if name == "BACKSPACE":
                 print("DISENGAGE sent — policy out, its servos limp, righting "
                       "servo holding; Enter / Y engages again")
@@ -2765,9 +2783,10 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
              "  9/4 righting servo · [ ] its current · q quit\n"
              "  ENTER engage (and re-arm) · BACKSPACE disengage — the bike "
              "starts in STANDBY\n"
+             "  PageDown lie down · PageUp get up (fn+down / fn+up on a Mac)\n"
              + ("  PAD: left stick drive/crab · right stick turn · LB/RB snap "
                 "L/R · Back 180\n       A re-aim · Y engage · B disengage · "
-                "RT-LT slew the "
+                "X lie down · Start get up · RT-LT slew the "
                 "righting servo · d-pad up/down its current\n"
                 if padin else "")
              + ("  wings DRAWN from the servo's measured angle — check "

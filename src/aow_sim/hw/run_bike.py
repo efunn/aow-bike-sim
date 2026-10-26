@@ -58,7 +58,9 @@ from collections import deque
 from ..params import load_params
 from ..control.drive import DriveController
 from ..control.flick import move_path
+from ..control.balance import mix
 from ..control.recovery import HANDOFF_RATE, RECOVER_DEG, ready_for_policy
+from ..control.swing_sit import SwingSit
 from . import telemetry
 from .bench_log import RunRecorder, new_capture_dir
 from .ahrs import (QOS_LIMITED, QOS_MIN_SERVICE, QOS_NAMES, QOS_UNKNOWN,
@@ -98,7 +100,31 @@ BIKE_COLS = {
     "controller": 1,                # index into telemetry.CONTROLLERS
 }
 # FallGuard.state. Appended, never reordered: records store the index.
-STATES = ("engaged", "cut", "standby")
+# A crank this far out from stow, with the bike leaning onto it, is a bike
+# resting on that blade: lie-down starts at `lower` from there, no policy.
+REST_CRANK_DEG = 45.0
+# Where the lie-down's `lower` ENDS: through centre to this far the other
+# way, where the bike lying on its cage comes to rest (SwingSit `rest_deg`).
+# MEASURED on the bike, 2026-10-26, lying on its left: a lower that stopped
+# at centre back-drove from 2 to 26.5-28 deg when the current went (runs
+# 261026-034200, -034517, -040340) and the bike dropped -68.7 -> -74.5 ->
+# -73.7 deg at 32 deg/s -- the CLUNK. Lowered to 75 (run -040425), roll was
+# already flat at -73.6 by ~23 deg and the blade only pressed past it.
+# 25 stops just short of the rest, so the blade never props the bike up.
+# The SIM puts this rest at ~77 deg (and the lie-down's sweep agreed with
+# itself there); the bike is the authority.
+LIE_REST_DEG = 25.0
+# The crank's speed both ways, lift and lower. The lower was the sim's 30
+# deg/s (tuned against a 211 deg/s drop at 120 there): on the bike, run
+# 261026-041350, down took 5.3 s against 1.25 s up, roll following the
+# crank at ~15 deg/s with a 37-60 deg/s peak; the lift peaks at 137-144.
+# Matched at the lift's 120 (user, 2026-10-26).
+SIT_DPS = 120.0
+# "sit": the swing-sit sequence is running (BikeRunner._sit_step); "lying":
+# it has finished lying down and holds the bike there until a get-up;
+# "propped": a get-up has stood the bike on a blade, drives limp, and waits
+# for Enter to hand it to the policy.
+STATES = ("engaged", "cut", "standby", "sit", "lying", "propped")
 
 # Defaults for the fall guard, overridable from control.onboard in
 # bike_params.yaml and from the command line.
@@ -338,7 +364,7 @@ class PackMonitor:
 class CommandLink:
     """UDP command receive + telemetry transmit.
 
-    The command arrives as 12 packed bytes (`telemetry.decode_command`) and is
+    The command arrives as 16 packed bytes (`telemetry.decode_command`) and is
     decoded straight back into the dict this class always held, so nothing
     downstream of the socket knows the wire format changed. A datagram that
     will not decode -- an old station still sending JSON -- is said ONCE and
@@ -541,6 +567,30 @@ class BikeRunner:
             rearm_rate_dps=float(cfg.get("rearm_roll_rate_dps", REARM_RATE_DPS)),
             dwell_s=float(cfg.get("rearm_dwell_s", REARM_DWELL_S)),
             auto=auto_rearm)
+        # SWING-SIT (control/swing_sit.py, the sequence teleop runs on PageDown
+        # / PageUp): lie down onto a blade and get back up, at the operator's
+        # press (`lie_n` / `up_n`). Built only with a righting servo and the
+        # module's stroke, never in --hold. While it owns the bike the fall
+        # guard is not consulted -- lying down IS a roll past the cut -- and
+        # the guard's `engaged` means only "policy servos torqued"; anything
+        # that takes them off (disengage, lost link, pack, fault) ends it.
+        # GET-UP STOPS PROPPED (hand_off=False): on a blade, drives limp,
+        # until Enter -- the policy never takes the bike by itself.
+        mod = (self.params.get("righting") or {}).get("module") or {}
+        travel = ((mod.get("linkage") or {}).get("stroke") or {}).get(
+            "crank_travel_deg")
+        self.sit = (SwingSit(np.radians(float(travel)), hand_off=False,
+                             rest_deg=LIE_REST_DEG, lift_dps=SIT_DPS,
+                             lower_dps=SIT_DPS)
+                    if self.bus.id_right and travel and not self.hold else None)
+        self._r_stow = np.radians(float(cfg.get("righting_stow_deg", 180.0)))
+        self._r_sign = float(cfg.get("righting_sign", 1))
+        self._sit_gc = None               # the operator's Goal Current, restored after
+        self._sit_steer = None            # steer held while the policy is off
+        self._sit_off = False             # policy off last tick: re-engage on return
+        self._sit_psi = 0.0               # heading the policy holds meanwhile
+        self._sit_said = "riding"
+        self._lie_seen = self._up_seen = None
         # BOUNDED, and not a list. It used to grow without limit while every
         # tick sliced the last 500 out of it and built a fresh numpy array for
         # the telemetry -- 1.13 ms typical and 49.5 ms worst case on a Pi 3B+,
@@ -676,6 +726,10 @@ class BikeRunner:
             self._switch_controller(want)
         self.ctl.set_command(v_cmd_world=c.get("v_cmd_world", [0.0, 0.0]),
                              psi_cmd=c.get("psi_cmd"))
+        if self._sit_owns():
+            # The sequence's `stop` needs the bike at rest, and the balance
+            # after a lift wants it still: the operator's command waits.
+            self.ctl.set_command(v_cmd_world=[0.0, 0.0], psi_cmd=self._sit_psi)
         if self.controller == "lqr":
             self.ctl.follow_command(self.data, c.get("v_cmd_world", [0.0, 0.0]),
                                     c.get("psi_cmd"))
@@ -716,8 +770,20 @@ class BikeRunner:
         else:
             self._rearm_from(c.get("rearm_n"))
             self._stop_from(c.get("stop_n"))
+            self._sit_from(c.get("lie_n"), c.get("up_n"))
         if not self.bus.id_right:
             return
+        if self._sit_owns():
+            # The station drops its goal on a lie/up press, so a goal here
+            # while LYING is the operator taking the wings back (9/4, the
+            # triggers): teleop's pad_crank does the same. Mid-sequence the
+            # sequence keeps them, and the current too. PROPPED likewise:
+            # taking them back there leaves an unbalanced bike limp, which
+            # is the operator's call to make.
+            if self.sit.phase not in ("lying", "propped") \
+                    or "righting_rad" not in c:
+                return
+            self._sit_release("wings taken back by the operator")
         if "righting_rad" in c:
             self.bus.set_righting(c["righting_rad"])
         want = c.get("righting_current")
@@ -825,6 +891,205 @@ class BikeRunner:
                                    "policy out, righting servo live. Enter / "
                                    "Y to engage")
         self._stop_seen = (peer, n)
+
+    # -- swing-sit ----------------------------------------------------------
+
+    def _sit_owns(self) -> bool:
+        """True while the sequence drives the bike, lying and propped
+        included."""
+        return self.sit is not None and (
+            self.sit.active or self.sit.phase in ("lying", "propped"))
+
+    def _state(self) -> str:
+        """The state the station and the record see: the guard's, or the
+        sequence's ("sit" running, "lying" done and holding)."""
+        if not self._sit_owns():
+            return self.guard.state
+        return (self.sit.phase if self.sit.phase in ("lying", "propped")
+                else "sit")
+
+    def _sit_from(self, lie_n, up_n) -> None:
+        """Lie-down / get-up presses, COUNTS judged as `_rearm_from` judges
+        them: a change from the known station, with the link up."""
+        peer = self.link.peer
+        for n, attr, what in ((lie_n, "_lie_seen", "down"),
+                              (up_n, "_up_seen", "up")):
+            if n is None:
+                continue
+            seen = getattr(self, attr)
+            if seen is not None and seen[0] == peer and n != seen[1] \
+                    and not self._link_lost:
+                self._sit_start(what)
+            setattr(self, attr, (peer, n))
+
+    def _sit_start(self, what: str) -> None:
+        """Begin lying down or getting up. Refused, and SAID, otherwise. The
+        press is the consent: from a cut or standby it arms the policy
+        servos (held, never the policy) without Enter.
+
+        DOWN: the policy riding (the full sequence), or the bike already
+        RESTING ON A BLADE -- `propped`, or powered up that way, the crank
+        out past `REST_CRANK_DEG` and the bike leaning onto it -- which
+        goes straight to `lower` and never runs the policy.
+        UP: from lying, or from any cut / standby, at any roll: the lift
+        ends propped either way. The side is the blade the crank is out
+        on when the bike leans onto it, else the way the bike leans."""
+        name = "lie down" if what == "down" else "get up"
+        crank = (None if self._righting_pos is None
+                 else (self._righting_pos - self._r_stow) * self._r_sign)
+        out = crank is not None and abs(crank) >= np.radians(REST_CRANK_DEG)
+        resting = out and (self.sit is not None and self.sit.phase == "propped"
+                           or (self.guard.state != "engaged"
+                               and np.sign(self._roll) == np.sign(crank)))
+        riding = self.guard.state == "engaged" and self.controller == "policy"
+        why = None
+        if self.sit is None:
+            why = ("no righting servo / module stroke" if not self.hold
+                   else "--hold")
+        elif self.sit.active:
+            why = f"busy ({self.sit.phase})"
+        elif self._hold_reason() is not None:
+            why = f"held: {self._hold_reason()}"
+        elif self._righting_current is None:
+            why = "the righting servo's Goal Current is unknown"
+        elif what == "down" and self.sit.phase == "lying":
+            why = "already lying"
+        elif what == "down" and not (riding or resting):
+            why = ("the policy is not driving and the bike is not resting "
+                   "on a blade" + ("" if crank is None else
+                                   f" (crank {np.degrees(crank):+.0f}, roll "
+                                   f"{np.degrees(self._roll):+.0f} deg)"))
+        elif what == "up" and self.sit.phase == "propped":
+            why = "already propped -- Enter hands it to the policy"
+        elif what == "up" and self.sit.phase != "lying" \
+                and self.guard.state == "engaged":
+            why = "the policy is driving (Backspace, then get up)"
+        if why is not None:
+            self._event("sit", f"{name} ignored -- {why}")
+            return
+        if self._sit_gc is None:
+            self._sit_gc = int(self._righting_current)
+        t = self.data.time
+        if self.guard.state != "engaged":
+            # From a cut, standby or propped: the drives and steer hold
+            # through what follows, so they need torque now.
+            if self.torque:
+                self.bus.arm(self.bus.policy_ids)
+            self.guard.state = "engaged"
+            self.guard.consent = False
+            self._sit_off = True
+        if what == "down" and not self._sit_off:
+            self._sit_psi = self._yaw
+            self.sit.lie_down(t, self._roll)          # the policy stops it first
+        elif what == "down":
+            self.sit.lie_from_prop(t, crank)
+        else:
+            # The crank's side only when the bike leans onto that blade: a
+            # bike lying on its cage has the crank LIE_REST_DEG the other
+            # way, and lifting that blade would push at the air.
+            onto = out and np.sign(crank) == np.sign(self._roll)
+            self.sit.get_up(t, self._roll,
+                            side=np.sign(crank) if onto else None)
+        self._sit_said = self.sit.phase
+        self._event("sit", f"{name}: {self.sit.phase} (Goal Current "
+                           f"{self._sit_gc})")
+
+    def _sit_release(self, why: str) -> None:
+        """Hand everything back: the operator's Goal Current, the crank held
+        where it IS, the sequence at `riding`. Policy servos: left as the
+        caller found them, except out of `lying`, where the bike is on its
+        side and they go limp (a cut, as a fall would leave it)."""
+        if self.sit is None:
+            return
+        lying = self.sit.phase in ("lying", "propped")
+        if self._righting_pos is not None:
+            self.bus.set_righting(self._righting_pos)
+        if self._sit_gc is not None:
+            self._righting_current = self.bus.set_righting_current(self._sit_gc)
+        if lying and self.guard.state == "engaged":
+            if self.torque:
+                self.bus.torque(False, self.bus.policy_ids)
+            self.guard.state = "cut"
+            self.guard.consent = False
+        self.sit.phase = "riding"
+        self.sit._down_since = None
+        self._sit_gc = self._sit_steer = None
+        self._sit_off = False
+        self._sit_said = "riding"
+        self._event("sit", f"sequence ended: {why}")
+
+    def _sit_step(self):
+        """This tick of the sequence, or None when it does not own the bike.
+        Runs where the fall guard would; the caller writes the drives."""
+        if not self._sit_owns():
+            return None
+        if self.sit.phase == "propped":
+            # Limp already, so a disengage changes nothing here; a lost link,
+            # a pack cut or a fault still ends it. Enter (the guard's consent)
+            # is the hand-off, through the re-arm window like any engage.
+            if self._hold_reason() is not None:
+                self._sit_release(self._hold_reason())
+                return None
+            if self.guard.consent:
+                self.guard.consent = False
+                if ready_for_policy(self._roll, self._roll_rate,
+                                    self.guard.rearm_deg,
+                                    self.guard.rearm_rate):
+                    if self.torque:
+                        self.bus.arm(self.bus.policy_ids)
+                    self.guard.state = "engaged"
+                    self._sit_off = True
+                    self.sit.engage(self.data.time)
+                else:
+                    self._event("sit", f"engage ignored -- roll "
+                                f"{np.degrees(self._roll):+.0f} deg, not "
+                                "settled inside the re-arm window")
+        elif self.guard.state != "engaged":
+            # Disengaged, link lost, pack cut, servo fault: all of them took
+            # the policy servos off. The crank holds where it is.
+            self._sit_release(self._hold_reason() or "disengaged")
+            return None
+        crank = (0.0 if self._righting_pos is None
+                 else (self._righting_pos - self._r_stow) * self._r_sign)
+        speed = float(np.hypot(self.data.qvel[0], self.data.qvel[1]))
+        cmd = self.sit.step(self.data.time, self._roll, self._roll_rate,
+                            crank, speed)
+        if self.sit.phase != self._sit_said:
+            self._sit_said = self.sit.phase
+            self._event("sit", self.sit.phase + (
+                " -- lie-down ABORTED: it went over the other way"
+                if self.sit.phase == "retract" and self.sit.aborted else ""))
+        self.bus.set_righting(self._r_stow + self._r_sign * cmd.crank)
+        # Quantised to 5 %: Goal Current is its own bus transaction, and the
+        # limp ramp would otherwise write one every tick for a second.
+        want = int(round(self._sit_gc * round(cmd.current * 20) / 20))
+        if want != self._righting_current:
+            self._righting_current = self.bus.set_righting_current(want)
+        if cmd.policy and self._sit_off:
+            # Back from holding: a clean slate, as any engage (its memory
+            # and estimator ran on a bike lying on its side).
+            self._engage(fresh_read=False)
+            self._sit_psi = self._yaw
+        self._sit_off = not cmd.policy
+        if cmd.limp and self.guard.state == "engaged":
+            # Propped: the bike stands on wheels + blade; nothing to hold.
+            if self.torque:
+                self.bus.torque(False, self.bus.policy_ids)
+            self.guard.state = "standby"
+            self.guard.consent = False      # an Enter from before is not one for now
+            self._event("sit", "PROPPED: drives limp, wings holding -- Enter "
+                               "hands it to the policy")
+        if cmd.policy:
+            self._sit_steer = None
+        elif self._sit_steer is None:
+            self._sit_steer = float(self.data.ctrl[self.aid["steer"]])
+        if not self._sit_owns():                  # just finished: riding
+            if self._sit_gc is not None:
+                self._righting_current = self.bus.set_righting_current(
+                    self._sit_gc)
+            self._sit_gc = None
+            return None
+        return cmd
 
     def _warning(self) -> str | None:
         """A standing warning, or None: the pack below warn but not yet cut
@@ -1346,14 +1611,29 @@ class BikeRunner:
 
             # The fall guard runs on the SENSED state and before the
             # controller, so a tick that starts on the bike's side never
-            # reaches the policy at all.
-            event = self.guard.update(self.data.time, self._roll,
-                                      self._roll_rate)
-            self._on_guard_event(event)
+            # reaches the policy at all. Not while the swing-sit sequence
+            # owns the bike: lying down is a roll past the cut.
+            sit = self._sit_step()
+            if sit is None:
+                event = self.guard.update(self.data.time, self._roll,
+                                          self._roll_rate)
+                self._on_guard_event(event)
 
             write_s = float("nan")
             self.bus.last_goal = {}
-            if self.guard.state == "engaged":
+            if sit is not None and sit.limp:
+                self.bus.write_righting()
+            elif sit is not None and not sit.policy:
+                # The policy is off: drives at zero speed plus the sequence's
+                # differential, steer where the policy left it (teleop's
+                # sit_override).
+                c, a = self.data.ctrl, self.aid
+                c[a["drive_a"]], c[a["drive_b"]] = mix(0.0, sit.diff)
+                c[a["steer"]] = self._sit_steer
+                t_w = time.perf_counter()
+                self.bus.write_commands(c, a)
+                write_s = time.perf_counter() - t_w
+            elif self.guard.state == "engaged":
                 self.ctl.tick(self.model, self.data)
                 t_w = time.perf_counter()
                 self.bus.write_commands(self.data.ctrl, self.aid)
@@ -1391,7 +1671,7 @@ class BikeRunner:
                       f"{self._jitter_ms:.2f} ms")
             self.link.telemetry = telemetry.build(
                 t=self.data.time,
-                state=self.guard.state,
+                state=self._state(),
                 quat=self.data.qpos[3:7],
                 gyro=self.data.qvel[3:6],
                 v_world=self.data.qvel[:2],
@@ -1470,7 +1750,7 @@ class BikeRunner:
     def _record_tick(self, t_host: float, slip: float, write_s: float,
                      voltage: float) -> None:
         c, a = self.data.ctrl, self.aid
-        st = self.guard.state
+        st = self._state()
         # A ridden-out bad read is recorded as one (`ok` False, raw blank),
         # not as the stale registers it held.
         raw = dict(self.bus.last_raw) if self._read_ok else None
