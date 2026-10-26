@@ -1,0 +1,39 @@
+{"step":"pip_phase3","rc":0,"wall_s":6.8042}
+{"step":"export_s1","rc":0,"wall_s":33.8416}
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.50 ms  (cached)
+Module aow_sim.gpu.env 6463443 load on device 'cuda:0' took 0.48 ms  (cached)
+{"saved": "graphs/aow_bike_4096_s1", "nworld": 4096, "device": "cuda:0", "mb": 233.6}
+{"step":"export_s2","rc":0,"wall_s":6.74937}
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.67 ms  (cached)
+Module aow_sim.gpu.env 6463443 load on device 'cuda:0' took 0.67 ms  (cached)
+{"saved": "graphs/aow_bike_4096_s2", "nworld": 4096, "device": "cuda:0", "mb": 233.6}
+{"step":"export_s3","rc":0,"wall_s":5.82161}
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.59 ms  (cached)
+Module aow_sim.gpu.env 6463443 load on device 'cuda:0' took 0.54 ms  (cached)
+{"saved": "graphs/aow_bike_4096_s3", "nworld": 4096, "device": "cuda:0", "mb": 233.6}
+{"step":"export_s4","rc":0,"wall_s":6.00823}
+Module aow_sim.gpu.rebase 6d07154 load on device 'cuda:0' took 0.65 ms  (cached)
+Module aow_sim.gpu.env 6463443 load on device 'cuda:0' took 0.66 ms  (cached)
+{"saved": "graphs/aow_bike_4096_s4", "nworld": 4096, "device": "cuda:0", "mb": 233.6}
+{"step":"build","rc":0,"wall_s":9.07916}
+Compiling ocean/aow_bike/aow_bike.cu -> puffer...
+Built: ./puffer
+built /root/puffer/puffer for aow_bike (4096 worlds, obs 17, graph /root/aow/graphs/aow_bike_4096_s1)
+{"step":"check_v3s0","rc":0,"wall_s":70.7578}
+     /root/.cache/warp/1.18.0
+Module bench_env 9175454 load on device 'cuda:0' took 950.84 ms  (compiled)
+{"stem": "graphs/aow_bike_4096_s1", "actions": "moves/archive/general_rl_v3_s0.npz", "nworld": 4096, "steps": 300, "device": "NVIDIA A40", "falls": 381, "episode_ends": 381, "reward_per_step": 2.6413, "ended_len_mean": 48.2, "ended_return_mean": 45.48, "ended_track_mean": 0.586, "ended_difficulty_mean": 0.0, "max_steps": 750}
+{"step":"check_random","rc":0,"wall_s":23.7991}
+   Kernel cache:
+     /root/.cache/warp/1.18.0
+{"stem": "graphs/aow_bike_4096_s1", "actions": "random", "nworld": 4096, "steps": 100, "device": "NVIDIA A40", "falls": 17221, "episode_ends": 17221, "reward_per_step": -0.0565, "ended_len_mean": 21.1, "ended_return_mean": -6.54, "ended_track_mean": 0.782, "ended_difficulty_mean": 0.0, "max_steps": 750}
+MPS on
+Terminated
+{"step":"train_s4","rc":143,"wall_s":222.022}
+Terminated
+{"step":"train_s3","rc":143,"wall_s":222.072}
+Terminated
+Terminated
+{"step":"train_s1","rc":143,"wall_s":222.151}
+{"step":"train_s2","rc":143,"wall_s":222.151}
+{"step":"warp_cache","rc":0,"wall_s":2.4509}

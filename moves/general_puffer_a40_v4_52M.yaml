@@ -1,0 +1,173 @@
+name: general_puffer_a40_v4_52M
+type: rl
+kind: general
+policy_file: general_puffer_a40_v4_52M.npz
+params_digest: 8cffb19805546dc8
+plant_digest: 54fdba72be3a7ca7
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.0
+vel_window_s: 0.0
+obs_zero_lat: false
+obs_odometry: true
+odometry_encoder: counts
+steer_rate_encoder: counts
+ahrs_level: tm151_filter
+ahrs_tau_s: 2.0
+ahrs_channels: both
+drivetrain_model:
+  update_every: 1
+  servo:
+    enabled: true
+    velocity_p_gain: 100
+    velocity_i_gain: 1920
+    kp_per_unit: 0.0004
+    ki_per_unit: 0.00145
+    command_delay_s: 0.004
+    measurement_delay_s: 0.004
+    velocity_filter_s: 0.012
+    velocity_limit_rad_s: 11.03
+    rotor_inertia: 0.0022
+    coulomb_friction: 0.15
+    friction_stick_stiffness: 250.0
+    friction_stick_damping: 0.2
+  detent:
+    enabled: true
+    period_deg: 7.5
+    width_deg: 1000.0
+    friction: 0.12
+    phase_deg: 0.0
+    stick_stiffness: 1000.0
+    stick_damping: 1.0
+    hill_nm: 0.12
+    hill_shape: sawtooth
+    kinetic_fraction: 0.15
+  roller_slop:
+    enabled: true
+    half_play_deg: 7.8
+    centring_stiffness: 0.01
+    damping: 5.0e-05
+    wall_timeconst_s: 0.001
+wheel_play:
+  front_axle:
+    travel_mm: 1.0
+    centring_stiffness: 4.0
+    wall_timeconst_s: 0.002
+  headset:
+    travel_mm: 1.5
+    centring_stiffness: 4.0
+    wall_timeconst_s: 0.002
+  rear_axle:
+    travel_mm: 2.5
+    centring_stiffness: 4.0
+    wall_timeconst_s: 0.002
+obs_pitch: true
+obs_wings: false
+act_wings: false
+obs_swing: false
+act_swing: false
+wing_max_deg: 90.0
+obs_style: false
+swing_linkage: false
+righting_module: v2
+righting_rigid: true
+ball_prob: 0.0
+swing_tip_mass_kg: 0.0
+wing_touch_fails: false
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- pitch
+- pitch_rate
+action_space: full
+trained:
+  algo: PufferLib 5.0 PPO (ea7f989), Muon
+  timesteps: 0
+  arch: Linear(17,128) -> MinGRU(128) -> Linear(128,3), no biases
+  precision: bf16 (fp32 master weights)
+  logstd:
+  - -0.7555
+  - -1.2384
+  - -1.203
+  unsaved_weights: 5
+  graph:
+    nworld: 4096
+    config: config/rl/rl_general_v4.yaml
+    config_sha256: 970e9be5e43d8b7f1340361c2d0c32e9b7646a0d43c481ee00b5f19d61eed17a
+    seed: 0
+    curriculum:
+      shared: true
+      envs: 32
+      lead: 0.1
+  exported_from: analysis/gpu/phase3/results_a40_v4/puffer_checkpoints/aow_bike/1793048139394/0000000052428800.bin
+  metrics:
+    survive_rate: 1.0
+    wing_touch_rate: 0.0
+    track: 0.773
+    track_geo: 0.755
+    vel_err: 0.101
+    head_err_deg: 5.2
+    n_eval: 20
+    drift_m: 0.114
+    drift_lon: -0.114
+    drift_lat: 0.011
+    drift_bearing_deg: 174.3
+    drift_max: 0.114
+    drift_sd: 0.032
+    steer_rest_deg: 2.5
+    speed_ratio_fwd: 0.974
+    speed_ratio_rev: 1.072
+    crab_ratio_left: 0.482
+    crab_ratio_right: 0.426
+    crab_head_err: 10.2
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.306
+    by_family:
+      hold:
+        n: 1
+        survive_rate: 1.0
+        head_err_tail: 3.1
+        vel_err_med: 0.037
+        drift_m: 0.114
+        drift_overshoot: 0.0
+      spin:
+        n: 2
+        survive_rate: 1.0
+        t_head_s: 0.66
+        t_head_n: 2
+        head_err_tail: 3.8
+        vel_err_med: 0.053
+      cruise:
+        n: 9
+        survive_rate: 1.0
+        t_head_s: 0.68
+        t_head_n: 6
+        head_err_tail: 4.8
+        vel_err_med: 0.077
+      crab:
+        n: 2
+        survive_rate: 1.0
+        head_err_tail: 8.7
+        vel_err_med: 0.396
+      turn_big:
+        n: 6
+        survive_rate: 1.0
+        t_head_s: 1.41
+        t_head_n: 6
+        head_err_tail: 7.8
+        vel_err_med: 0.101

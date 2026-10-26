@@ -19,7 +19,7 @@ and is judged here in C MuJoCo, as every GPU run is.
 | **roller slop with the measured spring** (~1e-2 N m/rad from the flick video, vs the 1e-3 GUESS) | `roller_slop` tendons; the sawtooth file carries 0.01 | carried: tendons and limits are model structure, `put_model` takes them | same inline overlay; check chatter after (x10 cut `smooth_temporal`'s chatter score 0.818 -> 0.598 in `slop_sensitivity.py`) |
 | drivetrain Coulomb as re-measured (coast: ~0.16-0.18 common, 0.114 diff per servo, sides equal) | the overlay still says `coulomb_friction` 0.15 | carried (a constant) | decide the value; edit the inline overlay |
 | `k_roller: -2.4` with the `onboard.yaml` A/B swap reverted, in ONE change | bike_params + onboard | carried (a constant) | do it; either half alone breaks the sideways sign. Moves plant_digest, so `export_deploy` + `bike.sh sync` |
-| **wheel play** (front axle 1.0 mm, headset 1.5 mm, rear axle 2.5 mm, 4 N m/rad; `traces/drivetrain/wheel_play_fit_1026.yaml`) | `build_model`'s optional `wheel_play:` (absent from bike_params) | carried by `put_model` (limited hinges with springs; no kernel) -- by reading, not yet run | the env key and the export record (below); check `njmax` |
+| **wheel play** (front axle 1.0 mm, headset 1.5 mm, rear axle 2.5 mm, 4 N m/rad; `traces/drivetrain/wheel_play_fit_1026.yaml`) | `build_model`'s optional `wheel_play:` (absent from bike_params) | carried by `put_model` (limited hinges with springs; no kernel); **run on Warp-CPU 2026-10-26** | done: `env.wheel_play`, recorded in the export (below) |
 | AHRS mount from test 5 | not run | -- | skip unless test 5 runs |
 
 **Checks run for the detent port** (Warp 1.18 on CPU, `aow-sim-gpu`):
@@ -44,40 +44,54 @@ and is judged here in C MuJoCo, as every GPU run is.
 - The whole `GpuGeneralEnv` with the sawtooth overlay, 4 worlds, 20 steps:
   finite observations, all four worlds' friction slipping.
 
-## Wheel play: what is left
+## Wheel play: done (2026-10-26)
 
-1. **An env key, mirrored on `drivetrain_model`.** `env.wheel_play` in an
-   RL config: absent = none (every config so far reproduces bit for bit),
-   a path = that file's `wheel_play:` block, a dict = a resolved record.
-   Resolved in `GeneralEnv.__init__` beside `drivetrain_model.from_env_config`,
-   so the CPU trainer and the GPU env both get it. Test: absent leaves the
-   model and the RNG stream identical (the pattern of
-   `test_absent_ranges_leave_the_rng_stream_untouched`).
-2. **Record it in the export.** `train_general_rl.py` (~line 346) and
-   `gpu/export_policy.py` write `drivetrain_model` into the move yaml; write
-   `wheel_play` beside it, and have `run_vs_sim.sim`, teleop's startup plant
-   and `drivetrain_trace.py` read the move's own record, so a policy is
-   always replayed on the plant it trained on.
-3. **CPU smoke**: `GeneralEnv` with the fit, a few thousand steps, play
-   joints inside their limits; peak `nefc` / `ncon` against the GPU's
-   `njmax 128` / `nconmax 32` (each hinge at a wall is a limit row).
-4. **Warp-on-CPU smoke**, as above for the detent.
+1. **`env.wheel_play`**, resolved inside `drivetrain_model.from_env_config`
+   (`params.with_wheel_play`), so the trainer, `GeneralEnv`, the GPU env
+   (built from a `GeneralEnv`) and `export_policy` all take it. Absent or
+   null leaves the params' own (none: v3 still hashes to 6446d8fa); a path
+   is that file's block; a dict is itself; false strips it.
+2. **Recorded**: `move_doc` writes `wheel_play` beside `drivetrain_model`;
+   a loaded policy carries it (`pol.wheel_play`) into
+   `policy_env_overrides`; `run_vs_sim.sim` (and so `drivetrain_trace.py`)
+   and teleop's startup plant build it from the move. `--set wheel_play=...`
+   and `--wheel-play` still win. A policy without a record is judged on the
+   caller's plant, so the pointer can still be flown with play switched on.
+3. **CPU smoke**, `GeneralEnv`, 3000 steps, actions random / zero
+   alternating (~130 falls each), one run each:
 
-What does not carry: per-world RANDOMISATION of the play (`BATCHED` in
-`gpu/env.py` holds mass, friction, force/ctrl range, frictionloss only;
-`jnt_range` / `jnt_stiffness` would need batching and a reset draw).
-Fixed play first. Speed: nv 25 -> 30, expect a few %; measure.
+   | config | nq / nv | peak nefc | peak ncon | limit rows | ms / env step |
+   |---|---|---|---|---|---|
+   | v3 | 21 / 20 | 39 | 4 | 0 | 1.66 |
+   | v4 | 26 / 25 | 39 | 5 | 4 | 1.95 |
+
+   Under those falls the play hinges pass their walls by 50-80 % (headset
+   +-0.30 deg range, seen -0.47..+0.41; rear axle +-1.40, seen +-1.6): the
+   2 ms walls are soft. Not checked under a policy that stays up.
+4. **Warp-on-CPU smoke** (`fly_policy.py --config config/rl/rl_general_v4.yaml`,
+   v3_s0, 8 worlds x 250 steps): finite, 1 fall (C MuJoCo 0), reward/step
+   2.60 (C 2.69); peak nefc 44 of `njmax` 128, 57 contacts in all for 8
+   worlds. 24 policy steps/s against v3's 35 on the same device: Warp-on-CPU
+   is not the GPU, so measure the pod's rate before reading anything into it.
 
 ## The run
 
-1. One config, `config/rl/rl_general_v4.yaml` (say): `rl_general_v3.yaml`
-   plus, inline, the sawtooth overlay with the chosen Coulomb and the
-   measured roller spring, and the wheel play fit. `k_roller` and the
-   onboard revert landed first, with `export_deploy`.
-2. CPU and Warp-on-CPU smokes on THAT config.
-3. ONE 72M pod run (`scripts/gpu.sh`). Confirm GPU type and $/h first.
+1. **Written**: `config/rl/rl_general_v4.yaml`, `rl_general_v3.yaml` plus,
+   inline, the sawtooth overlay (Coulomb 0.15 as fitted, roller spring 0.01)
+   and the wheel play fit. `k_roller` and the onboard revert LEFT (user,
+   10-26): today's pair, +2.4 with drive_a on servo 102, is consistent on
+   the bike (`onboard.yaml`, measured 10-24), and every policy so far
+   trained on +2.4, so flipping it now would mean re-flipping onboard.yaml
+   to fly old and new policies back to back. Coulomb stays 0.15 (user).
+2. **Done**: CPU and Warp-on-CPU smokes on that config (above).
+3. **Ran 2026-10-26**: one 80M run on a secure A40 (no 4090 / 5090 to be
+   had; 4 seeds under MPS were ~3.3 h each and were stopped):
+   `general_puffer_a40_v4_{52,72,80}M`, `results_a40_v4/`, details in
+   `gpu-training.md`. Training ended at fall 0.10 (the v2 run: 0.03).
 4. Judge here, with the same plant switched on: `per_command.py --summary
-   --ahrs tm151_filter`, `standstill.py`, `chatter.py`, and `run_vs_sim.py`
+   --ahrs tm151_filter` and `standstill.py` DONE (as good as the pointer;
+   standstill drifts less than it on either plant, and about the same
+   with the play as without), `chatter.py` and `run_vs_sim.py`
    against 174349 -- the 7-12 Hz band and the badges on
    `drivetrain_traces.html`. The bar: shakes markedly less than the pointer
    does on the same plant (15.1 deg/s roll rate 7-12 Hz RMS with the play

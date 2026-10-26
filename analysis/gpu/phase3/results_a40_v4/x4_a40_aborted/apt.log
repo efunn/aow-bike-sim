@@ -1,0 +1,5 @@
+W: https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/InRelease: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.
+{"step":"apt_update","wall_s":3.83106}
+debconf: delaying package configuration, since apt-utils is not installed
+{"step":"apt_install","wall_s":18.2466}
+{"step":"puffer_fetch","wall_s":3.23445}

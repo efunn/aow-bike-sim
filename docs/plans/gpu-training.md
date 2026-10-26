@@ -1340,7 +1340,7 @@ the trainer ini (seed, learning rate, entropy, horizon). A config that
 changes the obs width needs its own `install.sh` build (OBS_SIZE is
 compiled in); the copies share one build.
 
-**The runbook as a script (2026-10-23; not yet run end to end).**
+**The runbook as a script (2026-10-23; first run end to end 10-26, below).**
 `scripts/gpu.sh` drives steps 2-7 above from this checkout against any
 ssh-reachable root shell with an NVIDIA GPU (CUDA >= 13 driver; only the
 RunPod image is tested): `check HOST PORT` (CUDA, pypi and github speed),
@@ -1359,7 +1359,60 @@ json and ini in `results/checkpoints/`, so `export` reads both layouts.
 Checked here: syntax, the argument guard, and `export` on this run's
 results in both layouts (the 80M weights byte-identical to the export
 above; the test exports were `*smoke*` and are deleted). `run_seeds.sh`
-has NOT run on a GPU yet; its first use is the next run.
+had not run on a GPU then. Two bugs found on the 10-26 run, fixed: `watch`
+waited forever on a one-run launch (`ls a b` fails when either is
+missing, and a one-run launch has no `seed_*/`), and `export` took the
+first run folder under `puffer_checkpoints/aow_bike/`, which after a
+relaunch on the same pod is the stopped run's empty one (it now takes the
+newest that holds checkpoints).
+
+**The v4 plant: sawtooth detent + wheel play, on an A40 (ran 2026-10-26)**
+[measured]. `config/rl/rl_general_v4.yaml` (v3 + the sawtooth drivetrain
+and the play fit inline; `next-retrain.md`), plant 54fdba72, seeds 0 / 42,
+4096 x 64. No secure or community 4090 / 5090 at any CUDA version; a
+secure A40 ($0.59/h, CA-MTL-1; github's test URL read 0 B/s, github.com
+itself answered, setup never fetches from it). Results:
+`results_a40_v4/`, the two stopped attempts beside it.
+
+| on the A40, v4 | steps/s | 80M takes |
+|---|---|---|
+| `SEEDS=4`, MPS | 27k in all, 6.8k each | ~3.3 h each |
+| one run | 19.4-19.7k early, 16.0k by the end | 5361 s (89 min) |
+
+So MPS gave 1.4x on the A40 against 2.3x on the 5090; the 4-seed launch
+was stopped at 222 s (`x4_a40_aborted/`). `run_seeds.sh` worked end to
+end otherwise: four graphs, four inis (seeds 42-45), MPS on, checkpoints,
+the Warp cache, ALL_DONE. The first one-run relaunch was stopped at ~3 min
+(`x1_a40_capped/`): the one-run `TRAIN_S` default of 3600 s would have cut
+it near 70M; `TRAIN_S=5400` finished on the ini's 80M with 39 s to spare.
+The rate fell ~20 % over the run (19.7k -> 16.0k), as on no 5090 run.
+
+Training curve against the v2-plant run (5090, same seeds) -- one seed
+each, not repeatable:
+
+| steps | fall v3 / v4 | difficulty | entropy |
+|---|---|---|---|
+| 13.1M | 0.13 / 0.26 | 0.15 / 0.11 | 2.81 / 2.48 |
+| 32.8M | 0.19 / 0.64 | 0.82 / 0.76 | 2.00 / 1.52 |
+| 45.9M | 0.06 / 0.40 | 1.00 / 1.00 | 1.70 / 1.27 |
+| 80.0M | 0.03 / 0.10 | 0.67 / 0.67 | 1.27 / 0.59 |
+
+Difficulty (paced by tracking, not falls) climbed as fast; falls peaked
+later and higher and came down; entropy fell faster. One KL HIGH (0.131
+at 26.2M). Converted `general_puffer_a40_v4_{52,72,80}M` (each records
+`wheel_play` and the sawtooth overlay). Judged here, `per_command.py
+--summary` (each on its OWN plant, from its record): all five 0/20 falls,
+7/9 forward, 2/2 straight, hold -0.01..-0.03 m/s, spins steered (wheel/yaw
+0.96-1.05) -- the same as `fixes_72M` and `rake20_80M`. `standstill.py`
+(6 seeds, 5 s) on the v4 plant for all five, max |v| / end distance:
+pointer 0.19-0.23 m/s / 0.12-0.15 m, rake20_80M 0.18-0.26 / 0.15-0.17,
+v4 52M 0.14-0.21 / 0.08-0.12, 72M 0.14-0.17 / 0.07-0.08, 80M 0.12-0.19 /
+0.05-0.11; no falls. On the v3 plant (`standstill_v3plant.txt`) the same
+order (pointer end 0.10-0.12 m, v4 0.05-0.11): the play changes little
+for any of them in 5 s. NOTE `standstill.py` flies every policy on its
+`--config` plant, ignoring the move's record (default v3: no play).
+Not yet: the 7-12 Hz shake with the play (`run_vs_sim.py` against 174349),
+the steer wobble, and the bike.
 
 ### Phase 4 -- algorithm parity
 
