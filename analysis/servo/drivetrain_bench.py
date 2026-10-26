@@ -1435,10 +1435,21 @@ def _steer_straight(present: int, zero_deg: float) -> int:
     return present + (z - present + STEER_PERIOD // 2) % STEER_PERIOD - STEER_PERIOD // 2
 
 
-def _steer_hold_on(bus: DynamixelBus, sid: int, orig: dict, args) -> dict:
-    """Mode, gains and goal as `BikeBus` sets them for flight, then torque on.
-    No Bus Watchdog: the capture's frames go to the drive ids only, so an
-    armed watchdog would trip at once and drop the hold."""
+STEER_RAMP_SPEED = 1.0      # rad/s of shaft, peak of the raised-cosine move to straight
+
+
+def _steer_hold_on(bus: DynamixelBus, sid: int, orig: dict, args, sleep=time.sleep) -> dict:
+    """Mode and gains as `BikeBus` sets them for flight, torque on, THEN the
+    goal: a raised-cosine move from where the fork is to straight (peak
+    STEER_RAMP_SPEED), and the goal read back.
+
+    GOAL AFTER TORQUE. A goal written with torque off is acknowledged and
+    dropped (control_tables/README.md, measured on the XC430s). Until 10-25
+    this wrote it before torque on, and the steer came up holding wherever
+    it was: 2.1-2.5 deg off in five of the 10-25 bench captures, 8.3 deg in
+    the first tap test, while two others did reach straight. No Bus
+    Watchdog: the capture's frames go to the drive ids only, so an armed
+    watchdog would trip at once and drop the hold."""
     bus.prepare(ids=(sid,))            # torque off, Return Delay 0, profiles 0
     changed = orig["Operating Mode"] != MODE_EXTENDED_POSITION
     if changed:
@@ -1447,10 +1458,20 @@ def _steer_hold_on(bus: DynamixelBus, sid: int, orig: dict, args) -> dict:
         bus.write_raw(sid, n, int(v))
     present = bus.read_raw(sid, "Present Position")
     goal = _steer_straight(present, args.steer_zero_deg)
-    bus.write_raw(sid, "Goal Position", goal)
     bus.torque(True, (sid,))
+    bus.write_raw(sid, "Goal Position", present)            # hold here first
+    move = (goal - present) * 2 * np.pi / STEER_COUNTS_PER_REV
+    T = max(0.3, abs(move) * np.pi / 2 / STEER_RAMP_SPEED)
+    n = max(2, int(T / 0.01))
+    for k in range(1, n + 1):
+        frac = 0.5 * (1 - math.cos(math.pi * k / n))
+        bus.write_raw(sid, "Goal Position", int(round(present + (goal - present) * frac)))
+        sleep(T / n)
+    got = bus.read_raw(sid, "Goal Position")
+    if got != goal:
+        raise RuntimeError(f"steer {sid}: wrote Goal Position {goal}, read back {got}")
     return {"id": sid, "mode_changed": changed, "gains": dict(args.steer_gains),
-            "present_before": present, "goal": goal}
+            "present_before": present, "goal": goal, "ramp_s": T}
 
 
 def _steer_hold_off(bus: DynamixelBus, sid: int, orig: dict, hold: dict) -> None:
