@@ -289,3 +289,35 @@ matches both (worst schedule fit R^2 0.962). **Copy it to the Pi by hand**:
 `deploy/` is gitignored. No export carries this plant: the four
 smoothness-loss exports are at 9953690d, `cmd_curriculum2b` at e1ec36bf -- both
 before the wheel. History: `params-digest-split.md`.
+
+## Digest history, 2026-10-17 to 10-21 (from status.md, moved verbatim 2026-10-26)
+
+**Digests, 2026-10-21**: `plant_digest` 6446d8fa5b925702 -- the XC330s'
+firmware registers moved from `onboard.yaml` into the plant
+(`actuators.steer_gains`, `righting.module.gains`), with the sim's gains now
+derived from them: steer kp 2.3 -> 2.30004, righting kp/kv 1.48 / 0.0473 ->
+1.4795 / 0.04734 (the old values were the same derivations, rounded).
+`deploy/bundle.npz` re-exported; the 4327521f one kept as
+`deploy/bundle_plant-4327521f.npz`. Before it, 4327521f0ca7a1cb -- NO physics
+change from 6c0ad5cd: `bike_params.yaml` split into the bike, `onboard.yaml`
+and `config/studies/` (whose blocks `plant_digest` now leaves out); the
+default model is bit-identical and so is the bundle but for its digests
+(the 6c0ad5cd one kept as `deploy/bundle_plant-6c0ad5cd.npz`). Before it,
+6c0ad5cd33676eb5 -- the bike weighed by item: `chassis.mass` (cables + fasteners) 30 GUESS -> 61 g
+measured, the drive belts 4 GUESS -> 15 g each; the model is 53 g heavier
+(1157 g whole). `deploy/bundle.npz` re-exported (worst LQR fit R^2 0.985).
+Before it, 28946489e64c05de -- NO physics change from 0c0518e9 (the config/
+reorg moved paths only); its bundle, rebuilt from that commit's params, is
+`deploy/bundle_plant-28946489.npz`. `design_digest` 5fe8c19379988031
+(unchanged). 0c0518e9 is the v2 bike as built (10-19), its bundle
+`deploy/bundle_plant-0c0518e9.npz`. Before 0c0518e9: 7893a119, the steer's kp 2.3 + armature, then
+4b5355ed and bc66ca20; `deploy/bundle_plant-bc66ca20.npz` is untouched. `config/ahrs_mount.yaml`
+is the CAD's 45 deg nose-down mount (source: design, pinned equal to
+bike.ahrs.quat by a test), and `hw/ahrs.MountCalibration` now applies it on
+the correct side: before 10-19 it composed on the LEFT and rotated vectors by
+the inverse, harmless near identity and wrong at 45 deg (roll would have read
+as roll + yaw). `capture` still zeroes a reference pose, now as a separate
+earth offset.
+**To the Pi:** `scripts/bike.sh sync` carries the params and the bundle
+together (`deploy/` is gitignored, so a commit does not, but the sync's
+rsync does). History: `params-digest-split.md`.

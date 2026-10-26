@@ -335,3 +335,26 @@ Consequences, all in sim:
   showed plugging implies ~3x more braking than the linear law gives.
 - The fall-set numbers that were here (2/2 at 12 V at 416 counts) were under
   the sqrt law and are void until re-run in teleop.
+
+## Status log, 2026-10-17: the V2 module's first powered runs (from status.md, moved verbatim 2026-10-26)
+
+Righting module V2, first powered runs (10-17; stubs only, clamped free,
+horn now screwed; `analysis/mechanism/righting_sweep.py`, captures in
+`traces/righting_sweep/`). Kinetic friction at 15 deg/s, as (I+ - I-)/2:
+~90 mA near stow, ~110-120 at +-15-75, ~140 at +-75-90, ~170-190 at
++-90-120 (bare XC330 ~22). Breakaway by goal creep: 110-130 near stow,
+~150-190 at +-75-100, up to ~250 at +120. With Position I 0 the crank parks
+~6 deg short of its goal (~111 for the V3 blade's commanded 116.9). Friction rose with temperature over
+the session (76 -> 93 mA near stow, 26 -> 32 C). The rise toward the ends
+tracks the linkage's joint rates per crank degree (crank-pin rate alone: rms
+12 vs 32 mA for a constant), but those curves are all correlated, so which
+joint it is remains unknown. `righting_sign` +1 measured (horn forward: right
+wing down = +). The wings share crankpin and rocker rod, so their transmission
+angles are equal (73 deg at stow, 30 at 129); each passes its folded toggle at
+~+-62, and only the RIGHT wing's (crank -60) shows a bump, ~+25 mA: a joint on
+that side, not the geometry. Friction is flat with speed (ramps at 15 to 240
+deg/s, peak current <= 243 mA). The bike's own command, a goal step at 300 mA
+(`--step`): ~610 deg/s, 90 % of a 120 deg step in 0.21 s, no overshoot,
+parks ~6 deg short; braking current peaks ~380 mA, ABOVE the 300 cap. A
+stepping test (`servo_breakaway.py`) threw the
+crank at 630 deg/s and is not for built mechanisms.

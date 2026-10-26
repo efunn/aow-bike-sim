@@ -1779,3 +1779,43 @@ FastSyncRead at **2.000 ms mean / 2.034 p99**, i.e. a 500 Hz read-only ceiling
 and a tick that is entirely the FTDI latency timer. A SyncWrite is 25 µs and a
 SECOND one is free: read + one write and read + two writes are both 2.000 ms.
 See `pi-bench-bringup.md` §2.3.
+
+## Bring-up log, 2026-10-17: the bike's bus and the first policy on the bench (from status.md, moved verbatim 2026-10-26)
+
+Bring-up (10-17): all four servos share one bus at 3 Mbps as configured,
+101/102 XC430 velocity, 103 XC330 extended position (steer), 104 XC330
+current-based position (righting). The Pi's tree was resynced from this
+checkout (no `--delete`, `bench/` left alone); the 100 Hz loop runs torque-off
+with the GPU MinGRU pointer (p99 jitter 0.56 ms).
+
+First policy runs on the bench (10-17; new 5 V 2 A TRACO board, no
+undervoltage flags; drive servos bare, steer and righting modules clamped,
+steer column installed, no fork/wheel; `run_bike --bench --torque --no-link --auto-rearm`,
+records in `traces/bike/261017-17*`). 100 Hz, no dropped frames; fall cut and
+auto re-arm work. With the AHRS held level the policy SAWS THE STEER: 5.2 Hz,
+growing 1 -> 8 deg rms over ~15 s, in its own command (the servo follows).
+Not roll; the velocity estimate carries it too. In the sim, pinned upright
+(`analysis/policy/steer_pinned.py`), the same policy is quiet (0.02 deg) and only
+limit-cycles (0.43 deg, 4.9 Hz) once BOTH (a) the steer servo is given the
+bench's response and (b) the policy sees the steer rate as the Pi forms it.
+(a): open-loop sweep of the XC330 at P 900 with the steering column and
+headset installed (no fork or wheel, hanging)
+(`analysis/servo/steer_response.py`, `traces/bench/steer_response_261017-175708.json`):
+gain/phase 0.81/-69 deg at 5 Hz against the sim's 0.66/-63. Repeated on the
+bare righting XC330 (mode 4, `steer_response_261017-190803.json`): within
+0.02 at +-5 deg, so the column adds nothing and the units agree. NOW IN THE
+PLANT: `steer_kp` 2.3, `steer_armature` 5.5e-4, `crank_armature` 5.5e-4 (kv
+held at the free-spin droop; a kv fit, 0.055, let the steer outrun its motor
+at 14.5 rad/s). Constant-speed ramps confirm it above 0.45 rad/s (droop
+29 ms, running friction 5.75 mN m from the lag's intercept). Below ~0.25 rad/s
+the bare servo tracks within ~1 encoder count, with no droop or friction --
+NOT modelled, deliberately: a one-count effect that the wheel's scrub and the
+horn-to-wheel backlash will swamp on the bike. Next for small motions: the
+assembled steering, loaded, with the backlash read off the wheel side. (b): `bike_bus` differences the steer
+counts through RateFilter (~8 ms) while training observed the exact joint
+velocity. Fixed in the training path (10-17): `steer_rate_encoder: counts`
+(`sim_odometry.SimSteerRate`; GeneralEnv, the GPU odometry kernel, the move
+yaml, teleop `--steer-rate`), ON in `rl_general_v3.yaml`. Every existing
+policy is `joint`; teleop `--steer-rate counts` flies one as the Pi does. The
+remaining 20x amplitude gap is unexplained (small-signal servo nonlinearity,
+sensor noise and the wheel-less drives are untested).

@@ -439,3 +439,24 @@ flat|old|D,W,SHOULDER,CROWN` flies another tire for an A/B.
 Side effects measured: the axle rises 1.25 mm (the chassis stays level; the
 fork takes it), spin inertia +14% (uniform-density solid, same 60 g; the real
 wheel's distribution is unknown). Odometry does not use the front radius.
+
+## The v2 bike in the sim (2026-10-19 to 10-21) (from status.md, moved verbatim 2026-10-26)
+
+**The sim is the v2 bike since 10-19**: positions, orientations, rake 20
+and wheelbase 200.5 from the v2 CAD; the TM151 tilted 45 deg (the box and
+the accelerometer's place in the part; the IMU site stays on the chassis
+axes, as the mount calibration delivers); the rollcages + caps + sheet as
+one shell-inertia capsule (`righting.rollcage`, ~212 g, the heaviest single
+GUESS); the righting XC330 placed on its own. Every mass is a shape you
+can see: each part its CAD tight box in its own frame (45 deg drive, 20
+deg steering), the rails their CAD outlines extruded, the pulleys discs, the belts their
+runs, the righting's fixed block its five parts (`bike.frame_parts`,
+`righting.module.fixed`); cosmetics to replace them are next. 1248 -> 1104 g, CoM (86.8, 0.0,
+66.4) -> (87.3, 0.5 left, 60.4) mm from the rear axle; inertia about the CoM
+UP despite the lighter bike (roll/pitch/yaw 2.97/6.25/4.34 -> 3.37/7.43/5.73
+e-3 kg m2), the 212 g rollcage at the radius. Then (10-21) the cables, fasteners and belts
+weighed by item: 1104 -> 1157 g, CoM (87.3, 0.5, 60.4) -> (86.1, 0.5, 60.0). The power board weighed 16 g
+(was 56 GUESS). What moves is untouched: drive inputs, steer, wheels,
+the righting four-bar (its wing hubs read 11.5 g in the v2 CAD against 14.9
+listed). `bike_params_cad.yaml` is retired in practice (user): nothing in
+the sim reads it. Weighing sheet: `traces/weigh_v2_printed.txt`.
