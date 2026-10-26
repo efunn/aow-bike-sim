@@ -157,8 +157,9 @@ def test_the_move_yaml_records_it_and_replay_reads_it(params):
     del cfg["env"]["steer_rate_encoder"]
     assert move_doc("x_smoke", params, cfg, trained={})["steer_rate_encoder"] == "joint"
     # An export from before the field reads as "joint" and builds a "joint" env.
+    # Named, not the pointer: the pointer since 10-26 (v4) has the field.
     from aow_sim.control.flick import load_move
-    old = load_move(params["control"]["general_move"])
+    old = load_move("general_puffer_fixes_72M")
     assert old.steer_rate_encoder == "joint"
     assert policy_env_overrides(old)["steer_rate_encoder"] == "joint"
     old.steer_rate_encoder = "counts"

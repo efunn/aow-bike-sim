@@ -527,7 +527,7 @@ control:
   # `run_drive --general NAME` overrides it for one session. Changing it moves
   # neither digest. Why each pointer was chosen is in docs/status.md and the
   # DEVLOG.
-  general_move: general_puffer_fixes_72M
+  general_move: general_puffer_a40_v4_80M
   drive:
     # The speed cap teleop and the bike's command path clamp to.
     v_max: 1.2          # m/s; ~70% of the 1.7 no-load ceiling (torque margin)
