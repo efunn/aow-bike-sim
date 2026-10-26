@@ -879,11 +879,17 @@ class BikeRunner:
         is built and its expected attitude is known.
         """
         problems: list = []
-        if self.mount_source != "measured":
+        # `design` passes: since the v2 bike (10-19) the TM151 is located on
+        # its own four holes on the drive's tabs, so the CAD fixes the angle,
+        # and nothing on the bike levels more finely than the AHRS itself.
+        # What still blocks is a mount nobody located: `GUESS`, or `absent`
+        # (no config/ahrs_mount.yaml, identity assumed).
+        if self.mount_source not in MOUNT_LOCATED:
             problems.append((MOUNT_UNCALIBRATED,
-                f"AHRS mount calibration is '{self.mount_source}', not 'measured' — "
-                "assuming the sensor is perfectly aligned with the chassis. "
-                "Any mounting tilt is a permanent roll bias."))
+                f"AHRS mount is '{self.mount_source}', not one of "
+                f"{'/'.join(MOUNT_LOCATED)} — the rotation into the chassis "
+                "frame is unlocated, and any error in it is a permanent roll "
+                "bias."))
 
         t_end = time.monotonic() + seconds
         accels, gyros, qoses, last_err = [], [], [], None
@@ -1604,6 +1610,8 @@ def _rpy(quat) -> tuple[float, float, float]:
 # true on every run until a separate piece of work clears it. Tagged rather
 # than worded specially, so an escape hatch can be aimed at exactly this one.
 MOUNT_UNCALIBRATED = "ahrs-mount-uncalibrated"
+# config/ahrs_mount.yaml `source:` values preflight accepts as a located mount.
+MOUNT_LOCATED = ("measured", "design")
 # QoS 2 right after power-up: always a warning (preflight_ahrs).
 AHRS_QOS_LIMITED = "ahrs-qos-limited"
 
@@ -1709,12 +1717,11 @@ def main() -> None:
                          "off on the way out. Use this rather than `timeout`, "
                          "whose SIGTERM skips the shutdown handler")
     ap.add_argument("--allow-guess-mount", action="store_true",
-                    help="accept an uncalibrated AHRS mount and KEEP the rest "
-                         "of preflight armed. This is the flag a bench session "
-                         "wants: the mount stays 'GUESS' until the bike can be "
-                         "jigged level, so without it preflight blocks every "
-                         "run and the habit becomes --no-preflight, which also "
-                         "disarms the |accel|, |gyro| and QoS checks")
+                    help="accept an unlocated AHRS mount (source GUESS, or no "
+                         "config/ahrs_mount.yaml) and KEEP the rest of "
+                         "preflight armed, rather than --no-preflight, which "
+                         "also disarms the |accel|, |gyro| and QoS checks. "
+                         "A 'design' or 'measured' mount needs no flag")
     ap.add_argument("--steer-zero", metavar="DEG|capture",
                     type=lambda t: t if t == "capture" else float(t),
                     help="servo-shaft angle that is STRAIGHT AHEAD, for one "

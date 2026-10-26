@@ -481,6 +481,32 @@ def test_ahrs_qos_2_warns_and_lower_still_blocks(capsys):
     BikeRunner.preflight_ahrs(runner(3), seconds=0.03)       # silent pass
 
 
+def test_a_cad_located_mount_passes_and_an_unlocated_one_blocks():
+    """The v2 mount is `source: design` -- the TM151 sits on its own holes, so
+    the CAD fixes it -- and preflight demanding `measured` blocked every run
+    (10-25) until it went through --bench. `GUESS` and `absent` still block."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from aow_sim.hw.ahrs import AhrsSample
+    from aow_sim.hw.run_bike import BikeRunner
+
+    s = AhrsSample(np.array([1.0, 0, 0, 0]), np.zeros(3),
+                   np.array([0, 0, 9.81]), 0.0, 3)
+
+    def runner(source):
+        return SimpleNamespace(mount_source=source, _preflight_allow=(),
+                               ahrs=SimpleNamespace(latest=lambda: s),
+                               _ahrs_diagnosis=lambda: "")
+
+    for source in ("design", "measured"):
+        BikeRunner.preflight_ahrs(runner(source), seconds=0.03)
+    for source in ("GUESS", "absent"):
+        with pytest.raises(RuntimeError, match="--allow-guess-mount"):
+            BikeRunner.preflight_ahrs(runner(source), seconds=0.03)
+
+
 def test_non_strict_preflight_reports_without_raising():
     from aow_sim.hw.run_bike import _report_preflight
     got = _report_preflight([(None, "gyro running away")], False)
