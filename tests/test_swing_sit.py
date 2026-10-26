@@ -193,3 +193,65 @@ def test_a_fall_after_the_hand_off_folds_and_rearms_the_auto_up(lands):
     assert phases[-1] == "riding" and not seq.active
     assert not seq.fallen(t, down, 0.0), "fired on the first trigger's timer"
     assert seq.fallen(t + seq.fallen_s, down, 0.0)
+
+
+# --- up without the hand-off (hand_off=False, the real bike's default) ------
+
+def test_without_the_hand_off_the_lift_stops_at_the_lean_and_props():
+    """The lift ramps to `lean_deg`, not the full stroke, and ends PROPPED --
+    drives limp, blade held -- instead of handing to the policy, however
+    inside the recoverable set the bike is."""
+    seq = SwingSit(DEPLOY, hand_off=False)
+    seq.get_up(0.0, np.deg2rad(80.0))
+    crank, t = 0.0, 0.0
+    for _ in range(int(3.0 / DT)):
+        c = seq.step(t, np.deg2rad(5.0), 0.0, crank)
+        assert not c.policy and abs(c.crank) <= np.deg2rad(110.0) + 1e-9
+        crank, t = c.crank, t + DT
+        if seq.phase == "propped":
+            break
+    assert seq.phase == "propped" and not seq.active
+    c = seq.step(t + 10.0, np.deg2rad(5.0), 0.0, crank)
+    assert c.limp and not c.policy and c.crank == pytest.approx(np.deg2rad(110.0))
+    assert seq.phase == "propped", "it waits, for as long as it takes"
+
+
+def test_engage_from_propped_eases_the_blade_and_folds_it():
+    seq = SwingSit(DEPLOY, hand_off=False)
+    seq.get_up(0.0, np.deg2rad(-80.0))
+    t, crank = 0.0, 0.0
+    while seq.phase != "propped":
+        crank = seq.step(t, np.deg2rad(-5.0), 0.0, crank).crank
+        t += DT
+    seq.engage(t)
+    assert seq.phase == "balance"
+    c = seq.step(t + DT, 0.0, 0.0, crank)
+    assert c.policy and c.crank == pytest.approx(-np.deg2rad(110.0), abs=1e-3)
+    phases = set()
+    for _ in range(int(6.0 / DT)):
+        t += DT
+        crank = seq.step(t, 0.0, 0.0, crank).crank
+        phases.add(seq.phase)
+        if seq.phase == "riding":
+            break
+    assert {"balance", "retract", "riding"} <= phases and crank == pytest.approx(0.0)
+
+
+def test_engage_is_only_from_propped():
+    seq = SwingSit(DEPLOY, hand_off=False)
+    with pytest.raises(RuntimeError, match="propped"):
+        seq.engage(0.0)
+
+
+def test_rest_deg_carries_the_lower_through_centre_and_limp_holds_it_there():
+    seq = SwingSit(DEPLOY, rest_deg=75.0)
+    seq.lie_from_prop(0.0, np.deg2rad(-110.0))           # left side
+    t, crank, seen = 0.0, np.deg2rad(-110.0), []
+    while seq.phase in ("lower", "limp"):
+        c = seq.step(t, np.deg2rad(-60.0), 0.0, crank)
+        crank, t = c.crank, t + DT
+        seen.append(c.crank)
+    assert seq.phase == "lying"
+    assert max(seen) == pytest.approx(np.deg2rad(75.0)), "past centre, the other way"
+    assert np.all(np.diff(seen) >= -1e-12), "one way only, at the ramp"
+    assert seen[-1] == pytest.approx(np.deg2rad(75.0)), "limp holds the rest crank"

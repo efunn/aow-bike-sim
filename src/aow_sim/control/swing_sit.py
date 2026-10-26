@@ -22,7 +22,13 @@ DOWN, as gently as the module allows:
              the bike back and the blade folds away (`aborted`).
     settle   drives held; the bike comes to rest on wheels + blade (~6 deg).
     lower    crank ramped back to centre at `lower_dps`; the bike rolls down
-             onto its side.
+             onto its side. With `rest_deg` > 0 the ramp carries on THROUGH
+             centre to `rest_deg` the other way: where the bike, lying on
+             its cage, comes to rest. Stopping at centre left that last
+             stretch to gravity, which on the bike is a CLUNK when the
+             current goes. The bike's rest is MEASURED at 26.5-28 deg
+             (run_bike.LIE_REST_DEG); the sim's is ~77 deg, so a sim run
+             that wants the bike's behaviour sets this from the sim.
     limp     Goal Current ramped to 0 over `limp_s`. Held at full current the
              crank sits ~12 deg past centre against the bike's weight and
              limit-cycles (+-4 deg of roll, ~35 deg/s, indefinitely); dropped
@@ -43,6 +49,24 @@ UP, from lying (on purpose or after a fall):
     retract  once upright (`upright_deg`) and after `retract_after` s:
              crank to centre at `retract_dps`.
     riding   done.
+
+UP WITHOUT THE HAND-OFF (`hand_off=False`, the real bike's default since
+2026-10-26): the lift ramps to `lean_deg` instead of the full stroke --
+the lie-down's `settle` pose, the bike resting on wheels + blade -- and
+stops there:
+
+    lift     as above, to `lean_deg`; done once the ramp is there and the
+             bike is inside the recoverable set (`ready_for_policy`).
+    propped  holding. The drives LIMP (`Command.limp`), the blade at
+             `lean_deg`. Left by `engage()`, the operator's go-ahead, into
+             `balance` and `retract` as above -- or by `lie_from_prop()`.
+
+DOWN FROM A PROP (`lie_from_prop`): a bike already resting on a blade --
+`propped`, or powered up that way -- needs no stop, deploy or kick. It
+starts at `lower`, from wherever the crank IS, and the policy never runs.
+
+Not the full stroke: there the blade props an upright bike over the OTHER
+way once nothing balances it (see `deploy` above).
 
 A LIFT THAT TIMES OUT goes limp and lies, then tries again after `retry_s`
 (None: waits for the operator, as before 2026-10-23). The auto-up only fires
@@ -79,11 +103,13 @@ class Command:
     policy       True: the general policy drives. False: hold the drives at
                  zero speed and the steer where it is, plus `diff`.
     diff         rear differential [rad/s] while the policy is off
+    limp         the drives and steer unpowered rather than held (`propped`)
     """
     crank: float
     current: float = 1.0
     policy: bool = True
     diff: float = 0.0
+    limp: bool = False
 
 
 class SwingSit:
@@ -101,20 +127,24 @@ class SwingSit:
                  retract_dps: float = 120.0,
                  still_speed: float = 0.05, stop_max_s: float = 4.0,
                  lower_dps: float = 30.0, limp_s: float = 1.0,
+                 rest_deg: float = 0.0,
                  lift_timeout_s: float = 3.0, retract_after: float = 1.0,
                  lift_policy: bool = False, lift_dps: float | None = 120.0,
                  recover_deg: float = RECOVER_DEG,
                  fallen_deg: float = 60.0, fallen_s: float = 0.5,
-                 still_rate: float = 2.0, retry_s: float | None = 1.0):
+                 still_rate: float = 2.0, retry_s: float | None = 1.0,
+                 hand_off: bool = True):
         self.deploy = float(deploy_rad)
         self.lean = np.deg2rad(lean_deg)
         self.deploy_s, self.kick = deploy_s, kick
         self.settle_s, self.lower = settle_s, np.deg2rad(lower_dps)
+        self.rest = np.deg2rad(rest_deg)
         self.limp_s, self.lift_timeout_s = limp_s, lift_timeout_s
         self.retract_after, self.recover_deg = retract_after, recover_deg
         self.fallen_rad, self.fallen_s = np.deg2rad(fallen_deg), fallen_s
         self.still_rate = still_rate
         self.retry_s = retry_s
+        self.hand_off = bool(hand_off)
         self._retry = False         # lying after a failed lift: try again
         self.lean_on, self.kick_max_s = np.deg2rad(lean_on_deg), kick_max_s
         self.abort = np.deg2rad(abort_deg)
@@ -152,13 +182,30 @@ class SwingSit:
         self._retry = False
         self._go("stop", t)
 
-    def get_up(self, t: float, roll: float) -> None:
-        """Start getting up from lying on the side `roll` says."""
-        self.side = float(np.sign(roll) or 1.0)
+    def get_up(self, t: float, roll: float, side: float | None = None) -> None:
+        """Start getting up from lying on the side `roll` says (or `side`)."""
+        self.side = float(side if side is not None else (np.sign(roll) or 1.0))
         self._lift_from = None
         self._down_since = None     # the next auto-up waits its own fallen_s
         self._retry = False
         self._go("lift", t)
+
+    def lie_from_prop(self, t: float, crank: float) -> None:
+        """Lie down from resting on the blade at `crank` [rad]: straight to
+        `lower`, ramped from there. The side is the crank's."""
+        self.side = float(np.sign(crank) or 1.0)
+        self._crank = float(crank)
+        self.aborted = False
+        self._retry = False
+        self._go("lower", t)
+
+    def engage(self, t: float) -> None:
+        """`propped` -> `balance`: the policy takes the bike and the blade
+        eases off and folds, as after an automatic hand-off."""
+        if self.phase != "propped":
+            raise RuntimeError(f"engage from {self.phase}, not propped")
+        self._hold = self.side * self.lean
+        self._go("balance", t)
 
     def _abort(self, t, crank):
         self.aborted = True
@@ -214,15 +261,17 @@ class SwingSit:
                 self._crank = s * self.lean
             return Command(s * self.lean, policy=False)
         if self.phase == "lower":
-            mag = max(0.0, self.lean - self.lower * dt)
-            if mag == 0.0:
+            # In the side's frame: from the blade's own side, through centre,
+            # to `rest` beyond it.
+            u = max(-self.rest, s * self._crank - self.lower * dt)
+            if u == -self.rest:
                 self._go("limp", t)
-            return Command(s * mag, policy=False)
+            return Command(s * u, policy=False)
         if self.phase == "limp":
             frac = max(0.0, 1.0 - dt / self.limp_s) if self.limp_s > 0 else 0.0
             if frac == 0.0:
                 self._go("lying", t)
-            return Command(0.0, current=frac, policy=False)
+            return Command(-s * self.rest, current=frac, policy=False)
         if self.phase == "lying":
             if not (self._retry and dt >= self.retry_s):
                 return Command(crank, current=0.0, policy=False)
@@ -232,11 +281,19 @@ class SwingSit:
         if self.phase == "lift":
             if self._lift_from is None:
                 self._lift_from = crank
-            goal = s * self.deploy
+            target = s * (self.deploy if self.hand_off else self.lean)
+            goal = target
             if self.lift_rate is not None:          # a ramped goal, not a step
                 goal = self._lift_from + np.clip(goal - self._lift_from,
                                                  -self.lift_rate * dt, self.lift_rate * dt)
-            if ready_for_policy(roll, roll_rate, self.recover_deg):
+            if not self.hand_off:
+                # A tolerance, not ==: the ramp's sum lands within rounding
+                # of the target, and on one side never exactly on it.
+                if abs(goal - target) < 1e-6 and ready_for_policy(
+                        roll, roll_rate, self.recover_deg):
+                    self._go("propped", t)
+                    return Command(goal, policy=False, limp=True)
+            elif ready_for_policy(roll, roll_rate, self.recover_deg):
                 self._go("balance", t)
                 self._hold = goal                    # the blade stays put
                 return Command(goal)
@@ -246,6 +303,8 @@ class SwingSit:
                 self._go("limp", t)
                 self._retry = self.retry_s is not None
             return Command(goal, policy=self.lift_policy)
+        if self.phase == "propped":
+            return Command(s * self.lean, policy=False, limp=True)
         if self.phase in ("balance", "retract") and abs(roll) > self.fallen_rad \
                 and not self._fell:
             # The policy lost it after the hand-off and the bike is down again
