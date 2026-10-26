@@ -1804,14 +1804,34 @@ def rest_on_panel(foot, top, hinge, wheel_radius: float,
                           0.5 * (foot + top), friction)
 
 
+def cage_points(params: dict | None = None, step_deg: float = 2.0) -> dict:
+    """The rollcage's ring in the sketch frame (x lateral, z up from the
+    axle, mm): `righting.rollcage`'s circle, its axis `height` above the rear
+    axle, the 90 deg opening at the bottom left out (it faces the floor only
+    while the wheels carry the bike). name -> point, for `fixed=`."""
+    if params is None:
+        from aow_sim.params import load_params
+        params = load_params()
+    rc = params["righting"]["rollcage"]
+    r, h = 1000.0 * float(rc["radius"]), 1000.0 * float(rc["height"])
+    out = {}
+    for k, a in enumerate(np.arange(-45.0, 225.0 + 1e-9, step_deg)):
+        a = np.deg2rad(a)
+        out[k] = np.array([r * np.cos(a), h + r * np.sin(a)])
+    return out
+
+
 def resting_pose_on(lk: SwingLinkage, travel: float, outline, wing_com,
-                    friction: float = FLOOR_FRICTION_EFF, mp: dict | None = None) -> dict | None:
+                    friction: float = FLOOR_FRICTION_EFF, mp: dict | None = None,
+                    fixed: dict | None = None, near: float | None = None) -> dict | None:
     """`resting_pose` on a real wing SHAPE instead of the panel line: every
     point of `outline` (the deploying wing's section at stow, sketch mm) is a
     support, turned with the wing about its hinge -- the panel is rigid with
     the rocker, so the panel line's rotation since stow IS the shape's.
     `wing_com` is the wing's CoM at stow (mass_props()["wing_com"]); `mp`
-    the mass properties it came from, None for the live bike's.
+    the mass properties it came from, None for the live bike's. `fixed`:
+    chassis supports that do NOT turn (the rollcage), and `near`, see
+    `rest_on_points`.
 
     The panel line is the blade's CENTRE line, so resting on it leaves the
     blade's half-thickness and its toe out of the contact (2026-10-09)."""
@@ -1828,7 +1848,7 @@ def resting_pose_on(lk: SwingLinkage, travel: float, outline, wing_com,
     sup = {f"p{i}": turned(q) for i, q in enumerate(outline)}
     normals = {f"p{i}": R @ n for i, n in smooth_normals(outline).items()}
     return rest_on_points(sup, hinge, lk.wheel_radius, turned(wing_com), friction, mp,
-                          normals, ring=list(sup))
+                          normals, ring=list(sup), fixed=fixed, near=near)
 
 
 SMOOTH_TURN_DEG = 5.0   # an outline vertex turning less than this is on a curve
@@ -1858,7 +1878,9 @@ def smooth_normals(outline) -> dict:
 
 def rest_on_points(sup: dict, hinge, wheel_radius: float, wing_com,
                    friction: float = FLOOR_FRICTION_EFF, mp: dict | None = None,
-                   normals: dict | None = None, ring: list | None = None) -> dict | None:
+                   normals: dict | None = None, ring: list | None = None,
+                   fixed: dict | None = None, near: float | None = None,
+                   near_tol: float = 20.0) -> dict | None:
     """The rest itself, on any set of the deploying wing's support points
     (`sup`, name -> sketch mm) and the wheels' contact, with the wing's CoM
     at `wing_com`. Two points (the panel's ends) is `rest_on_panel`.
@@ -1871,13 +1893,27 @@ def rest_on_points(sup: dict, hinge, wheel_radius: float, wing_com,
     and the roll steps by the facet angle (2026-10-10, V3's arc). `ring`: the
     points in outline order, so the search can walk the curve's facets (the
     blended normals put the rest up to a facet away from the one the hull
-    search lands on)."""
+    search lands on).
+
+    `fixed` (name -> sketch mm): supports on the CHASSIS, which do not turn
+    with the wing -- the rollcage's ring (`cage_points`). Each is the wheel's
+    kind of point: a rest on the wing and one of them is solved as the
+    wing-and-wheels rest is (regime "panel+cage"), and a rest on two of them,
+    or one and the wheel, puts nothing on the wing (regime "cage", load 0).
+
+    `near` [deg, signed roll]: with a ring round most of the bike there is
+    more than one static rest -- rolled past flat onto the cage's far side,
+    say -- and the first one found need not be the one the bike reaches.
+    Given the previous pose's roll, this returns the rest nearest it, or
+    None (no rest within `near_tol`: falling) -- quasi-static continuity."""
     mp = mp or mass_props()
     M, mw = mp["total"], mp["wing"]
     hinge = np.asarray(hinge, float)
     rest = mp["rest"]
     com = ((M - mw) * rest + mw * np.asarray(wing_com, float)) / M
     pts = {k: np.asarray(v, float) for k, v in sup.items()}
+    chassis = {f"cage{k}" for k in (fixed or {})}
+    pts.update({f"cage{k}": np.asarray(v, float) for k, v in (fixed or {}).items()})
     pts["wheel"] = np.array([0.0, -wheel_radius])
     # Only points on the convex hull can ever be lowest, so the rest is
     # searched over those alone (pair order kept, so the same rest is found):
@@ -1888,6 +1924,7 @@ def rest_on_points(sup: dict, hinge, wheel_radius: float, wing_com,
         rim = MultiPoint([tuple(p) for p in pts.values()]).convex_hull.boundary
         pts = {k: p for k, p in pts.items() if k == "wheel" or rim.distance(Point(p)) < 1e-9}
     names = list(pts)                       # the wheel last, so it is always `b`
+    found = []
     P = np.array([pts[k] for k in names])
     for i, j in ((i, j) for i in range(len(names)) for j in range(i + 1, len(names))):
         a, b = names[i], names[j]
@@ -1911,8 +1948,18 @@ def rest_on_points(sup: dict, hinge, wheel_radius: float, wing_com,
             g = GRAVITY / 1000.0                  # N per kg, lever in mm -> N m
             H = _rot(hinge, roll)
             S = _rot(rest, roll)
+            if a in chassis:
+                # On the cage (and maybe the wheel): the wing carries nothing.
+                r = {"roll": abs(roll), "on": (a, b), "load": 0.0,
+                     "regime": "cage", "to_floor": (roll, floor),
+                     "com_h": float(C[1] - floor)}
+                if near is None:
+                    return r
+                found.append(r)
+                continue
             tau = (M - mw) * g * (S[0] - H[0])
-            if b == "wheel":
+            on_chassis = b == "wheel" or b in chassis
+            if on_chassis:
                 n_wheel = M * GRAVITY * (C[0] - x1) / (x2 - x1)
                 n_panel = M * GRAVITY - n_wheel
                 tau -= n_wheel * (x2 - H[0]) / 1000.0
@@ -1949,12 +1996,19 @@ def rest_on_points(sup: dict, hinge, wheel_radius: float, wing_com,
                     tau = (M - mw) * g * (S[0] - H[0])
                     C = _rot(com, roll)
             load = -tau
-            if b == "wheel":
+            if on_chassis:
                 load += friction * n_panel * (H[1] - floor) / 1000.0
-            return {"roll": abs(roll), "on": (a, b), "load": float(load),
-                    "regime": "wheels" if b == "wheel" else "panel",
-                    "to_floor": (roll, floor), "com_h": float(C[1] - floor)}
-    return None
+            r = {"roll": abs(roll), "on": (a, b), "load": float(load),
+                 "regime": ("wheels" if b == "wheel" else
+                            "panel+cage" if b in chassis else "panel"),
+                 "to_floor": (roll, floor), "com_h": float(C[1] - floor)}
+            if near is None:
+                return r
+            found.append(r)
+    if near is None or not found:
+        return None
+    best = min(found, key=lambda r: abs(r["to_floor"][0] - near))
+    return best if abs(best["to_floor"][0] - near) <= near_tol else None
 
 
 def _smooth_contact(pa, pb, na, nb, com, tol: float = 1e-9):

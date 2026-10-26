@@ -219,7 +219,19 @@ function updateHeatScale() {
 // ---------- geometry helpers
 const rot = (p, deg) => { const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
   return [c * p[0] - s * p[1], s * p[0] + c * p[1]]; };
-const frameOf = (d) => d.frames[Math.round(frac * (d.frames.length - 1))];
+// ONE CRANK AXIS for both panes and every chart: a CAD entry starts at the
+// lying rest (negative crank), a config design at stow, so a fraction of
+// each one's own frames would put the two panes at different cranks.
+function span() {
+  const ds = pick.map((di) => designs[di].frames);
+  return [Math.min(...ds.map((f) => f[0].t)), Math.max(...ds.map((f) => f[f.length - 1].t))];
+}
+const crankAt = (x) => { const [a, b] = span(); return a + x * (b - a); };
+const xOf = (t) => { const [a, b] = span(); return (t - a) / (b - a); };
+// frames are evenly spaced in crank: the nearest one, clamped to the design's own range
+const indexOf = (d) => { const f = d.frames, n = f.length - 1, t0 = f[0].t, t1 = f[n].t;
+  return Math.max(0, Math.min(n, Math.round((crankAt(frac) - t0) / (t1 - t0) * n))); };
+const frameOf = (d) => d.frames[indexOf(d)];
 function segDist(a, b, c, d) {
   const cross = (o, p, q) => (p[0]-o[0])*(q[1]-o[1]) - (p[1]-o[1])*(q[0]-o[0]);
   const d1 = cross(c, d, a), d2 = cross(c, d, b), d3 = cross(a, b, c), d4 = cross(a, b, d);
@@ -266,10 +278,16 @@ function poly(g, m, pts, fill, alpha) {
 function drawMechanism(g, m, d, fr, T, opts) {
   const R = geo.R, K = geo.keepout;
   const tp = (p) => T(p);
-  // keep-out (servos, battery), and the wheel seen end-on
-  const box = [[-K.half, K.z_lo], [K.half, K.z_lo], [K.half, 170], [-K.half, 170]].map(tp);
-  poly(g, m, box, C.keep, 0.06);
-  line(g, m, [...box, box[0]], C.keep, 1, 0.7, [4, 3]);
+  // the rollcage's ring, behind everything: a contact the CAD entries rest on
+  if (d.cad && geo.cage) line(g, m, geo.cage.map(tp), C.muted, 3, 0.3);
+  // keep-out (servos, battery): a config design's clearance target. A CAD
+  // entry is checked against the real parts, and the cage is its outline.
+  if (!d.cad) {
+    const box = [[-K.half, K.z_lo], [K.half, K.z_lo], [K.half, 170], [-K.half, 170]].map(tp);
+    poly(g, m, box, C.keep, 0.06);
+    line(g, m, [...box, box[0]], C.keep, 1, 0.7, [4, 3]);
+  }
+  // the wheel seen end-on
   poly(g, m, [[-7, -R], [7, -R], [7, R], [-7, R]].map(tp), C.muted, 0.35);
   const sh = d.shaft;
   {  // the XC330 case, behind the horn
@@ -359,8 +377,10 @@ function floorBox(BOX) {
   const R = geo.R, K = geo.keepout;
   let lo = Infinity, hi = -Infinity;
   for (const d of designs) for (const f of d.frames) {
-    const pts = [[-K.half, K.z_lo], [K.half, K.z_lo], [K.half, 170], [-K.half, 170], [-7, -R], [7, R],
-                 f.footR, f.topR, f.footL, f.topL, f.pivotR, f.pivotL];
+    const pts = [...(d.cad ? [] : [[-K.half, K.z_lo], [K.half, K.z_lo], [K.half, 170], [-K.half, 170]]),
+                 [-7, -R], [7, R],
+                 f.footR, f.topR, f.footL, f.topL, f.pivotR, f.pivotL,
+                 ...(d.cad && geo.cage ? geo.cage : [])];
     for (const p of pts) { const x = rot(p, f.roll)[0]; lo = Math.min(lo, x); hi = Math.max(hi, x); }
   }
   const c = (lo + hi) / 2, half = Math.max((BOX[1] - BOX[0]) / 2, (hi - lo) / 2 + 12);
@@ -392,12 +412,15 @@ function drawPane(i) {
   for (let z = 0; z <= FB[3]; z += 20) line(g, m, [[FB[0], z], [FB[1], z]], C.grid, 1);
   poly(g, m, [[FB[0], 0], [FB[1], 0], [FB[1], FB[2]], [FB[0], FB[2]]], C.muted, 0.18);
   line(g, m, [[FB[0], 0], [FB[1], 0]], C.ink, 1.5);
-  const n = Math.round(frac * (d.frames.length - 1));
+  const n = indexOf(d);
   const trail = d.frames.slice(0, n + 1).map((f) => { const q = rot(f.com, f.roll); return [q[0], q[1] - f.floor]; });
   if (trail.length > 1) line(g, m, trail, C.muted, 1.5, 0.8, [2, 3]);
   drawMechanism(g, m, d, fr, G, { cross: false, com: true });
   // text + badges
-  el.roll.textContent = `${fr.rollS.toFixed(0)}° roll · ${fr.regime === "panel" ? "on panel, wheels up" : "on panel end + wheels"}`;
+  el.roll.textContent = `${fr.rollS.toFixed(0)}° roll · ${{
+    panel: "on panel, wheels up", wheels: "on panel end + wheels",
+    cage: "on the cage", "panel+cage": "on panel + cage", over: "over centre",
+  }[fr.regime] || fr.regime}`;
   el.crank.textContent = `crank ${fr.t.toFixed(0)}° of ${d.T.toFixed(0)}° · wing ${fr.wing.toFixed(0)}°`;
   const b = [];
   // couplers in one plane, 8 mm wide: the gap between their faces
@@ -425,7 +448,9 @@ function drawChart(canvas, field, ymax, refs, tick, fmt, val = (f) => f[field], 
     g.textAlign = "right"; g.fillText(fmt(v), L - 6, Y(v) + 4);
   }
   g.textAlign = "center";
-  for (let f = 0; f <= 1.0001; f += 0.25) g.fillText(`${Math.round(f*100)}%`, X(f), H - 8);
+  { const [a, b] = span();   // crank ticks, 0 always among them, 30 deg or wider to fit
+    let step = 30; while (pw * step / (b - a) < 34) step += 30;
+    for (let t = Math.ceil(a / step) * step; t <= b + 1e-9; t += step) g.fillText(`${t}°`, X(xOf(t)), H - 8); }
   for (const [v, label] of refs) {
     g.save(); g.strokeStyle = C.warn; g.setLineDash([4, 4]); g.beginPath();
     g.moveTo(L, Y(v)); g.lineTo(W - Rr, Y(v)); g.stroke(); g.restore();
@@ -438,27 +463,29 @@ function drawChart(canvas, field, ymax, refs, tick, fmt, val = (f) => f[field], 
     g.save(); g.strokeStyle = col; g.lineWidth = 2; g.setLineDash(st.dash); g.beginPath();
     // where the model has nothing (over centre, past the flat): a band in
     // the design's colour, so the line visibly ends on purpose
-    const k0 = d.frames.findIndex((f) => val(f) == null);
-    if (k0 > 0) {
-      const x0 = X(k0 / (d.frames.length - 1));
-      g.save(); g.globalAlpha = 0.12; g.fillStyle = col; g.fillRect(x0, Tt, X(1) - x0, ph);
+    // (after the line starts: a gap BEFORE it -- below stow -- is not "ended")
+    const k1 = d.frames.findIndex((f) => val(f) != null);
+    const kEnd = k1 < 0 ? -1 : d.frames.findIndex((f, k) => k > k1 && val(f) == null);
+    if (kEnd > 0) {
+      const x0 = X(xOf(d.frames[kEnd].t)), x1 = X(xOf(d.frames[d.frames.length - 1].t));
+      g.save(); g.globalAlpha = 0.12; g.fillStyle = col; g.fillRect(x0, Tt, x1 - x0, ph);
       g.restore();
     }
     let up = true;   // a null (nothing modelled there) breaks the line
     d.frames.forEach((f, k) => { const v = val(f); if (v == null) { up = true; return; }
-      const x = X(k / (d.frames.length - 1)), y = Y(v); up ? g.moveTo(x, y) : g.lineTo(x, y); up = false; });
+      const x = X(xOf(f.t)), y = Y(v); up ? g.moveTo(x, y) : g.lineTo(x, y); up = false; });
     g.stroke(); g.restore();
     }
     if (sim) {   // the sim's trace: thin, the same colour and dash
       g.save(); g.strokeStyle = col; g.lineWidth = 1; g.globalAlpha = 0.6; g.setLineDash(st.dash); g.beginPath();
       let up2 = true;
       d.frames.forEach((f, k) => { const v = f[simField]; if (v == null) { up2 = true; return; }
-        const x = X(k / (d.frames.length - 1)), y = Y(Math.max(ymin, Math.min(ymax, v)));
+        const x = X(xOf(f.t)), y = Y(Math.max(ymin, Math.min(ymax, v)));
         up2 ? g.moveTo(x, y) : g.lineTo(x, y); up2 = false; });
       g.stroke(); g.restore();
     }
-    if (field === "motor" && qs) { g.fillStyle = col; const y = Y(d.brk);
-      g.beginPath(); g.moveTo(X(0) - 5, y - 6); g.lineTo(X(0) + 5, y - 6); g.lineTo(X(0), y + 2); g.fill(); }
+    if (field === "motor" && qs) { g.fillStyle = col; const y = Y(d.brk), x0 = X(xOf(0));
+      g.beginPath(); g.moveTo(x0 - 5, y - 6); g.lineTo(x0 + 5, y - 6); g.lineTo(x0, y + 2); g.fill(); }
     // the marker rides whichever line is shown, quasi-static first
     const f = frameOf(d), v = qs && val(f) != null ? val(f) : sim ? f[simField] : null;
     if (v != null) { g.fillStyle = col; g.beginPath(); g.arc(X(frac), Y(Math.max(ymin, Math.min(ymax, v))), 4, 0, 2*Math.PI); g.fill(); }
@@ -577,7 +604,7 @@ function drawAll() {
             undefined, -15, "sim_r");
   legends();
   const parts = pick.map((di) => { const f = frameOf(designs[di]); return `${f.t.toFixed(0)}°`; });
-  document.getElementById("readout").textContent = `${Math.round(frac * 100)}% of stroke · crank ${parts.join(" / ")}`;
+  document.getElementById("readout").textContent = `crank ${crankAt(frac).toFixed(0)}° · panes at ${parts.join(" / ")}`;
 }
 
 // ---------- controls

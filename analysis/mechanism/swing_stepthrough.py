@@ -40,8 +40,12 @@ analysis/swing_stepthrough_custom.html (scratch, gitignored; `--out` to put it
 elsewhere), so the tracked page only changes on a plain run. To add a design
 for good, add a line to `DEFAULT`.
 
-THE PAGE: two panes, each a design picked from a dropdown, under one stroke
-slider; each shows the mechanism in the bike frame and the bike resting on
+THE PAGE: two panes, each a design picked from a dropdown, under one crank
+slider (the charts share its axis). A CAD entry starts at the LYING REST,
+crank -LIE_REST_DEG (run_bike: where the lie-down leaves the bike resting
+on its cage, measured), and positive crank rights the bike; a config
+design starts at stow. The rollcage's ring is drawn faintly and is a contact
+(`swing_linkage.cage_points`); each shows the mechanism in the bike frame and the bike resting on
 the floor, both seen from behind, with its summary, diagnostics (clearances:
 red touching, amber under target) and files; then torque, pin-force, ratio
 and roll curves for both. Notes under "More info".
@@ -83,6 +87,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 import swing_linkage as sl  # noqa: E402
 import swing_synthesis as ss  # noqa: E402
 from aow_sim.build_model import SWING_LINKAGE_CFG, load_params  # noqa: E402
+from aow_sim.hw.run_bike import LIE_REST_DEG  # noqa: E402
 from aow_sim.params import blade_points  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -259,7 +264,9 @@ def on_frames(trace: dict, frames: list) -> None:
     reach = np.maximum.accumulate(a[:, 0])
     for fr in frames:
         j = int(np.searchsorted(reach, fr["t"] - 1e-6))
-        ok = j < len(a)
+        # before where the sim's fall left the crank (a CAD entry's frames
+        # start at the lying rest, below it): nothing measured there
+        ok = j < len(a) and fr["t"] >= a[0, 0] - 0.5
         fr["sim_m"] = round(float(a[j, 1]), 4) if ok else None
         fr["sim_p"] = round(float(a[j, 2]), 1) if ok else None
         fr["sim_r"] = round(float(a[j, 3]), 2) if ok else None
@@ -804,9 +811,26 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
               f"but this blade comes level at {level:.2f}; set it to "
               f"{np.floor(level * 10.0) / 10.0:.1f}")
     end = meet if meet is not None and meet > T else T
+    # A CAD entry STARTS WHERE THE BIKE LIES: the lie-down ends with the crank
+    # LIE_REST_DEG past centre (run_bike), the bike resting on its cage, and
+    # that is the rest it is found in -- crank 0 lying over is not one (let
+    # go there, the bike's crank back-drives to 26.5-28, measured). Positive
+    # rights the bike.
+    start = -LIE_REST_DEG if cad else 0.0
+    # THE ROLLCAGE IS A CONTACT TOO (2026-10-26): lying on its side, the bike
+    # rests on the cage until the blade reaches the floor, and the picture
+    # used to push the blade through the floor to rest on it alone. Only
+    # for the frames -- the level point is the blade's, with the bike
+    # standing on its wheels, where the cage never touches.
+    cage = sl.cage_points(bparams if variant else params) if cad else None
+    # ...and with a ring round most of the bike there is more than one rest
+    # (rolled past flat onto the cage's top, say): each frame takes the one
+    # nearest the last, from lying on the deploying side at stow.
+    prev_roll = 90.0
     frames = []
-    for f in np.linspace(0.0, 1.0, 121):
-        t = float(f * end)
+    # ~1.1 deg a frame, as the 121 over a 0..end stroke always were
+    for f in np.linspace(0.0, 1.0, int(round(121 * (end - start) / end))):
+        t = float(start + f * (end - start))
         fr = {"t": round(t, 2)}
         for side, tag in ((-1, "R"), (1, "L")):
             pz = lk.pose(side, t)
@@ -817,8 +841,10 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
         if blade0 is None:
             rest = sl.resting_pose(lk, t) or rest_over_centre(lk, t)
         else:
-            rest = (sl.resting_pose_on(lk, t, blade0, mp["wing_com"], mp=mp)
+            rest = (sl.resting_pose_on(lk, t, blade0, mp["wing_com"], mp=mp, fixed=cage,
+                                       near=prev_roll)
                     or rest_over_centre(lk, t, turned_points(lk, t, blade0)))
+            prev_roll = rest["to_floor"][0]
         pz = lk.pose(-1, t)
         g = abs(sl.ratio_at(lk, -1, t, pz) or 0.0)
         load = max(float(np.interp(pz["wing_deg"], *table)), 0.0)
@@ -828,10 +854,13 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
         # Past the flat the quasi-static model has no load: the bike is
         # falling over centre. Pins and motor are left empty (a gap in the
         # charts) rather than given a number nothing computed.
-        pins = sl.pin_forces(lk, t) if rest["regime"] != "over" else None
+        # Nor below stow: the bike lies on the cage and the folding blade,
+        # and the load table starts at stow. A gap, not a number.
+        pins = (sl.pin_forces(lk, t) if rest["regime"] != "over" and t >= 0
+                else None)
         cr_, hg = ((round(pins[s]["coupler"], 1), round(pins[s]["hinge"], 1)) if pins else (None, None)
                    for s in ("R", "L"))
-        motor = (1 + sc["c_run"]) * load * g + sc["f_run"]
+        motor = (1 + sc["c_run"]) * load * g + sc["f_run"] if t >= 0 else np.nan
         fr.update({"roll": round(rest["to_floor"][0], 3), "floor": round(rest["to_floor"][1], 3),
                    "fc": cr_[0], "fh": cr_[1],
                    "pin": {"crank_tipR": cr_[0], "jointR": cr_[0], "pivotR": cr_[1],
@@ -944,7 +973,11 @@ def main() -> int:
            # the most current the servo can turn into torque at 9.9 V: its
            # stall there, or the firmware limit if that is lower
            "max_ma": round(min(ss.counts(sc, sc["ts"] * ss.SUPPLY), ss.CURRENT_LIMIT_A * 1000)),
-           "limit_nm": sc["k"] * (ss.CURRENT_LIMIT_A - sc["i0"])}
+           "limit_nm": sc["k"] * (ss.CURRENT_LIMIT_A - sc["i0"]),
+           # the rollcage's ring, drawn faintly behind the CAD entries and a
+           # contact in their rest (sl.cage_points)
+           "cage": [[round(float(v), 1) for v in q]
+                    for q in sl.cage_points(params).values()]}
     # The CAD entries' sim: the bike's own righting module, the default build
     # (bike_params righting.module -- these links scaled as cad.righting
     # does, toes and all), carrying each entry's blade (`blade_params`: V2's
