@@ -10,6 +10,10 @@ training drivetrain, then with `--new`'s `detent` and `roller_slop`
 swapped in), one column each, three rows:
 
   roll       chassis roll angle [deg].
+  (page only) steer: the steer joint [deg] and its target, the policy's
+             steer ctrl, dashed; yaw: the chassis heading from its
+             quaternion [deg], unwrapped, about the run's median (sim: the
+             free joint, bike: the AHRS quaternion as run_bike had it).
   roller     every roller's spin angle, wrapped to ONE ROLLER REVOLUTION,
              in roller degrees. The black line is where the rollers would
              be with no slop, k_roller x ring-vs-hub (`ring_spin` is
@@ -84,6 +88,8 @@ class Tracer:
                                 for g in range(model.ngeom)
                                 if int(model.geom_bodyid[g]) in body}
             self.floor = model.geom("floor").id
+            self.q_steer = model.joint("steer_joint").qposadr[0]
+            self.a_steer = model.actuator("steer").id
         t = data.time
         if not (self.t0 <= t < self.t1):
             return
@@ -100,7 +106,9 @@ class Tracer:
         ref = (d.belt * (d.ga * d._ref[0] + d.gb * d._ref[1])
                if d is not None and d.servo else np.nan)
         self.rows.append((t, roll, data.qpos[self.q_ring],
-                          *(data.qpos[q] for q in self.q_rol), on, ref))
+                          *(data.qpos[q] for q in self.q_rol), on, ref,
+                          data.qpos[self.q_steer], data.ctrl[self.a_steer],
+                          math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))))
 
 
 def fly(policy, overrides, start, seconds, seed):
@@ -109,7 +117,8 @@ def fly(policy, overrides, start, seconds, seed):
     a = np.array(tr.rows)
     return tr, {"t": a[:, 0], "roll": a[:, 1], "ring": a[:, 2],
                 "roller": a[:, 3:3 + N], "on": a[:, 3 + N].astype(int),
-                "ref": a[:, 4 + N]}
+                "ref": a[:, 4 + N], "steer": np.degrees(a[:, 5 + N]),
+                "steer_cmd": np.degrees(a[:, 6 + N]), "yaw": _yaw_about_median(a[:, 7 + N])}
 
 
 def _breaks(y, jump=180.0):
@@ -416,8 +425,34 @@ def bike_trace(run_dir, bench, t_from, seconds):
     (A, B), (sa, sb) = bench["ids"], bench["signs"]
     cmd_phi = np.degrees(F.BELT * (sa * ref[A] - sb * ref[B]) / 2)
     return {"t": t[m], "phi": ph[m], "cmd": cmd_phi[m], "tb": tb[mb], "roll": np.degrees(c.bike("roll")[mb]),
+            **_steer_about_straight(np.degrees(c.bike("steer")[mb]), np.degrees(ctrl[mb, 2])),
+            "yaw": _yaw_about_median(_quat_yaw(c.bike("quat")[mb])),
             "rests": np.array(rests), "R": _circ(np.array(rests) % 7.5)[1],
             "policy": c.meta.get("policy", "?")}
+
+
+def _quat_yaw(q):
+    """Heading [rad] of (w, x, y, z) rows, z-up."""
+    w, x, y, z = np.asarray(q).T
+    return np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+
+def _yaw_about_median(yaw_rad):
+    """Unwrapped heading [deg] less its median: the page shows how the bike
+    turns over the run, not which way the room faces (22-29 deg p-p on the
+    two floor runs' longest engages)."""
+    y = np.degrees(np.unwrap(yaw_rad))
+    return y - np.median(y)
+
+
+def _steer_about_straight(steer, target):
+    """The bike records the steer joint with the extended-position turn count
+    in it (174349's median is 539 deg). Straight repeats every 180 deg (the
+    policy sees sin/cos 2 delta), so shift both by the one multiple of 180
+    that puts the steer's median within +-90 of 0: the target keeps its
+    offset from the shaft, and nothing is wrapped sample by sample."""
+    shift = 180.0 * np.round(np.nanmedian(steer) / 180.0)
+    return {"steer": steer - shift, "steer_cmd": target - shift}
 
 
 PAGE_TEMPLATE = HERE / "templates" / "drivetrain_traces.html"
@@ -455,6 +490,7 @@ def build_page(a, k, cols):
                     f"detent placed by the hung creep {a.bench_creep}",
             "top": (k * bench["flip"]) % notch,
             "t": r3(bike["t"]), "roll": r2(bike["roll"]),
+            "steer": r2(bike["steer"]), "steer_cmd": r2(bike["steer_cmd"]), "yaw": r2(bike["yaw"]),
             "noslop": r2(k * bike["phi"]), "cmd": r2(k * bike["cmd"])}
         runs[pol] = max(runs.get(pol, 0.0), dur)
     for pol, dur in runs.items():
@@ -474,6 +510,8 @@ def build_page(a, k, cols):
                         + " · commanded = the firmware's own reference",
                 "top": (k * math.degrees(drv.phase + 0.5 * drv.period)) % notch,
                 "t": r3(r["t"][::step]), "roll": r2(r["roll"][::step]),
+                "steer": r2(r["steer"][::step]), "steer_cmd": r2(r["steer_cmd"][::step]),
+                "yaw": r2(r["yaw"][::step]),
                 "noslop": r2(np.degrees(k * r["ring"][::step])),
                 "cmd": r2(np.degrees(k * r["ref"][::step])), "loaded": r2(loaded)}
             print(f"  sim {pol} / {title}: {dur:.0f} s")

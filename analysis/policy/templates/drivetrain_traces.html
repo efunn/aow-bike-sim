@@ -5,7 +5,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <!-- Written by analysis/policy/drivetrain_trace.py --page; edit this template, not the page. -->
 <style>
-/* A bench-notebook strip chart: two columns (sim | bike), each a short roll trace over a tall wrapped roller trace. */
+/* A bench-notebook strip chart: two columns (sim | bike), each short roll, steer and yaw traces over a tall wrapped roller trace.
+   Each column's selector and scrub bar stick to the top while its plots scroll under them. */
 :root {
   --bg: #f5f6f4; --panel: #ffffff; --ink: #1d2226; --muted: #646d73; --rule: #d6dbd9; --grid: #e7eae8;
   --top: #9aa4a8; --trough: #c4cbcd; --noslop: #1d2226; --cmd: #2a6fc9; --loaded: #d0532a; --focus: #2a6fc9;
@@ -44,6 +45,8 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 @media (max-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr); } }
 .col { min-width: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 12px 10px; display: grid; gap: 6px; }
+.stick { position: sticky; top: 0; z-index: 5; background: var(--panel); display: grid; gap: 6px;
+  margin: -12px -12px 0; padding: 12px 12px 8px; border-bottom: 1px solid var(--rule); border-radius: 6px 6px 0 0; }
 .colhead { display: flex; gap: 6px 12px; align-items: baseline; min-width: 0; }
 .colhead select { flex: 1 1 0; min-width: 0; text-overflow: ellipsis; }
 .col h2 { font-family: var(--f-display); font-weight: 600; font-size: 16px; margin: 0; }
@@ -78,7 +81,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 <div class="wrap">
   <header>
     <h1>Diff Detent Traces</h1>
-    <p class="sub">A policy standing on a zero command. The roller angle is wrapped to one roller revolution; the black line is where the rollers would be with no slop (k_roller × ring-vs-hub). Solid grey lines are the detent line, one per notch (7.5° of ring); dashed grey lines are midway. What the solid line means depends on the detent: a friction bump is where the shaft sticks, a sawtooth flip pushes it away.</p>
+    <p class="sub">A policy standing on a zero command. Roll, steer (its target dashed) and yaw (heading, about the run's median) share each column's time axis. The roller angle is wrapped to one roller revolution; the black line is where the rollers would be with no slop (k_roller × ring-vs-hub). Solid grey lines are the detent line, one per notch (7.5° of ring); dashed grey lines are midway. What the solid line means depends on the detent: a friction bump is where the shaft sticks, a sawtooth flip pushes it away.</p>
   </header>
 
   <div class="controls" role="group" aria-label="View controls">
@@ -88,7 +91,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
         <option value="10">10 s</option><option value="20">20 s</option><option value="0">everything</option>
       </select>
     </label>
-    <label><input type="checkbox" id="showCmd" checked> <span class="swatch" style="border-color:var(--cmd);border-top-style:dashed"></span> commanded</label>
+    <label><input type="checkbox" id="showCmd" checked> <span class="swatch" style="border-color:var(--cmd);border-top-style:dashed"></span> commanded (drive, steer target)</label>
     <label><input type="checkbox" id="showLoaded" checked> <span class="swatch" style="border-color:var(--loaded)"></span> roller on the floor (sim)</label>
     <label><input type="checkbox" id="showTrough" checked> <span class="swatch" style="border-color:var(--trough);border-top-style:dashed"></span> midway lines</label>
     <span class="note">Drag across a plot to zoom; double-click to return to the window.</span>
@@ -125,6 +128,20 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     S.roll.forEach((v) => v !== null && rollAbs.push(Math.abs(v))));
   rollAbs.sort((a, b) => a - b);
   const ROLL = Math.ceil(rollAbs[Math.floor(0.999 * (rollAbs.length - 1))] || 1);
+  // the same for steer (joint and target) and yaw rate
+  function fixedRange(keys) {
+    const a = [];
+    [...Object.values(D.sims), ...Object.values(D.bikes)].forEach((S) => keys.forEach((k) =>
+      (S[k] || []).forEach((v) => v !== null && a.push(Math.abs(v)))));
+    a.sort((x, y) => x - y);
+    return Math.ceil(a[Math.floor(0.999 * (a.length - 1))] || 1);
+  }
+  const STEER = fixedRange(["steer", "steer_cmd"]), YAW = fixedRange(["yaw"]);
+  // roll keeps its finer ticks; steer and yaw get at most two a side
+  const splitsFor = (R) => () => { const st = R <= 4 ? 1 : R <= 10 ? 2 : 5, out = [];
+    for (let v = -Math.floor(R / st) * st; v <= R; v += st) out.push(v); return out; };
+  const coarse = (R) => () => { const st = [1, 2, 5, 10, 20, 25, 50, 100, 200].find((x) => R / x <= 2.2) || 500, out = [];
+    for (let v = -Math.floor(R / st) * st; v <= R; v += st) out.push(v); return out; };
 
   // Wrap a series to [0, 360) and list where its line must break: a wrap,
   // or for the loaded roller a hand-off to another roller (a jump over
@@ -195,11 +212,13 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     const c = { key, el, sets, plots: [] };
     const opts = Object.entries(sets).map(([id, s]) => `<option value="${id}">${s.label}</option>`).join("");
     el.innerHTML =
-      `<div class="colhead"><h2>${key === "sim" ? "Sim" : "Bike"}</h2>` +
+      `<div class="stick"><div class="colhead"><h2>${key === "sim" ? "Sim" : "Bike"}</h2>` +
       `<select id="${key}-sel" aria-label="${key} selection">${opts}</select></div>` +
       `<div class="meta" id="${key}-meta"></div>` +
-      `<div class="scrub"><span>start</span><input type="range" id="${key}-pos" step="0.01" aria-label="${key} window start"><span id="${key}-pos-v"></span></div>` +
+      `<div class="scrub"><span>start</span><input type="range" id="${key}-pos" step="0.01" aria-label="${key} window start"><span id="${key}-pos-v"></span></div></div>` +
       `<div class="ptitle">roll, deg (one fixed scale for every run)</div><div id="${key}-roll"></div>` +
+      `<div class="ptitle">steer, deg (target dashed)</div><div id="${key}-steer"></div>` +
+      `<div class="ptitle">yaw, deg about the run's median</div><div id="${key}-yaw"></div>` +
       `<div class="ptitle">roller angle, wrapped to one revolution, deg</div><div id="${key}-rol"></div>`;
     c.sel = el.querySelector(`#${key}-sel`);
     c.pos = el.querySelector(`#${key}-pos`);
@@ -226,11 +245,23 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     const uRoll = new uPlot({
       width, height: 150, cursor, legend: { show: true },
       scales: { x: { time: false }, y: { range: [-ROLL, ROLL] } },
-      axes: [axis("time, s"), Object.assign(axis(""), {
-        splits: () => { const st = ROLL <= 4 ? 1 : ROLL <= 10 ? 2 : 5, out = [];
-          for (let v = -Math.floor(ROLL / st) * st; v <= ROLL; v += st) out.push(v); return out; } })],
+      axes: [axis("time, s"), Object.assign(axis(""), { splits: splitsFor(ROLL) })],
       series: [{ label: "t", value: fmt(3, " s") }, { label: "roll", stroke: () => css("--noslop"), width: 1.4, value: fmt(2, "°") }],
     }, [t, S.roll], c.el.querySelector(`#${c.key}-roll`));
+    const uSteer = new uPlot({
+      width, height: 150, cursor, legend: { show: true },
+      scales: { x: { time: false }, y: { range: [-STEER, STEER] } },
+      axes: [axis("time, s"), Object.assign(axis(""), { splits: coarse(STEER) })],
+      series: [{ label: "t", value: fmt(3, " s") },
+        { label: "steer", stroke: () => css("--noslop"), width: 1.4, value: fmt(2, "°") },
+        { label: "target", stroke: () => css("--cmd"), width: 1.3, dash: [6, 3], show: show.cmd, value: fmt(2, "°") }],
+    }, [t, S.steer, S.steer_cmd], c.el.querySelector(`#${c.key}-steer`));
+    const uYaw = new uPlot({
+      width, height: 150, cursor, legend: { show: true },
+      scales: { x: { time: false }, y: { range: [-YAW, YAW] } },
+      axes: [axis("time, s"), Object.assign(axis(""), { splits: coarse(YAW) })],
+      series: [{ label: "t", value: fmt(3, " s") }, { label: "yaw", stroke: () => css("--noslop"), width: 1.4, value: fmt(1, "°") }],
+    }, [t, S.yaw], c.el.querySelector(`#${c.key}-yaw`));
     const lines = [["no slop", S.noslop, false], ["commanded", S.cmd, false]];
     if (S.loaded) lines.push(["roller on the floor", S.loaded, true]);
     const style = {
@@ -250,8 +281,8 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       axes: [axis("time, s"), Object.assign(axis(""), { splits: () => [0, 45, 90, 135, 180, 225, 270, 315, 360] })],
       series, hooks: { drawClear: [detentHook(S)] },
     }, data, c.el.querySelector(`#${c.key}-rol`));
-    c.plots = [uRoll, uRol];
-    c.uRol = uRol;
+    c.plots = [uRoll, uSteer, uYaw, uRol];
+    c.uRol = uRol; c.uSteer = uSteer;
     const sync = uPlot.sync(c.key);
     c.plots.forEach((p) => sync.sub(p));
     // one x range for both panels after a drag-zoom in either
@@ -284,7 +315,8 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 
   document.getElementById("win").addEventListener("change", () => Object.values(cols).forEach(apply));
   document.getElementById("showCmd").addEventListener("change", (e) => {
-    show.cmd = e.target.checked; Object.values(cols).forEach((c) => c.uRol.setSeries(2, { show: show.cmd }));
+    show.cmd = e.target.checked; Object.values(cols).forEach((c) => {
+      c.uRol.setSeries(2, { show: show.cmd }); c.uSteer.setSeries(2, { show: show.cmd }); });
   });
   document.getElementById("showLoaded").addEventListener("change", (e) => {
     show.loaded = e.target.checked; Object.values(cols).forEach((c) => c.S.loaded && c.uRol.setSeries(3, { show: show.loaded }));
