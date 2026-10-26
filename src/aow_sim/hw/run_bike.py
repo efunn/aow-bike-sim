@@ -1082,7 +1082,12 @@ class BikeRunner:
         if cmd.policy:
             self._sit_steer = None
         elif self._sit_steer is None:
-            self._sit_steer = float(self.data.ctrl[self.aid["steer"]])
+            # Held where the steer IS, not at the last ctrl. In a fresh
+            # process ctrl is 0 whatever the wheel reads, and a wheel left
+            # near 180 deg is straight to the policy (it sees sin/cos
+            # 2 delta), so holding ctrl swung it ~200 deg at the start of a
+            # get-up (run 261026-163421).
+            self._sit_steer = float(self.data.qpos[self.ctl._sj])
         if not self._sit_owns():                  # just finished: riding
             if self._sit_gc is not None:
                 self._righting_current = self.bus.set_righting_current(

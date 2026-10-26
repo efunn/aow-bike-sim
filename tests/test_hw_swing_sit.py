@@ -96,7 +96,9 @@ def _runner(roll=0.0, state="engaged"):
         _pack_low=False, _servo_fault=False, _errs={}, pack=RB.PackMonitor(),
         _righting_current=600, _righting_pos=STOW, _r_stow=STOW, _r_sign=1.0,
         _roll=math.radians(roll), _roll_rate=0.0, _yaw=0.3,
-        data=SimpleNamespace(time=0.0, qvel=np.zeros(6), ctrl=np.zeros(3)),
+        data=SimpleNamespace(time=0.0, qvel=np.zeros(6), qpos=np.zeros(6),
+                             ctrl=np.zeros(3)),
+        ctl=SimpleNamespace(_sj=4),
         aid={"drive_a": 0, "drive_b": 1, "steer": 2},
         _sit_gc=None, _sit_steer=None, _sit_off=False, _sit_psi=0.0,
         _sit_said="riding", _lie_seen=None, _up_seen=None, said=[], engaged=[])
@@ -139,6 +141,17 @@ def test_a_lie_down_runs_to_lying_with_the_guard_stood_aside():
     assert r.bus.calls[-1] == ("current", 0), "limp at the end"
     assert r._sit_gc == 600, "the operator's current is kept to restore"
     assert r._sit_steer is not None
+
+
+def test_a_get_up_holds_the_steer_where_it_reads_not_at_a_stale_ctrl():
+    """A fresh process has ctrl 0 whatever the wheel reads. Run 261026-163421
+    started with the steer at +201 deg (straight, to the policy, which sees
+    sin/cos 2 delta) and the get-up swung it ~200 deg to the ctrl's 0."""
+    r = _runner(roll=-73.0, state="standby")
+    r.data.qpos[r.ctl._sj] = math.radians(200.7)
+    r._sit_from(0, 1)
+    r._sit_step()
+    assert r._sit_steer == pytest.approx(math.radians(200.7))
 
 
 def test_lie_down_is_refused_and_said_unless_the_policy_is_driving():
