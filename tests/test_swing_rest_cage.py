@@ -5,10 +5,12 @@ Synthetic: a two-point wing and the cage ring, so the answers are known.
 Pinned: with the wing tucked, the bike rests on the cage and the wing
 carries nothing; with the wing far out, the cage changes nothing; and with
 more than one rest available, `near` picks the one closest to the last pose
-(the 270 deg ring also offers rests rolled past flat onto its top).
+(the 270 deg ring also offers rests rolled past flat onto its top); and
+`pin_forces` handed a rest (the stepthrough's, on blade and cage) agrees
+with its own on the panel line's.
 
 WHAT INVALIDATES THIS FILE: rest_on_points' search or regimes, cage_points,
-or righting.rollcage's radius / height in bike_params.
+pin_forces, or righting.rollcage's radius / height in bike_params.
 """
 import sys
 
@@ -58,3 +60,21 @@ def test_near_picks_the_rest_closest_to_the_last_pose_or_none():
     assert lo is not None and hi is not None
     assert abs(lo["to_floor"][0] - 60.0) <= abs(hi["to_floor"][0] - 60.0)
     assert sl.rest_on_points(*args, fixed=cage, near=-500.0) is None
+
+
+@pytest.mark.parametrize("travel", [20.0, 60.0, 100.0])
+def test_pin_forces_from_a_given_rest_match_the_panel_lines_own(travel):
+    """The stepthrough hands `pin_forces` the rest it draws. Given the panel
+    line's own rest (its ends as the support points), the answer must be
+    the panel line's: the same free bodies, the floor at the same point."""
+    import yaml
+    from pathlib import Path
+    cfg = yaml.safe_load(Path("config/linkage/swing_linkage_smaller.yaml").read_text())
+    lk = sl.SwingLinkage(cfg)
+    rest = sl.resting_pose(lk, travel)
+    assert rest is not None
+    own, given = sl.pin_forces(lk, travel), sl.pin_forces(lk, travel, rest=rest)
+    for side in ("R", "L"):
+        for k in ("coupler", "hinge"):
+            assert given[side][k] == pytest.approx(own[side][k], rel=1e-6, abs=1e-6)
+    assert given["shaft"] == pytest.approx(own["shaft"], rel=1e-6, abs=1e-6)

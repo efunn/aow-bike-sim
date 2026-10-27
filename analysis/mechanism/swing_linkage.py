@@ -2001,7 +2001,8 @@ def rest_on_points(sup: dict, hinge, wheel_radius: float, wing_com,
             r = {"roll": abs(roll), "on": (a, b), "load": float(load),
                  "regime": ("wheels" if b == "wheel" else
                             "panel+cage" if b in chassis else "panel"),
-                 "to_floor": (roll, floor), "com_h": float(C[1] - floor)}
+                 "to_floor": (roll, floor), "com_h": float(C[1] - floor),
+                 "at": (pts[a], pts[b])}     # sketch mm, for pin_forces
             if near is None:
                 return r
             found.append(r)
@@ -2041,7 +2042,8 @@ def _smooth_contact(pa, pb, na, nb, com, tol: float = 1e-9):
 
 
 def pin_forces(lk: SwingLinkage, travel: float,
-               friction: float = FLOOR_FRICTION_EFF) -> dict | None:
+               friction: float = FLOOR_FRICTION_EFF, rest: dict | None = None,
+               mp: dict | None = None, wing_com=None) -> dict | None:
     """Pin forces [N] at crank `travel`, QUASI-STATIC, from each wing's free
     body in the resting pose:
 
@@ -2060,11 +2062,18 @@ def pin_forces(lk: SwingLinkage, travel: float,
     Dynamic peaks are larger -- a stepped stroke swings the wing -- and a fall
     onto a wing larger again; the sim's equality forces measure both
     (righting-linkage-margin.md).
+
+    `rest`: a rest found elsewhere -- `resting_pose_on`'s, on a real blade
+    and the rollcage -- with `mp` its mass properties and `wing_com` the
+    deploying wing's CoM in it (sketch mm, turned). The floor then pushes at
+    the rest's own blade point (`at`), shared with the wheel or the cage
+    point it rests with; wheels-up on the blade, under the CoM; on the cage
+    alone ("cage"), not on the wing at all. None: the panel line's rest.
     """
-    st = resting_pose(lk, travel, friction)
+    st = rest if rest is not None else resting_pose(lk, travel, friction)
     if st is None:
         return None
-    mp = mass_props()
+    mp = mp or mass_props()
     M, mw = mp["total"], mp["wing"]
     roll, floor = st["to_floor"]
 
@@ -2084,7 +2093,21 @@ def pin_forces(lk: SwingLinkage, travel: float,
         Ww, Wc = np.array([0.0, -mw * GRAVITY]), 0.5 * (foot + top)
         floors = [np.zeros(2)]
         Q = P
-        if side == -1:
+        if side == -1 and rest is not None:
+            Wc = g(wing_com) if wing_com is not None else Wc
+            com = g(((M - mw) * mp["rest"] + mw * (np.asarray(wing_com, float)
+                     if wing_com is not None else 0.5 * (pz["foot"] + pz["top"]))) / M)
+            fric = 0.0
+            if st["regime"] == "panel":             # wheels up, on the blade
+                Q, n = np.array([com[0], 0.0]), M * GRAVITY
+            elif st["regime"] in ("wheels", "panel+cage"):
+                Q, O = g(st["at"][0]), g(st["at"][1])
+                n = M * GRAVITY - M * GRAVITY * (com[0] - Q[0]) / (O[0] - Q[0])
+                fric = friction * n
+            else:                                   # on the cage: wing unloaded
+                n = 0.0
+            floors = [np.array([sg * fric, n]) for sg in ((0.0,) if fric == 0.0 else (1.0, -1.0))]
+        elif side == -1:
             com = g(((M - mw) * mp["rest"] + mw * 0.5 * (pz["foot"] + pz["top"])) / M)
             if st["regime"] == "panel":
                 n, v = M * GRAVITY, top - foot

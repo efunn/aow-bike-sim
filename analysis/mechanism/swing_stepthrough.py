@@ -87,7 +87,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 import swing_linkage as sl  # noqa: E402
 import swing_synthesis as ss  # noqa: E402
 from aow_sim.build_model import SWING_LINKAGE_CFG, load_params  # noqa: E402
-from aow_sim.hw.run_bike import LIE_REST_DEG  # noqa: E402
+from aow_sim.hw.run_bike import LIE_MAP, LIE_REST_DEG  # noqa: E402
 from aow_sim.params import blade_points  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -257,6 +257,56 @@ def sim_trace(params, path: Path | None, end_deg: float, slew_dps: float = 40.0,
     return {"samples": a, "slew": slew_dps}
 
 
+# The bike's get-ups whose righting current goes on the torque chart:
+# battery on, as the model's bike is. Lifts from lying (|roll| > 50) that
+# ended PROPPED (under 20 deg); 10-26.
+BIKE_LIFTS = ["261026-175020_run", "261026-180445_run"]
+
+
+def bike_torque(params, runs, step: float = 10.0) -> list:
+    """[[crank, N m], ...]: the righting servo's torque against crank on the
+    bike's get-ups, from its Present Current through the servo model's own
+    measured law, k (|I| - i0) (servos.xc330_t181; righting_servo.py).
+    Crank in the page's frame (positive rights the bike). Median per lift
+    per `step` bin, then across lifts. The lifts run at up to 120 deg/s, so
+    this is NOT quasi-static: it carries the bike's and crank's
+    acceleration, and past ~crank 0 the servo is at 100 % PWM much of the
+    way. Current still gives torque there; what PWM limits is how much."""
+    srv = params["servos"]["xc330_t181"]
+    k, i0 = float(srv["current_torque_gain"]), float(srv["current_deadband"])
+    rid = int(params["control"]["onboard"]["righting_id"])
+    stow = np.radians(float(params["control"]["onboard"].get("righting_stow_deg", 180.0)))
+    sign = float(params["control"]["onboard"].get("righting_sign", 1))
+    per = {}
+    for run in runs:
+        f = ROOT / "traces" / "bike" / run / "capture.npz"
+        if not f.exists():
+            print(f"WARNING: {f.relative_to(ROOT)} missing; its lifts are left off the torque chart")
+            continue
+        z = np.load(f, allow_pickle=True)
+        j = list(z["ids"]).index(rid)
+        st = z["bike_state"].astype(int)
+        roll = np.degrees(z["bike_roll"])
+        crank = np.degrees((z["raw_present_position"][:, j] * 2 * np.pi / 4096 - stow) * sign)
+        amps = z["raw_effort"][:, j].astype(np.int64)
+        amps = np.where(amps > 32767, amps - 65536, amps) * sign / 1000.0
+        sit = (st == 3).astype(int)
+        for a in np.flatnonzero(np.diff(sit) == 1) + 1:
+            b = a + int(np.argmax(st[a:] != 3))
+            # from lying, to a real prop (not run 173521's wall, propped
+            # at 34 deg by a rule since fixed)
+            if abs(roll[a]) < 50 or st[b] != 5 or abs(roll[b]) > 20:
+                continue
+            side = np.sign(roll[a])
+            u, i = side * crank[a:b], side * amps[a:b]
+            tau = np.where(np.abs(i) > i0, k * (np.abs(i) - i0) * np.sign(i), 0.0)
+            for c in np.arange(np.floor(u.min() / step) * step, u.max() + step, step):
+                m = np.abs(u - c) < step / 2
+                if m.any():
+                    per.setdefault(float(c), []).append(float(np.median(tau[m])))
+    return [[c, round(float(np.median(v)), 4)] for c, v in sorted(per.items())]
+
+
 def on_frames(trace: dict, frames: list) -> None:
     """The trace onto the page's frames by crank angle: each frame takes the
     first sample to reach its angle; frames the sim never reached stay empty."""
@@ -321,10 +371,22 @@ NOTES = [
     "stroke from lying on its side (0%) to the commanded stroke (100%); V2 runs "
     "on past it to where its toes meet.",
     "<b>Quasi-static.</b> At each crank angle the linkage is solved, the bike "
-    "set where it rests on the floor (V2 on its blade's whole section, toe and "
-    "both faces; V1 on its panel line), and every force is a static balance: no "
-    "speed, inertia or impacts. Past level the bike falls over centre, "
+    "set where it rests on the floor (V2 and V3 on the blade's whole section, toe and "
+    "both faces, and the rollcage; V1 on its panel line), and every force is a static balance: no "
+    "speed, inertia or impacts. V2's and V3's torque and pins come from that same rest, "
+    "below stow too; V1's from its panel line's load table. Past level the bike falls over centre, "
     "which has no static balance; only the sim has values there.",
+    "<b>The bike.</b> The dots on the roll chart: the real bike (V3 blades), "
+    "lowered slowly (30°/s, six runs, both sides, ~1° apart), "
+    "run_bike.LIE_MAP. The model's V3 rolls up to 10° ahead of it between "
+    "crank 0 and 35, and rests at 76-81° where the bike lies at 74°. The "
+    "bike's lift current has the model's torque shape, mostly at 1550-1600 mA per N m, "
+    "its dip at wheel touchdown at the same roll (~37°) but crank 55, not 44.",
+    "<b>The bike's torque.</b> The dots on the torque chart: the righting servo's Present "
+    "Current on the bike's get-ups with the battery on (BIKE_LIFTS), "
+    "through the servo model's measured k (|I| − i0), 0.83 N m/A. Lifts at up to 120°/s, so not "
+    "quasi-static. With the battery the servo is at 100 % PWM for most of the lift (~690 mA "
+    "at 11.8 V when stalled): the supply voltage, not the 785 mA Goal Current, is its ceiling.",
     "<b>mA.</b> The servo's Goal Current: the ceiling on the current its "
     "position loop may use. <i>Current limit @ 9.9 V (sim)</i>: the lowest "
     "ceiling that still rights the bike in the sim on a low battery. "
@@ -345,7 +407,7 @@ NOTES = [
     "<b>Layers.</b> Parts in different fore/aft layers cross in the front "
     "view without touching. Back on the left.",
     "<b>Other marks.</b> The dashed outline round the crank shaft is the "
-    "servo. The dashed yellow box is where panels must not go. The grey bar "
+    "servo. The dashed yellow box (V1) is where panels must not go. The grey bar "
     "is the wheel end-on.",
 ]
 
@@ -847,20 +909,32 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
             prev_roll = rest["to_floor"][0]
         pz = lk.pose(-1, t)
         g = abs(sl.ratio_at(lk, -1, t, pz) or 0.0)
-        load = max(float(np.interp(pz["wing_deg"], *table)), 0.0)
         wing_c = (0.5 * (pz["foot"] + pz["top"]) if blade0 is None
                   else turned_points(lk, t, [mp["wing_com"]])[0])
         com = ((M - mw) * mp["rest"] + mw * wing_c) / M
         # Past the flat the quasi-static model has no load: the bike is
         # falling over centre. Pins and motor are left empty (a gap in the
         # charts) rather than given a number nothing computed.
-        # Nor below stow: the bike lies on the cage and the folding blade,
-        # and the load table starts at stow. A gap, not a number.
-        pins = (sl.pin_forces(lk, t) if rest["regime"] != "over" and t >= 0
-                else None)
+        if rest["regime"] == "over":
+            pins, motor = None, np.nan
+        elif blade0 is None:
+            # The panel line's load table and rest, as the synthesis scores it.
+            load = max(float(np.interp(pz["wing_deg"], *table)), 0.0)
+            pins = sl.pin_forces(lk, t)
+            motor = (1 + sc["c_run"]) * load * g + sc["f_run"]
+        else:
+            # A CAD entry's load and pins come from THE REST IT DRAWS -- its
+            # blade, the cage, the wheel -- across the whole stroke, below
+            # stow included (2026-10-26). They were the panel line's
+            # (`load_table`, which knows neither blade nor cage), blank
+            # below 0. The hinge load is signed: < 0 the bike drives the
+            # wing, and the running friction still adds to what the servo
+            # must give to LIFT.
+            pins = sl.pin_forces(lk, t, rest=rest, mp=mp, wing_com=wing_c)
+            hinge = rest["load"] * g
+            motor = hinge + sc["c_run"] * abs(hinge) + sc["f_run"]
         cr_, hg = ((round(pins[s]["coupler"], 1), round(pins[s]["hinge"], 1)) if pins else (None, None)
                    for s in ("R", "L"))
-        motor = (1 + sc["c_run"]) * load * g + sc["f_run"] if t >= 0 else np.nan
         fr.update({"roll": round(rest["to_floor"][0], 3), "floor": round(rest["to_floor"][1], 3),
                    "fc": cr_[0], "fh": cr_[1],
                    "pin": {"crank_tipR": cr_[0], "jointR": cr_[0], "pivotR": cr_[1],
@@ -1010,6 +1084,8 @@ def main() -> int:
                        "rows": [[f[k] for k in keys] + [[f["pin"][k] for k in pk]] for f in fr]}
         if d["cad"]:
             geo["cad_parts"] = d["cad"].pop("parts")
+    geo["bike_roll"] = [[float(c), float(r)] for c, r in zip(*LIE_MAP)]
+    geo["bike_motor"] = bike_torque(params, BIKE_LIFTS)
     data = json.dumps({"designs": designs, "geo": geo, "notes": NOTES},
                       separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
     tag = '<script id="data" type="application/json">'

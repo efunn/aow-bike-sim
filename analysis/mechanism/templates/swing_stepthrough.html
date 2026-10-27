@@ -138,7 +138,7 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
       </div>
       <div class="chart">
         <h3>Servo torque needed [N m]</h3>
-        <p>▼: breakaway from rest. Jump: wheels touch down.</p>
+        <p>▼: breakaway from rest. Jump: wheels touch down. Dots: bike (measured).</p>
         <canvas id="chart-m" aria-label="Motor torque against stroke"></canvas>
       </div>
       <div class="chart">
@@ -148,7 +148,7 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
       </div>
       <div class="chart">
         <h3>Bike roll [deg]</h3>
-        <p>0: upright. Below 0: over centre.</p>
+        <p>0: upright. Below 0: over centre. Dots: bike (measured).</p>
         <canvas id="chart-roll" aria-label="Roll against stroke"></canvas>
       </div>
     </div>
@@ -484,12 +484,32 @@ function drawChart(canvas, field, ymax, refs, tick, fmt, val = (f) => f[field], 
         up2 ? g.moveTo(x, y) : g.lineTo(x, y); up2 = false; });
       g.stroke(); g.restore();
     }
-    if (field === "motor" && qs) { g.fillStyle = col; const y = Y(d.brk), x0 = X(xOf(0));
-      g.beginPath(); g.moveTo(x0 - 5, y - 6); g.lineTo(x0 + 5, y - 6); g.lineTo(x0, y + 2); g.fill(); }
     // the marker rides whichever line is shown, quasi-static first
     const f = frameOf(d), v = qs && val(f) != null ? val(f) : sim ? f[simField] : null;
     if (v != null) { g.fillStyle = col; g.beginPath(); g.arc(X(frac), Y(Math.max(ymin, Math.min(ymax, v))), 4, 0, 2*Math.PI); g.fill(); }
   });
+  // the breakaway marks, last, over every trace, ringed so the sim's line
+  // through them does not hide them
+  if (field === "motor" && (show.qs || !show.sim)) pick.forEach((di, i) => {
+    const d = designs[di], y = Y(d.brk), x0 = X(xOf(0));
+    g.save(); g.fillStyle = C[PANE_STYLE[i].key]; g.strokeStyle = C.bg; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(x0 - 6, y - 8); g.lineTo(x0 + 6, y - 8); g.lineTo(x0, y + 2); g.closePath();
+    g.stroke(); g.fill(); g.restore();
+  });
+  if (field === "motor" && geo.bike_motor) {   // the real bike's lifts, from its current
+    const [a, b] = span();
+    g.save(); g.strokeStyle = C.ink; g.fillStyle = C.ink; g.globalAlpha = 0.7; g.lineWidth = 1;
+    for (const [t, v] of geo.bike_motor) if (t >= a && t <= b) {
+      g.beginPath(); g.arc(X(xOf(t)), Y(v), 2.5, 0, 2 * Math.PI); g.fill(); }
+    g.restore();
+  }
+  if (field === "rollS" && geo.bike_roll) {   // the real bike, lowered slowly
+    const [a, b] = span();
+    g.save(); g.fillStyle = C.ink; g.globalAlpha = 0.7;
+    for (const [t, v] of geo.bike_roll) if (t >= a && t <= b) {
+      g.beginPath(); g.arc(X(xOf(t)), Y(v), 2.5, 0, 2 * Math.PI); g.fill(); }
+    g.restore();
+  }
   g.strokeStyle = C.ink; g.globalAlpha = 0.5; g.beginPath(); g.moveTo(X(frac), Tt); g.lineTo(X(frac), Tt + ph); g.stroke();
   g.globalAlpha = 1;
 }
