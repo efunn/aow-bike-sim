@@ -120,10 +120,47 @@ LIE_REST_DEG = 25.0
 # crank at ~15 deg/s with a 37-60 deg/s peak; the lift peaks at 137-144.
 # Matched at the lift's 120 (user, 2026-10-26).
 SIT_DPS = 120.0
+# The lie-down's ROLL against its crank, quasi-static, in the side's frame
+# (SwingSit `lower_map`): the lower is ramped in roll along this, at
+# LIE_ROLL_DPS, rather than at a constant crank rate. MEASURED on the bike,
+# 2026-10-26: medians of six lowers at 30 deg/s, both sides (runs
+# 261026-040425 left x2, -041350 right x4), which agree to ~1 deg sd; the
+# 110 point is the settle pose (-162523: crank stalled at 107, roll 8.1).
+# At -10 the cage has the bike (74 deg): past it the blade only lifts off,
+# at SIT_DPS. At 120 deg/s crank the roll ran ~5 deg ahead of this from 60
+# down, waited on the blade from 50 to 30 (the PAUSE, run -042118), then
+# overshot the cage to 78 and bounced back to 74.
+LIE_MAP = ((110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0, -10),
+           (8.0, 10.7, 17.3, 23.8, 29.4, 34.4, 39.2, 44.0, 48.9, 54.1, 61.9,
+            69.2, 73.4))
+# Roll's peak rate and acceleration along that: 1.44 s from a prop at 102
+# (the get-up's lift is 1.25 s), crank peaking at 125 deg/s (lift: 137-144).
+LIE_ROLL_DPS = 60.0
+LIE_ROLL_ACC = 240.0
+# THE STEER while the sequence holds it: straight ahead, or SIT_STEER_DEG
+# toward the side the bike leans (into the lean; + steer is left, + side
+# right), whichever of the two straight poses (delta and delta + 180: the
+# policy sees sin/cos 2 delta) is nearer -- never a half turn. Ramped at
+# SIT_STEER_DPS, at ANY roll: a bike lying with its wheel turned rests on
+# the wheel, and the short way back to straight only lifts it off (user,
+# 2026-10-26; a first version held it until 30 deg of upright). Held through
+# `propped` (only the drives go limp), so the policy is handed a straight
+# wheel: get-ups with it turned were failing.
+SIT_STEER_DEG = 0.0
+SIT_STEER_DPS = 180.0
+# PUMPING A STALLED GET-UP (SwingSit `pump`: push while the bike swings up
+# on its wing, limp while it swings back) is OFF: one attempt, and a stall
+# lowers and waits for the next press. Flown 10-26 (run 261026-195319, power
+# brick, Goal Current turned down to 485 / 565): neither pumped lift got up,
+# and the second ended in the righting servo's OVERLOAD -- 5.8 s above 400
+# mA. In the sim (46-48 % Goal Current) it got 4 of 6 stalls up, on a bike
+# that barely rocks and a crank that back-drives far too freely. Set > 0 to
+# try it again; keep it under ~3 s, and see the overload above.
+PUMP_S = 0.0
 # "sit": the swing-sit sequence is running (BikeRunner._sit_step); "lying":
 # it has finished lying down and holds the bike there until a get-up;
-# "propped": a get-up has stood the bike on a blade, drives limp, and waits
-# for Enter to hand it to the policy.
+# "propped": a get-up has stood the bike on a blade, drives limp (steer held
+# straight), and waits for Enter to hand it to the policy.
 STATES = ("engaged", "cut", "standby", "sit", "lying", "propped")
 
 # Defaults for the fall guard, overridable from control.onboard in
@@ -575,18 +612,26 @@ class BikeRunner:
         # the guard's `engaged` means only "policy servos torqued"; anything
         # that takes them off (disengage, lost link, pack, fault) ends it.
         # GET-UP STOPS PROPPED (hand_off=False): on a blade, drives limp,
-        # until Enter -- the policy never takes the bike by itself.
+        # until Enter -- the policy never takes the bike by itself. NO
+        # AUTO-RETRY (retry_s=None): a failed get-up lies there until the
+        # operator presses again. Retried every 1-4 s, a crank against a
+        # wall and then a dead one kept lifting for a minute (run
+        # 261026-173521).
         mod = (self.params.get("righting") or {}).get("module") or {}
         travel = ((mod.get("linkage") or {}).get("stroke") or {}).get(
             "crank_travel_deg")
         self.sit = (SwingSit(np.radians(float(travel)), hand_off=False,
                              rest_deg=LIE_REST_DEG, lift_dps=SIT_DPS,
-                             lower_dps=SIT_DPS)
+                             lower_dps=SIT_DPS, lower_map=LIE_MAP,
+                             lower_roll_dps=LIE_ROLL_DPS,
+                             lower_roll_acc=LIE_ROLL_ACC, retry_s=None,
+                             pump_s=PUMP_S)
                     if self.bus.id_right and travel and not self.hold else None)
         self._r_stow = np.radians(float(cfg.get("righting_stow_deg", 180.0)))
         self._r_sign = float(cfg.get("righting_sign", 1))
         self._sit_gc = None               # the operator's Goal Current, restored after
         self._sit_steer = None            # steer held while the policy is off
+        self._sit_steer_t = None          # ... and when it was last moved
         self._sit_off = False             # policy off last tick: re-engage on return
         self._sit_psi = 0.0               # heading the policy holds meanwhile
         self._sit_said = "riding"
@@ -625,6 +670,7 @@ class BikeRunner:
         self.events = telemetry.EventLog()
         self._errs: dict = {}             # role -> Hardware Error Status seen
         self._servo_fault = False         # a policy servo has a latched error
+        self._righting_fault = False      # ... the righting servo has; no sequence
         self._pack_low = False            # PackMonitor cut; latched
 
     # -- one tick ----------------------------------------------------------
@@ -777,9 +823,17 @@ class BikeRunner:
             # The station drops its goal on a lie/up press, so a goal here
             # while LYING is the operator taking the wings back (9/4, the
             # triggers): teleop's pad_crank does the same. Mid-sequence the
-            # sequence keeps them, and the current too. PROPPED likewise:
-            # taking them back there leaves an unbalanced bike limp, which
-            # is the operator's call to make.
+            # sequence keeps them. PROPPED likewise: taking them back there
+            # leaves an unbalanced bike limp, which is the operator's call.
+            # THE CURRENT is still the operator's: [ / ] move the Goal
+            # Current the sequence scales from (and restores at the end).
+            # It used to be dropped here, so the keys did nothing from a
+            # lie-down to the next riding (user, 2026-10-26).
+            want = c.get("righting_current")
+            if want is not None and self._sit_gc is not None \
+                    and int(want) != self._sit_gc:
+                self._sit_gc = int(want)
+                self._event("sit", f"Goal Current {self._sit_gc} for the sequence")
             if self.sit.phase not in ("lying", "propped") \
                     or "righting_rad" not in c:
                 return
@@ -950,6 +1004,9 @@ class BikeRunner:
             why = f"busy ({self.sit.phase})"
         elif self._hold_reason() is not None:
             why = f"held: {self._hold_reason()}"
+        elif self._righting_fault:
+            why = ("the righting servo has a latched hardware error -- "
+                   "restart run_bike to reboot it")
         elif self._righting_current is None:
             why = "the righting servo's Goal Current is unknown"
         elif what == "down" and self.sit.phase == "lying":
@@ -994,11 +1051,13 @@ class BikeRunner:
         self._event("sit", f"{name}: {self.sit.phase} (Goal Current "
                            f"{self._sit_gc})")
 
-    def _sit_release(self, why: str) -> None:
+    def _sit_release(self, why: str, cut: bool = False) -> None:
         """Hand everything back: the operator's Goal Current, the crank held
         where it IS, the sequence at `riding`. Policy servos: left as the
-        caller found them, except out of `lying`, where the bike is on its
-        side and they go limp (a cut, as a fall would leave it)."""
+        caller found them, except out of `lying` or `propped` -- or with
+        `cut` -- where they go limp (a cut, as a fall would leave it).
+        Propped has the steer still on (SIT_STEER_DEG), so this is not
+        keyed on the guard's `engaged`."""
         if self.sit is None:
             return
         lying = self.sit.phase in ("lying", "propped")
@@ -1006,14 +1065,15 @@ class BikeRunner:
             self.bus.set_righting(self._righting_pos)
         if self._sit_gc is not None:
             self._righting_current = self.bus.set_righting_current(self._sit_gc)
-        if lying and self.guard.state == "engaged":
+        if lying or cut:
             if self.torque:
                 self.bus.torque(False, self.bus.policy_ids)
-            self.guard.state = "cut"
+            if self.guard.state == "engaged":
+                self.guard.state = "cut"
             self.guard.consent = False
         self.sit.phase = "riding"
         self.sit._down_since = None
-        self._sit_gc = self._sit_steer = None
+        self._sit_gc = self._sit_steer = self._sit_steer_t = None
         self._sit_off = False
         self._sit_said = "riding"
         self._event("sit", f"sequence ended: {why}")
@@ -1058,7 +1118,12 @@ class BikeRunner:
             self._sit_said = self.sit.phase
             self._event("sit", self.sit.phase + (
                 " -- lie-down ABORTED: it went over the other way"
-                if self.sit.phase == "retract" and self.sit.aborted else ""))
+                if self.sit.phase == "retract" and self.sit.aborted else
+                f" -- get-up {self.sit.failed.upper()} at crank "
+                f"{np.degrees(crank):+.0f} deg: lowering back, press again"
+                if self.sit.phase == "lower" and self.sit.failed else
+                f" -- get-up stalled at crank {np.degrees(crank):+.0f} deg: "
+                "pumping with the rock" if self.sit.phase == "pump" else ""))
         self.bus.set_righting(self._r_stow + self._r_sign * cmd.crank)
         # Quantised to 5 %: Goal Current is its own bus transaction, and the
         # limp ramp would otherwise write one every tick for a second.
@@ -1072,22 +1137,18 @@ class BikeRunner:
             self._sit_psi = self._yaw
         self._sit_off = not cmd.policy
         if cmd.limp and self.guard.state == "engaged":
-            # Propped: the bike stands on wheels + blade; nothing to hold.
+            # Propped: the bike stands on wheels + blade; the drives have
+            # nothing to hold. The steer stays on, straight (SIT_STEER_DEG).
             if self.torque:
-                self.bus.torque(False, self.bus.policy_ids)
+                self.bus.torque(False, (self.bus.id_a, self.bus.id_b))
             self.guard.state = "standby"
             self.guard.consent = False      # an Enter from before is not one for now
-            self._event("sit", "PROPPED: drives limp, wings holding -- Enter "
-                               "hands it to the policy")
+            self._event("sit", "PROPPED: drives limp, steer and wings holding "
+                               "-- Enter hands it to the policy")
         if cmd.policy:
-            self._sit_steer = None
-        elif self._sit_steer is None:
-            # Held where the steer IS, not at the last ctrl. In a fresh
-            # process ctrl is 0 whatever the wheel reads, and a wheel left
-            # near 180 deg is straight to the policy (it sees sin/cos
-            # 2 delta), so holding ctrl swung it ~200 deg at the start of a
-            # get-up (run 261026-163421).
-            self._sit_steer = float(self.data.qpos[self.ctl._sj])
+            self._sit_steer = self._sit_steer_t = None
+        else:
+            self._sit_steer_step()
         if not self._sit_owns():                  # just finished: riding
             if self._sit_gc is not None:
                 self._righting_current = self.bus.set_righting_current(
@@ -1095,6 +1156,24 @@ class BikeRunner:
             self._sit_gc = None
             return None
         return cmd
+
+    def _sit_steer_step(self) -> None:
+        """Move the held steer one tick toward straight (SIT_STEER_DEG).
+
+        It starts where the steer IS, not at the last ctrl: in a fresh
+        process ctrl is 0 whatever the wheel reads, and holding it swung the
+        wheel ~200 deg at the start of a get-up (run 261026-163421). The
+        target is the nearer of the two straight poses, so the most it ever
+        turns is 90 deg."""
+        t = self.data.time
+        if self._sit_steer is None:
+            self._sit_steer = float(self.data.qpos[self.ctl._sj])
+            self._sit_steer_t = t
+        dt, self._sit_steer_t = t - self._sit_steer_t, t
+        off = -self.sit.side * np.radians(SIT_STEER_DEG)
+        to = off + np.pi * round((self._sit_steer - off) / np.pi)
+        step = np.radians(SIT_STEER_DPS) * max(dt, 0.0)
+        self._sit_steer += float(np.clip(to - self._sit_steer, -step, step))
 
     def _warning(self) -> str | None:
         """A standing warning, or None: the pack below warn but not yet cut
@@ -1293,7 +1372,9 @@ class BikeRunner:
         engaged and kept commanding it: drive A tripped overload at 88.6 s of
         a bench run and was driven, dead, for 5 s. The latch only clears on a
         reboot, which restarting run_bike now does (`BikeBus.open`). The
-        righting servo is exempt: its fault is announced, not a cut.
+        righting servo's fault is not a cut: it ends a lie-down / get-up
+        (policy servos cut unless the policy is riding) and refuses the
+        next one.
         """
         from .dynamixel import describe_hardware_error
         for role, h in self._health.items():
@@ -1303,6 +1384,16 @@ class BikeRunner:
                                      f"{describe_hardware_error(err)}"
                             if err else f"{role} hardware error cleared")
             self._errs[role] = err
+        # The righting servo's own fault ends the sequence (it can neither
+        # lift nor hold) and refuses the next one. It is NOT a cut while the
+        # policy rides: run 261026-173521 tripped overload against a wall,
+        # and the sequence went on commanding a dead crank for a minute.
+        rfault = bool(self._errs.get("righting"))
+        if rfault and not self._righting_fault \
+                and getattr(self, "sit", None) is not None and self._sit_owns():
+            self._sit_release("the righting servo faulted -- restart run_bike "
+                              "to reboot it", cut=self._sit_off)
+        self._righting_fault = rfault
         fault = any(self._errs.get(r) for r in ("drive_a", "drive_b", "steer"))
         if fault and not self._servo_fault:
             if self.guard.cut_now() and self.torque:
@@ -1626,12 +1717,10 @@ class BikeRunner:
 
             write_s = float("nan")
             self.bus.last_goal = {}
-            if sit is not None and sit.limp:
-                self.bus.write_righting()
-            elif sit is not None and not sit.policy:
+            if sit is not None and not sit.policy:
                 # The policy is off: drives at zero speed plus the sequence's
-                # differential, steer where the policy left it (teleop's
-                # sit_override).
+                # differential (unpowered, propped), the steer held and eased
+                # straight (_sit_steer_step).
                 c, a = self.data.ctrl, self.aid
                 c[a["drive_a"]], c[a["drive_b"]] = mix(0.0, sit.diff)
                 c[a["steer"]] = self._sit_steer
@@ -1714,7 +1803,11 @@ class BikeRunner:
                 # So `[` and `]` step from the value that is ON the servo
                 # (control.onboard.righting_current at startup) rather than
                 # from zero. The station cannot know it otherwise.
-                righting_current=self._righting_current,
+                # The OPERATOR's value while the swing-sit scales it (limp
+                # reads 0 on the servo, and a station that adopted that
+                # would step [ / ] from zero). The record keeps the live one.
+                righting_current=(self._sit_gc if self._sit_gc is not None
+                                  else self._righting_current),
                 servos=telemetry.servo_health(self._health,
                                               self._effort_unit),
                 run=self.run_id,

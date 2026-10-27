@@ -67,7 +67,7 @@ def test_wing_keys_are_ignored_mid_sequence_and_take_over_once_lying():
 
 class _Bus:
     policy_ids = (1, 2, 3)
-    id_right = 4
+    id_a, id_b, id_right = 1, 2, 4
 
     def __init__(self):
         self.calls, self.goal = [], None
@@ -89,24 +89,31 @@ class _Bus:
 def _runner(roll=0.0, state="engaged"):
     r = SimpleNamespace(
         sit=SwingSit(np.radians(116.9), hand_off=False,
-                     rest_deg=RB.LIE_REST_DEG), bus=_Bus(),
+                     rest_deg=RB.LIE_REST_DEG, lift_dps=RB.SIT_DPS,
+                     lower_dps=RB.SIT_DPS, lower_map=RB.LIE_MAP,
+                     lower_roll_dps=RB.LIE_ROLL_DPS,
+                     lower_roll_acc=RB.LIE_ROLL_ACC, retry_s=None,
+                     pump_s=RB.PUMP_S), bus=_Bus(),
         guard=RB.FallGuard(),
         torque=True, hold=False, controller="policy",
         link=SimpleNamespace(peer=("192.168.0.114", 5000)), _link_lost=False,
-        _pack_low=False, _servo_fault=False, _errs={}, pack=RB.PackMonitor(),
+        _pack_low=False, _servo_fault=False, _righting_fault=False, _errs={},
+        _health={}, pack=RB.PackMonitor(),
         _righting_current=600, _righting_pos=STOW, _r_stow=STOW, _r_sign=1.0,
         _roll=math.radians(roll), _roll_rate=0.0, _yaw=0.3,
         data=SimpleNamespace(time=0.0, qvel=np.zeros(6), qpos=np.zeros(6),
                              ctrl=np.zeros(3)),
         ctl=SimpleNamespace(_sj=4),
         aid={"drive_a": 0, "drive_b": 1, "steer": 2},
-        _sit_gc=None, _sit_steer=None, _sit_off=False, _sit_psi=0.0,
+        _sit_gc=None, _sit_steer=None, _sit_steer_t=None, _sit_off=False,
+        _sit_psi=0.0,
         _sit_said="riding", _lie_seen=None, _up_seen=None, said=[], engaged=[])
     r.guard.state = state
     r._event = lambda kind, text: r.said.append((kind, text))
     r._engage = lambda fresh_read=True: r.engaged.append(fresh_read)
     for name in ("_sit_owns", "_state", "_sit_from", "_sit_start",
-                 "_sit_release", "_sit_step", "_hold_reason"):
+                 "_sit_release", "_sit_step", "_sit_steer_step",
+                 "_hold_reason", "_watch_errors"):
         setattr(r, name, getattr(RB.BikeRunner, name).__get__(r))
     r._sit_from(0, 0)                    # first contact: no press
     return r
@@ -154,6 +161,30 @@ def test_a_get_up_holds_the_steer_where_it_reads_not_at_a_stale_ctrl():
     assert r._sit_steer == pytest.approx(math.radians(200.7))
 
 
+def test_the_held_steer_eases_to_the_nearer_straight_and_holds_propped():
+    """From the first tick, lying or not (a bike lying on a turned wheel is
+    only lifted off it), to the NEARER of 0 and 180 at SIT_STEER_DPS; the
+    steer stays torqued while propped so the policy gets a straight wheel."""
+    r = _runner(roll=-73.0, state="standby")
+    r.data.qpos[r.ctl._sj] = math.radians(150.0)
+    r._sit_from(0, 1)
+    seen = []
+    for _ in range(400):
+        r._roll = math.radians(-73.0 if r.sit.phase == "lift"
+                               and r._righting_pos - STOW > -1.5 else -6.0)
+        r._sit_step()
+        if r.bus.goal is not None:
+            r._righting_pos = r.bus.goal
+        seen.append(r._sit_steer)
+        r.data.time += 0.01
+    assert r.sit.phase == "propped"
+    assert seen[20] > seen[0], "moving while still lying"
+    assert r._sit_steer == pytest.approx(math.pi), "180, not 0: never a half turn"
+    rate = np.abs(np.diff(seen)).max() / 0.01
+    assert rate <= math.radians(RB.SIT_STEER_DPS) + 1e-9
+    assert ("torque", False, (1, 2)) in r.bus.calls, "only the drives go limp"
+
+
 def test_lie_down_is_refused_and_said_unless_the_policy_is_driving():
     r = _runner(state="standby")
     r._sit_from(1, 0)
@@ -176,7 +207,7 @@ def test_get_up_stops_propped_with_the_drives_limp_and_waits():
     cmd = r._sit_step()
     assert cmd.limp and not cmd.policy
     assert r._state() == "propped" and r.guard.state == "standby"
-    assert r.bus.calls[-1] == ("torque", False, (1, 2, 3))
+    assert r.bus.calls[-1] == ("torque", False, (1, 2)), "the steer stays on"
     assert r.bus.goal == pytest.approx(STOW + np.radians(110.0))
     for _ in range(500):                 # 5 s: nothing hands it over
         assert r._sit_step().limp
@@ -315,3 +346,49 @@ def test_a_lie_down_ends_with_the_crank_past_centre_and_get_up_lifts_the_down_si
     assert r.bus.goal == pytest.approx(STOW - math.radians(RB.LIE_REST_DEG))
     r._sit_from(1, 1)
     assert r.sit.phase == "lift" and r.sit.side == +1.0
+
+
+def test_a_righting_fault_ends_a_get_up_cuts_and_refuses_the_next():
+    """Run 261026-173521: the crank overloaded against a wall mid get-up and
+    the sequence went on commanding it, dead, for a minute."""
+    r = _runner(roll=-70.0, state="cut")
+    r._sit_from(0, 1)
+    _run(r, lambda r: r.data.time > 0.5, lambda p: -60.0)
+    assert r.sit.phase == "lift"
+    r._health = {"righting": {"Hardware Error Status": 32}}
+    r._watch_errors()
+    assert r.sit.phase == "riding" and r._state() == "cut"
+    assert ("torque", False, (1, 2, 3)) in r.bus.calls
+    assert r._sit_step() is None
+    r._sit_from(0, 2)
+    assert r.sit.phase == "riding" and "latched hardware error" in r.said[-1][1]
+
+
+def test_releasing_a_propped_bike_takes_the_steer_off_too():
+    """Propped leaves the steer on; letting go of it must not."""
+    r = _runner(roll=80.0, state="cut")
+    _propped(r)
+    r._sit_step()
+    r._sit_release("wings taken back by the operator")
+    assert r.bus.calls[-1] == ("torque", False, (1, 2, 3))
+
+
+def test_the_current_keys_reach_a_sequence_that_owns_the_bike():
+    """[ / ] used to be dropped from a lie-down until riding again, so a
+    get-up (always from lying) never saw them. They move the current the
+    sequence scales from, and it is the one restored at the end."""
+    r = _runner()
+    r._rearm_from = r._stop_from = lambda n: None
+    r._apply_operator = RB.BikeRunner._apply_operator.__get__(r)
+    r._sit_from(1, 0)
+    lean = {"stop": 0, "deploy": 0, "kick": 4, "settle": 6, "lower": 40,
+            "limp": 80, "lying": 80}
+    _run(r, lambda r: r.sit.phase == "lying", lambda p: lean[p])
+    r._apply_operator({"righting_current": 400})        # ] / [ while lying
+    assert r._sit_gc == 400 and r.sit.phase == "lying"
+    r._sit_from(1, 1)                                    # get up
+    r._sit_step()
+    assert r.bus.calls[-1] == ("current", 400), "the lift runs at the new value"
+    r._apply_operator({"righting_current": 380})        # and mid-lift
+    r._sit_step()
+    assert r.bus.calls[-1] == ("current", 380)

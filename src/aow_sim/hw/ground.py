@@ -80,7 +80,7 @@ eats escape sequences (ssh through something odd, tmux misconfigured).
               down works with the policy riding, or with the bike resting
               on a blade (propped, or powered up that way: no policy at
               all). Get up works from lying or any cut / standby, and STOPS
-              PROPPED on a blade with the drives limp -- Enter then hands
+              PROPPED on a blade, drives limp, steer straight -- Enter hands
               it to the policy, which folds the blade. Both hand the wings to the
               sequence: the station's own righting goal is dropped, and 9/4
               or the triggers take them back once it is lying or propped
