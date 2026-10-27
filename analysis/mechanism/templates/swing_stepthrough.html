@@ -1,6 +1,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Swing Linkage Stepthrough</title>
+<title>Self-Righting Linkage</title>
+<!-- Written by analysis/mechanism/swing_stepthrough.py; edit this template, not the page.
+     Every word on the page is here. After an edit:
+       python analysis/mechanism/swing_stepthrough.py --from-cache    (seconds, no compute)
+     Design names come from site/labels.yaml. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
@@ -70,9 +74,11 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
 .chartcard h2{font-size:15px;font-weight:600;margin:0}
 .charts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
 @media (max-width:640px){.charts{grid-template-columns:1fr}}
-.chart{display:flex;flex-direction:column;gap:4px;min-width:0}
+/* title, blurb and plot are three rows shared across each row of charts (subgrid),
+   so a blurb that wraps to more lines pushes every plot in its row down together */
+.chart{display:grid;grid-row:span 3;grid-template-rows:subgrid;row-gap:4px;min-width:0}
 .chart h3{font-size:13px;font-weight:600;margin:0}
-.chart p{margin:0;color:var(--muted);font-size:12px;min-height:3em}
+.chart p{margin:0;color:var(--muted);font-size:12px}
 .chart canvas{aspect-ratio:4/3}
 .notes{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:10px 16px}
 .notes summary{cursor:pointer;font-weight:600;font-size:14px}
@@ -105,8 +111,8 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
 </style>
 <div class="wrap">
   <header>
-    <h1>Swing linkage stepthrough</h1>
-    <p class="lede">Comparing two clamshell linkages.<br>Quasi-static, except the sim rows.</p>
+    <h1>Self-righting linkage</h1>
+    <p class="lede">When the bike falls over, it gets itself back up: one servo swings a wing out of each side, and the wing on the ground pushes the bike upright while the other tucks in. Two designs side by side, stepped through that stroke from lying on its side to upright. Drag the slider or press Play.</p>
   </header>
 
   <div class="controls" role="group" aria-label="Stroke">
@@ -117,7 +123,7 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
       <label><input type="radio" name="view" value="floor" checked><span>On the floor</span></label>
       <label><input type="radio" name="view" value="mech"><span>Mechanism</span></label>
     </span>
-    <span class="heat" aria-label="Pin force colour scale"><span class="k">Pin force, quasi-static</span><span class="bar" id="heatbar"></span><span class="ticks" id="heatticks"></span></span>
+    <span class="heat" aria-label="Pin force colour scale"><span class="k">Pin force</span><span class="bar" id="heatbar"></span><span class="ticks" id="heatticks"></span></span>
   </div>
 
   <div class="panes" id="panes"></div>
@@ -127,28 +133,28 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
       <div class="legend big" id="legend"></div>
     </div>
     <div class="key">
-      <label><input type="checkbox" id="show-qs" checked> <i style="height:3px"></i>quasi-static</label>
-      <label><input type="checkbox" id="show-sim" checked> <i style="height:1px"></i>sim (ramped stroke)</label>
+      <label><input type="checkbox" id="show-qs" checked> <i style="height:3px"></i>static model</label>
+      <label><input type="checkbox" id="show-sim" checked> <i style="height:1px"></i>simulation</label>
     </div>
     <div class="charts">
       <div class="chart">
         <h3>Wing degrees per servo degree</h3>
-        <p>Low = leverage. Heaviest at the start: good designs start low. Ends at 0: wing self-locks.</p>
+        <p>Low means more leverage, which matters most at the start, where the load is heaviest. Reaching 0 means the wing locks in place.</p>
         <canvas id="chart-r" aria-label="Ratio against stroke"></canvas>
       </div>
       <div class="chart">
         <h3>Servo torque needed [N m]</h3>
-        <p>▼: breakaway from rest. Jump: wheels touch down. Dots: bike (measured).</p>
+        <p>▼: to get it moving from rest. The jump: the wheels touch down. Dots: measured on the bike.</p>
         <canvas id="chart-m" aria-label="Motor torque against stroke"></canvas>
       </div>
       <div class="chart">
         <h3>Most-loaded pin [N]</h3>
-        <p>Quasi-static. The pushing wing's crank/coupler pin, or the servo shaft.</p>
+        <p>The pushing wing's crank or coupler pin, or the servo shaft.</p>
         <canvas id="chart-pin" aria-label="Largest pin force against stroke"></canvas>
       </div>
       <div class="chart">
         <h3>Bike roll [deg]</h3>
-        <p>0: upright. Below 0: over centre. Dots: bike (measured).</p>
+        <p>0 is upright; below 0 it has tipped past upright. Dots: measured on the bike.</p>
         <canvas id="chart-roll" aria-label="Roll against stroke"></canvas>
       </div>
     </div>
@@ -156,7 +162,17 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
 
   <details class="notes">
     <summary>More info</summary>
-    <ul id="notes"></ul>
+    <ul>
+      <li><b>The designs.</b> <i>V1</i>: an earlier four-bar linkage with flat panels, drawn from its design parameters only. <i>V2</i>: the linkage built into the bike, with its first blade shape, drawn from the CAD parts themselves. <i>V3</i>: the same linkage with the current blade: its outer face vertical when stowed, curving into the toe. The V3 blade is heavier (about 39 g each, estimated, against V2's 29).</li>
+      <li><b>View.</b> The bike seen from behind. Orange is the wing that pushes the bike up, blue the one that rises and tucks in, burgundy the servo's crank. The slider runs from lying on its side (0&nbsp;%) to the end of the commanded stroke (100&nbsp;%); V2 and V3 carry on past it to where the two blade toes meet, the mechanical stop.</li>
+      <li><b>How it is computed.</b> At each crank angle the linkage is solved and the bike is set down where it would rest: on the blade (V2, V3) and the rollcage, or on the panel (V1). Torques and forces are a static balance at that pose, with no speed, inertia or impacts. Past upright the bike tips over the top, which has no static answer, so only the simulation lines continue there.</li>
+      <li><b>Simulation lines.</b> The faded lines on the charts: the full physics simulation, the crank driven slowly through the whole stroke.</li>
+      <li><b>Measured on the bike.</b> The dots on the roll chart are the real bike (V3 blades) being lowered slowly, six runs on both sides. The model rolls up to 10&deg; ahead of it early in the stroke, and comes to rest at 76-81&deg; where the bike lies at 74&deg;. The dots on the torque chart are the servo's measured current during get-ups, converted to torque. Those lifts are fast (up to 120&deg;/s), so not static; the torque follows the model's shape, with its dip where the wheels touch down at the same roll but a later crank angle.</li>
+      <li><b>Servo current.</b> The servo is given a current limit, which caps its torque. <i>Current to right it (sim)</i> is the lowest limit that still gets the bike up in simulation on a low battery (9.9 V); <i>static estimate</i> is the same from the static model, which reads 25-45 mA high. The percentage is of the most the motor can draw at 9.9 V.</li>
+      <li><b>Pin forces.</b> The largest force on the linkage's pins over the stroke; the pins are coloured by it. The sudden-command figure is the peak when the servo is told to go straight to full travel from lying down: it comes in the first few milliseconds, before the bike moves.</li>
+      <li><b>Clearances.</b> Each design's closest approaches over the stroke, worst first. Red is a collision or under the hard limit, amber under the target (2 mm between moving parts, 5 mm from blade to servo). Parts at different depths front to back cross in this view without touching; <i>Layers</i> shows which.</li>
+      <li><b>Other marks.</b> The dashed outline round the crank is the servo. The dashed yellow box (V1) is where the panels must not go. The grey bar is the wheel seen end-on, the faint ring the rollcage.</li>
+    </ul>
   </details>
 </div>
 
@@ -549,13 +565,13 @@ function fillStatic(i) {
   const lock = d.frames[d.frames.length - 1].r < 0.05;
   const N = (v) => v == null ? "not run" : `${v.toFixed(0)} N`;
   const summary = [
-    ["Current limit @ 9.9 V (sim)", d.sim == null ? "not run" : `${d.sim} mA · ${Math.round(100 * d.sim / geo.max_ma)}%`],
-    ["Planar", `${d.counts.toFixed(0)} mA · ${Math.round(100 * d.counts / geo.max_ma)}%`],
-    [`Travel, commanded${lock ? " (locks)" : ""}${d.T_is_level ? ", = level" : ""}`, `${d.T.toFixed(1)}°`],
-    ...(d.level == null ? [] : [["Level (roll 0), on the blade", `${d.level.toFixed(2)}°`
-        + (d.level_drift ? ` <b style="color:var(--warn)">≠ pinned ${d.T.toFixed(1)}: update crank_travel_deg</b>` : "")]]),
-    ["F in coupler/hinge pins", `${d.pins.coupler.toFixed(0)} / ${d.pins.hinge.toFixed(0)} N`],
-    ["F coupler pin, step (sim)", N(d.pins.lift_sim)],
+    ["Current to right it (sim)", d.sim == null ? "not run" : `${d.sim} mA · ${Math.round(100 * d.sim / geo.max_ma)}%`],
+    ["Static estimate", `${d.counts.toFixed(0)} mA · ${Math.round(100 * d.counts / geo.max_ma)}%`],
+    [`Crank travel${lock ? " (self-locks)" : ""}`, `${d.T.toFixed(1)}°`],
+    ...(d.level == null ? [] : [["Crank angle at upright", `${d.level.toFixed(2)}°`
+        + (d.level_drift ? ` <b style="color:var(--warn)">≠ travel ${d.T.toFixed(1)}°: update the blade file</b>` : "")]]),
+    ["Peak pin force, coupler / hinge", `${d.pins.coupler.toFixed(0)} / ${d.pins.hinge.toFixed(0)} N`],
+    ["Peak pin force, sudden command (sim)", N(d.pins.lift_sim)],
   ].map(([k, v]) => `<div class="plane"><span class="n">${v}</span><span class="chips">${k}</span></div>`).join("");
   el.stats = summary;
   const det = (summary, body) => `<details class="fold"><summary>${summary}</summary>${body}</details>`;
@@ -577,7 +593,7 @@ function fillStatic(i) {
     layers = ps.sort((a, b) => a[1] - b[1]).map(([k, p]) =>
       kv(`<span class="chip" style="background:${col[members[k][1]]}">${members[k][0]}</span>`, strip(p), "white-space:pre")).join("");
   }
-  let html = det("Summary", el.stats) + det("Layers, fwd/rev", layers);
+  let html = det("Summary", el.stats) + det("Layers, front to back", layers);
   {
     const rows = d.cad ? d.cad.clear : d.diag;
     // FAIL: overlapping, or under the row's hard limit (`fail`; a config
@@ -591,7 +607,7 @@ function fillStatic(i) {
     let top = "";
     if (d.cad) {
       const cd = d.cad;
-      top = kv("blade", cd.src.split("/").pop()) + (cd.meet == null ? kv("toes meet", "never")
+      top = (cd.meet == null ? kv("toes meet", "never")
         : kv("toes meet (stop)", `${cd.meet.toFixed(1)}°`, cd.meet > cd.T ? "" : `color:${C.warn}`))
         + kv(cd.limit ? `links touch (${cd.limit.what})` : "links touch", cd.limit ? `${cd.limit.t.toFixed(1)}°` : "never");
     }
@@ -601,8 +617,8 @@ function fillStatic(i) {
       .filter(Boolean).join(", ") || `<b style="color:${C.good}">ok</b>`;
     html += det(`Diagnostics: ${state}`, top + cols("clearance", "to · at crank") + rows.map(row).join(""));
   }
-  html += det(d.file.split("/").pop(), cols("value", "link") + Object.entries(d.lengths).map(([k, v]) => kv(k, v)).join(""));
-  if (d.blade) html += det(d.blade.file, d.blade.rows.map(([k, v]) => kv(k, v, "white-space:pre")).join(""));
+  html += det("Link lengths", cols("value", "link") + Object.entries(d.lengths).map(([k, v]) => kv(k, v)).join(""));
+  if (d.blade) html += det("Blade", d.blade.rows.map(([k, v]) => kv(k, v, "white-space:pre")).join(""));
   el.planes.innerHTML = html;
   const ps = PANE_STYLE[i], pc = C[ps.key];
   el.sw.style.background = ps.dash.length
@@ -657,7 +673,6 @@ function tick(ts) {
 }
 playBtn.addEventListener("click", () => { playing = !playing; playBtn.textContent = playing ? "Pause" : "Play";
   last = null; if (playing) requestAnimationFrame(tick); });
-document.getElementById("notes").innerHTML = D.notes.map((n) => `<li>${n}</li>`).join("");
 panes.forEach((_, i) => fillStatic(i));
 new ResizeObserver(() => drawAll()).observe(document.body);
 drawAll();

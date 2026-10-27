@@ -3,7 +3,13 @@
 RENDER IT (from the repo root):
 
     python analysis/mechanism/swing_stepthrough.py --sim     # ~17 s: the tracked page, sim rows filled
-    python analysis/mechanism/swing_stepthrough.py           # ~6 s: the same, sim rows read "not run"
+    python analysis/mechanism/swing_stepthrough.py           # ~25 s: the same, sim rows read "not run"
+    python analysis/mechanism/swing_stepthrough.py --from-cache   # instant: the tracked page's
+                                    # own data into the template, after a wording edit
+
+Every word on the page is in templates/swing_stepthrough.html; design names
+are site/labels.yaml's. The page is also spiritlake.xyz/linkage/
+(scripts/site.sh).
 
 Either writes analysis/mechanism/plots/swing_stepthrough.html (self-contained); open it
 in a browser. Re-run after editing any file a design reads -- nothing
@@ -75,7 +81,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import json
 import sys
 from pathlib import Path
 
@@ -89,6 +94,7 @@ import swing_synthesis as ss  # noqa: E402
 from aow_sim.build_model import SWING_LINKAGE_CFG, load_params  # noqa: E402
 from aow_sim.hw.run_bike import LIE_MAP, LIE_REST_DEG  # noqa: E402
 from aow_sim.params import blade_points  # noqa: E402
+from aow_sim.web import page  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = Path(__file__).resolve().parent / "templates" / "swing_stepthrough.html"
@@ -350,66 +356,6 @@ def blade_params(params: dict, spec: dict | None) -> dict:
     if "crank_travel_deg" in spec:     # the blade's own level point
         m["linkage"]["stroke"]["crank_travel_deg"] = float(spec["crank_travel_deg"])
     return p
-NOTES = [
-    "<b>V1.</b> Linkage V1 (swing_linkage_smaller.yaml), the earlier four-bar, from its config.",
-    "<b>V2.</b> Linkage V2 (swing_linkage_shared_rod.yaml), from the CAD: the bike's righting "
-    "module, what the sim builds by default, blades from righting_blade.yaml.",
-    "<b>V3.</b> Exploring (2026-10-10): V2's linkage with a new blade, "
-    "swing_explore/blade_v3.yaml -- the outer face vertical at stow, V2's "
-    "inner face and toe kept, curving into the toe (a cubic, tangent to both; the face angle one number). "
-    "Its rest, wing CoM and sim carry "
-    "that blade, its mass (38.8 g each, GUESS; V2's 28.6) and its own stroke, to its level point.",
-    "<b>Where V1 and V2 come from.</b> V2's CAD is generated as solid parts "
-    "(cad.righting, 1.25x, with righting_blade.yaml), so the page reads its real "
-    "part outlines and checks the blade against them. V1's CAD is a 2D "
-    "sketch generated from the same config (cad.swing_linkage): lines, no "
-    "parts. So V1 is drawn and checked from its config's links and limits.",
-    "<b>View.</b> The bike is drawn seen from behind: the right wing on the "
-    "right, as the blade files' (x, y) have it.",
-    "<b>Colours.</b> Orange: the wing that pushes the bike up (the right one). Blue: the one "
-    "that rises and tucks in. Burgundy: the servo's crank. The slider runs the "
-    "stroke from lying on its side (0%) to the commanded stroke (100%); V2 runs "
-    "on past it to where its toes meet.",
-    "<b>Quasi-static.</b> At each crank angle the linkage is solved, the bike "
-    "set where it rests on the floor (V2 and V3 on the blade's whole section, toe and "
-    "both faces, and the rollcage; V1 on its panel line), and every force is a static balance: no "
-    "speed, inertia or impacts. V2's and V3's torque and pins come from that same rest, "
-    "below stow too; V1's from its panel line's load table. Past level the bike falls over centre, "
-    "which has no static balance; only the sim has values there.",
-    "<b>The bike.</b> The dots on the roll chart: the real bike (V3 blades), "
-    "lowered slowly (30°/s, six runs, both sides, ~1° apart), "
-    "run_bike.LIE_MAP. The model's V3 rolls up to 10° ahead of it between "
-    "crank 0 and 35, and rests at 76-81° where the bike lies at 74°. The "
-    "bike's lift current has the model's torque shape, mostly at 1550-1600 mA per N m, "
-    "its dip at wheel touchdown at the same roll (~37°) but crank 55, not 44.",
-    "<b>The bike's torque.</b> The dots on the torque chart: the righting servo's Present "
-    "Current on the bike's get-ups with the battery on (BIKE_LIFTS), "
-    "through the servo model's measured k (|I| − i0), 0.83 N m/A. Lifts at up to 120°/s, so not "
-    "quasi-static. With the battery the servo is at 100 % PWM for most of the lift (~690 mA "
-    "at 11.8 V when stalled): the supply voltage, not the 785 mA Goal Current, is its ceiling.",
-    "<b>mA.</b> The servo's Goal Current: the ceiling on the current its "
-    "position loop may use. <i>Current limit @ 9.9 V (sim)</i>: the lowest "
-    "ceiling that still rights the bike in the sim on a low battery. "
-    "<i>Planar</i>: the quasi-static estimate, 25-45 mA high. The % is of "
-    "812 mA, the most the motor can draw at 9.9 V (stalled).",
-    "<b>Sim traces.</b> The faded lines on the torque, pin and roll charts: "
-    "the sim, the crank driven slowly through the whole stroke.",
-    "<b>Pin forces.</b> <i>F in coupler/hinge pins</i>: the most on the "
-    "coupler and hinge pins, quasi-static; the pin colours are these. <i>F "
-    "coupler pin, step (sim)</i>: the peak when the servo is told to go "
-    "straight to full travel from lying on its side. It comes in the first "
-    "few milliseconds, before the bike moves.",
-    "<b>Diagnostics.</b> Each design's least clearances over the stroke, "
-    "worst first; red is a hit or under target. V2: the blade against every "
-    "part it shares fore/aft space with, and the floor, plus where the toes "
-    "meet (the stop) and the links touch. V1: its links and panels against "
-    "its config's limits, and the floor.",
-    "<b>Layers.</b> Parts in different fore/aft layers cross in the front "
-    "view without touching. Back on the left.",
-    "<b>Other marks.</b> The dashed outline round the crank shaft is the "
-    "servo. The dashed yellow box (V1) is where panels must not go. The grey bar "
-    "is the wheel end-on.",
-]
 
 
 def plane_of(lk, member: str):
@@ -997,6 +943,13 @@ def design(path: Path, label: str, sc: dict, params, run_sim: bool,
             "frames": frames}
 
 
+def present(data: dict) -> None:
+    """The designs' display names (site/labels.yaml), keeping the id."""
+    for d in data["designs"]:
+        d.setdefault("id", d["name"])
+        d["name"] = page.label("designs", d["id"])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1010,7 +963,16 @@ def main() -> int:
     ap.add_argument("--blade", type=Path, nargs="*", default=None,
                     help="blade front-section yamls: one CAD entry each ('cad' for the "
                          "CAD's own dummy blade)")
+    ap.add_argument("--from-cache", action="store_true",
+                    help="no compute: refill the template with the data of the tracked "
+                         "page (a wording or labels change)")
     args = ap.parse_args()
+    if args.from_cache:
+        data = page.cached(OUT)
+        data.pop("notes", None)      # pages from before the prose moved to the template
+        present(data)
+        page.fill(TEMPLATE, data, args.out or OUT)
+        return 0
     if args.configs or args.blade:
         # --labels name the entries in order: configs first, then blades.
         labels = list(args.labels or [])
@@ -1086,16 +1048,12 @@ def main() -> int:
             geo["cad_parts"] = d["cad"].pop("parts")
     geo["bike_roll"] = [[float(c), float(r)] for c, r in zip(*LIE_MAP)]
     geo["bike_motor"] = bike_torque(params, BIKE_LIFTS)
-    data = json.dumps({"designs": designs, "geo": geo, "notes": NOTES},
-                      separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
-    tag = '<script id="data" type="application/json">'
-    page = TEMPLATE.read_text(encoding="utf-8")
-    if page.count(tag + "/*DATA*/</script>") != 1:
-        raise SystemExit(f"{TEMPLATE.name}: expected exactly one data tag")
+    data = {"designs": designs, "geo": geo}
     if args.out is None:
         args.out = OUT_CUSTOM if (args.configs or args.blade) else OUT
-    args.out.write_text(page.replace(tag + "/*DATA*/", tag + data), encoding="utf-8")
-    print(f"wrote {args.out.relative_to(ROOT) if args.out.is_relative_to(ROOT) else args.out}")
+    if args.out == OUT:
+        present(data)
+    page.fill(TEMPLATE, data, args.out)
     return 0
 
 

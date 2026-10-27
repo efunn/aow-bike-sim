@@ -3,6 +3,12 @@
     python analysis/policy/drivetrain_trace.py \
         --new traces/drivetrain/drivetrain_sawtooth_1024.yaml
     python analysis/policy/drivetrain_trace.py --new <overlay> --start 5 --seconds 2
+    python analysis/policy/drivetrain_trace.py --new <overlay> --page
+    python analysis/policy/drivetrain_trace.py --page --from-cache   # wording only, no sim
+
+The --page output's words are all in templates/drivetrain_traces.html, its
+run names in site/labels.yaml; it is also spiritlake.xyz/sim2real/
+(scripts/site.sh).
 
 The still companion to drivetrain_slowmo.py: the same two flights
 (run_vs_sim.sim() through its `on_step` hook -- the policy on its own
@@ -59,6 +65,7 @@ import run_vs_sim as R  # noqa: E402
 
 from aow_sim import drivetrain_model as dm  # noqa: E402
 from aow_sim.build_model import load_params  # noqa: E402
+from aow_sim.web import page  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 N = 8
@@ -173,7 +180,8 @@ def _breaks(y, jump=180.0):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--new", type=Path, required=True, metavar="OVERLAY")
+    ap.add_argument("--new", type=Path, default=None, metavar="OVERLAY",
+                    help="required, except with --page --from-cache")
     ap.add_argument("--parts", nargs="+", default=["detent", "roller_slop"], choices=dm.PARTS)
     ap.add_argument("--policy", default=None)
     ap.add_argument("--set", dest="overrides", action="append", default=[],
@@ -203,9 +211,20 @@ def main():
     ap.add_argument("--play", type=Path, default=None, metavar="YAML",
                     help="page only: a third sim option, the training drivetrain with "
                          "this file's `wheel_play:` block (build_model's optional play)")
+    ap.add_argument("--from-cache", action="store_true",
+                    help="page only: no sim; refill the template with the data of the "
+                         "page last written (a wording or labels change)")
     ap.add_argument("--tag", default="")
     ap.add_argument("--out-dir", type=Path, default=REPO / "traces" / "drivetrain_slowmo")
     a = ap.parse_args()
+    if a.page and a.from_cache:
+        data = page.cached(PAGE_OUT)
+        data.pop("notes", None)      # pages from before the prose moved to the template
+        _present(data)
+        page.fill(PAGE_TEMPLATE, data, PAGE_OUT)
+        return
+    if a.new is None:
+        ap.error("--new is required (except with --page --from-cache)")
 
     import yaml
     params = load_params()
@@ -522,7 +541,6 @@ def build_page(a, k, cols):
     policy's floor sim (seed --seed, from t = 1 s, as long as that policy's
     longest engage) on each drivetrain in `cols`, at 100 Hz like the bike.
     Series are unwrapped roller degrees; the page wraps them."""
-    import json
     import yaml
     from aow_sim.control.flick import MOVES_DIR
     notch = 7.5 * k
@@ -536,9 +554,7 @@ def build_page(a, k, cols):
         pol, t0, dur = _longest_engage(run)
         bike = bike_trace(run, bench, t0, dur)
         bikes[run.name] = {
-            "label": f"{run.name} ({pol})",
-            "meta": f"{pol}, longest engage · drive encoders; commanded from Present PWM; "
-                    f"detent placed by the hung creep {a.bench_creep}",
+            "policy": pol,
             "top": (k * bench["flip"]) % notch,
             "t": r3(bike["t"]), "roll": r2(bike["roll"]),
             "steer": r2(bike["steer"]), "steer_cmd": r2(bike["steer_cmd"]), "yaw": r2(bike["yaw"]),
@@ -568,11 +584,7 @@ def build_page(a, k, cols):
             drv = tr.drive
             saw = bool(drv.hill and drv.hill_saw)
             sims[f"{pol}|{title}"] = {
-                "label": f"{pol} · {title}",
-                "meta": f"floor twin, seed {a.seed} · detent: "
-                        + ("sawtooth flip (pushes away) over flat friction" if saw
-                           else "friction bump (the shaft sticks on the line)")
-                        + " · logged as the bike logs it; commanded rebuilt from its registers",
+                "saw": saw,
                 "top": (k * math.degrees(drv.phase + 0.5 * drv.period)) % notch,
                 "t": r3(r["t"][::step]), "roll": r2(r["roll"][::step]),
                 # as the bike logs it: encoder counts, the reference rebuilt
@@ -585,107 +597,27 @@ def build_page(a, k, cols):
                 "cmd": r2(np.degrees(k * r["ref_rec"][::step])), "loaded": r2(loaded)}
             print(f"  sim {pol} / {title}: {dur:.0f} s")
     first = a.page_default if a.page_default in bikes else a.page_runs[0].name
-    pol0 = bikes[first]["label"].split("(")[1].rstrip(")")
-    new = a.new.relative_to(REPO) if a.new.is_absolute() else a.new
-    notes = [
-        ("What is plotted", [
-            "<b>The flight.</b> No input: speed command zero, heading command held where the "
-            "engage started. The sim is <code>run_vs_sim.sim</code>, the floor twin flying the "
-            "same policy on its own sensors; the bike column is the run's longest engage.",
-            "<b>Roll, steer.</b> Roll and the steer joint, on one fixed scale for every run. The "
-            "bike's steer carries the extended-position turn count; it is shifted by the one "
-            "multiple of 180&deg; that puts its median near straight (straight repeats every 180&deg;).",
-            "<b>Yaw.</b> The controller's heading estimate less its heading command, wrapped to "
-            "&plusmn;180&deg;: the error the policy sees as sin/cos psi_err.",
-            "<b>The sim is logged the way the bike is.</b> Every sim series that has a "
-            "register on the bike is built from that register as the bike would log it, at "
-            "100 Hz: the drive encoders (4096 counts a turn, through the 3:1 belt), Present "
-            "Velocity (0.229 rpm steps, the shaft speed through the firmware's ~50 ms "
-            "boxcar), Present PWM (1/885 duty), the XC330 steer (4096 a turn). The truth "
-            "(the joints, the firmware's own reference) is not plotted, so a difference "
-            "between the columns is a difference in the bikes, not in the logging.",
-            "<b>Roller angle.</b> Every roller's spin angle wrapped to one roller revolution. The "
-            "ink line is where the rollers would be with no slop, k_roller &times; ring-vs-hub "
-            "from the drive encoders (both columns). The orange roller on the floor is the "
-            "sim's joint: the bike has no sensor for it. The phase slider beside it turns the "
-            "wrap by whole notches, so the detent lines stay put.",
-            "<b>Drive diff velocity.</b> Input-shaft rad/s, drive a less drive b: measured "
-            "from Present Velocity (both columns), commanded from the logged command (the "
-            "policy's output through the hub/diff mix).",
-            "<b>Spectrum badges.</b> Under each roller key, four power spectra of the "
-            "roller RATE (first differences): whatever this plot shows (the commanded "
-            "line dashed); POSITION, this column's window (bright) against the other "
-            "column's (dim), with the sim's roller on the floor in orange (hand-offs "
-            "between rollers taken out); COMMAND, the same for the commanded line; and "
-            "the whole run. The steer panel carries the same four for the steer joint "
-            "(position) and its target (command), the diff-velocity panel for the measured "
-            "and commanded velocity themselves (no differencing). All eight badges of a "
-            "channel share one log scale across both columns, so heights compare. The "
-            "roller command is rebuilt from Present PWM in both columns, and the rebuild "
-            "amplifies the PWM's step noise above ~20 Hz: compare it column to column, "
-            "not against the position. Welch with "
-            "2.56 s Hann segments, a 3-bin running mean, log power over five decades, "
-            "0-25 Hz; the dot is the peak above 4 Hz (below it is balance sway). The "
-            "rate because the angle itself is mostly sway below 3 Hz.",
-            "<b>Roll and yaw badges.</b> Two each, of the RATE (first differences; yaw "
-            "taken the short way round its &plusmn;180&deg; wrap): this column's window "
-            "against the other's, and the whole run. No command to compare.",
-            "<b>Lock the two time sliders.</b> Moving one column's start moves the other "
-            "by the same offset from its own start; the phase sliders stay separate.",
-            "<b>Commanded (dashed blue), roller panel.</b> Where the drive is being pulled: "
-            "the servo firmware's position reference, which it does not report. Rebuilt per "
-            "sample in BOTH columns from the logged registers through the firmware law, "
-            "e = (duty &minus; Kp (v_ref &minus; w)) / Ki: on the sim it tracks the true "
-            "reference at r 0.993 (median 1.1 roller degrees; spikes where the duty "
-            "saturates). A shaft parked on a line with the command beyond it is being held "
-            "there.",
-        ]),
-        ("The detent lines", [
-            "<b>Grey: one line per notch</b>, 7.5&deg; of ring, %.0f&deg; of roller." % notch,
-            "<b>Friction bump</b> (each policy's training drivetrain): the gearbox is stickier on "
-            "the line, so a shaft that stops tends to stop there. 48&nbsp;% of the floor twin's "
-            "rests fall within 1&deg; of it." ,
-            "<b>Sawtooth flip</b> (the <code>%s</code> overlay): the notch torque pushes the shaft "
-            "AWAY from the line, toward the point midway between two lines, where the push "
-            "stops; a flat friction on top resists both ways. With friction as big as the "
-            "push, rests barely favour that midway point (26&nbsp;%%, even is 27)." % new,
-            "<b>On the bike</b> the lines are placed by the hung creep "
-            "<code>%s</code> in the same encoder frame, not fitted: one servo turn moves "
-            "ring-vs-hub 540&deg; = 72 notches, so a power-up turn reset keeps the phase." % a.bench_creep,
-        ]),
-        ("Reading sim against bike", [
-            "<b>Notch geometry is shared, time is not.</b> Same seed in every sim column, not "
-            "the same trajectory, and nothing aligns a sim second with a bike second.",
-            "<b>Roller on the floor</b> (orange) is the sim's only: which roller touches comes "
-            "from contacts, which the bike does not record.",
-        ]),
-    ]
-    if a.play:
-        doc = yaml.safe_load(a.play.read_text())
-        notes.append(("Wheel play", [
-            "<b>%s</b> (<code>%s</code>): build_model's optional <code>wheel_play</code>, "
-            "limited hinges between a part and what it carries. %s"
-            % (cols[-1][0], a.play, doc.get("note", "")),
-            "<b>Values.</b> <code>%s</code>" % json.dumps(doc["wheel_play"]),
-        ]))
-    play_arg = f" --play {a.play}" if a.play else ""
-    notes += [
-        ("Reproduce", [
-            "<code>python analysis/policy/drivetrain_trace.py --new %s --page%s</code> "
-            "(runs: <code>--page-runs</code>; template: "
-            "<code>analysis/policy/templates/drivetrain_traces.html</code>)." % (new, play_arg),
-        ]),
-    ]
-    data = json.dumps({"notch": notch, "k": k, "sims": sims, "bikes": bikes, "notes": notes,
-                       "default": {"sim": f"{pol0}|{last[pol0]}", "bike": first}},
-                      separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
-    tag = '<script id="data" type="application/json">'
-    page = PAGE_TEMPLATE.read_text(encoding="utf-8")
-    if page.count(tag + "/*DATA*/</script>") != 1:
-        raise SystemExit(f"{PAGE_TEMPLATE.name}: expected exactly one data tag")
-    PAGE_OUT.parent.mkdir(parents=True, exist_ok=True)
-    PAGE_OUT.write_text(page.replace(tag + "/*DATA*/", tag + data), encoding="utf-8")
-    print(f"wrote {PAGE_OUT.relative_to(REPO)} ({PAGE_OUT.stat().st_size / 1e6:.1f} MB)")
+    pol0 = bikes[first]["policy"]
+    data = {"notch": notch, "k": k, "sims": sims, "bikes": bikes,
+            "default": {"sim": f"{pol0}|{last[pol0]}", "bike": first}}
+    _present(data)
+    page.fill(PAGE_TEMPLATE, data, PAGE_OUT)
+
+
+def _present(data):
+    """Each run's dropdown name and caption, from the ids its key carries,
+    under site/labels.yaml's names. The words around them are the template's.
+    Fills a page from before the `policy` / `saw` fields from its old text."""
+    for key, S in data["sims"].items():
+        pol, title = key.split("|", 1)
+        S.setdefault("saw", "sawtooth" in S.get("meta", ""))
+        S["label"] = f"{page.label('policies', pol)} · {page.label('drivetrains', title)}"
+        S["meta"] = ("simulated, logged the way the bike logs it · gear notches: "
+                     + ("sawtooth (measured)" if S["saw"] else "friction bump"))
+    for key, S in data["bikes"].items():
+        S.setdefault("policy", S.get("label", "").rpartition("(")[2].rstrip(")"))
+        S["label"] = page.label("runs", key)
+        S["meta"] = "the real bike, its longest stretch of balancing in this run"
 
 def _has_slop(model):
     try:

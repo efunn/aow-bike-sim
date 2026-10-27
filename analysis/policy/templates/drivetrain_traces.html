@@ -1,9 +1,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drivetrain Traces</title>
+<title>Balance: Sim vs Bike</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<!-- Written by analysis/policy/drivetrain_trace.py --page; edit this template, not the page. -->
+<!-- Written by analysis/policy/drivetrain_trace.py --page; edit this template, not the page.
+     Every word on the page is here. After an edit:
+       python analysis/policy/drivetrain_trace.py --page --from-cache    (seconds, no sim)
+     Run names come from site/labels.yaml. -->
 <style>
 /* A bench-notebook strip chart: two columns (sim | bike), each short roll, steer and yaw traces over a tall wrapped roller trace.
    The view controls stick to the top, and each column's selector and scrub bar stick under them, while the plots scroll. */
@@ -78,6 +81,12 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 .u-legend th { font-weight: 400; display: inline-flex; gap: 6px; align-items: center; }
 .u-legend .u-marker { width: 14px; height: 3px; display: inline-block; }
 .u-legend td { min-width: 6ch; }
+/* A grid item will not shrink below its content, and a uPlot canvas is fixed-width
+   content: without these, narrowing the window left every plot at its old width
+   (the ResizeObserver measured the holder, which had not shrunk) and the two
+   columns overlapped. */
+.col > *, .rolrow > * { min-width: 0; }
+.plot { overflow: hidden; }
 .rolrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: start; }
 .phase { display: grid; justify-items: center; gap: 4px; padding-top: 6px;
   font-family: var(--f-mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -99,8 +108,8 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 
 <div class="wrap">
   <header>
-    <h1>Drivetrain Traces</h1>
-    <p class="sub">A policy holding a fixed heading command at zero commanded speed: its floor twin on the left, the bike on the right. Roll, yaw, steer and the rollers share each column's time axis; the roller angle is wrapped to one roller revolution. <span class="swatch" style="border-color:var(--noslop)"></span> lines are the measured values: the servo encoders and the AHRS on the bike, the joints in the sim. More detail at the bottom of the page.</p>
+    <h1>Balance: sim vs bike</h1>
+    <p class="sub">The same trained balance controller, standing still and holding its heading: in simulation on the left, on the real bike on the right. If the simulation is a faithful copy of the bike, the two columns look alike: the same slow sway, the same small corrections, the same amount of shake. Where they differ, the model is missing something. Pick a run at the top of each column; <span class="swatch" style="border-color:var(--noslop)"></span> lines are measured, dashed lines are commanded. More at the bottom of the page.</p>
   </header>
 
   <div class="bar" id="bar"><div class="controls" role="group" aria-label="View controls">
@@ -109,9 +118,9 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       <datalist id="win-ticks"><option value="0"></option><option value="1"></option><option value="2"></option><option value="3"></option><option value="4"></option><option value="5"></option></datalist>
       <span id="win-v" class="winv">2 s</span>
     </label>
-    <label><input type="checkbox" id="showCmd" checked> <span class="swatch" style="border-color:var(--cmd);border-top-style:dashed"></span> commanded (drive, steer target)</label>
-    <label><input type="checkbox" id="showLoaded" checked> <span class="swatch" style="border-color:var(--loaded)"></span> roller on the floor (sim)</label>
-    <label><input type="checkbox" id="lockT"> lock the two time sliders</label>
+    <label><input type="checkbox" id="showCmd" checked> <span class="swatch" style="border-color:var(--cmd);border-top-style:dashed"></span> commanded</label>
+    <label><input type="checkbox" id="showLoaded" checked> <span class="swatch" style="border-color:var(--loaded)"></span> roller touching the floor (sim only)</label>
+    <label><input type="checkbox" id="lockT"> move both time sliders together</label>
     <span class="note">Drag across a plot to zoom; double-click to return to the window.</span>
   </div></div>
 
@@ -122,7 +131,40 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 
   <details class="notes">
     <summary>More info</summary>
-    <div id="notes"></div>
+    <h3>The bike</h3>
+    <ul>
+      <li><b>It balances by steering and by its rear wheel.</b> The rear wheel is an omni wheel: rollers around its rim let the back of the bike move sideways. Two drive motors turn it; when they turn in step the bike rolls forward, and the difference between them spins the rollers. A policy (a small neural network trained in simulation) reads the bike's sensors and sets the steering and both motors 50 times a second; the servos are read and logged at 100 Hz.</li>
+      <li><b>Gear notches and play.</b> The drivetrain is not smooth. The gearbox has a notchy feel, a small catch every 7.5&deg; of its output ring (the grey lines in the roller panel), and there is slack in the rollers, the axles and the steering head. A policy trained on an idealised drivetrain can work in simulation and still shake on the real bike. This page is how those effects were found and put back into the model.</li>
+    </ul>
+    <h3>The policies</h3>
+    <ul>
+      <li><b>Policy A.</b> An early policy, trained on an earlier version of the bike model. Shakes at about 11 Hz on the real bike.</li>
+      <li><b>Policy B.</b> Trained on the bike model before its current geometry, with a smooth drivetrain.</li>
+      <li><b>Policy C.</b> The current geometry, still with a smooth drivetrain. Balances in simulation; shakes on the bike like B.</li>
+      <li><b>Policy D, the current one.</b> Trained with the measured gear notches and the slack in the simulation. On the bike the shake is gone.</li>
+    </ul>
+    <h3>The simulated drivetrains</h3>
+    <ul>
+      <li><b>As trained.</b> Exactly the drivetrain model the policy learned on.</li>
+      <li><b>Measured gear notches + roller slop.</b> The notch shape measured on the bench, and slack in each roller, added to it.</li>
+      <li><b>Wheel play.</b> A little looseness at the axles and the steering head, fitted to the bike's own floor runs.</li>
+    </ul>
+    <h3>The panels</h3>
+    <ul>
+      <li><b>Roll.</b> How far the bike leans. One scale for every run, so the columns compare directly.</li>
+      <li><b>Yaw.</b> The bike's heading less the heading it was told to hold.</li>
+      <li><b>Steer.</b> The steering angle and the angle the policy asked for (dashed).</li>
+      <li><b>Drive difference.</b> The speed of one drive motor less the other's: what spins the rollers. Measured and commanded.</li>
+      <li><b>Roller angle.</b> Each roller's angle, wrapped to one turn, so a roller resting on a gear notch shows as a flat line on a grey line. The thick line is where the rollers would be with no slack at all; the orange segment is whichever roller is on the floor, which only the simulation knows. The <i>phase</i> slider rotates the wrap by whole notches.</li>
+      <li><b>The small spectrum plots.</b> How much shaking there is at each frequency from 0 to 25 Hz, from the rate of each signal. Bright is this column's window, dim the other column's, the last one the whole run; the dot marks the strongest peak above 4 Hz (below that is ordinary balancing sway). All the plots of one signal share a scale, so their heights compare across columns.</li>
+    </ul>
+    <h3>Reading the two columns</h3>
+    <ul>
+      <li><b>Recorded the same way.</b> The simulation's signals are made as the bike records them: the same sensors, the same resolution, 100 samples a second. A difference between the columns is a difference between the bikes, not in how they were measured.</li>
+      <li><b>The commanded drive is reconstructed.</b> The motors do not report where they are being driven to, so in both columns it is worked back from the power they draw. That makes it noisy above about 20 Hz: compare it column to column, not against the measured line.</li>
+      <li><b>Not the same moment.</b> The simulation and the bike are separate runs, and their seconds do not line up. Compare the character of the motion, not individual wiggles.</li>
+      <li><b>Controls.</b> <i>Window</i> sets how many seconds are shown, <i>start</i> slides through the run. Drag across a plot to zoom; double-click to go back.</li>
+    </ul>
   </details>
 </div>
 
@@ -141,8 +183,6 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
   }
   const D = JSON.parse(raw);
   const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  document.getElementById("notes").innerHTML = D.notes.map(([h, items]) =>
-    `<h3>${h}</h3><ul>${items.map((n) => `<li>${n}</li>`).join("")}</ul>`).join("");
   const bar = document.getElementById("bar");
   new ResizeObserver(() => document.documentElement.style.setProperty("--bar-h", bar.offsetHeight + "px")).observe(bar);
   const NOTCHES = Math.round(360 / D.notch);   // whole notches in one roller turn
@@ -153,7 +193,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     S.roll.forEach((v) => v !== null && rollAbs.push(Math.abs(v))));
   rollAbs.sort((a, b) => a - b);
   const ROLL = Math.ceil(rollAbs[Math.floor(0.999 * (rollAbs.length - 1))] || 1);
-  // the same for steer (joint and target) and yaw rate
+  // the same for steer (angle and target) and yaw rate
   function fixedRange(keys) {
     const a = [];
     [...Object.values(D.sims), ...Object.values(D.bikes)].forEach((S) => keys.forEach((k) =>
@@ -448,27 +488,27 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       `<select id="${key}-sel" aria-label="${key} selection">${opts}</select></div>` +
       `<div class="meta" id="${key}-meta"></div>` +
       `<div class="scrub"><span>start</span><input type="range" id="${key}-pos" step="0.01" aria-label="${key} window start"><span id="${key}-pos-v"></span></div></div>` +
-      `<div class="ptitle">roll, deg (one fixed scale for every run)</div>` +
+      `<div class="ptitle">roll, deg</div>` +
       `<div class="lkey"><span>roll-rate spectra 0-25 Hz, peaks above 4 Hz: window, this column (bright) · the other (dim) · whole run</span></div>` +
       badgeRow(key, "r", "roll-rate", true) +
-      `<div id="${key}-roll"></div>` +
-      `<div class="ptitle">yaw less the commanded heading, deg</div>` +
+      `<div class="plot" id="${key}-roll"></div>` +
+      `<div class="ptitle">yaw: heading less its target, deg</div>` +
       `<div class="lkey"><span>yaw-rate spectra 0-25 Hz, peaks above 4 Hz: window, this column (bright) · the other (dim) · whole run</span></div>` +
       badgeRow(key, "y", "yaw-rate", true) +
-      `<div id="${key}-yaw"></div>` +
-      `<div class="ptitle">steer, deg (target dashed)</div>` +
-      `<div class="lkey"><span>steer-rate spectra 0-25 Hz, peaks above 4 Hz: window · joint and target, this column (bright) · the other (dim) · whole run</span></div>` +
+      `<div class="plot" id="${key}-yaw"></div>` +
+      `<div class="ptitle">steer, deg</div>` +
+      `<div class="lkey"><span>steer-rate spectra 0-25 Hz, peaks above 4 Hz: window · angle and target, this column (bright) · the other (dim) · whole run</span></div>` +
       badgeRow(key, "s", "steer-rate") +
-      `<div id="${key}-steer"></div>` +
-      `<div class="ptitle">drive diff velocity, input-shaft rad/s (a − b; command dashed)</div>` +
-      `<div class="lkey"><span>diff-velocity spectra 0-25 Hz, peaks above 4 Hz: window · measured (Present Velocity) and commanded, this column (bright) · the other (dim) · whole run</span></div>` +
+      `<div class="plot" id="${key}-steer"></div>` +
+      `<div class="ptitle">drive difference, motor rad/s</div>` +
+      `<div class="lkey"><span>diff-velocity spectra 0-25 Hz, peaks above 4 Hz: window · measured and commanded, this column (bright) · the other (dim) · whole run</span></div>` +
       badgeRow(key, "d", "diff-velocity") +
-      `<div id="${key}-dv"></div>` +
-      `<div class="ptitle">roller angle, wrapped to one revolution, deg</div>` +
-      `<div class="lkey"><span><span class="swatch" style="border-color:var(--top)"></span> detent line, one per notch (7.5° of ring)</span>` +
+      `<div class="plot" id="${key}-dv"></div>` +
+      `<div class="ptitle">roller angle, wrapped to one turn, deg</div>` +
+      `<div class="lkey"><span><span class="swatch" style="border-color:var(--top)"></span> gear notch</span>` +
       `<span>· roller-rate spectra 0-25 Hz, peaks above 4 Hz: window · position and command, this column (bright) · the other (dim) · whole run</span></div>` +
       badgeRow(key, "", "roller-rate") +
-      `<div class="rolrow"><div id="${key}-rol"></div>` +
+      `<div class="rolrow"><div class="plot" id="${key}-rol"></div>` +
       `<label class="phase"><span>phase</span><input type="range" id="${key}-ph" min="0" max="${NOTCHES - 1}" step="1" value="0" aria-label="${key} roller phase, whole notches"><span id="${key}-ph-v">+0°</span></label></div>`;
     c.sel = el.querySelector(`#${key}-sel`);
     c.pos = el.querySelector(`#${key}-pos`);

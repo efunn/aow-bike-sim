@@ -1,0 +1,35 @@
+# Display names for the ids the site's pages carry. Edit and run
+# `scripts/site.sh build`; no recompute. An id missing here shows as itself,
+# and the build prints a warning naming it.
+#
+# What each name stands for is described in the page's own template
+# ("More info"): keep the two in step when a name changes meaning.
+
+# Trained policies (moves/<id>.yaml), oldest first.
+policies:
+  general_rl_v3_s1: Policy A
+  general_puffer_fixes_72M: Policy B
+  general_puffer_rake20_80M: Policy C
+  general_puffer_a40_v4_80M: Policy D
+
+# Floor runs of the real bike (traces/bike/<id>).
+runs:
+  261024-174349_run: Policy B · Oct 24
+  261024-191558_run: Policy C · Oct 24
+  261025-225207_run: Policy A · Oct 25
+  261026-154111_run_v4_80M: Policy D · Oct 26
+  261026-154338_run_fixes_72M: Policy B · Oct 26
+
+# The drivetrain a policy is simulated on (drivetrain_trace.py's columns).
+drivetrains:
+  its training drivetrain: as trained
+  detent+roller_slop from drivetrain_sawtooth_1024: measured gear notches + roller slop
+  its training drivetrain + wheel play from wheel_play_fit_1026: as trained + wheel play
+  its training plant (sawtooth detent + wheel play, trained in): as trained (gear notches + wheel play)
+  its training plant without the wheel play (sawtooth detent only): as trained, wheel play removed
+
+# Righting-linkage designs (swing_stepthrough.py's DEFAULT).
+designs:
+  V1: V1 · four-bar, flat panels
+  V2: V2 · clamshell, first blade
+  V3: V3 · clamshell, current blade
