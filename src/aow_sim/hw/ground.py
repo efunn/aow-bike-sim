@@ -1,4 +1,21 @@
-"""The ground station: keyboard -> UDP command struct -> the bike.
+"""Ground-station building blocks, and a simple terminal station on top of them.
+
+THE BLOCKS, which any station uses -- the MuJoCo mirror (`run_drive --mirror`,
+the station actually flown) imports them from here:
+
+  * `OperatorState`  the operator's inputs as LEVELS and press counts, and
+                     `packet()`, the command dict `telemetry.encode_command`
+                     puts on the wire. Every key a station offers lands here
+                     first, so all stations send the same command for it.
+  * `BikeAddress`    the bike's name resolved off the frame loop.
+  * `linkage_travel_deg` / `module_travel_deg`   the righting stroke.
+  * `CURRENT_STEP`   the [ / ] step on the righting servo's Goal Current.
+
+Nothing on the BIKE imports this file: `run_bike` only sees the decoded
+packet (`telemetry.decode_command`), so the wire format is the one thing a
+station and the bike share.
+
+THE TERMINAL STATION (`run`, `main`, `decode_keys`), a keyboard in a shell:
 
     python -m aow_sim.hw.ground --host aowbike.local
     python -m aow_sim.hw.ground --host 127.0.0.1     # on the Pi, over ssh
@@ -10,10 +27,9 @@ Teleop is not a substitute: `run_drive.py`'s key handling lives inside MuJoCo's
 viewer callback and needs a rendering host and a compiled model, neither of
 which exists on a Pi or on a bench.
 
-IT IS A TERMINAL PROGRAM, on purpose, and since the MuJoCo mirror
-(`run_drive --mirror`) it is the FALLBACK station, not the main one. Nothing
-on the bike imports it; the mirror imports `OperatorState` from here, which is
-the one reason the file must stay. What it is still for:
+IT IS A TERMINAL PROGRAM, on purpose, and since the mirror it is the
+FALLBACK station, not the main one -- no script launches it. What it is
+still for:
 
   * a station on any machine with Python -- no MuJoCo, no mjpython, no
     display: `--host aowbike.local`;
@@ -70,7 +86,8 @@ eats escape sequences (ssh through something odd, tmux misconfigured).
               comparison mode, see docs/plans/untethered-setup.md
     Enter     ENGAGE: the policy takes the bike once it is upright and
               still. The bike starts in STANDBY when a station connects
-              (policy servos limp, righting live), and the same press
+              (policy servos limp, righting unpowered until 9/4, the
+              triggers or a sit press use it), and the same press
               re-arms after a fall cut; it never leaves standby on its own,
               not even with --auto-rearm                  (also r)
     Backspace DISENGAGE: policy out, its three servos limp, righting
@@ -84,6 +101,9 @@ eats escape sequences (ssh through something odd, tmux misconfigured).
               it to the policy, which folds the blade. Both hand the wings to the
               sequence: the station's own righting goal is dropped, and 9/4
               or the triggers take them back once it is lying or propped
+    p         PARK: the lie-down stopped at the blade -- the bike left
+              PROPPED, drives limp, for Enter to hand back to the policy
+              (the mirror's Home, fn+left); Enter takes a prop up to 15 deg
     q         quit -- and quitting stops the heartbeat: a second later the
               bike cuts (policy servos limp) and WAITS for a station. It no
               longer exits; restart a station and press r to re-arm
@@ -230,6 +250,7 @@ class OperatorState:
         # again, one per press.
         self.lie_downs = 0
         self.get_ups = 0
+        self.parks = 0
         # A LEVEL, like everything in the packet: which controller the
         # operator wants. `controller_actual` is the bike's answer.
         self.controller = "policy"
@@ -320,7 +341,7 @@ class OperatorState:
             self.rearms += 1                 # engage / re-arm
         elif ch in ("\x7f", "\x08", "BACKSPACE"):
             self.stops += 1                  # disengage: policy out
-        elif ch in ("z", "LIE_DOWN", "u", "GET_UP"):
+        elif ch in ("z", "LIE_DOWN", "u", "GET_UP", "p", "PARK"):
             # THE SEQUENCE OWNS THE WINGS FROM HERE: drop this station's goal
             # so the packet stops carrying one, or the bike would snap the
             # crank back to it the moment the sequence let go. 9/4 and the
@@ -333,6 +354,8 @@ class OperatorState:
                 self.psi = _wrap(self.psi_actual)
             if ch in ("z", "LIE_DOWN"):
                 self.lie_downs += 1
+            elif ch in ("p", "PARK"):
+                self.parks += 1
             else:
                 self.get_ups += 1
         elif ch in ("q", "\x03"):          # q or ctrl-C
@@ -377,6 +400,7 @@ class OperatorState:
         out["stop_n"] = self.stops
         out["lie_n"] = self.lie_downs
         out["up_n"] = self.get_ups
+        out["park_n"] = self.parks
         out["controller"] = self.controller
         return out
 

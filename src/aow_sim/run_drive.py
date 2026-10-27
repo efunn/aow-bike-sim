@@ -382,6 +382,14 @@ def main() -> None:
                          "hw/ground.py, no physics. Nothing is simulated -- "
                          "every pose comes from telemetry. Needs mjpython.")
     ap.add_argument("--mirror-port", type=int, default=9910)
+    ap.add_argument("--heading-offset", type=float, default=0.0, metavar="DEG",
+                    help="--mirror: turn the drawn world DEG about vertical "
+                         "(CCW from above) -- bike, path, floor dial -- so it "
+                         "lines up with a camera. Fixed for the session; what "
+                         "is SENT stays in the bike's own frame. In the "
+                         "opening view (azimuth 135) a bike facing the viewer "
+                         "is drawn at 315: with it facing your camera and the "
+                         "HUD reading heading H, use 315 - H")
     ap.add_argument("--no-pad", action="store_true",
                     help="ignore a wired Xbox One pad on USB (--teleop / "
                          "--mirror pick one up by default; "
@@ -925,7 +933,8 @@ def main() -> None:
                            else params["righting"]["module"]["linkage"]
                            if righting_module else None),
                 frame_stats=args.frame_stats, pad=not args.no_pad,
-                pad_righting_dps=args.pad_righting_dps)
+                pad_righting_dps=args.pad_righting_dps,
+                heading_offset_deg=args.heading_offset)
         return
     if args.teleop:
         _teleop(model, params, eq.qpos, frame_stats=args.frame_stats,
@@ -1806,7 +1815,9 @@ MIRROR_KEYS = {265: "UP", 264: "DOWN", 263: "LEFT", 262: "RIGHT",
                257: "ENTER", 259: "BACKSPACE",
                # LIE DOWN / GET UP: PageDown / PageUp, teleop's keys
                # (_KEY_LIE_DOWN, _KEY_GET_UP). The sequence runs on the bike.
-               267: "LIE_DOWN", 266: "GET_UP"}
+               # PARK: Home (fn+left), the lie-down stopped propped on the
+               # blade. Teleop's Home is its style bit; the mirror has none.
+               267: "LIE_DOWN", 266: "GET_UP", 268: "PARK"}
 
 
 # macOS virtual keycodes for the arrows (Carbon kVK_* constants).
@@ -2298,7 +2309,8 @@ def _rec_write(rec, path, params, gen_name, mode):
 def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             v_max: float = 1.2, show_ui: bool = False, travel_deg=None,
             swing_cfg=None, frame_stats=None, pad: bool = False,
-            pad_righting_dps: float = PAD_RIGHTING_DPS) -> None:
+            pad_righting_dps: float = PAD_RIGHTING_DPS,
+            heading_offset_deg: float = 0.0) -> None:
     """Drive the REAL bike, and watch a MuJoCo bike mirror it.
 
     Not a simulation. Nothing is stepped: each frame writes the latest
@@ -2421,6 +2433,13 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
     link = None if frame_stats is None else _LinkStats(frame_stats)
 
     tel: dict = {}
+    # --heading-offset: the DRAWN world turned, nothing sent. Fixed for the
+    # session -- turning it mid-run would swing the floor and the path under
+    # a bike that had not moved.
+    heading_off = float(np.deg2rad(heading_offset_deg))
+    if heading_off:
+        print(f"heading offset {heading_offset_deg:+.1f} deg: the bike's yaw "
+              f"0 is drawn at {heading_offset_deg:+.1f} deg")
     box = {"t_tel": 0.0, "shaft": (0.0, 0.0), "t_tx": 0.0, "t_frame": 0.0,
            "checked": False, "seen": 0, "said": False,
            "off_stroke": False, "fresh": False,
@@ -2513,7 +2532,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             # safe; it lists the SIMULATION bindings, and a group toggle is
             # view state, so it stays live under launch_passive. Letters do
             # work (verified on the real viewer), digits 0-5 do not.
-            got = tel.get("pos")
+            got = T.turned_for_display(tel, heading_off).get("pos")
             if got:
                 origin[0], origin[1] = float(got[0]), float(got[1])
             return
@@ -2549,7 +2568,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             if name in ("9", "4") and op.sitting:
                 print("  busy: the bike's lie-down / get-up owns the wings")
             op.key(name)
-            if name in ("LIE_DOWN", "GET_UP"):
+            if name in ("LIE_DOWN", "GET_UP", "PARK"):
                 # The bike says what it did (or why not) in its event log.
                 v_lat[0] = 0.0
                 ax_v.clear()
@@ -2557,6 +2576,9 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
                 print("lie down sent — the bike runs it; 9/4 / triggers take "
                       "the wings back once it is lying"
                       if name == "LIE_DOWN" else
+                      "park sent — the bike stops PROPPED on the blade, drives "
+                      "limp; Enter / Y hands it back (within 15°)"
+                      if name == "PARK" else
                       "get up sent — the bike stops PROPPED on a blade, drives "
                       "limp; Enter / Y hands it to the policy")
             if name == "BACKSPACE":
@@ -2705,12 +2727,13 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         if link is not None:
             link.frame(time.perf_counter(), box["fresh"], box["t_tel"])
         if tel:
-            box["shaft"] = T.apply_pose(m, d, tel, adr, params,
+            shown = T.turned_for_display(tel, heading_off)
+            box["shaft"] = T.apply_pose(m, d, shown, adr, params,
                                         shaft_angle=box["shaft"], rest_z=rest_z,
                                         dt=dt, swing_pose=swing_pose)
             # AFTER apply_pose and before mj_forward. Only x/y move, so the
             # wheel grounding it just did is untouched.
-            got = tel.get("pos")
+            got = shown.get("pos")
             if got:
                 if pinned[0]:
                     origin[0], origin[1] = float(got[0]), float(got[1])
@@ -2761,7 +2784,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         lk = T.link_text(host, addr.dest,
                          wall - box["t_tel"] if box["seen"] else None, wall,
                          (op.v, v_lat[0], op.psi))
-        st = T.status_text(tel) if tel else ("", "")
+        st = T.status_text(tel, (stow, r_sign)) if tel else ("", "")
         text = tuple("\n".join(x for x in pair if x) for pair in zip(lk, st))
         if text != box["hud"]:
             box["hud"] = text
@@ -2769,8 +2792,9 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
                          mujoco.mjtGridPos.mjGRID_TOPLEFT, *text))
 
     def draw(scn, m, d):
-        cmd = (float(tel.get("cmd_psi", 0.0)),
-               np.asarray(tel.get("cmd_v_world", (0.0, 0.0)), float))
+        shown = T.turned_for_display(tel, heading_off)
+        cmd = (float(shown.get("cmd_psi", 0.0)),
+               np.asarray(shown.get("cmd_v_world", (0.0, 0.0)), float))
         # `on` is a one-element list in teleop so a key can toggle it; the
         # mirror has no reason to hide the dial, which is the whole point.
         # The floor grid is a WORLD reference, and in pinned mode there is no

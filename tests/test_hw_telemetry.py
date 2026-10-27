@@ -88,14 +88,15 @@ def test_the_readout_shows_each_servo_and_puts_an_error_in_place_of_its_line():
     left, right = T.status_text(tel)
     labels, values = left.split("\n"), right.split("\n")
     assert len(labels) == len(values)
-    assert labels[3:] == ["drive_a", "drive_b", "steer", "righting"]
+    assert labels[-4:] == ["drive_a", "drive_b", "steer", "righting"]
     row = dict(zip(labels, values))
     assert "load  +30%" in row["drive_a"] and "+0.30 A" in row["steer"]
     assert row["record"] == "260917-221500_run"
     # 36 = bits 2 and 5: overheating and electrical shock
     assert row["righting"].startswith("HARDWARE ERROR")
     assert T.servo_errors(tel) == {"righting": row["righting"].split(": ", 1)[1]}
-    assert T.status_text(sample())[1].split("\n")[2] == "off"   # not recording
+    off = dict(zip(*(x.split("\n") for x in T.status_text(sample()))))
+    assert off["record"] == "off"                            # not recording
 
 
 def test_a_schema_mismatch_raises_rather_than_rendering_a_wrong_bike():
@@ -722,3 +723,16 @@ def test_a_hold_is_a_row_on_the_readout_while_it_lasts():
     assert "HELD" not in left and "WARN" not in left
     left, right = T.status_text(sample(warn="pack low: 10.4 V"))
     assert "WARN" in left.split("\n") and "10.4 V" in right
+
+
+def test_the_readout_gives_roll_and_the_crank_from_stow_in_the_sits_frame():
+    """To read a prop off by hand: roll, and the crank as swing_sit counts
+    it (from stow, times righting_sign), with its goal."""
+    tel = sample(roll=math.radians(-12.3), righting_pos=math.pi - math.radians(100.6),
+                 righting=math.pi - math.radians(110.0))
+    row = dict(zip(*(x.split("\n") for x in T.status_text(tel, (math.pi, 1.0)))))
+    assert row["roll"] == " -12.3 deg   crank -100.6 deg (goal -110.0)"
+    row = dict(zip(*(x.split("\n") for x in T.status_text(tel, (math.pi, -1.0)))))
+    assert "crank +100.6 deg (goal +110.0)" in row["roll"]
+    row = dict(zip(*(x.split("\n") for x in T.status_text(tel))))
+    assert row["roll"] == " -12.3 deg", "no stow known: roll alone"

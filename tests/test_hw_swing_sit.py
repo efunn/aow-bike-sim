@@ -7,7 +7,7 @@ wire, the fall guard stood aside while it runs, the drives held while the
 policy is off, and everything that must END it (a disengage, a lost link,
 the operator taking the wings back).
 
-WHAT INVALIDATES THIS FILE: the UDP command struct (lie_n / up_n), the
+WHAT INVALIDATES THIS FILE: the UDP command struct (lie_n / up_n / park_n), the
 SwingSit phases or its Command, or BikeRunner's _sit_* methods.
 """
 
@@ -75,6 +75,10 @@ class _Bus:
     def set_righting(self, g):
         self.goal = g
 
+    @property
+    def _righting_goal(self):
+        return self.goal
+
     def set_righting_current(self, n):
         self.calls.append(("current", int(n)))
         return int(n)
@@ -93,7 +97,12 @@ def _runner(roll=0.0, state="engaged"):
                      lower_dps=RB.SIT_DPS, lower_map=RB.LIE_MAP,
                      lower_roll_dps=RB.LIE_ROLL_DPS,
                      lower_roll_acc=RB.LIE_ROLL_ACC, retry_s=None,
-                     pump_s=RB.PUMP_S), bus=_Bus(),
+                     pump_s=RB.PUMP_S, prop_current=RB.PROP_CURRENT,
+                     nudge_dps=RB.NUDGE_DPS,
+                     lift_to_deg=tuple(116.9 if v == "stroke" else v for v in
+                                       (RB.LIFT_TO_DEG["left"],
+                                        RB.LIFT_TO_DEG["right"])),
+                     nudge_to_deg=RB.PROP_ENGAGE_DEG - 0.5), bus=_Bus(),
         guard=RB.FallGuard(),
         torque=True, hold=False, controller="policy",
         link=SimpleNamespace(peer=("192.168.0.114", 5000)), _link_lost=False,
@@ -107,15 +116,20 @@ def _runner(roll=0.0, state="engaged"):
         aid={"drive_a": 0, "drive_b": 1, "steer": 2},
         _sit_gc=None, _sit_steer=None, _sit_steer_t=None, _sit_off=False,
         _sit_psi=0.0,
-        _sit_said="riding", _lie_seen=None, _up_seen=None, said=[], engaged=[])
+        _sit_said="riding", _lie_seen=None, _up_seen=None, _park_seen=None,
+        _rearm_seen=None,
+        _sit_engage_pending=False, said=[], engaged=[])
     r.guard.state = state
     r._event = lambda kind, text: r.said.append((kind, text))
     r._engage = lambda fresh_read=True: r.engaged.append(fresh_read)
+    r._right_armed = False
     for name in ("_sit_owns", "_state", "_sit_from", "_sit_start",
-                 "_sit_release", "_sit_step", "_sit_steer_step",
+                 "_sit_release", "_sit_step", "_sit_steer_step", "_sit_engage",
+                 "_arm_righting", "_resting_crank", "_prop_if_resting",
+                 "_rearm_from",
                  "_hold_reason", "_watch_errors"):
         setattr(r, name, getattr(RB.BikeRunner, name).__get__(r))
-    r._sit_from(0, 0)                    # first contact: no press
+    r._sit_from(0, 0, 0)                 # first contact: no press
     return r
 
 
@@ -197,6 +211,7 @@ def _propped(r):
     r._sit_from(0, 1)
     assert r.sit.phase == "lift" and r.guard.state == "engaged"
     assert ("arm", (1, 2, 3)) in r.bus.calls
+    assert ("arm", (4,)) in r.bus.calls, "the righting servo, powered by the press"
     _run(r, lambda r: r.sit.phase == "propped",
          lambda p: 80.0 if r._righting_pos - STOW < 1.5 else 6.0)
 
@@ -235,6 +250,7 @@ def test_enter_while_propped_but_still_swinging_is_refused_and_said():
     _propped(r)
     r._sit_step()
     r._roll = math.radians(20.0)
+    r._roll_rate = math.radians(40.0)    # still: it would be nudged
     r.guard.request_rearm()
     r._sit_step()
     assert r._state() == "propped" and "engage ignored" in r.said[-1][1]
@@ -392,3 +408,240 @@ def test_the_current_keys_reach_a_sequence_that_owns_the_bike():
     r._apply_operator({"righting_current": 380})        # and mid-lift
     r._sit_step()
     assert r.bus.calls[-1] == ("current", 380)
+
+
+# --- park, and the nudge on Enter (2026-10-27) -------------------------------
+
+def test_park_and_up_and_lie_presses_round_trip_and_a_v4_command_has_no_park():
+    op = OperatorState(travel_rad=2.0)
+    op.key("PARK"), op.key("p"), op.key("z")
+    got = T.decode_command(T.encode_command(op.packet()))
+    assert (got["park_n"], got["lie_n"], got["up_n"]) == (2, 1, 0)
+    v4 = T._CMD_V4.pack(4, 5, 1, 0, 2, 3, 370, 0, 12340, T.ABSENT, T.ABSENT)
+    got = T.decode_command(v4)
+    assert (got["lie_n"], got["up_n"]) == (2, 3) and "park_n" not in got
+
+
+@pytest.mark.parametrize("side", [1.0, -1.0])
+def test_park_stops_propped_on_the_blade_and_enter_hands_it_back(side):
+    r = _runner(roll=side * 0.5)
+    r._sit_from(0, 0, 1)
+    assert r.sit.phase == "stop" and r._state() == "sit" and r.sit.side == side
+    lean = {"stop": 0, "deploy": 0, "kick": 4, "settle": 6}
+    cmds = _run(r, lambda r: r.sit.phase == "propped",
+                lambda p: side * lean[p])
+    assert all(c is None or c.crank * side >= 0 for c in cmds), \
+        "the blade on the side it leans, never through centre: no lower"
+    r._roll = math.radians(side * 6.0)
+    cmd = r._sit_step()
+    assert cmd.limp and r.guard.state == "standby", "drives limp, as a get-up"
+    assert r.bus.goal == pytest.approx(STOW + side * np.radians(110.0))
+    assert r.bus.calls[-1] == ("torque", False, (1, 2))
+    r.guard.request_rearm()
+    assert r._sit_step().policy and r.sit.phase == "balance"
+    assert r.guard.state == "engaged"
+
+
+def test_park_is_refused_unless_the_policy_is_driving():
+    r = _runner(state="standby")
+    r._sit_from(0, 0, 1)
+    assert r.sit.phase == "riding" and "not driving" in r.said[-1][1]
+
+
+@pytest.fixture
+def nudge_on(monkeypatch):
+    """The nudge is OFF on the bike (RB.NUDGE); these tests switch it on."""
+    monkeypatch.setattr(RB, "NUDGE", True)
+
+
+def _sagging(side, sag_deg=17.0, per_deg=1.0):
+    """Propped on `side`, leaning `sag_deg` onto the blade; every degree the
+    crank goes past the lean brings the roll `per_deg` in."""
+    r = _runner(roll=side * 80.0, state="cut")
+    r._sit_from(0, 1)
+    _run(r, lambda r: r.sit.phase == "propped",
+         lambda p: side * (80.0 if side * (r._righting_pos - STOW) < 1.5
+                           else 6.0))
+    lean = math.radians(110.0)
+
+    def roll(_phase):
+        past = math.degrees(side * (r._righting_pos - STOW) - lean)
+        return side * (sag_deg - per_deg * max(past, 0.0))
+    r._roll = math.radians(roll(None))
+    r._sit_step()
+    return r, roll
+
+
+@pytest.mark.parametrize("side", [1.0, -1.0])
+def test_enter_on_a_sagging_prop_nudges_the_blade_out_then_engages(side, nudge_on):
+    """Run 261026-175020: 29.6 s propped at -13.0 deg, crank 10.5 deg short of
+    its goal at 0.33 A -- droop, servo still holding, and Enter refused."""
+    r, roll = _sagging(side)
+    r.guard.request_rearm()
+    r._sit_step()
+    assert r.sit.phase == "nudge" and any("nudging" in t for _, t in r.said)
+    _run(r, lambda r: r.sit.phase != "nudge", roll)
+    assert r.sit.nudged
+    r._sit_step()                        # the pending engage
+    assert r.sit.phase == "balance" and r.guard.state == "engaged"
+    assert r.engaged == [False]
+    assert abs(math.degrees(r._roll)) <= RB.PROP_ENGAGE_DEG - 0.5 + 1e-6
+    past = math.degrees(side * r.sit._hold - math.radians(110.0))
+    assert 0.0 < past <= 116.9 - 110.0 + 1e-6, "out, never past the stroke"
+    assert r.sit._hold == pytest.approx(r.sit.side * r.sit._prop), \
+        "the hand-off starts from the hold, which is where the crank was"
+
+
+def test_the_nudge_is_slow(nudge_on):
+    r, roll = _sagging(1.0)
+    r.guard.request_rearm()
+    r._sit_step()
+    goals = [r.bus.goal]
+    for _ in range(50):
+        r._roll = math.radians(roll(None))
+        r._sit_step()
+        goals.append(r.bus.goal)
+        r.data.time += 0.01
+    rate = np.abs(np.diff(goals)).max() / 0.01
+    assert 0 < rate <= math.radians(RB.NUDGE_DPS) + 1e-9
+
+
+def test_a_nudge_that_cannot_get_it_in_goes_back_to_the_lean_and_says_so(nudge_on):
+    r, roll = _sagging(-1.0, per_deg=0.0)      # nothing it does helps
+    r.guard.request_rearm()
+    r._sit_step()
+    _run(r, lambda r: r.sit.phase != "nudge", roll)
+    assert r.sit.failed == "nudge"
+    r._sit_step()
+    assert r._state() == "propped" and r.engaged == []
+    assert "did not get it in" in r.said[-1][1]
+    assert r.bus.goal == pytest.approx(STOW - math.radians(110.0))
+
+
+def test_enter_on_a_prop_leaning_away_from_its_blade_is_not_nudged(nudge_on):
+    r, _ = _sagging(1.0)
+    r._roll = math.radians(-17.0)
+    r.guard.request_rearm()
+    r._sit_step()
+    assert r.sit.phase == "propped" and "engage ignored" in r.said[-1][1]
+
+
+def test_a_prop_lets_the_crank_go_and_the_hand_off_holds_it_where_it_is():
+    """The linkage holds a prop unpowered (user, 2026-10-27); held, the servo
+    drew 0.2-0.35 A for nothing. Enter then holds the blade from where the
+    crank sits, not from the goal it was let go at."""
+    r = _runner(roll=80.0, state="cut")
+    _propped(r)
+    for _ in range(150):                 # 1.5 s: past limp_s
+        r._sit_step()
+        r.data.time += 0.01
+    assert r.bus.calls[-1] == ("current", 0)
+    assert ("torque", False, (1, 2)) in r.bus.calls, "drives limp, steer on"
+    r._righting_pos = STOW + math.radians(101.0)     # settled under load
+    r._roll = math.radians(6.0)
+    r.guard.request_rearm()
+    n = len(r.bus.calls)
+    cmd = r._sit_step()
+    assert cmd.policy and r.sit.phase == "balance"
+    assert cmd.crank == pytest.approx(math.radians(101.0), abs=1e-6)
+    assert ("current", 600) in r.bus.calls[n:], "the current back for the hand-off"
+
+
+@pytest.mark.parametrize("roll", [14.8, -13.6])
+def test_enter_takes_a_prop_out_to_fifteen_degrees(roll):
+    """The props measured by hand, crank unpowered (user, 2026-10-27): right
+    +14.8 at crank +94, left -13.6 at -96.9. Outside the fall re-arm's 12,
+    inside the prop's own window."""
+    side = math.copysign(1.0, roll)
+    r = _runner(roll=side * 80.0, state="cut")
+    r._sit_from(0, 1)
+    _run(r, lambda r: r.sit.phase == "propped",
+         lambda p: side * (80.0 if side * (r._righting_pos - STOW) < 1.5 else 6.0))
+    r._roll = math.radians(roll)
+    r._sit_step()
+    r.guard.request_rearm()
+    assert r._sit_step().policy and r.sit.phase == "balance"
+
+
+def test_enter_past_the_prop_window_is_refused_with_the_nudge_off(monkeypatch):
+    monkeypatch.setattr(RB, "NUDGE", False)
+    r, _ = _sagging(1.0, sag_deg=16.0)
+    r.guard.request_rearm()
+    r._sit_step()
+    assert r.sit.phase == "propped" and "inside 15 deg" in r.said[-1][1]
+
+
+@pytest.mark.parametrize("crank_deg,roll", [(-96.9, -13.6), (94.0, 14.8)])
+def test_enter_on_a_bike_set_on_its_blade_by_hand_hands_off_as_from_a_prop(
+        crank_deg, roll):
+    """Standby, crank unpowered and moved by hand to a prop the user measured
+    (2026-10-27): Enter takes it through the prop's 15 deg window with the
+    blade held where it is, not the fall guard's 12."""
+    r = _resting(crank_deg=crank_deg, roll=roll)
+    r._rearm_from(0)                     # first contact: recorded only
+    r._rearm_from(1)                     # Enter
+    assert r.sit.phase == "propped" and r.guard.consent
+    cmd = r._sit_step()
+    assert cmd.policy and r.sit.phase == "balance" and r.guard.state == "engaged"
+    assert cmd.crank == pytest.approx(math.radians(crank_deg), abs=1e-6)
+    assert ("arm", (4,)) in r.bus.calls and ("arm", (1, 2, 3)) in r.bus.calls
+
+
+def test_enter_with_the_wings_stowed_stays_the_fall_guards():
+    r = _resting(crank_deg=0.0, roll=13.0)
+    r._rearm_from(0)
+    r._rearm_from(1)
+    assert r.sit.phase == "riding" and r.guard.consent, "left to FallGuard's 12"
+
+
+def test_a_let_go_prop_sagged_past_the_window_is_nudged_back_in_and_handed_off(
+        nudge_on):
+    """Run 261027-143131: the left get-ups settled at -15.3 to -15.7 deg with
+    the crank let go and back-driven ~3 deg (-97.5 -> -94.4); powered, the
+    same side propped at -12.3 to -13.0. Enter powers it and takes that back."""
+    r = _runner(roll=-80.0, state="cut")
+    r._sit_from(0, 1)
+    _run(r, lambda r: r.sit.phase == "propped",
+         lambda p: -80.0 if r._righting_pos - STOW > -1.5 else -6.0)
+    for _ in range(150):                         # let go
+        r._sit_step()
+        r.data.time += 0.01
+    r._righting_pos = STOW - math.radians(94.4)  # sagged
+    r._roll = math.radians(-15.6)
+    assert r.bus.calls[-1] == ("current", 0)
+    r.guard.request_rearm()
+    r._sit_step()
+    assert r.sit.phase == "nudge" and ("current", 600) in r.bus.calls[-3:]
+
+    def roll(_p):      # the crank's goal coming back out takes the sag back
+        out = math.degrees(-(r.bus.goal - STOW)) - 94.4
+        return -(15.6 - min(max(out, 0.0), 3.0))
+    _run(r, lambda r: r.sit.phase != "nudge", roll)
+    r._sit_step()
+    assert r.sit.phase == "balance" and r.guard.state == "engaged"
+
+
+@pytest.mark.parametrize("side,to", [(-1.0, 116.9), (1.0, 110.0)])
+def test_the_lift_pushes_to_its_sides_target_and_a_left_style_stall_still_props(
+        side, to):
+    """The left lifts stalled at crank 96-99, roll 14-16, with the push
+    easing off against a 110 goal (runs 261027-143131, -144242). The goal
+    now ramps to the stroke; the stall is still a prop, not BLOCKED, since
+    both checks are against the 110 lean."""
+    r = _runner(roll=side * 80.0, state="cut")
+    r._sit_from(0, 1)
+    goals = []
+    for _ in range(400):
+        u = side * (r._righting_pos - STOW)
+        r._roll = math.radians(side * (80.0 if u < 1.5 else 15.5))
+        r._sit_step()
+        goals.append(side * (r.bus.goal - STOW))
+        # the crank follows its goal up to the left side's stall, no further
+        r._righting_pos = STOW + side * min(side * (r.bus.goal - STOW),
+                                            math.radians(96.9))
+        r.data.time += 0.01
+        if r.sit.phase != "lift":
+            break
+    assert max(goals) == pytest.approx(math.radians(to), abs=1e-6), \
+        "left to the stroke, right to the lean (run 261027-145541)"
+    assert r.sit.phase == "propped" and r.sit.failed is None

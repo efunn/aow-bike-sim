@@ -297,9 +297,13 @@ def link_text(host: str, dest, age_s: float | None, wall_s: float,
     return "link\nsending", f"{link}\n{you}"
 
 
-def status_text(tel: dict) -> tuple[str, str]:
+def status_text(tel: dict, crank_ref: tuple | None = None) -> tuple[str, str]:
     """The station's readout: (labels, values), one line each, for the
     viewer's two-column text overlay. Pure, so it is tested without a window.
+
+    `crank_ref` = (stow [rad], sign): with it, the righting servo reads as
+    the CRANK angle from stow -- the swing-sit's own frame, + puts the right
+    blade down -- beside the roll, to read a prop off by hand.
 
     What is here is what the operator cannot see by looking at the bike: the
     pack, the loop's health, which record this is going into, and per servo
@@ -325,7 +329,22 @@ def status_text(tel: dict) -> tuple[str, str]:
     q = tel.get("qos")
     row("pack", f"{tel.get('volts', float('nan')):.1f} V   jitter "
                 f"{tel.get('jitter_ms') or 0:.2f} ms   qos {'-' if q is None else q}")
+    if tel.get("psi") is not None:
+        # The bike's own yaw, in ITS frame (no --heading-offset): the number
+        # to read with the bike facing a camera, to choose that offset.
+        import math
+        row("heading", f"{math.degrees(float(tel['psi'])) % 360:5.1f} deg")
     row("record", tel.get("run") or "off")
+    if tel.get("roll") is not None:
+        import math
+        line = f"{math.degrees(float(tel['roll'])):+6.1f} deg"
+        pos, goal = tel.get("righting_pos"), tel.get("righting")
+        if crank_ref is not None and pos is not None:
+            stow, sign = crank_ref
+            line += f"   crank {math.degrees((float(pos) - stow) * sign):+6.1f} deg"
+            if goal is not None:
+                line += f" (goal {math.degrees((float(goal) - stow) * sign):+6.1f})"
+        row("roll", line)
     log = tel.get("log") or []
     if log:
         row("bike", str(log[-1][2]))
@@ -344,7 +363,7 @@ def status_text(tel: dict) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# The OTHER direction: station -> bike, as 16 packed bytes (v4).
+# The OTHER direction: station -> bike, as 17 packed bytes (v5).
 #
 #   byte  0      version (COMMAND_VERSION)
 #   byte  1      rearm_n, uint8 -- a press COUNT, wraps at 256; the bike acts
@@ -352,11 +371,12 @@ def status_text(tel: dict) -> tuple[str, str]:
 #   byte  2      stop_n, uint8 -- disengage presses, the same way (v3)
 #   byte  3      controller, uint8 -- CONTROLLERS index: 0 policy, 1 lqr (v2)
 #   bytes 4-5    lie_n, up_n, uint8 -- lie-down / get-up presses (v4)
-#   bytes 6-9    v_cmd_world x, y     int16  [mm/s]    +-32.7 m/s
-#   bytes 10-11  psi_cmd, WRAPPED     int16  [1e-4 rad]  +-pi fits in +-31416;
+#   byte  6      park_n, uint8 -- park presses (v5)
+#   bytes 7-10   v_cmd_world x, y     int16  [mm/s]    +-32.7 m/s
+#   bytes 11-12  psi_cmd, WRAPPED     int16  [1e-4 rad]  +-pi fits in +-31416;
 #                ABSENT = the station does not know the bike's heading yet
-#   bytes 12-13  righting_rad         int16  [1e-3 rad]  +-32.7 rad, ~5 turns
-#   bytes 14-15  righting_current     int16  [raw counts]
+#   bytes 13-14  righting_rad         int16  [1e-3 rad]  +-32.7 rad, ~5 turns
+#   bytes 15-16  righting_current     int16  [raw counts]
 #
 # v2 (2026-09-22) added the controller byte. A v1 datagram (12 B, no
 # controller) still decodes -- with no `controller` key, which the bike reads
@@ -382,12 +402,15 @@ def status_text(tel: dict) -> tuple[str, str]:
 # v4 (2026-10-26): `lie_n` and `up_n`, lie-down and get-up presses for the
 # swing-sit sequence (control/swing_sit.py, run on the bike), counts again --
 # bytes 4 and 5, so everything after them moves up two.
-COMMAND_VERSION = 4
-_CMD = __import__("struct").Struct("<BBBBBBhhhhh")
+# v5 (2026-10-27): `park_n`, the park presses (SwingSit.park: a lie-down
+# that stops propped on the blade), byte 6.
+COMMAND_VERSION = 5
+_CMD = __import__("struct").Struct("<BBBBBBBhhhhh")
+_CMD_V4 = __import__("struct").Struct("<BBBBBBhhhhh")
 _CMD_V3 = __import__("struct").Struct("<BBBBhhhhh")
 _CMD_V2 = __import__("struct").Struct("<BBBhhhhh")
 _CMD_V1 = __import__("struct").Struct("<BBhhhhh")
-COMMAND_BYTES = _CMD.size          # 16
+COMMAND_BYTES = _CMD.size          # 17
 ABSENT = -32768
 # What the operator can ask the bike to fly. The index is the wire value.
 CONTROLLERS = ("policy", "lqr")
@@ -416,6 +439,7 @@ def encode_command(pkt: dict) -> bytes:
                      int(pkt.get("stop_n", 0)) & 0xFF, ctl,
                      int(pkt.get("lie_n", 0)) & 0xFF,
                      int(pkt.get("up_n", 0)) & 0xFF,
+                     int(pkt.get("park_n", 0)) & 0xFF,
                      _i16(vx * 1e3), _i16(vy * 1e3),
                      ABSENT if psi is None else _i16(psi * 1e4),
                      ABSENT if r is None else _i16(r * 1e3),
@@ -432,6 +456,7 @@ def decode_command(data: bytes) -> dict:
     ver = data[0] if data else None
     stop = None                       # v1/v2 carried no disengage
     lie = up = None                   # v1-v3 carried no swing-sit
+    park = None                       # v1-v4 carried no park
     if ver == 1 and len(data) == _CMD_V1.size:
         _, n, vx, vy, psi, r, cur = _CMD_V1.unpack(data)
         ctl = None                    # v1 carried no controller request
@@ -439,9 +464,11 @@ def decode_command(data: bytes) -> dict:
         _, n, ctl, vx, vy, psi, r, cur = _CMD_V2.unpack(data)
     elif ver == 3 and len(data) == _CMD_V3.size:
         _, n, stop, ctl, vx, vy, psi, r, cur = _CMD_V3.unpack(data)
+    elif ver == 4 and len(data) == _CMD_V4.size:
+        _, n, stop, ctl, lie, up, vx, vy, psi, r, cur = _CMD_V4.unpack(data)
     elif ver == COMMAND_VERSION and len(data) == COMMAND_BYTES:
-        _, n, stop, ctl, lie, up, vx, vy, psi, r, cur = _CMD.unpack(data)
-    elif ver in (1, 2, 3, COMMAND_VERSION):
+        _, n, stop, ctl, lie, up, park, vx, vy, psi, r, cur = _CMD.unpack(data)
+    elif ver in (1, 2, 3, 4, COMMAND_VERSION):
         raise CommandFormatError(f"{len(data)} B is not a v{ver} command")
     else:
         raise CommandFormatError(
@@ -453,6 +480,8 @@ def decode_command(data: bytes) -> dict:
         out["stop_n"] = stop
     if lie is not None:
         out["lie_n"], out["up_n"] = lie, up
+    if park is not None:
+        out["park_n"] = park
     if ctl is not None:
         out["controller"] = CONTROLLERS[ctl]
     if psi != ABSENT:
@@ -631,6 +660,31 @@ def front_roll_speed(tel: dict, params: dict) -> float:
     delta = float(tel.get("steer", 0.0))
     theta = math.atan2(math.cos(rake) * math.sin(delta), math.cos(delta))
     return v_lon * math.cos(theta) + v_lat * math.sin(theta)
+
+
+def turned_for_display(tel: dict, offset: float) -> dict:
+    """A copy of `tel` with the world turned `offset` [rad] about +z (CCW
+    seen from above): attitude, position, velocities, the commanded heading
+    and velocity. For DRAWING only -- the station's own command stays in the
+    bike's frame, so `psi` (what `/` re-aims at) is left alone, and the gyro
+    is body-frame and needs nothing. `offset` 0 returns `tel` itself."""
+    if not offset:
+        return tel
+    import math
+    c, s = math.cos(offset), math.sin(offset)
+    out = dict(tel)
+    for key in ("pos", "v_world", "cmd_v_world"):
+        if key in tel:
+            x, y = tel[key]
+            out[key] = [c * x - s * y, s * x + c * y]
+    if "quat" in tel:                      # q_z(offset) * q, (w, x, y, z)
+        w, x, y, z = tel["quat"]
+        hc, hs = math.cos(offset / 2), math.sin(offset / 2)
+        out["quat"] = [hc * w - hs * z, hc * x - hs * y,
+                       hc * y + hs * x, hc * z + hs * w]
+    if "cmd_psi" in tel:
+        out["cmd_psi"] = float(tel["cmd_psi"]) + offset
+    return out
 
 
 def apply_pose(model, data, tel: dict, adr: PoseAdr, params: dict,

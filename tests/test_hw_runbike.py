@@ -182,6 +182,7 @@ def _bike_hearing(peer="A", lost=False):
                         _servo_fault=False, _errs={}, said=[])
     r._hold_reason = lambda: RB.BikeRunner._hold_reason(r)
     r._event = lambda kind, text: r.said.append((kind, text))
+    r._prop_if_resting = lambda: None    # no righting servo here
     return r
 
 
@@ -386,7 +387,7 @@ def test_the_viewer_and_the_terminal_share_one_command_model():
     from aow_sim.run_drive import MIRROR_KEYS
     from aow_sim.hw.ground import OperatorState
     handled = {"UP", "DOWN", "LEFT", "RIGHT", "/", " ", "9", "4", "[", "]",
-               "r", "q", "ENTER", "BACKSPACE", "LIE_DOWN", "GET_UP"}
+               "r", "q", "ENTER", "BACKSPACE", "LIE_DOWN", "GET_UP", "PARK"}
     assert set(MIRROR_KEYS.values()) <= handled, (
         f"unhandled: {set(MIRROR_KEYS.values()) - handled}")
     # and every one of them actually moves the state
@@ -394,10 +395,10 @@ def test_the_viewer_and_the_terminal_share_one_command_model():
         op = OperatorState(travel_rad=1.0)
         op.sync({"state": "engaged", "psi": 0.3})   # the bike has said where
         before = (op.v, op.psi, op.pos, op.righting_current, op.rearms,
-                  op.stops, op.lie_downs, op.get_ups, op.quit)
+                  op.stops, op.lie_downs, op.get_ups, op.parks, op.quit)
         op.key(name)
         after = (op.v, op.psi, op.pos, op.righting_current, op.rearms,
-                 op.stops, op.lie_downs, op.get_ups, op.quit)
+                 op.stops, op.lie_downs, op.get_ups, op.parks, op.quit)
         if name not in (" ", "/"):        # stop from a standstill is a no-op
             assert before != after, f"{name!r} changed nothing"
 
@@ -621,6 +622,8 @@ def _runner(torque=True, age=0.0):
     r._hold_reason = lambda: RB.BikeRunner._hold_reason(r)
     r.params = {"control": {"onboard": {"righting_stow_deg": 180.0}}}
     r._stow_if_unset = RB.BikeRunner._stow_if_unset.__get__(r)
+    r._right_armed, r._righting_pos = False, None
+    r._arm_righting = RB.BikeRunner._arm_righting.__get__(r)
     return r
 
 
@@ -917,9 +920,9 @@ def test_a_latched_error_is_rebooted_away_at_startup():
 
 # --- the packed command (hw/telemetry.encode_command) ----------------------
 
-def test_the_command_is_sixteen_bytes_and_round_trips():
+def test_the_command_is_seventeen_bytes_and_round_trips():
     """v3 (2026-10-20) added `stop_n`, the disengage count: 13 -> 14 B; v4
-    (2026-10-26) `lie_n` / `up_n`: 16 B."""
+    (2026-10-26) `lie_n` / `up_n`: 16 B; v5 (2026-10-27) `park_n`: 17 B."""
     from aow_sim.hw import telemetry as T
     op = OperatorState(travel_rad=2.4)
     op.v, op.psi = 0.37, 1.234
@@ -927,7 +930,7 @@ def test_the_command_is_sixteen_bytes_and_round_trips():
     op.key("BACKSPACE"), op.key("BACKSPACE")
     pkt = op.packet()
     wire = T.encode_command(pkt)
-    assert len(wire) == T.COMMAND_BYTES == 16
+    assert len(wire) == T.COMMAND_BYTES == 17
     assert T.decode_command(wire)["stop_n"] == pkt["stop_n"] == 2
     assert pkt["controller"] == "lqr" and T.decode_command(wire)["controller"] == "lqr"
     got = T.decode_command(wire)
@@ -1345,6 +1348,7 @@ def test_an_engage_sends_uncommanded_wings_to_stow():
     r.bus = _Bus(id_right=4)
     RB.BikeRunner._on_guard_event(r, "rearm")
     assert r.bus._righting_goal == pytest.approx(math.pi)
+    assert ("arm", (4,)) in r.bus.calls, "unpowered in standby: powered here"
 
 
 def test_an_engage_leaves_wings_the_station_has_commanded():
@@ -1359,3 +1363,38 @@ def test_no_righting_servo_no_stow():
     r = _runner(torque=True)
     RB.BikeRunner._on_guard_event(r, "rearm")
     assert r.bus._righting_goal is None
+
+
+def test_the_mirrors_heading_offset_turns_what_is_drawn_and_nothing_sent():
+    """--heading-offset: attitude, position, velocities and the command dial
+    turn together; `psi`, which the station re-aims its command at, does not."""
+    from aow_sim.hw import telemetry as T
+    from aow_sim.hw.run_bike import _rpy
+    yaw, off = math.radians(20.0), math.radians(90.0)
+    q = [math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)]
+    tel = {"quat": q, "pos": [1.0, 0.0], "v_world": [0.0, 0.5], "psi": yaw,
+           "cmd_psi": yaw, "cmd_v_world": [0.3, 0.0]}
+    assert T.turned_for_display(tel, 0.0) is tel
+    got = T.turned_for_display(tel, off)
+    assert _rpy(got["quat"])[2] == pytest.approx(yaw + off)
+    assert got["pos"] == pytest.approx([0.0, 1.0])
+    assert got["v_world"] == pytest.approx([-0.5, 0.0])
+    assert got["cmd_v_world"] == pytest.approx([0.0, 0.3])
+    assert got["cmd_psi"] == pytest.approx(yaw + off)
+    assert got["psi"] == yaw and tel["pos"] == [1.0, 0.0], "a copy, psi kept"
+
+
+def test_the_righting_servo_is_powered_at_first_use_holding_where_it_is():
+    """In standby it is left unpowered, to move by hand; the first drive
+    arms it once, with its goal where the crank was left."""
+    r = _runner(torque=True)
+    r.bus = _Bus(id_right=4)
+    r._righting_pos = 2.2
+    r._arm_righting()
+    assert r.bus.calls == [("arm", (4,))] and r.bus._righting_goal == 2.2
+    r._arm_righting()
+    assert r.bus.calls == [("arm", (4,))], "once"
+    r = _runner(torque=False)
+    r.bus = _Bus(id_right=4)
+    r._arm_righting()
+    assert r.bus.calls == [], "--no-torque never arms"

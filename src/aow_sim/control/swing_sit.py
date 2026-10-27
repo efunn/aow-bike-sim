@@ -93,9 +93,44 @@ stops there:
              40-44 % none. On the bike (run 261026-195319) 0 of 2, and the
              second tripped the servo's overload: OFF there (run_bike
              PUMP_S 0), kept for another go.
+    LIFT_TO (`lift_to_deg`, None: the lean): where the no-hand-off lift's
+             goal ramps to, past the lean so the push holds up to the end.
+             Measured on the bike (runs 261027-143131, -144242, left x5):
+             at 100 % PWM through crank 90, then falling to 577-695 of 885
+             as the crank closed on a 110 goal, stalling at 96-99 with the
+             roll at 14-16 -- the position loop easing off, not the motor
+             at its limit. The prop is still the lean, and the blocked lag
+             and prop tolerance are measured against the lean, not this.
+             The full stroke is the safe ceiling: there the blade meets a
+             level floor with the bike upright. A (left, right) PAIR sets it
+             per side: at the stroke the right side reached its prop at
+             -67 to -97 deg/s of roll and went over twice in four (run
+             261027-145541), at 110 at -21 / -35 and stayed.
     propped  holding. The drives LIMP (`Command.limp`), the blade at
-             `lean_deg`. Left by `engage()`, the operator's go-ahead, into
+             `lean_deg`, its Goal Current ramped over `limp_s` to
+             `prop_current` (1: held; the bike uses 0 -- the linkage holds
+             a prop unpowered). Left by `engage()`, the operator's go-ahead, into
              `balance` and `retract` as above -- or by `lie_from_prop()`.
+
+PARK (`park`): the lie-down's stop, deploy, kick and settle, then
+`propped` instead of `lower` -- the bike left standing on wheels + blade,
+drives limp, for Enter to hand back to the policy. The same `propped` a
+get-up ends in, so everything below applies to it.
+
+NUDGE (`nudge`, from `propped`): a prop can sag past the hand-off window
+with the servo still holding -- position droop, not a cut: 13 deg for
+29.6 s on the bike's left with the crank 10.5 deg short of its goal at
+0.33 A against 0.785 (run 261026-175020). The crank goal ramps OUT at
+`nudge_dps`, never past the full stroke, until the bike leans no more
+than `nudge_to_deg` onto the blade and `ready_for_policy` holds; then
+`propped` again, holding the crank where it IS (the ramped goal can be
+~15 deg ahead of it, and `balance` eases the blade from the hold), and
+`nudged` is True. Not there within `nudge_s`: back to the lean, `failed` =
+"nudge". Only for a bike leaning ONTO its blade: pushing a bike leaning
+away would push it further over. On the bike (run 261027-135627, left x3)
+the goal reached the stroke in 1.4 s and the crank moved under 2 deg, at
+0.48-0.51 A of 0.785: the position loop's gain, again, ~30 mA per degree
+of error. Best roll 11.9.
 
 DOWN FROM A PROP (`lie_from_prop`): a bike already resting on a blade --
 `propped`, or powered up that way -- needs no stop, deploy or kick. It
@@ -152,7 +187,7 @@ class Command:
 class SwingSit:
     #: phases in which the sequence owns the bike
     ACTIVE = ("stop", "deploy", "kick", "settle", "lower", "limp", "lift", "pump",
-              "balance", "retract")
+              "balance", "retract", "nudge")
 
     def __init__(self, deploy_rad: float, *,
                  lean_deg: float = 110.0, deploy_s: float = 0.6,
@@ -174,7 +209,9 @@ class SwingSit:
                  hand_off: bool = True, block_deg: float = 20.0,
                  block_move_deg: float = 3.0, block_s: float = 0.5,
                  prop_tol_deg: float = 20.0, pump_s: float = 0.0,
-                 pump_ease: float = 0.0):
+                 pump_ease: float = 0.0, prop_current: float = 1.0,
+                 nudge_dps: float = 5.0, lift_to_deg: float | None = None,
+                 nudge_to_deg: float | None = None, nudge_s: float = 4.0):
         self.deploy = float(deploy_rad)
         self.lean = np.deg2rad(lean_deg)
         self.deploy_s, self.kick = deploy_s, kick
@@ -199,6 +236,23 @@ class SwingSit:
         self.pump_s, self.pump_ease = pump_s, pump_ease
         self._pump_from, self._pump_used, self._push = 0.0, 0.0, True
         self.prop_tol = np.deg2rad(prop_tol_deg)
+        self.nudge_rate = np.deg2rad(nudge_dps)
+        # 0.5 deg inside the hand-off window by default: the AHRS reads
+        # roll to 0.014 deg RMS at rest (sensor-workstream.md, 08-27), and
+        # a 2 deg margin turned away a nudge that reached 11.9 on the bike.
+        self.nudge_to = np.deg2rad(recover_deg - 0.5 if nudge_to_deg is None
+                                   else nudge_to_deg)
+        self.nudge_s = nudge_s
+        self.prop_current = float(prop_current)
+        # Per side, keyed by `side` (-1 left, +1 right).
+        pair = (lift_to_deg if isinstance(lift_to_deg, (tuple, list))
+                else (lift_to_deg, lift_to_deg))
+        self.lift_to = {k: self.lean if v is None else float(np.deg2rad(v))
+                        for k, v in zip((-1.0, 1.0), pair)}
+        self._prop = self.lean      # the crank's prop [side frame]
+        self._nudge_from = self.lean
+        self.nudged = False
+        self._park = False          # this lie-down stops at `propped`
         self._block_t = None
         self.failed = None          # why the last lift came back down
         self._retry = False         # lying after a failed lift: try again
@@ -236,7 +290,42 @@ class SwingSit:
         self.side = float(side if side is not None else (np.sign(roll) or 1.0))
         self.aborted = False
         self._retry = False
+        self._park = False
+        self._prop = self.lean
         self._go("stop", t)
+
+    def park(self, t: float, roll: float = 0.0, side: float | None = None) -> None:
+        """Lie down as far as the blade and stop there, `propped`: the
+        lie-down without its `lower`. Sides as `lie_down`."""
+        self.lie_down(t, roll, side)
+        self._park = True
+
+    def nudge(self, t: float, crank: float) -> None:
+        """`propped` -> `nudge`: ramp the blade out from where the crank's
+        goal is, to bring a sagging prop inside the hand-off window."""
+        if self.phase != "propped":
+            raise RuntimeError(f"nudge from {self.phase}, not propped")
+        # From the crank when it was let go (it may have settled anywhere),
+        # from the held goal when it was not (the crank droops behind it).
+        self._nudge_from = (self.side * crank if self.prop_current < 1.0
+                            else self._prop)
+        self.nudged = False
+        self.failed = None
+        self._go("nudge", t)
+
+    def prop_from(self, t: float, crank: float) -> None:
+        """Take a bike already standing on the blade at `crank` [rad] --
+        set there by hand, say -- as `propped`, so `engage` hands it off
+        the way it does after a get-up. The side is the crank's."""
+        self.side = float(np.sign(crank) or 1.0)
+        self._prop = self.side * float(crank)
+        self.nudged, self.failed = False, None
+        self._retry = False
+        self._go("propped", t)
+
+    def onto_blade(self, roll: float) -> bool:
+        """Whether the bike leans onto the blade that is out."""
+        return self.side * roll > 0.0
 
     def get_up(self, t: float, roll: float, side: float | None = None) -> None:
         """Start getting up from lying on the side `roll` says (or `side`)."""
@@ -246,6 +335,7 @@ class SwingSit:
         self._block_best = np.inf
         self._pump_used = 0.0
         self.failed = None
+        self._prop = self.lean
         self._down_since = None     # the next auto-up waits its own fallen_s
         self._retry = False
         self._go("lift", t)
@@ -295,12 +385,15 @@ class SwingSit:
             w = w1 - 0.5 * a * (T - dt) ** 2
         return min(self.side * self._crank, float(np.interp(w, wc, uc)))
 
-    def engage(self, t: float) -> None:
+    def engage(self, t: float, crank: float | None = None) -> None:
         """`propped` -> `balance`: the policy takes the bike and the blade
-        eases off and folds, as after an automatic hand-off."""
+        eases off and folds, as after an automatic hand-off. With `crank`
+        [rad], the blade is held from where it IS -- the prop's crank was
+        let go, so its goal says nothing about the blade."""
         if self.phase != "propped":
             raise RuntimeError(f"engage from {self.phase}, not propped")
-        self._hold = self.side * self.lean
+        self._hold = (self.side * self._prop
+                      if crank is None or self.prop_current >= 1.0 else crank)
         self._go("balance", t)
 
     def _abort(self, t, crank):
@@ -352,6 +445,9 @@ class SwingSit:
             # bike leans the other way, so -s leans it onto blade s.
             return Command(s * self.lean, policy=False, diff=-s * self.kick)
         if self.phase == "settle":
+            if dt >= self.settle_s and self._park:
+                self._go("propped", t)
+                return Command(s * self.lean, policy=False, limp=True)
             if dt >= self.settle_s:
                 self._start_lower(t, s * self.lean)
             return Command(s * self.lean, policy=False)
@@ -376,7 +472,7 @@ class SwingSit:
         if self.phase == "lift":
             if self._lift_from is None:
                 self._lift_from = crank
-            target = s * (self.deploy if self.hand_off else self.lean)
+            target = s * (self.deploy if self.hand_off else self.lift_to[s])
             goal = target
             rate = self.lift_rate
             if rate is not None:                    # a ramped goal, not a step
@@ -399,7 +495,9 @@ class SwingSit:
                 # 2.3 s, crank dead at 650 mA, each upswing restarting a
                 # rule that took any rise as progress.
                 best = s * roll < self._block_best - np.deg2rad(1.0)
-                if s * (goal - crank) > self.block:
+                # Lag behind the ramp, capped at the lean: past it the goal
+                # is LIFT_TO's push, which a stalled prop never reaches.
+                if min(s * goal, self.lean) - s * crank > self.block:
                     # FORWARD progress only: a stalled crank can slide back
                     # (the sim's does, 13 -> 8 deg), which is not moving on.
                     if self._block_t is None or best \
@@ -425,11 +523,11 @@ class SwingSit:
                 if abs(goal - target) < 1e-6 and (
                         ready_for_policy(roll, roll_rate, self.recover_deg)
                         or (dt >= ramp + self.settle_s
-                            and abs(crank - target) <= self.prop_tol
+                            and abs(crank - s * self.lean) <= self.prop_tol
                             and 0.0 < s * roll < self.fallen_rad    # onto ITS blade
                             and abs(roll_rate) < np.deg2rad(10.0))):
                     self._go("propped", t)
-                    return Command(goal, policy=False, limp=True)
+                    return Command(s * self._prop, policy=False, limp=True)
                 if dt > self.lift_timeout_s:
                     # Not up and not blocked: lower back from where the
                     # crank is. A step to the rest dropped the bike.
@@ -469,8 +567,26 @@ class SwingSit:
                 self._push = False
             return (Command(s * self.lean, policy=False) if self._push
                     else Command(crank, current=self.pump_ease, policy=False))
+        if self.phase == "nudge":
+            u = min(max(self.deploy, self._nudge_from),
+                    self._nudge_from + self.nudge_rate * dt)
+            # The angle is nudge_to's, which may lie past recover_deg (the
+            # bike's prop window is 15); ready_for_policy adds the rate.
+            if s * roll <= self.nudge_to and ready_for_policy(
+                    roll, roll_rate, max(self.recover_deg,
+                                         np.degrees(self.nudge_to) + 1e-9)):
+                self._prop, self.nudged = s * crank, True
+                self._go("propped", t)
+                return Command(s * self._prop, policy=False, limp=True)
+            elif dt >= self.nudge_s or not self.onto_blade(roll):
+                self._prop, self.failed = self.lean, "nudge"
+                self._go("propped", t)
+                return Command(s * self._prop, policy=False, limp=True)
+            return Command(s * u, policy=False, limp=True)
         if self.phase == "propped":
-            return Command(s * self.lean, policy=False, limp=True)
+            frac = 1.0 - min(1.0, dt / self.limp_s) if self.limp_s > 0 else 0.0
+            cur = self.prop_current + (1.0 - self.prop_current) * frac
+            return Command(s * self._prop, current=cur, policy=False, limp=True)
         if self.phase in ("balance", "retract") and abs(roll) > self.fallen_rad \
                 and not self._fell:
             # The policy lost it after the hand-off and the bike is down again
