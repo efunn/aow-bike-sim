@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spirit Lake</title>
+<meta name="description" content="Spirit Lake: a self-balancing robot bike, in simulation and on the floor.">
+<!-- The landing page, by hand. Edit, then `scripts/site.sh build` (or just reload `scripts/site.sh serve`). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root { --bg: #f5f6f4; --panel: #ffffff; --ink: #1d2226; --muted: #646d73; --rule: #d6dbd9; --accent: #f47516; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 56px 16px 64px; display: grid; gap: 32px; }
+h1 { font-size: 40px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+.lede { color: var(--muted); font-size: 18px; margin: 8px 0 0; max-width: 60ch; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+a.card { display: grid; gap: 6px; padding: 18px 20px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px;
+  color: inherit; text-decoration: none; transition: border-color 0.15s; }
+a.card:hover, a.card:focus-visible { border-color: var(--accent); outline: none; }
+a.card b { font-weight: 600; font-size: 17px; }
+a.card span { color: var(--muted); font-size: 14.5px; }
+footer { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Spirit Lake</h1>
+    <p class="lede">A small self-balancing robot bike with an omni-wheel at the back. It is driven by a neural network trained in simulation, and gets itself back up when it falls.</p>
+  </header>
+  <nav class="cards" aria-label="Pages">
+    <a class="card" href="videos/"><b>Videos</b><span>The bike balancing, turning and getting back up.</span></a>
+    <a class="card" href="sim/"><b>Drive it</b><span>The live simulation in your browser: keyboard or touch, knock it over and watch it recover.</span></a>
+    <a class="card" href="linkage/"><b>Self-righting linkage</b><span>How one servo and two wings lift the bike off its side, design by design.</span></a>
+    <a class="card" href="sim2real/"><b>Balance: sim vs bike</b><span>The same controller in simulation and on the real bike, side by side.</span></a>
+  </nav>
+  <footer>Spirit Lake</footer>
+</div>
+</body>
+</html>

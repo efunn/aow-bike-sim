@@ -57,3 +57,8 @@ deploy/
 # Personal working agreements for agents in this checkout; not a team document.
 CLAUDE.md
 .claude/
+
+# scripts/site.sh build: the assembled spiritlake.xyz, rebuilt from tracked sources.
+site/build/
+# wrangler (scripts/site.sh deploy) keeps its local state here.
+.wrangler/
