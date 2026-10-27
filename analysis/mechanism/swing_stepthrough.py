@@ -8,7 +8,7 @@ RENDER IT (from the repo root):
                                     # own data into the template, after a wording edit
 
 Every word on the page is in templates/swing_stepthrough.html; design names
-are site/labels.yaml's. The page is also spiritlake.xyz/linkage/
+are site/labels.yaml's. The page is also the site's /aow/linkage/
 (scripts/site.sh).
 
 Either writes analysis/mechanism/plots/swing_stepthrough.html (self-contained); open it

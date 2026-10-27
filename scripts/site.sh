@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# spiritlake.xyz: assemble the site from this repo's pages, look at it, upload it.
+# The static site: assemble it from this repo's pages, look at it, upload it.
 #
 #   scripts/site.sh build     site/build/, from the pages as they stand (seconds)
 #   scripts/site.sh serve     build, then http://localhost:8770
@@ -7,11 +7,11 @@
 #
 # What goes where (Cloudflare serves <dir>/index.html at /<dir>/):
 #
-#   /            site/index.html                             by hand
-#   /videos/     site/videos/index.html + media/*.webp       by hand
-#   /sim/        src/aow_sim/web/site/                       python -m aow_sim.web.export
-#   /linkage/    analysis/mechanism/plots/swing_stepthrough.html
-#   /sim2real/   analysis/policy/plots/drivetrain_traces.html
+#   /               site/index.html                  by hand (the ice-top game)
+#   /aow/           site/aow/index.html + media/     by hand (the four clips, a link to the sim)
+#   /aow/sim/       src/aow_sim/web/site/            python -m aow_sim.web.export
+#   /aow/linkage/   analysis/mechanism/plots/swing_stepthrough.html   (not linked from /aow/)
+#   /aow/sim2real/  analysis/policy/plots/drivetrain_traces.html      (not linked from /aow/)
 #
 # The two analysis pages are re-filled from their templates on every build
 # (--from-cache: no sim), so a wording edit in
@@ -20,14 +20,14 @@
 # or a name in site/labels.yaml shows up on the next build. New DATA (a new
 # run, a changed design) needs the generator run in full; see its docstring.
 #
-# deploy needs `npx wrangler login` once, and a Pages project named
-# $SITE_PROJECT (default spiritlake) attached to the domain in the dashboard.
+# deploy needs `npx wrangler login` once, and SITE_PROJECT set to the name of
+# a Pages project attached to the domain in the dashboard.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 B=site/build
+A=$B/aow
 PORT=${PORT:-8770}
-PROJECT=${SITE_PROJECT:-spiritlake}
 SIM=src/aow_sim/web/site
 CLIPS=(hold turn_fwd turn_rev spin180)
 
@@ -39,26 +39,27 @@ build() {
     python analysis/mechanism/swing_stepthrough.py --from-cache
 
     rm -rf "$B"     # only ever this script's output (gitignored)
-    mkdir -p "$B"/{videos/media,linkage,sim2real}
+    mkdir -p "$A"/{media,linkage,sim2real}
     cp site/index.html "$B"/
-    cp site/videos/index.html "$B"/videos/
+    cp site/aow/index.html "$A"/
     for c in "${CLIPS[@]}"; do
-        if [[ -f site/videos/media/$c.webp ]]; then
-            cp "site/videos/media/$c.webp" "$B/videos/media/"
+        if [[ -f site/aow/media/$c.webp ]]; then
+            cp "site/aow/media/$c.webp" "$A/media/"
         else
-            echo "videos: no site/videos/media/$c.webp yet; using the sim clip docs/media/eval_$c.webp"
-            cp "docs/media/eval_$c.webp" "$B/videos/media/$c.webp"
+            echo "videos: no site/aow/media/$c.webp yet; using the sim clip docs/media/eval_$c.webp"
+            cp "docs/media/eval_$c.webp" "$A/media/$c.webp"
         fi
     done
-    cp -R "$SIM" "$B"/sim
-    cp analysis/mechanism/plots/swing_stepthrough.html "$B"/linkage/index.html
-    cp analysis/policy/plots/drivetrain_traces.html "$B"/sim2real/index.html
+    cp -R "$SIM" "$A"/sim
+    cp analysis/mechanism/plots/swing_stepthrough.html "$A"/linkage/index.html
+    cp analysis/policy/plots/drivetrain_traces.html "$A"/sim2real/index.html
     echo "built $B ($(du -sh "$B" | cut -f1))"
 }
 
 case "${1:-}" in
     build)  build ;;
     serve)  build; echo "http://localhost:$PORT"; exec python -m http.server "$PORT" --bind 127.0.0.1 --directory "$B" ;;
-    deploy) build; npx wrangler pages deploy "$B" --project-name "$PROJECT" ;;
-    *)      sed -n '2,7p' "$0"; exit 2 ;;
+    deploy) : "${SITE_PROJECT:?set SITE_PROJECT to the Cloudflare Pages project name}"
+            build; npx wrangler pages deploy "$B" --project-name "$SITE_PROJECT" ;;
+    *)      sed -n '2,6p' "$0"; exit 2 ;;
 esac

@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Spirit Lake Videos</title>
+<title>Self-Balancing Bike</title>
+<meta name="description" content="A small self-balancing robot bike, driven by a policy trained in simulation.">
 <!-- By hand. The four clips are media/<name>.webp; drop the recorded ones into
-     site/videos/media/ under these names. Until a name is there, `scripts/site.sh build`
+     site/aow/media/ under these names. Until a name is there, `scripts/site.sh build`
      puts the README's simulation clip (docs/media/eval_<name>.webp) in its place. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
-:root { --bg: #f5f6f4; --panel: #ffffff; --ink: #1d2226; --muted: #646d73; --rule: #d6dbd9; }
+:root { --bg: #f5f6f4; --panel: #ffffff; --ink: #1d2226; --muted: #646d73; --rule: #d6dbd9; --accent: #f47516; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) { --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; color-scheme: dark; }
 }
@@ -18,23 +19,21 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; }
 .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 16px 56px; display: grid; gap: 24px; }
-.back { color: var(--muted); font-size: 14px; text-decoration: none; }
-.back:hover { color: var(--ink); }
-h1 { font-size: 32px; font-weight: 600; margin: 4px 0 0; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
 figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
 figure img { display: block; width: 100%; height: auto; }
 figcaption { padding: 10px 14px; font-size: 14.5px; color: var(--muted); }
 figcaption b { color: var(--ink); font-weight: 600; }
+a.sim { display: grid; gap: 4px; padding: 18px 20px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px;
+  color: inherit; text-decoration: none; transition: border-color 0.15s; }
+a.sim:hover, a.sim:focus-visible { border-color: var(--accent); outline: none; }
+a.sim b { font-weight: 600; font-size: 17px; }
+a.sim span { color: var(--muted); font-size: 14.5px; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <a class="back" href="../">&larr; Spirit Lake</a>
-    <h1>Videos</h1>
-  </header>
   <div class="grid">
     <figure><img src="media/hold.webp" alt="balancing in place" loading="lazy">
       <figcaption><b>It balances.</b> Standing still, no input.</figcaption></figure>
@@ -45,6 +44,7 @@ figcaption b { color: var(--ink); font-weight: 600; }
     <figure><img src="media/spin180.webp" alt="a 180 degree about-face from standstill" loading="lazy">
       <figcaption><b>It spins.</b> A 180&deg; about-face from standstill.</figcaption></figure>
   </div>
+  <a class="sim" href="sim/"><b>Drive it</b><span>The simulation in your browser: keyboard or touch, knock it over and watch it get back up.</span></a>
 </div>
 </body>
 </html>

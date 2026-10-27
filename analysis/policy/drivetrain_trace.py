@@ -7,7 +7,7 @@
     python analysis/policy/drivetrain_trace.py --page --from-cache   # wording only, no sim
 
 The --page output's words are all in templates/drivetrain_traces.html, its
-run names in site/labels.yaml; it is also spiritlake.xyz/sim2real/
+run names in site/labels.yaml; it is also the site's /aow/sim2real/
 (scripts/site.sh).
 
 The still companion to drivetrain_slowmo.py: the same two flights

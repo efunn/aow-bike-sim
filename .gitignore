@@ -58,7 +58,7 @@ deploy/
 CLAUDE.md
 .claude/
 
-# scripts/site.sh build: the assembled spiritlake.xyz, rebuilt from tracked sources.
+# scripts/site.sh build: the assembled static site, rebuilt from tracked sources.
 site/build/
 # wrangler (scripts/site.sh deploy) keeps its local state here.
 .wrangler/
