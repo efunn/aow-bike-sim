@@ -255,3 +255,205 @@ def test_rest_deg_carries_the_lower_through_centre_and_limp_holds_it_there():
     assert max(seen) == pytest.approx(np.deg2rad(75.0)), "past centre, the other way"
     assert np.all(np.diff(seen) >= -1e-12), "one way only, at the ramp"
     assert seen[-1] == pytest.approx(np.deg2rad(75.0)), "limp holds the rest crank"
+
+
+def test_a_lift_that_stalls_outside_the_window_props_rather_than_dropping():
+    """The bike's left side stalls at a 15-17 deg prop (runs 261026-163044,
+    -163421). Timing out there let go and dropped it at up to 614 deg/s;
+    now a still bike on the blade is propped, and Enter's gate decides."""
+    seq = SwingSit(DEPLOY, hand_off=False)
+    seq.get_up(0.0, np.deg2rad(-80.0))
+    crank, t = 0.0, 0.0
+    while seq.phase == "lift" and t < seq.lift_timeout_s + 1.0:
+        crank = seq.step(t, np.deg2rad(-15.5), 0.0, crank).crank
+        t += DT
+    assert seq.phase == "propped" and t < seq.lift_timeout_s
+    seq = SwingSit(DEPLOY, hand_off=False)                # still lying: back down
+    seq.get_up(0.0, np.deg2rad(-80.0))
+    crank, t = 0.0, 0.0
+    while seq.phase == "lift":
+        crank = seq.step(t, np.deg2rad(-75.0), 0.0, crank).crank
+        t += DT
+    assert seq.phase == "lower" and seq.failed == "timeout"
+    assert seq.step(t, np.deg2rad(-75.0), 0.0, crank).crank == pytest.approx(crank, abs=1e-3), \
+        "from where the crank is, not a step"
+
+
+MAP = ((110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0, -10),
+       (8.0, 10.7, 17.3, 23.8, 29.4, 34.4, 39.2, 44.0, 48.9, 54.1, 61.9,
+        69.2, 73.4))
+
+
+@pytest.mark.parametrize("side", [1.0, -1.0])
+def test_a_lower_with_a_map_ramps_the_roll_not_the_crank(side):
+    """Along the map's roll the rate is capped and starts and ends at zero;
+    the crank falls one way only, from where it was, to the rest."""
+    seq = SwingSit(DEPLOY, rest_deg=25.0, lower_dps=120.0, lower_map=MAP,
+                   lower_roll_dps=60.0, lower_roll_acc=240.0)
+    seq.lie_from_prop(0.0, side * np.deg2rad(102.0))
+    u, t = [], 0.0
+    while seq.phase == "lower":
+        u.append(side * seq.step(t, 0.0, 0.0, 0.0).crank)
+        t += DT
+    u = np.degrees(u)
+    assert u[0] == pytest.approx(102.0) and u[-1] == pytest.approx(-25.0)
+    assert np.all(np.diff(u) <= 1e-9)
+    on = u > MAP[0][-1]
+    w = np.interp(-u[on], -np.array(MAP[0], float), MAP[1])
+    rate = np.diff(w) / DT
+    assert rate.max() <= 60.0 + 1e-6 and rate[:5].max() < 5.0 and rate[-5:].max() < 5.0
+    assert 1.3 < t < 1.6
+
+
+def test_a_blocked_lift_lowers_back_before_it_can_overload():
+    """Run 261026-173521: the crank stopped at -64 against a wall while its
+    ramp ran to -110, was held there at 700 mA, and tripped overload 1.2 s
+    later. A crank behind its ramp that stops moving is blocked: the lift
+    comes back down from where it is. Never propped."""
+    seq = SwingSit(DEPLOY, hand_off=False, lift_dps=120.0, retry_s=None)
+    seq.get_up(0.0, np.deg2rad(-70.0))
+    wall, t, crank = np.deg2rad(-64.0), 0.0, 0.0
+    while seq.phase == "lift":
+        goal = seq.step(t, np.deg2rad(-34.0), 0.0, crank).crank
+        crank = max(goal, wall)                       # lag-free, until the wall
+        t += DT
+    assert seq.phase == "lower" and seq.failed == "blocked"
+    # well inside the 1.5 s the wall stall took to trip overload
+    assert t < (64.0 + np.degrees(seq.block)) / 120.0 + seq.block_s + 0.05 and t < 1.3
+    while seq.phase in ("lower", "limp"):
+        crank = seq.step(t, np.deg2rad(-50.0), 0.0, crank).crank
+        t += DT
+    assert seq.phase == "lying"
+    seq.step(t + 5.0, np.deg2rad(-73.0), 0.0, crank)
+    assert seq.phase == "lying", "no retry: the operator presses again"
+
+
+def test_a_stall_far_short_of_the_lean_is_not_a_prop():
+    """Still and below the fallen roll, but 46 deg short: not on the blade."""
+    seq = SwingSit(DEPLOY, hand_off=False, block_deg=90.0)  # isolate the prop rule
+    seq.get_up(0.0, np.deg2rad(-70.0))
+    t, crank = 0.0, 0.0
+    while seq.phase == "lift":
+        crank = max(seq.step(t, np.deg2rad(-34.0), 0.0, crank).crank, np.deg2rad(-64.0))
+        t += DT
+    assert seq.phase == "lower" and seq.failed == "timeout"
+
+
+def test_a_slow_lift_is_not_a_blocked_one():
+    """Run 261026-175020, battery on: the crank near its current cap lags
+    35-58 deg behind the ramp and still lifts the bike. Moving, it is not
+    blocked, however far behind."""
+    seq = SwingSit(DEPLOY, hand_off=False, lift_dps=120.0, retry_s=None)
+    seq.get_up(0.0, np.deg2rad(-74.0))
+    t, crank = 0.0, np.deg2rad(25.0)
+    while seq.phase == "lift" and t < 2.5:
+        seq.step(t, np.deg2rad(-60.0), 0.0, crank)
+        crank -= np.deg2rad(60.0) * DT                # half the ramp's speed
+        t += DT
+    assert seq.phase == "lift" and seq.failed is None
+
+
+def test_a_bike_thrown_over_the_top_is_not_propped():
+    """In the sim a 240 deg/s lift at full current threw the bike over to
+    -50 deg on the far side, and the stall rule called that a prop. A prop
+    leans onto the blade that is down."""
+    seq = SwingSit(DEPLOY, hand_off=False)
+    seq.get_up(0.0, np.deg2rad(-74.0))                    # left blade
+    crank, t = 0.0, 0.0
+    while seq.phase == "lift" and t < seq.lift_timeout_s + 0.5:
+        crank = seq.step(t, np.deg2rad(+50.0), 0.0, crank).crank
+        t += DT
+    assert seq.phase != "propped"
+
+
+def test_a_stalled_crank_is_not_blocked_while_the_bike_still_rolls_up():
+    """Run 261026-184729: the crank stopped dead and the bike coasted on up
+    8-10 deg for the whole 0.3 s. Blocked counts from when it stops."""
+    seq = SwingSit(DEPLOY, hand_off=False, lift_dps=120.0, retry_s=None)
+    seq.get_up(0.0, np.deg2rad(74.0))                     # right blade
+    t, crank, stuck_at = 0.0, 0.0, None
+    while seq.phase == "lift" and t < 3.0:
+        if stuck_at is None and crank >= np.deg2rad(20.0):
+            stuck_at = t
+        up = 0.0 if stuck_at is None else min(t - stuck_at, 0.5)   # rolls up 0.5 s
+        c = seq.step(t, np.deg2rad(60.0 - 40.0 * up),
+                     -np.deg2rad(40.0) if 0 < up < 0.5 else 0.0, crank)
+        crank = min(c.crank, np.deg2rad(20.0))
+        t += DT
+    assert seq.failed == "blocked"
+    # restarts on each new best degree, so up to ~1 deg of climb early
+    assert t - stuck_at >= 0.5 + seq.block_s - 0.05, "not while it still rolled"
+
+
+def test_a_bike_rocking_on_the_wing_is_blocked_but_one_still_gaining_is_not():
+    """Run 261026-191739: crank dead at 9.7 deg, the bike rocking on the wing
+    between 62 and 76 deg at ~1.25 Hz. Each upswing is not progress; only a
+    new best roll restarts the wait."""
+    def fly(roll_of_t):
+        seq = SwingSit(DEPLOY, hand_off=False, lift_dps=120.0, retry_s=None)
+        seq.get_up(0.0, np.deg2rad(74.0))
+        t, crank, stuck = 0.0, 0.0, None
+        while seq.phase == "lift" and t < 3.0:
+            if stuck is None and crank >= np.deg2rad(10.0):
+                stuck = t
+            w = 72.0 if stuck is None else roll_of_t(t - stuck)
+            dw = (roll_of_t(t - stuck + DT) - w) / DT if stuck is not None else 0.0
+            crank = min(seq.step(t, np.deg2rad(w), np.deg2rad(dw), crank).crank,
+                        np.deg2rad(10.0))
+            t += DT
+        return seq, t - stuck
+    rock = lambda u: 69.0 + 7.0 * np.cos(2 * np.pi * 1.25 * u)    # 62..76, no gain
+    seq, after = fly(rock)
+    assert seq.failed == "blocked" and after < 1.2, "rocking in place: given up"
+    climb = lambda u: 72.0 - 10.0 * u                               # still gaining
+    seq, after = fly(climb)
+    assert seq.failed != "blocked" or after > 2.0
+
+
+def _pump(seq, crank_of, roll_of, rate_of, T=8.0):
+    """Fly a left lift; the crank, roll and rate are functions of (t, cmd).
+    -> [(t, phase, cmd)]."""
+    seq.get_up(0.0, np.deg2rad(-74.0))
+    t, crank, out, cmd = 0.0, np.deg2rad(25.0), [], None
+    while seq.phase in ("lift", "pump") and t < T:
+        cmd = seq.step(t, np.deg2rad(roll_of(t)), np.deg2rad(rate_of(t)), crank)
+        out.append((t, seq.phase, cmd))
+        crank = crank_of(t, cmd, crank)
+        t += DT
+    return out
+
+
+def test_a_blocked_lift_pumps_with_the_rock_then_lowers_when_its_time_is_up():
+    """Run 261026-191739: crank dead at 9.7, the bike rocking on the wing at
+    ~1.25 Hz. Push while it swings up (rate toward upright), ease off while
+    it swings back; give up after `pump_s` in all."""
+    seq = SwingSit(DEPLOY, hand_off=False, lift_dps=120.0, retry_s=None, pump_s=2.0)
+    wall = np.deg2rad(-10.0)
+    rock = lambda t: 69.0 + 7.0 * np.cos(2 * np.pi * 1.25 * t)
+    rate = lambda t: -7.0 * 2 * np.pi * 1.25 * np.sin(2 * np.pi * 1.25 * t)
+    out = _pump(seq, lambda t, c, k: max(c.crank, wall), lambda t: -rock(t), lambda t: -rate(t))
+    pumped = [(t, c) for t, ph, c in out if ph == "pump"]
+    assert pumped and seq.phase == "lower" and seq.failed == "blocked"
+    assert 1.9 < pumped[-1][0] - pumped[0][0] < 2.1, "its time budget"
+    for t, c in pumped[5:]:
+        up = rate(t) < -5.0 * 1.0                     # swinging toward upright (side frame)
+        down = rate(t) > 5.0
+        if up:
+            assert c.current == 1.0 and c.crank == pytest.approx(np.deg2rad(-110.0))
+        elif down:
+            assert c.current == seq.pump_ease
+
+
+def test_a_pump_that_gets_the_crank_up_hands_to_the_lift_and_props():
+    seq = SwingSit(DEPLOY, hand_off=False, lift_dps=120.0, retry_s=None, pump_s=5.0)
+    state = {"free": None}
+    def crank_of(t, c, k):
+        if seq.phase == "pump" and state["free"] is None:
+            state["free"] = t + 1.0                    # gets through after a second
+        if state["free"] is not None and t > state["free"]:
+            return k + np.sign(c.crank - k) * min(abs(c.crank - k), np.deg2rad(100.0) * DT)
+        return max(c.crank, np.deg2rad(-10.0))
+    roll_of = lambda t: -10.0 if state["free"] and t > state["free"] + 1.0 else -65.0
+    out = _pump(seq, crank_of, roll_of, lambda t: 0.0)
+    phases = [ph for _, ph, _ in out]
+    assert "pump" in phases and seq.phase == "propped"

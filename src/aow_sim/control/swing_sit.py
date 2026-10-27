@@ -29,6 +29,13 @@ DOWN, as gently as the module allows:
              current goes. The bike's rest is MEASURED at 26.5-28 deg
              (run_bike.LIE_REST_DEG); the sim's is ~77 deg, so a sim run
              that wants the bike's behaviour sets this from the sim.
+             With `lower_map` (crank -> roll, quasi-static, the bike's own)
+             the ramp is in ROLL, not crank: up to `lower_roll_dps` at
+             `lower_roll_acc` and back to rest at the map's last point,
+             where the cage takes the bike; past it, crank at `lower_dps`.
+             A constant crank rate ran the bike ahead of its blade where
+             the map is steep and left it waiting where it is flat -- on
+             the bike, a pause at ~45 deg and a bounce onto the cage.
     limp     Goal Current ramped to 0 over `limp_s`. Held at full current the
              crank sits ~12 deg past centre against the bike's weight and
              limit-cycles (+-4 deg of roll, ~35 deg/s, indefinitely); dropped
@@ -56,7 +63,36 @@ the lie-down's `settle` pose, the bike resting on wheels + blade -- and
 stops there:
 
     lift     as above, to `lean_deg`; done once the ramp is there and the
-             bike is inside the recoverable set (`ready_for_policy`).
+             bike is inside the recoverable set (`ready_for_policy`) -- or,
+             outside it, has sat still on the blade for `settle_s` with the
+             crank within `prop_tol_deg` of the lean. The bike's left side
+             stalls at a 15-17 deg prop, crank 13-14 deg short (runs
+             261026-163044, -163421); timing out there let go of the crank
+             and dropped the bike at up to 614 deg/s. Enter's own gate
+             decides whether the policy can take it from there. A lift
+             that does not get there comes back down through `lower`
+             (`failed`): BLOCKED, the crank `block_deg` behind its ramp
+             and moving less than `block_move_deg` in `block_s` (one
+             stopped dead against a wall and, held there, tripped
+             overload; with the battery on, lifts lag 35-58 deg and still
+             move), or timed out. Ramped from where the crank is, never a
+             step. Then limp and lying: no retry, the operator presses
+             again. (A rock -- back to a windup past the lying rest and up
+             again faster -- got 0 of 18 up on the bike, run
+             261026-184729, and was taken out.) `block_s` 0.5 restarts
+             whenever the bike reaches a new best roll: at a stall it
+             coasts on 8-15 deg with the crank dead, then may rock on the
+             wing, which is not progress.
+    pump     a BLOCKED lift, for up to `pump_s` in all (0: off): the bike
+             rocks on its wing with the crank dead (run 261026-191739,
+             62-76 deg at ~1.25 Hz), so push only while it swings up and
+             go limp while it swings back, building the rock, until the
+             crank is within `prop_tol_deg` of the lean (then `lift`, to
+             prop); down otherwise. In the sim, at 46-48 %
+             Goal Current (where a held lift stalls), 4 of 6 got up; at
+             40-44 % none. On the bike (run 261026-195319) 0 of 2, and the
+             second tripped the servo's overload: OFF there (run_bike
+             PUMP_S 0), kept for another go.
     propped  holding. The drives LIMP (`Command.limp`), the blade at
              `lean_deg`. Left by `engage()`, the operator's go-ahead, into
              `balance` and `retract` as above -- or by `lie_from_prop()`.
@@ -103,7 +139,8 @@ class Command:
     policy       True: the general policy drives. False: hold the drives at
                  zero speed and the steer where it is, plus `diff`.
     diff         rear differential [rad/s] while the policy is off
-    limp         the drives and steer unpowered rather than held (`propped`)
+    limp         the drives unpowered rather than held (`propped`); the
+                 steer is the caller's, as when the policy is off
     """
     crank: float
     current: float = 1.0
@@ -114,8 +151,8 @@ class Command:
 
 class SwingSit:
     #: phases in which the sequence owns the bike
-    ACTIVE = ("stop", "deploy", "kick", "settle", "lower", "limp", "lift", "balance",
-              "retract")
+    ACTIVE = ("stop", "deploy", "kick", "settle", "lower", "limp", "lift", "pump",
+              "balance", "retract")
 
     def __init__(self, deploy_rad: float, *,
                  lean_deg: float = 110.0, deploy_s: float = 0.6,
@@ -127,24 +164,43 @@ class SwingSit:
                  retract_dps: float = 120.0,
                  still_speed: float = 0.05, stop_max_s: float = 4.0,
                  lower_dps: float = 30.0, limp_s: float = 1.0,
-                 rest_deg: float = 0.0,
+                 rest_deg: float = 0.0, lower_map=None,
+                 lower_roll_dps: float = 60.0, lower_roll_acc: float = 240.0,
                  lift_timeout_s: float = 3.0, retract_after: float = 1.0,
                  lift_policy: bool = False, lift_dps: float | None = 120.0,
                  recover_deg: float = RECOVER_DEG,
                  fallen_deg: float = 60.0, fallen_s: float = 0.5,
                  still_rate: float = 2.0, retry_s: float | None = 1.0,
-                 hand_off: bool = True):
+                 hand_off: bool = True, block_deg: float = 20.0,
+                 block_move_deg: float = 3.0, block_s: float = 0.5,
+                 prop_tol_deg: float = 20.0, pump_s: float = 0.0,
+                 pump_ease: float = 0.0):
         self.deploy = float(deploy_rad)
         self.lean = np.deg2rad(lean_deg)
         self.deploy_s, self.kick = deploy_s, kick
         self.settle_s, self.lower = settle_s, np.deg2rad(lower_dps)
         self.rest = np.deg2rad(rest_deg)
+        # (crank, roll) [deg] in the side's frame, crank falling, roll rising
+        self.lower_map = None if lower_map is None else tuple(
+            np.deg2rad(np.asarray(a, float)) for a in lower_map)
+        self.lower_roll_rate = np.deg2rad(lower_roll_dps)
+        self.lower_roll_acc = np.deg2rad(lower_roll_acc)
+        self._plan = None
         self.limp_s, self.lift_timeout_s = limp_s, lift_timeout_s
         self.retract_after, self.recover_deg = retract_after, recover_deg
         self.fallen_rad, self.fallen_s = np.deg2rad(fallen_deg), fallen_s
         self.still_rate = still_rate
         self.retry_s = retry_s
         self.hand_off = bool(hand_off)
+        self.block, self.block_s = np.deg2rad(block_deg), block_s
+        self.block_move = np.deg2rad(block_move_deg)
+        self._block_c = 0.0
+        self._block_best = np.inf   # the best roll [side frame] while behind
+        self.pump_s, self.pump_ease = pump_s, pump_ease
+        self._pump_from, self._pump_used, self._push = 0.0, 0.0, True
+        self.prop_tol = np.deg2rad(prop_tol_deg)
+        self._block_t = None
+        self.failed = None          # why the last lift came back down
         self._retry = False         # lying after a failed lift: try again
         self.lean_on, self.kick_max_s = np.deg2rad(lean_on_deg), kick_max_s
         self.abort = np.deg2rad(abort_deg)
@@ -186,6 +242,10 @@ class SwingSit:
         """Start getting up from lying on the side `roll` says (or `side`)."""
         self.side = float(side if side is not None else (np.sign(roll) or 1.0))
         self._lift_from = None
+        self._block_t = None
+        self._block_best = np.inf
+        self._pump_used = 0.0
+        self.failed = None
         self._down_since = None     # the next auto-up waits its own fallen_s
         self._retry = False
         self._go("lift", t)
@@ -194,10 +254,46 @@ class SwingSit:
         """Lie down from resting on the blade at `crank` [rad]: straight to
         `lower`, ramped from there. The side is the crank's."""
         self.side = float(np.sign(crank) or 1.0)
-        self._crank = float(crank)
         self.aborted = False
         self._retry = False
+        self._start_lower(t, float(crank))
+
+    def _start_lower(self, t, crank):
+        """Into `lower` from `crank`, planning the roll ramp if there is a
+        map: (roll from, roll to, duration, accel time, cruise rate)."""
+        self._crank = crank
+        self._plan = None
+        if self.lower_map is not None:
+            uc, wc = self.lower_map
+            u0 = self.side * crank
+            if u0 > uc[-1]:
+                w0 = float(np.interp(-u0, -uc, wc))
+                d = wc[-1] - w0
+                v, a = self.lower_roll_rate, self.lower_roll_acc
+                if d < v * v / a:                   # never reaches cruise
+                    ta = np.sqrt(d / a)
+                    self._plan = (w0, wc[-1], 2 * ta, ta, a * ta)
+                else:
+                    ta = v / a
+                    self._plan = (w0, wc[-1], 2 * ta + (d - v * ta) / v, ta, v)
         self._go("lower", t)
+
+    def _lower_crank(self, dt):
+        """The lower's crank goal in the side's frame, `dt` into it."""
+        if self._plan is None:
+            return max(-self.rest, self.side * self._crank - self.lower * dt)
+        w0, w1, T, ta, v = self._plan
+        uc, wc = self.lower_map
+        if dt >= T:                                 # past the map: crank ramp
+            return max(-self.rest, uc[-1] - self.lower * (dt - T))
+        a = v / ta if ta > 0 else 0.0
+        if dt < ta:
+            w = w0 + 0.5 * a * dt * dt
+        elif dt < T - ta:
+            w = w0 + 0.5 * v * ta + v * (dt - ta)
+        else:
+            w = w1 - 0.5 * a * (T - dt) ** 2
+        return min(self.side * self._crank, float(np.interp(w, wc, uc)))
 
     def engage(self, t: float) -> None:
         """`propped` -> `balance`: the policy takes the bike and the blade
@@ -257,13 +353,12 @@ class SwingSit:
             return Command(s * self.lean, policy=False, diff=-s * self.kick)
         if self.phase == "settle":
             if dt >= self.settle_s:
-                self._go("lower", t)
-                self._crank = s * self.lean
+                self._start_lower(t, s * self.lean)
             return Command(s * self.lean, policy=False)
         if self.phase == "lower":
             # In the side's frame: from the blade's own side, through centre,
             # to `rest` beyond it.
-            u = max(-self.rest, s * self._crank - self.lower * dt)
+            u = self._lower_crank(dt)
             if u == -self.rest:
                 self._go("limp", t)
             return Command(s * u, policy=False)
@@ -283,16 +378,64 @@ class SwingSit:
                 self._lift_from = crank
             target = s * (self.deploy if self.hand_off else self.lean)
             goal = target
-            if self.lift_rate is not None:          # a ramped goal, not a step
+            rate = self.lift_rate
+            if rate is not None:                    # a ramped goal, not a step
                 goal = self._lift_from + np.clip(goal - self._lift_from,
-                                                 -self.lift_rate * dt, self.lift_rate * dt)
+                                                 -rate * dt, rate * dt)
             if not self.hand_off:
+                # BLOCKED: behind its ramp AND not moving -- under
+                # `block_move_deg` in `block_s` -- is against something.
+                # Held there at full current it trips the servo's overload
+                # (run 261026-173521: stopped dead at -64 against a wall,
+                # 700 mA, overload 1.2 s later). Lowered back, gently, from
+                # where it IS. Lag alone is not it: with the battery on, a
+                # crank near its current cap lags 35-58 deg and still lifts
+                # (run 261026-175020: a lag-only rule sent 9 of 13 lifts
+                # back down while the bike was rising).
+                # Nor while the BIKE still gains: run 261026-184729, the
+                # crank stopped dead at 100 % PWM and the bike coasted on up
+                # 8-10 deg. Only a NEW best roll counts -- run -191739's bike
+                # rocked on the wing between 62 and 76 deg at ~1.25 Hz for
+                # 2.3 s, crank dead at 650 mA, each upswing restarting a
+                # rule that took any rise as progress.
+                best = s * roll < self._block_best - np.deg2rad(1.0)
+                if s * (goal - crank) > self.block:
+                    # FORWARD progress only: a stalled crank can slide back
+                    # (the sim's does, 13 -> 8 deg), which is not moving on.
+                    if self._block_t is None or best \
+                            or s * (crank - self._block_c) > self.block_move:
+                        self._block_t, self._block_c = t, crank
+                        self._block_best = min(self._block_best, s * roll)
+                else:
+                    self._block_t = None
+                    self._block_best = s * roll
+                if self._block_t is not None and t - self._block_t >= self.block_s:
+                    if self._pump_used < self.pump_s:
+                        self._push = True
+                        self._pump_from = crank
+                        self._go("pump", t)
+                        return Command(target, policy=False)
+                    self.failed = "blocked"
+                    self._start_lower(t, crank)
+                    return Command(crank, policy=False)
                 # A tolerance, not ==: the ramp's sum lands within rounding
                 # of the target, and on one side never exactly on it.
-                if abs(goal - target) < 1e-6 and ready_for_policy(
-                        roll, roll_rate, self.recover_deg):
+                ramp = (0.0 if rate is None else
+                        abs(target - self._lift_from) / rate)
+                if abs(goal - target) < 1e-6 and (
+                        ready_for_policy(roll, roll_rate, self.recover_deg)
+                        or (dt >= ramp + self.settle_s
+                            and abs(crank - target) <= self.prop_tol
+                            and 0.0 < s * roll < self.fallen_rad    # onto ITS blade
+                            and abs(roll_rate) < np.deg2rad(10.0))):
                     self._go("propped", t)
                     return Command(goal, policy=False, limp=True)
+                if dt > self.lift_timeout_s:
+                    # Not up and not blocked: lower back from where the
+                    # crank is. A step to the rest dropped the bike.
+                    self.failed = "timeout"
+                    self._start_lower(t, crank)
+                    return Command(crank, policy=False)
             elif ready_for_policy(roll, roll_rate, self.recover_deg):
                 self._go("balance", t)
                 self._hold = goal                    # the blade stays put
@@ -303,6 +446,29 @@ class SwingSit:
                 self._go("limp", t)
                 self._retry = self.retry_s is not None
             return Command(goal, policy=self.lift_policy)
+        if self.phase == "pump":
+            # PUMP the bike's rock on the wing: full push while it swings up,
+            # limp while it swings back, until the crank is up near the lean
+            # (then `lift` with its ramp done, to prop) or `pump_s` passes
+            # (then down). Hysteresis on the roll rate. Handing back to the
+            # ramp after a partial gain only stalled again, in the sim.
+            if s * crank >= self.lean - self.prop_tol:
+                self._pump_used += dt
+                self._lift_from, self._block_t = s * self.lean, None
+                self._block_best = np.inf
+                self._go("lift", t)
+                return Command(s * self.lean, policy=False)
+            if self._pump_used + dt >= self.pump_s:
+                self.failed = "blocked"
+                self._start_lower(t, crank)
+                return Command(crank, policy=False)
+            up = s * roll_rate
+            if up < -np.deg2rad(5.0):
+                self._push = True
+            elif up > np.deg2rad(5.0):
+                self._push = False
+            return (Command(s * self.lean, policy=False) if self._push
+                    else Command(crank, current=self.pump_ease, policy=False))
         if self.phase == "propped":
             return Command(s * self.lean, policy=False, limp=True)
         if self.phase in ("balance", "retract") and abs(roll) > self.fallen_rad \
