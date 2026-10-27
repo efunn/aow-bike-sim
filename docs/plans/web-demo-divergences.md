@@ -1,8 +1,10 @@
 # The web demo against teleop: what differs, and what might come back
 
-> **Status (2026-10-23):** a review list. ONE item is applied to the Python
-> side: the failed get-up retry (row 1), now in `control/swing_sit.py` and
-> shared by teleop and the page. The rest is open. Every item below is either a change the browser demo (`src/aow_sim/web/`)
+> **Status (2026-10-26):** a review list. ONE item is applied to the Python
+> side: the failed get-up retry (row 1), in `control/swing_sit.py` -- which
+> the bike has since turned OFF (`retry_s=None`, run_bike). Since 10-26 the
+> page runs lie down / get up as the BIKE does (row 12), not as teleop does.
+> The rest is open. Every item below is either a change the browser demo (`src/aow_sim/web/`)
 > made that teleop (`run_drive --teleop`) does not have, or something learned
 > while building it that is true of the shared plant. Numbers are from the
 > page's own simulation, which replays the Python env to ~1e-15 open loop and
@@ -17,8 +19,8 @@ user has asked for it on the Python side).
 
 | # | what | teleop | page | mark |
 |---|---|---|---|---|
-| 1 | a failed get-up | was: lift times out -> `limp` -> `lying`, waits for PageUp | retries 1 s after a lift that failed; a chosen lie-down stays down | **done** in `swing_sit` (both) |
-| 2 | the shove | `.`: 8 N for 0.35 s along **world y**, no marker | Space: 3 N, Shift+Space: 1.5 N, 0.35 s, across **the bike** (`-sin psi, cos psi`), alternating sides, a red arrow while it acts | **TODO** |
+| 1 | a failed get-up | retries 1 s after a lift that times out (`swing_sit` default); the bike: never (`retry_s=None`) | retries 1 s after a lift that failed (blocked or timed out), page-side, since its `SwingSit` is the bike's | **done** in `swing_sit`; page-only now |
+| 2 | the shove | `.`: 8 N for 0.35 s along **world y**, no marker | Space: 2 N, Shift+Space: 0.75 N (3 and 1.5 before the v4 plant), 0.35 s, across **the bike** (`-sin psi, cos psi`), alternating sides, a red arrow while it acts | **TODO** |
 | 3 | fresh turn press | jumps the heading 10 deg, then slews | no jump; slews only. Same lead clamp, same snap disarm/re-arm | page-only |
 | 4 | blade keys | 9 / 4 step left / centre / right at the FULL stroke (116.9 deg crank), where the blade meets the floor | Z / C step to 91 deg of crank (70 % of stroke, user's number from the mechanism sim) | **port?** (as a third stop) |
 | 5 | the ball | `--hockey`: the study ball (67 mm, 60 g), stick panels on the chassis, pelt 4 m/s | 160 mm, 10 g, bouncy, air drag, no stick panels, pelt 2.5 m/s; spawns in front of the bike; drawn as a beach ball | **TODO**: fix the ball physics (section 2); the page's ball is a stand-in, not the answer |
@@ -28,8 +30,15 @@ user has asked for it on the Python side).
 | 9 | righting module | jointed, crank on `CurrentBasedPositionServo` | the same (the eval env welds it: `righting_rigid`) | same as teleop |
 | 10 | trail | the chassis origin | the rear hub (`aow_hub`), 2 s solid + 0.5 s fade | page-only |
 | 11 | steer readout | -- | mod 180, +-90 deg (multi-turn joint, symmetric wheel) | page-only |
+| 12 | lie down / get up | `SwingSit` defaults: constant-rate lower to centre, lift to the full stroke and hand off inside the window | `run_bike`'s settings, read off it at export: lower along the bike's roll map (`LIE_MAP`) to 25 deg past centre, 120 deg/s both ways, lift to the 110 deg prop (`hand_off=False`), blocked-lift detection, no pump; the steer eased to the nearer straight at 180 deg/s while the policy is off. The bike then waits propped for Enter; the page hands off at once (section 2, "does not stay propped") | **port?** (teleop is now the odd one out) |
 
-### 1. The failed get-up (the "press X twice" case) -- applied
+### 1. The failed get-up (the "press X twice" case) -- applied, then off on the bike
+
+10-26: the bike's `run_bike` builds `SwingSit(retry_s=None)`: retried every
+1-4 s, a crank against a wall and then a dead one kept lifting for a minute
+(run 261026-173521). The page, now on the bike's settings, keeps a retry of
+its own (1 s after a lift that failed; the sim's crank has no overload). The
+history:
 
 Seen by hand in the page: after repeated knockdowns the bike can come to rest
 rolled onto its cage, and the lift jackknifes the blade against the shell,
@@ -54,14 +63,27 @@ Not yet flown in teleop by hand.
 
 ### 2. The shove
 
-Swept on this plant, both sides, 4 detent phases each:
+Swept on `fixes_72M`'s plant (10-23), standing, both sides, 4 detent phases each:
 
 | force (0.35 s) | impulse | result |
 |---|---|---|
 | 0.5-1.5 N | 0.18-0.53 N s | the policy catches it, peak roll 3-18 deg |
 | 2-8 N | 0.7-2.8 N s | over, every time; the round cage then rolls it onto its back (168-180 deg) |
 
-So teleop's 8 N is ~4x the threshold, which matches its comment ("comfortably
+On `a40_v4_80M`'s plant (10-26, same sweep) it tips at about two thirds
+of that:
+
+| force (0.35 s) | result |
+|---|---|
+| 0.25-0.9 N | caught, peak roll 3-7 deg |
+| 1.0 N | 1 / 8 over |
+| 1.25 N | 7 / 8 over |
+| 1.5-3 N | 8 / 8 over |
+
+So the page's keys came down to 0.75 N and 2 N (user: "a bit less stable").
+20 knockdowns at 2 N in a row: 20 / 20 up, slowest 6.7 s.
+
+On the old plant, teleop's 8 N was ~4x the threshold (~6x on v4), which matches its comment ("comfortably
 past the recoverable set") but leaves nothing between "nothing" and
 "barrel roll". A recoverable nudge was the more interesting key in the page.
 
@@ -73,7 +95,8 @@ along y. The page pushes across the bike.
 
   * push along the BIKE's lateral axis, not world y;
   * reduce the force to the page's: 3 N for the knockdown; consider the
-    page's 1.5 N nudge as a second key;
+    page's 1.5 N nudge as a second key (10-26: on the v4 plant the page's
+    are 2 N and 0.75 N; see below);
   * draw the marker: an arrow at the chassis's centre of mass, pointing along
     the force, shown for exactly the pulse and scaled with the force (the
     page's is red, driving in from 0.3 m to 0.1 m over the pulse, then
@@ -176,8 +199,9 @@ Torque Enable 0, and whether the stowed blade bears weight while lying
 (CAD).
 
 **Correction to an earlier claim in this session:** changing this is NOT
-gated by the policy. The pointer (`general_puffer_fixes_72M`) trained with
-the module WELDED (`righting_rigid: true`), so crank and linkage friction
+gated by the policy. The pointer (`general_puffer_fixes_72M` then, and
+`general_puffer_a40_v4_80M` since 10-26) trained with the module WELDED
+(`righting_rigid: true`), so crank and linkage friction
 never reached it. What a change does cost: `righting.module` is in
 `plant_digest`, so every export's digest stops matching and the deploy
 bundle needs re-exporting (`python -m aow_sim.export_deploy`), and the
@@ -190,6 +214,28 @@ may turn out right. If the blade holds, the fix is the ZERO-TORQUE linkage
 friction -- a load term, or a higher holding value, re-measured loaded as
 the bike_params comment already asks. If it flips too, the model is right
 and nothing changes.
+
+### The sim does not stay propped -- finding (10-26)
+
+The bike's get-up (`hand_off=False`) lifts to the 110 deg crank prop and
+stops there, drives limp, until Enter. In the page's sim (a40_v4_80M plant,
+run_bike's settings) it never stays: the lift reaches the prop with the
+roll still falling at ~44 deg/s (from -72 deg/s at crank 96), which passes
+`ready_for_policy` (3 rad/s), so the sequence goes `propped` at roll +6.5;
+with nothing balancing, the bike coasts through upright and over onto the
+side with no blade (-75 deg, after a bounce to -116). 6 of 6 with the drives
+limp; the one run with them held at zero speed went over the same way, so
+it is not the limp drives.
+
+The bike stops: its prop rests at ~8 deg (LIE_MAP's 110 point). So the
+sim's lift arrives with more momentum, or less to slow it at the top, than
+the bike's. Not pursued. One more number from the same runs, not compared
+with anything: the page's crank still lifted a knocked-down bike at 15 % of
+its 785-count Goal Current; it failed (blocked) at 5 %.
+
+The page hands the bike to the policy the moment it is propped inside the
+window, which is what teleop's `hand_off=True` does at the same instant:
+6 / 6 lie-downs up in 3.1 s, both sides; 20 / 20 knockdowns in 4.3-5.3 s.
 
 ### An XML round trip of the compiled model is not faithful -- low severity
 
