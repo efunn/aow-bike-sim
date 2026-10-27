@@ -22,11 +22,14 @@ Writes `site/assets/`:
 THE PLANT IS THE POLICY'S OWN EVAL ENV with one sensor swapped: the AHRS error
 model is off (`ahrs_level: none`), so attitude and heading are MuJoCo truth.
 Felt in teleop (2026-10-22): no visible difference for general_puffer_fixes_72M.
-Everything else it trained with stays -- the XC430 firmware loop, the detent,
-roller slop, steer gearbox friction, and the onboard velocity estimate from
-quantised encoder counts. The firmware loop was the one that mattered by hand.
+Everything else it trained with stays, as its move yaml records it -- the XC430
+firmware loop, the detent (sawtooth hill and kinetic friction where it has
+them), roller slop, wheel play (joints in the compiled model, nothing per
+step), steer gearbox friction, the onboard velocity estimate from quantised
+encoder counts, and the steer rate from the servo's counts where it trained
+on that. The firmware loop was the one that mattered by hand.
 
-Two changes make it teleop's bike rather than the eval's, both for the demo:
+Three changes make it teleop's bike rather than the eval's, all for the demo:
 
   * the righting module is JOINTED (`righting_rigid: false`), with the crank
     on its current-based position servo model, as teleop flies it -- the
@@ -40,6 +43,7 @@ Two changes make it teleop's bike rather than the eval's, both for the demo:
     4 m/s and still going at 20 s. It is also bigger, lighter and bouncier
     than the study's (BALL_RADIUS and the rest, below, with the sweep).
     `config/studies/ball.yaml` is unchanged.
+  * lie down / get up as the bike runs them (`sit_config`), not teleop's.
 
 `--trace` also runs the env for `--seconds` under a fixed command schedule
 and records every step, for `check.mjs`.
@@ -93,16 +97,36 @@ BALL_DRAG_TAU = 0.8             # s; air drag, applied by the page
 # GeneralEnv builds its ball scene only when it may place a ball. This
 # probability never fires, so every reset parks it, as an eval reset does.
 BALL_PROB_PARKED = 1e-12
-# Teleop's shove (`.`) is 8 N for 0.35 s, sideways on the chassis. Swept on
-# this plant (2026-10-23, both sides, 4 detent phases each): 0.5-1.5 N the
-# policy catches (peak roll 3-18 deg); 2 N and up it goes over, and the round
-# cage rolls it onto its back (168-180 deg) at every force to 8. So the page
-# has two: a nudge it catches and a knockdown for the auto-up.
-SHOVE_N, NUDGE_N, SHOVE_S = 3.0, 1.5, 0.35
+# Teleop's shove (`.`) is 8 N for 0.35 s, sideways on the chassis. The page
+# has two: a nudge the policy catches and a knockdown for the auto-up. Swept
+# standing, both sides, 4 detent phases each (8 shoves a force):
+#
+#     plant                   caught                       over
+#     fixes_72M (10-23)       0.5-1.5 N, peak roll 3-18    2 N and up, 8 / 8
+#     a40_v4_80M (10-26)      0.25-0.9 N, peak roll 3-7    1.0 N 1 / 8, 1.25 N 7 / 8,
+#                                                          1.5 N and up 8 / 8
+#
+# The v4 plant (sawtooth detent, wheel play) tips at about two thirds of the
+# old force, so both keys came down (user, 10-26: "a bit less stable"): the
+# nudge to 0.75 N, below the first fall; the knockdown to 2 N, 8 / 8 over.
+SHOVE_N, NUDGE_N, SHOVE_S = 2.0, 0.75, 0.35
 # Z / C swing the blades to this crank angle, one side or the other: 70 % of
 # the stroke, from the mechanism sim (user, 2026-10-23). Teleop's 9 / 4 go to
 # the full stroke, where the blade meets the floor.
 BLADE_CRANK_DEG = 91.0
+# Lie down / get up are the bike's (sit_config). Where the bike waits for
+# the operator, the page goes on by itself: a get-up that stood the bike on
+# a blade hands it to the policy after PROP_HOLD_S, and one that failed
+# tries again after RETRY_S. The bike has no retry on purpose -- lifting a
+# stalled crank again and again overloaded it -- and the sim's crank has no
+# overload. PROP_HOLD_S is 0 because the SIM does not stay propped: its lift
+# reaches the prop still rolling at ~44 deg/s, inside the hand-off gate, and
+# with nobody balancing it coasts through upright onto the side with no
+# blade (2026-10-26, a40_v4_80M: 6 of 6 with the drives limp, and the one
+# run with them held). Handed over at once: 6 / 6 lie-downs up in 3.1 s, both sides; 20 /
+# 20 knockdowns in 4.3-5.3 s, no lift failing. 0.8 s was the first value.
+PROP_HOLD_S = 0.0
+RETRY_S = 1.0
 # Teleop's pelt (`--hockey`, Space): rolled in from this far off the flank.
 # Teleop throws at 4 m/s; the page's lighter ball at 2.5.
 PELT_SPEED, PELT_STANDOFF = 2.5, 0.45
@@ -166,8 +190,10 @@ def _check_supported(env, pol) -> None:
     """The page implements the paths this policy takes and no others. Refuse
     the rest here, where the reason can be said, instead of exporting a page
     that silently flies a different observation."""
-    if env._ahrs is not None or env._steer_rate is not None:
-        raise SystemExit("the page reads attitude and steer rate as truth")
+    if env._ahrs is not None:
+        raise SystemExit("the page reads attitude as truth")
+    if env._steer_rate is not None and env._steer_rate.encoder != "counts":
+        raise SystemExit("the page implements the joint and counts steer rates only")
     if env._odo is None or env._odo.encoder != "counts" or env._odo.fusion != "front":
         raise SystemExit("the page implements only the counts encoder, front fusion")
     if env._crank is None or not env.hockey:
@@ -216,6 +242,23 @@ def visible_geoms(model) -> list:
             if shown.geom_bodyid[g] != 0 and shown.geom_rgba[g][3] > 0.0]
 
 
+def sit_config() -> dict:
+    """Lie down / get up as the BIKE runs it (hw/run_bike.py's SwingSit and
+    its steer hold), read off run_bike so the two cannot drift; plus the
+    page's two waits where the bike waits for the operator."""
+    from ..hw import run_bike as rb
+    return {
+        "swing_sit": {"handOff": False, "restDeg": rb.LIE_REST_DEG,
+                      "liftDps": rb.SIT_DPS, "lowerDps": rb.SIT_DPS,
+                      "lowerMap": [list(a) for a in rb.LIE_MAP],
+                      "lowerRollDps": rb.LIE_ROLL_DPS,
+                      "lowerRollAcc": rb.LIE_ROLL_ACC,
+                      "retryS": None, "pumpS": rb.PUMP_S},
+        "steer_deg": rb.SIT_STEER_DEG, "steer_dps": rb.SIT_STEER_DPS,
+        "prop_hold_s": PROP_HOLD_S, "retry_s": RETRY_S,
+    }
+
+
 def config(env, pol, manifest: dict) -> dict:
     m, drv, odo = env.model, env._drive, env._odo
     est = odo.est
@@ -235,6 +278,7 @@ def config(env, pol, manifest: dict) -> dict:
                 "ha": getattr(g, "_ha", 0.0), "hb": getattr(g, "_hb", 0.0)}
 
     gb = [friction(g) for g in env._gearbox]
+    sr = env._steer_rate
     cs = env._crank
     from ..control.general_env import _PARKED
     from ..control.recovery import HANDOFF_RATE, RECOVER_DEG
@@ -277,7 +321,11 @@ def config(env, pol, manifest: dict) -> dict:
             "detent": None if not drv.detent else {
                 "period": drv.period, "width": drv.width, "fmax": drv.fmax,
                 "k_stick": drv.k_stick, "c_stick": drv.c_stick,
-                "ga": drv.ga, "gb": drv.gb},
+                "ga": drv.ga, "gb": drv.gb,
+                "hill": drv.hill, "hill_saw": drv.hill_saw,
+                "hill_phase": drv.hill_phase, "hill_flip": drv.hill_flip,
+                "hill_offset": drv.hill_offset, "kinetic": drv.kinetic,
+                "minus_scale": drv.minus_scale},
         },
         "gearbox": gb,
         "odometry": {
@@ -293,6 +341,10 @@ def config(env, pol, manifest: dict) -> dict:
             "counts_per_rad": XC330_COUNTS_PER_RAD, "pos_wrap": POS_WRAP,
             "cos_min": COS_MIN, "gravity": GRAVITY,
         },
+        "steer_rate": None if env._steer_rate is None else {
+            "adr": sr.adr, "ratio": sr.ratio, "cpr": sr.cpr,
+            "odo_dt": sr.odo_dt, "window_ms": sr.window_ms, "taper": sr.taper},
+        "sit": sit_config(),
         "crank": {
             "aid": cs.aid, "qadr": cs.qadr, "dadr": cs.dadr,
             "ts": cs.ts, "w0": cs.w0, "k": cs.k, "i0": cs.i0,

@@ -11,7 +11,7 @@
 // use, never cached: a view goes stale if the heap grows, and efc_force moves
 // with the arena every step.
 
-import { SwingSit } from "./sit.js";
+import { SwingSit, readyForPolicy } from "./sit.js";
 
 // Python's round(): half to even. Ties are rare on simulator floats, but the
 // RateFilter tap count is round(25 / 10) = round(2.5), which is 2, not 3.
@@ -57,6 +57,27 @@ class Drivetrain {
   }
 
   reset(d, phase = null) {
+    const q = d.qpos;
+    this.recapture(d);
+    this.limp = false;
+    this.fa = [q[this.qadr[0]], q[this.qadr[1]]];
+    if (this.detent) {
+      if (phase !== null) this.phase = phase;
+      const g = this.detent;
+      this.anchor = g.ga * q[this.qadr[0]] + g.gb * q[this.qadr[1]];
+      this.sliding = false;
+    }
+    const f = d.qfrc_applied;
+    f[this.dadr[0]] = 0.0; f[this.dadr[1]] = 0.0;
+    this.tLast = d.time;
+    this.ready = true;
+    this.n = this.every - 1;
+  }
+
+  // The firmware's state, captured from the shafts as they are: a reset, and
+  // a torque-on after `limp` (page-only: the bike's propped drives, torque
+  // off, so the motors coast and only the friction acts).
+  recapture(d) {
     const q = d.qpos, v = d.qvel, ctrl = d.ctrl;
     this.kC = 0; this.kM = 0;
     this.ref = [0, 0]; this.wf = [0, 0]; this.duty = [0, 0];
@@ -69,17 +90,7 @@ class Drivetrain {
       this.w[i] = new Array(this.nm).fill(w);
       ctrl[this.motorId[i]] = 0.0;
     }
-    this.fa = [q[this.qadr[0]], q[this.qadr[1]]];
-    if (this.detent) {
-      if (phase !== null) this.phase = phase;
-      const g = this.detent;
-      this.anchor = g.ga * q[this.qadr[0]] + g.gb * q[this.qadr[1]];
-    }
-    const f = d.qfrc_applied;
-    f[this.dadr[0]] = 0.0; f[this.dadr[1]] = 0.0;
-    this.tLast = d.time;
-    this.ready = true;
-    this.n = this.every - 1;
+    this.wasLimp = false;
   }
 
   preStep(d) {
@@ -91,7 +102,11 @@ class Drivetrain {
     if (fw) this.n = 0;
     const q = d.qpos, v = d.qvel;
     const fric = [0, 0];
-    if (fw) {
+    if (fw && this.limp) {
+      d.ctrl[this.motorId[0]] = 0.0; d.ctrl[this.motorId[1]] = 0.0;
+      this.wasLimp = true;
+    } else if (fw) {
+      if (this.wasLimp) this.recapture(d);
       const ctrl = d.ctrl, h = this.h_fw, belt = this.belt, vlim = this.vlim;
       const kp = this.kp, ki = this.ki, alpha = this.alpha;
       const kc = this.kC, kc1 = (this.kC + 1) % this.nc;
@@ -140,16 +155,35 @@ class Drivetrain {
       let qf = 0.0;
       if (Math.abs(x) < 0.5 * g.width) {
         const c = Math.cos(Math.PI * x / g.width);
-        const limit = g.fmax * c * c;
+        let limit = g.fmax * c * c;
         const vphi = g.ga * v[this.dadr[0]] + g.gb * v[this.dadr[1]];
         qf = -g.k_stick * (phi - this.anchor) - g.c_stick * vphi;
+        if (qf > 0.0) limit *= g.minus_scale;        // resisting - motion
+        if (this.sliding) limit *= g.kinetic;
         if (qf > limit || qf < -limit) {
+          // Slipping: the anchor is dragged so the spring sits exactly at
+          // the limit (kinetic once sliding).
+          if (!this.sliding) { this.sliding = true; limit *= g.kinetic; }
           qf = qf > 0.0 ? limit : -limit;
           this.anchor = phi + qf / g.k_stick;
+        } else {
+          this.sliding = false;
         }
       } else {
         this.anchor = phi;
+        this.sliding = false;
       }
+      if (g.hill && g.hill_saw) {
+        // The sawtooth: one ramp per notch, repelling from the peak.
+        const xh = ((((phi - this.phase - g.hill_phase * P / (2.0 * Math.PI)) % P) + P) % P) - 0.5 * P;
+        const w = g.hill_flip;
+        qf += w > 0.0 && Math.abs(xh) < 0.5 * w
+          ? g.hill * (2.0 * xh / w) * (1.0 - w / P)
+          : g.hill * ((xh > 0.0 ? 1.0 : -1.0) - 2.0 * xh / P);
+      } else if (g.hill) {
+        qf += -g.hill * Math.sin(2.0 * Math.PI * (phi - this.phase) / P + g.hill_phase);
+      }
+      qf += g.hill_offset;
       fric[0] += g.ga * qf;
       fric[1] += g.gb * qf;
     }
@@ -359,6 +393,38 @@ class Odometry {
   }
 }
 
+// sim_odometry.SimSteerRate, encoder "counts": the steer servo's position
+// counts, backward-differenced at 100 Hz and smoothed, as the Pi forms the
+// steer rate. On its own clock, with SimOdometry's arithmetic.
+class SteerRate {
+  constructor(cfg) { Object.assign(this, cfg.steer_rate); this.reset(); }
+
+  reset() {
+    this.filt = new RateFilter(this.window_ms, this.taper, 1000.0 * this.odo_dt);
+    this.acc = 0.0;
+    this.prev = null;
+    this.last = 0.0;
+  }
+
+  _advance(d, dt) {
+    const c = roundHalfEven(d.sensordata[this.adr] * this.ratio * this.cpr);
+    const prev = this.prev;
+    this.prev = c;
+    if (prev === null) return this.filt.peek();
+    return this.filt.update(((c - prev) / this.cpr) / dt) / this.ratio;
+  }
+
+  update(d, dt) {
+    this.acc += dt;
+    const n = Math.trunc(this.acc / this.odo_dt);
+    if (n) {
+      this.acc -= n * this.odo_dt;
+      for (let i = 0; i < Math.min(n, 4); i++) this.last = this._advance(d, this.odo_dt);
+    }
+    return this.last;
+  }
+}
+
 // control/policy.MinGRUPolicy
 export class Policy {
   constructor(cfg, blob) {
@@ -451,7 +517,11 @@ export class BikeSim {
     this.gearbox = cfg.gearbox.map((g) => new Gearbox(g, model));
     this.crank = new CrankServo(cfg.crank, model);
     this.odo = new Odometry(cfg);
-    this.sit = new SwingSit(cfg.crank.deploy, cfg.crank.recover_deg, cfg.crank.handoff_rate);
+    // null: the policy reads the exact joint velocity (every export before
+    // the steer-rate encoder)
+    this.steerRate = cfg.steer_rate ? new SteerRate(cfg) : null;
+    this.sit = new SwingSit(cfg.crank.deploy, cfg.crank.recover_deg, cfg.crank.handoff_rate,
+                            cfg.sit.swing_sit);
     this.sj = cfg.joints.steer_joint.qpos;
     this.sd = cfg.joints.steer_joint.dof;
     this.vCmdW = [0.0, 0.0];
@@ -478,6 +548,7 @@ export class BikeSim {
     q[3] = Math.cos(a / 2); q[4] = Math.sin(a / 2); q[5] = 0.0; q[6] = 0.0;
     mj.mj_forward(m, d);
     this.odo.reset();
+    if (this.steerRate) this.steerRate.reset();
     this.psi = chassisState(d).yaw;
     this.rawPrev = this.psi;
     this.parkBall();
@@ -498,6 +569,7 @@ export class BikeSim {
     this.sit.reset();
     this.policyOff = false;
     this.heldSteer = null;
+    this.engageNow = false;
     this.crankGoal = 0.0;       // the operator's (Z/C); the sit owns it while active
     this.wingPos = 0;
     this.pushLeft = 0;
@@ -507,6 +579,7 @@ export class BikeSim {
 
   observe() {
     const d = this.d, s = chassisState(d);
+    const steerRate = this.steerRate ? this.steerRate.update(d, 0.0) : d.qvel[this.sd];
     const [oLon, oLat] = this.odo.update(d, 0.0);
     const c = Math.cos(this.psi), sn = Math.sin(this.psi);
     const vCl = c * this.vCmdW[0] + sn * this.vCmdW[1];
@@ -516,7 +589,7 @@ export class BikeSim {
     const pa = this.prevA;
     return [
       s.roll, s.roll_rate, s.yaw_rate,
-      Math.sin(2 * steer), Math.cos(2 * steer), d.qvel[this.sd],
+      Math.sin(2 * steer), Math.cos(2 * steer), steerRate,
       oLon, oLat, vCl, vCt, Math.sin(psiErr), Math.cos(psiErr),
       pa[0], pa[1], pa[2], s.pitch, s.pitch_rate,
     ].map(Math.fround);
@@ -572,6 +645,7 @@ export class BikeSim {
     for (const g of this.gearbox) g.preStep(d);
     this.crank.preStep(d);
     mj.mj_step(m, d);
+    if (this.steerRate) this.steerRate.update(d, cfg.timestep);
     this.odo.update(d, cfg.timestep);
   }
 
@@ -605,8 +679,9 @@ export class BikeSim {
     }
   }
 
-  // A control-step boundary: lie down / get up first (teleop's sit_command),
-  // then the policy, or the drives held while the sequence owns the bike.
+  // A control-step boundary: lie down / get up first (run_bike's _sit_step,
+  // and teleop's auto-up), then the policy, or the drives held while the
+  // sequence owns the bike.
   beginControl() {
     const { d, cfg, sit } = this;
     const s = chassisState(d);
@@ -615,7 +690,12 @@ export class BikeSim {
     if (sit.phase === "riding" && sit.fallen(this.t, s.roll, s.roll_rate)) {
       sit.getUp(this.t, s.roll);
     }
-    if (sit.active || sit.phase === "lying") {
+    // Page-only, both: the bike waits for the operator at each of these.
+    if (sit.phase === "propped" && (this.engageNow
+        || this.t - sit.t0 >= cfg.sit.prop_hold_s)) this.engageProp(s);
+    else if (sit.phase === "lying" && sit.failed !== null
+        && this.t - sit.t0 >= cfg.sit.retry_s) sit.getUp(this.t, s.roll);
+    if (sit.active || this.busy) {
       c = sit.step(this.t, s.roll, s.roll_rate, crankQ, Math.hypot(this.obs[6], this.obs[7]));
       this.crankGoal = c.crank;
       this.crank.goalCurrent = Math.round(this.crank.goalCurrentBase * c.current);
@@ -625,6 +705,7 @@ export class BikeSim {
       this.wingPos = 0;
     }
     d.ctrl[cfg.crank.aid] = this.crankGoal;
+    this.drive.limp = c !== null && c.limp;
     if (c === null || c.policy) {
       if (this.policyOff) this.engage();
       this.policyOff = false;
@@ -632,15 +713,36 @@ export class BikeSim {
       this.applyAction(this.policy.act(this.obs));
       return;
     }
-    // Policy off: drives at zero speed plus the sequence's differential, the
-    // steer held where it was when the policy let go.
+    // Policy off: drives at zero speed plus the sequence's differential
+    // (unpowered while propped), the steer eased straight.
     this.policyOff = true;
-    if (this.heldSteer === null) this.heldSteer = d.ctrl[cfg.actuators.steer];
+    this.steerStraight();
     d.ctrl[cfg.actuators.drive_a] = c.diff / 2;
     d.ctrl[cfg.actuators.drive_b] = -c.diff / 2;
     d.ctrl[cfg.actuators.steer] = this.heldSteer;
     this.lastA = [0.0, 0.0, 0.0];
     this.clearForce();
+  }
+
+  // run_bike._sit_steer_step: from where the steer IS, toward the nearer of
+  // the two straight poses (the policy sees sin/cos 2 delta, so at most a
+  // quarter turn), plus `steer_deg` into the lean, at `steer_dps`.
+  steerStraight() {
+    const k = this.cfg.sit, q = this.d.qpos[this.sj];
+    if (this.heldSteer === null) this.heldSteer = q;
+    const off = -this.sit.side * k.steer_deg * Math.PI / 180;
+    const to = off + Math.PI * roundHalfEven((this.heldSteer - off) / Math.PI);
+    const step = k.steer_dps * Math.PI / 180 * this.cfg.ctrl_dt;
+    this.heldSteer += clip(to - this.heldSteer, -step, step);
+  }
+
+  // Propped -> the policy, through the bike's own gate (its re-arm window
+  // is recovery.ready_for_policy too). Outside it, wait.
+  engageProp(s) {
+    this.engageNow = false;
+    if (readyForPolicy(s.roll, s.roll_rate, this.cfg.crank.recover_deg, this.cfg.crank.handoff_rate)) {
+      this.sit.engage(this.t);
+    }
   }
 
   // drive.engage_general: the policy starts from a clean slate -- empty
@@ -658,7 +760,7 @@ export class BikeSim {
 
   // -- the operator's buttons ----------------------------------------------
 
-  get busy() { return this.sit.active || this.sit.phase === "lying"; }
+  get busy() { return this.sit.active || this.sit.phase === "lying" || this.sit.phase === "propped"; }
 
   // Teleop's `.`: a sideways pulse on the chassis, alternating sides --
   // across the BIKE, where teleop pushes along world y. `gentle` is the
@@ -689,9 +791,11 @@ export class BikeSim {
     this.crankGoal = this.wingPos * this.cfg.crank.blade;
   }
 
-  // Lie down when riding; get up when lying (or down after a fall).
+  // Lie down when riding; get up when lying (or down after a fall); from a
+  // prop, hand the bike to the policy now rather than after the pause.
   sitToggle() {
     const s = chassisState(this.d);
+    if (this.sit.phase === "propped") { this.engageNow = true; return "up"; }
     if (this.sit.active) return;
     if (this.sit.phase === "riding" && Math.abs(s.roll) < 45 * Math.PI / 180) {
       this.vCmdW = [0.0, 0.0];

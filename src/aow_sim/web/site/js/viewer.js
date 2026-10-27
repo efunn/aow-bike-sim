@@ -326,9 +326,9 @@ export class Viewer {
     if (push && com) {
       // Drives in from 0.30 m to just off the shell over the pulse. The
       // whole arrow scales with the force -- thicker as well as longer, which
-      // reads far better than length alone: 0.6x for the nudge, 1.2x for
-      // the knockdown.
-      this.pushArrow.scale.setScalar(push.force / 2.5);
+      // reads far better than length alone: 0.45x for the 0.75 N nudge,
+      // 1.2x for the 2 N knockdown.
+      this.pushArrow.scale.setScalar(push.force / (2.0 / 1.2));
       const gap = 0.10 + 0.20 * push.left;
       const u = new THREE.Vector3(push.dir[0], push.dir[1], 0).normalize();
       this.pushArrow.position.set(com[0] - u.x * gap, com[1] - u.y * gap, com[2]);
