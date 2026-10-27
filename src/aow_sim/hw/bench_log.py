@@ -48,6 +48,7 @@ import dataclasses
 import datetime as _dt
 import gc
 import json
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -357,9 +358,12 @@ class RunRecorder:
         self._f.write(r.tobytes())
         self.n += 1
 
-    def _write_meta(self) -> None:
-        (self.dir / "meta.json").write_text(
-            json.dumps(self.meta, indent=1, default=_jsonable) + "\n")
+    def _write_meta(self, sync: bool = False) -> None:
+        with open(self.dir / "meta.json", "w") as fh:
+            fh.write(json.dumps(self.meta, indent=1, default=_jsonable) + "\n")
+            if sync:
+                fh.flush()
+                os.fsync(fh.fileno())
 
     def close(self, stopped_by: str | None = None, **meta) -> Path:
         """Flush, convert rows.bin to capture.npz, finalise meta.json."""
@@ -372,10 +376,29 @@ class RunRecorder:
         self.meta["complete"] = stopped_by is None
         self.meta["stopped_by"] = stopped_by
         self.meta["stats"] = {"frames": n, "dropped": int(n - arrays["ok"].sum())}
-        np.savez_compressed(self.dir / "capture.npz", **arrays)
-        self._write_meta()
+        # ON THE CARD BEFORE rows.bin GOES. Eight runs on the Pi had a 0-byte
+        # capture.npz beside a complete meta.json and no rows.bin: power off
+        # seconds after a clean close (one boot began at 13:32:49, a minute
+        # after run 261027-133121 closed). A NEW file's data waits in the
+        # page cache while the unlink is already journalled, so the record
+        # was gone. fsync the npz, the meta and the directory, then unlink.
+        with open(self.dir / "capture.npz", "wb") as fh:
+            np.savez_compressed(fh, **arrays)
+            fh.flush()
+            os.fsync(fh.fileno())
+        self._write_meta(sync=True)
+        _fsync_dir(self.dir)
         (self.dir / "rows.bin").unlink()
         return self.dir
+
+
+def _fsync_dir(d: Path) -> None:
+    """Make a directory's entries (a new file, an unlink) durable."""
+    fd = os.open(d, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _row_dtype(labels, n_servo: int, bike_cols: dict) -> np.dtype:
