@@ -3,44 +3,565 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Spirit Lake</title>
-<meta name="description" content="Spirit Lake: a self-balancing robot bike, in simulation and on the floor.">
-<!-- The landing page, by hand. Edit, then `scripts/site.sh build` (or just reload `scripts/site.sh serve`). -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<title>Ice Top</title>
+<meta name="description" content="A spinning top on the frozen lake. Push it and it moves sideways.">
+<!-- No build step.
+     A heavy symmetric top on ice, orthographic camera.
+     Drag anywhere to push the top; line its disc up with the dashed outline.
+     The disc flashes while it is lined up and changes colour on each hit.
+     'X' key (mobile: two-finger tap) gives up: a new target and the colour back to default.
+     It starts with the computer playing (a border, and AUTO top left).
+     Clicking AUTO / MANUAL, or the 'A' key, switches modes; a press on the ice also takes over.
+     Constants at the top of the script, below. -->
 <style>
-:root { --bg: #f5f6f4; --panel: #ffffff; --ink: #1d2226; --muted: #646d73; --rule: #d6dbd9; --accent: #f47516; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; color-scheme: dark; }
-}
-:root[data-theme="dark"] { --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; color-scheme: dark; }
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; }
-.wrap { max-width: 860px; margin: 0 auto; padding: 56px 16px 64px; display: grid; gap: 32px; }
-h1 { font-size: 40px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
-.lede { color: var(--muted); font-size: 18px; margin: 8px 0 0; max-width: 60ch; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
-a.card { display: grid; gap: 6px; padding: 18px 20px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px;
-  color: inherit; text-decoration: none; transition: border-color 0.15s; }
-a.card:hover, a.card:focus-visible { border-color: var(--accent); outline: none; }
-a.card b { font-weight: 600; font-size: 17px; }
-a.card span { color: var(--muted); font-size: 14.5px; }
-footer { color: var(--muted); font-size: 13px; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #16232c; }
+canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; touch-action: none; cursor: grab; }
+canvas.held { cursor: grabbing; }
+#mode { position: fixed; top: 8px; left: 8px; padding: 6px; border: 0; background: none; cursor: pointer;
+  font: 600 13px system-ui, sans-serif; letter-spacing: 0.04em; color: rgba(225,242,255,0.6); }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1>Spirit Lake</h1>
-    <p class="lede">A small self-balancing robot bike with an omni-wheel at the back. It is driven by a neural network trained in simulation, and gets itself back up when it falls.</p>
-  </header>
-  <nav class="cards" aria-label="Pages">
-    <a class="card" href="videos/"><b>Videos</b><span>The bike balancing, turning and getting back up.</span></a>
-    <a class="card" href="sim/"><b>Drive it</b><span>The live simulation in your browser: keyboard or touch, knock it over and watch it recover.</span></a>
-    <a class="card" href="linkage/"><b>Self-righting linkage</b><span>How one servo and two wings lift the bike off its side, design by design.</span></a>
-    <a class="card" href="sim2real/"><b>Balance: sim vs bike</b><span>The same controller in simulation and on the real bike, side by side.</span></a>
-  </nav>
-  <footer>Spirit Lake</footer>
-</div>
+<canvas id="c" aria-label="A spinning top on ice. Drag to push it; line it up with the dashed outline."></canvas>
+<button id="mode" aria-label="Switch between the computer playing and you playing">AUTO</button>
+<script>
+(function () {
+"use strict";
+
+/* ---- tuning ---------------------------------------------------------- */
+var SPIN0 = 14;          // rad/s: launch spin, and what the ice keeps topping it back up towards
+var SPIN_KEEP = 0.08;    // fraction of the spin deficit restored per second
+var MGL = 1.0;           // gravity torque scale: precession ~ MGL / (I3 * spin)
+var GAIN = 1.6;          // push torque per metre of drag
+var F_MAX = 1.5;         // metres: a drag further than this pushes no harder
+var DAMP = 0.05;         // ice friction on the whole tilting motion (slowly lowers the top)
+var WOBBLE = 1.2, WOBBLE_TAU = 0.4;   // damping on the fast nutation only: tilt rate vs its own slow average
+var LOCK_DEG = 9, LOCK_NEED = 1.6;    // target tolerance, and seconds to hold at target
+var LIFE = { tip: 14, drag: 9, rim: 22, frac: 18 };   // seconds a scratch stays visible
+var EL_DEFAULT = 5;      // camera height, degrees above the ice. Lower makes the target and its twin
+                         // the same lean, toward you or away; above ~25 no target has an upright twin
+                         // under 36 deg (__top.setCamera(d) to try one, __top.spread(d) to see the pairs)
+var HOLD_STILL = 0.3;    // seconds a press has to stay put before the ice starts to fracture
+var ICE = "214,232,244";                    // cracks and scratches, one colour
+var COLOURS = [[244, 117, 22], [38, 170, 158], [246, 200, 30], [232, 74, 150], [128, 200, 40], [60, 170, 240], [226, 62, 62], [160, 96, 232]];
+
+/* ---- the top: disc/cone/shaft parameters ----------------------------- */
+var L_CM = 0.75, H_DISC = 0.9, R_DISC = 1.0, T_DISC = 0.12, H_STEM = 1.5, R_CONE = 0.3, H_POINT = 0.16, R_POINT = 0.05, R_SHAFT = 0.045;
+var I3 = 0.5, I1 = 0.25 + L_CM * L_CM;
+
+/* ---- vectors --------------------------------------------------------- */
+function v(x, y, z) { return [x, y, z]; }
+function add(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+function scl(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
+function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+function len(a) { return Math.sqrt(dot(a, a)); }
+function norm(a) { var l = len(a) || 1; return scl(a, 1 / l); }
+function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
+var Z = v(0, 0, 1), DEG = 180 / Math.PI, VIEW;
+
+/* ---- camera: orthographic and low --------------------------------------
+   ---- so a lean toward you and its mirror away from you look identical -- */
+var CAM, EL = EL_DEFAULT;
+function setCamera(elDeg) {
+  EL = elDeg;
+  var az = -0.62, el = elDeg / DEG;
+  var back = v(Math.cos(el) * Math.cos(az), Math.cos(el) * Math.sin(az), Math.sin(el));
+  var fwd = scl(back, -1), right = norm(cross(Z, fwd)), up = cross(fwd, right);
+  var away = norm(v(fwd[0], fwd[1], 0));
+  CAM = { fwd: fwd, right: right, up: up, away: away, look: v(0, 0, 0.7) };
+  VIEW = scl(fwd, -1);
+}
+var cv = document.getElementById("c"), g = cv.getContext("2d");
+var W = 0, H = 0, S = 1, DPR = 1, DNEAR = -10, DFAR = 10;
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = cv.clientWidth; H = cv.clientHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  S = Math.min(W / 4.4, H / 4.5);
+  DNEAR = depthOfScreen(H); DFAR = depthOfScreen(0);
+  makeCracks();
+}
+function P(p) {
+  var r = sub(p, CAM.look);
+  return { x: W / 2 + dot(r, CAM.right) * S, y: H * 0.55 - dot(r, CAM.up) * S, d: dot(r, CAM.fwd) };
+}
+function toIce(sx, sy) {           // screen point -> where it lands on the ice (z = 0)
+  var a = (sx - W / 2) / S, b = -(sy - H * 0.55) / S;
+  var o = add(CAM.look, add(scl(CAM.right, a), scl(CAM.up, b)));
+  return add(o, scl(CAM.fwd, -o[2] / CAM.fwd[2]));
+}
+function depthOfScreen(sy) { return P(toIce(W / 2, sy)).d; }
+function fog(p) { return clamp((P(p).d - DNEAR) / (DFAR - DNEAR), 0, 1); }   // 0 at the bottom edge, 1 at the top
+
+/* ---- state ----------------------------------------------------------- */
+var n, u, Lm, wpSlow, target, mirror, lock = 0, hits = 0, flashT = -9, colour = 0, time = 0;
+var drag = null, scratches = [], cracks = [], lastTip = null, lastRim = null, lastDrag = null;
+
+function tipOf(nn) { return v(-L_CM * nn[0], -L_CM * nn[1], 0); }   // center of mass stays over the origin
+function omega() {
+  var nL = dot(n, Lm);
+  return add(scl(Lm, 1 / I1), scl(n, (1 / I3 - 1 / I1) * nL));
+}
+function launch() {
+  var a = Math.random() * Math.PI * 2, t = 4 / DEG;
+  n = norm(v(Math.sin(t) * Math.cos(a), Math.sin(t) * Math.sin(a), Math.cos(t)));
+  u = norm(cross(n, v(1, 0.3, 0)));
+  Lm = scl(n, I3 * SPIN0);
+  wpSlow = v(0, 0, 0); lastTip = null;
+}
+function mirrorOf(t) { return sub(t, scl(CAM.fwd, 2 * dot(t, CAM.fwd))); }
+function newTarget() {
+  // Matching targets (far enough away that holding the mirror does nothing).
+  // Targets must have a mirror through the picture plane,
+  // which is also an upright lean the top can reach.
+  // At least 14deg away, so holding the mirror doesn't trigger the real target. 
+  for (var k = 0; k < 2000; k++) {
+    var tilt = (6 + Math.random() * 30) / DEG, az = Math.random() * Math.PI * 2;
+    var t = v(Math.sin(tilt) * Math.cos(az), Math.sin(tilt) * Math.sin(az), Math.cos(tilt));
+    var m = mirrorOf(t);
+    var mt = Math.acos(clamp(m[2], -1, 1)), gap = Math.acos(clamp(dot(t, m), -1, 1));
+    var far = Math.acos(clamp(dot(t, n), -1, 1));
+    if (m[2] > 0 && mt < 36 / DEG && gap > 14 / DEG && far > 15 / DEG) { target = t; mirror = m; break; }
+  }
+  lock = 0;
+}
+function makeCracks() {
+  // Scattered over the whole view, laid out on screen and then put on the ice,
+  // and kept out of an oval around the top so its tip has clean ice to draw on.
+  cracks = [];
+  var o = P(v(0, 0, 0));
+  function clear(p) { var q = P(p), dx = (q.x - o.x) / (1.7 * S), dy = (q.y - o.y) / (0.55 * S); return dx * dx + dy * dy > 1; }
+  for (var i = 0; i < 45; i++) {
+    var p = toIce(Math.random() * W, H * 0.08 + Math.random() * H * 0.92);
+    if (!clear(p)) continue;
+    var a = Math.random() * Math.PI * 2, pts = [p], k = 3 + Math.floor(Math.random() * 7);
+    var reach = 0.4 + 0.03 * len(p);            // a little longer further away (where they shrink on screen)
+    for (var j = 0; j < k; j++) {
+      a += (Math.random() - 0.5) * 0.4;
+      var s = reach * (0.3 + Math.random() * 1.1);
+      p = add(p, v(Math.cos(a) * s, Math.sin(a) * s, 0));
+      if (!clear(p)) break;
+      pts.push(p);
+    }
+    if (pts.length > 1) cracks.push(pts);
+  }
+}
+
+/* ---- scratches: segments on the ice that fade --------------------------- */
+function scratch(a, b, kind) {    // returns the point the next segment should start from
+  if (!a) return b;
+  if (len(sub(a, b)) < 0.01) return a;
+  scratches.push({ a: a, b: b, t: time, kind: kind });
+  if (scratches.length > 6000) scratches.splice(0, scratches.length - 6000);
+  return b;
+}
+
+/* ---- physics --------------------------------------------------------- */
+function hubOf(nn) { return add(tipOf(nn), scl(nn, H_DISC)); }
+function rimLow(nn) {             // the disc's lowest point: on the rim of its underside
+  var down = sub(scl(nn, nn[2]), Z);      // straight down, minus its part along the axis
+  var dl = len(down);
+  var dir = dl > 1e-6 ? scl(down, 1 / dl) : v(0, 0, 0);
+  return add(add(tipOf(nn), scl(nn, H_DISC - T_DISC / 2)), scl(dir, R_DISC));
+}
+function pushForce() {
+  // The push is the drag measured on screen from the hub, laid flat on the ice:
+  // across the screen is across the ice, up the screen is further away.
+  // (not measured on the ice because at low angle this would be twitchy)
+  if (drag.F) return drag.F;
+  var h = P(hubOf(n));
+  var F = add(scl(CAM.right, (drag.sx - h.x) / S), scl(CAM.away, -(drag.sy - h.y) / S));
+  F[2] = 0;
+  var fm = len(F);
+  return fm > F_MAX ? scl(F, F_MAX / fm) : F;
+}
+function step(dt) {
+  var w = omega(), tip = tipOf(n);
+  var tq = scl(cross(n, scl(Z, -1)), MGL);                         // gravity
+  if (drag) tq = add(tq, scl(cross(scl(n, H_DISC), pushForce()), GAIN));
+
+  var wn = dot(w, n), wp = sub(w, scl(n, wn));
+  tq = add(tq, scl(wp, -DAMP));
+  wpSlow = add(wpSlow, scl(sub(wp, wpSlow), dt / WOBBLE_TAU));
+  tq = add(tq, scl(sub(wp, wpSlow), -WOBBLE));
+  tq = add(tq, scl(n, I3 * (SPIN0 - wn) * SPIN_KEEP));
+
+  var q = rimLow(n);
+  if (q[2] < 0) {                                                   // disc on ice
+    tq = add(tq, cross(sub(q, tip), v(0, 0, -q[2] * 60)));
+    tq = add(tq, scl(wp, -0.8));
+    tq = add(tq, scl(sub(Z, scl(n, n[2])), 0.15 * wn));            // spinning rim rolls it back up
+    Lm = sub(Lm, scl(n, wn * I3 * 0.15 * dt));                     // bite
+  }
+  Lm = add(Lm, scl(tq, dt));
+
+  w = omega();
+  n = norm(add(n, scl(cross(w, n), dt)));
+  u = add(u, scl(cross(w, u), dt));
+  u = norm(sub(u, scl(n, dot(u, n))));
+  time += dt;
+
+  lastTip = scratch(lastTip, tipOf(n), "tip");
+  var q2 = rimLow(n);
+  lastRim = q2[2] < 0.002 ? scratch(lastRim, q2, "rim") : null;
+
+  var err = Math.acos(clamp(dot(n, target), -1, 1)) * DEG;
+  if (err < LOCK_DEG) lock = Math.min(LOCK_NEED, lock + dt); else lock = Math.max(0, lock - dt * 1.7);
+  if (lock >= LOCK_NEED) { hits++; colour = (colour + 1) % COLOURS.length; flashT = time; newTarget(); }
+  return err;
+}
+
+/* ---- drawing --------------------------------------------------------- */
+var LIGHT = norm(v(0.35, -0.55, 0.9));
+function line(a, b, style, wid) {
+  var p = P(a), q = P(b);
+  g.strokeStyle = style; g.lineWidth = wid; g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(q.x, q.y); g.stroke();
+}
+function path(pts, close) {
+  g.beginPath();
+  for (var i = 0; i < pts.length; i++) { var p = P(pts[i]); if (i) g.lineTo(p.x, p.y); else g.moveTo(p.x, p.y); }
+  if (close) g.closePath();
+}
+function circle(c, nn, r, segs) {
+  var e1 = norm(cross(nn, Math.abs(nn[2]) < 0.9 ? Z : v(1, 0, 0))), e2 = cross(nn, e1), pts = [];
+  for (var i = 0; i < segs; i++) {
+    var a = i / segs * Math.PI * 2;
+    pts.push(add(c, add(scl(e1, Math.cos(a) * r), scl(e2, Math.sin(a) * r))));
+  }
+  return pts;
+}
+function rgba(c, k, white, a) {
+  return "rgba(" + c.map(function (x) { return Math.round(clamp(x * k * (1 - white) + 255 * white, 0, 255)); }).join(",") + "," + a + ")";
+}
+function rgb(c, k, white) {
+  white = white || 0;
+  return "rgb(" + c.map(function (x) { return Math.round(clamp(x * k * (1 - white) + 255 * white, 0, 255)); }).join(",") + ")";
+}
+function lit(nrm, spec) {
+  var d = Math.max(0, dot(nrm, LIGHT)), k = 0.42 + 0.68 * d;
+  if (spec) { var h = norm(add(LIGHT, VIEW)); k += spec * Math.pow(Math.max(0, dot(nrm, h)), 24); }
+  return k;
+}
+
+function drawIce() {
+  var gr = g.createLinearGradient(0, 0, 0, H);
+  gr.addColorStop(0, "#3a5463"); gr.addColorStop(0.45, "#223643"); gr.addColorStop(1, "#111c24");
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  g.lineCap = "round"; g.lineJoin = "round";
+  // Far = thinner and fainter
+  for (var i = 0; i < cracks.length; i++) {
+    var c = cracks[i], f = fog(c[c.length >> 1]), q = c.map(P);
+    // a curve through the midpoints, so the corners round off; round caps on the ends
+    g.beginPath(); g.moveTo(q[0].x, q[0].y);
+    for (var j = 1; j < q.length - 1; j++) g.quadraticCurveTo(q[j].x, q[j].y, (q[j].x + q[j + 1].x) / 2, (q[j].y + q[j + 1].y) / 2);
+    g.lineTo(q[q.length - 1].x, q[q.length - 1].y);
+    g.strokeStyle = "rgba(" + ICE + "," + (0.28 * (1 - f) + 0.05).toFixed(3) + ")"; g.lineWidth = 1.7 * (1 - f) + 0.35; g.stroke();
+  }
+  var keep = [];
+  for (var k = 0; k < scratches.length; k++) {
+    var s = scratches[k], age = (time - s.t) / LIFE[s.kind];
+    if (age >= 1) continue;
+    keep.push(s);
+    var f2 = fog(s.a), a = Math.pow(1 - age, 1.6) * (0.9 - 0.5 * f2);
+    var wid = (s.kind === "rim" ? 2.6 : s.kind === "drag" ? 1.7 : s.kind === "frac" ? 1.1 : 1.3) * (1.15 - 0.6 * f2);
+    line(s.a, s.b, "rgba(" + ICE + "," + a.toFixed(3) + ")", wid);
+  }
+  scratches = keep;
+}
+var shade2 = document.createElement("canvas"), sg = shade2.getContext("2d");
+function drawShadow() {
+  // Drawn opaque on a side canvas and laid down once,
+  // so points where the disc, cone, and stem shadows overlap form one shadow.
+  // The disc is translucent, so its shadow is lighter.
+  function flat(p) { var q = P(sub(p, scl(LIGHT, p[2] / LIGHT[2]))); return [q.x, q.y]; }
+  function fill(pts, a) {
+    sg.beginPath(); pts.forEach(function (q, i) { if (i) sg.lineTo(q[0], q[1]); else sg.moveTo(q[0], q[1]); });
+    sg.closePath(); sg.fillStyle = "rgba(0,0,0," + a + ")"; sg.fill();
+  }
+  if (shade2.width !== cv.width || shade2.height !== cv.height) { shade2.width = cv.width; shade2.height = cv.height; }
+  sg.setTransform(1, 0, 0, 1, 0, 0); sg.clearRect(0, 0, shade2.width, shade2.height);
+  sg.setTransform(DPR, 0, 0, DPR, 0, 0);
+  var t = tipOf(n), hi = add(t, scl(n, H_DISC + T_DISC / 2)), lo = add(t, scl(n, H_DISC - T_DISC / 2));
+  fill(hull2(circle(hi, n, R_DISC, 36).concat(circle(lo, n, R_DISC, 36)).map(flat)), 0.55);
+  fill(hull2(circle(lo, n, R_CONE, 24).map(flat).concat([flat(t)])), 1);
+  var a = flat(add(t, scl(n, H_DISC))), b = flat(add(t, scl(n, H_STEM)));
+  sg.beginPath(); sg.moveTo(a[0], a[1]); sg.lineTo(b[0], b[1]);
+  sg.lineCap = "round"; sg.lineWidth = Math.max(4, S * 0.07); sg.strokeStyle = "#000"; sg.stroke();
+  g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 0.34; g.drawImage(shade2, 0, 0); g.restore();
+  path(circle(t, Z, 0.07, 16), true); g.fillStyle = "rgba(0,0,0,0.45)"; g.fill();   // where the point meets the ice
+}
+function hull2(pts) {            // convex hull of points on the ice (monotone chain)
+  pts = pts.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+  function turn(o, a, b) { return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]); }
+  var lo = [], up = [];
+  for (var i = 0; i < pts.length; i++) {
+    while (lo.length >= 2 && turn(lo[lo.length - 2], lo[lo.length - 1], pts[i]) <= 0) lo.pop();
+    lo.push(pts[i]);
+  }
+  for (var j = pts.length - 1; j >= 0; j--) {
+    while (up.length >= 2 && turn(up[up.length - 2], up[up.length - 1], pts[j]) <= 0) up.pop();
+    up.push(pts[j]);
+  }
+  return lo.slice(0, -1).concat(up.slice(0, -1));
+}
+
+function drawTop() {
+  // steel point, black cone, shaft from disc up to a light-up ball
+  // also the flat see-through disc of colour
+  //
+  // Occlusion is exact, by clipping rather than sorting.
+  // The disc is sandwiched by the cone (below) and shaft (above).
+  // From exactly the side, nothing is occluded.
+  // From above, the shaft is never occluded, and the cone is occluded by the disc's bottom surface.
+  // From below, the cone is never occluded, and the shaft is occluded by the disc's top surface.
+  // So: the far piece clipped to that face (bottom or top), then the disc,
+  //     then the far piece outside that face, then the near piece.
+  // Rings are sampled in a frame fixed to the view:
+  // Every part is round, so the spin can’t show in them, and the tick shows the spin instead.
+  // Ring vertices are exactly where each side line touches to avoid flickering.
+  var tip = tipOf(n), SEG = 48, a1 = cross(n, VIEW);
+  a1 = len(a1) > 1e-4 ? norm(a1) : u;
+  var a2 = cross(n, a1);
+  function ring(h, r, segs) {
+    var out = [], base = add(tip, scl(n, h)); segs = segs || SEG;
+    for (var i = 0; i < segs; i++) {
+      var a = i / segs * Math.PI * 2;
+      out.push(add(base, add(scl(a1, Math.cos(a) * r), scl(a2, Math.sin(a) * r))));
+    }
+    return out;
+  }
+  // lined up -> the disc blinks, faster as the hold fills; a hit pops it white
+  var pop = clamp(1 - (time - flashT) / 0.5, 0, 1), blink = 0;
+  if (lock > 0) { var f = 2 + 7 * lock / LOCK_NEED; blink = 0.55 * (0.5 + 0.5 * Math.sin(time * f * Math.PI * 2)); }
+  var white = Math.max(blink, pop * 0.9), col = COLOURS[colour];
+  var BLACK = [40, 44, 48], STEEL = [170, 178, 186];
+  var hLow = H_DISC - T_DISC / 2, hTop = H_DISC + T_DISC / 2, capUp = dot(n, VIEW) > 0;
+  var SEAM = "rgba(0,0,0,0.5)", seamW = Math.max(1, S * 0.012);
+
+  function band(r0, r1, col0, spec) {           // side faces between two rings
+    var fs = [];
+    for (var j = 0; j < r0.length; j++) {
+      var k = (j + 1) % r0.length, nrm = norm(cross(sub(r1[k], r0[j]), sub(r1[j], r0[j])));
+      fs.push({ v: [r0[j], r0[k], r1[k], r1[j]], nrm: nrm, col: col0, spec: spec });
+    }
+    return fs;
+  }
+  function solid(fs) {          // one convex piece: cull the back faces, paint the rest
+    fs.filter(function (f) { return dot(f.nrm, VIEW) > 0; }).forEach(function (f) {
+      var c = rgb(f.col, lit(f.nrm, f.spec));
+      path(f.v, true); g.fillStyle = c; g.fill(); g.strokeStyle = c; g.lineWidth = 0.8; g.stroke();
+    });
+  }
+  function frontArc(h, r, back) {   // the half of a ring on the side facing the camera (or the far half)
+    var pts = ring(h, r), c = add(tip, scl(n, h)), eps = 1e-9 * (1 + r);
+    var vis = pts.map(function (p) { var d = dot(sub(p, c), VIEW); return back ? d <= eps : d >= -eps; });
+    var start = vis.indexOf(false); if (start < 0) start = 0;
+    var arcs = [], cur = null;
+    for (var i = 1; i <= pts.length; i++) {
+      var j = (start + i) % pts.length;
+      if (vis[j]) { if (!cur) { cur = []; arcs.push(cur); } cur.push(pts[j]); } else cur = null;
+    }
+    return arcs;
+  }
+  function crease(h, r) { g.strokeStyle = SEAM; g.lineWidth = seamW; g.lineCap = "round"; frontArc(h, r).forEach(function (a) { path(a, false); g.stroke(); }); }
+
+  var neck = ring(H_POINT, R_POINT), cone = ring(hLow, R_CONE), coneFs = [];
+  neck.forEach(function (p, j) {
+    var k = (j + 1) % SEG;
+    coneFs.push({ v: [tip, neck[k], neck[j]], nrm: norm(cross(sub(neck[k], tip), sub(neck[j], tip))), col: STEEL, spec: 1.2 });
+  });
+  coneFs = coneFs.concat(band(neck, cone, BLACK, 0.4));
+  coneFs.push({ v: cone.slice().reverse(), nrm: n, col: BLACK, spec: 0.3 });   // its flat top, against the disc
+  var shaftFs = band(ring(hTop, R_SHAFT, 20), ring(H_STEM, R_SHAFT, 20), BLACK, 0.6);
+
+  function drawCone() {
+    g.strokeStyle = SEAM; g.lineWidth = seamW * 1.6;              // contact shadow on the disc's underside
+    path(ring(hLow, R_CONE * 1.04), true); g.stroke();
+    solid(coneFs);
+    crease(H_POINT, R_POINT);
+    if (capUp) { g.lineWidth = seamW; path(cone, true); g.stroke(); } else crease(hLow, R_CONE);
+  }
+  function drawShaft() {
+    g.strokeStyle = SEAM; g.lineWidth = seamW * 1.6;              // contact shadow on the top face
+    path(ring(hTop, R_SHAFT * 1.5, 20), true); g.stroke();
+    solid(shaftFs);
+    crease(hTop, R_SHAFT);
+    var p = P(add(tip, scl(n, H_STEM))), r = Math.max(4, S * 0.06);
+    var gr = g.createRadialGradient(p.x - r * 0.35, p.y - r * 0.35, r * 0.1, p.x, p.y, r);
+    if (drag) {                 // lit in the disc's colour while you are pushing
+      gr.addColorStop(0, rgb(col, 1, 0.6)); gr.addColorStop(1, rgb(col, 0.9));
+      g.shadowColor = rgb(col, 1); g.shadowBlur = r * 2.5;
+    } else { gr.addColorStop(0, "#8a9096"); gr.addColorStop(1, "#1e2124"); }
+    g.beginPath(); g.arc(p.x, p.y, r, 0, Math.PI * 2); g.fillStyle = gr; g.fill();
+    g.shadowBlur = 0; g.lineWidth = seamW; g.strokeStyle = SEAM; g.stroke();
+  }
+  // The disc's edges: everything on its near surface bright,
+  // and only the far half of the hidden face's ring dim.
+  var EDGE = rgba(col, 1.15, white, 0.95), EDGE_W = 1.5, DIM = rgba(col, 1.15, white, 0.4);
+  var hFace = capUp ? hTop : hLow, hOther = capUp ? hLow : hTop;
+  function dimEdges() {
+    g.strokeStyle = DIM; g.lineWidth = 1; g.lineCap = "round";
+    frontArc(hOther, R_DISC, true).forEach(function (a) { path(a, false); g.stroke(); });
+  }
+  function brightEdges() {
+    g.strokeStyle = EDGE; g.lineWidth = EDGE_W; g.lineCap = "round";
+    path(ring(hFace, R_DISC), true); g.stroke();
+    frontArc(hOther, R_DISC).forEach(function (a) { path(a, false); g.stroke(); });
+    if (a1 !== u) {
+      var side = scl(a1, R_DISC);                // the same points the rings have a vertex on
+      [1, -1].forEach(function (k) {
+        line(add(tip, add(scl(n, hLow), scl(side, k))), add(tip, add(scl(n, hTop), scl(side, k))), EDGE, EDGE_W);
+      });
+    }
+  }
+  function film() {             // the fill, and the tick on the middle plane
+    var top = ring(hTop, R_DISC), bot = ring(hLow, R_DISC);
+    var sil = hull2(top.concat(bot).map(function (p) { var q = P(p); return [q.x, q.y]; }));
+    g.beginPath(); sil.forEach(function (q, i) { if (i) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); }); g.closePath();
+    g.fillStyle = rgba(col, 1, white, 0.42); g.fill();
+    var cc = add(tip, scl(n, H_DISC));
+    g.lineCap = "round";
+    line(add(cc, scl(u, 0.3)), add(cc, scl(u, R_DISC * 0.88)), rgba(col, 0.45, 0, 0.8), Math.max(2, S * 0.03));
+  }
+
+  var far = capUp ? drawCone : drawShaft, near = capUp ? drawShaft : drawCone;
+  var face = ring(capUp ? hLow : hTop, R_DISC, 96);               // the face between the far piece and you
+  g.save(); path(face, true); g.clip(); far(); g.restore();
+  dimEdges(); film();
+  g.save(); g.beginPath(); g.rect(-10, -10, W + 20, H + 20);
+  face.forEach(function (p, i) { var q = P(p); if (i) g.lineTo(q.x, q.y); else g.moveTo(q.x, q.y); });
+  g.closePath(); g.clip("evenodd"); far(); g.restore();
+  brightEdges();
+  near();
+}
+function drawTarget() {
+  // Drawn last, over everything
+  // the outline of the disc and a stalk the same length up and down (nothing says which end is nearer)
+  // ghosted: a faint film and a thin dashed edge, same size as disc
+  var c = add(tipOf(n), scl(target, H_DISC)), rim = circle(c, target, R_DISC, 72);
+  path(rim, true); g.fillStyle = "rgba(200,232,255,0.08)"; g.fill();
+  g.setLineDash([7, 7]); g.lineCap = "butt"; g.lineWidth = 1.6;
+  g.strokeStyle = "rgba(225,242,255,0.55)"; g.stroke();
+  path([add(c, scl(target, -0.8)), add(c, scl(target, 0.8))]); g.strokeStyle = "rgba(225,242,255,0.4)"; g.stroke();
+  g.setLineDash([]);
+}
+function draw() {
+  g.setTransform(DPR, 0, 0, DPR, 0, 0); drawIce(); drawShadow(); drawTop(); drawTarget();
+  if (auto) { g.strokeStyle = rgb(COLOURS[colour], 1); g.lineWidth = 4; g.strokeRect(2, 2, W - 4, H - 4); }   // a frame while the computer plays
+  modeBtn.textContent = auto ? "AUTO" : "MANUAL";
+  modeBtn.style.color = auto ? rgb(COLOURS[colour], 1) : "";
+}
+
+/* ---- input ----------------------------------------------------------- */
+function at(e) { var r = cv.getBoundingClientRect(); return { sx: e.clientX - r.left, sy: e.clientY - r.top }; }
+var pointers = 0, still = null;   // still: where a press is being held without moving, and since when
+cv.addEventListener("pointerdown", function (e) {
+  auto = null;                  // a real press takes over
+  pointers++;
+  if (pointers >= 2) { release(); giveUp(); e.preventDefault(); return; }   // two-finger tap: give up
+  drag = at(e); lastDrag = toIce(drag.sx, drag.sy); cv.classList.add("held");
+  still = { sx: drag.sx, sy: drag.sy, t: time, next: time + HOLD_STILL, made: 0 };
+  try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+  e.preventDefault();
+});
+cv.addEventListener("pointermove", function (e) {
+  if (!drag || !pointers) return;   // only a press that is really down (not the computer's presses)
+  drag = at(e); lastDrag = scratch(lastDrag, toIce(drag.sx, drag.sy), "drag");
+  if (still && Math.hypot(drag.sx - still.sx, drag.sy - still.sy) > 5) still = { sx: drag.sx, sy: drag.sy, t: time, next: time + HOLD_STILL, made: 0 };
+});
+function release() { drag = null; lastDrag = null; still = null; cv.classList.remove("held"); }
+function lift() { pointers = Math.max(0, pointers - 1); if (!pointers) release(); }
+cv.addEventListener("pointerup", lift);
+cv.addEventListener("pointercancel", lift);
+window.addEventListener("blur", function () { pointers = 0; release(); });
+cv.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+function fracture() {
+  // A press held still cracks the ice around it: short jagged lines leading
+  // outward, reaching further the longer it is held.
+  if (!still || time < still.next || still.made >= 70) return;
+  still.next = time + 0.07; still.made++;
+  var c = toIce(still.sx, still.sy), held = time - still.t;
+  var a = Math.random() * Math.PI * 2, r = 0.04 + Math.random() * Math.min(0.9, 0.12 + held * 0.22);
+  var p = add(c, v(Math.cos(a) * r, Math.sin(a) * r, 0)), k = 2 + Math.floor(Math.random() * 3);
+  for (var i = 0; i < k; i++) {
+    a += (Math.random() - 0.5) * 1.1;
+    var s = 0.05 + Math.random() * 0.12, q = add(p, v(Math.cos(a) * s, Math.sin(a) * s, 0));
+    scratch(p, q, "frac"); p = q;
+  }
+}
+
+/* ---- give up ------------------------------------------------------- */
+function giveUp() { colour = 0; newTarget(); }
+window.addEventListener("keydown", function (e) {
+  if (e.key === "x" || e.key === "X") giveUp();
+  if (e.key === "a" || e.key === "A") toggleAuto();
+});
+
+/* ---- auto mode -------------------------------
+   It sees the top and the outline, which fits two orientations
+   (it is not told which is real), and whether the disc is flashing.
+   It aims at the nearer of the two; if it has held that one close
+   for a moment with no flash, it tries the other.
+   It moves the top only by pressing the screen */
+var auto = {}, PEN_UP = 25;       // starts playing; PEN_UP: px a press may move in one frame before it counts as lifted
+var modeBtn = document.getElementById("mode");
+function toggleAuto() { auto = auto ? null : {}; release(); }
+modeBtn.addEventListener("click", function (e) { toggleAuto(); modeBtn.blur(); });
+function autoPlay(dt) {
+  var pair = [target, mirror];
+  if (auto.seen !== target) {   // a new outline: start with whichever fit is closer
+    auto.seen = target; auto.near = 0;
+    auto.aim = dot(n, target) > dot(n, mirror) ? 0 : 1;
+  }
+  var goal = pair[auto.aim], err = Math.acos(clamp(dot(n, goal), -1, 1)) * DEG;
+  if (err < LOCK_DEG - 1 && lock === 0) auto.near += dt; else if (lock > 0) auto.near = 0;
+  if (auto.near > 0.8) { auto.aim = 1 - auto.aim; auto.near = 0; }
+  // push toward the goal, plus a steady push that cancels gravity's sideways drift
+  // (Z - n/n_z is flat, and turns the top exactly as Z would)
+  var F = add(scl(cross(sub(goal, n), n), 3), scl(sub(Z, scl(n, 1 / n[2])), MGL / (GAIN * H_DISC))), h = P(hubOf(n));
+  // a press has to be on the screen, and apply scratches
+  var was = drag;
+  drag = { sx: clamp(h.x + dot(F, CAM.right) * S, 0, W), sy: clamp(h.y - dot(F, CAM.away) * S, 0, H) };
+  if (was && Math.hypot(drag.sx - was.sx, drag.sy - was.sy) > PEN_UP) lastDrag = null;   // a jump (new target, switched guess): lift the pen
+  lastDrag = scratch(lastDrag, toIce(drag.sx, drag.sy), "drag");
+}
+
+/* ---- loop ------------------------------------------------------------ */
+var last = 0;
+function frame(ts) {
+  var dt = Math.min(0.05, last ? (ts - last) / 1000 : 0), N = 6; last = ts;
+  if (auto) autoPlay(dt);
+  for (var i = 0; i < N; i++) step(dt / N);
+  fracture();
+  draw();
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener("resize", resize);
+setCamera(EL_DEFAULT); resize(); launch(); newTarget();
+requestAnimationFrame(frame);
+
+// for poking at from the console
+window.__top = {
+  state: function () { return { auto: auto, drag: drag, n: n, target: target, mirror: mirror, spin: dot(omega(), n), lock: lock, hits: hits, colour: colour, scratches: scratches.length }; },
+  step: function (k, dt) { for (var i = 0; i < k; i++) step(dt || 0.004); },
+  push: function (F) { drag = F ? { F: F } : null; }, hub: function () { return hubOf(n); },
+  frames: function (k) { for (var i = 0; i < k; i++) { if (auto) autoPlay(1 / 60); for (var j = 0; j < 6; j++) step(1 / 360); fracture(); } draw(); },
+  newTarget: newTarget, draw: draw, setCamera: function (d) { setCamera(d); resize(); newTarget(); }, giveUp: giveUp,
+  // how the targets spread at a camera height: [target tilt, twin tilt, gap] in degrees
+  spread: function (d, k) {
+    var keep = EL, out = []; setCamera(d);
+    for (var i = 0; i < (k || 200); i++) {
+      newTarget();
+      out.push([Math.acos(target[2]) * DEG, Math.acos(mirror[2]) * DEG, Math.acos(clamp(dot(target, mirror), -1, 1)) * DEG]);
+    }
+    setCamera(keep); resize(); newTarget(); return out;
+  },
+};
+})();
+</script>
 </body>
 </html>
