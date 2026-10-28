@@ -1977,8 +1977,9 @@ class BikeRunner:
         from ..params import design_digest, plant_digest
         d = new_capture_dir(RECORD_ROOT, "run", self.tag)
         self.run_id = d.name
+        from .clock import check as clock_check
         self.rec = RunRecorder(d, self.bus._map, BIKE_COLS, rate_hz=1 / self.dt,
-                               meta={
+                               clock=clock_check, meta={
             "argv": sys.argv,
             "bundle": str(self.bundle_path),
             "policy": self.gen_name,

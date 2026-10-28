@@ -23,8 +23,11 @@ the way it turned in the room. Wrong by a few degrees? Change `--view`.
 
 THE CLOCK. Output frame k shows record time `from + k / fps`. Sync by hand
 in the editor against an event visible in both -- an engage, a crank lift.
-`--info` prints the record's start (wall clock, to the second) and its
-state changes with their record times, which is where to look for one.
+`--info` prints the record's start and its state changes with their record
+times, which is where to look for one. The start is the Pi's clock, which can
+be minutes slow after a power-up, so it also prints the TRUE start where a
+time-server check answered (hw/clock.py) -- a coarse sync, to about the
+check's round trip, to narrow down where to look.
 
 Output: <run>/mirror.mp4 by default (traces/ is gitignored, synced), or --out.
 """
@@ -48,6 +51,7 @@ from .build_model import (SwingLinkageSolver, build_model, strip_visuals,
 from .control.linearize import settle_upright
 from .drivetrain_model import base_params
 from .hw import telemetry as T
+from .hw.clock import record_start
 from .control.steer import XC330_COUNTS_PER_RAD
 from .hw.dynamixel import POS_WRAP
 from .params import load_params
@@ -188,8 +192,16 @@ def main(argv=None) -> None:
     pk = packets(cols, meta, params)
     t = pk["t"]
     if args.info:
-        print(f"{args.run}: started {meta.get('created')}, "
+        print(f"{args.run}: started {meta.get('created')} by the Pi's clock, "
               f"{t[-1] - t[0]:.1f} s, policy {meta.get('policy')}")
+        got = record_start(meta)
+        if got is None:
+            print("  true start: unknown -- no time-server check answered (or "
+                  "the record predates them); after a power-up the Pi's clock "
+                  "can be minutes slow")
+        else:
+            print(f"  true start: {got[0].isoformat(timespec='milliseconds')} "
+                  f"({got[1]})")
         for ts, name in state_changes(pk, meta):
             print(f"  {ts:8.2f} s  {name}")
         return

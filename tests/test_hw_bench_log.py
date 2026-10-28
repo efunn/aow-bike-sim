@@ -285,3 +285,28 @@ def test_a_stopped_run_says_why(tmp_path):
     cap = Capture.load(d)
     assert cap.meta["complete"] is False
     assert cap.meta["stopped_by"] == "failsafe: pack at 9.9 V"
+
+
+def test_a_run_record_carries_both_clock_checks(tmp_path):
+    """`clock` is asked at the start and at close, off the caller's thread,
+    and row 0's place on the wall and monotonic clocks is kept beside them."""
+    import json
+    calls = []
+
+    def fake():
+        calls.append(1)
+        return {"wall": 1.0, "mono": 2.0, "offset_s": 3.0, "rtt_s": 0.01,
+                "server": "s", "synced": False}
+    bus = FakeBus()
+    rec = RunRecorder(tmp_path / "run", _imap(bus), BIKE, clock=fake)
+    rec.add(0.01, {i: (0, 4000, 0, 120) for i in IDS})
+    d = rec.close()
+    c = json.loads((d / "meta.json").read_text())["clock"]
+    assert len(calls) == 2 and c["start"]["offset_s"] == 3.0 == c["close"]["offset_s"]
+    assert abs(c["t0_wall"] - time.time()) < 5 and "t0_mono" in c
+
+
+def test_no_clock_means_no_check(tmp_path):
+    import json
+    d, _ = _run(tmp_path, 3)
+    assert "clock" not in json.loads((d / "meta.json").read_text())

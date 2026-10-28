@@ -289,10 +289,15 @@ class RunRecorder:
 
     `close()` converts `rows.bin` to the usual `capture.npz` and removes it --
     the one is this recorder's scratch, the other is the artifact.
+
+    THE WALL CLOCK (`clock`, e.g. `hw.clock.check`): run once at the start
+    and once at close, each on a thread, into `meta["clock"]` with row 0's
+    wall and monotonic times -- `hw.clock.record_start` makes the true start
+    of them. None (the default) asks nothing, which keeps tests offline.
     """
 
     def __init__(self, directory, imap, bike_cols: dict, meta: dict | None = None,
-                 rate_hz: float = 0.0, buffer_bytes: int = 1 << 16):
+                 rate_hz: float = 0.0, buffer_bytes: int = 1 << 16, clock=None):
         self.dir = Path(directory)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.ids = tuple(imap.ids)
@@ -331,6 +336,11 @@ class RunRecorder:
             "stopped_by": "not closed -- crash, kill or power loss; rows.bin only",
             **(meta or {}),
         }
+        self._clock = clock
+        self._clock_start = None
+        if clock is not None:
+            from .clock import Background
+            self._clock_start = Background(clock)
         self._write_meta()
         self._f = open(self.dir / "rows.bin", "wb", buffering=int(buffer_bytes))
 
@@ -342,6 +352,10 @@ class RunRecorder:
         {name: scalar or sequence} for the declared columns. Unknown `bike`
         keys are ignored rather than raised: this runs inside the control
         loop, and a typo must not be what stops the bike."""
+        if self.n == 0 and self._clock is not None:
+            # Row 0's place on both clocks; t_host is monotonic from it.
+            self.meta["clock"] = {"t0_wall": time.time() - t_host,
+                                  "t0_mono": time.monotonic() - t_host}
         r = self._row
         r[()] = self._blank
         r["t_host"], r["read_s"], r["write_s"] = t_host, read_s, write_s
@@ -368,6 +382,11 @@ class RunRecorder:
     def close(self, stopped_by: str | None = None, **meta) -> Path:
         """Flush, convert rows.bin to capture.npz, finalise meta.json."""
         self._f.close()
+        if self._clock is not None:
+            from .clock import Background
+            c = self.meta.setdefault("clock", {})
+            c["start"] = self._clock_start.result() or {"error": "no answer"}
+            c["close"] = Background(self._clock).result() or {"error": "no answer"}
         arrays = _read_rows(self.dir, self.meta)
         self.meta.update(meta)
         n = len(arrays["t_host"])
