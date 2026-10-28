@@ -317,6 +317,36 @@ each module studio gets the edit on its next push. Not yet tried on
 `bike_v2`. An edit that spans two modules has no one generator to go in:
 say so, and it gets split.
 
+**Replayed rather than re-derived (2026-10-28, `cad.finish`).** For the
+v2 bike's 77 hand features (and the righting's 5) the encoding step is
+mechanical instead:
+
+1. `python -m aow_sim.cad.hand_edits <tab> --picks` reads every pick with
+   the rollback bar before its feature (`?rollbackBarIndex=` on the eval
+   endpoint, the picks passed as deterministic ids in `queries`). Each round
+   is one call. A pick that does not exist yet (an edge an earlier hand
+   feature made) waits for a later round. For bike_v2 that was 35 calls;
+   `--resume` carries on from a partial run.
+2. `python -m aow_sim.cad.finish <tab> [--wheelbase W]` bakes
+   `config/cad/finish/<tab>.yaml`: one op per feature, its dialog values,
+   each pick as a point (and a point inside its body), sketches as curves in
+   their own frame. That frame's origin is the world origin projected onto the
+   plane, not the plane's own origin. `--wheelbase` copies the rollcage front's
+   ops to the rear.
+3. The generator calls `finishOps`, which runs Onshape's own `fillet` /
+   `chamfer` / `extrude` / `moveFace` / `revolve` on those points. Picks
+   are matched within 0.01 mm: `qContainsPoint` found no sketch region at all
+   on an oblique plane rebuilt from 5-decimal numbers.
+4. `--check` compares every body's volume with the hand model's (read once
+   from the tab), so "replayed" is measured, not assumed.
+
+What it is not: the points are frozen, not computed in `layout()`. A
+dimension change that moves an edge drops that pick (`FIN|miss`, a feature
+warning). Re-model it then, or move the edit into its generator properly.
+`--mirror` offers each one-sided pick on its X twin. It was NOT used on
+bike_v2: the drive's sides are not mirror images, and one mirrored chamfer
+cut an edge a later fillet picks.
+
 What the readback found in `aow-bike-steering` on 2026-09-30 (exploratory,
 NOT to encode as is, user):
 - 24 hand features: 14 chamfers, 5 fillets, 2 sketches, 3 extrudes;

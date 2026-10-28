@@ -174,3 +174,58 @@ both `--check`s clean. 4 calls (101 -> 105).
 - **Bridge hints** on each bar's socket ceiling, where the screw's hole
   leaves it (it is a bridge as the ring prints): a hole-wide strip across
   the span, then the hole's square, 0.2 each.
+
+## Round 3 (2026-10-28): the hand finishing rolled in, the bike's colours
+
+The user's finishing in `aow-bike-whole-v2` (77 hand features) and
+`aow-bike-righting` (5) is now generated. Both studios pushed; in both tabs
+the rollback bar sits right after the generated feature, the hand features
+kept below it (to be deleted by the user once happy). `docs/media/cad_bike_v2.png`
+is the README's picture (`cad.bike_v2 --shot`).
+
+**How (`cad.finish`, data in `config/cad/finish/*.yaml`).** Each hand
+feature is replayed by Onshape's own feature of that kind (fillet, chamfer,
+extrude, move face, revolve) with its dialog values; sketches are redrawn
+from their curves. Picks are found again by a point within 0.01 mm and
+scoped to the body holding a point just inside. Every point was read with
+the rollback bar before its feature (`cad.hand_edits --picks`; 35 calls for
+414 picks, one round per bar). These are the hand model's points, frozen,
+not `layout()`'s: a dimension change that moves an edge drops its pick, and
+`--check` names it (`FIN|miss`), and the studio warns.
+
+**Checked:** both `--check`s compare each body's volume with the hand model's
+(`traces/hand_edits/<tab>_final_bodies.txt`):
+
+| | |
+|---|---|
+| righting | 0 of 29 bodies differ; twins equal; no interference over 10 poses |
+| bike_v2 | the same as the hand model but for 7 bodies, all meant: the righting's six (its own edits, equal to the righting tab's) and `rollcage rear` (= the front, 77.5 cm3; was 71.5) |
+| bike_v2 | no interference at rest, steered, at every righting pose, lifted; 86 ops, 0 misses |
+
+- **Order changed in `bikeV2Build`:** placed at rest and steer 0, then the
+  carriers, the cage, the finishing, the colours, and only then the steer
+  and the pose (in the bike frame, as the check sweeps them).
+- **The rollcage rear** gets every front edit, turned 180 deg about Z
+  (the same print).
+- **Left/right: not mirrored.** The drive's sides are not mirror images
+  (the left's ears), and a mirrored 4 mm chamfer cut the edge Fillet 10
+  picks on the right. One-sided edits whose mirror point does land on an
+  edge of the twin, left as modelled, for the user to decide:
+
+| feature | size | on | at (bike, mm) |
+|---|---|---|---|
+| Chamfer 12 | 4 | case side R | (18.3, 63.0, 105.1) |
+| Chamfer 14 | 4 | case side R / L | (18.3, 83.3, 41.2) / (-18.8, 83.3, 41.2) |
+| Fillet 11 | r 1 | case side L / R | (-16.3, 80.4, 38.4) / (18.3, 80.4, 38.4) |
+| Chamfer 16 | 1 | case side L | (-16.0, 86.2, 44.2) |
+| Fillet 18 | r 1.2 | wing L / R blade | (-63.9, 100.2, 96.2) / (49.9, 59.2, 43.0) |
+
+- **Caps off** (not built): a dialog tick, default off; the check still
+  builds them.
+- **Keep-outs off**: the plugs' clearance boxes are a tick too, default
+  off; the check builds them.
+- **Colours** (`bike_v2_cad.yaml colors:`, by part name, over what each
+  generator sets): the wings and rollcages orange, every other print a grey
+  of its own (the bike's are black), servos near-black, horns aluminium, rods
+  steel; wheels and electronics as they were. `dress` now also sets an
+  `aowName` attribute, which is how a Part Studio finds a part by name.
