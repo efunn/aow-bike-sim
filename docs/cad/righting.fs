@@ -842,12 +842,17 @@ export function partAt(context is Context, scope is Id, pt is Vector) returns Qu
                                     BodyType.SOLID), pt);
 }
 
-/** Name, colour and describe a body. */
+/**
+ * Name, colour and describe a body. The name also goes on as an attribute,
+ * `aowName`: a Part Studio cannot read a name back (getProperty throws
+ * there), and a later pass that recolours by name finds it this way.
+ */
 export function dress(context is Context, q is Query, name is string, c is Color,
                       note is string)
 {
     setProperty(context, { "entities" : q, "propertyType" : PropertyType.NAME,
                            "value" : name });
+    setAttribute(context, { "entities" : q, "name" : "aowName", "attribute" : name });
     setProperty(context, { "entities" : q, "propertyType" : PropertyType.APPEARANCE,
                            "value" : c });
     if (note != "")
@@ -1055,6 +1060,170 @@ export function x330Envelope(context is Context, id is Id, cs is CoordSystem) re
             "operationType" : BooleanOperationType.SUBTRACTION });
     return { "caseQ" : caseBody, "horn" : horn };
 }
+
+/**
+ * The finishing pass (cad.finish): hand features replayed as Onshape's own
+ * features with their dialog values, every pick found again by a point on
+ * it, scoped to the body holding a point inside it. `S` is the solids it may
+ * touch; `en` maps enum names to values; `nameOf` (the check's, a function
+ * of a body; undefined in a studio, where a name cannot be read) prints
+ * where each mirrored pick landed. Returns the picks that found
+ * nothing and the ops that failed, as text: a dimension that moved an edge
+ * drops its pick and is named here, never silently.
+ */
+export function finishOps(context is Context, id is Id, S is Query, ops is array, en is map, nameOf) returns array
+{
+    const mm = millimeter;
+    const V = function(a) returns Vector { return vector(a[0], a[1], a[2]) * mm; };
+    const U = function(a) returns Vector { return vector(a[0], a[1], a[2]); };
+    const check = nameOf != undefined;
+    const TOL = 0.01 * mm;
+    // the one of several candidates nearest p; of faces (n given), the one
+    // whose normal there is n's first -- a face's point can sit on an edge
+    // it shares with another
+    const nearest = function(cands is Query, p is Vector, n) returns Query
+    {
+        const es = evaluateQuery(context, cands);
+        if (size(es) < 2)
+            return cands;
+        var best = es[0];
+        var score = inf;
+        for (var e in es)
+        {
+            const d = evDistance(context, { "side0" : p, "side1" : e });
+            var sc = d.distance / mm;
+            if (n != undefined)
+            {
+                const t = evFaceTangentPlane(context, { "face" : e, "parameter" : d.sides[1].parameter });
+                sc = sc + 10 * (1 - dot(t.normal, n));
+            }
+            if (sc < score)
+            {
+                score = sc;
+                best = e;
+            }
+        }
+        return best;
+    };
+    var bad = [];
+    var sk = {};
+    var sketches = [];
+    for (var i = 0; i < size(ops); i += 1)
+    {
+        const op = ops[i];
+        const oid = id + ("h" ~ i);
+        if (op.op == "sketch")
+        {
+            const s = newSketchOnPlane(context, oid, { "sketchPlane" : plane(V(op.origin), U(op.normal), U(op.x)) });
+            const p2 = function(a) returns Vector { return vector(a[0], a[1]) * mm; };
+            for (var k = 0; k < size(op.lines); k += 1)
+                skLineSegment(s, "l" ~ k, { "start" : p2(op.lines[k].a), "end" : p2(op.lines[k].b), "construction" : op.lines[k].c });
+            for (var k = 0; k < size(op.circles); k += 1)
+                skCircle(s, "c" ~ k, { "center" : p2(op.circles[k].c), "radius" : op.circles[k].r * mm, "construction" : op.circles[k].k });
+            for (var k = 0; k < size(op.arcs); k += 1)
+                skArc(s, "a" ~ k, { "start" : p2(op.arcs[k].a), "mid" : p2(op.arcs[k].m), "end" : p2(op.arcs[k].b), "construction" : op.arcs[k].k });
+            skSolve(s);
+            sk[op.name] = oid;
+            sketches = append(sketches, oid);
+            continue;
+        }
+        var def = {};
+        for (var k in keys(op.params))
+        {
+            const v = op.params[k];
+            if (v is boolean)
+                def[k] = v;
+            else if (v.e != undefined)
+                def[k] = en[v.e];
+            else if (v.u != undefined)
+            {
+                // (a chained ?: does not nest right-to-left here)
+                var x = v.v;
+                if (v.u == "mm")
+                    x = v.v * mm;
+                else if (v.u == "deg")
+                    x = v.v * degree;
+                else if (v.u == "in")
+                    x = v.v * inch;
+                def[k] = x;
+            }
+            else
+            {
+                var qs = [];
+                for (var j = 0; j < size(v.q); j += 1)
+                {
+                    const q = v.q[j];
+                    // within TOL of the point, not ON it: the points were read to 1e-5
+                    // mm, and a sketch's plane rebuilt from rounded numbers is 1e-4 off
+                    // its region points (qContainsPoint found none of those, 2026-10-28)
+                    var r = qNothing();
+                    if (q.k == "R")
+                        r = nearest(qWithinRadius(qSketchRegion(sk[q.s]), V(q.p), TOL), V(q.p), undefined);
+                    else if (q.k == "B")
+                        r = qContainsPoint(S, V(q.p));
+                    else
+                    {
+                        var scope = S;
+                        if (q.b != undefined)
+                        {
+                            const bq = qContainsPoint(S, V(q.b));
+                            if (size(evaluateQuery(context, bq)) == 1)
+                                scope = bq;
+                        }
+                        const t = q.k == "E" ? EntityType.EDGE : EntityType.FACE;
+                        r = nearest(qWithinRadius(qOwnedByBody(scope, t), V(q.p), TOL), V(q.p),
+                                    q.k == "F" ? U(q.n) : undefined);
+                    }
+                    const n = size(evaluateQuery(context, r));
+                    if (check && q.m == true)
+                        println("FIN|mir|" ~ i ~ "|" ~ k ~ "|" ~ j ~ "|" ~ n ~ "|"
+                                ~ (n == 1 ? nameOf(qOwnerBody(r)) : "-"));
+                    if (n == 0)
+                    {
+                        if (q.m != true)
+                            bad = append(bad, op.name ~ " " ~ k ~ "[" ~ j ~ "]");
+                        continue;
+                    }
+                    qs = append(qs, r);
+                }
+                def[k] = qUnion(qs);
+            }
+        }
+        var ok = true;
+        try
+        {
+            if (op.op == "fillet")
+                fillet(context, oid, def);
+            else if (op.op == "chamfer")
+                chamfer(context, oid, def);
+            else if (op.op == "extrude")
+                extrude(context, oid, def);
+            else if (op.op == "moveFace")
+                moveFace(context, oid, def);
+            else if (op.op == "revolve")
+                revolve(context, oid, def);
+        }
+        catch (e)
+        {
+            ok = false;
+            bad = append(bad, op.name ~ " FAILED: " ~ toString(e));
+        }
+        if (check)
+            println("FIN|op|" ~ i ~ "|" ~ op.name ~ "|" ~ (ok ? "ok" : "FAILED"));
+    }
+    // the sketches, drawn for the regions only: their own ids, after
+    // everything (an id under a sketch's would split its history)
+    for (var k = 0; k < size(sketches); k += 1)
+        opDeleteBodies(context, id + ("sd" ~ k), { "entities" : qCreatedBy(sketches[k], EntityType.BODY) });
+    if (check)
+        for (var b in bad)
+            println("FIN|miss|" ~ b);
+    return bad;
+}
+
+export const RG_FIN = [{ "op" : "fillet", "name" : "Fillet 1", "params" : { "filletType" : { "e" : "FilletType.EDGE" }, "entities" : { "q" : [{ "k" : "E", "p" : [35.42616, -9.9, 37.12222], "b" : [35.45138, -9.9, 37.07904], "nm" : "rocker R" }, { "k" : "E", "p" : [35.42616, 3.3, 37.12222], "b" : [35.45138, 3.3, 37.07904], "nm" : "knuckle R" }, { "k" : "E", "p" : [36.40196, -9.9, 16.18791], "b" : [36.38435, -9.9, 16.23471], "nm" : "rocker R" }, { "k" : "E", "p" : [36.40196, 3.3, 16.18791], "b" : [36.38435, 3.3, 16.23471], "nm" : "knuckle R" }, { "k" : "E", "p" : [-35.42616, -3.3, 37.12222], "b" : [-35.45138, -3.3, 37.07904], "nm" : "knuckle L" }, { "k" : "E", "p" : [-35.42616, 9.9, 37.12222], "b" : [-35.45138, 9.9, 37.07904], "nm" : "rocker L" }, { "k" : "E", "p" : [-36.40196, 9.9, 16.18791], "b" : [-36.38435, 9.9, 16.23471], "nm" : "rocker L" }, { "k" : "E", "p" : [-36.40196, -3.3, 16.18791], "b" : [-36.38435, -3.3, 16.23471], "nm" : "knuckle L" }] }, "side1Face" : { "q" : [] }, "side2Face" : { "q" : [] }, "centerFaces" : { "q" : [] }, "tangentPropagation" : true, "blendControlType" : { "e" : "BlendControlType.RADIUS" }, "crossSection" : { "e" : "FilletCrossSection.CIRCULAR" }, "radius" : { "v" : 2, "u" : "mm" }, "nonCircularRadius" : { "v" : 5, "u" : "mm" }, "width" : { "v" : 5, "u" : "mm" }, "rho" : { "v" : 0.5, "u" : "" }, "magnitude" : { "v" : 0.5, "u" : "" }, "defaultsChanged" : false, "isAsymmetric" : false, "otherRadius" : { "v" : 1, "u" : "mm" }, "flipAsymmetric" : false, "isPartial" : false, "startPartialType" : { "e" : "EndTypePartialFillet.PERCENTAGE" }, "startPartialOffset" : { "v" : 5, "u" : "mm" }, "startPartialEntity" : { "q" : [] }, "partialFirstEdgeTotalParameter" : { "v" : 0.01, "u" : "" }, "partialOppositeParameter" : true, "useTrimmedFirstBound" : false, "secondBound" : false, "endPartialType" : { "e" : "EndTypePartialFillet.PERCENTAGE" }, "endPartialOffset" : { "v" : 5, "u" : "mm" }, "endPartialEntity" : { "q" : [] }, "useTrimmedSecondBound" : false, "partialSecondEdgeTotalParameter" : { "v" : 0.99, "u" : "" }, "isVariable" : false, "smoothTransition" : false, "allowEdgeOverflow" : true, "keepEdges" : { "q" : [] }, "smoothCorners" : false, "smoothCornerExceptions" : { "q" : [] } } }, { "op" : "fillet", "name" : "Fillet 2", "params" : { "filletType" : { "e" : "FilletType.EDGE" }, "entities" : { "q" : [{ "k" : "E", "p" : [21.87017, -9.9, 17.27087], "b" : [21.89906, -9.9, 17.23006], "nm" : "rocker R" }, { "k" : "E", "p" : [21.87017, 3.3, 17.27087], "b" : [21.89906, 3.3, 17.23006], "nm" : "knuckle R" }, { "k" : "E", "p" : [-21.87017, -3.3, 17.27087], "b" : [-21.89906, -3.3, 17.23006], "nm" : "knuckle L" }, { "k" : "E", "p" : [-21.87017, 9.9, 17.27087], "b" : [-21.89906, 9.9, 17.23006], "nm" : "rocker L" }, { "k" : "E", "p" : [-33.00373, -3.3, 27.89723], "b" : [-33.0468, -3.3, 27.87183], "nm" : "knuckle L" }, { "k" : "E", "p" : [-33.00373, 9.9, 27.89723], "b" : [-33.0468, 9.9, 27.87183], "nm" : "rocker L" }, { "k" : "E", "p" : [33.00373, -9.9, 27.89723], "b" : [33.0468, -9.9, 27.87183], "nm" : "rocker R" }, { "k" : "E", "p" : [33.00373, 3.3, 27.89723], "b" : [33.0468, 3.3, 27.87183], "nm" : "knuckle R" }, { "k" : "E", "p" : [-12.35, 18.5, 25.09139], "b" : [-12.30011, 18.5, 25.09464], "nm" : "front bulkhead" }, { "k" : "E", "p" : [12.35, 18.5, 25.09139], "b" : [12.30011, 18.5, 25.09464], "nm" : "front bulkhead" }] }, "side1Face" : { "q" : [] }, "side2Face" : { "q" : [] }, "centerFaces" : { "q" : [] }, "tangentPropagation" : true, "blendControlType" : { "e" : "BlendControlType.RADIUS" }, "crossSection" : { "e" : "FilletCrossSection.CIRCULAR" }, "radius" : { "v" : 5, "u" : "mm" }, "nonCircularRadius" : { "v" : 5, "u" : "mm" }, "width" : { "v" : 5, "u" : "mm" }, "rho" : { "v" : 0.5, "u" : "" }, "magnitude" : { "v" : 0.5, "u" : "" }, "defaultsChanged" : false, "isAsymmetric" : false, "otherRadius" : { "v" : 1, "u" : "mm" }, "flipAsymmetric" : false, "isPartial" : false, "startPartialType" : { "e" : "EndTypePartialFillet.PERCENTAGE" }, "startPartialOffset" : { "v" : 5, "u" : "mm" }, "startPartialEntity" : { "q" : [] }, "partialFirstEdgeTotalParameter" : { "v" : 0.01, "u" : "" }, "partialOppositeParameter" : true, "useTrimmedFirstBound" : false, "secondBound" : false, "endPartialType" : { "e" : "EndTypePartialFillet.PERCENTAGE" }, "endPartialOffset" : { "v" : 5, "u" : "mm" }, "endPartialEntity" : { "q" : [] }, "useTrimmedSecondBound" : false, "partialSecondEdgeTotalParameter" : { "v" : 0.99, "u" : "" }, "isVariable" : false, "smoothTransition" : false, "allowEdgeOverflow" : true, "keepEdges" : { "q" : [] }, "smoothCorners" : false, "smoothCornerExceptions" : { "q" : [] } } }, { "op" : "chamfer", "name" : "Chamfer 1", "params" : { "entities" : { "q" : [{ "k" : "E", "p" : [14.05, -48.55, 38.64139], "b" : [14.01464, -48.55, 38.60603], "nm" : "upper case" }, { "k" : "E", "p" : [-14.05, -48.55, 38.64139], "b" : [-14.01464, -48.55, 38.60603], "nm" : "upper case" }, { "k" : "E", "p" : [14.05, -48.55, -3.45861], "b" : [14.01464, -48.55, -3.42325], "nm" : "upper case" }, { "k" : "E", "p" : [-14.05, -48.55, -3.45861], "b" : [-14.01464, -48.55, -3.42325], "nm" : "upper case" }, { "k" : "F", "p" : [0, -59.7, 17.82332], "n" : [0, -1, 0], "b" : [0, -59.65, 17.82332], "nm" : "upper case" }] }, "chamferMethod" : { "e" : "ChamferMethod.FACE_OFFSET" }, "chamferType" : { "e" : "ChamferType.OFFSET_ANGLE" }, "width" : { "v" : 1.6, "u" : "mm" }, "width1" : { "v" : 5, "u" : "mm" }, "oppositeDirection" : false, "width2" : { "v" : 5, "u" : "mm" }, "angle" : { "v" : 45, "u" : "deg" }, "directionOverrides" : { "q" : [] }, "tangentPropagation" : true } }, { "op" : "fillet", "name" : "Fillet 3", "params" : { "filletType" : { "e" : "FilletType.EDGE" }, "entities" : { "q" : [{ "k" : "E", "p" : [5.25, -43.55, 38.64139], "b" : [5.21464, -43.55, 38.60603], "nm" : "upper case" }, { "k" : "E", "p" : [-5.25, -43.55, 38.64139], "b" : [-5.21464, -43.55, 38.60603], "nm" : "upper case" }, { "k" : "E", "p" : [5.25, -39.11305, 47.5153], "b" : [5.21464, -39.11305, 47.47994], "nm" : "upper case" }, { "k" : "E", "p" : [5.25, -30.45, 47.5153], "b" : [5.21464, -30.45, 47.47994], "nm" : "lower case" }, { "k" : "E", "p" : [-5.25, -39.11305, 47.5153], "b" : [-5.21464, -39.11305, 47.47994], "nm" : "upper case" }, { "k" : "E", "p" : [-5.25, -30.45, 47.5153], "b" : [-5.21464, -30.45, 47.47994], "nm" : "lower case" }, { "k" : "E", "p" : [0, -40.82609, 47.5153], "b" : [0, -40.80696, 47.46911], "nm" : "upper case" }] }, "side1Face" : { "q" : [] }, "side2Face" : { "q" : [] }, "centerFaces" : { "q" : [] }, "tangentPropagation" : true, "blendControlType" : { "e" : "BlendControlType.RADIUS" }, "crossSection" : { "e" : "FilletCrossSection.CIRCULAR" }, "radius" : { "v" : 2, "u" : "mm" }, "nonCircularRadius" : { "v" : 5, "u" : "mm" }, "width" : { "v" : 5, "u" : "mm" }, "rho" : { "v" : 0.5, "u" : "" }, "magnitude" : { "v" : 0.5, "u" : "" }, "defaultsChanged" : false, "isAsymmetric" : false, "otherRadius" : { "v" : 1, "u" : "mm" }, "flipAsymmetric" : false, "isPartial" : false, "startPartialType" : { "e" : "EndTypePartialFillet.PERCENTAGE" }, "startPartialOffset" : { "v" : 5, "u" : "mm" }, "startPartialEntity" : { "q" : [] }, "partialFirstEdgeTotalParameter" : { "v" : 0.01, "u" : "" }, "partialOppositeParameter" : true, "useTrimmedFirstBound" : false, "secondBound" : false, "endPartialType" : { "e" : "EndTypePartialFillet.PERCENTAGE" }, "endPartialOffset" : { "v" : 5, "u" : "mm" }, "endPartialEntity" : { "q" : [] }, "useTrimmedSecondBound" : false, "partialSecondEdgeTotalParameter" : { "v" : 0.99, "u" : "" }, "isVariable" : false, "smoothTransition" : false, "allowEdgeOverflow" : true, "keepEdges" : { "q" : [] }, "smoothCorners" : false, "smoothCornerExceptions" : { "q" : [] } } }, { "op" : "chamfer", "name" : "Chamfer 2", "params" : { "entities" : { "q" : [{ "k" : "E", "p" : [8.8, -23.5, 36.94139], "b" : [8.8, -23.46464, 36.90603], "nm" : "lower case" }, { "k" : "E", "p" : [-8.8, -23.5, 36.94139], "b" : [-8.8, -23.46464, 36.90603], "nm" : "lower case" }] }, "chamferMethod" : { "e" : "ChamferMethod.FACE_OFFSET" }, "chamferType" : { "e" : "ChamferType.OFFSET_ANGLE" }, "width" : { "v" : 2, "u" : "mm" }, "width1" : { "v" : 5, "u" : "mm" }, "oppositeDirection" : false, "width2" : { "v" : 5, "u" : "mm" }, "angle" : { "v" : 45, "u" : "deg" }, "directionOverrides" : { "q" : [] }, "tangentPropagation" : true } }];
+
+export const RG_FIN_EN = { "BlendControlType.RADIUS" : BlendControlType.RADIUS, "ChamferMethod.FACE_OFFSET" : ChamferMethod.FACE_OFFSET, "ChamferType.OFFSET_ANGLE" : ChamferType.OFFSET_ANGLE, "EndTypePartialFillet.PERCENTAGE" : EndTypePartialFillet.PERCENTAGE, "FilletCrossSection.CIRCULAR" : FilletCrossSection.CIRCULAR, "FilletType.EDGE" : FilletType.EDGE };
 
 /**
  * Case pins in the servo's OTHER hole row, onto `target`: aow-bike-steering's
@@ -1370,7 +1539,16 @@ export function rightingBuild(context is Context, id is Id, opt is map) returns 
     }
     else
         opDeleteBodies(context, id + "noServo", { "entities" : qUnion([sv.caseQ, sv.horn]) });
-    return { "groups" : groups, "prints" : prints };
+    // ---- the hand edits (config/cad/finish/righting.yaml), at rest: v1's
+    // bike leaves them off (opt.finish)
+    var bad = [];
+    if (opt.finish == true)
+    {
+        step("finish");
+        bad = finishOps(context, id + "fin", qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID),
+                        RG_FIN, RG_FIN_EN, opt.nameOf);
+    }
+    return { "groups" : groups, "prints" : prints, "finish" : bad };
 }
 
 /** The transform that puts one group at one pose. */
@@ -1421,7 +1599,9 @@ export const aowRighting = defineFeature(function(context is Context, id is Id, 
         definition.mocks is boolean;
     }
     {
-        const r = rightingBuild(context, id + "build", { "mocks" : definition.mocks });
+        const r = rightingBuild(context, id + "build", { "mocks" : definition.mocks, "finish" : true });
+        if (size(r.finish) > 0)
+            reportFeatureWarning(context, id, "Hand edits that found nothing: " ~ toString(r.finish));
         const keys = { RightingPose.REST : "+0.00", RightingPose.R25 : "+0.25", RightingPose.R50 : "+0.50", RightingPose.R75 : "+0.75", RightingPose.R100 : "+1.00", RightingPose.L25 : "-0.25", RightingPose.L50 : "-0.50", RightingPose.L75 : "-0.75", RightingPose.L100 : "-1.00" };
         const key = keys[definition.pose];
         if (key != "+0.00")

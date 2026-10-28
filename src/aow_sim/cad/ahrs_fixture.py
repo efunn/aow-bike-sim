@@ -330,12 +330,17 @@ export function partAt(context is Context, scope is Id, pt is Vector) returns Qu
                                     BodyType.SOLID), pt);
 }
 
-/** Name, colour and describe a body. */
+/**
+ * Name, colour and describe a body. The name also goes on as an attribute,
+ * `aowName`: a Part Studio cannot read a name back (getProperty throws
+ * there), and a later pass that recolours by name finds it this way.
+ */
 export function dress(context is Context, q is Query, name is string, c is Color,
                       note is string)
 {
     setProperty(context, { "entities" : q, "propertyType" : PropertyType.NAME,
                            "value" : name });
+    setAttribute(context, { "entities" : q, "name" : "aowName", "attribute" : name });
     setProperty(context, { "entities" : q, "propertyType" : PropertyType.APPEARANCE,
                            "value" : c });
     if (note != "")

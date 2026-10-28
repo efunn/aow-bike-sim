@@ -41,6 +41,7 @@ import yaml
 from . import ahrs_fixture as af
 from . import bike as cb
 from . import drive as cd
+from . import finish as cf
 from . import pi_carrier as cpc
 from . import power as cpw
 from . import righting as cr
@@ -182,6 +183,7 @@ def layout(data: dict) -> dict:
                       "at": at, "rx": 0.0, "mass": None, "boxes": rel, "holes": hr, "lift": False})
     L["comps"] = comps
     L["cage"] = rollcage(data, L)
+    L["palette"] = [[n, *c] for n, c in s["colors"]["parts"].items()]
     keys = ("adds", "cuts", "cyls", "joints", "pt")
     L["carriers"] = [{"name": "power holder", "color": [0.93, 0.56, 0.20],
                       "note": "Printed -X (its battery-side face on the bed). The power board, the switch in the "
@@ -562,6 +564,10 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 
 export const BK2 = %BK2%;
 
+// the hand edits made in aow-bike-whole-v2, replayed (cad.finish,
+// config/cad/finish/bike_v2.yaml); finishOps comes in with the righting
+%FIN%
+
 /** A bike-frame vector from a plain [x, y, z] in mm. */
 export function bk2V(a is array) returns Vector
 {
@@ -659,7 +665,7 @@ export function bk2Carrier(context is Context, id is Id, C is map) returns Query
  * axis (along Y at z RC.zc), revolved over [psi centre, half] (deg, psi
  * from +X toward +Z). Each scope's children are made contiguously.
  */
-export function bk2Cage(context is Context, id is Id, RC is map)
+export function bk2Cage(context is Context, id is Id, RC is map, caps is boolean)
 {
     const mm = millimeter;
     const X  = vector(1, 0, 0);
@@ -741,7 +747,19 @@ export function bk2Cage(context is Context, id is Id, RC is map)
                  ~ "the head outboard (under the cap).";
     dress(context, partAt(context, R, ringPt), "rollcage rear", color(0.30, 0.30, 0.34), note);
     // ---- the cap: the dome (one ellipse, its quarter outboard of the rim
-    // and off the axis), less its cone, plus the three lugs on its skirt's bore
+    // and off the axis), less its cone, plus the three lugs on its skirt's
+    // bore. Off unless asked: the caps were not built (user, 2026-10-28)
+    const W = line(vector(0, RC.wb / 2, 0) * mm, Z);
+    const fl = function(q is Vector) returns Vector { return vector(-q[0], RC.wb * mm - q[1], q[2]); };
+    if (!caps)
+    {
+        opPattern(context, id + "f", { "entities" : partAt(context, R, ringPt),
+                "transforms" : [rotationAround(W, 180 * degree)], "instanceNames" : ["front"] });
+        dress(context, partAt(context, id + "f", fl(ringPt)), "rollcage front", color(0.30, 0.30, 0.34), note);
+        setAttribute(context, { "entities" : qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID),
+                                "name" : "bk_mod", "attribute" : "bike" });
+        return;
+    }
     const P = id + "p";
     var sk = newSketchOnPlane(context, P + "dome", { "sketchPlane" : plane(C, Z, X) });
     skEllipse(sk, "ell", { "center" : v2([0, 0]), "majorRadius" : RC.Ro * mm, "minorRadius" : RC.He * mm });
@@ -766,10 +784,8 @@ export function bk2Cage(context is Context, id is Id, RC is map)
           "Printed Y-outboard (its rim on the bed; the inside a cone). Turns on CLOCKWISE seen from outboard, "
           ~ "three lugs into the ring's grooves. ONE part: the front is the rear turned 180 deg about Z.");
     // ---- the front: the same two parts turned about mid-wheelbase
-    const W = line(vector(0, RC.wb / 2, 0) * mm, Z);
     opPattern(context, id + "f", { "entities" : qUnion([partAt(context, R, ringPt), partAt(context, P, capPt)]),
             "transforms" : [rotationAround(W, 180 * degree)], "instanceNames" : ["front"] });
-    const fl = function(q is Vector) returns Vector { return vector(-q[0], RC.wb * mm - q[1], q[2]); };
     dress(context, partAt(context, id + "f", fl(ringPt)), "rollcage front", color(0.30, 0.30, 0.34), note);
     dress(context, partAt(context, id + "f", fl(capPt)), "cap front", color(0.85, 0.85, 0.88),
           "The rear cap turned 180 deg about Z (the same part).");
@@ -779,7 +795,10 @@ export function bk2Cage(context is Context, id is Id, RC is map)
 
 /**
  * The whole bike, v2. opt: steer (angle), pose (a RG_POSES key), mocks
- * (bool: the electronics envelopes). Returns what the check sweeps.
+ * (bool: the electronics envelopes), keepouts (their plugs' clearances),
+ * caps (the rollcages' end caps), nameOf (the check's: names where the
+ * hand edits' mirrored picks land). Returns what the check sweeps, and
+ * the hand edits that found nothing.
  */
 export function bikeV2Build(context is Context, id is Id, opt is map) returns map
 {
@@ -798,7 +817,7 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
     const RGi = id + "rg";
     const rs = steeringBuild(context, STi, { "attach" : "SCREWS", "key" : "CROSS", "v2" : true });
     driveBuild(context, DRi, { "shift" : 0 * mm, "fixture" : false, "rail" : true });
-    const rr = rightingBuild(context, RGi, { "mocks" : true });
+    const rr = rightingBuild(context, RGi, { "mocks" : true, "finish" : true, "nameOf" : opt.nameOf });
     // the righting's floor mock and chassis placeholder: not in v2
     for (var k = 0; k < size(BK2.rgDrop); k += 1)
         opDeleteBodies(context, id + ("rgDrop" ~ k), { "entities" : partAt(context, RGi, bk2V(BK2.rgDrop[k])) });
@@ -814,11 +833,8 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
     for (var g in ["crank", "cR", "cL", "wR", "wL"])
         for (var q in rr.groups[g])
             setAttribute(context, { "entities" : q, "name" : "bk_" ~ g, "attribute" : g });
-    if (opt.steer != undefined && opt.steer != 0 * degree)
-        opTransform(context, id + "steer", { "bodies" : qHasAttribute("bk_steer"),
-                "transform" : rotationAround(rs.axis, opt.steer) });
-    if (opt.pose != undefined && opt.pose != "+0.00")
-        rgPose(context, id + "pose", rr.groups, opt.pose, false);
+    // placed at rest and steer 0: the hand edits were read there, and the
+    // steer and the pose go on after them (below)
     opTransform(context, id + "stXf", { "bodies" : qBodyType(qCreatedBy(STi, EntityType.BODY), BodyType.SOLID), "transform" : sXf });
     opTransform(context, id + "drXf", { "bodies" : qBodyType(qCreatedBy(DRi, EntityType.BODY), BodyType.SOLID), "transform" : dXf });
     opTransform(context, id + "rgXf", { "bodies" : qBodyType(qCreatedBy(RGi, EntityType.BODY), BodyType.SOLID), "transform" : rXf });
@@ -836,6 +852,8 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
             for (var i = 0; i < size(c.boxes); i += 1)
             {
                 const b = c.boxes[i];
+                if (b.ko && opt.keepouts != true)
+                    continue;
                 const C = id + ("comp" ~ k ~ "_" ~ i);
                 const q = boxIn(context, C, coordSystem(O, X, Z), bk2V(b.lo), bk2V(b.hi));
                 // the Pi's mounting holes, through the board (its first box)
@@ -871,9 +889,29 @@ export function bikeV2Build(context is Context, id is Id, opt is map) returns ma
     for (var k = 0; k < size(BK2.carriers); k += 1)
         bk2Carrier(context, id + ("pc" ~ k), BK2.carriers[k]);
     step("rollcage");
-    bk2Cage(context, id + "cage", BK2.cage);
-    return { "steer" : rs, "righting" : rr, "rXf" : rXf,
-             "sAxis" : line(bk2V(BK2.sOrigin), vector(BK2.sAxis[0], BK2.sAxis[1], BK2.sAxis[2])) };
+    bk2Cage(context, id + "cage", BK2.cage, opt.caps != false);
+    step("finish");
+    const bad = concatenateArrays([rr.finish, finishOps(context, id + "fin",
+            qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID), BK2_FIN, BK2_FIN_EN, opt.nameOf)]);
+    step("colour");
+    for (var c in BK2.palette)
+    {
+        const q = qHasAttributeWithValue(qCreatedBy(id, EntityType.BODY), "aowName", c[0]);
+        if (size(evaluateQuery(context, q)) > 0)
+            setProperty(context, { "entities" : q, "propertyType" : PropertyType.APPEARANCE,
+                                   "value" : color(c[1], c[2], c[3]) });
+    }
+    step("pose");
+    const sAxis = line(bk2V(BK2.sOrigin), vector(BK2.sAxis[0], BK2.sAxis[1], BK2.sAxis[2]));
+    if (opt.steer != undefined && opt.steer != 0 * degree)
+        opTransform(context, id + "steer", { "bodies" : qHasAttribute("bk_steer"),
+                "transform" : rotationAround(sAxis, opt.steer) });
+    if (opt.pose != undefined && opt.pose != "+0.00")
+        for (var g in ["crank", "cR", "cL", "wR", "wL"])
+            if (size(evaluateQuery(context, qHasAttribute("bk_" ~ g))) > 0)
+                opTransform(context, id + ("pose" ~ g), { "bodies" : qHasAttribute("bk_" ~ g),
+                        "transform" : rXf * rgXf(RG_POSES[opt.pose][g]) * inverse(rXf) });
+    return { "steer" : rs, "righting" : rr, "rXf" : rXf, "sAxis" : sAxis, "finish" : bad };
 }
 
 %SPLIT%
@@ -903,25 +941,37 @@ export const aowBikeV2 = defineFeature(function(context is Context, id is Id, de
         definition.pose is BikeV2Pose;
         annotation { "Name" : "Show the electronics and battery", "Default" : true }
         definition.mocks is boolean;
+        annotation { "Name" : "Show the plug keep-outs (the check's clearances)", "Default" : false }
+        definition.keepouts is boolean;
+        annotation { "Name" : "Show the rollcage end caps (not built)", "Default" : false }
+        definition.caps is boolean;
     }
     {
         const keys = { BikeV2Pose.REST : "+0.00", BikeV2Pose.R50 : "+0.50", BikeV2Pose.R100 : "+1.00",
                        BikeV2Pose.L50 : "-0.50", BikeV2Pose.L100 : "-1.00" };
-        bikeV2Build(context, id + "build", { "steer" : definition.steer, "pose" : keys[definition.pose],
-                                             "mocks" : definition.mocks });
+        const r = bikeV2Build(context, id + "build", { "steer" : definition.steer, "pose" : keys[definition.pose],
+                                                       "mocks" : definition.mocks, "caps" : definition.caps == true,
+                                                       "keepouts" : definition.keepouts == true });
+        if (size(r.finish) > 0)
+            reportFeatureWarning(context, id, "Hand edits that found nothing: " ~ toString(r.finish));
         reportFeatureInfo(context, id, "%INFO%");
     });
 '''
 
 
 def build_fs(L: dict, fs_version: str = "3044") -> str:
-    keep = ("wb", "yr", "zr", "tilt", "rake", "sOrigin", "sAxis", "rgDrop", "comps", "carriers", "cage")
+    keep = ("wb", "yr", "zr", "tilt", "rake", "sOrigin", "sAxis", "rgDrop", "comps", "carriers", "cage", "palette")
     bk = {k: L[k] for k in keep}
     bk["comps"] = [{k: c[k] for k in ("name", "frame", "at", "rx", "boxes", "holes", "lift") if c[k] is not None}
                    for c in L["comps"]]
+    # a plug's keep-out is room the check keeps clear, not a thing: drawn
+    # only when asked (the check always asks)
+    for c in bk["comps"]:
+        c["boxes"] = [{**b, "ko": "(keep-out)" in b["name"]} for b in c["boxes"]]
     info = (f"Wheelbase {L['wb']:g} mm (CAD only); righting rod {L['yr']:g} mm ahead of the rear axle, "
             f"{L['zr'] - L['floor']:.1f} mm off the floor")
     subs = {"%VERSION%": fs_version, "%MODULES%": cb.merge_layers(module_texts()), "%BK2%": cb._fs(bk),
+            "%FIN%": cf.fs_data("BK2_FIN", cf.load("bike_v2")),
             "%SPLIT%": SPLIT_MARK, "%INFO%": info}
     text = FS
     for k, v in subs.items():
@@ -953,7 +1003,7 @@ def check_wrapper(fs: str, probes: list = ()) -> str:
     }};
     const mm = millimeter;
     const id = makeId("chk");
-    const r = bikeV2Build(context, id, {{ "mocks" : true, "debug" : true }});
+    const r = bikeV2Build(context, id, {{ "mocks" : true, "debug" : true, "caps" : true, "keepouts" : true, "nameOf" : name }});
     const all = evaluateQuery(context, qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID));
     for (var b in all)
     {{
@@ -1050,6 +1100,9 @@ def judge(console: str, L: dict) -> bool:
     if strays:
         ok = False
         print(f"  {len(strays)} UNNAMED bodies  FAIL")
+    fok, ftxt = cf.verdict(rows, "bike_v2", strip=("steering: ", "drive: ", "righting: "))
+    ok &= fok
+    print(ftxt)
     print(f"  {len(bodies)} bodies")
     want = {b["name"]: comp_box(L, c, b) for c in L["comps"] for b in c["boxes"]}
     for r in bodies:
@@ -1141,6 +1194,25 @@ def report(L: dict) -> str:
     return "\n".join(out)
 
 
+# the README's picture (docs/media/cad_bike_v2.png): looking from the
+# bike's right, a little ahead and above -- the direction TO the camera
+SHOT_VIEW = (1.0, 0.55, 0.45)
+SHOT_MARGIN = 8     # px kept either side of the bike when cropped
+
+
+def shot_matrix(toward) -> str:
+    """Onshape's 3x4 view matrix, row-major, for a camera in direction
+    `toward` from the model, Z up on screen: rows are screen right, screen
+    up and toward the viewer (the named `isometric` is toward (1, -1, 1))."""
+    n = math.sqrt(sum(v * v for v in toward))
+    w = [v / n for v in toward]
+    r = [-w[1], w[0], 0.0]
+    m = math.hypot(r[0], r[1])
+    r = [v / m for v in r]
+    u = [w[1] * r[2] - w[2] * r[1], w[2] * r[0] - w[0] * r[2], w[0] * r[1] - w[1] * r[0]]
+    return ",".join(f"{v:.6f}" for row in (r, u, w) for v in (*row, 0.0))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1152,7 +1224,23 @@ def main() -> None:
     ap.add_argument("--push", metavar="TAB|URL", nargs="?", const="", default=None,
                     help=f"replace a Feature Studio's contents (`{TAB}` only)")
     ap.add_argument("--dry-run", action="store_true", help="print the check script instead of spending a call")
+    ap.add_argument("--shot", metavar="PNG", help=f"render the `{PART_STUDIO}` Part Studio as it regenerates (ONE call), "
+                                                  f"the README's view: {SHOT_VIEW}")
     args = ap.parse_args()
+    if args.shot:
+        from . import onshape
+        # transparent (for the README on a light or dark page), cropped
+        # left and right to the bike
+        out, _ = onshape.shaded_view(onshape.resolve(PART_STUDIO, PART_STUDIO), Path(args.shot),
+                                     width=1600, height=1000, view=shot_matrix(SHOT_VIEW), bg=None)
+        from PIL import Image
+        im = Image.open(out)
+        box = im.getchannel("A").getbbox()
+        if box:
+            im.crop((max(box[0] - SHOT_MARGIN, 0), 0, min(box[2] + SHOT_MARGIN, im.width), im.height)).save(out)
+        print(f"-> {out}")
+        print(onshape.budget_line())
+        return
 
     L = layout(load(args.config))
     text = build_fs(L, args.fs_version)

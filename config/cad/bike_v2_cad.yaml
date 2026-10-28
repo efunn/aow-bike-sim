@@ -322,3 +322,84 @@ rollcage:
   bar_fit: {value: 0.15, source: GUESS (as the house ridge)}
   bar_wall: {value: 2.0, source: design}
   bar_split_x: {value: 16.2, source: design (0.2 outside the rail's inner face, where the pads and the panel stop)}
+
+# Colours, by part name, over whatever each generator dresses it with: the
+# bike as built (user, 2026-10-28). Everything printed is black on the
+# bike except the wings and the rollcages, which are orange; here the
+# black prints are told apart by a grey each, so they read in a render.
+# The rest (servos, horns, metal, wheels, the electronics) as they are.
+# Applied last, by the `aowName` attribute `dress` sets.
+colors:
+  orange: &orange [0.96, 0.45, 0.10]
+  servo: &servo [0.09, 0.09, 0.10]
+  horn: &horn [0.72, 0.72, 0.75]
+  steel: &steel [0.62, 0.63, 0.66]
+  belt: &belt [0.07, 0.07, 0.07]
+  parts:
+    # wings and rollcage: orange prints
+    wing R blade: *orange
+    wing L blade: *orange
+    wing R stub (knuckle): *orange
+    wing R stub (rocker): *orange
+    wing L stub (knuckle): *orange
+    wing L stub (rocker): *orange
+    rollcage rear: *orange
+    rollcage front: *orange
+    cap rear: *orange
+    cap front: *orange
+    # drive: black prints
+    case side L [print X+]: [0.20, 0.20, 0.21]
+    case side R [print X-]: [0.20, 0.20, 0.21]
+    chainstay L [print X+]: [0.31, 0.31, 0.32]
+    chainstay R [print X-]: [0.31, 0.31, 0.32]
+    drive pulley L [print X+]: [0.25, 0.25, 0.26]
+    drive pulley R [print X-]: [0.25, 0.25, 0.26]
+    spline pulley L [print X+]: [0.38, 0.38, 0.39]
+    spline pulley R [print X-]: [0.38, 0.38, 0.39]
+    # steering: black prints
+    fork L [print X+]: [0.28, 0.28, 0.29]
+    fork R [print X-]: [0.28, 0.28, 0.29]
+    lower case [print Z+]: [0.22, 0.22, 0.23]
+    upper case [print Z-]: [0.34, 0.34, 0.35]
+    headset lower [print Z+]: [0.40, 0.40, 0.41]
+    headset upper [print Z+]: [0.40, 0.40, 0.41]
+    horn hub [print Z-]: [0.30, 0.30, 0.31]
+    # righting: black prints
+    bridge: [0.25, 0.25, 0.26]
+    front bulkhead: [0.34, 0.34, 0.35]
+    lower case: [0.22, 0.22, 0.23]
+    upper case: [0.30, 0.30, 0.31]
+    half crank R: [0.40, 0.40, 0.41]
+    half crank L: [0.40, 0.40, 0.41]
+    coupler R: [0.27, 0.27, 0.28]
+    coupler L: [0.27, 0.27, 0.28]
+    rocker R: [0.36, 0.36, 0.37]
+    rocker L: [0.36, 0.36, 0.37]
+    knuckle R: [0.30, 0.30, 0.31]
+    knuckle L: [0.30, 0.30, 0.31]
+    horn hub: [0.42, 0.42, 0.43]
+    centre washer: [0.42, 0.42, 0.43]
+    # carriers: black prints
+    power holder: [0.33, 0.33, 0.34]
+    Pi carrier: [0.38, 0.38, 0.39]
+    Pi spacer 1: [0.46, 0.46, 0.47]
+    Pi spacer 2: [0.46, 0.46, 0.47]
+    Pi spacer 3: [0.46, 0.46, 0.47]
+    Pi spacer 4: [0.46, 0.46, 0.47]
+    # bought parts
+    XC430 A: *servo
+    XC430 B: *servo
+    X330 case: *servo
+    XC430 horn A: *horn
+    XC430 horn B: *horn
+    X330 horn: *horn
+    # the omni wheel black, as the front tire (cad.steering's 0.10)
+    rear wheel: [0.10, 0.10, 0.11]
+    belt L: *belt
+    belt R: *belt
+    M5 axle: *steel
+    axle: *steel
+    wing rod: *steel
+    crankpin: *steel
+    rocker pin R: *steel
+    rocker pin L: *steel

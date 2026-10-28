@@ -60,6 +60,7 @@ import numpy as np
 import yaml
 
 from . import ahrs_fixture as af
+from . import finish as cf
 from . import servo_mount as sm
 from ..params import _normalize, blade_points, blade_segments, load_params
 
@@ -1282,6 +1283,7 @@ import(path : "onshape/std/geometry.fs", version : "%VERSION%.0");
 // ---- end of the copy ----
 
 %HELPERS%
+%FINISH%
 /**
  * Case pins in the servo's OTHER hole row, onto `target`: aow-bike-steering's
  * nearRowPins, verbatim.
@@ -1596,7 +1598,16 @@ export function rightingBuild(context is Context, id is Id, opt is map) returns 
     }
     else
         opDeleteBodies(context, id + "noServo", { "entities" : qUnion([sv.caseQ, sv.horn]) });
-    return { "groups" : groups, "prints" : prints };
+    // ---- the hand edits (config/cad/finish/righting.yaml), at rest: v1's
+    // bike leaves them off (opt.finish)
+    var bad = [];
+    if (opt.finish == true)
+    {
+        step("finish");
+        bad = finishOps(context, id + "fin", qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID),
+                        RG_FIN, RG_FIN_EN, opt.nameOf);
+    }
+    return { "groups" : groups, "prints" : prints, "finish" : bad };
 }
 
 /** The transform that puts one group at one pose. */
@@ -1639,7 +1650,9 @@ export const aowRighting = defineFeature(function(context is Context, id is Id, 
         definition.mocks is boolean;
     }
     {
-        const r = rightingBuild(context, id + "build", { "mocks" : definition.mocks });
+        const r = rightingBuild(context, id + "build", { "mocks" : definition.mocks, "finish" : true });
+        if (size(r.finish) > 0)
+            reportFeatureWarning(context, id, "Hand edits that found nothing: " ~ toString(r.finish));
         const keys = %KEYS%;
         const key = keys[definition.pose];
         if (key != "+0.00")
@@ -1666,6 +1679,9 @@ def build_fs(L: dict, data: dict, fs_version: str = "3044") -> str:
             "%DATA%": fs_data(L),
             "%SERVO_MOUNT%": af._servo_mount_layer(data, fs_version),
             "%HELPERS%": af.FS_HELPERS.rstrip("\n") + "\n",
+            # the finishing pass: the interpreter (every bike's merge takes it
+            # from here) and this module's own hand edits
+            "%FINISH%": cf.FS.strip("\n") + "\n\n" + cf.fs_data("RG_FIN", cf.load("righting")),
             "%SPLIT%": SPLIT_MARK, "%ENUM%": enum, "%KEYS%": keys, "%INFO%": info}
     text = FS
     for k, v in subs.items():
@@ -1689,7 +1705,7 @@ def check_wrapper(fs: str) -> str:
     }};
     const mm = millimeter;
     const id = makeId("chk");
-    const r = rightingBuild(context, id, {{ "mocks" : true, "debug" : true }});
+    const r = rightingBuild(context, id, {{ "mocks" : true, "debug" : true, "finish" : true, "nameOf" : name }});
     const all = evaluateQuery(context, qBodyType(qCreatedBy(id, EntityType.BODY), BodyType.SOLID));
     for (var b in all)
     {{
@@ -1747,8 +1763,12 @@ def judge(console: str, L: dict, data: dict) -> bool:
     if strays:
         ok = False
         print(f"  {len(strays)} UNNAMED bodies -- a cutter left behind  FAIL")
+    fok, ftxt = cf.verdict(rows, "righting")
+    ok &= fok
+    print(ftxt)
     bad = 0
     areas = {}
+    finished = cf.touched(cf.load("righting"))
     for r in bodies:
         vols[r[1]] = float(r[8])
         if len(r) > 9:                       # checks before 2026-10-05 carried no area
@@ -1759,11 +1779,15 @@ def judge(console: str, L: dict, data: dict) -> bool:
         got = [float(v) for v in r[2:8]]
         want = p["bbox"][0] + p["bbox"][1]
         err = max(abs(a - b) for a, b in zip(got, want))
+        if r[1] in finished:
+            # a fillet or chamfer only ever trims: inside its primitives' box
+            err = max(max(w - g for g, w in zip(got[:3], want[:3])), max(g - w for g, w in zip(got[3:], want[3:])), 0)
         if err > 1e-3:
             bad += 1
             print(f"  {r[1]:24} bbox off by {err:.4f}  FAIL  got {np.round(got, 2)} want {np.round(want, 2)}")
     ok &= bad == 0
-    print(f"  {len(bodies)} bodies; {len(PURE)} plain parts' bounding boxes as computed: {'ok' if not bad else 'NO'}")
+    print(f"  {len(bodies)} bodies; {len(PURE)} plain parts' bounding boxes as computed (inside it, for the "
+          f"{len(finished & set(PURE))} the hand edits trim): {'ok' if not bad else 'NO'}")
     for r in rows:
         if r[0] == "PART" and int(r[2]) != 1:
             ok = False
