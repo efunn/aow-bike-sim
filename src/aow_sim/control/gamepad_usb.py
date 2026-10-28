@@ -29,6 +29,7 @@ THE PROTOCOL, from the Linux `xpad` driver (drivers/input/joystick/xpad.c):
   out  05 20 ss 01 00               power on: no input reports until this
   out  0a 20 ss 03 00 01 14         PDP only: LED on
   out  06 20 ss 02 01 00            PDP only: authentication done
+  out  0a 20 ss 03 00 00 00         PDP only: LED off (sent on close)
   in   20 00 ss 0e ...              input report (ss is a sequence byte):
          [4] bit 2 MENU(start) 3 VIEW(back) 4 A 5 B 6 X 7 Y
          [5] bit 0 up 1 down 2 left 3 right 4 LB 5 RB 6 LS 7 RS
@@ -60,6 +61,9 @@ PDP_VENDOR = 0x0E6F
 POWER_ON = bytes([0x05, 0x20, 0x00, 0x01, 0x00])
 PDP_LED_ON = bytes([0x0A, 0x20, 0x00, 0x03, 0x00, 0x01, 0x14])
 PDP_AUTH = bytes([0x06, 0x20, 0x00, 0x02, 0x01, 0x00])
+# The LED command with mode 0 (off). Sent on close, so the light means "a
+# program has this pad": left on, it outlived Ctrl-C and said nothing.
+PDP_LED_OFF = bytes([0x0A, 0x20, 0x00, 0x03, 0x00, 0x00, 0x00])
 
 # Bit -> standard button name, per byte of the 0x20 report.
 _BYTE4 = {2: "START", 3: "BACK", 4: "A", 5: "B", 6: "X", 7: "Y"}
@@ -127,7 +131,10 @@ class GipPad:
 
     `state()` is the latest snapshot; `presses()` drains the buttons that went
     DOWN since the last call, so a tap shorter than one frame is not lost.
-    `connected` goes False if the pad is unplugged; nothing reconnects.
+    `connected` goes False if the pad is unplugged -- or the Mac sleeps, which
+    ends the read the same way -- and the state then reads NEUTRAL, so a
+    stick held at the moment it went is not held forever. This class does
+    not reconnect; `run_drive._PadInput` does, by opening a new one.
     """
 
     def __init__(self, dev):
@@ -171,6 +178,8 @@ class GipPad:
             except usb.core.USBTimeoutError:
                 continue
             except usb.core.USBError:
+                with self._lock:
+                    self._state, self._guide = PadState(), False
                 self.connected = False
                 return
             if not r:
@@ -210,6 +219,11 @@ class GipPad:
     def close(self) -> None:
         self._stop.set()
         self._thread.join(timeout=0.5)
+        if self.connected and self.dev.idVendor == PDP_VENDOR:
+            try:
+                self._send(PDP_LED_OFF)
+            except Exception:
+                pass
         try:
             self._usb_util.release_interface(self.dev, 0)
             self._usb_util.dispose_resources(self.dev)
@@ -222,6 +236,33 @@ def _safe_strings(dev) -> bool:
         return bool(dev.manufacturer or dev.product)
     except Exception:
         return False
+
+
+class NoPad:
+    """No pad yet: neutral, never pressed, `connected` False -- so a caller
+    that reopens a dropped pad (`run_drive._PadInput`) also picks up one
+    plugged in after it started."""
+
+    name = "no pad"
+    connected = False
+
+    def state(self) -> PadState:
+        return PadState()
+
+    def presses(self) -> list[str]:
+        return []
+
+    def close(self) -> None:
+        pass
+
+
+def usb_usable() -> bool:
+    """pyusb and libusb are both there, so a pad could be opened at all."""
+    try:
+        import usb.core  # noqa: F401
+    except ImportError:
+        return False
+    return _backend() is not None
 
 
 def open_gamepad(verbose: bool = True) -> GipPad | None:
@@ -255,18 +296,32 @@ def open_gamepad(verbose: bool = True) -> GipPad | None:
 
 
 def main() -> None:
-    pad = open_gamepad()
-    if pad is None:
+    """Live readout. Unplug and replug to test hot-plug: it waits for a pad,
+    and for it again after one drops, as the stations do."""
+    if not usb_usable():
+        open_gamepad()              # says which of pyusb / libusb is missing
         raise SystemExit(1)
+    pad = open_gamepad() or NoPad()
+    if not pad.connected:
+        print("waiting for a pad -- plug one in (Ctrl-C quits)")
     print("move the sticks, pull the triggers, press buttons -- Ctrl-C quits")
     try:
-        while pad.connected:
+        while True:
+            if not pad.connected:
+                pad.close()
+                pad = open_gamepad(verbose=False) or NoPad()
+                if pad.connected:
+                    print(f"\npad connected: {pad.name}")
+                else:
+                    time.sleep(1.0)
+                    continue
             s = pad.state()
             print(f"\rL {s.lx:+.2f} {s.ly:+.2f}  R {s.rx:+.2f} {s.ry:+.2f}  "
                   f"LT {s.lt:.2f} RT {s.rt:.2f}  "
                   f"{' '.join(sorted(s.buttons)):<40}", end="", flush=True)
             time.sleep(0.03)
-        print("\npad disconnected")
+            if not pad.connected:
+                print("\npad disconnected -- waiting for it")
     except KeyboardInterrupt:
         print()
     finally:

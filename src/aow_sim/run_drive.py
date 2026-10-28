@@ -2057,9 +2057,12 @@ TELEOP_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
 MIRROR_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
                    "BACK": ord("8"), "Y": 257, "B": 259,   # engage / disengage
                    # X lies down as in teleop; B is taken (disengage), so
-                   # get-up is START.
+                   # get-up is START. The d-pad doubles them as the keyboard
+                   # has them (PageUp / PageDown / Home, fn+up/down/left on
+                   # a Mac); the righting current stays on `]` / `[`.
                    "X": _KEY_LIE_DOWN, "START": _KEY_GET_UP,
-                   "DPAD_UP": ord("]"), "DPAD_DOWN": ord("[")}
+                   "DPAD_UP": _KEY_GET_UP, "DPAD_DOWN": _KEY_LIE_DOWN,
+                   "DPAD_LEFT": 268}                       # PARK
 _TRIGGER_DEAD = 0.05
 # Full trigger, deg/s: twice swing_sit's lift rate (user, 2026-10-19). Analog,
 # so a light pull is as slow as you like; this is only the ceiling.
@@ -2076,13 +2079,39 @@ class _PadInput:
     keyboard's hold-to-ramp still works with a pad plugged in and idle.
 
     BUTTONS go through the station's `on_key`, called from the loop thread.
+
+    A PAD THAT DROPS is reopened, tried once a second. Seen 2026-10-27: the
+    Mac idle-slept on battery mid-session (the pad over raw USB is not user
+    activity to macOS), the read ended, and the pad stayed dead until the
+    station was restarted. `_keep_awake` stops the sleep; this is for the
+    rest -- a cable knocked out, a wake from a sleep that happened anyway.
     """
+
+    REOPEN_S = 1.0
 
     def __init__(self, pad, keys: dict):
         self.pad, self.keys = pad, keys
         self._owned = False
+        self._t_try = 0.0
+
+    def _reconnect(self) -> None:
+        if self.pad.connected:
+            return
+        now = time.perf_counter()
+        if now - self._t_try < self.REOPEN_S:
+            return
+        from .control.gamepad_usb import NoPad, open_gamepad
+        if not self._t_try and not isinstance(self.pad, NoPad):
+            print("gamepad: lost -- trying to reopen it once a second")
+        self._t_try = now
+        self.pad.close()
+        new = open_gamepad(verbose=False)
+        if new is not None:
+            self.pad, self._t_try, self._owned = new, 0.0, False
+            print(f"gamepad: back ({new.name})")
 
     def dispatch(self, on_key) -> None:
+        self._reconnect()
         for name in self.pad.presses():
             k = self.keys.get(name)
             if k is not None:
@@ -2111,13 +2140,38 @@ class _PadInput:
         return 0.0 if abs(d) < _TRIGGER_DEAD else d
 
 
+def _keep_awake():
+    """Hold the Mac -- display included -- awake while the station runs, by
+    `caffeinate -di -w <our pid>`, which ends with us. -> the process, or None
+    off macOS.
+
+    Measured 2026-10-27, from pmset's log against the bike's link_age: every
+    unexplained link loss that afternoon was the Mac going to Idle Sleep on
+    battery (display off at 2 min, sleep 1 min later), to the second. Driving
+    from the pad is not user activity to macOS, and the heartbeat is tied to
+    the rendered frame, so the bike cut and the pad's read died with it."""
+    import shutil
+    import subprocess
+    import sys
+    exe = shutil.which("caffeinate") if sys.platform == "darwin" else None
+    if exe is None:
+        return None
+    import os
+    return subprocess.Popen([exe, "-di", "-w", str(os.getpid())])
+
+
 def _open_pad(keys: dict, enabled: bool = True):
     """A `_PadInput`, or None. Never fatal: a station without a pad is the
     keyboard station it always was."""
     if not enabled:
         return None
-    from .control.gamepad_usb import open_gamepad
+    from .control.gamepad_usb import NoPad, open_gamepad, usb_usable
     pad = open_gamepad()
+    if pad is None and usb_usable():
+        # Plugged in later, or replugged: `_PadInput` reopens a pad that is
+        # not connected, and NoPad is one.
+        print("gamepad: none yet -- one plugged in later is picked up")
+        pad = NoPad()
     return None if pad is None else _PadInput(pad, keys)
 
 
@@ -2695,6 +2749,10 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             turn(ramp_psi * _TURN_RATE * dt)
 
     padin = _open_pad(MIRROR_PAD_KEYS, pad)
+    awake = _keep_awake()
+    if awake is not None:
+        print("keeping the Mac and its display awake while the mirror runs "
+              "(caffeinate)")
     pad_rate = np.deg2rad(float(pad_righting_dps))
 
     def pad_frame(dt):
@@ -2816,7 +2874,8 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
              + ("  PAD: left stick drive/crab · right stick turn · LB/RB snap "
                 "L/R · Back 180\n       A re-aim · Y engage · B disengage · "
                 "X lie down · Start get up · RT-LT slew the "
-                "righting servo · d-pad up/down its current\n"
+                "righting servo\n       d-pad up get up · down lie down · "
+                "left park\n"
                 if padin else "")
              + ("  wings DRAWN from the servo's measured angle — check "
                 "against the real\n  mechanism: righting_sign is still TBD "
@@ -2877,6 +2936,8 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
         addr.close()
         if padin is not None:
             padin.pad.close()
+        if awake is not None:
+            awake.terminate()
         # Only when the viewer actually came up. Printing "mirror stopped" after
         # launch_passive refused (the mjpython hint) reads as though it ran and
         # buries the one line that says what to do.

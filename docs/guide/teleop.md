@@ -178,6 +178,8 @@ python -m aow_sim.control.gamepad_usb
 
 The reader reports the standard layout (+x right, +y up, triggers 0..1, Xbox button names), and `gamepad.from_state` maps that onto the bike's command. A different controller only needs a backend that produces the same `PadState`.
 
+The pad is hot-pluggable: the stations and the test tool reopen one that drops (unplugged, or the Mac slept) once a second, and pick up one plugged in after they start. A dropped pad reads as centred, so a stick held as it went is not held on. The PDP's light goes off when the program holding it exits, so a lit pad has an owner. The mirror also keeps the Mac awake (`caffeinate -di`) while it runs: on battery the display sleeps after 2 min and the Mac a minute later, pad input doesn't count as activity, and a sleeping Mac stops the heartbeat, so the bike cuts.
+
 | input | teleop | mirror |
 |---|---|---|
 | left stick | velocity (forward) and crab, absolute, while deflected | same |
@@ -187,9 +189,10 @@ The reader reports the standard layout (+x right, +y up, triggers 0..1, Xbox but
 | A | re-aim the heading at the bike (`/`) | same |
 | Y | reset / respawn (Backspace) | **engage** / re-arm (Enter) |
 | B | get up (`swing_sit`) | **disengage** (Backspace) |
-| X | lie down (`swing_sit`) | — (not onboard yet) |
-| Start | camera (`\`) | — |
-| d-pad up / down | righting current + / − (`]` / `[`) | same |
+| X | lie down (`swing_sit`) | lie down (PageDown) |
+| Start | camera (`\`) | get up (PageUp) |
+| d-pad up / down | righting current + / − (`]` / `[`) | **get up / lie down** (PageUp / PageDown) |
+| d-pad left | — | **park** (Home), propped on the blade |
 | RT − LT | **slews the righting crank's goal** | same, on the real servo |
 
 The triggers are analog: full pull is `--pad-righting-dps` (240 °/s, twice `swing_sit`'s lift rate), a light pull as slow as you like. Both pulled is their difference, so equal pulls hold. The slew starts from where the crank actually is, holds when released, and `9`/`4` then step to the next stop of left / centre / right from there. In teleop it takes the crank from a finished lie-down, and is ignored while one is running. To right the bike by hand with the policy on throughout: `--no-auto-up`, knock it over with `.`, then the triggers.

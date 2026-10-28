@@ -105,8 +105,9 @@ BUTTON_MAP = {
     "X": "lie down",        # teleop PageDown (swing_sit); nothing on the bike yet
     "B": "get up / disengage",  # teleop PageUp; mirror BACKSPACE (standby)
     "START": "camera",    # teleop `\\`
-    "DPAD_UP": "righting current +",    # `]`
-    "DPAD_DOWN": "righting current -",  # `[`
+    "DPAD_UP": "righting current + / get up",    # teleop `]`; mirror PageUp
+    "DPAD_DOWN": "righting current - / lie down",  # teleop `[`; mirror PageDown
+    "DPAD_LEFT": "park",                # mirror Home (fn+left); teleop none
     # Triggers: RT - LT slews the righting crank's goal (analog; equal pulls
     # cancel), teleop and mirror both.
 }

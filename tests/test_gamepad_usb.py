@@ -76,8 +76,14 @@ def test_stick_right_crabs_right_and_turns_clockwise():
 
 
 class _FakePad:
+    name = "fake"
+
     def __init__(self):
         self.s, self.p = PadState(), []
+        self.connected, self.closed = True, False
+
+    def close(self):
+        self.closed = True
 
     def state(self):
         return self.s
@@ -85,6 +91,31 @@ class _FakePad:
     def presses(self):
         out, self.p = self.p, []
         return out
+
+
+def test_a_dropped_pad_is_reopened_and_its_stick_released(monkeypatch):
+    """The Mac slept, the read died: the next frames reopen it, once a
+    second, and a stick held when it went does not stay held."""
+    import aow_sim.control.gamepad_usb as gu
+    from aow_sim.run_drive import _PadInput
+    old, new = _FakePad(), _FakePad()
+    pin = _PadInput(old, {"A": ord("5")})
+    old.s = PadState(ly=0.5)
+    assert pin.drive()[0][0] > 0
+    tries = []
+    monkeypatch.setattr(gu, "open_gamepad",
+                        lambda verbose=True: tries.append(1) or None)
+    old.connected = False
+    pin.dispatch(lambda k: None)
+    pin.dispatch(lambda k: None)                   # inside the second: no retry
+    assert len(tries) == 1 and old.closed
+    monkeypatch.setattr(gu, "open_gamepad", lambda verbose=True: new)
+    pin._t_try -= _PadInput.REOPEN_S
+    new.p = ["A"]
+    got = []
+    pin.dispatch(got.append)
+    assert pin.pad is new and got == [ord("5")]
+    assert pin.drive()[0] is None                  # the new pad is idle
 
 
 def test_the_pad_owns_the_velocity_only_while_deflected():

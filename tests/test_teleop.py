@@ -1292,6 +1292,8 @@ class _FakePad:
     """A `gamepad_usb.GipPad` stand-in: `s` is the held state, `p` the
     presses waiting to be drained."""
 
+    connected = True
+
     def __init__(self):
         from aow_sim.control.gamepad_usb import PadState
         self.s, self.p = PadState(), []
