@@ -17,6 +17,8 @@
 #                    1 run ~29 min for 80M at ~51k steps/s; 4 runs ~46 min
 #                    at ~29k each (116k in all); 8 runs 127k in all, 16k each
 #   CONFIG=config/rl/rl_general_v3.yaml   the env config (every seed)
+#   CONFIGS=a.yaml,b.yaml,...             one config per seed instead (SEEDS
+#                    of them, comma-separated, one obs width)
 #   NW=4096 HORIZON=64 CURRICULUM_LEAD ENV_SEED=0 PUFFER_SEED=42 TRAIN_S MPS=1
 #   TRAIN_S is a wall cap (3600 s one run, 7200 several) that cuts a run
 #   short of the ini's 80M on a card under ~23k steps/s: an A40 on the v4
@@ -35,9 +37,9 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 P3=analysis/gpu/phase3
-PASS="SEEDS CONFIG NW HORIZON CURRICULUM_LEAD ENV_SEED PUFFER_SEED TRAIN_S MPS SKIP_CHECKS"
+PASS="SEEDS CONFIG CONFIGS NW HORIZON CURRICULUM_LEAD ENV_SEED PUFFER_SEED TRAIN_S MPS SKIP_CHECKS"
 
-usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 remote() {  # remote HOST PORT CMD
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
         -p "$2" root@"$1" "$3"

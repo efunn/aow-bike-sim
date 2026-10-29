@@ -37,7 +37,7 @@ from ..build_model import (SWING_LINKAGE_CFG, build_model, load_params,
                            reset_actuator_state)
 from .balance import extract_state, mix
 from .general_spec import (ACT_DIM, ActionBounds, act_dim_for, build_obs,
-                           command_to_body, obs_dim_for, obs_layout,
+                           command_to_body, detent_angle, obs_dim_for, obs_layout,
                            righting_module_for, style_active,
                            wheel_err, wheel_world_heading,
                            rotate_to_body, scale_action, vel_filter_alpha,
@@ -459,6 +459,16 @@ class GeneralEnv(gym.Env):
         if (self.style_p or self.w_style) and not self.obs_style:
             raise ValueError("style_p / w_style without obs_style: the policy "
                              "would be paid on a bit it cannot see")
+        # THE DETENT PHASE (general_spec.detent_angle): sin/cos of where
+        # ring-vs-hub sits in its notch, and the measured diff rate. Needs
+        # the detailed drivetrain's detent (the flip it measures from) and
+        # the odometry (the rate is its differenced encoders).
+        self.obs_detent = bool(env.get("obs_detent", False))
+        if self.obs_detent and (self._drive is None or not self._drive.detent
+                                or not self.obs_odometry
+                                or not self.bounds.diff_max):
+            raise ValueError("obs_detent needs drivetrain_model with its detent, "
+                             "obs_odometry, and a non-zero diff_max")
         self._rake = np.deg2rad(float(self.p["bike"]["rake_deg"]))
         self._style = 0.0          # the bit as the policy sees it (gated)
         self._latch_obs = 0.0      # wheel heading at the bit's edge, the bike's psi
@@ -500,9 +510,11 @@ class GeneralEnv(gym.Env):
         act_dim = act_dim_for(self.act_wings, self.act_swing) if self.full else 2
         self.action_space = spaces.Box(-1.0, 1.0, (act_dim,), np.float32)
         self.obs_dim = obs_dim_for(self.vel_window_s, self.obs_pitch,
-                                   self.obs_wings, self.obs_swing, self.obs_style)
+                                   self.obs_wings, self.obs_swing, self.obs_style,
+                                   self.obs_detent)
         self.obs_layout = obs_layout(self.vel_window_s, self.obs_pitch,
-                                     self.obs_wings, self.obs_swing, self.obs_style)
+                                     self.obs_wings, self.obs_swing, self.obs_style,
+                                     self.obs_detent)
         self.observation_space = spaces.Box(-np.inf, np.inf, (self.obs_dim,),
                                             np.float32)
         self._aid = {n: self.model.actuator(n).id
@@ -998,8 +1010,18 @@ class GeneralEnv(gym.Env):
                         style=((self._style, wheel_err(
                             self._psi, float(self.data.qpos[self._sj]),
                             self._latch_obs, self._rake) if self._style else 0.0)
-                               if self.obs_style else None))
+                               if self.obs_style else None),
+                        detent=self._detent_obs() if self.obs_detent else None)
         return obs, s, v_cl, v_ct, psi_err, vb_lon, vb_lat
+
+    def _detent_obs(self) -> tuple[float, float]:
+        """(angle, diff rate) for obs_detent: the angle from the episode's
+        flip on the exact shaft angles (an encoder count of S is 1.7 % of a
+        notch), the rate off the odometry's differenced, filtered encoders
+        as the Pi's bike_bus forms them, held between its ticks."""
+        wa, wb = self._odo.last_rates
+        rate = self._odo.est.belt_ratio * (wa - wb) / self.bounds.diff_max
+        return detent_angle(self._drive.ring_vs_hub(self.data), self._drive.flip), rate
 
     # -- curriculum --------------------------------------------------------
 

@@ -83,6 +83,7 @@ from __future__ import annotations
 
 import copy
 import math
+import weakref
 from pathlib import Path
 
 import mujoco
@@ -149,12 +150,13 @@ def from_env_config(params: dict, env: dict) -> dict:
     the export) and every env resolve the same config again. A caller forcing
     a plant (analysis/policy/drivetrain_eval.py) sets the env key, not the params.
 
-    Also `wheel_play` (build_model's optional play; `params.with_wheel_play`):
-    absent leaves `params`' own, so every config before 2026-10-26 builds
-    what it built.
+    Also `wheel_play` (build_model's optional play; `params.with_wheel_play`)
+    and `floor` (the sim's contact; `params.with_floor`): absent leaves
+    `params`' own, so every config before them builds what it built.
     """
-    from .params import with_wheel_play
-    return with_wheel_play(_drivetrain_from_env(params, env), env.get("wheel_play"))
+    from .params import with_floor, with_wheel_play
+    return with_floor(with_wheel_play(_drivetrain_from_env(params, env),
+                                      env.get("wheel_play")), env.get("floor"))
 
 
 def _drivetrain_from_env(params: dict, env: dict) -> dict:
@@ -185,6 +187,19 @@ def base_params(params: dict) -> dict:
     if KEY not in params:
         return params
     return {k: v for k, v in params.items() if k != KEY}
+
+
+# model id -> the DrivetrainSim last attached to it: how a DriveController in
+# the sim finds the detent's flip (obs_detent) without every loop handing it
+# over. Weak, so a finished episode's drive does not outlive it.
+_ATTACHED: dict = {}
+
+
+def attached(model):
+    """The live DrivetrainSim last attached to `model`, or None."""
+    ref = _ATTACHED.get(id(model))
+    drive = ref() if ref is not None else None
+    return drive if drive is not None and drive.model is model else None
 
 
 def attach_hooks(model, params: dict) -> list:
@@ -421,7 +436,9 @@ class DrivetrainSim:
         `edit_spec`); None when `params` enable no part."""
         if not any(enabled(params, part) for part in PARTS):
             return None
-        return cls(model, params)
+        drive = cls(model, params)
+        _ATTACHED[id(model)] = weakref.ref(drive)
+        return drive
 
     def _switch(self, model, params: dict) -> None:
         """Turn the compiled ideal plant into the detailed one, saving what
@@ -573,6 +590,25 @@ class DrivetrainSim:
                      int(model.joint("input_b_spin").dofadr[0]))
         self._ready = False
         self._t_last = -math.inf
+
+    @property
+    def flip(self) -> float:
+        """Ring-vs-hub [rad, mod period] at the top of the detent's hill, the
+        sawtooth's flip: what the bench's creep locates and what `obs_detent`
+        measures from (general_spec.detent_angle). The sawtooth flips where
+        its x is 0, at phase + P/2 shifted by hill_phase; the sine's top is
+        where its push changes from back to forward, at the same P/2 shifted
+        the other way. A flat friction alone has no top and reads as phase."""
+        P = self.period
+        if self.hill == 0.0:
+            return self.phase % P
+        shift = self.hill_phase * P / (2.0 * math.pi)
+        return (self.phase + 0.5 * P + (shift if self.hill_saw else -shift)) % P
+
+    def ring_vs_hub(self, data) -> float:
+        """The detent's coordinate [rad]: ga * input_a + gb * input_b."""
+        return (self.ga * float(data.qpos[self.in_q[0]])
+                + self.gb * float(data.qpos[self.in_q[1]]))
 
     def set_supply(self, scale: float) -> None:
         """Battery voltage as a fraction of 12 V. Stall torque and no-load speed

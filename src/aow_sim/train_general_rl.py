@@ -348,6 +348,9 @@ def move_doc(name: str, params, cfg, trained: dict) -> dict:
            # `wheel_play:`), resolved; null = none, every export before
            # 2026-10-26. Same reason as the drivetrain: replay rebuilds it.
            "wheel_play": params.get("wheel_play"),
+           # The floor it trained on (`floor:`, params.with_floor), as the
+           # config gave it; null = bike_params' sim contact.
+           "floor": cfg["env"].get("floor"),
            "obs_pitch": bool(cfg["env"].get("obs_pitch", False)),
            "obs_wings": bool(cfg["env"].get("obs_wings", False)),
            "act_wings": bool(cfg["env"].get("act_wings", False)),
@@ -363,6 +366,10 @@ def move_doc(name: str, params, cfg, trained: dict) -> dict:
            # entries, so it is in obs_layout too; written even when false, like
            # obs_swing. style_p / w_style are training-only and not replayed.
            "obs_style": bool(cfg["env"].get("obs_style", False)),
+           # The detent phase and the measured diff rate (general_spec.
+           # detent_angle): three entries; the bike reads its flip off
+           # onboard.yaml's detent_flip.
+           "obs_detent": bool(cfg["env"].get("obs_detent", False)),
            # WHICH swing mechanism, and what is on it. The layout is the same
            # for the geared stand-in and the four-bar (one crank channel), so
            # obs_layout cannot tell them apart; these are the only record.
@@ -389,7 +396,8 @@ def move_doc(name: str, params, cfg, trained: dict) -> dict:
                cfg["env"].get("obs_pitch", False),
                cfg["env"].get("obs_wings", False),
                cfg["env"].get("obs_swing", False),
-               cfg["env"].get("obs_style", False))),
+               cfg["env"].get("obs_style", False),
+               cfg["env"].get("obs_detent", False))),
            "action_space": cfg["env"]["action_space"],
            "trained": trained}
 
@@ -510,7 +518,8 @@ def _export_from(spec: str, params, cfg, name="general_rl"):
                        obs_pitch=bool(env_cfg.get("obs_pitch", False)),
                        obs_wings=bool(env_cfg.get("obs_wings", False)),
                        obs_swing=bool(env_cfg.get("obs_swing", False)),
-                       obs_style=bool(env_cfg.get("obs_style", False)))
+                       obs_style=bool(env_cfg.get("obs_style", False)),
+                       obs_detent=bool(env_cfg.get("obs_detent", False)))
     got = int(model.observation_space.shape[0])
     if got != want:
         raise SystemExit(

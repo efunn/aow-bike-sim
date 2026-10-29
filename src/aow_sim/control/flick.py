@@ -331,6 +331,7 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         pol.drivetrain_model = d.get("drivetrain_model")
         # The wheel play it trained with; None = none (or before the field).
         pol.wheel_play = d.get("wheel_play")
+        pol.floor = d.get("floor")
         # The attitude error model this policy trained against. Same contract
         # role as the two lines above and the same invisible failure: the AHRS
         # corrupts roll/roll_rate/yaw_rate IN PLACE, so a policy evaluated
@@ -363,6 +364,8 @@ def load_move(name: str, moves_dir: Path | str | None = None):
         pol.act_swing = bool(d.get("act_swing", False))
         # The style bit: a command entry the operator sets (drive.set_style).
         pol.obs_style = bool(d.get("obs_style", False))
+        # The detent phase + diff rate (general_spec.detent_angle).
+        pol.obs_detent = bool(d.get("obs_detent", False))
         pol.wing_max_deg = float(d.get("wing_max_deg", 90.0))
         # Which swing mechanism (the four-bar or the geared stand-in) and the
         # tip masses on it: the same layout either way, so only these say.

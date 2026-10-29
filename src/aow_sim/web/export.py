@@ -204,6 +204,8 @@ def _check_supported(env, pol) -> None:
         raise SystemExit("the page expects the jointed righting module and the ball")
     if env.wings or env.swing or env.obs_style:
         raise SystemExit("the page has no policy-driven wing or style channels")
+    if env.obs_detent:
+        raise SystemExit("the page does not form the detent phase (obs_detent) yet")
     if env.vel_window_s > 0.0 or env.zero_lat or not env.full:
         raise SystemExit("the page implements the un-windowed full action space")
     if not hasattr(pol, "enc"):

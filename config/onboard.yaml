@@ -36,6 +36,18 @@ steer_sign: -1           # source: measured -- hand-steer vs the mirror
 # reverted in the same change. Records before
 # 2026-10-24 have 101 as drive_a; each run's meta `roles` says which.
 servo_ids: [102, 101, 103]
+# THE DETENT'S FLIP, for a policy that observes the detent phase
+# (`obs_detent`; general_spec.detent_angle). Ring-vs-hub mod 7.5 deg at the
+# top of the sawtooth, in the frame the bench measured it: BELT (s0 theta_id0
+# - s1 theta_id1) / 2 over the raw Present Positions of frame_ids, i.e.
+# (theta_101 + theta_102) x 1.5. general_spec.detent_flip_model converts it to
+# the model's frame through servo_ids / servo_sign above (today the negative,
+# with A and B swapped), so reverting the swap needs no edit here.
+# Measured (analysis/servo/detent_phase.py): 0.28-0.55 deg over the 7 creeps
+# since the 10-24 rebuild, 5 days and 3+ power cycles; 3.2 +- 1.1 counts of
+# theta_101 + theta_102 in counts. A REBUILD OF THE DRIVETRAIN MOVES IT (the
+# 09-13 testbed read 2.8-2.9): re-measure with one ~45 s diff creep.
+detent_flip: {deg: 0.43, frame_ids: [101, 102], frame_signs: [1, -1]}
 # The self-righting servo; omit it for a three-servo bench. It shares the
 # SyncRead/SyncWrite but is driven by hand, not by the policy
 # (docs/plans/self-righting.md).

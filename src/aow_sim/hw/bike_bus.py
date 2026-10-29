@@ -593,6 +593,10 @@ class BikeBus:
             "w_servo_b": sv[self.id_b]["vel"] * self.servo_sign[1],
             "turned_a": sv[self.id_a]["turned"] * self.belt_ratio * self.servo_sign[0],
             "turned_b": sv[self.id_b]["turned"] * self.belt_ratio * self.servo_sign[1],
+            # Present Position itself, not `turned`: the detent phase
+            # (obs_detent) is fixed in the raw encoders across power-ups.
+            "shaft_pos_a": sv[self.id_a]["pos"] * self.belt_ratio * self.servo_sign[0],
+            "shaft_pos_b": sv[self.id_b]["pos"] * self.belt_ratio * self.servo_sign[1],
             "steer_pos": ((sv[self.id_steer]["pos"] - (self.steer_zero or 0.0))
                           * self.steer_sign / self.steer_ratio),
             "steer_vel": sv[self.id_steer]["vel"] * self.steer_sign / self.steer_ratio,

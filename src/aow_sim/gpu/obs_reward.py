@@ -12,6 +12,9 @@ v3's recipe only: no velocity window, no wings, no hub-idle or copper term
 and with `obs_style` three more, the style bit (17) and sin/cos of the front
 wheel's world heading against its latch (18-19), whose reward term pays for
 the wheel staying where it was when the bit came on (general_spec.wheel_err).
+With `obs_detent` three more after those: sin/cos of the detent phase from
+the world's flip (general_spec.detent_angle) and the odometry's filtered
+diff rate over diff_max.
 """
 from __future__ import annotations
 
@@ -20,7 +23,7 @@ import warp as wp
 
 from . import commands as gcmd
 
-OBS_DIM = 17                  # v3; + 3 with obs_style (obs_dim_for)
+OBS_DIM = 17                  # v3; + 3 with obs_style, + 3 with obs_detent (obs_dim_for)
 
 
 @wp.struct
@@ -47,12 +50,21 @@ class RewConst:
     style_mult: int       # GeneralEnv.style_form: 0 "add", 1 "mult" (x w_head r_head)
     sigma_style: float    # [rad]
     cos_rake: float
+    detent_on: int        # obs[det_i:det_i+3] the detent phase and diff rate
+    det_i: int
+    det_qa: int
+    det_qb: int
+    det_ga: float
+    det_gb: float
+    det_period: float
+    det_flip: float       # flip - phase [rad]: DrivetrainSim.flip's offset
+    inv_diff_max: float
 
 
 def const_from(env) -> RewConst:
     if (env.vel_window_s or env.zero_lat or env.wings or env.swing or env.w_hub_idle
             or env.w_copper or not env.obs_pitch
-            or env.obs_dim != OBS_DIM + 3 * int(env.obs_style)
+            or env.obs_dim != OBS_DIM + 3 * int(env.obs_style) + 3 * int(env.obs_detent)
             or env.wing_touch_fails):
         raise NotImplementedError("the port covers v3's observation and reward")
     rw = env.rw
@@ -72,7 +84,29 @@ def const_from(env) -> RewConst:
     c.w_style, c.sigma_style = float(env.w_style), float(env.sigma_style)
     c.style_mult = int(env.style_form == "mult")
     c.cos_rake = float(np.cos(env._rake))
+    c.detent_on = int(env.obs_detent)
+    c.det_i = OBS_DIM + 3 * int(env.obs_style)
+    c.det_qa, c.det_qb = 0, 0
+    c.det_ga = c.det_gb = c.det_period = c.det_flip = c.inv_diff_max = 0.0
+    if env.obs_detent:
+        dr = env._drive
+        c.det_qa, c.det_qb = int(dr.in_q[0]), int(dr.in_q[1])
+        c.det_ga, c.det_gb = float(dr.ga), float(dr.gb)
+        c.det_period = float(dr.period)
+        c.det_flip = float((dr.flip - dr.phase) % dr.period)
+        c.inv_diff_max = 1.0 / float(env.bounds.diff_max)
     return c
+
+
+@wp.func
+def detent_obs(c: RewConst, world: int, qpos: wp.array2d(dtype=float),
+               phase: wp.array(dtype=float), obs: wp.array2d(dtype=float)):
+    """obs[det_i], obs[det_i+1]: general_spec.detent_angle's sin, cos."""
+    phi = c.det_ga * qpos[world, c.det_qa] + c.det_gb * qpos[world, c.det_qb]
+    x = (phi - phase[world] - c.det_flip) / c.det_period
+    a = 2.0 * wp.pi * (x - wp.floor(x))
+    obs[world, c.det_i] = wp.sin(a)
+    obs[world, c.det_i + 1] = wp.cos(a)
 
 
 @wp.func
@@ -88,6 +122,7 @@ def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtyp
                v_cmd_w: wp.array2d(dtype=float), psi_cmd: wp.array(dtype=float),
                style: wp.array(dtype=float), latch_obs: wp.array(dtype=float),
                latch_true: wp.array(dtype=float),
+               phase: wp.array(dtype=float), w_diff: wp.array(dtype=float),
                psi: wp.array(dtype=float), raw_prev: wp.array(dtype=float),
                action: wp.array2d(dtype=float), prev_a: wp.array2d(dtype=float),
                step: wp.array(dtype=int), track_sum: wp.array(dtype=float),
@@ -167,6 +202,9 @@ def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtyp
         obs[world, 17] = style[world]
         obs[world, 18] = wp.sin(e_obs)
         obs[world, 19] = wp.cos(e_obs)
+    if c.detent_on == 1:
+        detent_obs(c, world, qpos, phase, obs)
+        obs[world, c.det_i + 2] = w_diff[world] * c.inv_diff_max
 
     # reward
     v_err2 = (v_cl - v_lon) * (v_cl - v_lon) + (v_ct - v_lat) * (v_ct - v_lat)
@@ -212,12 +250,12 @@ def obs_reward(c: RewConst, qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtyp
 
 
 def launch(c: RewConst, qpos, qvel, ahrs_quat, ahrs_gyro, odo_lon, odo_lat,
-           steer_rate, v_cmd_w, psi_cmd, style, latch_obs, latch_true, psi, raw_prev,
-           action, prev_a, step,
+           steer_rate, v_cmd_w, psi_cmd, style, latch_obs, latch_true, phase, w_diff,
+           psi, raw_prev, action, prev_a, step,
            track_sum, track_n, obs, reward, terminated, truncated):
     wp.launch(obs_reward, dim=qpos.shape[0], inputs=[
         c, qpos, qvel, ahrs_quat, ahrs_gyro, odo_lon, odo_lat, steer_rate, v_cmd_w, psi_cmd,
-        style, latch_obs, latch_true, psi, raw_prev, action, prev_a, step, track_sum, track_n, obs, reward,
+        style, latch_obs, latch_true, phase, w_diff, psi, raw_prev, action, prev_a, step, track_sum, track_n, obs, reward,
         terminated, truncated], device=qpos.device)
 
 
@@ -227,7 +265,7 @@ def reset_obs(c: RewConst, done: wp.array(dtype=int), qpos: wp.array2d(dtype=flo
               ahrs_gyro: wp.array2d(dtype=float), odo_lon: wp.array(dtype=float),
               odo_lat: wp.array(dtype=float), v_cmd_w: wp.array2d(dtype=float),
               psi_cmd: wp.array(dtype=float), style: wp.array(dtype=float),
-              latch_obs: wp.array(dtype=float),
+              latch_obs: wp.array(dtype=float), phase: wp.array(dtype=float),
               psi: wp.array(dtype=float), obs: wp.array2d(dtype=float)):
     """The observation `reset` returns (`GeneralEnv._obs` right after the
     reset): no heading update, no reward, prev_action zero. Reset worlds only."""
@@ -273,3 +311,7 @@ def reset_obs(c: RewConst, done: wp.array(dtype=int), qpos: wp.array2d(dtype=flo
         obs[world, 17] = style[world]
         obs[world, 18] = wp.sin(e_obs)
         obs[world, 19] = wp.cos(e_obs)
+    if c.detent_on == 1:
+        # a fresh filter: the reset's priming tick has no interval yet
+        detent_obs(c, world, qpos, phase, obs)
+        obs[world, c.det_i + 2] = 0.0

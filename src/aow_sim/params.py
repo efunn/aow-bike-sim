@@ -342,6 +342,26 @@ def with_wheel_play(params: dict, spec) -> dict:
     return {**params, "wheel_play": json.loads(json.dumps(spec))}
 
 
+# What an RL config's `floor:` may set: the sim's contact, which in this model
+# is every wheel on the floor (and everything else that touches). No floor is
+# measured yet (docs/measurements/floor-measurements.yaml); label a setting by
+# its sink at bike weight, never by solref's names (CLAUDE.md, the dampratio
+# trap).
+FLOOR_KEYS = ("contact_solref", "contact_solimp", "friction_sliding",
+              "friction_torsional")
+
+
+def with_floor(params: dict, spec) -> dict:
+    """`params` with an RL config's `floor:` overlay on `sim`: ABSENT or None
+    leaves it, a dict of FLOOR_KEYS replaces those. An export records the
+    dict, so replay rebuilds the floor it trained on."""
+    if spec is None:
+        return params
+    if not isinstance(spec, dict) or set(spec) - set(FLOOR_KEYS):
+        raise ValueError(f"floor: a dict of {FLOOR_KEYS}, not {spec!r}")
+    return {**params, "sim": {**params["sim"], **json.loads(json.dumps(spec))}}
+
+
 def load_raw_params(path: str | Path | None = None, studies: bool = True) -> dict:
     """The merged tree as written -- `{value:, source:}` wrappers kept, nothing
     derived -- for readers that want a parameter's provenance or the onboard

@@ -184,6 +184,8 @@ class SimOdometry:
                                     1000.0 / self.odo_hz)
                       for k in ("a", "b")}
         self._prev_counts = {}          # k -> quantised shaft counts
+        # (w_servo_a, w_servo_b) of the last tick, held: obs_detent's diff rate
+        self.last_rates = (0.0, 0.0)
 
     def _read(self, data, name):
         # ONE PHYSICAL AHRS. When an error model is attached, its cached sample
@@ -217,8 +219,10 @@ class SimOdometry:
         """(w_servo_a, w_servo_b) by the configured encoder model."""
         if self.encoder == "ideal":
             # Instantaneous joint velocity: no quantisation, no lag. A FLOOR.
-            return (float(self._read(data, "input_a_vel")[0]) / self.est.belt_ratio,
-                    float(self._read(data, "input_b_vel")[0]) / self.est.belt_ratio)
+            self.last_rates = (
+                float(self._read(data, "input_a_vel")[0]) / self.est.belt_ratio,
+                float(self._read(data, "input_b_vel")[0]) / self.est.belt_ratio)
+            return self.last_rates
         out = []
         for k in ("a", "b"):
             counts = self._counts(data, k)
@@ -232,6 +236,7 @@ class SimOdometry:
             d = pos_delta(counts, prev)
             raw = (d / XC330_COUNTS_PER_RAD) / dt
             out.append(self._filt[k].update(raw))
+        self.last_rates = (out[0], out[1])
         return out[0], out[1]
 
     def _advance(self, data, dt: float) -> tuple[float, float]:

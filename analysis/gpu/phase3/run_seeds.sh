@@ -16,6 +16,11 @@
 #                  normally ends each run first. 4 x 80M ~46 min on a 5090
 #   NW, HORIZON, CONFIG, CURRICULUM_LEAD, SKIP_CHECKS: as run_pod.sh, the
 #                  same for every run
+#   CONFIGS=a.yaml,b.yaml,...   one env config PER RUN instead of CONFIG
+#                  (comma-separated, SEEDS of them; they must share the obs
+#                  width, since the runs share one PufferLib build). Each
+#                  run's graph json records its own, and `gpu.sh export`
+#                  reads it from there.
 #
 # Every run gets its own graph (graphs/aow_bike_<NW>_s<k>), its own copy of
 # ~/puffer (~/puffer_s<k>; one build, so every run must share the obs
@@ -41,10 +46,16 @@ TRAIN_S=${TRAIN_S:-7200}
 ENV_SEED=${ENV_SEED:-0}
 PUFFER_SEED=${PUFFER_SEED:-42}
 CONFIG=${CONFIG:-config/rl/rl_general_v3.yaml}
+CONFIGS=${CONFIGS:-}
+if [ -n "$CONFIGS" ]; then
+    IFS=, read -ra CFG <<< "$CONFIGS"
+    [ ${#CFG[@]} -eq "$SEEDS" ] || { echo "CONFIGS has ${#CFG[@]} entries for SEEDS=$SEEDS"; exit 1; }
+fi
+cfg_for() { if [ -n "$CONFIGS" ]; then echo "${CFG[$(($1 - 1))]}"; else echo "$CONFIG"; fi; }
 CURRICULUM_LEAD=${CURRICULUM_LEAD:-$(awk "BEGIN{print 0.1 * $NW / 4096}")}
 step pip_phase3 pip install -q gymnasium==1.3.0 scipy pyyaml
 for k in $(seq 1 $SEEDS); do
-    step export_s$k python -m aow_sim.gpu.export_graph --config $CONFIG --nworld $NW \
+    step export_s$k python -m aow_sim.gpu.export_graph --config $(cfg_for $k) --nworld $NW \
         --out graphs/aow_bike_${NW}_s$k --seed $((ENV_SEED + k - 1)) \
         --curriculum-lead $CURRICULUM_LEAD || exit 1
 done

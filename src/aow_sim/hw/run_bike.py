@@ -568,6 +568,11 @@ class BikeRunner:
         self.aid = self.ctl.aid
         self.data = HardwareData(self.model.nq, self.model.nv, self.model.nu)
         cfg = ((self.params.get("control") or {}).get("onboard") or {})
+        # The detent's flip, for a policy that observes the phase; without
+        # it such a policy refuses at engage (DriveController.engage_general).
+        if cfg.get("detent_flip"):
+            from ..control.general_spec import detent_flip_model
+            self.ctl.set_detent_flip(detent_flip_model(cfg))
         self.require_link = bool(require_link)
         # WHICH policy, resolved HERE rather than at engage time, because the
         # firmware gains have to follow it and they are written before torque.
@@ -750,6 +755,7 @@ class BikeRunner:
         # counts (balance.CrawlSensor): these are the same filtered rates
         # odometry reads below. Untested on hardware as of 2026-09-22.
         self.ctl.crawl.feed(s["w_servo_a"], s["w_servo_b"])
+        self.ctl.feed_drive_angles(s["shaft_pos_a"], s["shaft_pos_b"])
 
         roll, pitch, yaw = _rpy(a.quat)
         self._sensed = (s, a, dt, roll, pitch, yaw)

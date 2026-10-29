@@ -152,9 +152,8 @@ shoulder ~2x. The measured roller spring does nothing visible. Contact
    A fixed phase in training WITHOUT a new observation would only make
    every episode start at the same notch, something to overfit to, so the
    per-episode draw stays right for today's policies. Using it needs a
-   notch-phase obs (ONE number, wrapped at the sawtooth's flip -- see
-   10-29 below; computable on the Pi
-   from Present Position), a `general_spec` layout change on both sides,
+   notch-phase obs (built 10-29 as `obs_detent`, below; computable on the
+   Pi from Present Position), a `general_spec` layout change on both sides,
    and a retrain. Cheap without any of that: start the twin
    (`run_vs_sim`) at the bike run's own phase instead of a draw.
    **Tested 10-29 (`analysis/servo/detent_phase.py`): the phase is fixed
@@ -175,16 +174,28 @@ shoulder ~2x. The measured roller spring does nothing visible. Contact
    = 56.889 counts of S. The flip sits at S = 3.2 counts mod 56.889
    (captures 2.1-4.2; jump starts scatter 3-4 counts). As an integer:
    phase = (72 S - 230) mod 4096, a 12-bit notch angle.
-   One input covers it: x = phase / 2048 - 1 in [-1, 1) wraps exactly at
-   the flip, where the push itself jumps, so its one discontinuity is the
-   physics' own and x is proportional to the angle-only push (sin/cos is
-   for a smooth periodic function or a wrap in the wrong place). Drive
-   Mode matters only through its Reverse bit, which negates one servo's
+   One wrapped input would cover the push (its one discontinuity is the
+   flip's own), but sin and cos were chosen (user): the phase is the
+   observation, not a model of the push. Drive Mode matters only through its Reverse bit, which negates one servo's
    Present Position and turns S into a difference. The 3.2-count offset
    could live in one servo's Homing Offset instead of the yaml, but that
    moves the frame everything else reads.
    A fourth capture (000007) was lost: 0-byte files after a power cycle;
    `Capture.save` now fsyncs, as `RunRecorder.close` already did.
+   **Built 10-29: `obs_detent`** (`config/rl/rl_general_v5.yaml`, obs 17
+   -> 20): sin and cos of `general_spec.detent_angle` (0 at the flip, 2 pi
+   a notch) and the MEASURED diff rate, input_a - input_b from the
+   differenced encoders through the odometry's 25 ms RateFilter, over
+   diff_max (prev_diff's units: the command and what the drive made, side
+   by side). The sim measures from the episode's draw
+   (`DrivetrainSim.flip`, the sawtooth's top; the draw stays), the bike
+   from `onboard.yaml` `detent_flip` (0.43 deg in the bench's frame,
+   converted through `servo_ids` / `servo_sign`: the model's frame is its
+   negative while A and B are swapped). CPU env, Warp kernels, `drive.py`
+   and `run_bike` form it; `tests/test_detent_obs.py`. At 50 Hz the phase
+   aliases above ~1.1 rad/s of servo diff (~23 Hz of notch per rad/s), so
+   it can help only slow: standing, stick-slip, reversals. The detent
+   stays in the physics either way.
 7. **The detent is barely visible in the FLOOR runs' PWM (10-25).**
    `analysis/servo/floor_detent.py`: the diff-mode duty averaged by notch
    phase in the hung creep's encoder frame, split by direction, over both

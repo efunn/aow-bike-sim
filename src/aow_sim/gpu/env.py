@@ -203,7 +203,8 @@ class GpuGeneralEnv:
         self._tick(active=self.done)                  # the reset's priming sample
         wp.launch(gobs.reset_obs, self.nworld, [
             self.c_obs, self.done, d.qpos, d.qvel, a.quat, a.gyro, o.v_lon, o.v_lat,
-            self.v_cmd_w, self.psi_cmd, self.style, self.latch_obs, self.psi, self.obs],
+            self.v_cmd_w, self.psi_cmd, self.style, self.latch_obs, s.phase, self.psi,
+            self.obs],
             device=self.device)
 
     def _mjw_call(self):
@@ -237,7 +238,8 @@ class GpuGeneralEnv:
         gobs.launch(self.c_obs, d.qpos, d.qvel, self.s_ahrs.quat, self.s_ahrs.gyro,
                     self.s_odo.v_lon, self.s_odo.v_lat, self.s_odo.steer_rate,
                     self.v_cmd_w, self.psi_cmd, self.style, self.latch_obs,
-                    self.latch_true, self.psi, self.raw_prev, self.action, self.prev_a, self.step_i,
+                    self.latch_true, self.s_drv.phase, self.s_odo.w_diff,
+                    self.psi, self.raw_prev, self.action, self.prev_a, self.step_i,
                     self.track_sum, self.track_n, self.obs, self.reward,
                     self.terminated, self.truncated)
         wp.launch(gcmd.after_step, self.nworld, [

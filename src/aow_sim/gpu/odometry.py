@@ -62,6 +62,7 @@ class OdoState:
         self.sprev = z(nworld, dt=int)          # steer counts, last tick
         self.sbuf = z(nworld, MAX_TAPS)         # steer raw rates, newest first
         self.steer_rate = z(nworld)             # what obs[5] reads when on
+        self.w_diff = z(nworld)                 # input_a - input_b rate, filtered (obs_detent)
 
 
 def const_from(odo, steer_rate=None) -> OdoConst:
@@ -160,7 +161,7 @@ def advance(c: OdoConst, sensordata: wp.array2d(dtype=float),
             rbuf: wp.array3d(dtype=float), rcount: wp.array(dtype=int),
             v_lon: wp.array(dtype=float), v_lat: wp.array(dtype=float),
             sprev: wp.array(dtype=int), sbuf: wp.array2d(dtype=float),
-            steer_rate: wp.array(dtype=float)):
+            steer_rate: wp.array(dtype=float), w_diff: wp.array(dtype=float)):
     world = wp.tid()
     # roll, pitch from the AHRS quaternion (wxyz)
     qw = ahrs_quat[world, 0]
@@ -174,6 +175,8 @@ def advance(c: OdoConst, sensordata: wp.array2d(dtype=float),
     n = rcount[world]
     wa = _shaft_rate(c, world, 0, sensordata[world, c.adr_a], prev, ok, rbuf, n)
     wb = _shaft_rate(c, world, 1, sensordata[world, c.adr_b], prev, ok, rbuf, n)
+    # SimOdometry.last_rates as the diff action's units (balance.mix)
+    w_diff[world] = c.belt * (wa - wb)
     if c.steer_rate_on == 1:
         steer_rate[world] = _steer_rate(c, world, sensordata[world, c.adr_steer],
                                         sprev, ok, sbuf, n)
@@ -206,4 +209,4 @@ def advance(c: OdoConst, sensordata: wp.array2d(dtype=float),
 def launch_advance(c: OdoConst, s: OdoState, sensordata, quat, gyro, accel):
     wp.launch(advance, dim=sensordata.shape[0], inputs=[
         c, sensordata, quat, gyro, accel, s.prev, s.prev_ok, s.rbuf, s.rcount,
-        s.v_lon, s.v_lat, s.sprev, s.sbuf, s.steer_rate], device=sensordata.device)
+        s.v_lon, s.v_lat, s.sprev, s.sbuf, s.steer_rate, s.w_diff], device=sensordata.device)

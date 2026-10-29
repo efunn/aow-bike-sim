@@ -117,6 +117,7 @@ _OPTIONAL_BLOCKS = (
     ("obs_wings", ("wing_angle", "wing_rate")),
     ("obs_swing", ("swing_angle", "swing_rate")),
     ("obs_style", ("style", "sin_wheel_err", "cos_wheel_err")),
+    ("obs_detent", ("sin_detent", "cos_detent", "diff_rate")),
 )
 
 
@@ -133,7 +134,8 @@ OBS_NAMES_BASE = (
 OBS_NAMES = OBS_NAMES_BASE + ("v_bar_lon", "v_bar_lat", "pitch", "pitch_rate",
                               "wing_angle", "wing_rate",
                               "swing_angle", "swing_rate",
-                              "style", "sin_wheel_err", "cos_wheel_err")
+                              "style", "sin_wheel_err", "cos_wheel_err",
+                              "sin_detent", "cos_detent", "diff_rate")
 # Sign under the sagittal mirror. A filter is linear and time-invariant, so a
 # filtered quantity mirrors exactly like its source: v_bar_lon follows v_lon
 # (+1), v_bar_lat follows v_lat (-1). Getting these wrong does not raise --
@@ -175,6 +177,9 @@ OBS_MIRROR_PARITY = np.array([
     +1,                # style -- a mode bit (0/1, a knob later), not a
                        #   direction: the mirrored bike is asked the same thing.
     -1, +1,            # sin/cos wheel_err -- a yaw-like angle, like psi_err
+    -1, +1, -1,        # sin/cos detent, diff_rate -- ring-vs-hub is the diff's
+                       #   angle, so it flips as prev_diff does; the angle is
+                       #   measured from the flip, so its cos is even
 ], dtype=float)
 assert len(OBS_NAMES) == len(OBS_MIRROR_PARITY)
 assert len(OBS_NAMES_BASE) == OBS_DIM
@@ -182,7 +187,7 @@ assert len(OBS_NAMES_BASE) == OBS_DIM
 
 def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False,
                obs_wings: bool = False, obs_swing: bool = False,
-               obs_style: bool = False) -> tuple:
+               obs_style: bool = False, obs_detent: bool = False) -> tuple:
     """The exact entry names this feature combination produces.
 
     WIDTH ALONE IS AMBIGUOUS and must not be used as the contract. With two
@@ -196,7 +201,8 @@ def obs_layout(vel_window_s: float = 0.0, obs_pitch: bool = False,
           "obs_pitch": bool(obs_pitch),
           "obs_wings": bool(obs_wings),
           "obs_swing": bool(obs_swing),
-          "obs_style": bool(obs_style)}
+          "obs_style": bool(obs_style),
+          "obs_detent": bool(obs_detent)}
     names = list(OBS_NAMES_BASE)
     for flag, block in _OPTIONAL_BLOCKS:
         if on[flag]:
@@ -238,7 +244,8 @@ def policy_flags(pol) -> dict:
             "obs_pitch": bool(getattr(pol, "obs_pitch", False)),
             "obs_wings": bool(getattr(pol, "obs_wings", False)),
             "obs_swing": bool(getattr(pol, "obs_swing", False)),
-            "obs_style": bool(getattr(pol, "obs_style", False))}
+            "obs_style": bool(getattr(pol, "obs_style", False)),
+            "obs_detent": bool(getattr(pol, "obs_detent", False))}
 
 
 def policy_env_overrides(pol) -> dict:
@@ -320,7 +327,9 @@ def policy_env_overrides(pol) -> dict:
                 # Its wheel play. None leaves the caller's params alone (no
                 # play unless it put some there, as run_vs_sim --set does),
                 # so a policy trained without play can be judged with it.
-                wheel_play=getattr(pol, "wheel_play", None))
+                wheel_play=getattr(pol, "wheel_play", None),
+                # Its floor: None leaves the caller's, like the play.
+                floor=getattr(pol, "floor", None))
 
 
 def obs_layout_for(pol) -> tuple:
@@ -330,14 +339,14 @@ def obs_layout_for(pol) -> tuple:
 
 def obs_dim_for(vel_window_s: float = 0.0, obs_pitch: bool = False,
                 obs_wings: bool = False, obs_swing: bool = False,
-                obs_style: bool = False) -> int:
+                obs_style: bool = False, obs_detent: bool = False) -> int:
     """Observation width implied by a policy's feature flags.
 
     Prefer `obs_layout()` for the CONTRACT -- width collides (see its
     docstring). This stays for sizing an array.
     """
     return len(obs_layout(vel_window_s, obs_pitch, obs_wings, obs_swing,
-                          obs_style))
+                          obs_style, obs_detent))
 
 
 def act_dim_for(act_wings: bool = False, act_swing: bool = False) -> int:
@@ -384,7 +393,7 @@ def vel_filter_step(v_bar_w, v_w, alpha: float) -> np.ndarray:
 def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
               v_cmd_lon, v_cmd_lat, psi_err, prev_action,
               v_bar=None, pitch=None, wings=None,
-              zero_lat=False, style=None) -> np.ndarray:
+              zero_lat=False, style=None, detent=None) -> np.ndarray:
     """Assemble the observation vector (length OBS_DIM, or OBS_DIM_WINDOWED
     when `v_bar` is given).
 
@@ -442,6 +451,14 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
                      operator's); wheel_err [rad] is the front wheel's world
                      heading minus where it was when the bit came on, 0 while
                      it is off. Appended as bit, sin, cos.
+    detent         : (angle, diff_rate) for a policy that observes the
+                     differential's detent, or None -- see `detent_angle`.
+                     angle [rad] is ring-vs-hub from the sawtooth's flip in
+                     units of one notch (2 pi = 7.5 deg); diff_rate is the
+                     MEASURED diff, input_a - input_b rate [rad/s] (the diff
+                     action's own definition, balance.mix) from the
+                     differenced encoders, over diff_max, so it reads in
+                     prev_diff's units. Appended as sin, cos, rate.
     """
     pa = np.asarray(prev_action, dtype=float).reshape(-1)
     if zero_lat:
@@ -466,7 +483,54 @@ def build_obs(roll, roll_rate, yaw_rate, steer, steer_rate, v_lon, v_lat,
     if style is not None:
         bit, err = style
         obs.extend((float(bit), float(np.sin(err)), float(np.cos(err))))
+    if detent is not None:
+        ang, rate = detent
+        obs.extend((float(np.sin(ang)), float(np.cos(ang)), float(rate)))
     return np.array(obs, dtype=np.float32)
+
+
+DETENT_PERIOD = np.deg2rad(7.5)    # ring-vs-hub per notch (tooth-count)
+
+
+def detent_angle(phi, flip, period: float = DETENT_PERIOD) -> float:
+    """THE DETENT PHASE (`obs_detent`, physical-bike-tests.md item 6): where
+    ring-vs-hub `phi` [rad, the model's ga*input_a + gb*input_b] sits in its
+    notch, as an angle with 0 at the sawtooth's flip (the top of its hill) and
+    2 pi per notch. `flip` [rad] is the flip in the same frame: the episode's
+    draw in the sim (DrivetrainSim.flip), the bench's measurement on the bike
+    (detent_flip_model). Fixed in the raw encoders until a rebuild: one servo
+    turn is 72 whole notches, so a power-up turn count keeps it."""
+    return float(2.0 * np.pi * ((float(phi) - float(flip)) / period % 1.0))
+
+
+def detent_frame_sign(servo_ids, servo_sign, frame_ids, frame_signs) -> float:
+    """+1 or -1: the model's ring-vs-hub over the frame the bench measured the
+    flip in. Both are BELT (s0 theta_id0 - s1 theta_id1) / 2 over raw servo
+    angles, for (ids, signs) per role [drive_a, drive_b]: the model's from
+    onboard.yaml's servo_ids / servo_sign, the bench's from its capture. While
+    onboard.yaml swaps A and B (2026-10-24, the k_roller sign) the two are
+    opposite; reverting the swap makes them agree, with no edit here."""
+    def coef(ids, signs):
+        (i0, i1), (s0, s1) = ids[:2], signs[:2]      # servo_ids carries the steer third
+        return {int(i0): float(s0), int(i1): -float(s1)}
+    m, b = coef(servo_ids, servo_sign), coef(frame_ids, frame_signs)
+    if set(m) != set(b):
+        raise ValueError(f"detent flip measured on servos {sorted(b)}, "
+                         f"but the drives are {sorted(m)}")
+    if all(m[i] == b[i] for i in m):
+        return 1.0
+    if all(m[i] == -b[i] for i in m):
+        return -1.0
+    raise ValueError(f"servo_sign {list(servo_sign)} on {list(servo_ids)} is "
+                     f"neither the detent frame {list(frame_signs)} nor its mirror")
+
+
+def detent_flip_model(onboard: dict) -> float:
+    """onboard.yaml's `detent_flip` in the model's frame [rad]."""
+    d = onboard["detent_flip"]
+    eps = detent_frame_sign(onboard["servo_ids"], onboard["servo_sign"],
+                            d["frame_ids"], d["frame_signs"])
+    return eps * float(np.deg2rad(float(d["deg"])))
 
 
 def wheel_world_heading(psi, steer, rake: float) -> float:

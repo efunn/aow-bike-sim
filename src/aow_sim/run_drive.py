@@ -839,6 +839,10 @@ def main() -> None:
         if _mv.get("wheel_play") and not args.wheel_play:
             params = {**params, "wheel_play": _mv["wheel_play"]}
             print(f"WHEEL PLAY from {startup}'s training record: {_mv['wheel_play']}")
+        if _mv.get("floor"):
+            from .params import with_floor
+            params = with_floor(params, _mv["floor"])
+            print(f"FLOOR from {startup}'s training record: {_mv['floor']}")
         drive_friction = None
         if args.drive_friction:
             fc = [float(x) for x in args.drive_friction.split(":")]

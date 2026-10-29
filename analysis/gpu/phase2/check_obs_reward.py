@@ -61,6 +61,7 @@ def main(ref_path):
                f(np.zeros(N)),
                f(before("v_cmd_w", "v_cmd_w")), f(before("psi_cmd", "psi_cmd")),
                f(np.zeros(N)), f(np.zeros(N)), f(np.zeros(N)),
+               f(np.zeros(N)), f(np.zeros(N)),     # phase, w_diff: no obs_detent either
                psi, raw_prev, f(r["pol_action"]), prev_a, step, track_sum, track_n,
                obs, rew, term, trunc)
 

@@ -219,7 +219,8 @@ def test_warp_kernels_match_the_spec():
         # identity AHRS quaternion and raw_prev 0: the heading update adds 0
         gor.launch(c, f2(qpos), f2(qvel), f2([1.0, 0, 0, 0]), f2(np.zeros(3)),
                    f(0.0), f(0.0), f(0.0), f2(np.zeros(2)), f(0.0), f(bit),
-                   f(lat_obs), f(lat_true), psi, f(0.0), f2(np.zeros(3)),
+                   f(lat_obs), f(lat_true), f(0.0), f(0.0), psi, f(0.0),
+                   f2(np.zeros(3)),
                    f2(np.zeros(3)), i1(0), f(0.0), i1(0), obs, rew, i1(0), i1(0))
         out[bit] = (obs.numpy()[0], float(rew.numpy()[0]))
     steer = float(qpos[e._sj])
@@ -295,7 +296,8 @@ def test_warp_kernel_mult_matches_the_cpu_env():
         r = wp.zeros(1, dtype=float, device="cpu")
         gor.launch(c, f2(qpos), f2(qvel), f2([1.0, 0, 0, 0]), f2(np.zeros(3)),
                    f(0.0), f(0.0), f(0.0), f2(np.zeros(2)), f(psi_cmd), f(bit),
-                   f(lat_obs), f(lat_true), f(psi0), f(0.0), f2(np.zeros(3)),
+                   f(lat_obs), f(lat_true), f(0.0), f(0.0), f(psi0), f(0.0),
+                   f2(np.zeros(3)),
                    f2(np.zeros(3)), i1(0), f(0.0), i1(0), obs, r, i1(0), i1(0))
         rew[bit] = float(r.numpy()[0])
     yaw = extract_state(e.data, e._p0).yaw

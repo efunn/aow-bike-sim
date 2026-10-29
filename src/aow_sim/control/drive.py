@@ -73,6 +73,19 @@ class DriveController(LQRBalance):
         self.reverse_turn_scale = dc["reverse_turn_scale"]
         self.reverse_avoid_band = tuple(dc["reverse_avoid_band"])
         self.flip_cfg = params["control"]["flip"]
+        # The detent phase (obs_detent): ring-vs-hub = ga a + gb b over the
+        # input shafts, read from the model in the sim or fed by run_bike
+        # (feed_drive_angles), measured from a flip set by whoever knows it
+        # (set_detent_flip): onboard.yaml's on the bike. Unset in the sim,
+        # it is the live draw of the DrivetrainSim attached to this model
+        # (drivetrain_model.attached), read every query since a reset
+        # re-draws it. Neither refuses an obs_detent policy at engage.
+        self._det_model = model
+        dtp = params["drivetrain"]
+        self._det_g = (float(dtp["mix_ring_a"]) - float(dtp["mix_hub_a"]),
+                       float(dtp["mix_ring_b"]) - float(dtp["mix_hub_b"]))
+        self._detent_flip = None
+        self._drive_angles = None
         from .balance import lat_gain
         self.lat_per_d = lat_gain(params)
         self._psi_dot_ref = 0.0
@@ -174,6 +187,7 @@ class DriveController(LQRBalance):
         self._ahrs_active = False
         self._gen_obs_pitch = False     # does the policy observe pitch?
         self._gen_obs_style = False     # ...take the style bit? (set_style)
+        self._gen_obs_detent = False    # ...observe the detent phase? (obs_detent)
         self._gen_style = 0.0           # the operator's style bit (toggle)
         self._gen_style_on = 0.0        # ...through the zero-speed gate
         self._gen_style_latch = 0.0     # wheel heading at its rising edge
@@ -488,6 +502,12 @@ class DriveController(LQRBalance):
         # The style bit: does the policy take one? Its value is a COMMAND
         # (set_style), and it survives an engage like the operator's stick.
         self._gen_obs_style = bool(getattr(self._gen, "obs_style", False))
+        self._gen_obs_detent = bool(getattr(self._gen, "obs_detent", False))
+        if self._gen_obs_detent and self._flip_now() is None:
+            raise ValueError(
+                f"moves/{name} observes the detent phase and no flip is set: "
+                "on the bike it is onboard.yaml's detent_flip (run_bike), in "
+                "the sim set_detent_flip(DrivetrainSim.flip) after its reset")
         self._gen_obs_wings = bool(getattr(self._gen, "obs_wings", False))
         self._gen_act_wings = bool(getattr(self._gen, "act_wings", False))
         # The co-rotating pair. Same single channel, same two observations --
@@ -602,6 +622,39 @@ class DriveController(LQRBalance):
         if dpsi:
             self._gen_psi_cmd += float(dpsi)
 
+    def set_detent_flip(self, flip: float) -> None:
+        """The detent's flip [rad, the model's ring-vs-hub frame] that an
+        obs_detent policy measures its phase from (general_spec.detent_angle)."""
+        self._detent_flip = float(flip)
+
+    def feed_drive_angles(self, a: float, b: float) -> None:
+        """The bike's path: input-shaft angles [rad, the model's frame] from
+        the drives' Present Position (BikeBus.to_controller_units). The sim
+        reads them off the model instead."""
+        self._drive_angles = (float(a), float(b))
+
+    def _flip_now(self):
+        if self._detent_flip is not None:
+            return self._detent_flip
+        if self.crawl._qa is None:            # the bike: only set_detent_flip
+            return None
+        from ..drivetrain_model import attached   # the sim only: imports mujoco
+        drive = attached(self._det_model)
+        return drive.flip if drive is not None and drive.detent else None
+
+    def _detent_obs(self, data) -> tuple[float, float]:
+        """(angle, diff rate) for obs_detent, as GeneralEnv._detent_obs: the
+        rate is the crawl sensor's (w_a - w_b) belt, which on the bike is the
+        bus's differenced, filtered encoders -- the numbers the odometry reads."""
+        from .general_spec import detent_angle
+        if self._drive_angles is not None:
+            a, b = self._drive_angles
+        else:
+            a, b = float(data.qpos[self.crawl._qa]), float(data.qpos[self.crawl._qb])
+        phi = self._det_g[0] * a + self._det_g[1] * b
+        return (detent_angle(phi, self._flip_now()),
+                self.crawl.rate / float(self._gen.bounds.diff_max))
+
     def set_style(self, on: bool) -> None:
         """The style bit (general_spec.wheel_err): 1 asks a policy that takes
         it to turn around a held front wheel. Active only while the speed
@@ -674,7 +727,9 @@ class DriveController(LQRBalance):
                             pitch=((s.pitch, s.pitch_rate)
                                    if self._gen_obs_pitch else None),
                             wings=wg,
-                            style=st)
+                            style=st,
+                            detent=(self._detent_obs(data)
+                                    if self._gen_obs_detent else None))
             act = pol.action(obs)
             steer_rate, hub, diff = act[0], act[1], act[2]
             wing_rate = act[3] if len(act) > 3 else 0.0
