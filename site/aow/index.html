@@ -3,11 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Self-Balancing Bike</title>
+<title>Robot Bike</title>
 <meta name="description" content="A small self-balancing robot bike, driven by a policy trained in simulation.">
-<!-- By hand. The four clips are media/<name>.webp; drop the recorded ones into
-     site/aow/media/ under these names. Until a name is there, `scripts/site.sh build`
-     puts the README's simulation clip (docs/media/eval_<name>.webp) in its place. -->
+<!-- By hand. The clips in media/ are phone footage (1080p60), cut down to 1280 px with
+     no audio and no metadata:
+       ffmpeg -i in.mp4 -an -map_metadata -1 -vf scale=1280:-2:flags=lanczos -r 60 \
+         -c:v libx264 -crf 26 -preset slow -pix_fmt yuv420p -movflags +faststart media/<name>.mp4
+     H.264 rather than animated webp: ~10x smaller at the same size and frame rate.
+     Under each clip, the keys (or, on a touch screen, the buttons) that do the same in the
+     sim. tech/ (a new tab) links the source and the two analysis pages. The sim is
+     sim/ in a frame below, loading from the start, so the policy and the model are in
+     by the time anyone scrolls down; sim/ also works on its own. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
@@ -17,34 +23,90 @@
 }
 :root[data-theme="dark"] { --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; color-scheme: dark; }
 * { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; }
 .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 16px 56px; display: grid; gap: 24px; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
 figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
-figure img { display: block; width: 100%; height: auto; }
-figcaption { padding: 10px 14px; font-size: 14.5px; color: var(--muted); }
-figcaption b { color: var(--ink); font-weight: 600; }
-a.sim { display: grid; gap: 4px; padding: 18px 20px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px;
-  color: inherit; text-decoration: none; transition: border-color 0.15s; }
-a.sim:hover, a.sim:focus-visible { border-color: var(--accent); outline: none; }
-a.sim b { font-weight: 600; font-size: 17px; }
-a.sim span { color: var(--muted); font-size: 14.5px; }
+figure { position: relative; }
+figure.paused::after { content: ""; position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; border-radius: 6px; pointer-events: none;
+  background: linear-gradient(90deg, transparent 9px, #fff 9px 12px, transparent 12px 16px, #fff 16px 19px, transparent 19px) center / 28px 12px no-repeat, rgba(0, 0, 0, 0.55); }
+figure video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000; cursor: pointer; }
+figcaption { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 12px; font-size: 13.5px; color: var(--muted); }
+kbd { display: inline-block; min-width: 1.6em; padding: 0 4px; margin-right: 2px; border: 1px solid var(--rule); border-bottom-width: 2px;
+  border-radius: 4px; background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px; text-align: center; }
+.tap { display: none; }
+@media (pointer: coarse) { .key { display: none; } .tap { display: inline; } }
+header { display: grid; gap: 12px; }
+header p { margin: 0; color: var(--muted); }
+header nav { display: flex; flex-wrap: wrap; gap: 10px; }
+header a.go { padding: 10px 18px; font-size: 15.5px; }
+a.go { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 14px 20px; background: var(--panel);
+  border: 1px solid var(--rule); border-radius: 8px; color: inherit; text-decoration: none; font-weight: 600; font-size: 17px; transition: border-color 0.15s; }
+a.go:hover, a.go:focus-visible { border-color: var(--accent); outline: none; }
+a.go span { color: var(--accent); }
+#drive { display: grid; grid-template-rows: 40px 1fr; height: 100vh; height: 100svh; }
+#drive a { place-self: center; color: var(--muted); font-size: 14px; text-decoration: none; }
+#drive a:hover { color: var(--ink); }
+#drive iframe { display: block; width: 100%; height: 100%; border: 0; border-top: 1px solid var(--rule); }
 </style>
 </head>
-<body>
+<body id="top">
 <div class="wrap">
+  <header>
+    <p>A robot bike driven by a neural network trained in simulation.</p>
+    <nav>
+      <a class="go" href="#drive">Take a test drive <span>&darr;</span></a>
+      <a class="go" href="tech/" target="_blank" rel="noopener">Technical details <span>&nearr;</span></a>
+    </nav>
+  </header>
   <div class="grid">
-    <figure><img src="media/hold.webp" alt="balancing in place" loading="lazy">
-      <figcaption><b>It balances.</b> Standing still, no input.</figcaption></figure>
-    <figure><img src="media/turn_fwd.webp" alt="driving forward through a 90 degree turn" loading="lazy">
-      <figcaption><b>It turns.</b> Driving forward through a 90&deg; turn.</figcaption></figure>
-    <figure><img src="media/turn_rev.webp" alt="reversing through a 90 degree turn" loading="lazy">
-      <figcaption><b>It reverses.</b> Backing through a 90&deg; turn.</figcaption></figure>
-    <figure><img src="media/spin180.webp" alt="a 180 degree about-face from standstill" loading="lazy">
-      <figcaption><b>It spins.</b> A 180&deg; about-face from standstill.</figcaption></figure>
+    <figure><video src="media/updown.mp4" autoplay muted loop playsinline preload="auto" aria-label="the bike standing itself up from lying on its side, driving, and lying back down"></video>
+      <figcaption><span class="key"><kbd>X</kbd> lie down / get up</span><span class="key"><kbd>Q</kbd><kbd>E</kbd> turn 90&deg;</span><span class="tap"><kbd>Lie / up</kbd> <kbd>&#10226;</kbd><kbd>&#10227;</kbd> turn 90&deg;</span></figcaption></figure>
+    <figure><video src="media/disturbed.mp4" autoplay muted loop playsinline preload="auto" aria-label="the bike knocked over with a stick and getting back up"></video>
+      <figcaption><span class="key"><kbd>space</kbd> knock over</span><span class="key"><kbd>&#8679;</kbd><kbd>space</kbd> nudge</span><span class="tap"><kbd>Knock</kbd> knock over</span></figcaption></figure>
+    <figure><video src="media/loop.mp4" autoplay muted loop playsinline preload="auto" aria-label="the bike driving a loop"></video>
+      <figcaption><span class="key"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or <kbd>&uarr;</kbd><kbd>&larr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd> drive</span><span class="tap"><kbd>&uarr;</kbd><kbd>&larr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd> drive</span></figcaption></figure>
+    <figure><video src="media/ballhit.mp4" autoplay muted loop playsinline preload="auto" aria-label="the bike driving at a ball and swatting it with a panel"></video>
+      <figcaption><span class="key"><kbd>Z</kbd><kbd>C</kbd> swing</span><span class="key"><kbd>B</kbd> ball</span><span class="tap"><kbd>&#9664; Lean</kbd><kbd>Lean &#9654;</kbd> swing</span><span class="tap"><kbd>Ball</kbd> ball</span></figcaption></figure>
   </div>
-  <a class="sim" href="sim/"><b>Drive it</b><span>The simulation in your browser: keyboard or touch, knock it over and watch it get back up.</span></a>
 </div>
+<section id="drive">
+  <a href="#top">&uarr; see video examples</a>
+  <iframe src="sim/" title="the bike, simulated: drive it with the keyboard or the buttons"></iframe>
+</section>
+<script>
+// a click pauses or resumes that clip; a paused one gets a mark in its corner
+document.querySelectorAll('video').forEach(v => {
+  v.addEventListener('click', () => v.paused ? v.play() : v.pause());
+  v.addEventListener('pause', () => v.parentNode.classList.add('paused'));
+  v.addEventListener('play', () => v.parentNode.classList.remove('paused'));
+});
+// The sim takes the keyboard whenever it is mostly in view, so the arrows
+// drive the bike rather than scroll the page, with no click needed (it
+// pauses itself while out of view)
+const sim = document.querySelector('#drive iframe');
+new IntersectionObserver(([e]) => { if (e.intersectionRatio >= 0.5) sim.contentWindow.focus(); },
+  { threshold: [0.5] }).observe(sim);
+// "Take a test drive" scrolls the sim into view and hands it the keyboard,
+// leaving /aow/#drive in the address bar as a link straight to the sim
+const drive = (behavior) => {
+  document.getElementById('drive').scrollIntoView({ behavior });
+  sim.contentWindow.focus();
+};
+document.querySelectorAll('a.go[href="#drive"]').forEach((a) => a.addEventListener('click', (e) => {
+  e.preventDefault();
+  history.replaceState(null, '', '#drive');
+  drive('smooth');
+}));
+// arriving on /aow/#drive: the browser's own jump to it stayed at the top on
+// some loads in testing, and never hands the sim the keyboard, so do both
+// once the page has loaded
+if (location.hash === '#drive') {
+  history.scrollRestoration = 'manual';
+  addEventListener('load', () => drive('instant'));
+}
+</script>
 </body>
 </html>

@@ -8,10 +8,11 @@
 # What goes where (Cloudflare serves <dir>/index.html at /<dir>/):
 #
 #   /               site/index.html                  by hand (the ice-top game)
-#   /aow/           site/aow/index.html + media/     by hand (the four clips, a link to the sim)
+#   /aow/           site/aow/index.html + media/     by hand (the four clips; the sim below them, framed)
 #   /aow/sim/       src/aow_sim/web/site/            python -m aow_sim.web.export
-#   /aow/linkage/   analysis/mechanism/plots/swing_stepthrough.html   (not linked from /aow/)
-#   /aow/sim2real/  analysis/policy/plots/drivetrain_traces.html      (not linked from /aow/)
+#   /aow/tech/      site/aow/tech/ (+ bike.webp)     by hand (a summary; links the source and the two below)
+#   /aow/linkage/   analysis/mechanism/plots/swing_stepthrough.html   (linked from /aow/tech/)
+#   /aow/sim2real/  analysis/policy/plots/drivetrain_traces.html      (linked from /aow/tech/)
 #
 # The two analysis pages are re-filled from their templates on every build
 # (--from-cache: no sim), so a wording edit in
@@ -29,7 +30,6 @@ B=site/build
 A=$B/aow
 PORT=${PORT:-8770}
 SIM=src/aow_sim/web/site
-CLIPS=(hold turn_fwd turn_rev spin180)
 
 build() {
     for f in bike.mjb policy.bin config.json; do
@@ -39,17 +39,11 @@ build() {
     python analysis/mechanism/swing_stepthrough.py --from-cache
 
     rm -rf "$B"     # only ever this script's output (gitignored)
-    mkdir -p "$A"/{media,linkage,sim2real}
+    mkdir -p "$A"/{media,tech,linkage,sim2real}
     cp site/index.html "$B"/
     cp site/aow/index.html "$A"/
-    for c in "${CLIPS[@]}"; do
-        if [[ -f site/aow/media/$c.webp ]]; then
-            cp "site/aow/media/$c.webp" "$A/media/"
-        else
-            echo "videos: no site/aow/media/$c.webp yet; using the sim clip docs/media/eval_$c.webp"
-            cp "docs/media/eval_$c.webp" "$A/media/$c.webp"
-        fi
-    done
+    cp site/aow/tech/{index.html,bike.webp} "$A"/tech/
+    cp site/aow/media/*.mp4 "$A"/media/
     cp -R "$SIM" "$A"/sim
     cp analysis/mechanism/plots/swing_stepthrough.html "$A"/linkage/index.html
     cp analysis/policy/plots/drivetrain_traces.html "$A"/sim2real/index.html

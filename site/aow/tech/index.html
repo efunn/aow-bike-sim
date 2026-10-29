@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot Bike · Technical Details</title>
+<meta name="description" content="How the self-balancing bike works, with links to the source and two studies.">
+<!-- By hand. Opened in a new tab from /aow/. The facts here are the README's
+     ("How it works"); keep the two in step. bike.webp is traces/closeup_edit.jpg:
+       cwebp -q 80 -resize 480 0 -metadata none traces/closeup_edit.jpg -o site/aow/tech/bike.webp -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root { --bg: #f5f6f4; --panel: #ffffff; --ink: #1d2226; --muted: #646d73; --rule: #d6dbd9; --accent: #f47516; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #14181b; --panel: #1b2024; --ink: #e3e7e9; --muted: #98a2a8; --rule: #2e353a; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; }
+.wrap { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; display: grid; gap: 28px; }
+h1 { margin: 0; font-size: 26px; line-height: 1.25; font-weight: 600; }
+h2 { margin: 0 0 4px; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+p { margin: 0 0 12px; }
+p:last-child { margin-bottom: 0; }
+section::after { content: ""; display: block; clear: both; }
+img.side { float: right; width: 200px; height: auto; margin: 4px 0 12px 20px; border-radius: 8px; border: 1px solid var(--rule); }
+@media (max-width: 520px) { img.side { width: 120px; margin-left: 14px; } }
+.links { display: grid; gap: 10px; }
+.links a { display: grid; gap: 2px; padding: 14px 18px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px;
+  color: inherit; text-decoration: none; transition: border-color 0.15s; }
+.links a:hover, .links a:focus-visible { border-color: var(--accent); outline: none; }
+.links b { font-weight: 600; }
+.links b span { color: var(--accent); }
+.links small { color: var(--muted); font-size: 14.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Technical details</h1>
+
+  <section>
+    <h2>How it works</h2>
+    <img class="side" src="bike.webp" width="480" height="720" alt="the bike close up: black body, orange roll cages and panels">
+    <p>The rear wheel is an active omni wheel, taken from a toy motorbike. Two servos drive
+      it as a differential: turned together the wheel rolls, turned against each other it
+      drives sideways, and standing still the bike balances using that sideways drive. A
+      third servo steers, and a fourth swings a pair of panels that lay the bike down and
+      lift it back up when it falls. An orientation sensor (AHRS) tells it which way is up.</p>
+    <p>One reinforcement-learning policy does all of the driving: it balances the bike and
+      follows a speed and heading command, 50 times a second. It is a small recurrent
+      network, trained in MuJoCo against a model of the bike built from measured parameters,
+      and the same control policy weights run on the bike's onboard computer and in the
+      simulated test drive.</p>
+  </section>
+
+  <section>
+    <h2>More</h2>
+    <div class="links">
+      <a href="https://github.com/efunn/aow-bike-sim" target="_blank" rel="noopener"><b>Source <span>&nearr;</span></b>
+        <small>The simulator, neural network training, and onboard code on GitHub</small></a>
+      <a href="../linkage/" target="_blank" rel="noopener"><b>Self-righting linkage <span>&nearr;</span></b>
+        <small>How a mechanism swings the bike back upright: compare different designs through their strokes.</small></a>
+      <a href="../sim2real/" target="_blank" rel="noopener"><b>Balance: simulation vs the real bike <span>&nearr;</span></b>
+        <small>The same control policy balancing and holding position on the simulated and real bikes.</small></a>
+    </div>
+  </section>
+</div>
+</body>
+</html>
