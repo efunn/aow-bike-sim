@@ -3,7 +3,7 @@
 #
 #   scripts/site.sh build     site/build/, from the pages as they stand (seconds)
 #   scripts/site.sh serve     build, then http://localhost:8770
-#   scripts/site.sh deploy    build, then upload site/build to Cloudflare Pages
+#   scripts/site.sh deploy    build, then upload site/build to a Cloudflare Worker
 #
 # What goes where (Cloudflare serves <dir>/index.html at /<dir>/):
 #
@@ -21,8 +21,15 @@
 # or a name in site/labels.yaml shows up on the next build. New DATA (a new
 # run, a changed design) needs the generator run in full; see its docstring.
 #
-# deploy needs `npx wrangler login` once, and SITE_PROJECT set to the name of
-# a Pages project attached to the domain in the dashboard.
+# deploy needs `npx wrangler login` once, and SITE_WORKER set to the name of
+# the Worker the domain is attached to (Workers & Pages in the dashboard). It
+# is an assets-only Worker: no script, Cloudflare serves the files as they are.
+# A deploy REPLACES every file the Worker serves with site/build, so anything
+# uploaded by hand and not in this repo is gone afterwards. A custom domain set
+# in the dashboard stays as long as no wrangler config holds a `routes` key
+# (Cloudflare's docs: the config's routes override the dashboard's), so keep
+# this config-free, or keep `routes` out of any wrangler.jsonc that appears.
+# DRY=1 builds and checks without uploading.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -53,7 +60,9 @@ build() {
 case "${1:-}" in
     build)  build ;;
     serve)  build; echo "http://localhost:$PORT"; exec python -m http.server "$PORT" --bind 127.0.0.1 --directory "$B" ;;
-    deploy) : "${SITE_PROJECT:?set SITE_PROJECT to the Cloudflare Pages project name}"
-            build; npx wrangler pages deploy "$B" --project-name "$SITE_PROJECT" ;;
+    deploy) : "${SITE_WORKER:?set SITE_WORKER to the name of the Cloudflare Worker}"
+            build
+            npx wrangler deploy --assets "$B" --name "$SITE_WORKER" \
+                --compatibility-date 2026-10-01 ${DRY:+--dry-run} ;;
     *)      sed -n '2,6p' "$0"; exit 2 ;;
 esac
