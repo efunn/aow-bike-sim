@@ -51,6 +51,14 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 @media (max-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr); } }
 .col { min-width: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 12px 10px; display: grid; gap: 6px; }
+/* side by side, the two columns share their rows (subgrid), so a line that
+   wraps in one -- a legend filling in on hover, a narrower window -- moves
+   both columns' rows below it together. --rows: each column's child count,
+   set by the script */
+@media (min-width: 901px) {
+  .col { grid-row: span var(--rows, 1); grid-template-rows: subgrid; }
+}
+.pk { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
 .stick { position: sticky; top: var(--bar-h, 0px); z-index: 5; background: var(--panel); display: grid; gap: 6px;
   margin: -12px -12px 0; padding: 12px 12px 8px; border-bottom: 1px solid var(--rule); border-radius: 6px 6px 0 0; }
 .colhead { display: flex; gap: 6px 12px; align-items: baseline; min-width: 0; }
@@ -87,7 +95,15 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
    columns overlapped. */
 .col > *, .rolrow > * { min-width: 0; }
 .plot { overflow: hidden; }
-.rolrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: start; }
+.prow, .rolrow { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 4px; align-items: start; }
+.rolrow { grid-template-columns: 40px minmax(0, 1fr) auto; }
+/* the y-axis label: a sketch of the bike and what the panel measures on it */
+.icon { width: 40px; height: 40px; margin-top: 50px; fill: none; stroke: var(--muted); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.prow > * { min-width: 0; }
+.icon { overflow: visible; }
+.icon.tall { height: 80px; margin-top: 140px; }
+.icon .faint { opacity: 0.45; }
+.icon .mv { stroke: var(--ink); stroke-width: 1.5; }
 .phase { display: grid; justify-items: center; gap: 4px; padding-top: 6px;
   font-family: var(--f-mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .phase input { writing-mode: vertical-lr; direction: rtl; width: 22px; height: 330px; margin: 0; }
@@ -109,7 +125,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 <div class="wrap">
   <header>
     <h1>Balance: sim vs bike</h1>
-    <p class="sub">The same trained balance controller, standing still and holding its heading: in simulation on the left, on the real bike on the right. If the simulation is a faithful copy of the bike, the two columns look alike: the same slow sway, the same small corrections, the same amount of shake. Where they differ, the model is missing something. Pick a run at the top of each column; <span class="swatch" style="border-color:var(--noslop)"></span> lines are measured, dashed lines are commanded. More at the bottom of the page.</p>
+    <p class="sub">A balance control policy, standing still and holding its heading: in simulation on the left, on the real bike on the right. If the simulation is accurate, the two columns look alike in terms of sway, small corrections, and shake. Differences indicate shortfalls in the model. Pick a run at the top of each column; <span class="swatch" style="border-color:var(--noslop)"></span> lines are measured, dashed lines are commanded. More at the bottom of the page.</p>
   </header>
 
   <div class="bar" id="bar"><div class="controls" role="group" aria-label="View controls">
@@ -118,9 +134,9 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       <datalist id="win-ticks"><option value="0"></option><option value="1"></option><option value="2"></option><option value="3"></option><option value="4"></option><option value="5"></option></datalist>
       <span id="win-v" class="winv">2 s</span>
     </label>
+    <label><input type="checkbox" id="lockT"> sync sim+real time sliders</label>
     <label><input type="checkbox" id="showCmd" checked> <span class="swatch" style="border-color:var(--cmd);border-top-style:dashed"></span> commanded</label>
     <label><input type="checkbox" id="showLoaded" checked> <span class="swatch" style="border-color:var(--loaded)"></span> roller touching the floor (sim only)</label>
-    <label><input type="checkbox" id="lockT"> move both time sliders together</label>
     <span class="note">Drag across a plot to zoom; double-click to return to the window.</span>
   </div></div>
 
@@ -134,36 +150,35 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     <h3>The bike</h3>
     <ul>
       <li><b>It balances by steering and by its rear wheel.</b> The rear wheel is an omni wheel: rollers around its rim let the back of the bike move sideways. Two drive motors turn it; when they turn in step the bike rolls forward, and the difference between them spins the rollers. A policy (a small neural network trained in simulation) reads the bike's sensors and sets the steering and both motors 50 times a second; the servos are read and logged at 100 Hz.</li>
-      <li><b>Gear notches and play.</b> The drivetrain is not smooth. The gearbox has a notchy feel, a small catch every 7.5&deg; of its output ring (the grey lines in the roller panel), and there is slack in the rollers, the axles and the steering head. A policy trained on an idealised drivetrain can work in simulation and still shake on the real bike. This page is how those effects were found and put back into the model.</li>
+      <li><b>Gear notches and play.</b> The drivetrain is not smooth. The gearbox has a notchy feel, a small catch every 7.5&deg; of its output ring (the grey lines in the roller panel), and there is slack in the rollers, the axles and the steering head. A policy trained on a model that gets these slightly wrong can work in simulation and still shake on the real bike. This page is how those effects were found and put back into the model.</li>
     </ul>
     <h3>The policies</h3>
     <ul>
-      <li><b>Policy A.</b> An early policy, trained on an earlier version of the bike model. Shakes at about 11 Hz on the real bike.</li>
-      <li><b>Policy B.</b> Trained on the bike model before its current geometry, with a smooth drivetrain.</li>
-      <li><b>Policy C.</b> The current geometry, still with a smooth drivetrain. Balances in simulation; shakes on the bike like B.</li>
-      <li><b>Policy D, the current one.</b> Trained with the measured gear notches and the slack in the simulation. On the bike the shake is gone.</li>
+      <li><b>MLP.</b> An early policy, a plain feed-forward network, trained on plant V1. Shakes at about 11 Hz on the real bike.</li>
+      <li><b>minGRU.</b> The other three are small recurrent networks (minGRU), named by the plant, the simulated bike, each was trained on.</li>
+      <li><b>Plant V1.</b> The bike model before its current geometry, with the first drivetrain model: a friction bump at each gear notch, and a first fit of the slack in the rollers. Its two bike runs, <i>sample 1</i> and <i>sample 2</i>, are two days apart.</li>
+      <li><b>Plant V2.</b> The current geometry, with the same first drivetrain model. Balances in simulation; shakes on the bike like V1.</li>
+      <li><b>Plant V3, the current one.</b> V2 plus the roller slack refitted, the gear notches as the sawtooth measured on the bench, and flex at the axles and the steering head, fitted to the bike's own floor runs. On the bike the shake is gone.</li>
     </ul>
-    <h3>The simulated drivetrains</h3>
+    <h3>What each policy is simulated on</h3>
     <ul>
-      <li><b>As trained.</b> Exactly the drivetrain model the policy learned on.</li>
-      <li><b>Measured gear notches + roller slop.</b> The notch shape measured on the bench, and slack in each roller, added to it.</li>
-      <li><b>Wheel play.</b> A little looseness at the axles and the steering head, fitted to the bike's own floor runs.</li>
+      <li><b>Plant, then policy.</b> Each simulation names the plant it runs on, then the policy flying it. Every policy is flown on plant V2 and on plant V3, whichever it was trained on. Plant V1 is never flown: every simulation here is on the current geometry, so for the MLP and the plant V1 policy the nearest is V2, which has the same drivetrain they trained with.</li>
     </ul>
     <h3>The panels</h3>
     <ul>
       <li><b>Roll.</b> How far the bike leans. One scale for every run, so the columns compare directly.</li>
-      <li><b>Yaw.</b> The bike's heading less the heading it was told to hold.</li>
+      <li><b>Yaw.</b> The bike's heading minus the heading it was told to hold.</li>
       <li><b>Steer.</b> The steering angle and the angle the policy asked for (dashed).</li>
       <li><b>Drive difference.</b> The speed of one drive motor less the other's: what spins the rollers. Measured and commanded.</li>
-      <li><b>Roller angle.</b> Each roller's angle, wrapped to one turn, so a roller resting on a gear notch shows as a flat line on a grey line. The thick line is where the rollers would be with no slack at all; the orange segment is whichever roller is on the floor, which only the simulation knows. The <i>phase</i> slider rotates the wrap by whole notches.</li>
-      <li><b>The small spectrum plots.</b> How much shaking there is at each frequency from 0 to 25 Hz, from the rate of each signal. Bright is this column's window, dim the other column's, the last one the whole run; the dot marks the strongest peak above 4 Hz (below that is ordinary balancing sway). All the plots of one signal share a scale, so their heights compare across columns.</li>
+      <li><b>Roller angle.</b> Each roller's angle, wrapped to one cycle, so a roller resting on a gear notch shows as a flat line on a grey line. The thick line is where the rollers would be with no slack at all; the orange segment is whichever roller is on the floor, which only the simulation knows. The <i>phase</i> slider rotates the wrap by whole notches.</li>
+      <li><b>The small spectrum plots.</b> How much shaking there is at each frequency from 0 to 25 Hz, from the rate of each signal. Bright is this column's window, faded the other column's; <i>window</i> is this column's alone, <i>all</i> its whole run; the dot marks the strongest peak above 4 Hz (below that is ordinary balancing sway). All the plots of one signal share a scale, so their heights compare across columns.</li>
     </ul>
     <h3>Reading the two columns</h3>
     <ul>
       <li><b>Recorded the same way.</b> The simulation's signals are made as the bike records them: the same sensors, the same resolution, 100 samples a second. A difference between the columns is a difference between the bikes, not in how they were measured.</li>
       <li><b>The commanded drive is reconstructed.</b> The motors do not report where they are being driven to, so in both columns it is worked back from the power they draw. That makes it noisy above about 20 Hz: compare it column to column, not against the measured line.</li>
       <li><b>Not the same moment.</b> The simulation and the bike are separate runs, and their seconds do not line up. Compare the character of the motion, not individual wiggles.</li>
-      <li><b>Controls.</b> <i>Window</i> sets how many seconds are shown, <i>start</i> slides through the run. Drag across a plot to zoom; double-click to go back.</li>
+      <li><b>Controls.</b> <i>Window</i> sets how many seconds are shown, and the slider at the top of each column moves them through its run; <i>sync sim+real time sliders</i> moves both columns together. Drag across a plot to zoom; double-click to go back.</li>
     </ul>
   </details>
 </div>
@@ -344,7 +359,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
   const CH = { roll: { pos: "roll", cmd: null, loaded: null, p: "r", name: "rate", two: true },
                yaw: { pos: "yaw", cmd: null, loaded: null, p: "y", name: "rate", two: true, wrap: true },
                roller: { pos: "noslop", cmd: "cmd", loaded: "loaded", p: "", name: "pos" },
-               steer: { pos: "steer", cmd: "steer_cmd", loaded: null, p: "s", name: "pos" },
+               steer: { pos: "steer", cmd: "steer_cmd", loaded: null, p: "s", name: "angle", cmdName: "target" },
                diff: { pos: "dv", cmd: "dv_cmd", loaded: null, p: "d", name: "meas", raw: true } };
   function spectra(S, lo, hi, ch) {
     const t = S.t;
@@ -398,11 +413,21 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       r.P.forEach((v, f) => { const hz = f * r.df; if (hz < 0.5 || hz > FMAX) return;
         const x = fx(hz), y = fy(v); pen ? ctx.lineTo(x, y) : ctx.moveTo(x, y); pen = true; });
       ctx.stroke(); ctx.setLineDash([]);
-      if (peak) {                                  // the peak above 4 Hz: below it is balance sway
+      if (peak) {
+        // The highest true peak above 4 Hz (below it is balance sway): a bin
+        // above both neighbours, so a spectrum still rolling off past 4 Hz
+        // does not count its own edge. Placed between bins by a parabola
+        // through the three log powers. None found: no dot.
         let best = -1;
-        r.P.forEach((v, f) => { const hz = f * r.df; if (hz >= 4 && hz <= FMAX && (best < 0 || v > r.P[best])) best = f; });
-        peaks.push([peak, best * r.df]);
-        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(fx(best * r.df), fy(r.P[best]), 2.5, 0, 2 * Math.PI); ctx.fill();
+        for (let f = 1; f < r.P.length - 1; f++) {
+          const hz = f * r.df;
+          if (hz >= 4 && hz <= FMAX && r.P[f] > r.P[f - 1] && r.P[f] > r.P[f + 1] && (best < 0 || r.P[f] > r.P[best])) best = f;
+        }
+        if (best < 0) { peaks.push([peak, null]); ctx.globalAlpha = 1; continue; }
+        const [a, b, c] = [r.P[best - 1], r.P[best], r.P[best + 1]].map((v) => Math.log(Math.max(v, 1e-30)));
+        const fp = (best + 0.5 * (a - c) / (a - 2 * b + c || 1)) * r.df;
+        peaks.push([peak, fp]);
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(fx(fp), fy(r.P[best]), 2.5, 0, 2 * Math.PI); ctx.fill();
       }
       ctx.globalAlpha = 1;
     }
@@ -427,7 +452,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     top = isFinite(top) ? top + 0.5 : 1;
     return [top - 5, top];
   }
-  const hz = (peaks, k) => { const p = peaks.find(([n]) => n === k); return p ? p[1].toFixed(1) : "–"; };
+  const hz = (peaks, k) => { const p = peaks.find(([n]) => n === k); return p && p[1] !== null ? p[1].toFixed(1) : "–"; };
   function ownBadge(c, ch, id, lo, hi, what, yr) {
     id = ch.p + id;
     const sp = isFinite(lo) ? spectra(c.S, lo, hi, ch) : wholeRun(c.S, ch), sets = [];
@@ -436,7 +461,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       if (show.cmd && sp.cmd) sets.push({ r: sp.cmd, col: css("--cmd"), dash: [4, 3] });
     }
     drawBadge(c.el.querySelector(`#${c.key}-${id}`), c.el.querySelector(`#${c.key}-${id}-v`), sets,
-      (pk) => sp ? `${what} ${hz(pk, "own")} Hz` : "too short", yr);
+      (pk) => { const f = hz(pk, "own"); return sp ? `${what} ${f}${f === "–" ? "" : " Hz"}` : "too short"; }, yr);
   }
   function compareBadge(c, ch, id, what, yr) {
     id = ch.p + id;
@@ -457,7 +482,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
     }
     const name = (x) => x.key === "sim" ? "sim" : "bike";
     drawBadge(c.el.querySelector(`#${c.key}-${id}`), c.el.querySelector(`#${c.key}-${id}-v`), sets,
-      (pk) => `${what === "position" ? ch.name : "cmd"} ${hz(pk, "own")} · ${hz(pk, "other")}`, yr);
+      (pk) => `${what === "position" ? ch.name : ch.cmdName || "cmd"} ${hz(pk, "own")} · ${hz(pk, "other")}`, yr);
   }
   function drawPsd(c) {
     for (const ch of Object.values(CH)) {
@@ -478,37 +503,84 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       ["psdall", `${what} spectrum over the whole run`]].filter(([id]) => !two || id === "psdpos" || id === "psdall").map(([id, l]) =>
       `<div class="badge"><canvas id="${key}-${p}${id}" aria-label="${key} ${l}"></canvas><span id="${key}-${p}${id}-v"></span></div>`).join("") + `</div>`;
 
+  // ---- the panels' y-axis icons: the bike from the back or the top ----
+  // an elliptical arc a0 -> a1 (deg, svg's y-down angles) with an arrowhead at a1
+  function arrow(cx, cy, rx, ry, a0, a1) {
+    const R = Math.PI / 180, pt = (a) => [cx + rx * Math.cos(a * R), cy + ry * Math.sin(a * R)];
+    const [x0, y0] = pt(a0), [x1, y1] = pt(a1), s = a1 > a0 ? 1 : -1;
+    // the head points along the chord from the arc's last 3.2 units, not
+    // its tangent at the tip, so both barbs sit evenly about the curve
+    let b = a1, bx = x1, by = y1;
+    while (Math.hypot(bx - x1, by - y1) < 3.2 && Math.abs(b - a0) > 1) { b -= s; [bx, by] = pt(b); }
+    const n = Math.hypot(x1 - bx, y1 - by) || 1, tx = (x1 - bx) / n, ty = (y1 - by) / n;
+    const h = (k) => `${(x1 - 3.2 * tx + k * 2.4 * ty).toFixed(1)} ${(y1 - 3.2 * ty - k * 2.4 * tx).toFixed(1)}`;
+    return `<path class="mv" d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${rx} ${ry} 0 ${Math.abs(a1 - a0) > 180 ? 1 : 0} ${s > 0 ? 1 : 0} ` +
+      `${x1.toFixed(1)} ${y1.toFixed(1)}"/><path class="mv" d="M${h(1)} L${x1.toFixed(1)} ${y1.toFixed(1)} L${h(-1)}"/>`;
+  }
+  // from the back: the wheel edge-on, the roll cage's 270 deg hoop open at the bottom
+  const BACK = `<rect x="17.5" y="15" width="5" height="21" rx="1.5"/>` +
+    `<path d="M12.2 24.8 A11 11 0 1 1 27.8 24.8"/>`;
+  // from the top: both wheels and, faint, the body's outline
+  const TOP = (steer) => `<rect class="faint" x="13" y="3" width="14" height="34" rx="7"/>` +
+    `<rect x="18" y="25" width="4" height="10" rx="1"/>` +
+    `<rect x="18" y="5" width="4" height="10" rx="1" transform="rotate(${steer} 20 10)"/>`;
+  const ICONS = {
+    roll: `<path class="faint" d="M6 37.5 H34"/><g transform="rotate(-14 20 37)">${BACK}</g>` + arrow(15.5, 18, 15.5, 15.5, -35, -125),
+    yaw: `<g transform="rotate(-10 20 20)">${TOP(0)}</g>` + arrow(20, 20, 17, 17, 35, -35),
+    steer: `<g transform="translate(0 2)">${TOP(-28)}</g>` + arrow(20, 12, 10.5, 10.5, -35, -145),
+    dv: `<g class="faint">${BACK}</g><rect x="17.5" y="15" width="5" height="21" rx="1.5"/>` +
+      arrow(6.5, 26, 3.5, 7.5, 70, -200) + arrow(33.5, 26, 3.5, 7.5, 250, -20),
+    // the rear wheel from the side, eight rollers round its rim (the bike's
+    // sixteen do not fit at this size), then the bottom one close up
+    roller: `<circle cx="20" cy="18" r="4"/><circle class="faint" cx="20" cy="18" r="10"/>` +
+      Array.from({ length: 8 }, (_, k) => `<rect${k === 2 ? ' class="mv"' : ""} x="-4" y="-2.2" width="8" height="4.4" rx="2" ` +
+        `transform="translate(${(20 + 13 * Math.cos(k * Math.PI / 4)).toFixed(1)} ${(18 + 13 * Math.sin(k * Math.PI / 4)).toFixed(1)}) rotate(${k * 45 + 90})"/>`).join("") +
+      `<path class="faint" d="M2 58 H8 M32 58 H38"/><path d="M8 52.5 Q20 48 32 52.5 V63.5 Q20 68 8 63.5 Z"/>` +
+      arrow(24, 58, 4, 12, 100, -125),
+  };
+  const icon = (k, l) => `<svg class="icon${k === "roller" ? " tall" : ""}" viewBox="0 0 40 ${k === "roller" ? 80 : 40}" role="img" aria-label="${l}">${ICONS[k]}</svg>`;
+
   const cols = {};
 
   function column(key, el, sets) {
     const c = { key, el, sets, plots: [] };
-    const opts = Object.entries(sets).map(([id, s]) => `<option value="${id}">${s.label}</option>`).join("");
+    // by plant: a sim's ("plant V2 | policy: minGRU · plant V3") by the
+    // plant it flies, then its policy's, oldest first (MLP has none, so 0);
+    // a bike run's by its policy's. A stable sort: a policy's two samples
+    // keep the generator's date order
+    const V = (t) => +((t || "").match(/plant V(\d+)/) || [0, 0])[1];
+    const rank = (s) => { const [a, b] = s.label.split(" | policy: "); return b === undefined ? V(a) : 10 * V(a) + V(b); };
+    const opts = Object.entries(sets).sort(([, p], [, q]) => rank(p) - rank(q))
+      .map(([id, s]) => `<option value="${id}">${s.label}</option>`).join("");
+    // a spectrum row's key: the dot is the badges' peak dot, and the faded
+    // trace in a badge is the OTHER column's
+    const spec = (what) => `<div class="lkey"><span>${what} spectra 0-25 Hz, <span class="pk"></span> peaks above 4 Hz `
+      + `(faded traces from ${key === "sim" ? "the real bike" : "simulation"})</span></div>`;
     el.innerHTML =
       `<div class="stick"><div class="colhead"><h2>${key === "sim" ? "Sim" : "Bike"}</h2>` +
       `<select id="${key}-sel" aria-label="${key} selection">${opts}</select></div>` +
       `<div class="meta" id="${key}-meta"></div>` +
       `<div class="scrub"><span>start</span><input type="range" id="${key}-pos" step="0.01" aria-label="${key} window start"><span id="${key}-pos-v"></span></div></div>` +
       `<div class="ptitle">roll, deg</div>` +
-      `<div class="lkey"><span>roll-rate spectra 0-25 Hz, peaks above 4 Hz: window, this column (bright) · the other (dim) · whole run</span></div>` +
+      spec("roll-rate") +
       badgeRow(key, "r", "roll-rate", true) +
-      `<div class="plot" id="${key}-roll"></div>` +
-      `<div class="ptitle">yaw: heading less its target, deg</div>` +
-      `<div class="lkey"><span>yaw-rate spectra 0-25 Hz, peaks above 4 Hz: window, this column (bright) · the other (dim) · whole run</span></div>` +
+      `<div class="prow">${icon("roll", "the bike from the back, leaning")}<div class="plot" id="${key}-roll"></div></div>` +
+      `<div class="ptitle">yaw: heading minus its target, deg</div>` +
+      spec("yaw-rate") +
       badgeRow(key, "y", "yaw-rate", true) +
-      `<div class="plot" id="${key}-yaw"></div>` +
+      `<div class="prow">${icon("yaw", "the bike from above, turning")}<div class="plot" id="${key}-yaw"></div></div>` +
       `<div class="ptitle">steer, deg</div>` +
-      `<div class="lkey"><span>steer-rate spectra 0-25 Hz, peaks above 4 Hz: window · angle and target, this column (bright) · the other (dim) · whole run</span></div>` +
+      spec("steer-rate") +
       badgeRow(key, "s", "steer-rate") +
-      `<div class="plot" id="${key}-steer"></div>` +
+      `<div class="prow">${icon("steer", "the bike from above, its front wheel steered")}<div class="plot" id="${key}-steer"></div></div>` +
       `<div class="ptitle">drive difference, motor rad/s</div>` +
-      `<div class="lkey"><span>diff-velocity spectra 0-25 Hz, peaks above 4 Hz: window · measured and commanded, this column (bright) · the other (dim) · whole run</span></div>` +
+      spec("diff-velocity") +
       badgeRow(key, "d", "diff-velocity") +
-      `<div class="plot" id="${key}-dv"></div>` +
-      `<div class="ptitle">roller angle, wrapped to one turn, deg</div>` +
-      `<div class="lkey"><span><span class="swatch" style="border-color:var(--top)"></span> gear notch</span>` +
-      `<span>· roller-rate spectra 0-25 Hz, peaks above 4 Hz: window · position and command, this column (bright) · the other (dim) · whole run</span></div>` +
+      `<div class="prow">${icon("dv", "the bike from the back, its two drive motors turning against each other")}<div class="plot" id="${key}-dv"></div></div>` +
+      `<div class="ptitle">roller angle, wrapped to one cycle, deg</div>` +
+      spec("roller-rate") +
       badgeRow(key, "", "roller-rate") +
-      `<div class="rolrow"><div class="plot" id="${key}-rol"></div>` +
+      `<div class="rolrow">${icon("roller", "one roller close up, spinning on its axle")}<div class="plot" id="${key}-rol"></div>` +
       `<label class="phase"><span>phase</span><input type="range" id="${key}-ph" min="0" max="${NOTCHES - 1}" step="1" value="0" aria-label="${key} roller phase, whole notches"><span id="${key}-ph-v">+0°</span></label></div>`;
     c.sel = el.querySelector(`#${key}-sel`);
     c.pos = el.querySelector(`#${key}-pos`);
@@ -590,6 +662,9 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
       axes: [axis("time, s"), Object.assign(axis(""), { splits: () => [0, 45, 90, 135, 180, 225, 270, 315, 360] })],
       series, hooks: { drawClear: [detentHook(S)] },
     }, data, c.el.querySelector(`#${c.key}-rol`));
+    // the grey lines in the legend under the plot, after the lines it draws
+    uRol.root.querySelector(".u-legend tbody").insertAdjacentHTML("beforeend",
+      `<tr><th><div class="u-marker" style="background:var(--top);height:2px"></div><div class="u-label">gear notch</div></th></tr>`);
     c.plots = [uRoll, uSteer, uDv, uYaw, uRol];
     c.uRol = uRol; c.uSteer = uSteer; c.uDv = uDv;
     const sync = uPlot.sync(c.key);
@@ -623,6 +698,7 @@ select { background: var(--bg); color: var(--ink); border: 1px solid var(--rule)
 
   const sim = column("sim", document.getElementById("col-sim"), D.sims);
   const bike = column("bike", document.getElementById("col-bike"), D.bikes);
+  document.querySelector(".cols").style.setProperty("--rows", sim.el.children.length);
   sim.sel.value = D.default.sim; bike.sel.value = D.default.bike;
   load(sim, D.default.sim); load(bike, D.default.bike);
 

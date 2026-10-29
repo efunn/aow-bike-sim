@@ -3,7 +3,9 @@
     python analysis/policy/drivetrain_trace.py \
         --new traces/drivetrain/drivetrain_sawtooth_1024.yaml
     python analysis/policy/drivetrain_trace.py --new <overlay> --start 5 --seconds 2
-    python analysis/policy/drivetrain_trace.py --new <overlay> --page
+    python analysis/policy/drivetrain_trace.py --page \
+        --new traces/drivetrain/drivetrain_sawtooth_1024.yaml \
+        --play traces/drivetrain/wheel_play_fit_1026.yaml   # every policy on plants V2, V3
     python analysis/policy/drivetrain_trace.py --page --from-cache   # wording only, no sim
 
 The --page output's words are all in templates/drivetrain_traces.html, its
@@ -209,8 +211,8 @@ def main():
     ap.add_argument("--page-default", default="261026-154111_run_v4_80M",
                     help="the bike run the page opens on (beside its policy's last sim)")
     ap.add_argument("--play", type=Path, default=None, metavar="YAML",
-                    help="page only: a third sim option, the training drivetrain with "
-                         "this file's `wheel_play:` block (build_model's optional play)")
+                    help="page (required there): plant V3's `wheel_play:` block "
+                         "(build_model's optional play)")
     ap.add_argument("--from-cache", action="store_true",
                     help="page only: no sim; refill the template with the data of the "
                          "page last written (a wording or labels change)")
@@ -236,10 +238,20 @@ def main():
     cols = [("its training drivetrain", shared),
             (f"{'+'.join(a.parts)} from {a.new.stem}", shared + swap)]
     if a.page:
-        if a.play:
-            play = yaml.safe_load(a.play.read_text())["wheel_play"]
-            cols.append((f"its training drivetrain + wheel play from {a.play.stem}",
-                         shared + [("wheel_play", yaml.safe_dump(play, default_flow_style=True))]))
+        # Two plants, every policy flown on both, each set as WHOLE blocks so
+        # it is the same plant whatever the policy trained with: V2 is
+        # today's params (their drivetrain, no play); V3 is that drivetrain
+        # with --new's parts swapped in, plus --play's wheel play -- what
+        # general_puffer_a40_v4_80M trained on (same plant_digest).
+        if a.play is None:
+            ap.error("--page needs --play (plant V3's wheel play)")
+        play = yaml.safe_load(a.play.read_text())["wheel_play"]
+        dump = lambda v: yaml.safe_dump(v, default_flow_style=True)  # noqa: E731
+        v3_drive = {**params[dm.KEY], **{p: new[p] for p in a.parts}}
+        cols = [("plant V2: the params' drivetrain, no wheel play",
+                 shared + [(dm.KEY, dump(params[dm.KEY])), ("wheel_play", "{}")]),
+                (f"plant V3: {'+'.join(a.parts)} from {a.new.stem}, wheel play from {a.play.stem}",
+                 shared + [(dm.KEY, dump(v3_drive)), ("wheel_play", dump(play))])]
         build_page(a, k, cols)
         return
     runs = [fly(policy, ov, a.start, a.seconds, a.seed) for _, ov in cols]
@@ -541,15 +553,13 @@ def build_page(a, k, cols):
     policy's floor sim (seed --seed, from t = 1 s, as long as that policy's
     longest engage) on each drivetrain in `cols`, at 100 Hz like the bike.
     Series are unwrapped roller degrees; the page wraps them."""
-    import yaml
-    from aow_sim.control.flick import MOVES_DIR
     notch = 7.5 * k
     bench = bench_detent(a.bench_creep)
     r2 = lambda x: [None if not np.isfinite(v) else round(float(v), 2) for v in x]
     # time to the ms: the bike's samples are 7-15 ms apart, so 2 decimals
     # merged neighbours into repeated time points (199 on 174349)
     r3 = lambda x: [round(float(v), 3) for v in x]
-    bikes, sims, runs, last = {}, {}, {}, {}
+    bikes, sims, runs = {}, {}, {}
     for run in a.page_runs:
         pol, t0, dur = _longest_engage(run)
         bike = bike_trace(run, bench, t0, dur)
@@ -562,20 +572,7 @@ def build_page(a, k, cols):
             "noslop": r2(k * bike["phi"]), "cmd": r2(k * bike["cmd"])}
         runs[pol] = max(runs.get(pol, 0.0), dur)
     for pol, dur in runs.items():
-        # A policy that TRAINED on wheel play (its move records it, and
-        # run_vs_sim.sim flies it so) has one plant: the overlay and the
-        # play columns would rebuild it three times over. Its other column
-        # is that plant with the play taken out (wheel_play={} is none).
-        spec = yaml.safe_load((MOVES_DIR / f"{pol}.yaml").read_text()) or {}
-        if spec.get("wheel_play"):
-            shape = spec[dm.KEY].get("detent", {}).get("hill_shape", "sine")
-            own = [(f"its training plant ({shape} detent + wheel play, trained in)", cols[0][1]),
-                   (f"its training plant without the wheel play ({shape} detent only)",
-                    cols[0][1] + [("wheel_play", "{}")])]
-        else:
-            own = cols
-        last[pol] = own[0][0] if spec.get("wheel_play") else own[-1][0]
-        for title, ov in own:
+        for title, ov in cols:
             tr, r = fly(pol, ov, 1.0, dur, a.seed)
             step = max(1, int(round(0.01 / tr.model.opt.timestep)))
             on = r["on"][::step]
@@ -599,7 +596,7 @@ def build_page(a, k, cols):
     first = a.page_default if a.page_default in bikes else a.page_runs[0].name
     pol0 = bikes[first]["policy"]
     data = {"notch": notch, "k": k, "sims": sims, "bikes": bikes,
-            "default": {"sim": f"{pol0}|{last[pol0]}", "bike": first}}
+            "default": {"sim": f"{pol0}|{cols[-1][0]}", "bike": first}}
     _present(data)
     page.fill(PAGE_TEMPLATE, data, PAGE_OUT)
 
@@ -611,9 +608,10 @@ def _present(data):
     for key, S in data["sims"].items():
         pol, title = key.split("|", 1)
         S.setdefault("saw", "sawtooth" in S.get("meta", ""))
-        S["label"] = f"{page.label('policies', pol)} · {page.label('drivetrains', title)}"
-        S["meta"] = ("simulated, logged the way the bike logs it · gear notches: "
-                     + ("sawtooth (measured)" if S["saw"] else "friction bump"))
+        S["label"] = f"{page.label('drivetrains', title)} | policy: {page.label('policies', pol)}"
+        play = "wheel play from" in title      # V3's title names its play file; V2's says "no"
+        S["meta"] = ("simulated · roller notches: " + ("sawtooth" if S["saw"] else "friction bump")
+                     + (" · flexible fork and axles" if play else " · rigid fork and axles"))
     for key, S in data["bikes"].items():
         S.setdefault("policy", S.get("label", "").rpartition("(")[2].rstrip(")"))
         S["label"] = page.label("runs", key)

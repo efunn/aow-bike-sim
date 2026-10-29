@@ -7,29 +7,32 @@
 
 # Trained policies (moves/<id>.yaml), oldest first.
 policies:
-  general_rl_v3_s1: Policy A
-  general_puffer_fixes_72M: Policy B
-  general_puffer_rake20_80M: Policy C
-  general_puffer_a40_v4_80M: Policy D
+# A is a feed-forward network; the three minGRUs are named by the plant
+# (the bike model) each was trained on.
+  general_rl_v3_s1: MLP
+  general_puffer_fixes_72M: minGRU · plant V1
+  general_puffer_rake20_80M: minGRU · plant V2
+  general_puffer_a40_v4_80M: minGRU · plant V3
 
 # Floor runs of the real bike (traces/bike/<id>).
 runs:
-  261024-174349_run: Policy B · Oct 24
-  261024-191558_run: Policy C · Oct 24
-  261025-225207_run: Policy A · Oct 25
-  261026-154111_run_v4_80M: Policy D · Oct 26
-  261026-154338_run_fixes_72M: Policy B · Oct 26
+# No dates; a policy with two runs numbers them in date order.
+  261024-174349_run: minGRU · plant V1 · sample 1
+  261024-191558_run: minGRU · plant V2
+  261025-225207_run: MLP
+  261026-154111_run_v4_80M: minGRU · plant V3
+  261026-154338_run_fixes_72M: minGRU · plant V1 · sample 2
 
-# The drivetrain a policy is simulated on (drivetrain_trace.py's columns).
+# The plant a policy is simulated on (drivetrain_trace.py's columns), shown
+# after "| sim:". Every policy is flown on both; each matches the policy of
+# that name's plant_digest. Plant V1 is never flown: the sim is always on
+# the current geometry.
 drivetrains:
-  its training drivetrain: as trained
-  detent+roller_slop from drivetrain_sawtooth_1024: measured gear notches + roller slop
-  its training drivetrain + wheel play from wheel_play_fit_1026: as trained + wheel play
-  its training plant (sawtooth detent + wheel play, trained in): as trained (gear notches + wheel play)
-  its training plant without the wheel play (sawtooth detent only): as trained, wheel play removed
+  "plant V2: the params' drivetrain, no wheel play": plant V2
+  "plant V3: detent+roller_slop from drivetrain_sawtooth_1024, wheel play from wheel_play_fit_1026": plant V3
 
 # Righting-linkage designs (swing_stepthrough.py's DEFAULT).
 designs:
-  V1: V1 · four-bar, flat panels
-  V2: V2 · clamshell, first blade
-  V3: V3 · clamshell, current blade
+  V1: V1 · flat panels
+  V2: V2 · flat panels
+  V3: V3 · curved panels
