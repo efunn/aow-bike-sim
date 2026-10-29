@@ -1590,6 +1590,425 @@ Roll rate by band (Welch, 2.56 s segments), and the odometry:
 The page: `analysis/policy/plots/drivetrain_traces.html` has both runs
 (v4 beside its own plant, one sim; the pointer's three as before).
 
+### 10. The steer and front axle stiffened  [flown 10-28, v4]
+
+The user's hardware change: the steerer shimmed, and a nut on the front
+axle, which now rolls a bit tight. No parameter moved. Three records:
+261027-191736 (the steer fitted 90 deg off, cancelled; never engaged; its
+stamp is the Pi's clock before it synced), 261028-212855 (436 s of play
+and driving on a few surfaces) and 261028-214417 (132 s at rest on the
+test floor). The user's impression: forward very smooth, backward fine
+but with speed wobbles, where before it struggled to go backward at all
+-- so much that it was barely driven backward before ("I could tell it
+was going to fall over"), and this time at full speed, hence the
+reversing fall. On a slippery wood floor the rear slides much more; it
+drives nicer on grippy or soft floors.
+
+**At rest on the test floor, v4 before (154111) and after (214417):**
+
+| | before | after |
+|---|---|---|
+| engaged, s | 73 | 131 |
+| roll rate 7-12 Hz / 2-7 Hz, deg/s | 4.0 / 13.6 | 4.7 / 11.8 |
+| yaw rate 7-12 Hz / 2-7 Hz, deg/s | 7.9 / 16.5 | 5.9 / 11.5 |
+| steer target 7-12 Hz, deg | 0.115 | 0.109 |
+| steer tracking error (target - encoder), RMS deg | 2.7 | 3.5 |
+| steer current, mean abs, mA | 20 | 34 |
+| odometry: net drift / path, m | 0.85 / 5.6 | 0.17 / 6.3 |
+
+The 9 Hz shake stays gone, the slow sway is a little lower, and the drift
+is a fifth of before in nearly twice the time (one run each; test 6 is the
+measurement).
+
+**The steer's friction about doubled, and the model now matches it.** A
+fit, over every sample with the steer moving faster than 0.5 rad/s, of
+the XC330's current to `Fc sign(w) + B w + J dw/dt + c` (a scratch
+script; the steer's angle differenced for w):
+
+| record | Coulomb, mA | as torque (datasheet kt 0.91), mN m | viscous, mA per rad/s |
+|---|---|---|---|
+| 154111, 163044, 175020 (before) | 13.1-15.8 | 12-14 | 13-15 |
+| 214417, 212855 (after) | 30.5-34.0 | 28-31 | 19 |
+
+(A first cut, half the +/- difference of the mean current, gave 27-36 ->
+53-61 mA: it lumped the viscous part in.) The model's steer friction --
+gearbox plus headset, `headset_friction_nm` + `_per_n` x the sim's
+3.8 N of thrust -- is 31 mN m while the steer moves (headset ~20, gearbox
+~11; v4 at rest, 2 seeds). So the model sat ~2x above the bike before
+the shim and at it after: **no refit**. Rough because: kt is the
+datasheet's, unmeasured on this unit (the fixture put its torque per duty
+at 0.62-0.69 of the 0.80 rated, which would scale both rows down
+~20 %); the fit takes any floor torque on the fork that follows the
+steer's direction as friction; and the mode-5 current deadband (16.5 mA)
+does not carry over -- subtracted, the before rows go negative. The same
+fit on the sim is no check: its steer moves above 0.5 rad/s 5-16 % of the
+time against the bike's 29-49 %, and the coefficients swing in sign
+seed to seed. Test 4 separates headset from floor if it ever matters.
+
+**The front axle does not show.** The drives log Present Load (a fraction
+of max torque), and its mean is set by the balancing, not by rolling:
+10-15 % at rest and 15-17 % driving forward, before and after alike.
+Rolling drag this small is under that.
+
+**Backward wobbles; forward does not.** 212855, stretches of at least
+1 s under a steady command, first 0.5 s dropped:
+
+| | s | cmd, m/s | speed, m/s | yaw rate 2-7 Hz | roll rate 7-12 Hz | steer target pk |
+|---|---|---|---|---|---|---|
+| forward | 5.1 | +0.66 | +0.65 | 10.9 | 2.1 | 3.7 Hz |
+| backward | 21.1 | -0.76 | -0.45 | 57.2 | 8.6 | 3.6 Hz |
+
+Backward reaches 60 % of its command and yaws at ~3.6 Hz. Before the
+change there are only 6.5 s of backward driving across four records, in
+1-3 s pieces (yaw 2-7 Hz 28-73 deg/s, speed 71-87 % of command): it was
+barely reversed then because it felt about to fall, so the records cannot
+compare; the user's impression is that it improved. One of the three falls in 212855 was reversing, at
+168.5 s with the command at -1.2 m/s.
+
+**Reversing fast, the steer swings slowly; under it, the rear wobbles at
+4.7 Hz.** The user sees the steering swing back and forth when reversing
+quickly, "like it is about to fall", and settle when slowed. The record
+has it: commanded past about -0.7 m/s, the steer swings 25-57 deg peak to
+peak within a second (5-14 at -0.5), at 1 Hz or under, and the steer
+TARGET swings as much or more, so the policy is moving it, not the fork
+flapping past it. The reversing fall at 168.5 s is the fork going round:
+steer +3 -> 39 -> 58 -> 85 deg in 0.4 s, then the bike over.
+
+The faster wobble, the one in the yaw, is not in the steer.
+Cross-spectra against the yaw rate at its peak, 212855 backward (14 s in
+stretches of 1.8 s or more):
+
+| at 4.7 Hz | 2-7 Hz RMS | coherence with yaw |
+|---|---|---|
+| yaw rate, deg/s | 56 | -- |
+| roll rate, deg/s | 51 | 0.89 |
+| drive differential cmd (A - B), rad/s | 24 | 0.97 |
+| steer target / encoder, deg | 4.6 / 3.5 | 0.01 / 0.03 |
+
+The fork is not in it: the bike yaws and rolls together with the rear
+omni-wheel's sideways (roller) drive. Reversing, the front's trail is
+behind the wheel's direction of travel, an unstable caster that the steer
+servo holds; the policy balances on the rear instead. The sim does the
+same thing at half the size: v4, -0.8 vs +0.8 m/s, mu 0.9, 2 seeds,
+coherent with yaw at 3.9 Hz:
+
+| sim | yaw 2-7 Hz | drive diff cmd 2-7 Hz | steer target 2-7 Hz |
+|---|---|---|---|
+| +0.8 | 14-15 | 3.7-3.8 | 5.5-5.6 |
+| -0.8 | 19-21 | 14-15 | 4.5-4.9 |
+| -0.8, no wheel play | 24-27 | 12-14 | 3.4-4.0 |
+| bike, +0.66 / -0.76 | 11 / 56 | 4.9 / 24 | 8.1 / 4.6 (the steer incoherent backward) |
+
+Floor friction, the sim at -0.8: yaw 2-7 Hz 20 / 17 / 10 / 4-6 deg/s at
+mu 0.9 / 0.6 / 0.4 / 0.3 -- less on a slipperier floor in the sim, where
+the user finds the slippery floor worse; which floor each of 212855's
+stretches was on is not in the record. So the mode is the policy's own
+reversing loop through the rear, and something on the bike makes it ~2x
+the sim's. The physical "shimmy damper" would be damping in the rear's
+sideways motion, which in the model is only what the drivetrain carries
+(servo friction, the roller play and detent, the drive delay); the
+contact has no tyre compliance or relaxation length, so a classic tyre
+shimmy cannot form in the sim at all.
+
+**The rear skids on drive reversals (user: "the drive gets traction and
+then when it tries to change direction it skids along the floor").** The
+speed estimate is the drive encoders', the rear wheel's own speed, so it
+cannot see a skid directly. Against the accelerometer, 1-10 Hz: at rest
+the wheel's dv/dt and the body's x acceleration are the same size (0.9
+and 1.1 m/s2 RMS); reversing faster than -0.7 the wheel's is 4.5 against
+the body's 2.1, correlation 0.08. A wheel changing speed twice as hard as
+the bike follows it is what a skid looks like; the accelerometer is noisy
+(the drivetrain's own vibration), so this is suggestive only.
+
+**How much of it the policy decides: a matrix in the sim.** Three
+policies, four plants, all with the steer and AHRS each policy expects;
+the shipped floor (mu 0.9, sink 0.135 mm); a step command at 2 s, 10 s
+flown, 2 seeds (scratch script). yaw 2-7 Hz deg/s / drive differential
+2-7 Hz rad/s; FELL = rolled past 45 deg, each one a fork that went round
+(steer peak to peak ~200 deg) about 1.5 s after the step:
+
+| reversing -0.8 / -1.2 m/s | A: v4's plant (detent + all play) | B: "stiffened" (rear play only) | C: v4 detent, no play | D: old detent, no play |
+|---|---|---|---|---|
+| v4 (trained on A) | 18-21/14-15, 16-20/7-9 | 21/16, 7-8/4 | 24-28/12-14, 18/8 | **58-60/24-25, 61/25** |
+| rake20_80M (trained on D) | 10-12/6-7, FELL 2/2 | 5-7/3-4, FELL 1/2 | 4-5/3, 6-7/2-3 | 5-6/3, 7-8/3 |
+| fixes_72M (old plant, ~D) | 8-12/6-7, FELL 2/2 | FELL 1/2, FELL 2/2 | 5/2, 6-8/1-4 | 3/1, 5-13/1-5 |
+| bike, -0.76 cmd | | 56/24 at 60 % of the command | | |
+
+- **In the sim on its shipped floor, the 4.7 Hz rear wobble is v4's; the
+  bike disagrees** (all three wobble there, next section).
+  At -0.4 and -0.8 the older policies reverse quietly (yaw 3-14) on every
+  plant; v4 wobbles on all four, worst on the old detent without play,
+  where it matches the bike's 56/24. At -1.2 on the play plants the older
+  two fall even on a 1 s ramp like the mirror's (8 of 8; at -0.8 on B the
+  ramp saves fixes_72M, 2 of 2), and not out of a fast wobble: the speed
+  reaches -1.0 to -1.2, then over ~1 s the roll creeps to 5-11 deg, the
+  steer turns slowly to 20-30 deg, the rear stops and lurches forward
+  (+0.4 m/s), and the fork goes round (to -100 deg). One run (rake20 on
+  B, a step) weaved for 5 s first: steer +-60 deg, yaw +-300 deg/s,
+  forward and back at ~0.6 Hz -- the slow swing the user sees, which v4
+  never shows in the sim. Read so: v4 holds a reversing balance the
+  older two lose at speed, and the rear wobble is how it holds it (an
+  inference).
+- **Whether the fork goes round reversing fast is policy x plant.** The
+  older policies, flown on the play they never trained on, lose the fork
+  at -1.2 (and on A wobble forward at yaw 51-69, the old shake); v4
+  never does on this floor. A step is harsher than the mirror's ~1 s ramp.
+- **v4 on the stiffened bike (B against A):** forward quieter (yaw 4-5
+  against 14-15), -0.4 worse (45-54 against 16-20), -1.2 better (7-8
+  against 16-20). The slow steer swing the user sees does not appear in
+  the sim short of a fork going round (v4's 0.3-2 Hz steer under 2 deg
+  RMS everywhere it survives).
+
+**Floors, v4 on B.** No floor here is measured yet
+(`docs/measurements/floor-measurements.yaml` is the template), so these
+are settings, labelled by sink at rest (`contact_calibration.rest_sink`);
+mu 0.35 is a guess for a slippery floor, the shipped 0.9 a GUESS:
+
+| floor | sink, mm | mu | -0.8: yaw/diff, speed | -1.2: yaw/diff, speed |
+|---|---|---|---|---|
+| hard, grippy (shipped) | 0.135 | 0.9 | 21/16, -0.85 | 7-8/4, -1.02 |
+| hard, slippery | 0.135 | 0.35 | 4/4, -0.88 | 4/3-16, -0.99 / FELL 1/2 |
+| soft, grippy (`[0.02, 1.0]`) | 0.75 | 0.9 | **68-72/24-25, -0.62** | 64-67/25, -0.80 |
+| soft, slippery | 0.75 | 0.35 | 30-31/22-23, -0.77 | 19-22/20-22, -1.0 |
+| stiff, underdamped (`[0.005, 0.3]`), grippy | 0.012 | 0.9 | FELL 2/2 | FELL 1/2 |
+| same, slippery | 0.012 | 0.35 | FELL 2/2 | FELL 2/2 |
+
+**Bouncy at the shipped stiffness, in MuJoCo's negative form.** The
+positive solref `[timeconst, dampratio]` couples the two: damping is
+2/timeconst (over `solimp`'s dmax), and dampratio enters only the
+stiffness, as 1/(timeconst x dampratio)^2 -- so a lower dampratio is
+bouncier AND stiffer (0.3: 0.012 mm of sink). The negative form
+`[-stiffness, -damping]` sets each alone. Checked: `[-40000, -400]`
+gives the shipped `[0.005, 1.0]`'s sink and drop exactly; `[-40000,
+-120]` (damping ratio ~0.3) keeps the sink (0.139 mm) and rebounds the
+rear 1.7 mm from a 10 mm drop, where the shipped floor does not
+rebound. v4 on B over it: -0.8 yaw/diff 15-21/11-15 (shipped 21/16),
+but reversing at -1.2 it fell in 1 of 2 runs (grippy) and 2 of 2
+(slippery) against 0 / 1 on the same floors without the bounce.
+
+The soft grippy floor is the first sim to give both halves of the bike's
+reversing: the wobble (yaw ~70, diff 25) AND the speed shortfall (78 %
+and 66 % of the command against the bike's 60 %). Which floor 212855's
+backward stretches were on is not in the record. Dampratio 0.3 (the
+bench's bounce) is ten times stiffer, the naming trap; it is where v4
+loses the fork, and is not a model of a bouncy floor so much as of none.
+
+Real floors fall in roughly four corners, with mu for rubber typical
+of textbook tables, not measured here: hard and slippery (polished wood,
+laminate, smooth tile; ~0.3-0.5, lower when dusty), hard and grippy
+(concrete, textured tile; ~0.6-0.9), soft and grippy (yoga or foam mat,
+rubber; ~0.8-1+, and dead: soft floors damp rather than bounce), soft
+and slippery (a rug sliding on wood, a vinyl skin over foam; rare
+indoors). Bounce mostly comes from the hard side and the wheel itself,
+not the floor. The rollers' own material sets mu as much as the floor
+does. In the model the corners are `friction_sliding` against
+`contact_solref` / `contact_solimp` (sink), with `contact_parts` to give
+the rollers, the tyre and the wings their own; P0 / P0b / P1 measure a
+floor's (section 5 of `floors-and-the-contact-model.md`).
+
+**The rollers keep their sideways grip at speed on the bike; in the sim
+they lose it.** The question (user): once it is rolling, do the rollers
+give less sideways traction? Two rates for the rear, sideways: what the
+rollers drive (no-slip roller kinematics from the drive servos'
+measured speeds, `VelocityEstimator.roller_lateral`) and what the rear
+does (the front constraint's rear lateral velocity, `v_lon tan(theta) -
+yaw_rate L`, true while the front tyre does not slide). 2-7 Hz, and the
+command -> servo lag of the drive differential at 4.7 Hz (the bike's
+from Present Velocity; the sim's from the true shaft, `input_*_vel`):
+
+| | rear actual / roller-driven, RMS (corr) | at 4.7 Hz: gain, phase | drive diff cmd -> servo |
+|---|---|---|---|
+| bike 212855, rest | 1.22 (0.81) | 1.05, +11 | 63 ms, gain 0.62 |
+| bike 212855, forward | 1.12 (0.81) | 1.16, -1 | 61 ms, 0.67 |
+| bike 212855, reverse < -0.6 (11 s) | **1.87 (0.64)** | **1.23, -1**, coh 0.96 | 62 ms, 0.54 |
+| bike 175020 (before), rest / forward | 1.41 / 1.26 | 1.30 / 0.93 | 68 / 64 ms |
+| sim v4 on B, shipped: rest / +0.8 / -0.8 | 1.64 / **0.57 / 0.68** | 1.49 / 0.46 / 0.70 | 37 / 30 / 25 ms |
+| sim, soft grippy: rest / +0.8 / -0.8 | 1.47 / 1.41 / 1.30 | 1.43 / 1.27 / 1.29 | 34-42 ms |
+| sim, old detent, shipped: -0.8 | 0.99 | 0.98 | 30 ms |
+
+Ratios over 1 at rest on both sides say the roller kinematic gain reads
+~20-40 % low against the constraint, so read each column against its own
+rest row. Reversing, the bike's rear follows the rollers at the wobble
+frequency (1.23, in phase), as at rest, and on top moves about as much
+again sideways that the rollers did not drive (the correlation drops to
+0.64): sliding. The sim on its shipped floor is the one whose rollers
+lose grip at speed (0.57-0.68 of what they drive). On the soft grippy
+floor -- where the sim matched the bike's wobble -- they keep it
+(1.30). One reading, an inference: the bike's rear has more sideways bite
+at speed than the floor v4 trained on, so the push the policy learned
+where the rollers slip overshoots, and the rear rings.
+
+The drive differential reaches the servos ~62-68 ms after the command on
+the bike in every regime, before and after the stiffening, against 25-42
+ms in the sim. Most of that gap is likely measurement: Present Velocity
+carries the model's 4 ms measurement delay and 12 ms filter (~15 ms at
+4.7 Hz), and the record reads before it commands (up to 10 ms). Swept
+anyway, v4 on B with the drive's `command_delay_s` 4 / 15 / 25 / 35 ms,
+2 seeds: reversing -0.8, the differential grows 16 -> 19-21 -> 22-24 ->
+21-22 rad/s, the yaw stays 15-24 deg/s, the speed -0.85 -> -0.75; -1.2
+and forward stay quiet. Not the 2x.
+
+**All three policies, reversing on the bike (10-28 evening).** Records
+261028-231419 (fixes_72M), -231802 (rake20_80M), -232101 (v4), ~2.5
+min each, `--move` per process, driving with reverses. Stretches of a
+steady command, first 0.5 s dropped:
+
+| | reverse -0.3..-0.6: speed / yaw 2-7 / diff 2-7 | reverse < -0.6: s, speed, yaw | forward: speed, yaw | falls (in or just after a reverse) |
+|---|---|---|---|---|
+| fixes_72M | 110 % / 48 / 19 | 3.1 s, 62 %, 24 | 94 %, 9 | 3 (3) |
+| rake20_80M | 105 % / 59 / 23 | 7.2 s, 79 %, 27 | 99 %, 15 | 4 (3; one forward at +1.2) |
+| v4 | **47 %** / 51 / 20 | 19.2 s, **47 %**, 43 | 95 %, 10 | 2 (1; one a 180 snap at rest) |
+
+- **The 4.7 Hz rear wobble is not v4's on the bike: all three have it**
+  reversing at -0.5 (yaw 48-59, the drive differential 19-23 rad/s),
+  where the sim's shipped floor gave the older two 3-13. The rollers grip
+  for all three (rear actual over roller-driven 1.15-1.25, corr 0.81-0.98).
+- **v4 is the slow reverser**: 47 % of the command at both levels, where
+  the older two make 105-110 % at -0.5. It also reversed fast the longest
+  (19 s) and fell once doing it; the older two fell 3 times each, mostly
+  in the stop after a -1.2 reverse: the steer turns 30-80 deg, the rear
+  lurches forward (+0.5-1.0 m/s), over.
+- **The old pointer's shake looks halved** since the stiffening: roll
+  rate 7-12 Hz at rest 13.6 deg/s in 154338 (10-26, one 56 s stretch) and
+  6.7 here (12 short stretches between driving; same Welch, so not quite
+  like for like). v4: 3.4 then, 4.4 now. Front play as part of the old
+  shake would fit; one run.
+
+**v4 holds back on purpose.** The user's reading: v4 learned that going
+backwards falls, so it trades away the commanded speed. The record
+agrees on the mechanism: the policy's own wheel target (the drive
+command's common mode as a rear speed) against the user's command, and
+what the wheel then made:
+
+| reversing | policy's target / user's cmd: -0.3..-0.6, < -0.6 | wheel made / target |
+|---|---|---|
+| fixes_72M | 116 %, 72 % | 94 % |
+| rake20_80M | 112 %, 88 % | 90-93 % |
+| v4 (232101) | **47 %, 56 %** | 84-93 % |
+| v4 (212855) | --, 50 % | 89 % |
+
+So v4 asks for half the reverse speed, and the wheel delivers what it
+asks; it is not slip. Over 0.5 s windows, v4's target falls as the bike
+moves more: 68 % of the command in the calmer half (by yaw-rate std), 53
+% in the wobblier half (212855: 85 / 74 %; Spearman against roll-rate
+std -0.30 / -0.60); the older two hold 113-119 % in both halves. In the
+sim on its own training plant v4 reverses at the full command (-0.85
+for -0.8, no falls), so it is not a blanket rule it learned; it backs
+off on the bike, more when the bike is moving about. Which way the
+causation runs, and why it holds back even in the calm windows (68 %),
+is not in these records.
+
+**The stiffening removed the old pointer's shake.** The user: tightening
+the steering and axle made it "way way better" backwards, and forwards
+too (still some wobble there), more than the runs captured. A
+stationary run of the old pointer after it (261028-232511, 124 s,
+`run_vs_sim --no-plot --seed 1`, bike side, 7-12 Hz):
+
+| | fixes_72M 154338 (10-26, before) | fixes_72M 232511 (10-28, after) | v4 154111 (10-26) |
+|---|---|---|---|
+| roll rate, deg/s | 16.4 | **5.2** | 4.0 |
+| yaw rate, deg/s | 19.7 | 7.7 | 7.9 |
+| steer target, deg | 1.40 | 0.15 | 0.115 |
+| drive A / B cmd, rad/s | 3.1 / 4.9 | 0.66 / 0.73 | 0.37 / 0.63 |
+| roll-rate peak | 10.0 Hz | 4.7 Hz | 5.3 Hz |
+
+Taking the play out of the front axle and headset did for the policy
+that never trained on play what v4's training did: the 9-10 Hz shake is
+gone, and the bike is within ~1.5x of that policy's own sim (roll rate
+5.2 against 3.4, yaw 7.7 against 4.2). That is the play diagnosis
+(tests 2 and 9) confirmed on the hardware from the other side. It also
+dates the fitted play: v4 trained on 1.0 mm of front axle and 1.5 mm of
+headset play that the bike no longer has.
+
+**The soft floor gives the older policies the bike's wobble too.** Sim, B
+plant, a 1 s ramp, 2 seeds, yaw 2-7 / diff 2-7, speed:
+
+| | shipped, -0.5 | shipped, -1.0 | soft grippy, -0.5 | soft grippy, -1.0 |
+|---|---|---|---|---|
+| fixes_72M | 5 / 2, 112 % | FELL 2/2 | 9-11 / 4, 111 % | **66-70 / 24-25, 92 %** |
+| rake20_80M | 11-12 / 5-6, 111 % | 4 / 1.5, FELL 1/2 | 17-32 / 7-11, 108 % | 31-47 / 15-19, 104 % |
+| v4 | 34-38 / 14, 106 % | 7-9 / 6-7, 103 % | 68 / 21, 83 % | 64-71 / 25-26, 84 % |
+| bike | 48-59 / 19-23 (all three) | | | |
+
+On the soft floor (0.75 mm of sink against 0.135) all three wobble, and
+the older two stop falling at -1.0 (0 of 4, against 3 of 4 on the
+shipped floor), closer to the bike in both, though not matched: at -0.5
+the sim's older policies wobble less than the bike's, and the bike's v4
+reverses slower (47 % against 83 %). Read so: the bike's ground contact
+is more like the soft setting than the shipped one, for all three
+policies. The contact's compliance is the rollers' and tyre's as well as
+the floor's; P0 (load against sink, on the bike's own wheels, on the test
+floor) is the measurement that says which.
+
+**Not an odometry loop.** The question (user): when the steer passes some
+angle, does the velocity estimate get stuck or lost and feed back? The
+lateral estimate is the front wheel's no-slip constraint, `v_lat = v_lon
+tan(theta) - yaw_rate L` (`hw/odometry.py`); past ~75 deg of wheel
+heading its confidence goes to 0 and it coasts on the accelerometer.
+On the bike that happens only AFTER the fork has gone round: through
+the reversing fall's lead-up the wheel heading is 1-7 deg and the
+confidence 0.98-1.0; it drops (0.46 -> 0) at 40-87 deg, in the last
+0.3 s. The estimate does carry the wobble: v_lat swings +-0.2-0.5 m/s
+sample to sample there, nearly all of it the `yaw_rate L` term (60
+deg/s x 0.2 m). Testing whether the wobble needs that path: v4 in the
+sim with the policy given the TRUE lateral velocity (`SimOdometry`
+channels "lon"), 2 seeds:
+
+| v4, true v_lat | yaw/diff, speed | with the estimate |
+|---|---|---|
+| B, shipped floor, -0.8 | 26-29/16-19, -0.81 | 21/16, -0.85 |
+| B, shipped floor, -1.2 | 25-38/16-23, -0.94 (1 fell at 11.7 s) | 7-8/4, -1.02 |
+| B, soft grippy, -0.8 | 70-73/25-26, -0.46 | 68-72/24-25, -0.62 |
+| D (old detent), shipped, -0.8 | 63-66/25-26, -0.67 | 58-60/24-25, -0.79 |
+
+The wobble is there, as large or larger, with the true velocity, so in
+the sim it does not need the estimator; nor does the speed shortfall.
+The bike's estimator could still differ from the sim's (its gyro, its
+noisier accelerometer), which these runs cannot test.
+
+The user's reading of the hardware change: mostly the front axle and the
+steerer's play went, and the added friction is handled by the drives and
+the steer.
+
+**The other two falls were 180 deg heading snaps from rest.** Every 180
+snap on v4, with how it went:
+
+| record | t, s | peak yaw, deg/s | roll min, deg | turned |
+|---|---|---|---|---|
+| 175020 (before) | 28.9 | 278 | -12 | 174 deg in 1.5 s |
+| 175020 (before) | 251.9 | 268 | -12 | 182 |
+| 180445 (before) | 158.8 | 257 | -12 | 180 |
+| 212855 (after) | 149.8 | 187 | -59 | 59 deg, FELL at 0.7 s |
+| 212855 (after) | 352.9 | 220 | -56 | 110 deg, FELL at 1.0 s |
+| 212855 (after) | 382.6 | 246 | -8 | 186 |
+| 212855 (after) | 389.8 | 255 | -9 | 178 |
+
+Each spin pins drive A at its 33.3 rad/s action limit for ~0.4 s. The two
+that fell spun slower (187 and 220 deg/s at peak) and leaned out instead.
+The three 90 deg snaps in the same record were fine. Both falls were on
+a really slippery wood floor (user); tried again on a grippier floor,
+the snaps were fine. So the floor, not the steering: the rear slides
+there instead of spinning the bike round.
+
+**The sim spins like the bike did before, and friction alone does not
+make it fall.** v4 on its training plant (`run_vs_sim.sim` with a
+command; a scratch script, not tracked), seeds 0 / 1:
+
+| sim | 180 snap: peak yaw, roll min | backward -0.8: speed, yaw 2-7 Hz |
+|---|---|---|
+| as trained | 257 / 238, -11 / -9 | -0.85 / -0.86, 16.1 / 17.8 |
+| headset friction x2 | 253 / 238, -10 / -7 | -0.85 / -0.86, 24.2 / 25.7 |
+| + front axle 5 mN m (`front_spin` frictionloss) | 243 / 257, -10 / -11 | -0.86 / -0.85, 29.0 / 22.6 |
+| + front axle 20 mN m | 234 / 243, -11 / -10 | -0.85 / -0.86, 35.7 / 20.1 |
+
+No variant fell on a snap. More steer and axle friction raises the
+backward wobble 1.5-2x, toward the bike's 57, but the sim still reaches
+its reversing speed where the bike makes 60 %. The axle values are
+guesses (the axle's drag is unmeasured). The sim floor's mu is 0.9 (a
+GUESS) and the CPU configs randomise it +-20 %; a slippery wood floor
+is probably below that. Open: the backward speed gap and the 2x
+reversing wobble.
+
 ## Not tests, but now worth watching
 
 **10-26 evening, three sessions on the v4 pointer** (261026-162523,
