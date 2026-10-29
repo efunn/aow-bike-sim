@@ -73,6 +73,10 @@ changes), and only an unmeasured 1.45-1.6 scale pushes - toward doubles
 scale with the - side's mix; the symmetric sawtooth gives the same mix.
 A map taken at another ring angle (rotate the wheel ~90 deg) would split
 the two readings if the bias is gravity on an unbalanced ring or roller.
+(10-29: unlikely. With the wheel unloaded in the air, gravity on the
+ring or a roller is negligible. Loads through the wheel and axle are
+the likelier source of any bias, and the loaded 10-25 map read close
+to the hung one.)
 The + side is chaotic in kinetic and hill: 0.2 vs 0.15 flips it between
 mixed and all-singles. Centred on a bump friction instead, the sawtooth's
 flip position gives handedness (friction 0.21, hill 0.04, flip 15-60
@@ -148,10 +152,39 @@ shoulder ~2x. The measured roller spring does nothing visible. Contact
    A fixed phase in training WITHOUT a new observation would only make
    every episode start at the same notch, something to overfit to, so the
    per-episode draw stays right for today's policies. Using it needs a
-   notch-phase obs (sin/cos of 2 pi phi / 7.5 deg, computable on the Pi
+   notch-phase obs (ONE number, wrapped at the sawtooth's flip -- see
+   10-29 below; computable on the Pi
    from Present Position), a `general_spec` layout change on both sides,
    and a retrain. Cheap without any of that: start the twin
    (`run_vs_sim`) at the bike run's own phase instead of a draw.
+   **Tested 10-29 (`analysis/servo/detent_phase.py`): the phase is fixed
+   until the drivetrain is rebuilt.** Diff creeps with the bike on its
+   side and the wheels up, after a ride and two power cycles, then the
+   wheel turned ~120 deg between runs on one power-up (261029-000445,
+   000645, 000756): flip 0.28 / 0.41 / 0.43 deg. With the four 10-24/25
+   creeps, 7 captures over 5 days, 3+ power cycles, hung, loaded and on
+   its side, wheel angle all round: **0.43 deg mod 7.5, max deviation
+   0.15 deg (2 % of a notch)**. Single jump starts scatter ~0.4-0.5 deg
+   (circular s.d.) around it. The 09-13 testbed creeps sit at 2.8-2.9:
+   the drivetrain was rebuilt in between (section 3), so a refit of a
+   belt or servo moves it and the number must be re-measured (one ~45 s
+   creep).
+   In raw Present Position counts (signed, Drive Mode 0, Homing Offset 0,
+   as every capture recorded): the phase is the SUM S = c101 + c102, one
+   count of S = 3 x 360 / 8192 = 0.132 deg of ring, one notch = 4096 / 72
+   = 56.889 counts of S. The flip sits at S = 3.2 counts mod 56.889
+   (captures 2.1-4.2; jump starts scatter 3-4 counts). As an integer:
+   phase = (72 S - 230) mod 4096, a 12-bit notch angle.
+   One input covers it: x = phase / 2048 - 1 in [-1, 1) wraps exactly at
+   the flip, where the push itself jumps, so its one discontinuity is the
+   physics' own and x is proportional to the angle-only push (sin/cos is
+   for a smooth periodic function or a wrap in the wrong place). Drive
+   Mode matters only through its Reverse bit, which negates one servo's
+   Present Position and turns S into a difference. The 3.2-count offset
+   could live in one servo's Homing Offset instead of the yaml, but that
+   moves the frame everything else reads.
+   A fourth capture (000007) was lost: 0-byte files after a power cycle;
+   `Capture.save` now fsyncs, as `RunRecorder.close` already did.
 7. **The detent is barely visible in the FLOOR runs' PWM (10-25).**
    `analysis/servo/floor_detent.py`: the diff-mode duty averaged by notch
    phase in the hung creep's encoder frame, split by direction, over both
