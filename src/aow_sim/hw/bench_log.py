@@ -474,9 +474,17 @@ class Capture:
     def save(self, directory) -> Path:
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(d / "capture.npz", **self.arrays)
-        (d / "meta.json").write_text(json.dumps(self.meta, indent=1,
-                                                default=_jsonable) + "\n")
+        # fsync, as RunRecorder.close does: the bench creep of 261029-000007
+        # was three 0-byte files after a power cycle a minute or two later.
+        with open(d / "capture.npz", "wb") as fh:
+            np.savez_compressed(fh, **self.arrays)
+            fh.flush()
+            os.fsync(fh.fileno())
+        with open(d / "meta.json", "w") as fh:
+            fh.write(json.dumps(self.meta, indent=1, default=_jsonable) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        _fsync_dir(d)
         return d
 
     @classmethod
