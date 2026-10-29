@@ -23,7 +23,7 @@ user has asked for it on the Python side).
 | 2 | the shove | `.`: 8 N for 0.35 s along **world y**, no marker | Space: 2 N, Shift+Space: 0.75 N (3 and 1.5 before the v4 plant), 0.35 s, across **the bike** (`-sin psi, cos psi`), alternating sides, a red arrow while it acts | **TODO** |
 | 3 | fresh turn press | jumps the heading 10 deg, then slews | no jump; slews only. Same lead clamp, same snap disarm/re-arm | page-only |
 | 4 | blade keys | 9 / 4 step left / centre / right at the FULL stroke (116.9 deg crank), where the blade meets the floor | Z / C step to 91 deg of crank (70 % of stroke, user's number from the mechanism sim) | **port?** (as a third stop) |
-| 5 | the ball | `--hockey`: the study ball (67 mm, 60 g), stick panels on the chassis, pelt 4 m/s | 160 mm, 10 g, bouncy, air drag, no stick panels, pelt 2.5 m/s; spawns in front of the bike; drawn as a beach ball | **TODO**: fix the ball physics (section 2); the page's ball is a stand-in, not the answer |
+| 5 | the ball | `--hockey`: the study ball (67 mm, 60 g), stick panels on the chassis, pelt 4 m/s | 74 mm (a pickleball; 160 mm until 10-27), 10 g, bouncy, air drag, no stick panels, pelt 2.5 m/s; spawns in front of the bike; drawn as a pickleball | **TODO**: fix the ball physics (section 2); the page's ball is a stand-in, not the answer |
 | 6 | command after a get-up | `engage()` holds what the bike is doing: `v_cmd = qvel`, heading as is | velocity command zeroed, heading where the bike points, key state cleared | page-only |
 | 7 | AHRS model | `tm151_filter` by default | off: attitude and heading are MuJoCo truth (felt in teleop first: no visible difference) | page-only |
 | 8 | controller rate | `DriveController` at 200 Hz, policy held 4 ticks, steer integrator and `swing_sit` stepped at 200 Hz | the env's 50 Hz: policy, steer integrator and `swing_sit` per 50 Hz step | page-only (the env's semantics, which is what trained) |
@@ -119,7 +119,7 @@ Who builds that ball: teleop `--hockey`, and the ball-shot move's env
 (`ball_prob: 0.0` in every `rl_general*` config and in the pointer's yaml).
 
 **TODO: fix the ball physics (approach TBD).** condim 6 and a real rolling
-friction is the minimum. The page's ball (160 mm, 10 g, stiff bouncy contact,
+friction is the minimum. The page's ball (74 mm, 10 g, stiff bouncy contact,
 air drag) is a demo stand-in chosen for play, and the user is not satisfied
 with it yet; the hockey ball's mass and radius in `config/studies/ball.yaml`
 are still `GUESS`. The ball lives under `hockey`, which is in `params.STUDY_PATHS`, so

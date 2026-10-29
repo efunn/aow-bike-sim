@@ -90,7 +90,11 @@ AHRS_LEVEL = "none"
 #
 # Re-run with this contact: still 0 / 24 falls, ball pushed 0.32 m median.
 # Rolls ~0.5 m from 1 m/s with the air drag. At rest it never moved (5 um).
-BALL_RADIUS = 0.08
+#
+# 2026-10-27, the user: a real pickleball's size, 74 mm, accepting the blade
+# riding up onto it that the sweep above found at 67 mm. Not re-swept; the
+# mass and contact stay the 160 mm ball's.
+BALL_RADIUS = 0.037
 BALL_MASS, BALL_SLIDING, BALL_ROLLING = 0.010, 0.4, 0.002
 BALL_SOLREF = (-3e4, -70.0)     # direct form: stiffness, damping (mass-normalised)
 BALL_DRAG_TAU = 0.8             # s; air drag, applied by the page
@@ -231,14 +235,33 @@ def write_policy(pol, path: Path) -> dict:
     return manifest
 
 
+# The page's look where it differs from teleop's, by geom name (user,
+# 2026-10-27): the roll cages solid, both blades orange, and the front tyre
+# in the rear rollers' two greys rather than teleop's blue / orange quarters
+# (those show its spin; the greys still do).
+_ORANGE = (0.96, 0.46, 0.09, 1.0)
+_GREY_LIGHT, _GREY_DARK = (0.70, 0.71, 0.73, 1.0), (0.38, 0.39, 0.41, 1.0)
+PAGE_COLOURS = {
+    "rollcage_rear": _ORANGE, "rollcage_front": _ORANGE,
+    "swing_wing_left": _ORANGE, "swing_wing_left_toe": _ORANGE,
+    "swing_wing_right": _ORANGE, "swing_wing_right_toe": _ORANGE,
+    "front_tire_q0": _GREY_LIGHT, "front_tire_q1": _GREY_DARK,
+    "front_tire_q2": _GREY_LIGHT, "front_tire_q3": _GREY_DARK,
+}
+
+
 def visible_geoms(model) -> list:
     """[geom id, r, g, b, a] for every bike geom teleop's bare look draws,
     from `strip_visuals` on a COPY: the exported model keeps its colours.
-    The floor (body 0) is left out; the page draws its own ground."""
+    The floor (body 0) is left out; the page draws its own ground.
+    PAGE_COLOURS overrides by name."""
     from ..build_model import strip_visuals
     shown = copy.deepcopy(model)
     strip_visuals(shown)
-    return [[g, *map(float, shown.geom_rgba[g])] for g in range(shown.ngeom)
+    missing = set(PAGE_COLOURS) - {shown.geom(g).name for g in range(shown.ngeom)}
+    assert not missing, f"PAGE_COLOURS names no geom: {sorted(missing)}"
+    return [[g, *map(float, PAGE_COLOURS.get(shown.geom(g).name, shown.geom_rgba[g]))]
+            for g in range(shown.ngeom)
             if shown.geom_bodyid[g] != 0 and shown.geom_rgba[g][3] > 0.0]
 
 

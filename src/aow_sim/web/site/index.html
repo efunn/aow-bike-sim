@@ -92,15 +92,20 @@
     margin: 0 0 1px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
     text-transform: uppercase; color: var(--ink);
   }
-  #focus-hint { grid-column: 1 / -1; justify-self: center; margin-bottom: 2px; }
   @media (max-width: 760px) { #keys { grid-template-columns: repeat(2, auto); } }
   kbd {
     display: inline-block; min-width: 1.6em; padding: 0 4px; margin: 0 1px;
     border: 1px solid var(--panel-edge); border-bottom-width: 2px; border-radius: 4px;
     background: var(--key); color: var(--ink); font: inherit; text-align: center;
   }
-  #focus-hint { color: var(--accent); }
-  body.focused #focus-hint { display: none; }
+  /* Paused (main.js: under half on screen, or the browser in the background). */
+  #paused {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    padding: 7px 16px; border-radius: 999px; background: var(--accent); color: #fff;
+    font-size: 14px; font-weight: 600; white-space: nowrap; pointer-events: none;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  }
+  body:not(.paused) #paused, body:not(.ready) #paused { display: none; }
 
   #touch { display: none; }
   @media (pointer: coarse) {
@@ -155,8 +160,9 @@
   <dd id="hud-slow" hidden>running slower than real time</dd>
 </dl>
 
+<div id="paused">Paused</div>
+
 <div id="keys" class="panel">
-  <div id="focus-hint">Click to drive</div>
   <section><h3>Drive</h3>
     <div><kbd>↑</kbd><kbd>↓</kbd> speed</div>
     <div><kbd>←</kbd><kbd>→</kbd> turn</div>

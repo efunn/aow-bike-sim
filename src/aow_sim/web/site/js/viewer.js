@@ -5,6 +5,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 
@@ -77,43 +78,78 @@ function arrowGeometry() {
     [V(0, 0), V(0.02, -0.045), V(0.007, -0.045), V(0.007, -0.17), V(0, -0.17)], 24);
 }
 
-// A beach ball: six gores alternating the bike's blue and orange, a cap of
-// each colour at the poles with a thin seam of the other round it, so its
-// spin shows. Unindexed, so each triangle takes its own panel's colour and
-// the seams stay sharp.
-const CAP_DEG = 17.3;     // polar angle of the cap's edge
-const SEAM_DEG = 2.5;     // the seam's width beyond it
+// A pickleball, hollow: an outer and an inner sphere 2.5 mm apart, both with
+// 26 round holes cut by the shader (exact circles, edges antialiased by
+// alpha-to-coverage), and a short wall round each hole joining the two. So
+// the holes are holes: you see the wall's edge, and the inside of the far
+// side through them. Hole centres on a Fibonacci sphere; 26 holes, 12 mm
+// across, like the indoor ball in the clips (holes ~1/6 of its width).
+const HOLES = 26;
+const HOLE_D = 0.012;     // m
+const WALL = 0.0025;      // m
 
-function beachBall(r) {
-  const g = new THREE.SphereGeometry(r, 96, 120).toNonIndexed();   // 1.5 deg bands
-  const pos = g.attributes.position, n = pos.count;
-  const col = new Float32Array(n * 3);
-  const blue = new THREE.Color().setRGB(0.0, 0.55, 0.76, THREE.SRGBColorSpace);
-  const orange = new THREE.Color().setRGB(0.96, 0.46, 0.09, THREE.SRGBColorSpace);
-  for (let i = 0; i < n; i += 3) {
-    let x = 0, z = 0, lo = Infinity, hi = -Infinity;
-    for (let k = 0; k < 3; k++) {
-      x += pos.getX(i + k); z += pos.getZ(i + k);
-      lo = Math.min(lo, pos.getY(i + k)); hi = Math.max(hi, pos.getY(i + k));
-    }
-    // SphereGeometry's poles are on its y axis. Caps and seams are judged by
-    // the latitude BAND (both triangles of a quad agree), so their edges are
-    // circles, not sawteeth.
-    const lat = (lo + hi) / 2;
-    const fromPole = Math.acos(Math.min(1, Math.abs(lat) / r)) * 180 / Math.PI;
-    const top = lat > 0;
-    let c;
-    if (fromPole < CAP_DEG) c = top ? blue : orange;
-    else if (fromPole < CAP_DEG + SEAM_DEG) c = top ? orange : blue;
-    else c = Math.floor((Math.atan2(z, x) + Math.PI) / (Math.PI / 3)) % 2 ? orange : blue;
-    for (let k = 0; k < 3; k++) col.set([c.r, c.g, c.b], (i + k) * 3);
+function holeCentres() {
+  const out = [], golden = Math.PI * (3 - Math.sqrt(5));
+  for (let k = 0; k < HOLES; k++) {
+    const y = 1 - (2 * k + 1) / HOLES, rr = Math.sqrt(1 - y * y), th = golden * k;
+    out.push(new THREE.Vector3(rr * Math.cos(th), y, rr * Math.sin(th)));
   }
-  g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-  // A sphere's normal is its position over r: smooth, seams or no seams.
-  const nrm = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) nrm.set([pos.getX(i) / r, pos.getY(i) / r, pos.getZ(i) / r], i * 3);
-  g.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
-  return g;
+  return out;
+}
+
+function pickleballMesh(r) {
+  const ri = r - WALL, th = Math.asin(HOLE_D / 2 / r), holes = holeCentres();
+  const tint = (g, rgb, shell) => {
+    const n = g.attributes.position.count, c = new THREE.Color().setRGB(...rgb, THREE.SRGBColorSpace);
+    g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(n * 3).map((_, i) => [c.r, c.g, c.b][i % 3]), 3));
+    g.setAttribute("aShell", new THREE.BufferAttribute(new Float32Array(n).fill(shell), 1));
+    g.deleteAttribute("uv");
+    return g;
+  };
+  const parts = [
+    tint(new THREE.SphereGeometry(r, 64, 48), [0.96, 0.46, 0.09], 1),
+    tint(new THREE.SphereGeometry(ri, 64, 48), [0.62, 0.26, 0.04], 1),
+  ];
+  // Each wall: a frustum from the outer hole's circle to the inner one's.
+  const up = new THREE.Vector3(0, 1, 0);
+  for (const h of holes) {
+    const g = new THREE.CylinderGeometry(r * Math.sin(th), ri * Math.sin(th),
+      (r - ri) * Math.cos(th), 24, 1, true);
+    g.translate(0, (r + ri) / 2 * Math.cos(th), 0);
+    g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(up, h));
+    parts.push(tint(g, [0.80, 0.36, 0.06], 0));
+  }
+  const geo = mergeGeometries(parts.map((g) => g.index ? g.toNonIndexed() : g));
+
+  const mat = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.45, metalness: 0.0,
+    side: THREE.DoubleSide, alphaToCoverage: true,
+  });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uHoles = { value: holes };
+    sh.uniforms.uCos = { value: Math.cos(th) };
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", "#include <common>\nattribute float aShell;\nvarying vec3 vDir;\nvarying float vShell;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvDir = position; vShell = aShell;");
+    sh.fragmentShader = sh.fragmentShader
+      .replace("#include <common>", `#include <common>
+uniform vec3 uHoles[${HOLES}];
+uniform float uCos;
+varying vec3 vDir;
+varying float vShell;`)
+      .replace("#include <clipping_planes_fragment>", `#include <clipping_planes_fragment>
+float holeA = 1.0;
+if (vShell > 0.5) {
+  vec3 u = normalize(vDir);
+  float m = -1.0;
+  for (int i = 0; i < ${HOLES}; i++) m = max(m, dot(u, uHoles[i]));
+  float w = fwidth(m);
+  holeA = 1.0 - smoothstep(uCos - w, uCos + w, m);
+  if (holeA < 0.02) discard;
+}`)
+      .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.a *= holeA;");
+  };
+  return new THREE.Mesh(geo, mat);
 }
 
 // A radial falloff for the ball's blob shadow.
@@ -152,6 +188,9 @@ export class Viewer {
     this.controls.maxDistance = 4;
     this.controls.maxPolarAngle = Math.PI * 0.49;
     this.controls.enablePan = false;
+    // The wheel scrolls the page (the sim sits under the clips on /aow/);
+    // dragging still orbits.
+    this.controls.enableZoom = false;
 
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f99, 1.6));
     const sun = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -183,22 +222,28 @@ export class Viewer {
       shown.push([ball, c[4 * ball], c[4 * ball + 1], c[4 * ball + 2], 1.0]);
     }
     for (const [id, r, g, b, a] of shown) {
-      const geo = id === ball ? beachBall(model.geom_size[3 * ball]) : geomGeometry(model, id);
-      if (!geo) continue;
-      const mat = new THREE.MeshStandardMaterial({
-        color: id === ball ? 0xffffff : new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace),
-        vertexColors: id === ball,
-        roughness: id === ball ? 0.45 : 0.6, metalness: 0.05, flatShading: id !== ball,
-        transparent: a < 1, opacity: a, depthWrite: a >= 1,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
+      let mesh;
+      if (id === ball) mesh = pickleballMesh(model.geom_size[3 * ball]);
+      else {
+        const geo = geomGeometry(model, id);
+        if (!geo) continue;
+        const mat = new THREE.MeshStandardMaterial({
+          color: new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace),
+          roughness: 0.6, metalness: 0.05, flatShading: true,
+          transparent: a < 1, opacity: a, depthWrite: a >= 1,
+        });
+        // Solid parts glow a little in their own colour, so the orange stays
+        // orange on the side away from the sun instead of going brown.
+        if (a >= 1) mat.emissive.copy(mat.color).multiplyScalar(0.3);
+        mesh = new THREE.Mesh(geo, mat);
+        if (a < 1) this.shell.push([mat, a]);
+      }
       mesh.matrixAutoUpdate = false;
       // The ball is not in the shadow map: it roams past the map's +-0.6 m
       // around the bike, where its shadow would pop out. It gets a blob.
       mesh.castShadow = id !== ball;
       this.scene.add(mesh);
       this.geoms.push([id, mesh]);
-      if (a < 1) this.shell.push([mat, a]);
     }
 
     // The commanded heading: teleop's green arc on the ground dial, 0.30 m

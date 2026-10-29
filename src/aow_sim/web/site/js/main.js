@@ -88,10 +88,10 @@ async function boot() {
   addEventListener("keyup", (e) => { const h = HOLD[e.code]; if (h) teleop.release(h); });
   // A key released while the frame had no focus never sends keyup: let go
   // of everything rather than drive on.
-  addEventListener("blur", () => { teleop.held.clear(); updateFocus(); });
-  addEventListener("focus", updateFocus);
-  function updateFocus() { document.body.classList.toggle("focused", document.hasFocus()); }
-  updateFocus();
+  addEventListener("blur", () => teleop.held.clear());
+  // A touch on a button takes the keyboard too (their pointerdown is
+  // cancelled, which would otherwise leave it with the page around).
+  addEventListener("pointerdown", () => focus(), true);
 
   for (const b of document.querySelectorAll("[data-hold]")) {
     const name = b.dataset.hold;
@@ -110,11 +110,30 @@ async function boot() {
   // sim itself every `substeps` of them. Drawing the state after each frame's
   // substeps shows the bike where it is now, not where it was at the last
   // 50 Hz control tick.
+  // Whether this browser window is in front at all (the frame's own focus
+  // is the page around it's business). A cross-origin parent cannot be
+  // asked: assume it is.
+  const topHasFocus = () => { try { return top.document.hasFocus(); } catch { return true; } };
+  let onScreen = true;
+  new IntersectionObserver(([e]) => { onScreen = e.intersectionRatio >= 0.5; },
+    { threshold: [0, 0.5, 1] }).observe($("view"));
   let last = performance.now(), acc = 0.0, slow = false;
   let physMs = 0, simS = 0, wallS = 0, frames = 0;     // since the last readout
   function frame(now) {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
+    // Paused with less than half of it on screen, or the browser in the
+    // background: on /aow/ the sim sits below the clips, and a bike left
+    // running while the page is scrolled away has done things by the time
+    // anyone looks again. It resumes by itself; /aow/ hands it the keyboard
+    // as it comes into view. It still draws, so the view can be dragged.
+    const running = onScreen && topHasFocus();
+    document.body.classList.toggle("paused", !running);
+    if (!running) {
+      viewer.draw(sim.d, [sim.d.qpos[0], sim.d.qpos[1]], sim.psiCmd, dt, { busy: sim.busy });
+      requestAnimationFrame(frame);
+      return;
+    }
     teleop.update(dt, sim.psi);
     if (!sim.busy && !sim.policyOff) {
       sim.vCmdW = teleop.vCmdWorld();

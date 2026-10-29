@@ -71,6 +71,12 @@ later. Blades at 91 deg with the bike still balancing (peak lean 2-4 deg,
 | T | telemetry, hidden by default |
 | R | reset |
 
+The sim pauses while less than half of it is on screen or the browser is in
+the background (it sits below the clips on the site's `/aow/`, and kept
+running while scrolled away), with a "Paused" banner at the top, and resumes
+by itself. `/aow/` hands it the keyboard whenever it comes into view, so no
+click is needed there. Dragging orbits the camera; the wheel scrolls the
+page, no zoom.
 The rear wheel leaves teleop's red trail (2 s, then fading). Phones get the
 same keys as buttons. `?telemetry` starts with the readout shown;
 `?hud=0` hides the key hints; `?debug` puts `sim`, `teleop`, `viewer` and
@@ -98,14 +104,15 @@ stalled crank, lifted again and again, overloaded); the page does, after
 Two additions make it teleop's bike: the righting module JOINTED, its crank
 on the current-based position servo model (the policy trained on it welded,
 and holds it at stow either way), and a ball, without the ball-shot move's
-stick panels: a 160 mm, 10 g play ball that bounces (0.48 of its impact
+stick panels: a pickleball-sized (74 mm), 10 g play ball that bounces (0.48 of its impact
 speed back, with a contact stiff enough not to jitter against the wheel), with air drag the page applies and rolling friction (at the
 sim's condim 4 rolling friction is ignored and the study's ball rolled 53 m).
 Its contact settings are its own: MuJoCo mixes each contact from both geoms
 (friction the larger, solref/solimp weighted by solmix), and the ball's
 solmix is set to win, so nothing else's contact changed. Driving into it or
-past it with a blade out, 0 falls in 24; the 67 mm ball fell when the blade
-rode up onto it and propped the bike over, which is why it is big.
+past it with a blade out, 0 falls in 24 at 160 mm; the 67 mm ball fell when
+the blade rode up onto it and propped the bike over. It was 160 mm for that
+until 10-27, when it went to a real pickleball's size anyway (not re-swept).
 `export.py` has the sweeps; `docs/plans/web-demo-divergences.md` collects
 what differs from teleop.
 
