@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 620" width="1000" role="img" aria-label="The policy's observations, network and actions">
+
+<style>
+  svg { --ink:#1f2328; --muted:#59636e; --rule:#d1d9e0; --card:#f6f8fa;
+         --head:#1a7f37; --vel:#bc4c00; --meas:#0969da; --est:#8250df;
+         --out:#cf222e; --box:#24292f; --boxink:#f6f8fa; }
+  @media (prefers-color-scheme: dark) {
+    svg { --ink:#e6edf3; --muted:#9198a1; --rule:#3d444d; --card:#151b23;
+           --head:#3fb950; --vel:#f0883e; --meas:#4493f8; --est:#ab7df8;
+           --out:#f85149; --box:#e6edf3; --boxink:#0d1117; } }
+  text { font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill:var(--ink); }
+  .t { font-size:15px; font-weight:600; }
+  .s { font-size:13px; fill:var(--muted); }
+  .h { font-size:12px; font-weight:600; letter-spacing:.08em; fill:var(--muted); }
+  .card { fill:var(--card); stroke:var(--rule); }
+  .ic { fill:none; stroke:var(--ink); stroke-width:1.6; stroke-linecap:round;
+         stroke-linejoin:round; }
+  .ic .faint { stroke:var(--muted); opacity:.55; }
+  .wire { fill:none; stroke:var(--muted); stroke-width:1.4; }
+</style>
+
+<text class="h" x="20" y="24">OBSERVED · 17 VALUES</text>
+<text class="h" x="508" y="24">CONTROL POLICY</text>
+<text class="h" x="692" y="24">ACTIONS · 3 VALUES</text>
+<rect class="card" x="10" y="40" width="420" height="100" rx="10"/>
+<rect x="10" y="40" width="5" height="100" rx="2" style="fill:var(--head)"/>
+<g class="ic" transform="translate(28 58) scale(1.6)"><g class="faint" transform="rotate(40 20 20)"><rect class="faint" x="13" y="3" width="14" height="34" rx="7"/><rect x="18" y="25" width="4" height="10" rx="1"/><rect x="18" y="5" width="4" height="10" rx="1" transform="rotate(0 20 10)"/></g><g transform="translate(0 0)"><rect x="18" y="25" width="4" height="10" rx="1"/><rect x="18" y="5" width="4" height="10" rx="1" transform="rotate(0 20 10)"/></g><path style="stroke:var(--vel)" d="M20.0 20.0 L34.8 2.4"/><path style="stroke:var(--vel)" d="M30.6 3.3 L34.8 2.4 L34.6 6.7"/><path style="stroke:var(--head)" d="M16.1 -2.1 A22.4 22.4 0 0 1 29.8 -0.1"/><path style="stroke:var(--head)" d="M27.7 -3.5 L29.8 -0.1 L26.0 0.9"/></g>
+<text class="t" x="110" y="68">Command <tspan class="s">· from the operator · 4</tspan></text>
+<text class="s" x="110" y="92">velocity, forward</text>
+<text class="s" x="110" y="110">velocity, sideways</text>
+<text class="s" x="270" y="92">heading error (sin)</text>
+<text class="s" x="270" y="110">heading error (cos)</text>
+<rect class="card" x="10" y="150" width="420" height="100" rx="10"/>
+<rect x="10" y="150" width="5" height="100" rx="2" style="fill:var(--meas)"/>
+<g class="ic" transform="translate(28 168) scale(1.6)"><path class="faint" d="M6 37.5 H34"/><g transform="rotate(-14 20 37)"><rect x="17.5" y="15" width="5" height="21" rx="1.5"/><path d="M12.2 24.8 A11 11 0 1 1 27.8 24.8"/></g><path style="stroke:var(--meas)" d="M28.2 9.1 A15.5 15.5 0 0 0 6.6 5.3"/><path style="stroke:var(--meas)" d="M10.6 5.9 L6.6 5.3 L8.2 1.7"/></g>
+<text class="t" x="110" y="178">Measured <tspan class="s">· AHRS · 5</tspan></text>
+<text class="s" x="110" y="202">roll</text>
+<text class="s" x="110" y="220">roll rate</text>
+<text class="s" x="110" y="238">yaw rate</text>
+<text class="s" x="270" y="202">pitch</text>
+<text class="s" x="270" y="220">pitch rate</text>
+<rect class="card" x="10" y="260" width="420" height="100" rx="10"/>
+<rect x="10" y="260" width="5" height="100" rx="2" style="fill:var(--meas)"/>
+<g class="ic" transform="translate(28 278) scale(1.6)"><g transform="translate(0 2)"><rect class="faint" x="13" y="3" width="14" height="34" rx="7"/><rect x="18" y="25" width="4" height="10" rx="1"/><rect x="18" y="5" width="4" height="10" rx="1" transform="rotate(-28 20 10)"/></g><path style="stroke:var(--meas)" d="M28.6 6.0 A10.5 10.5 0 0 0 11.4 6.0"/><path style="stroke:var(--meas)" d="M15.3 5.3 L11.4 6.0 L11.9 2.0"/></g>
+<text class="t" x="110" y="288">Measured <tspan class="s">· steering servo encoder · 3</tspan></text>
+<text class="s" x="110" y="312">steer angle (sin 2δ)</text>
+<text class="s" x="110" y="330">steer angle (cos 2δ)</text>
+<text class="s" x="270" y="312">steer rate</text>
+<rect class="card" x="10" y="370" width="420" height="100" rx="10"/>
+<rect x="10" y="370" width="5" height="100" rx="2" style="fill:var(--est)"/>
+<g class="ic" transform="translate(28 388) scale(1.6)"><rect class="faint" x="13" y="3" width="14" height="34" rx="7"/><rect x="18" y="25" width="4" height="10" rx="1"/><rect x="18" y="5" width="4" height="10" rx="1" transform="rotate(0 20 10)"/><path style="stroke:var(--est)" d="M20.0 20.0 L20.0 -6.0"/><path style="stroke:var(--est)" d="M17.4 -2.6 L20.0 -6.0 L22.6 -2.6"/><path style="stroke:var(--est)" d="M20.0 20.0 L36.0 20.0"/><path style="stroke:var(--est)" d="M32.6 17.4 L36.0 20.0 L32.6 22.6"/></g>
+<text class="t" x="110" y="398">Estimated <tspan class="s">· odometry, from the encoders · 2</tspan></text>
+<text class="s" x="110" y="422">velocity, forward</text>
+<text class="s" x="270" y="422">velocity, sideways</text>
+<rect class="card" x="10" y="480" width="420" height="100" rx="10"/>
+<rect x="10" y="480" width="5" height="100" rx="2" style="fill:var(--muted)"/>
+<g class="ic" transform="translate(28 498) scale(1.6)"><path style="stroke:var(--muted)" d="M26.0 9.6 A12 12 0 1 1 12.3 10.8"/><path style="stroke:var(--muted)" d="M8.4 11.6 L12.3 10.8 L11.9 14.8"/></g>
+<text class="t" x="110" y="508">Feedback <tspan class="s">· previous action · 3</tspan></text>
+<text class="s" x="110" y="532">steer rate</text>
+<text class="s" x="110" y="550">common drive</text>
+<text class="s" x="270" y="532">differential drive</text>
+<rect x="500" y="170" width="150" height="270" rx="12" style="fill:var(--box)"/>
+<text x="575.0" y="240" text-anchor="middle" style="fill:var(--boxink);font-size:14px;font-weight:600">Linear(17,128)</text>
+<path d="M575.0 250 V288" style="stroke:var(--boxink);stroke-width:1.4;opacity:.5"/>
+<text x="575.0" y="310" text-anchor="middle" style="fill:var(--boxink);font-size:14px;font-weight:600">MinGRU(128)</text>
+<text x="575.0" y="328" text-anchor="middle" style="fill:var(--boxink);font-size:12px;opacity:.7">memory</text>
+<path d="M575.0 336 V358" style="stroke:var(--boxink);stroke-width:1.4;opacity:.5"/>
+<text x="575.0" y="380" text-anchor="middle" style="fill:var(--boxink);font-size:14px;font-weight:600">Linear(128,3)</text>
+<text x="575.0" y="204" text-anchor="middle" style="fill:var(--boxink);font-size:12px;opacity:.7">every 20 ms (50 Hz)</text>
+<path class="wire" d="M430 90.0 C470 90.0 460 210.0 500 210.0"/>
+<path class="wire" d="M430 200.0 C470 200.0 460 257.5 500 257.5"/>
+<path class="wire" d="M430 310.0 C470 310.0 460 305.0 500 305.0"/>
+<path class="wire" d="M430 420.0 C470 420.0 460 352.5 500 352.5"/>
+<path class="wire" d="M430 530.0 C470 530.0 460 400.0 500 400.0"/>
+<rect class="card" x="690" y="110" width="300" height="108" rx="10"/>
+<rect x="985" y="110" width="5" height="108" rx="2" style="fill:var(--out)"/>
+<g class="ic" transform="translate(704 132) scale(1.6)"><g transform="translate(0 2)"><rect class="faint" x="13" y="3" width="14" height="34" rx="7"/><rect x="18" y="25" width="4" height="10" rx="1"/><rect x="18" y="5" width="4" height="10" rx="1" transform="rotate(-28 20 10)"/></g><path style="stroke:var(--out)" d="M28.6 6.0 A10.5 10.5 0 0 0 11.4 6.0"/><path style="stroke:var(--out)" d="M15.3 5.3 L11.4 6.0 L11.9 2.0"/></g>
+<text class="t" x="786" y="138">Steer rate</text>
+<text class="s" x="786" y="156" style="fill:var(--out)">±8 rad/s</text>
+<text class="s" x="786" y="176">integrated into the steering</text>
+<text class="s" x="786" y="192">servo's position target</text>
+<rect class="card" x="690" y="230" width="300" height="108" rx="10"/>
+<rect x="985" y="230" width="5" height="108" rx="2" style="fill:var(--out)"/>
+<g class="ic" transform="translate(704 252) scale(1.6)"><circle cx="20" cy="20" r="4"/><circle class="faint" cx="20" cy="20" r="10"/><rect x="-4" y="-2.2" width="8" height="4.4" rx="2" transform="translate(33.0 20.0) rotate(90)"/><rect x="-4" y="-2.2" width="8" height="4.4" rx="2" transform="translate(29.2 29.2) rotate(135)"/><rect x="-4" y="-2.2" width="8" height="4.4" rx="2" transform="translate(20.0 33.0) rotate(180)"/><rect x="-4" y="-2.2" width="8" height="4.4" rx="2" transform="translate(10.8 29.2) rotate(225)"/><rect x="-4" y="-2.2" width="8" height="4.4" rx="2" transform="translate(7.0 20.0) rotate(270)"/><rect x="-4" y="-2.2" width="8" height="4.4" rx="2" transform="translate(10.8 10.8) rotate(315)"/><rect x="-4" y="-2.2" width="8" height="4.4" rx="2" transform="translate(20.0 7.0) rotate(360)"/><rect x="-4" y="-2.2" width="8" height="4.4" rx="2" transform="translate(29.2 10.8) rotate(405)"/><path class="faint" d="M2 37.5 H38"/><path style="stroke:var(--out)" d="M2.1 13.5 A19 19 0 0 1 36.5 10.5"/><path style="stroke:var(--out)" d="M36.6 6.5 L36.5 10.5 L32.7 9.3"/></g>
+<text class="t" x="786" y="258">Common mode</text>
+<text class="s" x="786" y="276" style="fill:var(--out)">±1.4 m/s</text>
+<text class="s" x="786" y="296">both drive servos together:</text>
+<text class="s" x="786" y="312">the wheel rolls</text>
+<rect class="card" x="690" y="350" width="300" height="108" rx="10"/>
+<rect x="985" y="350" width="5" height="108" rx="2" style="fill:var(--out)"/>
+<g class="ic" transform="translate(704 372) scale(1.6)"><g class="faint"><rect x="17.5" y="15" width="5" height="21" rx="1.5"/><path d="M12.2 24.8 A11 11 0 1 1 27.8 24.8"/></g><rect x="17.5" y="15" width="5" height="21" rx="1.5"/><path class="faint" d="M4 37.5 H36"/><path style="stroke:var(--out)" d="M23.0 42.5 L35.0 42.5"/><path style="stroke:var(--out)" d="M31.6 39.9 L35.0 42.5 L31.6 45.1"/><path style="stroke:var(--out)" d="M17.0 42.5 L5.0 42.5"/><path style="stroke:var(--out)" d="M8.4 45.1 L5.0 42.5 L8.4 39.9"/></g>
+<text class="t" x="786" y="378">Differential</text>
+<text class="s" x="786" y="396" style="fill:var(--out)">±40 rad/s</text>
+<text class="s" x="786" y="416">the drive servos against each</text>
+<text class="s" x="786" y="432">other: the rollers spin, and</text>
+<text class="s" x="786" y="448">the wheel drives sideways</text>
+<path class="wire" d="M650 240 C670 240 665 164 690 164"/>
+<path class="wire" d="M650 305 C670 305 665 284 690 284"/>
+<path class="wire" d="M650 370 C670 370 665 404 690 404"/>
+<path class="wire" style="stroke-dasharray:4 4" d="M850 458 V602 H220 V580"/>
+<path class="wire" d="M215 587 L220 580 L225 587"/>
+<text class="s" x="540" y="596" text-anchor="middle">fed back at the next step</text>
+</svg>

@@ -1,176 +1,88 @@
 <h1 align="center">aow-bike-sim</h1>
 
 <p align="center">
-  🚧 🏗️ 🚧 <b>UNDER CONSTRUCTION</b> 🚧 🏗️ 🚧<br>
+  <em>A self-balancing and self-righting robot bike</em>
 </p>
-
-<p align="center">
-  <em>A self-balancing RC bike whose rear wheel can also drive sideways.</em>
-</p>
-
-<p align="center">
-  <a href="#how-it-works">How it works</a> ·
-  <a href="#install">Installing</a> ·
-  <a href="#drive-it">Driving</a> ·
-  <a href="#training-policies">Training</a> ·
-  <a href="#physical-build">Hardware</a>
-</p>
-
----
-
-## Demo
-
-Four commands from the control policy's **evaluation grid**: the same commands
-that reinforcement learning training runs are scored on. Simulated; **real footage goes beside these once the bike is assembled**.
 
 <!--
   Committed animated WebPs, so they loop on their own and render in a clone.
-  docs/guide/media.md has the exact command behind each one, which policy, and the
-  GitHub-attachment route for anything too long to commit.
+  docs/guide/media.md has the command behind each one and the GitHub-attachment
+  route for anything too long to commit.
 -->
 
 <table>
 <tr>
-<td width="50%"><img src="docs/media/eval_hold.webp" alt="balancing in place" width="100%"></td>
-<td width="50%"><img src="docs/media/eval_turn_fwd.webp" alt="driving forward through a 90 degree turn" width="100%"></td>
+<td width="50%"><img src="docs/media/bike_updown.webp" alt="the bike standing itself up from lying on its side, driving, and lying back down" width="100%"></td>
+<td width="50%"><img src="docs/media/bike_disturbed.webp" alt="the bike knocked over with a stick and getting back up" width="100%"></td>
 </tr>
 <tr>
-<td><b>It balances.</b> Zero input command.</td>
-<td><b>It turns.</b> Forward 0.8 m/s, 90° heading step.</td>
-</tr>
-
-<tr>
-<td width="50%"><img src="docs/media/eval_turn_rev.webp" alt="reversing through a 90 degree turn" width="100%"></td>
-<td width="50%"><img src="docs/media/eval_spin180.webp" alt="a 180 degree about-face from standstill" width="100%"></td>
-</tr>
-<tr>
-<td><b>It reverses.</b> Reverse 0.5 m/s, 90° heading step.</td>
-<td><b>It spins.</b> 180° turnaround.</td>
+<td width="50%"><img src="docs/media/bike_loop.webp" alt="the bike driving a loop" width="100%"></td>
+<td width="50%"><img src="docs/media/bike_ballhit.webp" alt="the bike driving at a ball and swatting it with a side panel" width="100%"></td>
 </tr>
 </table>
 
-Commanded heading and velocity are drawn on a dial under the bike (green and orange), against what it actually achieved (cyan and yellow). The red line is 1 s of rear wheel position history.
+<!-- TODO: link the browser demo here once it is hosted. -->
 
-## How it works
+---
 
-The rear wheel is an **active omni wheel** extracted from a toy RC bike. Two servos drive it as a differential: turn them together and the wheel rolls, turn them in opposite directions and the wheel drives *sideways*. While stationary, it uses the sideways actuation to maintain balance. A third servo steers (continuous, 360°+), a fourth servo drives a self-righting mechanism (in case it falls), and an AHRS measures orientation.
+## How it learns to balance and drive
 
-This repo is the **simulator and the control stack**: a parametric MuJoCo model built from a measured parameter file, the RL training that produces the policies, and the onboard code that runs them on the bike. The physical bike is [under construction](docs/guide/physical-build.md): the control loop has been proven against real servos and a real AHRS, but the full bike is still being assembled.
+**One neural-network control policy handles both balance and ground movement.** It reads the bike's own sensors and a command — a velocity vector and a heading — and outputs the steering and drive servo targets, 50 times a second. There are no separate balance, drive and turn modes. Lying down and getting up are a scripted sequence on the righting servo, which hands over to the policy once the bike gets up.
 
-**A single reinforcement learning policy drives it.** A `general_rl*` policy balances the bike and tracks a live (velocity vector, heading) command at 50 Hz. It has no horizon and no hand-back: engage it once and it runs indefinitely. The contract shared by training and replay is [`control/general_spec.py`](src/aow_sim/control/general_spec.py). A trained policy exports as **numpy weights plus a yaml**, so it is lightweight (i.e. no PyTorch).
+<p align="center">
+  <img src="docs/media/control_scheme.svg" alt="the policy's 17 observations — the command, what the AHRS and the steering encoder measure, the odometry's velocity estimate, and the previous action — feeding a small recurrent network that outputs steer rate, common-mode drive and differential drive" width="100%">
+</p>
 
-**An LQR controller also exists as reference baseline**. This controller is maintained in a 'best effort' manner but is quite sensitive to contact model changes.
+**It learns in stages.** Training starts with the bike asked only to hold still or drive straight, slowly. After it learns to track easier commands, the difficulty increases: faster speeds, then turns in place, then turns on the move, until any heading change (up to a full 180°) can come at any speed.
 
-**The same controller code runs on the bike.** `hw/state.py` provides a `HardwareData` shim that quacks like MuJoCo's `mjData`, so `DriveController` runs on the robot unmodified. The onboard code never imports MuJoCo or scipy — a test enforces that — and gets its LQR gains from a digest-pinned deploy bundle instead.
+<p align="center">
+  <img src="docs/media/curriculum.svg" alt="the training curriculum: at each difficulty, the speeds and heading changes a command can ask for, and how often each kind of command is drawn" width="100%">
+</p>
 
+**It learns entirely in simulation.** The sim is a MuJoCo model built from a single parameter file (`config/bike_params.yaml`), where each number is tagged with its source — measured, counted off gear teeth, read from a datasheet, or still a guess. The policy trains against a detailed simulation of the bike's sensors: a model of the AHRS's filtering and lag (measured on a fixture) and a velocity estimate (odometry) from the bike's simulated wheel and steering encoders.
 
-## Install
+**Training is performed on a GPU.** With the physics on the GPU (MuJoCo Warp) and thousands of bikes in parallel (PufferLib 5.0), a control policy is trained in ~80 million simulation steps. Training takes about 30 minutes on an RTX 5090, mostly pinning the GPU (VRAM < 4GB). Policies can also be trained on CPU, but 80M steps on a Mac M4 takes ~9 hours and is less parallelizable (~32 bikes in parallel instead of thousands).
 
-Python 3.11+.
+## Active omni-wheel modelling
 
-```sh
-python -m venv .venv && source .venv/bin/activate
-pip install -e '.[dev]'
-```
+The rear wheel is an **active omni-wheel** from a toy bike, with two motors driving it as a differential. Turned together, they roll the wheel normally; turned against each other, they spin the rollers, and the wheel drives *sideways* under the bike.
 
-or, with conda:
+<p align="center">
+  <img src="docs/media/omni_teardown.webp" alt="the omni wheel taken apart in six steps: intact, the ring gear exposed, the roller assembly, one roller off, the roller gears and axles, and the gears with their tooth counts" width="480">
+</p>
 
-```sh
-conda create -n aow-sim python=3.12 -y && conda activate aow-sim
-pip install -e '.[dev]'
-```
+The wheel is modelled in MuJoCo: 8 cone roller pairs driven through a bevel differential. Detailed wheel parameters were measured and incorporated into the GPU training, including periodic friction in the omni-wheel's geartrain ("roller detent") and play at the roller output ("roller slop").
 
-`[dev]` is sufficient for working on the simulator. Extras such as `[rl]` for remote RL training or `[onboard]` for talking to hardware:
+## Self-righting linkage modelling
 
-| extra | pulls in | when you need it |
-|---|---|---|
-| *(base)* | mujoco, numpy, pyyaml, scipy | run the sim, replay a trained policy |
-| `dev` | pytest, xdist, matplotlib, imageio | everything below except `rl` and `onboard` |
-| `viz` | matplotlib, imageio, imageio-ffmpeg | `aow_sim.record`, and the PNGs the tools write beside their CSVs |
-| `teleop` | pyobjc (macOS only) | **hold-to-drive.** Without it the arrow keys still work, but only tap-by-tap — MuJoCo's viewer reports key-down and nothing else, so real key state has to come from the OS |
-| `rl` | gymnasium, SB3, torch, tensorboard | *training only.* Replaying an exported policy needs numpy alone |
-| `onboard` | pyserial, dynamixel-sdk | talking to real servos and the AHRS, from a laptop. **Not** how you install on the bike: the base dependencies are unconditional, so this drags MuJoCo along with it |
+One servo is responsible for getting the bike back up when it falls, and swinging a side panel down like a kickstand to rest upright. A mirrored linkage operates asymmetrically to deploy panels on either side:
 
-## Drive it
+<p align="center">
+  <img src="docs/media/swing_linkage.webp" alt="the swing linkage stepping through its stroke, seen from behind: on the left the mechanism in the bike's frame, one crank swinging both panels; on the right the bike on the floor, levered from lying on its side to upright" width="720"><br>
+  <em>The linkage through its stroke in the bike's frame (left) and on the floor (right).</em>
+</p>
 
-```sh
-mjpython -m aow_sim.run_drive --teleop
-```
+The mechanism is optimized (`scipy differential_evolution`) to minimize the peak servo torque through its stroke (quasi-static), while maintaining the required geometry; candidate mechanisms are then validated in the dynamic MuJoCo physics simulation.
 
-**`mjpython`, not `python`, for anything with an interactive viewer**. Headless tools (`record`, `rollout_move`, the trainers) run under plain `python` anywhere, including over ssh.
+## Hardware
 
-It drives like an RC bike. The basics:
+For development, I used 12V Dynamixel servos (XC430-W150 for the drives, XC330-T181 for steering and righting), with a Linux SBC (Raspberry Pi) as the controller and a SYD Dynamics TM151 AHRS for orientation sensing.
 
-| key | what it does |
-|---|---|
-| `↑` / `↓` | throttle / brake into reverse. Tap to step 0.25 m/s, hold to build, release to coast back to zero |
-| `←` / `→` | turn. Heading is a *setpoint* — it stays where you leave it |
-| `1` / `3` | **crab left / right** — sideways, heading held |
-| `6` / `7` / `8` | snap the heading 90° left / 90° right / 180° |
-| `5` | stop now, laterally as well |
-| `,` | policy menu — pick which trained policy is driving, live |
-| `\` | camera: free → follow → overhead → rear wheel |
+The servo control loop runs at 100Hz, with the control policy updating every second step (50Hz). The control policy is tiny, with ~200KB of fp32 weights and about 0.1 MFLOP per step (~5 MFLOP/s), so a much smaller onboard computer can be used. A 9-axis AHRS (with a magnetometer) gives the control policy an absolute heading to hold; a 6-axis IMU's yaw would drift, so heading would have to come from elsewhere, such as steering and odometry.
 
-Bindings are digits, arrows and punctuation to avoid ghosting the MuJoCo's viewer's defaults (A–Z).
+<p align="center">
+  <img src="docs/media/cad_bike_v2.png" alt="the bike rendered in CAD" width="480"><br>
+</p>
 
-**The real bike takes the same commands.** The operator sends a whole command struct (velocity vector, heading, mode) over UDP. Run with:
+The CAD is generated from the same parameter file as the simulator (`config/bike_params.yaml`): Python emits Onshape FeatureScript for each module (drivetrain, steering, righting linkage, chassis), so a dimension that changes in the sim moves the CAD. Fit details and smoothing were finished by hand in Onshape on top of the rough layout and subassemblies. All parts were 3D printed from ASA filament and assembled with countersunk machine screws and embedded nuts.
 
-```sh
-mjpython -m aow_sim.run_drive --mirror aowbike.local
-```
+## Docs
 
-Same key map, no simulated physics: every pose in the viewer is now telemetry coming back from the bike over UDP.
-
-**Full key reference, every mode, the ground dial, the policy menu, slow motion and the self-righting layer: [docs/guide/teleop.md](docs/guide/teleop.md).**
-
-Other useful scripts:
-
-```sh
-python -m aow_sim.view --training-wheels    # open-loop viewer, bike propped up
-python -m aow_sim.run_balance --view        # the LQR baseline balancing
-python -m aow_sim.run_drive                 # headless: sprints, circles, envelopes
-```
-
-## Training policies
-
-Training needs the `rl` extra; replaying an export does not.
-
-```sh
-pip install -e '.[rl]'
-python -m aow_sim.train_general_rl          # -> moves/general_rl.{yaml,npz}
-```
-
-The trainer keeps the best-scoring snapshot from a periodic deterministic eval and exports *that*. Hyperparameters, reward weights and domain randomization live in `config/rl/rl_general*.yaml` (superseded ones in `config/rl/archive/`); learning curves are `tensorboard --logdir runs/general_rl`.
-
-**[docs/guide/training.md](docs/guide/training.md)** covers exporting a mid-run checkpoint, inspecting a policy, and recording video of trained policies.
-
-## Physical build
-
-The physical bike is **under construction**. Several subassemblies exist and the control loop is proven on real servos and a real AHRS at 100 Hz, but the subassemblies are still being integrated. Four Dynamixel servos, one AHRS, one single-board computer, one battery.
-
-The **CAD is generated from the same parameter file the simulator reads**: `aow_sim.cad.layout` emits FeatureScript straight into Onshape, pinning the sim and physical model together.
-
-**[docs/guide/physical-build.md](docs/guide/physical-build.md)** explains what the machine is, how it's wired, the CAD workflow, bring-up, and failsafes.
-
-## Repo map
-
-| path | what is in it |
-|---|---|
-| `config/bike_params.yaml` | every physical measurement, with units and provenance: `measured` / `tooth-count` / `datasheet` / `GUESS`. `GUESS` means "placeholder, still to be identified" |
-| `config/rl/rl_*.yaml` | per-move training configs — algorithm, env, reward weights, domain randomization |
-| `src/aow_sim/` | the parametric model builder (`mjSpec`), procedural contact meshes, viewer, runners, offline optimizers and trainers |
-| `src/aow_sim/control/` | `drive.py` is the controller that runs everywhere, in sim and on the bike, and `general_spec.py` is the observation/action contract training and replay share. Alongside them: the multi-turn steering frame, shared state extraction, and the LQR baseline |
-| `src/aow_sim/hw/` | the onboard stack: Dynamixel bus, TM151 reader, velocity estimation, the 100 Hz control loop, the ground station. Imports without MuJoCo, scipy or torch |
-| `analysis/` | one-off studies that ask a question of existing artifacts and change nothing. Grouped by kind (`policy/`, `moves/`, `sensing/`, `contact/`, `servo/`, `mechanism/`, `gpu/`); tracked figures land in that folder's `plots/` |
-| `moves/` | trained policies: `*.yaml` plus `*.npz` weights |
-| `scripts/` | launchers and generators, including the one that rebuilds the clips above |
-| `tests/` | compilation, coupling-ratio, envelope and behaviour tests. Every file carries a marker saying what invalidates it — `pytest --markers` |
-| `docs/guide/` | the pages linked above |
-| `docs/plans/` | design records: the reasoning, the measurements, the options rejected and why. Each opens with a status banner |
-| `docs/measurements/` | hand-entered protocol/data pairs — what to measure, how, and the numbers that came back |
-
-`runs/` (training checkpoints and tensorboard logs) and `traces/` (diagnostic plots and video) are gitignored.
+If you're interested in running the code, you can try **[Getting started](docs/guide/getting-started.md)** to install the base Python code, drive the bike in the sim, and see a map of the repo.
 
 ## Credits
 
-The rear wheel was obtained from an HC-802 RC bike; the omni-wheel geometry was reverse-engineered from a teardown. Built on [MuJoCo](https://mujoco.org) and [Stable-Baselines3](https://stable-baselines3.readthedocs.io).
+Built on [MuJoCo](https://mujoco.org),
+[MuJoCo Warp](https://github.com/google-deepmind/mujoco_warp),
+[PufferLib](https://github.com/PufferAI/PufferLib) and
+[Stable-Baselines3](https://stable-baselines3.readthedocs.io).

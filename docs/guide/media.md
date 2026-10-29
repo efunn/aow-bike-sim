@@ -2,17 +2,120 @@
 
 What the README's clips are, the command behind each, and how to add more.
 
-The four clips are **committed animated WebPs** in `docs/media/`. They loop on
-their own, they render in a clone and with no network, and at ~0.9 MB for the
-set they are small enough to live in the repo.
+There are two sets, both **committed animated WebPs** in `docs/media/`: four
+clips of the real bike (`bike_*.webp`), which the README shows at the top, and
+four sim renders (`eval_*.webp`, ~0.9 MB), which it does not show at the
+moment (2026-10-27: they are of an older policy). They loop on their own,
+they render in a clone and with no network, and they are small enough to live
+in the repo.
 
 They are also **tracked figures**, so the repo's rule applies: each must be
-reproducible at the name it is tracked under. That is what the table below is
-for.
+reproducible at the name it is tracked under. `scripts/readme_media.py` makes
+both sets.
 
 ---
 
-## Provenance
+## The bike footage
+
+```sh
+python scripts/readme_media.py --footage                # all four
+python scripts/readme_media.py --footage --only loop    # just one
+```
+
+The sources are the site's clips, `site/aow/media/{updown,disturbed,loop,ballhit}.mp4`:
+phone footage (1080p60), cut to 1280 px for the site by the command in
+`site/aow/index.html`'s header. The script decimates to 15 fps, scales to 480
+px wide and writes `docs/media/bike_<name>.webp`.
+
+| file | KB (2026-10-28) |
+|---|---|
+| `bike_updown.webp` | 1305 |
+| `bike_disturbed.webp` | 704 |
+| `bike_loop.webp` | 526 |
+| `bike_ballhit.webp` | 450 |
+
+**They are HDR, and are tone-mapped.** The phone records BT.2020 primaries
+with the HLG transfer (`arib-std-b67`); the mp4s keep those tags, and a
+browser playing them honours them. A plain conversion to WebP does not: it
+reads the pixels as SDR, and the result is washed out with the orange shifted
+toward yellow. The script reads the transfer off ffmpeg's banner and, for HLG
+or PQ, converts to BT.709 first through `zscale` and `tonemap=hable` (against
+`mobius`, which came out blown out, and `clip`; picked by eye on one frame).
+That needs `zscale` and `libwebp`, which imageio-ffmpeg's bundled binary has
+and Homebrew's 9.0.2 does not, so the script uses the bundled one.
+
+**Quality 80, not the sim set's 60** (`FOOTAGE_QUALITY`): at 60 the dark floor
+tiles break into visible blocks.
+
+---
+
+## The teardown and the linkage
+
+```sh
+python scripts/readme_media.py --teardown    # docs/media/omni_teardown.webp
+python scripts/readme_media.py --linkage     # docs/media/swing_linkage.webp
+```
+
+| file | from | KB (2026-10-28) |
+|---|---|---|
+| `omni_teardown.webp` | `docs/measurements/wheel-dimensions/01-06*.jpg` | 431 |
+| `swing_linkage.webp` | `analysis/mechanism/plots/swing_stepthrough.html` | 1135 |
+
+**The teardown** is the six photos of the 2026-07-17 teardown, outside in,
+cropped to the notebook page (`TEARDOWN_CROP`), each held 0.75 s with a
+0.25 s crossfade to the next. Each photo is white-balanced on its own: a bare
+patch of the page (`TEARDOWN_PAGE_BOX`) is scaled to a slightly warm white
+(`TEARDOWN_PAGE_WHITE`, blue/green 0.96). As shot, the page and the hub's
+white plastic both read yellow, the plastic ~4% bluer than the page, so that
+target leaves the plastic about neutral and the notebook still a touch warm
+against it (photo 03's hub: (195, 188, 167) as shot, (222, 221, 220) after). Every frame is a keyframe (`kmin=kmax=1`): left to
+itself the animated-WebP encoder re-codes only the blocks it judges changed,
+and across a crossfade it kept stale ones, a grid of white patches over the
+third photo.
+
+**The linkage** is the stepthrough page's two views for V3, the current
+blade, side by side and in sync: "Mechanism, bike frame" and "Bike on the
+floor", with their crank and roll readouts. Captured with headless Google
+Chrome at 1000 x 540 CSS px (over the page's 900 px breakpoint, so the views
+sit side by side), scaled to 720 px. The script appends a few lines to a
+scratch copy of the tracked page: they grab the slider (which pauses the
+autoplay), pin that pane's views to the window, and set the slider from the
+URL's `#fragment`. The slider's far end runs past V3's 117° stroke (the
+readout says "130° of 117°"), as it does on the page. 61
+positions across the stroke, then the same frames back, 4 s a sweep, as the
+page's own Play does. It shoots the page as it stands, so re-render the page
+first (`analysis/mechanism/swing_stepthrough.py --sim`) if a design changed.
+It takes the system's colour scheme; this one was shot in dark mode.
+
+---
+
+## The two diagrams
+
+```sh
+python scripts/readme_diagrams.py                 # the pointer's
+python scripts/readme_diagrams.py --policy NAME   # another export's
+```
+
+`docs/media/control_scheme.svg` and `docs/media/curriculum.svg`, drawn from
+the data, not typed: the observation layout and the network from the move
+yaml (`obs_layout`, `trained.arch`), the action bounds and the command
+sampler's constants from the training config the move names. The config's
+sha256 is checked against the one the move recorded, and the script refuses
+on a mismatch, so a config edited since the run is never drawn as the one it
+trained on. The family mix is the sampler's own formula
+(`gpu/commands.py`), evaluated at difficulty 0, 0.25, 0.5, 0.75 and 1; it
+agrees with the mix measured in `config/rl/rl_general_v4.yaml`'s comment
+(40/0/60/0 at 0, 10/20/30/40 at 1). Every observation entry must fall in one
+of the script's groups, or it stops.
+
+The bike icons are the drivetrain-traces page's (`BACK`, `TOP`, the arc
+arrow), at the same 40-unit scale. **No wings in any drawing**: the policy
+neither observes nor drives them. Both files carry a `prefers-color-scheme`
+block, checked rendered as `<img>` in headless Chrome in both schemes.
+
+---
+
+## The sim renders
 
 ### Which policy
 
