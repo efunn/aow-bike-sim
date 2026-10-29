@@ -112,7 +112,7 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
 <div class="wrap">
   <header>
     <h1>Self-righting linkage</h1>
-    <p class="lede">When the bike falls over, it gets itself back up: one servo swings a wing out of each side, and the wing on the ground pushes the bike upright while the other tucks in. Two designs side by side, stepped through that stroke from lying on its side to upright. Drag the slider or press Play.</p>
+    <p class="lede">When this bike falls over, it gets itself back up: one servo swings a panel out of each side, and the panel on the ground pushes the bike upright while the other tucks in. Two designs side by side, stepped through from the ground to upright. Drag the slider or press Play.</p>
   </header>
 
   <div class="controls" role="group" aria-label="Stroke">
@@ -138,8 +138,8 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
     </div>
     <div class="charts">
       <div class="chart">
-        <h3>Wing degrees per servo degree</h3>
-        <p>Low means more leverage, which matters most at the start, where the load is heaviest. Reaching 0 means the wing locks in place.</p>
+        <h3>Panel degrees per servo degree</h3>
+        <p>Low means more leverage, which matters most at the start, where the load is heaviest. Reaching 0 means the panel locks in place.</p>
         <canvas id="chart-r" aria-label="Ratio against stroke"></canvas>
       </div>
       <div class="chart">
@@ -149,7 +149,7 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
       </div>
       <div class="chart">
         <h3>Most-loaded pin [N]</h3>
-        <p>The pushing wing's crank or coupler pin, or the servo shaft.</p>
+        <p>The pushing panel's crank or coupler pin, or the servo shaft.</p>
         <canvas id="chart-pin" aria-label="Largest pin force against stroke"></canvas>
       </div>
       <div class="chart">
@@ -163,14 +163,14 @@ canvas{width:100%;display:block;background:var(--bg);border-radius:6px}
   <details class="notes">
     <summary>More info</summary>
     <ul>
-      <li><b>The designs.</b> <i>V1</i>: an earlier four-bar linkage with flat panels, drawn from its design parameters only. <i>V2</i>: the linkage built into the bike, with its first blade shape, drawn from the CAD parts themselves. <i>V3</i>: the same linkage with the current blade: its outer face vertical when stowed, curving into the toe. The V3 blade is heavier (about 39 g each, estimated, against V2's 29).</li>
-      <li><b>View.</b> The bike seen from behind. Orange is the wing that pushes the bike up, blue the one that rises and tucks in, burgundy the servo's crank. The slider runs from lying on its side (0&nbsp;%) to the end of the commanded stroke (100&nbsp;%); V2 and V3 carry on past it to where the two blade toes meet, the mechanical stop.</li>
-      <li><b>How it is computed.</b> At each crank angle the linkage is solved and the bike is set down where it would rest: on the blade (V2, V3) and the rollcage, or on the panel (V1). Torques and forces are a static balance at that pose, with no speed, inertia or impacts. Past upright the bike tips over the top, which has no static answer, so only the simulation lines continue there.</li>
+      <li><b>The designs.</b> All three are four-bar linkages. <i>V1</i>: an earlier layout with its pins spread out (the servo shaft 50&nbsp;mm above the axle against 15, the panel hinges 5&nbsp;mm either side of centre rather than on it, two crank arms 21.5&deg; apart rather than one) and longer links, with flat panels, drawn from its design parameters only. <i>V2</i>: the linkage built into the bike, with its first, flat panels, drawn from the CAD parts themselves. <i>V3</i>: the same linkage with the current curved panels: the outer face vertical when stowed, curving into the toe. The V3 panel is heavier (about 39 g each, estimated, against V2's 29).</li>
+      <li><b>View.</b> The bike seen from behind. Orange is the panel that pushes the bike up, blue the one that rises and tucks in, burgundy the servo's crank. The slider runs from lying on its side (0&nbsp;%) to the end of the commanded stroke (100&nbsp;%); V2 and V3 carry on past it to where the two panel toes meet, the mechanical stop.</li>
+      <li><b>How it is computed.</b> At each crank angle the linkage is solved and the bike is set down where it would rest: on the panel, and for V2 and V3 the rollcage as well. Torques and forces are a static balance at that pose, with no speed, inertia or impacts. Past upright the bike tips over the top, which has no static answer, so only the simulation lines continue there.</li>
       <li><b>Simulation lines.</b> The faded lines on the charts: the full physics simulation, the crank driven slowly through the whole stroke.</li>
-      <li><b>Measured on the bike.</b> The dots on the roll chart are the real bike (V3 blades) being lowered slowly, six runs on both sides. The model rolls up to 10&deg; ahead of it early in the stroke, and comes to rest at 76-81&deg; where the bike lies at 74&deg;. The dots on the torque chart are the servo's measured current during get-ups, converted to torque. Those lifts are fast (up to 120&deg;/s), so not static; the torque follows the model's shape, with its dip where the wheels touch down at the same roll but a later crank angle.</li>
+      <li><b>Measured on the bike.</b> The dots on the roll chart are the real bike (V3 panels) being lowered slowly, six runs on both sides. The model rolls up to 10&deg; ahead of it early in the stroke, and comes to rest at 76-81&deg; where the bike lies at 74&deg;. The dots on the torque chart are the servo's measured current during get-ups, converted to torque. Those lifts are fast (up to 120&deg;/s), so not static; the torque follows the model's shape, with its dip where the wheels touch down at the same roll but a later crank angle.</li>
       <li><b>Servo current.</b> The servo is given a current limit, which caps its torque. <i>Current to right it (sim)</i> is the lowest limit that still gets the bike up in simulation on a low battery (9.9 V); <i>static estimate</i> is the same from the static model, which reads 25-45 mA high. The percentage is of the most the motor can draw at 9.9 V.</li>
       <li><b>Pin forces.</b> The largest force on the linkage's pins over the stroke; the pins are coloured by it. The sudden-command figure is the peak when the servo is told to go straight to full travel from lying down: it comes in the first few milliseconds, before the bike moves.</li>
-      <li><b>Clearances.</b> Each design's closest approaches over the stroke, worst first. Red is a collision or under the hard limit, amber under the target (2 mm between moving parts, 5 mm from blade to servo). Parts at different depths front to back cross in this view without touching; <i>Layers</i> shows which.</li>
+      <li><b>Clearances.</b> Each design's closest approaches over the stroke, worst first. Red is a collision or under the hard limit, amber under the target (2 mm between moving parts, 5 mm from panel to servo). Parts at different depths front to back cross in this view without touching; <i>Layers</i> shows which.</li>
       <li><b>Other marks.</b> The dashed outline round the crank is the servo. The dashed yellow box (V1) is where the panels must not go. The grey bar is the wheel seen end-on, the faint ring the rollcage.</li>
     </ul>
   </details>
@@ -437,7 +437,7 @@ function drawPane(i) {
     panel: "on panel, wheels up", wheels: "on panel end + wheels",
     cage: "on the cage", "panel+cage": "on panel + cage", over: "over centre",
   }[fr.regime] || fr.regime}`;
-  el.crank.textContent = `crank ${fr.t.toFixed(0)}° of ${d.T.toFixed(0)}° · wing ${fr.wing.toFixed(0)}°`;
+  el.crank.textContent = `crank ${fr.t.toFixed(0)}° of ${d.T.toFixed(0)}° · panel ${fr.wing.toFixed(0)}°`;
   const b = [];
   // couplers in one plane, 8 mm wide: the gap between their faces
   if (gap - 8 < 0.5 && d.planes.couplerR === d.planes.couplerL)
@@ -445,12 +445,15 @@ function drawPane(i) {
   // a CAD design: the tightest pair of parts at this frame, under its target
   // (under the target warns, touching fails -- as the diagnostics)
   if (d.cad && fr.link && fr.link[1] < d.cad.link_target)
-    b.push(`<span class="badge ${fr.link[1] < 0 ? "hot" : "caution"}">CLEARANCE: ${fr.link[0]} ${Math.max(0, fr.link[1]).toFixed(1)} mm</span>`);
+    b.push(`<span class="badge ${fr.link[1] < 0 ? "hot" : "caution"}">CLEARANCE: ${noun(fr.link[0])} ${Math.max(0, fr.link[1]).toFixed(1)} mm</span>`);
   b.push(`<span class="badge">ratio ${fr.r.toFixed(2)}</span>`);
   b.push(`<span class="badge">motor ${fr.motor == null ? "–" : fr.motor.toFixed(3)} N m</span>`);
   el.badges.innerHTML = b.join("");
   return fr;
 }
+
+// the CAD's and configs' part names say "wing"; the page says "panel"
+const noun = (t) => String(t).replace(/\bwing panel\b/g, "panel").replace(/\bwing\b/g, "panel");
 
 // ---------- charts
 function drawChart(canvas, field, ymax, refs, tick, fmt, val = (f) => f[field], ymin = 0, simField = null) {
@@ -504,14 +507,6 @@ function drawChart(canvas, field, ymax, refs, tick, fmt, val = (f) => f[field], 
     const f = frameOf(d), v = qs && val(f) != null ? val(f) : sim ? f[simField] : null;
     if (v != null) { g.fillStyle = col; g.beginPath(); g.arc(X(frac), Y(Math.max(ymin, Math.min(ymax, v))), 4, 0, 2*Math.PI); g.fill(); }
   });
-  // the breakaway marks, last, over every trace, ringed so the sim's line
-  // through them does not hide them
-  if (field === "motor" && (show.qs || !show.sim)) pick.forEach((di, i) => {
-    const d = designs[di], y = Y(d.brk), x0 = X(xOf(0));
-    g.save(); g.fillStyle = C[PANE_STYLE[i].key]; g.strokeStyle = C.bg; g.lineWidth = 2;
-    g.beginPath(); g.moveTo(x0 - 6, y - 8); g.lineTo(x0 + 6, y - 8); g.lineTo(x0, y + 2); g.closePath();
-    g.stroke(); g.fill(); g.restore();
-  });
   if (field === "motor" && geo.bike_motor) {   // the real bike's lifts, from its current
     const [a, b] = span();
     g.save(); g.strokeStyle = C.ink; g.fillStyle = C.ink; g.globalAlpha = 0.7; g.lineWidth = 1;
@@ -526,6 +521,19 @@ function drawChart(canvas, field, ymax, refs, tick, fmt, val = (f) => f[field], 
       g.beginPath(); g.arc(X(xOf(t)), Y(v), 2.5, 0, 2 * Math.PI); g.fill(); }
     g.restore();
   }
+  // the breakaway marks, last, over every trace and the bike's dots, ringed
+  // so a line through them does not hide them. Two that would overlap
+  // stack: the lower keeps its value, the other sits on top of it
+  const ys = pick.map((di) => Y(designs[di].brk));
+  if (ys.length > 1 && Math.abs(ys[0] - ys[1]) < 12) {
+    const lo = ys[0] >= ys[1] ? 0 : 1; ys[1 - lo] = ys[lo] - 12;
+  }
+  if (field === "motor" && (show.qs || !show.sim)) pick.forEach((di, i) => {
+    const y = ys[i], x0 = X(xOf(0));
+    g.save(); g.fillStyle = C[PANE_STYLE[i].key]; g.strokeStyle = C.bg; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(x0 - 6, y - 8); g.lineTo(x0 + 6, y - 8); g.lineTo(x0, y + 2); g.closePath();
+    g.stroke(); g.fill(); g.restore();
+  });
   g.strokeStyle = C.ink; g.globalAlpha = 0.5; g.beginPath(); g.moveTo(X(frac), Tt); g.lineTo(X(frac), Tt + ph); g.stroke();
   g.globalAlpha = 1;
 }
@@ -576,7 +584,7 @@ function fillStatic(i) {
   el.stats = summary;
   const det = (summary, body) => `<details class="fold"><summary>${summary}</summary>${body}</details>`;
   const cols = (a, b) => `<div class="plane" style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em"><span>${a}</span><span>${b}</span></div>`;
-  const kv = (k, v, style = "") => `<div class="plane"><span class="n" style="${style}">${v}</span><span class="chips">${k}</span></div>`;
+  const kv = (k, v, style = "") => `<div class="plane"><span class="n" style="${style}">${noun(v)}</span><span class="chips">${noun(k)}</span></div>`;
   // Fore/aft layers: the CAD's from its layout, else the config's planes.
   const col = { crank: C.crank, cR: C.right, cL: C.left, wR: C.right, wL: C.left };
   let layers;
@@ -586,7 +594,7 @@ function fillStatic(i) {
     layers = d.cad.layers.map((q) => kv(`<span class="chip" style="background:${col[q.g]}">${q.n}</span>`, strip(q.l), "white-space:pre")).join("");
   }
   else {
-    const members = { crank: ["crank arm", "crank"], couplerR: ["coupler R", "cR"], couplerL: ["coupler L", "cL"], rockerR: ["wing R", "wR"], rockerL: ["wing L", "wL"] };
+    const members = { crank: ["crank arm", "crank"], couplerR: ["coupler R", "cR"], couplerL: ["coupler L", "cL"], rockerR: ["panel R", "wR"], rockerL: ["panel L", "wL"] };
     const ps = Object.entries(d.planes).filter(([k]) => members[k]);
     const n = Math.max(...ps.map(([, p]) => p)) + 1;
     const strip = (p) => "[" + Array.from({ length: n }, (_, k) => k === p ? "X" : " ").join("") + "]";
