@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- an omni wheel from the side, eight rollers round its rim (the bike's
+       sixteen do not fit at this size): by hand, in the pages' accent colour -->
+  <rect width="32" height="32" rx="7" fill="#1d2226"/>
+  <circle cx="16" cy="16" r="7.6" fill="none" stroke="#e3e7e9" stroke-width="2"/>
+  <circle cx="16" cy="16" r="2.6" fill="#e3e7e9"/>
+  <g fill="#f47516">
+    <rect x="-3.4" y="-2" width="6.8" height="4" rx="2" transform="translate(27.2 16.0) rotate(90)"/>
+    <rect x="-3.4" y="-2" width="6.8" height="4" rx="2" transform="translate(23.9 23.9) rotate(135)"/>
+    <rect x="-3.4" y="-2" width="6.8" height="4" rx="2" transform="translate(16.0 27.2) rotate(180)"/>
+    <rect x="-3.4" y="-2" width="6.8" height="4" rx="2" transform="translate(8.1 23.9) rotate(225)"/>
+    <rect x="-3.4" y="-2" width="6.8" height="4" rx="2" transform="translate(4.8 16.0) rotate(270)"/>
+    <rect x="-3.4" y="-2" width="6.8" height="4" rx="2" transform="translate(8.1 8.1) rotate(315)"/>
+    <rect x="-3.4" y="-2" width="6.8" height="4" rx="2" transform="translate(16.0 4.8) rotate(360)"/>
+    <rect x="-3.4" y="-2" width="6.8" height="4" rx="2" transform="translate(23.9 8.1) rotate(405)"/>
+  </g>
+</svg>

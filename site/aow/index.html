@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Robot Bike</title>
+<link rel="icon" href="/aow/favicon.svg" type="image/svg+xml">
 <meta name="description" content="A small self-balancing robot bike, driven by a policy trained in simulation.">
 <!-- By hand. The clips in media/ are phone footage (1080p60), cut down to 1280 px with
      no audio and no metadata:
@@ -37,6 +38,8 @@ figcaption { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 12px; f
 kbd { display: inline-block; min-width: 1.6em; padding: 0 4px; margin-right: 2px; border: 1px solid var(--rule); border-bottom-width: 2px;
   border-radius: 4px; background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px; text-align: center; }
 .tap { display: none; }
+.turn { width: 1.15em; height: 1.15em; vertical-align: -0.22em; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.turn .hd { fill: currentColor; stroke: none; }
 @media (pointer: coarse) { .key { display: none; } .tap { display: inline; } }
 header { display: grid; gap: 12px; }
 header p { margin: 0; color: var(--muted); }
@@ -63,7 +66,7 @@ a.go span { color: var(--accent); }
   </header>
   <div class="grid">
     <figure><video src="media/updown.mp4" autoplay muted loop playsinline preload="auto" aria-label="the bike standing itself up from lying on its side, driving, and lying back down"></video>
-      <figcaption><span class="key"><kbd>X</kbd> lie down / get up</span><span class="key"><kbd>Q</kbd><kbd>E</kbd> turn 90&deg;</span><span class="tap"><kbd>Lie / up</kbd> <kbd>&#10226;</kbd><kbd>&#10227;</kbd> turn 90&deg;</span></figcaption></figure>
+      <figcaption><span class="key"><kbd>X</kbd> lie down / get up</span><span class="key"><kbd>Q</kbd><kbd>E</kbd> turn 90&deg;</span><span class="tap"><kbd>Lie / up</kbd> <kbd><svg class="turn" viewBox="0 0 24 24" role="img" aria-label="turn left"><path d="M12 19 A7 7 0 1 0 5 12"/><path class="hd" d="M1.6 11 H8.4 L5 16.2 Z"/></svg></kbd><kbd><svg class="turn" viewBox="0 0 24 24" role="img" aria-label="turn right"><g transform="matrix(-1 0 0 1 24 0)"><path d="M12 19 A7 7 0 1 0 5 12"/><path class="hd" d="M1.6 11 H8.4 L5 16.2 Z"/></g></svg></kbd> turn 90&deg;</span></figcaption></figure>
     <figure><video src="media/disturbed.mp4" autoplay muted loop playsinline preload="auto" aria-label="the bike knocked over with a stick and getting back up"></video>
       <figcaption><span class="key"><kbd>space</kbd> knock over</span><span class="key"><kbd>&#8679;</kbd><kbd>space</kbd> nudge</span><span class="tap"><kbd>Knock</kbd> knock over</span></figcaption></figure>
     <figure><video src="media/loop.mp4" autoplay muted loop playsinline preload="auto" aria-label="the bike driving a loop"></video>

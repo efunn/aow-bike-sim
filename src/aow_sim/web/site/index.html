@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AOW Bike Sim</title>
+<link rel="icon" href="/aow/favicon.svg" type="image/svg+xml">
 <meta name="description" content="A self-balancing bike with an omni rear wheel, driven by a trained RL policy, simulated live in MuJoCo.">
 <style>
   :root {
@@ -125,6 +126,8 @@
     font-family: inherit; font-weight: 600; font-size: 18px; line-height: 1;
     touch-action: none; -webkit-tap-highlight-color: transparent;
   }
+  .turn { width: 1.15em; height: 1.15em; vertical-align: -0.22em; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .turn .hd { fill: currentColor; stroke: none; }
   #acts button { font-size: 12px; }
   #touch button:active { border-color: var(--accent); }
 
@@ -182,9 +185,9 @@
 
 <div id="touch">
   <div id="drive" class="pad">
-    <button data-action="snapLeft" aria-label="turn 90 degrees left">⟲</button>
+    <button data-action="snapLeft" aria-label="turn 90 degrees left"><svg class="turn" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19 A7 7 0 1 0 5 12"/><path class="hd" d="M1.6 11 H8.4 L5 16.2 Z"/></svg></button>
     <button data-hold="up" aria-label="faster">↑</button>
-    <button data-action="snapRight" aria-label="turn 90 degrees right">⟳</button>
+    <button data-action="snapRight" aria-label="turn 90 degrees right"><svg class="turn" viewBox="0 0 24 24" aria-hidden="true"><g transform="matrix(-1 0 0 1 24 0)"><path d="M12 19 A7 7 0 1 0 5 12"/><path class="hd" d="M1.6 11 H8.4 L5 16.2 Z"/></g></svg></button>
     <button data-hold="left" aria-label="turn left">←</button>
     <button data-hold="down" aria-label="slower">↓</button>
     <button data-hold="right" aria-label="turn right">→</button>

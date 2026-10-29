@@ -294,6 +294,7 @@ export class Viewer {
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => this.applyTheme());
 
     this.follow = new THREE.Vector3();
+    this.vel = new THREE.Vector2();      // the chassis's smoothed velocity, for the lead
     this.followed = false;
     this.resize();
   }
@@ -350,9 +351,18 @@ export class Viewer {
             0, 0, 0, 1);
       mesh.matrix.copy(M);
     }
-    const goal = new THREE.Vector3(chassisXY[0], chassisXY[1], 0.08);
+    // aimed ahead of the chassis by its velocity times the lag, so at a
+    // steady speed the bike sits mid-frame instead of trailing towards an
+    // edge (a phone's narrow view lost its front end). The velocity (qvel
+    // 0-1, the free joint's, world frame) is itself smoothed over 0.6 s:
+    // led by the raw one, the camera shook with every balancing correction
+    const TAU = 0.12, TAU_V = 0.6;
+    const kv = 1 - Math.exp(-dt / TAU_V);
+    this.vel.x += kv * (d.qvel[0] - this.vel.x);
+    this.vel.y += kv * (d.qvel[1] - this.vel.y);
+    const goal = new THREE.Vector3(chassisXY[0] + TAU * this.vel.x, chassisXY[1] + TAU * this.vel.y, 0.08);
     if (!this.followed) { this.follow.copy(goal); this.followed = true; }
-    const step = goal.clone().sub(this.follow).multiplyScalar(1 - Math.exp(-dt / 0.12));
+    const step = goal.clone().sub(this.follow).multiplyScalar(1 - Math.exp(-dt / TAU));
     this.follow.add(step);
     this.controls.target.add(step);
     this.camera.position.add(step);
@@ -438,6 +448,7 @@ export class Viewer {
   recentre(chassisXY) {
     const off = this.camera.position.clone().sub(this.controls.target);
     this.follow.set(chassisXY[0], chassisXY[1], 0.08);
+    this.vel.set(0, 0);
     this.controls.target.copy(this.follow);
     this.camera.position.copy(this.follow).add(off);
   }

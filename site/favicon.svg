@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- the spinning top on the ice: by hand, in the game's first colour -->
+  <rect width="32" height="32" rx="7" fill="#16232c"/>
+  <ellipse cx="16" cy="27.5" rx="7" ry="1.6" fill="#d6e8f4" opacity="0.25"/>
+  <path d="M8 15 L16 27 L24 15 Z" fill="#aab2ba"/>
+  <ellipse cx="16" cy="14" rx="10" ry="4" fill="#f47516"/>
+  <ellipse cx="16" cy="12.6" rx="10" ry="3.4" fill="#f9a35c"/>
+  <rect x="14.6" y="4" width="2.8" height="9" rx="1.2" fill="#aab2ba"/>
+  <ellipse cx="16" cy="12.6" rx="1.4" ry="0.5" fill="#000" opacity="0.3"/>
+</svg>

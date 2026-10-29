@@ -47,8 +47,8 @@ build() {
 
     rm -rf "$B"     # only ever this script's output (gitignored)
     mkdir -p "$A"/{media,tech,linkage,sim2real}
-    cp site/index.html "$B"/
-    cp site/aow/index.html "$A"/
+    cp site/index.html site/favicon.svg "$B"/
+    cp site/aow/index.html site/aow/favicon.svg "$A"/
     cp site/aow/tech/{index.html,bike.webp} "$A"/tech/
     cp site/aow/media/*.mp4 "$A"/media/
     cp -R "$SIM" "$A"/sim
