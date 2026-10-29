@@ -1,0 +1,42 @@
+# python analysis/policy/per_command.py --summary --ahrs tm151_filter --tag v5floor --policies general_puffer_a40_v4_80M general_puffer_5090_v5floor_s{1,2,3,4}_{72,80}M
+# rows in that order (names truncated by the table); each policy on its own move-yaml floor/plant
+eval: 9 policies in parallel, one process each, --encoder counts --ahrs tm151_filter --ahrs-tau 2
+  general_puffer_a40_v4_80M: 0/20 fell
+  general_puffer_5090_v5floor_s1_72M: 0/20 fell
+  general_puffer_5090_v5floor_s1_80M: 0/20 fell
+  general_puffer_5090_v5floor_s2_72M: 0/20 fell
+  general_puffer_5090_v5floor_s2_80M: 0/20 fell
+  general_puffer_5090_v5floor_s3_72M: 0/20 fell
+  general_puffer_5090_v5floor_s3_80M: 0/20 fell
+  general_puffer_5090_v5floor_s4_72M: 1/20 fell
+  general_puffer_5090_v5floor_s4_80M: 0/20 fell
+
+  policy                        turns fwd  straight fwd   hold v   fell
+  ---------------------------------------------------------------------
+  general_puffer_a40_v4_80M           7/9           2/2    -0.02      0
+  general_puffer_5090_v5floor_        7/9           2/2    -0.01      0
+  general_puffer_5090_v5floor_        7/9           2/2    -0.02      0
+  general_puffer_5090_v5floor_        7/9           2/2     0.03      0
+  general_puffer_5090_v5floor_        7/9           2/2     0.01      0
+  general_puffer_5090_v5floor_        7/9           2/2    -0.02      0
+  general_puffer_5090_v5floor_        7/9           2/2    -0.01      0
+  general_puffer_5090_v5floor_        7/8           2/2    -0.03      1
+  general_puffer_5090_v5floor_        7/9           2/2    -0.02      0
+
+  turns fwd    = turning commands resolved body-FORWARD (character)
+  straight fwd = forward commands actually driven forward (competence)
+  hold v       = body velocity on the pure hold command, m/s
+  fell counts ALL 20; the two ratios exclude the commands it fell on.
+
+  wheel/yaw, in place            spin +90   spin -90  spin +170  spin -170  spin +180
+  -----------------------------------------------------------------------------------
+  general_puffer_a40_v4_80M          1.02       0.97       1.05       1.00       1.02
+  general_puffer_5090_v5floor_       0.96       0.91       1.03       0.98       1.02
+  general_puffer_5090_v5floor_       1.00       0.96       1.05       1.02       1.03
+  general_puffer_5090_v5floor_       0.96       0.96       1.10       0.99       1.08
+  general_puffer_5090_v5floor_       1.13       0.71       1.17       0.88       1.06
+  general_puffer_5090_v5floor_       1.05       0.95       1.06       1.02       1.04
+  general_puffer_5090_v5floor_       1.06       0.92    yaw -13       0.98       1.03
+  general_puffer_5090_v5floor_       0.93       0.91       1.09       0.95       1.10
+  general_puffer_5090_v5floor_       0.93       1.07       1.02       1.01       0.96
+  ~1 = steered spin (wheel turns with the chassis), ~0 = pivot

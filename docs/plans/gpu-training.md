@@ -1414,6 +1414,47 @@ for any of them in 5 s. NOTE `standstill.py` flies every policy on its
 Not yet: the 7-12 Hz shake with the play (`run_vs_sim.py` against 174349),
 the steer wobble, and the bike.
 
+**v5, four floors at once: the first multi-seed run (ran 2026-10-29)**
+[measured]. `rl_general_v5.yaml` (v4 + `obs_detent`, front play a third,
+rear lateral slide +-0.5 mm) and three siblings differing only in
+`floor:`, one per seed (`CONFIGS=`): secure 5090, EUR-IS-2, driver 595 /
+CUDA 13.2; codeload.github.com timed out, github.com answered in 0.7 s and
+setup only needs that. Pod 08:28-10:08 UTC, ~$2.00. `results_5090_v5floor/`.
+
+| seed | config | floor (solref / mu, sink at rest) | steps/s start -> end | train wall |
+|---|---|---|---|---|
+| 1 | v5 | shipped [0.005, 1] / 0.9, 0.135 mm | 17.1k -> 16.0k | 5399 s |
+| 2 | _floor_soft | [0.02, 1] / 0.9, 0.75 mm | 16.3k -> 15.8k | 5510 s |
+| 3 | _floor_slip | shipped / 0.35, 0.135 mm | 16.4k -> 14.6k | 5527 s |
+| 4 | _floor_softslip | [0.02, 1] / 0.35, 0.75 mm | 15.2k -> 14.3k | 5626 s |
+
+62-65k steps/s in all under MPS (card 100 %, 517 W). The 2.3x above was a
+120 s bench on the 10-23 plant, so this is the plant's cost and MPS's
+together; no one-run v5 number to split them. All four reached 80M inside
+the 7200 s cap. Training panel, fall / entropy:
+
+| steps | s1 | s2 | s3 | s4 |
+|---|---|---|---|---|
+| 13.1M | 0.21 / 2.70 | 0.12 / 2.70 | 0.53 / 2.55 | 0.58 / 2.65 |
+| 32.8M | 0.39 / 1.82 | 0.20 / 1.90 | 0.71 / 1.54 | 0.49 / 1.63 |
+| 52.4M | 0.13 / 1.30 | 0.17 / 1.17 | 0.61 / 0.92 | 0.29 / 1.17 |
+| 78.6M | 0.08 / 0.99 | 0.07 / 0.83 | 0.47 / 0.40 | 0.33 / 0.78 |
+
+All at difficulty 1.0 by the end; the slippery floors keep ~4-6x the
+falls. Two KL HIGH rows on s4 (0.130 / 0.144 at 26-33M), none elsewhere.
+One seed per floor: floor and seed are confounded.
+
+Converted `general_puffer_5090_v5floor_s{1..4}_{52,72,80}M` (each records
+its `floor`). Judged on its own floor (`per_command.txt`, `standstill.txt`
+here): all 0/20 falls except s4 72M (1/20), 7/9 forward, 2/2 straight,
+like v4. Outliers: s2 80M spins -90 half-pivoted (wheel/yaw 0.71) and
+creeps past 0.3 m/s on 2 of 6 standstill seeds; s3 80M prints a yaw
+(-13) for spin +170 instead of a ratio, unread; s4 80M drifts 0.38-0.44 m
+on 2 seeds. s1 80M reads like v4 throughout (standstill 0.16-0.19 m/s,
+0.07-0.10 m). `standstill.py` now builds each policy's env from its move
+record (the NOTE above is fixed); v4 on its own plant: 0.12-0.19 m/s,
+0.05-0.11 m. Not yet: all four on ONE floor, `chatter.py`, the bike.
+
 ### Phase 4 -- algorithm parity
 
 - **Network.** 5.0 has NO built-in MLP [read, `algo.cu` @ ea7f989]:

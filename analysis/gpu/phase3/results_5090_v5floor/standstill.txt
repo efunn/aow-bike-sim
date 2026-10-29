@@ -1,0 +1,64 @@
+# python analysis/gpu/phase3/standstill.py (fixed 10-29: each policy in its own env) general_puffer_a40_v4_80M general_puffer_5090_v5floor_s1_72M general_puffer_5090_v5floor_s1_80M general_puffer_5090_v5floor_s2_72M general_puffer_5090_v5floor_s2_80M general_puffer_5090_v5floor_s3_72M general_puffer_5090_v5floor_s3_80M general_puffer_5090_v5floor_s4_72M general_puffer_5090_v5floor_s4_80M
+general_puffer_a40_v4_80M
+  seed 0: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.05 m from start  mean |hub| 0.03
+  seed 1: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.09 m from start  mean |hub| 0.02
+  seed 2: ok    5.0 s  max |v| 0.15 m/s  >0.3 m/s at  never  end 0.07 m from start  mean |hub| 0.02
+  seed 3: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.10 m from start  mean |hub| 0.02
+  seed 4: ok    5.0 s  max |v| 0.19 m/s  >0.3 m/s at  never  end 0.08 m from start  mean |hub| 0.03
+  seed 5: ok    5.0 s  max |v| 0.12 m/s  >0.3 m/s at  never  end 0.11 m from start  mean |hub| 0.03
+general_puffer_5090_v5floor_s1_72M
+  seed 0: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.03 m from start  mean |hub| 0.03
+  seed 1: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.03 m from start  mean |hub| 0.03
+  seed 2: ok    5.0 s  max |v| 0.20 m/s  >0.3 m/s at  never  end 0.03 m from start  mean |hub| 0.03
+  seed 3: ok    5.0 s  max |v| 0.21 m/s  >0.3 m/s at  never  end 0.03 m from start  mean |hub| 0.04
+  seed 4: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.04 m from start  mean |hub| 0.03
+  seed 5: ok    5.0 s  max |v| 0.22 m/s  >0.3 m/s at  never  end 0.04 m from start  mean |hub| 0.03
+general_puffer_5090_v5floor_s1_80M
+  seed 0: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.07 m from start  mean |hub| 0.03
+  seed 1: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.09 m from start  mean |hub| 0.03
+  seed 2: ok    5.0 s  max |v| 0.19 m/s  >0.3 m/s at  never  end 0.07 m from start  mean |hub| 0.03
+  seed 3: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.10 m from start  mean |hub| 0.03
+  seed 4: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.07 m from start  mean |hub| 0.03
+  seed 5: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.10 m from start  mean |hub| 0.03
+general_puffer_5090_v5floor_s2_72M
+  seed 0: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.05 m from start  mean |hub| 0.01
+  seed 1: ok    5.0 s  max |v| 0.13 m/s  >0.3 m/s at  never  end 0.02 m from start  mean |hub| 0.01
+  seed 2: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.04 m from start  mean |hub| 0.02
+  seed 3: ok    5.0 s  max |v| 0.15 m/s  >0.3 m/s at  never  end 0.02 m from start  mean |hub| 0.01
+  seed 4: ok    5.0 s  max |v| 0.22 m/s  >0.3 m/s at  never  end 0.11 m from start  mean |hub| 0.03
+  seed 5: ok    5.0 s  max |v| 0.19 m/s  >0.3 m/s at  never  end 0.14 m from start  mean |hub| 0.03
+general_puffer_5090_v5floor_s2_80M
+  seed 0: ok    5.0 s  max |v| 0.31 m/s  >0.3 m/s at  1.1 s  end 0.13 m from start  mean |hub| 0.05
+  seed 1: ok    5.0 s  max |v| 0.28 m/s  >0.3 m/s at  never  end 0.14 m from start  mean |hub| 0.05
+  seed 2: ok    5.0 s  max |v| 0.22 m/s  >0.3 m/s at  never  end 0.15 m from start  mean |hub| 0.05
+  seed 3: ok    5.0 s  max |v| 0.15 m/s  >0.3 m/s at  never  end 0.01 m from start  mean |hub| 0.03
+  seed 4: ok    5.0 s  max |v| 0.34 m/s  >0.3 m/s at  1.3 s  end 0.15 m from start  mean |hub| 0.04
+  seed 5: ok    5.0 s  max |v| 0.12 m/s  >0.3 m/s at  never  end 0.03 m from start  mean |hub| 0.02
+general_puffer_5090_v5floor_s3_72M
+  seed 0: ok    5.0 s  max |v| 0.19 m/s  >0.3 m/s at  never  end 0.13 m from start  mean |hub| 0.03
+  seed 1: ok    5.0 s  max |v| 0.21 m/s  >0.3 m/s at  never  end 0.13 m from start  mean |hub| 0.04
+  seed 2: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.13 m from start  mean |hub| 0.03
+  seed 3: ok    5.0 s  max |v| 0.19 m/s  >0.3 m/s at  never  end 0.14 m from start  mean |hub| 0.03
+  seed 4: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.15 m from start  mean |hub| 0.04
+  seed 5: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.14 m from start  mean |hub| 0.03
+general_puffer_5090_v5floor_s3_80M
+  seed 0: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.05 m from start  mean |hub| 0.03
+  seed 1: ok    5.0 s  max |v| 0.15 m/s  >0.3 m/s at  never  end 0.08 m from start  mean |hub| 0.02
+  seed 2: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.06 m from start  mean |hub| 0.03
+  seed 3: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.07 m from start  mean |hub| 0.03
+  seed 4: ok    5.0 s  max |v| 0.20 m/s  >0.3 m/s at  never  end 0.06 m from start  mean |hub| 0.03
+  seed 5: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.07 m from start  mean |hub| 0.03
+general_puffer_5090_v5floor_s4_72M
+  seed 0: ok    5.0 s  max |v| 0.21 m/s  >0.3 m/s at  never  end 0.09 m from start  mean |hub| 0.06
+  seed 1: ok    5.0 s  max |v| 0.14 m/s  >0.3 m/s at  never  end 0.14 m from start  mean |hub| 0.04
+  seed 2: ok    5.0 s  max |v| 0.23 m/s  >0.3 m/s at  never  end 0.07 m from start  mean |hub| 0.05
+  seed 3: ok    5.0 s  max |v| 0.17 m/s  >0.3 m/s at  never  end 0.17 m from start  mean |hub| 0.04
+  seed 4: ok    5.0 s  max |v| 0.15 m/s  >0.3 m/s at  never  end 0.08 m from start  mean |hub| 0.05
+  seed 5: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.23 m from start  mean |hub| 0.04
+general_puffer_5090_v5floor_s4_80M
+  seed 0: ok    5.0 s  max |v| 0.16 m/s  >0.3 m/s at  never  end 0.04 m from start  mean |hub| 0.04
+  seed 1: ok    5.0 s  max |v| 0.14 m/s  >0.3 m/s at  never  end 0.04 m from start  mean |hub| 0.03
+  seed 2: ok    5.0 s  max |v| 0.18 m/s  >0.3 m/s at  never  end 0.06 m from start  mean |hub| 0.04
+  seed 3: ok    5.0 s  max |v| 0.29 m/s  >0.3 m/s at  never  end 0.38 m from start  mean |hub| 0.10
+  seed 4: ok    5.0 s  max |v| 0.14 m/s  >0.3 m/s at  never  end 0.08 m from start  mean |hub| 0.04
+  seed 5: ok    5.0 s  max |v| 0.36 m/s  >0.3 m/s at  2.5 s  end 0.44 m from start  mean |hub| 0.10

@@ -1,0 +1,187 @@
+name: general_puffer_5090_v5floor_s4_52M
+type: rl
+kind: general
+policy_file: general_puffer_5090_v5floor_s4_52M.npz
+params_digest: 9bc0c573c4967738
+plant_digest: 6ba91e45bb29e335
+control_rate_hz: 50
+v_max: 1.2
+v_lat_frac: 0.0
+vel_window_s: 0.0
+obs_zero_lat: false
+obs_odometry: true
+odometry_encoder: counts
+steer_rate_encoder: counts
+ahrs_level: tm151_filter
+ahrs_tau_s: 2.0
+ahrs_channels: both
+drivetrain_model:
+  update_every: 1
+  servo:
+    enabled: true
+    velocity_p_gain: 100
+    velocity_i_gain: 1920
+    kp_per_unit: 0.0004
+    ki_per_unit: 0.00145
+    command_delay_s: 0.004
+    measurement_delay_s: 0.004
+    velocity_filter_s: 0.012
+    velocity_limit_rad_s: 11.03
+    rotor_inertia: 0.0022
+    coulomb_friction: 0.15
+    friction_stick_stiffness: 250.0
+    friction_stick_damping: 0.2
+  detent:
+    enabled: true
+    period_deg: 7.5
+    width_deg: 1000.0
+    friction: 0.12
+    phase_deg: 0.0
+    stick_stiffness: 1000.0
+    stick_damping: 1.0
+    hill_nm: 0.12
+    hill_shape: sawtooth
+    kinetic_fraction: 0.15
+  roller_slop:
+    enabled: true
+    half_play_deg: 7.8
+    centring_stiffness: 0.01
+    damping: 5.0e-05
+    wall_timeconst_s: 0.001
+wheel_play:
+  front_axle:
+    travel_mm: 0.33
+    centring_stiffness: 4.0
+    wall_timeconst_s: 0.002
+  headset:
+    travel_mm: 0.5
+    centring_stiffness: 4.0
+    wall_timeconst_s: 0.002
+  rear_axle:
+    travel_mm: 2.5
+    centring_stiffness: 4.0
+    wall_timeconst_s: 0.002
+  rear_axle_lateral:
+    travel_mm: 1.0
+    centring_stiffness: 2000.0
+    damping: 1.0
+    wall_timeconst_s: 0.002
+floor:
+  contact_solref:
+  - 0.02
+  - 1.0
+  friction_sliding: 0.35
+obs_pitch: true
+obs_wings: false
+act_wings: false
+obs_swing: false
+act_swing: false
+wing_max_deg: 90.0
+obs_style: false
+obs_detent: true
+swing_linkage: false
+righting_module: v2
+righting_rigid: true
+ball_prob: 0.0
+swing_tip_mass_kg: 0.0
+wing_touch_fails: false
+obs_layout:
+- roll
+- roll_rate
+- yaw_rate
+- sin2steer
+- cos2steer
+- steer_rate
+- v_lon
+- v_lat
+- v_cmd_lon
+- v_cmd_lat
+- sin_psi_err
+- cos_psi_err
+- prev_steer_rate
+- prev_hub
+- prev_diff
+- pitch
+- pitch_rate
+- sin_detent
+- cos_detent
+- diff_rate
+action_space: full
+trained:
+  algo: PufferLib 5.0 PPO (ea7f989), Muon
+  timesteps: 0
+  arch: Linear(20,128) -> MinGRU(128) -> Linear(128,3), no biases
+  precision: bf16 (fp32 master weights)
+  logstd:
+  - -0.8568
+  - -1.1054
+  - -1.1158
+  unsaved_weights: 5
+  graph:
+    nworld: 4096
+    config: config/rl/rl_general_v5_floor_softslip.yaml
+    config_sha256: 720fa959ed6e8d352934c9e4e74059f5acbfbce737ca0061dd4af298cccdc658
+    seed: 3
+    curriculum:
+      shared: true
+      envs: 32
+      lead: 0.1
+  exported_from: analysis/gpu/phase3/results_5090_v5floor/seed_4/puffer_checkpoints/aow_bike/1793262791090/0000000052428800.bin
+  metrics:
+    survive_rate: 1.0
+    wing_touch_rate: 0.0
+    track: 0.763
+    track_geo: 0.752
+    vel_err: 0.141
+    head_err_deg: 3.8
+    n_eval: 20
+    drift_m: 0.236
+    drift_lon: -0.236
+    drift_lat: -0.004
+    drift_bearing_deg: -179.0
+    drift_max: 0.236
+    drift_sd: 0.069
+    steer_rest_deg: 3.9
+    speed_ratio_fwd: 1.019
+    speed_ratio_rev: 0.759
+    crab_ratio_left: 0.332
+    crab_ratio_right: 0.272
+    crab_head_err: 6.7
+    crab_osc: 0.0
+    wing_deg: 0.0
+    wing_duty: 0.0
+    turn_asym: 0.27
+    by_family:
+      hold:
+        n: 1
+        survive_rate: 1.0
+        head_err_tail: 2.7
+        vel_err_med: 0.06
+        drift_m: 0.236
+        drift_overshoot: 0.0
+      spin:
+        n: 2
+        survive_rate: 1.0
+        t_head_s: 0.88
+        t_head_n: 2
+        head_err_tail: 5.8
+        vel_err_med: 0.099
+      cruise:
+        n: 9
+        survive_rate: 1.0
+        t_head_s: 0.66
+        t_head_n: 6
+        head_err_tail: 7.1
+        vel_err_med: 0.099
+      crab:
+        n: 2
+        survive_rate: 1.0
+        head_err_tail: 10.5
+        vel_err_med: 0.376
+      turn_big:
+        n: 6
+        survive_rate: 1.0
+        t_head_s: 1.51
+        t_head_n: 6
+        head_err_tail: 5.4
+        vel_err_med: 0.117

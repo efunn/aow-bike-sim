@@ -1,0 +1,4 @@
+mujoco==3.10.0
+mujoco-warp==3.10.0.3
+nvidia-nccl-cu12==2.27.3
+warp-lang==1.18.0
