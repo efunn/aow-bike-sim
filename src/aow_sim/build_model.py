@@ -304,6 +304,8 @@ LUG_BOSS_RADIUS = 0.0045
 #     front_axle: {travel_mm: 2.5}   # the front wheel on its axle: yaw + camber
 #     headset:    {travel_mm: 2.5}   # steerer clearance: the fork tilts sideways
 #     rear_axle:  {travel_mm: 2.5}   # the omni wheel on its axle: yaw + camber
+#     rear_axle_lateral: {travel_mm: 1.0}  # ...and sliding along it (a slide;
+#                                    # see SLIDE_PLAY_DEFAULTS for its units)
 #     rear_stays: {travel_mm: 2.5}   # the chainstays flexing: the wheel swings
 #                                    # sideways and up/down about the stays' root
 #
@@ -349,6 +351,34 @@ def _play_body(parent, name: str, cfg: dict | None, lever: float, axes, pos=(0.0
         j.solref_limit = [float(c["wall_timeconst_s"]), 1.0]
         j.stiffness = [float(c["centring_stiffness"]), 0, 0]
         j.damping = [float(c["damping"]), 0, 0]
+    return body
+
+
+# The omni wheel's sideways float along its own axle (`rear_axle_lateral`),
+# in the AOW mechanism itself: ~+-0.5 mm by hand (2026-10-29), and stiffening
+# the stays cannot touch it. A slide, so its units are linear:
+# travel_mm is the TOTAL travel, centring_stiffness N/m, damping N s/m.
+SLIDE_PLAY_DEFAULTS = {"centring_stiffness": 2000.0, "damping": 1.0,
+                       "wall_timeconst_s": 0.002}
+
+
+def _slide_play_body(parent, name: str, cfg: dict | None, axis):
+    """`parent`, or a body under it on one limited slide along `axis`, when
+    `cfg` asks for play (the slide counterpart of `_play_body`)."""
+    if not cfg or not float(cfg.get("travel_mm", 0.0)):
+        return parent
+    c = {**SLIDE_PLAY_DEFAULTS, **cfg}
+    body = parent.add_body(name=name)
+    body.explicitinertial = True
+    body.mass = 1e-4
+    body.inertia = [1e-9, 1e-9, 1e-9]
+    half = 0.5e-3 * float(c["travel_mm"])
+    j = body.add_joint(name=name, type=mujoco.mjtJoint.mjJNT_SLIDE, axis=list(axis))
+    j.limited = mujoco.mjtLimited.mjLIMITED_TRUE
+    j.range = [-half, half]                               # metres: degree only touches hinges
+    j.solref_limit = [float(c["wall_timeconst_s"]), 1.0]
+    j.stiffness = [float(c["centring_stiffness"]), 0, 0]
+    j.damping = [float(c["damping"]), 0, 0]
     return body
 
 
@@ -527,6 +557,8 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
         stays = _play_body(parent, "rear_stays_play", play["rear_stays"], levers, axes, pos=root)
     axle = _play_body(stays, "rear_axle_play", play.get("rear_axle"),
                       ow["outer_radius"], {"yaw": (0, 0, 1), "camber": (1, 0, 0)})
+    axle = _slide_play_body(axle, "rear_axle_lateral_play", play.get("rear_axle_lateral"),
+                            (0, 1, 0))
     hub = axle.add_body(name="aow_hub")
     hub.add_joint(
         name="hub_spin",
