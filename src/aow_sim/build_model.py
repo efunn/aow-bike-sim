@@ -184,8 +184,9 @@ def _contact_friction(sim: dict) -> list[float]:
 
 
 # The three things that actually touch the ground, and which have no business
-# sharing one contact: compliant TPU rollers, a different-material front tire
-# whose contact carries the odometry estimator's whole lateral channel, and
+# sharing one contact: compliant rollers, a front tire whose contact carries
+# the odometry estimator's whole lateral channel (both rubbery to the touch,
+# material unknown; the 10-01 dial reads them alike, 0.36 mm at 26.7 N), and
 # rigid printed righting parts that arrive as an impact.
 #
 # HOW A PART GETS ITS OWN CONTACT. MuJoCo combines a contact pair by rule:

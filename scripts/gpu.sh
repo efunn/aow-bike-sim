@@ -8,7 +8,8 @@
 #
 #   scripts/gpu.sh check  HOST PORT                 # CUDA works? pypi / github speed?
 #   scripts/gpu.sh up     HOST PORT [VAR=VAL ...]   # bundle, copy, launch (detached)
-#   scripts/gpu.sh watch  HOST PORT                 # stream the checkpoint rows until done
+#   scripts/gpu.sh status HOST PORT                 # one table: a row per seed, config, ETA
+#   scripts/gpu.sh watch  HOST PORT                 # that table at each checkpoint, until done
 #   scripts/gpu.sh pull   HOST PORT TAG             # results -> analysis/gpu/phase3/results_TAG
 #   scripts/gpu.sh export TAG [STEPS_M ...]         # checkpoints -> moves/general_puffer_TAG[_s<k>]_<N>M
 #
@@ -39,7 +40,7 @@ cd "$REPO"
 P3=analysis/gpu/phase3
 PASS="SEEDS CONFIG CONFIGS NW HORIZON CURRICULUM_LEAD ENV_SEED PUFFER_SEED TRAIN_S MPS SKIP_CHECKS"
 
-usage() { sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 remote() {  # remote HOST PORT CMD
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
         -p "$2" root@"$1" "$3"
@@ -83,16 +84,13 @@ up)
     rm -rf "$TMP"
     echo "next: scripts/gpu.sh watch $HOST $PORT"
     ;;
-watch)
+status|watch)
     [ $# -ge 2 ] || usage
-    remote "$1" "$2" 'cd ~/aow
-        # ls exits non-zero if EITHER is missing, so test for any output
-        until ls results/watch.log results/seed_*/watch.log 2>/dev/null | grep -q .; do sleep 2; done
-        sleep 3
-        tail -n +1 -F $(ls results/watch.log results/seed_*/watch.log 2>/dev/null) & T=$!
-        while [ ! -f results/ALL_DONE ]; do sleep 10; done
-        sleep 8; kill $T 2>/dev/null
-        echo; echo "== ALL_DONE"; tail -n 4 results/timings.jsonl'
+    # piped, not run from the bundle, so a pod launched before status.sh
+    # existed reads the same way
+    F=""; [ "$cmd" = watch ] && F=--follow
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -p "$2" root@"$1" "bash -s -- $F" \
+        < $P3/status.sh
     ;;
 pull)
     [ $# -ge 3 ] || usage

@@ -8,18 +8,27 @@ Why it exists (2026-10-15): PufferLib policies whose training curves looked
 fine drove off at 0.4-0.7 m/s on a zero command (one in circles, steer
 parked at 24 deg) -- the eval grid's single hold episode does not show it.
 v3_s0 reference: max |v| 0.10-0.17 m/s, never above 0.3, 0.05-0.10 m.
+
+Each policy gets an env built FROM ITS MOVE YAML (rsa_policies.env_for, as
+per_command does): obs blocks, drivetrain, wheel play, floor. Until
+2026-10-29 every policy ran in one env built from --config, so v4 was
+judged on the v3 plant (no detent, no play) and v5's 20-wide obs raised.
+--config now supplies only the eval settings (episode length, curriculum).
 """
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 
 import numpy as np
 
 from aow_sim.build_model import load_params
-from aow_sim.control.general_env import GeneralEnv, _load_rl_config
-from aow_sim.control.policy import load_policy_npz
-from aow_sim.drivetrain_model import from_env_config
+from aow_sim.control.general_env import _load_rl_config
 from aow_sim.eval_general import _eval_cfg
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "policy"))
+from rsa_policies import env_for, load_general  # noqa: E402
 
 
 def main():
@@ -28,11 +37,10 @@ def main():
     ap.add_argument("--config", default="config/rl/rl_general_v3.yaml")
     ap.add_argument("--seeds", type=int, default=6)
     a = ap.parse_args()
-    cfg = _load_rl_config(a.config)
-    params = from_env_config(load_params(), cfg["env"])
+    cfg = _eval_cfg(_load_rl_config(a.config))
     for name in a.moves:
-        pol = load_policy_npz(f"moves/{name}.npz")
-        env = GeneralEnv(params, _eval_cfg(cfg))
+        pol = load_general(name)
+        env = env_for(pol, load_params(), cfg)
         sc = np.array([pol.bounds.steer_rate_max, pol.bounds.hub_max, pol.bounds.diff_max])
         sc = np.where(sc == 0, 1, sc)
         print(name)
