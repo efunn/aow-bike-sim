@@ -1,6 +1,8 @@
 # Teleop reference
 
-Every key, and what it does. Confirm in `src/aow_sim/run_drive.py` because I like changing the controls pretty often.
+Ground truth for inputs/keys is in `src/aow_sim/run_drive.py`.
+
+The viewer is hacked on top of MuJoCo's interactive viewer.
 
 ```sh
 mjpython -m aow_sim.run_drive --teleop
@@ -8,13 +10,11 @@ mjpython -m aow_sim.run_drive --teleop
 
 **`mjpython`, not `python`.** MuJoCo's interactive viewer requires it on macOS.
 
-Bindings are mostly digits, arrows, and punctuation to avoid collisions with the default MuJoCo keybinds (i.g. A-Z keys).
+Bindings are mostly digits, arrows, and punctuation to avoid collisions with the default MuJoCo keybinds (e.g. A-Z keys).
 
-## The look
+## Visible elements
 
-`--teleop` and `--mirror` draw the bike **bare** by default: the floor, the wheels (black front tyre with an orange/blue spoke cover, grey rollers on a black hub), the wings, and the rollcage (a translucent blue shell over the two orange rings). Every mass shape (servos, cases, electronics, battery, fork) and marker is hidden. In teleop the ground dial is only the green commanded-heading arc (no dashed rim); the grids and the trail are as in `--look full`. `--look full` draws everything.
-
-It is viewing only. The hiding zeroes colours on the compiled model, which no physics reads and no digest hashes, so the bike drives exactly the same either way. The shell is the CAD's shape, not the contact: the contact is still the `roof` capsule, which differs from the drawn shell by up to 2.6 mm at the rings.
+`--teleop` and `--mirror` draw the bike **bare** by default: the floor, the wheels, the wing panels, and the rollcage (a translucent shell over the two rollcage rings). Detailed mass shapes (servos, cases, electronics, battery, fork) and markers are hidden. `--look full` draws everything (physics unchanged; all those masses are still calculated, just not drawn).
 
 ---
 
@@ -24,7 +24,7 @@ It is viewing only. The hiding zeroes colours on the compiled model, which no ph
 exists and matches the current spec. You give it a velocity vector and a
 heading, continuously, and it balances.
 
-`,` can swap it for the **analytic LQR**, which is a reference baseline and maintained in a 'best effort' manner. **Not all the keys work there**: it has no lateral command at all, and the digits address a library of older canned maneuvers instead of steering the live command. The tables below say which layer each key belongs to.
+`,` can swap it for an analytic LQR, which has not been maintained. There are several differences, e.g. it has no lateral command at all, and the digits address a library of older canned maneuvers instead of steering the live command. The tables below say which layer each key belongs to.
 
 ## Key controls (global)
 
@@ -82,7 +82,7 @@ Each zeroes the live command, runs to completion, and hands control back to the 
 | `9` / `4` | **step** through left → centre → right. Double-tapping either one crosses the whole range, so "swap sides" is one gesture |
 | `.` | shove the bike over — a repeatable 8 N pulse, alternating sides |
 
-Nothing deploys or hands off by itself (yet). That is deliberate: push the bike over and watch what it actually does before deciding what should trigger.
+At the latest defaults, the bike gets itself back up automatically after falling.
 
 By hand instead of `.`: double-click the bike, then Ctrl + right-drag.
 
@@ -98,15 +98,11 @@ At 0 m/s the ball simply drops where it is. The topple threshold was once measur
 
 ## Policy menu
 
-`,` opens a menu in the top right: every `kind: general` move in `moves/`, newest first, with the analytic LQR as the first entry. `↑`/`↓` move the cursor, `ENTER` loads, `,` closes. `>` marks the cursor, `*` marks what is currently driving.
+`,` opens a menu on the right side of the screen: every `kind: general` move in `moves/`, newest first, with the analytic LQR as the first entry. `↑`/`↓` move the cursor, `ENTER` loads, `,` closes. `>` marks the cursor, `*` marks what is currently driving.
 
 **Loading is live.** The new policy inherits the heading and velocity you were already commanding, so a mid-drive swap does not jolt the bike. The command *is* zeroed on any switch between controller **kinds**, so nothing inherits a stale setpoint.
 
 The cursor opens on the controller you are *not* using, so `,` `ENTER` is a two-keystroke analytic/policy toggle. The list is rebuilt every time the menu opens, so a policy exported from another terminal shows up without restarting.
-
-While the menu is open it **swallows every key**, not just the ones it uses: picking a controller and driving are different activities, and a stray throttle tap landing between opening the menu and choosing would be applied to whatever loads next.
-
-It is a menu of labels rather than a real dropdown because MuJoCo's passive viewer exposes no widget API and no 2D overlay — scene geometry is the only thing a script can draw. `TAB` is unavailable for this; it is the viewer's own left-panel toggle.
 
 ## Spawn dial: tilt the floor and reposition the spawn orientation
 
@@ -142,7 +138,7 @@ A 0.5 m **floor grid** is drawn in every mode. The tracked cameras hold the bike
 
 A **red trail** marks where the bike has actually been — the last 2 s solid, then fading to clear over 0.5 s. `;` and `'` step that history through pen-up / 2 s / 4 s / 10 s / infinite. **Pen-up keeps what is already drawn and stops adding**, so the bike can be repositioned invisibly and a disconnected shape drawn: that is how the `t` drawing script puts a stem under a crossbar without retracing it.
 
-## Hold-to-drive needs an extra
+## Hold-to-drive extras
 
 The viewer reports a key going *down* and nothing else (no release, no auto-repeat) so holding a key can only work if the OS supplies real key state. On macOS we use pyobjc:
 
@@ -152,7 +148,7 @@ pip install -e '.[dev,teleop]'
 
 Without it teleop still works (kinda), but every key is tap-only.
 
-## The virtual gamepad
+## Virtual gamepad
 
 Teleop and the drawing scripts are two front-ends onto one mapping, `control/gamepad.py`: axes in, a velocity vector plus a heading rate out. Anything a script can draw is therefore reachable by hand.
 
@@ -168,17 +164,9 @@ Teleop and the drawing scripts are two front-ends onto one mapping, `control/gam
 
 `aow_sim.record` burns a gamepad overlay into every video frame (stick gates, pen state, snap button) so a recording shows what was *commanded*, not just what happened. The live viewer does not have it, deliberately: the keyboard path has no continuous axes to display, so the gates would read as a square wave. It becomes worth porting if a real game controller feeds `gamepad.py`.
 
-## A game controller
+## Game controller
 
-A wired Xbox One pad on USB is picked up by `--teleop` and `--mirror` automatically (`--no-pad` to ignore it). It is read over raw USB by `control/gamepad_usb.py`, because macOS has no driver for third-party wired Xbox pads: the PDP one enumerates with nothing attached, so no browser, SDL or GameController app can see it. It needs `pyusb` and `brew install libusb`. To check a pad on its own:
-
-```bash
-python -m aow_sim.control.gamepad_usb
-```
-
-The reader reports the standard layout (+x right, +y up, triggers 0..1, Xbox button names), and `gamepad.from_state` maps that onto the bike's command. A different controller only needs a backend that produces the same `PadState`.
-
-The pad is hot-pluggable: the stations and the test tool reopen one that drops (unplugged, or the Mac slept) once a second, and pick up one plugged in after they start. A dropped pad reads as centred, so a stick held as it went is not held on. The PDP's light goes off when the program holding it exits, so a lit pad has an owner. The mirror also keeps the Mac awake (`caffeinate -di`) while it runs: on battery the display sleeps after 2 min and the Mac a minute later, pad input doesn't count as activity, and a sleeping Mac stops the heartbeat, so the bike cuts.
+In principle, any game controller. This repo contains some hacks for a third-party xbox USB controller which is picked up by `--teleop` and `--mirror` automatically (`--no-pad` to ignore it). It is read over raw USB by `control/gamepad_usb.py`, because macOS had no driver for it.
 
 | input | teleop | mirror |
 |---|---|---|
@@ -195,9 +183,9 @@ The pad is hot-pluggable: the stations and the test tool reopen one that drops (
 | d-pad left | — | **park** (Home), propped on the blade |
 | RT − LT | **slews the righting crank's goal** | same, on the real servo |
 
-The triggers are analog: full pull is `--pad-righting-dps` (240 °/s, twice `swing_sit`'s lift rate), a light pull as slow as you like. Both pulled is their difference, so equal pulls hold. The slew starts from where the crank actually is, holds when released, and `9`/`4` then step to the next stop of left / centre / right from there. In teleop it takes the crank from a finished lie-down, and is ignored while one is running. To right the bike by hand with the policy on throughout: `--no-auto-up`, knock it over with `.`, then the triggers.
+The triggers are analog: full pull is `--pad-righting-dps` (240 °/s, twice the default lift rate). Both pulled is their difference, so equal pulls hold. The slew starts from where the crank actually is, holds when released, and `9`/`4` from the keyboard (if used) then step to the next stop of left / centre / right from there. In teleop it takes over the crank from a finished lie-down, and is ignored while one is running. To right the bike by hand with the policy on throughout: `--no-auto-up`, knock it over with `.`, then the triggers.
 
-Crab works by default: the clamp is the larger of the policy's own envelope and 0.4 `v_max`. Every current policy trained with `v_lat_frac` 0, so crab is off-distribution for them (it sees the command, but never trained on one), and teleop says so once.
+Crabbing (trying to move laterally) works by default: the clamp is the larger of the policy's own envelope and 0.4 `v_max`. Most policies trained with `v_lat_frac` 0, so a crabbing movement is off-distribution for them (it sees the command, but never never trained on one), and teleop will warn.
 
 The sticks own the velocity only while one is out of the deadzone. When they're released, the command goes to zero once and the keyboard takes over again.
 
@@ -212,6 +200,6 @@ The sticks own the velocity only while one is out of the deadzone. When they're 
 | `P` | **pin the bike at the origin**, or let it go. Unpinned it walks by its own dead-reckoned odometry, so the drift *is* the odometry error, made visible. Pinned, the drift is hidden and you get a fixed reference |
 | `-` / `=` | zoom. The viewer owns the scroll wheel |
 
-The camera is fixed-azimuth tracking, closer than teleop's. There is a telemetry readout on screen as well. **It is still in flux**, so it is not documented here (read it off the window).
+The camera is fixed-azimuth tracking, closer than teleop's. There is a telemetry readout on screen as well.
 
-`hw/ground.py` is a fallback station for a machine with no display or no MuJoCo: arrows or `WASD`, space to re-zero. See [physical-build.md](physical-build.md) for the bike side.
+`hw/ground.py` contains tools for setting up remote communication with the bike and contains a fallback keyboard-only station for a machine with no display or no MuJoCo: arrows or `WASD`, space to re-zero.
