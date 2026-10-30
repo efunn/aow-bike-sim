@@ -21,7 +21,9 @@
 </tr>
 </table>
 
-<!-- TODO: link the browser demo here once it is hosted. -->
+<p align="center">
+  <em><a href="https://spiritlake.xyz/aow/#drive">Click here to take a test drive (browser demo)</a></em>
+</p>
 
 ---
 
@@ -59,7 +61,8 @@ One servo is responsible for getting the bike back up when it falls, and swingin
 
 <p align="center">
   <img src="docs/media/swing_linkage.webp" alt="the swing linkage stepping through its stroke, seen from behind: on the left the mechanism in the bike's frame, one crank swinging both panels; on the right the bike on the floor, levered from lying on its side to upright" width="720"><br>
-  <em>The linkage through its stroke in the bike's frame (left) and on the floor (right).</em>
+  <em>The linkage through its stroke in the bike's frame (left) and on the floor (right).</em><br>
+  <em><a href="https://spiritlake.xyz/aow/linkage">Click here to see the detailed mechanism analysis (browser demo)</a></em>
 </p>
 
 The mechanism is optimized (`scipy differential_evolution`) to minimize the peak servo torque through its stroke (quasi-static), while maintaining the required geometry; candidate mechanisms are then validated in the dynamic MuJoCo physics simulation.
