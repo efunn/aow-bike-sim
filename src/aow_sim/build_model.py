@@ -2826,7 +2826,13 @@ def build_spec(
     hub_f = _play_body(head, "front_axle_play", play.get("front_axle"), r_front,
                        {"yaw": (0, 0, 1), "camber": (1, 0, 0)})
     front = hub_f.add_body(name="front_wheel")
-    front.add_joint(name="front_spin", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0])
+    spin = front.add_joint(name="front_spin", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0])
+    # The front axle's dry friction [N m], optional and ABSENT from
+    # bike_params.yaml (default model and plant_digest unchanged). Since
+    # 2026-10-28 a nut on the axle makes the wheel "roll a bit tight";
+    # unmeasured. Set it with `bike.front_wheel.axle_friction_nm`.
+    if fw.get("axle_friction_nm"):
+        spin.frictionloss = float(fw["axle_friction_nm"])
     front.add_geom(
         name="front_tire",
         type=mujoco.mjtGeom.mjGEOM_MESH,

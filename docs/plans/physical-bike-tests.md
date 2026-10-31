@@ -2053,6 +2053,58 @@ GUESS) and the CPU configs randomise it +-20 %; a slippery wood floor
 is probably below that. Open: the backward speed gap and the 2x
 reversing wobble.
 
+### 11. Standing 90 deg snaps fall since the axle nut  [sim done 10-31; floor and axle to measure]
+
+On the bike, a 90 deg heading snap from rest (the d-pad), counted as a fall
+when the bike cuts within 1.5 s and before the next snap:
+
+| | falls / snaps |
+|---|---|
+| v4, 10-24 to 10-27 (before the shim and nut) | 3 / 102 |
+| v4, 10-28 and 10-29 | 2 / 7 |
+| v5 s1, 10-29 | 2 / 2 |
+
+In the snaps that held, nothing moved across the change (first 0.45 s,
+medians, before / after): steer target swing 36 / 36 deg, worst tracking
+error 13 / 14 deg, peak yaw 160 / 161 deg/s. The drive command sits at its
+~33 rad/s limit in nearly every snap. Pack 11.8-12.3 V and the firmware
+gains are the same in every session. Falls come 0.5-0.8 s after the snap;
+3 of the 4 since 10-28 were +90.
+
+Axle drag measured by hand: **100 g at 30 mm to turn the wheel in the
+air, 0.03 N m.** In the sim (`bike.front_wheel.axle_friction_nm`, dry
+friction on `front_spin`; `analysis/policy/axle_friction_snaps.py`), it
+is the PAIR, floor grip and axle drag together, that falls. Falls out of
+40 standing snaps, no wheel play, the shipped floor stiffness:
+
+| v4 80M, floor mu \ axle N m | 0 | 0.015 | 0.03 | 0.06 | 0.10 |
+|---|---|---|---|---|---|
+| 0.9 / 0.7 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| 0.6 | 0 | 0 | 0 | 0 | 18 |
+| 0.5 | 0 | 0 | 3 | 20 | 32 |
+| 0.45 | 0 | 0 | 7 | 27 | 40 |
+| 0.4 | 0 | 4 | 23 | 39 | 40 |
+
+v5 s1, which turns harder (peak yaw ~230 deg/s against ~185), falls a
+step sooner: at mu 0.6, 0 / 2 / 7 / 34 / 40 across the same axle values,
+and 17 of 40 at mu 0.5 with a free axle. A soft floor (solref 0.02) falls
+more at the same mu. The slip-trained v5 s3 turns in ~2 s at 115-150
+deg/s and holds to mu 0.45; the user judges it a worse policy overall.
+
+At mu 0.9 the axle alone needs ~0.12 N m (v4 on its trained play) to ~0.2
+(no play) before any snap falls, the front wheel then mostly skidding.
+LESS front play makes the sim more tolerant of axle drag, not less, so
+the shim is not the suspect through this route. With no play every fall
+in the sim is +90, none -90 (cause not looked for).
+
+Next, physical: the floor's mu by a tilt test (the bike on a board of the
+floor, tilted until it slides; mu = tan(angle): 0.45 = 24 deg, 0.6 = 31,
+0.9 = 42), front tyre and rollers apart; then the axle loosened and the
+snaps flown again on the same floor. Teleop takes both: `--floor-mu`,
+`--axle-friction`. If the floor reads low, the retrain randomises floor
+mu (~0.4-0.9) and axle drag (0-0.06 N m) together; GPU friction is
+already per world, `dof_frictionloss` too.
+
 ## Not tests, but now worth watching
 
 **10-26 evening, three sessions on the v4 pointer** (261026-162523,

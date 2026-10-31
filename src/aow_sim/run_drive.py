@@ -742,6 +742,20 @@ def main() -> None:
                          "with a round 14 mm crown. Or four mm values: "
                          "diameter, width, shoulder radius, tread crown radius "
                          "(inf = flat). Moves plant_digest")
+    ap.add_argument("--floor-mu", type=float, default=None, metavar="MU",
+                    help="override sim.friction_sliding in memory, after any "
+                         "floor the policy trained on: every geom's, so the "
+                         "floor-tyre pair gets it (MuJoCo takes the larger of "
+                         "a pair). 0.9 shipped, a GUESS. Standing 90 deg snaps "
+                         "start falling near 0.5 for the v4 pointer with the "
+                         "axle at 0.03 N m (analysis/policy/axle_friction_"
+                         "snaps.py). Moves plant_digest")
+    ap.add_argument("--axle-friction", type=float, default=None, metavar="NM",
+                    help="bike.front_wheel.axle_friction_nm in memory: dry "
+                         "friction on the front wheel's spin [N m], absent "
+                         "(0) in bike_params.yaml. 0.03 is the 2026-10-31 "
+                         "hand measurement (100 g at 30 mm, wheel in the "
+                         "air). Moves plant_digest")
     args = ap.parse_args()
     if args.ahrs_gate is not None:
         from . import sim_ahrs
@@ -866,6 +880,17 @@ def main() -> None:
                 else "from bike_params.yaml (--servo-gains / --drive-friction)")
             if drive_friction is not None:
                 drivetrain_source += f", friction PINNED at {args.drive_friction}"
+    # After the policy's own floor, so the flag wins over its training record.
+    if args.floor_mu is not None:
+        from .params import with_floor
+        print(f"FLOOR friction_sliding {params['sim']['friction_sliding']:g} -> "
+              f"{args.floor_mu:g} (in memory)")
+        params = with_floor(params, {"friction_sliding": float(args.floor_mu)})
+    if args.axle_friction is not None:
+        print(f"FRONT AXLE friction {args.axle_friction:g} N m (in memory)")
+        params = {**params, "bike": {**params["bike"], "front_wheel": {
+            **params["bike"]["front_wheel"],
+            "axle_friction_nm": float(args.axle_friction)}}}
     rig_cfg = None
     if (args.rig or args.rig_mode or args.rig_lock or args.rig_free or args.rig_servo
             or args.rig_heading):
