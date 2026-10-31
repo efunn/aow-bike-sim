@@ -55,6 +55,7 @@ import numpy as np
 from scipy.optimize import brentq
 
 from aow_sim.build_model import _add_aow, _add_world, _apply_options, load_params
+from aow_sim.params import with_contact_solref
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bench"))
@@ -78,7 +79,7 @@ def build(wheel="front", rest_n=FRONT_REST_N, m_eff_g=None, pinned=None,
     """The rig, compiled. Returns the model and what the arm was built from."""
     p = load_params()
     if solref is not None:
-        p["sim"]["contact_solref"] = list(solref)
+        p = with_contact_solref(p, solref)      # the wheel's own solref too
     if solimp is not None:
         p["sim"]["contact_solimp"] = list(solimp)
     arm_cfg = rig_config()["arm"]

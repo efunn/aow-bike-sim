@@ -11,10 +11,12 @@ wood comes out as the AVERAGE, not as the roller. `geom_priority` is the only
 knob that overrides both: the higher-priority geom dictates every contact
 parameter and no combination happens.
 
-It ships as a bit-exact no-op -- every part resolves to the same globals, where
-dictation and combination agree -- so that turning it on did not move
-`plant_digest` and did not make a single export in `moves/` provisional. These
-tests pin that, and pin that the override actually bites when someone means it.
+It shipped as a bit-exact no-op -- every part resolving to the same globals,
+where dictation and combination agree -- so that turning it on did not move
+`plant_digest`. Since 2026-10-31 bike_params.yaml overrides the front tire's and
+the rollers' solref (their damping, from the pivot drops); a part without an
+override, the righting parts, still gets the globals verbatim. These tests pin
+that, and pin that the override actually bites when someone means it.
 """
 import numpy as np
 import pytest
@@ -46,23 +48,26 @@ def _ground_contacts(model, settle=500):
     return out
 
 
-def test_shipped_config_is_a_bit_exact_no_op():
-    """No `sim.contact_parts` block -> every part gets the globals verbatim.
-
-    This is the guard that lets the split ship without re-baselining anything.
-    If it fails, the physics moved and every policy in `moves/` is provisional.
-    """
-    p = load_params()
-    assert "contact_parts" not in p["sim"], (
-        "bike_params.yaml has grown a contact_parts block -- that is a "
-        "deliberate physics change and moves plant_digest; update this test "
-        "and re-export rather than deleting the assertion")
-    sim = p["sim"]
+def test_a_part_without_an_override_gets_the_globals_verbatim():
+    """Every part the `sim.contact_parts` block leaves out resolves to the
+    globals exactly, so a block with nothing in it is still the bit-exact no-op
+    the split shipped as. The shipped block overrides the wheels' solref only
+    (2026-10-31); their friction and the righting parts are the globals."""
+    sim = load_params()["sim"]
+    shipped = sim.get("contact_parts") or {}
+    assert set(shipped) == {"front_tire", "roller"}, (
+        "bike_params.yaml's contact_parts block changed -- a deliberate physics "
+        "change that moves plant_digest; update this test and re-export rather "
+        "than deleting the assertion")
     for part in CONTACT_PARTS:
         kw = _part_contact(sim, part)
-        assert kw["solref"] == list(sim["contact_solref"])
+        want = shipped.get(part, {}).get("solref", sim["contact_solref"])
+        assert kw["solref"] == list(want)
         assert kw["friction"][0] == sim["friction_sliding"]
         assert kw["friction"][1] == sim["friction_torsional"]
+    bare = {**sim, "contact_parts": {}}
+    for part in CONTACT_PARTS:
+        assert _part_contact(bare, part)["solref"] == list(sim["contact_solref"])
 
 
 def test_the_split_did_not_move_the_plant_digest():
@@ -155,8 +160,20 @@ def test_the_split_did_not_move_the_plant_digest():
                           righting.module.servo_kp/kv now derived from them:
                           2.3 -> 2.30004, 1.48 -> 1.4795, 0.0473 -> 0.04734
                           (the old values were the same derivations, rounded)
+        ce559fd6dabcc346  2026-10-31  sim.contact_parts: the front tire's and the
+                          rollers' damping from the pivot drops, negative
+                          solref at the shipped stiffness (-44321, -249 /
+                          -115: 0.59 / 0.27 x critical, the sink unchanged);
+                          sim.friction_sliding 0.9 GUESS -> 0.52 measured
+                          (the front tire's lateral steady slide)
+        2e7aa606d14cf8b7  2026-10-31  wheel_play into the default plant (was only
+                          in the RL configs / exports): v5's front axle
+                          0.33, headset 0.5, rear axle 2.5, rear sliding
+                          1.0 mm total travel
+        46c263de90495ac6  2026-10-31  bike.front_wheel.axle_friction_nm 0.015
+                          measured (50 g at 30 mm, the loosened axle nut)
     """
-    assert plant_digest(load_params()) == "6446d8fa5b925702"
+    assert plant_digest(load_params()) == "46c263de90495ac6"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

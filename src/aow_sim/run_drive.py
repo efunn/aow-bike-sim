@@ -752,10 +752,19 @@ def main() -> None:
                          "snaps.py). Moves plant_digest")
     ap.add_argument("--axle-friction", type=float, default=None, metavar="NM",
                     help="bike.front_wheel.axle_friction_nm in memory: dry "
-                         "friction on the front wheel's spin [N m], absent "
-                         "(0) in bike_params.yaml. 0.03 is the 2026-10-31 "
-                         "hand measurement (100 g at 30 mm, wheel in the "
-                         "air). Moves plant_digest")
+                         "friction on the front wheel's spin [N m]; "
+                         "bike_params' 0.015 is the 2026-10-31 hand "
+                         "measurement (50 g at 30 mm, wheel in the air, "
+                         "loosened; 0.03 before). Moves plant_digest")
+    ap.add_argument("--contact-part", nargs=3, action="append", default=None,
+                    metavar=("PART", "TIMECONST", "DAMPRATIO"),
+                    help="sim.contact_parts.<PART>.solref in memory, after any "
+                         "floor the policy trained on; PART is front_tire, "
+                         "roller or righting, repeatable. timeconst x dampratio "
+                         "sets the stiffness, timeconst alone the damping. The "
+                         "2026-10-31 pivot drops (analysis/contact/pivot_drop."
+                         "py) at the shipped stiffness: front_tire 0.00847 "
+                         "0.59, roller 0.0185 0.27. Moves plant_digest")
     args = ap.parse_args()
     if args.ahrs_gate is not None:
         from . import sim_ahrs
@@ -788,7 +797,11 @@ def main() -> None:
         if len(value) != n:
             raise SystemExit(f"--{key[8:]} takes {n} comma-separated numbers")
         print(f"CONTACT {key[8:]} {list(params['sim'][key])} -> {value} (in memory)")
-        params = {**params, "sim": {**params["sim"], key: value}}
+        if key == "contact_solref":
+            from .params import with_contact_solref
+            params = with_contact_solref(params, value)   # the wheels' own too
+        else:
+            params = {**params, "sim": {**params["sim"], key: value}}
     if args.front_wheel is not None:
         params = _front_wheel_override(params, args.front_wheel)
     if args.no_headset:
@@ -891,6 +904,15 @@ def main() -> None:
         params = {**params, "bike": {**params["bike"], "front_wheel": {
             **params["bike"]["front_wheel"],
             "axle_friction_nm": float(args.axle_friction)}}}
+    if args.contact_part:
+        from .build_model import CONTACT_PARTS
+        parts = dict(params["sim"].get("contact_parts") or {})
+        for name, tc, dr in args.contact_part:
+            if name not in CONTACT_PARTS:
+                raise SystemExit(f"--contact-part: {name!r} is not one of {CONTACT_PARTS}")
+            parts[name] = {**parts.get(name, {}), "solref": [float(tc), float(dr)]}
+            print(f"CONTACT {name} solref [{float(tc):g}, {float(dr):g}] (in memory)")
+        params = {**params, "sim": {**params["sim"], "contact_parts": parts}}
     rig_cfg = None
     if (args.rig or args.rig_mode or args.rig_lock or args.rig_free or args.rig_servo
             or args.rig_heading):

@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "policy"))  # sibling category
 
 from aow_sim.build_model import load_params
+from aow_sim.params import with_contact_solref
 from aow_sim.control.general_env import _load_rl_config
 from aow_sim.train_general_rl import _eval_episodes, eval_cmds
 from rsa_policies import REPO, env_for, load_general
@@ -119,7 +120,7 @@ def _one_point(job):
     # into `geom_friction` and MuJoCo rejects it at add_geom, several frames away
     # from the mistake.
     params["sim"]["friction_sliding"] = float(mu)
-    params["sim"]["contact_solref"] = [float(tc), float(dr)]
+    params = with_contact_solref(params, [float(tc), float(dr)])   # the wheels' own too
 
     cfg = _cfg()
     pol = load_general(name)

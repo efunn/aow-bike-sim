@@ -57,6 +57,12 @@ class ResetConst:
     # gearbox
     gb_dof: int
     gb_static: float          # base + s0: the build-time value
+    # the front axle's dry friction (DomainRandomizer's axle_friction_range)
+    axle_on: int              # 1: drawn per reset from [axle_lo, axle_hi]
+    axle_dof: int
+    axle_0: float             # the build-time value, randomization off
+    axle_lo: float
+    axle_hi: float
     # AHRS
     misalign: float
     rms0: wp.vec3
@@ -94,6 +100,14 @@ def const_from(env) -> ResetConst:
     g = env._gearbox[0]
     c.gb_dof = int(g.dof)
     c.gb_static = float(g.base + g.s0)
+    rz = env._rand
+    ax = r.get("axle_friction_range")
+    c.axle_on = int(bool(ax))
+    c.axle_dof = int(rz._axle_dof) if rz._axle_dof is not None else 0
+    c.axle_0 = float(rz._axle0) if rz._axle_dof is not None else 0.0
+    c.axle_lo, c.axle_hi = (float(ax[0]), float(ax[1])) if ax else (0.0, 0.0)
+    if ax and rz._axle_dof is None:
+        raise ValueError("axle_friction_range: this model has no front_spin")
     a = env._ahrs
     c.misalign = math.radians(sa.MISALIGN_DEG.get(a.level, sa.ACCEL_MISALIGN_DEG))
     c.rms0 = wp.vec3(*np.deg2rad(sa.ORIENT_RMS_DEG[a.level]).tolist())
@@ -310,6 +324,12 @@ def reset_worlds(c: ResetConst, cc: gcmd.CmdConst, done: wp.array(dtype=int),
 
     # -- gearbox: the build-time static value --
     frictionloss[world, c.gb_dof] = c.gb_static
+    # -- the front axle: a fresh draw, or its build-time value --
+    if c.axle_on == 1:
+        axv = float(c.axle_0)
+        if c.rand_on == 1:
+            axv, s = _uniform(s, c.axle_lo, c.axle_hi)
+        frictionloss[world, c.axle_dof] = axv
 
     # -- odometry: fresh --
     o_prev_ok[world] = 0

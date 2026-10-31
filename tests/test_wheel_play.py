@@ -1,5 +1,6 @@
-"""Wheel play (`wheel_play:`): absent from bike_params, so the default model is
-untouched; configured, it adds limited hinges sized from travel at the ground."""
+"""Wheel play (`wheel_play:`): in bike_params since 2026-10-31; stripped (or
+zero), the model is the rigid bike; configured, it adds limited hinges sized
+from travel at the ground."""
 import numpy as np
 import pytest
 
@@ -15,7 +16,8 @@ def test_absent_or_zero_play_builds_the_same_model():
     """No key, an empty block and zero travel are all the rigid bike: the
     play bodies are not inserted, so joint addresses (which the deploy bundle
     pins) do not move."""
-    p = load_params()
+    from aow_sim.params import with_wheel_play
+    p = with_wheel_play(load_params(), False)
     ref = build_model(p)
     for play in ({}, {"front_axle": {"travel_mm": 0}, "rear_axle": {"travel_mm": 0}}):
         m = build_model({**p, "wheel_play": play})
@@ -81,7 +83,7 @@ def test_an_rl_config_resolves_and_records_its_play(tmp_path):
 
     p = load_params()
     assert from_env_config(p, {}) == from_env_config(p, {"wheel_play": None})
-    assert "wheel_play" not in from_env_config(p, {})
+    assert from_env_config(p, {})["wheel_play"] == p["wheel_play"]   # bike_params' own
     f = tmp_path / "play.yaml"
     f.write_text(yaml.safe_dump({"note": "x", "wheel_play": PLAY}))
     by_path = from_env_config(p, {"wheel_play": str(f)})

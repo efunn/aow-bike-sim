@@ -56,6 +56,7 @@ import numpy as np
 from aow_sim import geometry
 from aow_sim.build_model import (_Y_AXIS_QUAT, _add_aow, _add_world, _apply_options,
                                  _part_contact, load_params)
+from aow_sim.params import with_contact_solref
 from wheel_slowmo import clearance_mm, wheel_vertices
 
 G = 9.81
@@ -93,7 +94,7 @@ def _add_front(spec, car, p) -> None:
 def build(phase_deg: float, solref=None, wheel: str = "rear") -> mujoco.MjModel:
     p = load_params()
     if solref is not None:
-        p["sim"]["contact_solref"] = list(solref)
+        p = with_contact_solref(p, solref)      # the wheels' own solref too
     spec = mujoco.MjSpec()
     _apply_options(spec, p)
     _add_world(spec, p)

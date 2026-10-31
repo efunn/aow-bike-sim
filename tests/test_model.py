@@ -43,13 +43,16 @@ def _step_for(model, data, seconds):
 
 def test_variants_compile_with_expected_dofs(full_model, testbed_model, params):
     # full: free(6) + steer + front + hub + ring + 8 rollers + 2 inputs = 20,
-    # + the righting module (2026-10-09): crank, 2 couplers, 2 wings = 25
-    assert full_model.nv == 25
+    # + the righting module (2026-10-09): crank, 2 couplers, 2 wings = 25,
+    # + the wheel play (2026-10-31): headset tilt, each axle's yaw and camber,
+    # the rear axle's slide = 31
+    assert full_model.nv == 31
     assert full_model.nu == 4  # drive_a, drive_b, steer, swing
     plain = build_model(params, variant="full", swing_linkage=False)
-    assert (plain.nv, plain.nu) == (20, 3)
-    # testbed: hub + ring + 8 rollers + 2 inputs = 12
-    assert testbed_model.nv == 12
+    assert (plain.nv, plain.nu) == (26, 3)
+    # testbed: hub + ring + 8 rollers + 2 inputs = 12, + the rear axle's play
+    # (yaw, camber, slide; 2026-10-31) = 15
+    assert testbed_model.nv == 15
     assert testbed_model.nu == 2
     # 8 roller couplings + 2 gearbox tendon constraints (+ the module's two
     # four-bar loop closures on the default bike)

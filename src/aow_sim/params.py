@@ -320,9 +320,10 @@ def load_params(path: str | Path | None = None,
 
 def with_wheel_play(params: dict, spec) -> dict:
     """`params` with the `wheel_play:` block (build_model's optional play)
-    that `spec` names: ABSENT or None leaves `params` as it is (bike_params
-    has no play, so that is none unless a caller put one there); False strips
-    it; a path is that file's `wheel_play:` block (or the whole file); a dict
+    that `spec` names: ABSENT or None leaves `params` as it is (bike_params'
+    own play since 2026-10-31); False strips it; a path is that file's
+    `wheel_play:` block (or the whole file), its {value:, source:} wrappers
+    stripped so bike_params.yaml itself works; a dict
     is itself, as an export records it. Idempotent once resolved, so the
     trainer and each env can resolve the same config. Relative paths are
     from the repo root (traces/ is not in the GPU pod's tarball: put the
@@ -336,7 +337,7 @@ def with_wheel_play(params: dict, spec) -> dict:
         if not f.is_absolute() and not f.exists():
             f = DEFAULT_PARAMS.parents[1] / f
         doc = yaml.safe_load(f.read_text()) or {}
-        spec = doc.get("wheel_play", doc)
+        spec = _normalize(doc.get("wheel_play", doc))
     if not isinstance(spec, dict):
         raise ValueError(f"wheel_play: a path, a dict, false or absent, not {spec!r}")
     return {**params, "wheel_play": json.loads(json.dumps(spec))}
@@ -351,15 +352,36 @@ FLOOR_KEYS = ("contact_solref", "contact_solimp", "friction_sliding",
               "friction_torsional")
 
 
+def with_contact_solref(params: dict, solref) -> dict:
+    """`params` with `sim.contact_solref` set AND every `sim.contact_parts`
+    solref dropped, so the one contact really is every contact. Since
+    2026-10-31 the wheels carry their own solref, which dictates over the
+    global (build_model._part_contact): setting the global alone would leave
+    the wheels where they were. Everything that sets the contact for a study,
+    a floor overlay or a teleop flag goes through here."""
+    parts = {}
+    for name, over in (params["sim"].get("contact_parts") or {}).items():
+        rest = {k: v for k, v in over.items() if k != "solref"}
+        if rest:
+            parts[name] = rest
+    return {**params, "sim": {**params["sim"], "contact_solref": list(solref),
+                              "contact_parts": parts}}
+
+
 def with_floor(params: dict, spec) -> dict:
     """`params` with an RL config's `floor:` overlay on `sim`: ABSENT or None
     leaves it, a dict of FLOOR_KEYS replaces those. An export records the
-    dict, so replay rebuilds the floor it trained on."""
+    dict, so replay rebuilds the floor it trained on. A floor's contact_solref
+    is every contact's, the wheels' own included (with_contact_solref): what
+    the soft-floor exports (v5 s2-s4) trained on, before the wheels had one."""
     if spec is None:
         return params
     if not isinstance(spec, dict) or set(spec) - set(FLOOR_KEYS):
         raise ValueError(f"floor: a dict of {FLOOR_KEYS}, not {spec!r}")
-    return {**params, "sim": {**params["sim"], **json.loads(json.dumps(spec))}}
+    spec = json.loads(json.dumps(spec))
+    if "contact_solref" in spec:
+        params = with_contact_solref(params, spec["contact_solref"])
+    return {**params, "sim": {**params["sim"], **spec}}
 
 
 def load_raw_params(path: str | Path | None = None, studies: bool = True) -> dict:

@@ -296,10 +296,11 @@ LUG_HALF_THICK = 0.004
 LUG_BOSS_RADIUS = 0.0045
 
 
-# WHEEL PLAY (`wheel_play:`), optional and ABSENT from bike_params.yaml, so the
-# default model and plant_digest are unchanged; `run_vs_sim.py --set
-# 'wheel_play={...}'` switches it on. Free play measured by hand (2026-10-26)
-# as TOTAL sideways travel at the ground, across the play:
+# WHEEL PLAY (`wheel_play:`), in bike_params.yaml since 2026-10-31 (before, only
+# the RL configs and each export's record carried it); `params.with_wheel_play`
+# swaps it, False strips it. Free play measured by hand (2026-10-26) as TOTAL
+# sideways travel at the ground, across the play (the 10-26 values; the
+# current ones are bike_params'):
 #
 #   wheel_play:
 #     front_axle: {travel_mm: 2.5}   # the front wheel on its axle: yaw + camber
@@ -2827,10 +2828,9 @@ def build_spec(
                        {"yaw": (0, 0, 1), "camber": (1, 0, 0)})
     front = hub_f.add_body(name="front_wheel")
     spin = front.add_joint(name="front_spin", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0])
-    # The front axle's dry friction [N m], optional and ABSENT from
-    # bike_params.yaml (default model and plant_digest unchanged). Since
-    # 2026-10-28 a nut on the axle makes the wheel "roll a bit tight";
-    # unmeasured. Set it with `bike.front_wheel.axle_friction_nm`.
+    # The front axle's dry friction [N m], `bike.front_wheel.axle_friction_nm`
+    # (optional; in bike_params since 2026-10-31, measured): the axle nut since
+    # 2026-10-28 makes the wheel "roll a bit tight".
     if fw.get("axle_friction_nm"):
         spin.frictionloss = float(fw["axle_friction_nm"])
     front.add_geom(

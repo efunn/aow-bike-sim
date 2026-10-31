@@ -34,13 +34,16 @@ sim:
   # 64 costs ~3 % of step time, 128 costs 19 % for nothing more.
   mesh_segments: 64
   condim: 4               # 3 = sliding only; 4 adds torsional friction at the contact patch
-  # [time constant s, damping ratio]. The time constant is 4x shorter than
-  # MuJoCo's default 0.02, which let the rollers sink ~2.2 mm. The damping
-  # ratio 1.0 is known to be too high: the real wheel bounced 2-3 times on the
-  # bench (docs/measurements/contact-protocol.md P1), which implies ~0.3. 0.5
-  # was tried and reverted. Note the naming trap: damping ratio enters only the
-  # stiffness term, so lowering it makes the contact STIFFER. To be replaced by
-  # a bench fit.
+  # [time constant s, damping ratio]: every contact WITHOUT its own below --
+  # since 2026-10-31 that is the righting parts (wings, blades, rollcage) and
+  # anything else of the bike's that touches; the front tire and the rollers
+  # carry their own (contact_parts), at this pair's stiffness. Setting this key
+  # for a study or a floor overlay goes through params.with_contact_solref,
+  # which clears the wheels' own so it reaches them too. The time constant is
+  # 4x shorter than MuJoCo's default 0.02, which let the rollers sink ~2.2 mm.
+  # Critically damped, so these parts cannot bounce; unmeasured. Note the
+  # naming trap: damping ratio enters only the stiffness term, so lowering it
+  # makes the contact STIFFER.
   contact_solref: [0.005, 1.0]
   # (dmin, dmax, width, midpoint, power): MuJoCo's default, written out because
   # the result depends on it. Measured on this model:
@@ -49,9 +52,36 @@ sim:
   #   width 1e-4 -> 1e-2   sink at bike weight 0.278 -> 0.419 mm
   # so a bench fit of solref has to pin dmin too. The contact is also nonlinear
   # over the measured range (26.6 N/mm at bike weight, 22.7 at 44 N), from the
-  # faceted cones and a patch that grows as the wheel sinks.
+  # faceted cones and a patch that grows as the wheel sinks. Every contact's,
+  # the wheels' included (contact_parts sets solref only); the 2026-10-31
+  # pivot-drop fit held it here, since a 200 Hz drop cannot see it.
   contact_solimp: {value: [0.9, 0.95, 0.001, 0.5, 2.0], source: GUESS}
-  friction_sliding: {value: 0.9, source: GUESS}      # wheel rubber on hard floor -> P0b pull test
+  # The wheels' own contacts (build_model.CONTACT_PARTS; the floor and the
+  # righting parts keep contact_solref above). NEGATIVE solref: (-stiffness,
+  # -damping), so the two are separate numbers. Stiffness is the shipped
+  # [0.005, 1.0]'s own, 1/(dmax*0.005)^2 = 44321, so the sink is unchanged:
+  # 0.049 mm front at its 4.2 N, 0.148 mm rear at 5.8 N. Damping is fitted to
+  # the pivot drops (2026-10-31, analysis/contact/pivot_drop.py, the bike on the
+  # floor, one end lifted 5-30 mm and let go, read off the TM151 at 200 Hz):
+  # rebound / fall pitch rate, median 0.22 front, 0.48 rear (the rollers bounce
+  # visibly more, user). Shipped damping, 421, could not bounce at all.
+  #   front_tire: 249 = 0.59 x critical (middle half 0.50-0.84, 18 drops)
+  #   roller:     115 = 0.27 x critical (middle half 0.25-0.29, 13 drops)
+  # As positive pairs, timeconst x dampratio = 0.005 kept: [0.00847, 0.59] and
+  # [0.0185, 0.27]; the negative form also stays put if solimp's dmax moves.
+  contact_parts:
+    front_tire:
+      solref: {value: [-44321.0, -249.0], source: measured}
+    roller:
+      solref: {value: [-44321.0, -115.0], source: measured}
+  # Lateral pull on the front tire, the bike upright on the target floor
+  # (2026-10-31, user): breakaway 150 g, steady slide 250 g at 4.72 N on the
+  # front (the measured CoG), so mu 0.31 / 0.52, +-0.03 from the scale's 25 g
+  # marks. The slide's 0.52 is the one standing 90 deg snaps reproduce the
+  # bike's falls at (analysis/policy/axle_friction_snaps.py). One surface, one
+  # direction, the tire only: the rollers' and the righting parts' mu are
+  # unmeasured and take this too.
+  friction_sliding: {value: 0.52, source: measured}
   friction_torsional: {value: 0.005, source: GUESS}  # scales with contact patch size -> validation
   floor_size: 3.0
 
@@ -349,6 +379,14 @@ bike:
     # moves smoothly with lean (docs/plans/mujoco-modeling-decisions.md).
     crown_radius: {value: 0.080, source: model}
     mass: {value: 0.060, source: estimate}
+    # Dry friction on the wheel's spin [N m] (build_model: front_spin's
+    # frictionloss, the same holding it and rolling, load-independent): the
+    # fork faces rubbing the hub since the 10-28 axle nut. Wheel in the air,
+    # weight on a string at 30 mm: 100 g (0.03) as first tightened, 50 g after
+    # loosening 10-31. Tied to wheel_play.front_axle: tightening trades play for
+    # drag, and not predictably (user). Standing 90 deg snaps fall on left
+    # turns at 0.03 and hold at 0.015, as on the bike (physical-bike-tests.md 11).
+    axle_friction_nm: {value: 0.015, source: measured}
   steering:
     gear_ratio: {value: 1.0, source: design}  # servo rotation per steer rotation; range is continuous 360°+
     # Headset friction (the printed bushing and thrust face), on top of the
@@ -531,6 +569,34 @@ control:
   drive:
     # The speed cap teleop and the bike's command path clamp to.
     v_max: 1.2          # m/s; ~70% of the 1.7 no-load ceiling (torque margin)
+
+# Free play at the wheels (build_model's WHEEL PLAY): each group a massless body
+# with limited hinges between a part and what it carries. travel_mm is the
+# TOTAL sideways travel at the ground, end to end, by hand; build_model turns it
+# into a half-angle through the group's lever arm. In the default plant since
+# 2026-10-31 (it was only in the RL configs and each export's own record, which
+# replay still uses: a policy flies the play it trained on unless
+# --wheel-play names another, e.g. this file).
+wheel_play:
+  front_axle:      # the front wheel on its axle: yaw + camber
+    # 1.0 fitted 10-26; the axle nut 10-28 left "no obvious play, at most a
+    # third" (user). Loosened again 10-31 for the axle drag, not re-measured.
+    travel_mm: {value: 0.33, source: estimate}
+    centring_stiffness: {value: 4.0, source: GUESS}     # N m/rad
+    wall_timeconst_s: {value: 0.002, source: model}     # the ends' solref
+  headset:         # steerer clearance: the fork tilts sideways
+    travel_mm: {value: 0.5, source: estimate}           # 1.5 before the 10-28 shim
+    centring_stiffness: {value: 4.0, source: GUESS}
+    wall_timeconst_s: {value: 0.002, source: model}
+  rear_axle:       # the omni wheel on its axle: yaw + camber
+    travel_mm: {value: 2.5, source: measured}           # 10-26
+    centring_stiffness: {value: 4.0, source: GUESS}
+    wall_timeconst_s: {value: 0.002, source: model}
+  rear_axle_lateral:   # the omni wheel sliding along its axle: a slide, N/m and N s/m
+    travel_mm: {value: 1.0, source: measured}           # +-0.5 mm by hand, 10-29
+    centring_stiffness: {value: 2000.0, source: GUESS}  # the hinges' 4 N m/rad at the ground
+    damping: {value: 1.0, source: GUESS}
+    wall_timeconst_s: {value: 0.002, source: model}
 
 righting:
   # The bike's righting: `module`, the V2 four-bar with its blades, and

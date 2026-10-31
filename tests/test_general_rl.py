@@ -363,6 +363,31 @@ def test_w_copper_normalises_by_the_nominal_stall_torque():
     assert moved, "actuator_frac never moved forcerange -- the test is vacuous"
 
 
+def test_axle_friction_range_draws_the_front_axle_and_restores_it():
+    """axle_friction_range (2026-10-31): the front axle's frictionloss drawn
+    per episode inside [lo, hi]; randomization off puts bike_params' own back.
+    Absent, nothing about the draws changes (it is the last one)."""
+    pytest.importorskip("gymnasium")
+    from aow_sim.build_model import load_params
+    from aow_sim.control.general_env import GeneralEnv, _load_rl_config
+    cfg = _load_rl_config()
+    rnd = {**cfg["randomization"], "enabled": True, "axle_friction_range": [0.0, 0.035]}
+    env = GeneralEnv(rl_cfg={**cfg, "env": {**cfg["env"], "ball_prob": 0.0},
+                             "randomization": rnd}, seed=0)
+    dof = env.model.joint("front_spin").dofadr[0]
+    nominal = env._rand._axle0
+    assert nominal == pytest.approx(load_params()["bike"]["front_wheel"]["axle_friction_nm"])
+    seen = set()
+    for seed in range(6):
+        env.reset(seed=seed)
+        v = float(env.model.dof_frictionloss[dof])
+        assert 0.0 <= v <= 0.035
+        seen.add(round(v, 6))
+    assert len(seen) > 1, "never drew -- the test is vacuous"
+    env._rand.reset_nominal()
+    assert env.model.dof_frictionloss[dof] == nominal
+
+
 def test_per_channel_w_smooth_rejects_a_short_list():
     """A 2-list against 3 channels would quietly leave `diff` unpriced --
     which is exactly the experiment being run, so it must never happen by
@@ -1341,8 +1366,10 @@ def test_wings_off_flies_the_righting_module_held_at_stow():
     """Without the wing flags the policy still has 3 channels and the base
     observation -- but since 2026-10-09 the bike CARRIES its righting module
     (V2), its crank held at stow by the firmware model. `righting_module:
-    none` is the wingless bike every earlier export trained on."""
-    env = _env()
+    none` is the wingless bike every earlier export trained on. Without the
+    wheel play: with it the unpowered bike tips within the 25 steps (falls
+    at 0.46 s, 2026-10-31) and the module swings with it."""
+    env = _env(wheel_play=False)
     assert env.obs_dim == OBS_DIM and env.action_space.shape == (3,)
     # 3 commands + the crank; the detailed drivetrain appends two more.
     from aow_sim import drivetrain_model as dm
@@ -1366,7 +1393,7 @@ def test_righting_rigid_carries_the_module_with_no_servo_to_run():
     righting_rigid) -- no crank, so no crank servo and no `swing` actuator;
     the env steps, and a policy that wants to DRIVE the crank is refused."""
     from aow_sim import drivetrain_model as dm
-    env = _env(righting_rigid=True)
+    env = _env(righting_rigid=True, wheel_play=False)   # the play tips it in 25 steps
     assert env.righting_module == "v2" and env._crank is None
     assert env.model.nu == 3 + 2 * dm.enabled(env.p, "servo")
     assert all("swing" not in env.model.joint(i).name

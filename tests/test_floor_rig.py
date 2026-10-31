@@ -136,7 +136,12 @@ def test_skids_stay_on_the_roll_member_when_the_bike_wheelies():
     limit. The skids must stay on the roll member they are drawn on; on the
     chassis they swung ~93 mm off their outriggers (2026-09-25)."""
     from aow_sim.floor_rig import place
-    m = build_rig_model()
+    # The wheelie needs grip: at the measured floor mu 0.52 (2026-10-31) the
+    # drive wheels spin against the stop and the bike pitches only ~2 deg. The
+    # skids are what this tests, so the floor is the old 0.9 that lifts it.
+    p = copy.deepcopy(load_params())
+    p["sim"]["friction_sliding"] = 0.9
+    m = build_rig_model(params=p)
     d = mujoco.MjData(m)
     place(m, d, 0.0)
     mujoco.mj_forward(m, d)
@@ -145,7 +150,7 @@ def test_skids_stay_on_the_roll_member_when_the_bike_wheelies():
     local = lambda g: d.xmat[rb].reshape(3, 3).T @ (d.geom_xpos[g] - d.xpos[rb])
     before = [local(g) for g in gs]
     from aow_sim.drivetrain_model import DrivetrainSim
-    drive = DrivetrainSim.attach(m, load_params())   # the drives only move with it
+    drive = DrivetrainSim.attach(m, p)   # the drives only move with it
     d.ctrl[[m.actuator("drive_a").id, m.actuator("drive_b").id]] = 5.0
     for _ in range(int(1.0 / m.opt.timestep)):
         if drive is not None:

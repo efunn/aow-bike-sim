@@ -19,6 +19,11 @@ Axes:
   dampratio_range— CONTACT RESTITUTION, drawn absolutely (not as a fraction)
                    from [lo, hi], because the plausible band is wide and not
                    centred on the nominal.
+  axle_friction_range — the FRONT AXLE's dry friction [N m] (`front_spin`'s
+                   frictionloss), drawn absolutely from [lo, hi]. The axle nut
+                   trades play for drag and is re-set by hand: 0.03 as first
+                   tightened, 0.015 loosened (2026-10-31), and standing 90 deg
+                   snaps fall at the one and hold at the other.
 
 Why contact was worth adding (2026-08): `contact_solref` is the least known
 parameter in the model -- the bench measurements that would pin it are only
@@ -62,6 +67,11 @@ class DomainRandomizer:
         self._forcerange0 = model.actuator_forcerange.copy()
         self._ctrlrange0 = model.actuator_ctrlrange.copy()
         self._solref0 = model.geom_solref.copy()
+        try:                          # absent on the wheel-only variants
+            self._axle_dof = int(model.joint("front_spin").dofadr[0])
+            self._axle0 = float(model.dof_frictionloss[self._axle_dof])
+        except KeyError:
+            self._axle_dof = None
         # The supply draw, kept so a per-step actuator outside the model arrays
         # -- the detailed drivetrain's servo loop -- can follow the same
         # battery. 1.0 whenever actuator_frac draws nothing.
@@ -74,6 +84,8 @@ class DomainRandomizer:
         self.model.actuator_forcerange[:] = self._forcerange0
         self.model.actuator_ctrlrange[:] = self._ctrlrange0
         self.model.geom_solref[:] = self._solref0
+        if self._axle_dof is not None:
+            self.model.dof_frictionloss[self._axle_dof] = self._axle0
         self.supply_scale = 1.0
 
     def apply(self, rng) -> None:
@@ -98,9 +110,22 @@ class DomainRandomizer:
         # nominal contact, so existing runs reproduce exactly.
         sf = float(r.get("solref_frac", 0.0))
         dr = r.get("dampratio_range")
+        if (sf > 0.0 or dr) and (self._solref0 < 0).any():
+            # A negative solref (-stiffness, -damping) -- the wheels' own since
+            # 2026-10-31 -- is not (timeconst, dampratio): column 1 would be
+            # overwritten with a dampratio. Not ported; say so.
+            raise NotImplementedError("solref_frac / dampratio_range on a model "
+                                      "with negative solref (sim.contact_parts)")
         if sf > 0.0:
             self.model.geom_solref[:, 0] = (self._solref0[:, 0]
                                             * (1 + rng.uniform(-sf, sf)))
         if dr:
             self.model.geom_solref[:, 1] = rng.uniform(float(dr[0]),
                                                        float(dr[1]))
+        # Last, so a config without it draws exactly what it always did.
+        ax = r.get("axle_friction_range")
+        if ax:
+            if self._axle_dof is None:
+                raise ValueError("axle_friction_range: this model has no front_spin")
+            self.model.dof_frictionloss[self._axle_dof] = rng.uniform(float(ax[0]),
+                                                                      float(ax[1]))

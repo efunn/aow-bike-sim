@@ -54,6 +54,7 @@ from aow_sim.build_model import (
     DYN_CONAFF, DYN_CONTYPE, _add_world, _apply_options, _contact_friction,
     _quat_z_to, _Y_AXIS_QUAT, load_params,
 )
+from aow_sim.params import with_contact_solref
 
 MODES = ("cones", "spheres2", "spheres1", "capsules", "torus")
 # Read from the config rather than hard-coded, so the "<- shipped" markers
@@ -229,7 +230,7 @@ def build_rig(mode="cones", n_axles=None, timestep=None, segments=None,
     if segments:
         p["sim"]["mesh_segments"] = segments
     if solref:
-        p["sim"]["contact_solref"] = list(solref)
+        p = with_contact_solref(p, solref)      # the wheels' own solref too
     spec = mujoco.MjSpec()
     spec.modelname = f"aow_rig_{mode}"
     _apply_options(spec, p)
