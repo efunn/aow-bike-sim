@@ -65,6 +65,7 @@ BUILD_PID=$!
 if [ -z "${SKIP_CHECKS:-}" ]; then
 step check_v3s0   python analysis/gpu/phase3/check_graph.py $G --steps 300
 step check_random python analysis/gpu/phase3/check_graph.py $G --steps 100 --random
+step check_contacts python analysis/gpu/phase3/check_contact_parts.py   # the wheels' negative solref, Warp against C
 fi
 wait $BUILD_PID || { echo "build failed: results/build.log"; exit 1; }
 if [ -n "${PUFFER_SEED:-}" ]; then

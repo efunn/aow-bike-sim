@@ -21,6 +21,16 @@ enumerates as "STM32 Virtual ComPort", 0483), then checked by content: no
 decoded Combo frames in 2 s and it refuses, naming the port.
 
     python bench/ahrs_stream.py              # find it, print 2 s of frames
+    python bench/ahrs_stream.py --record pivot_drops            # until Ctrl-C
+    python bench/ahrs_stream.py --record pivot_drops --seconds 90
+
+--record TAG keeps every frame until Ctrl-C (or --seconds) and writes
+traces/ahrs/<stamp>_<TAG>.csv, printing the pitch and roll twice a second
+so a lift can be held still and read before it is let go. Nothing else may
+hold the port: stop run_bike first. Made for the pivot drop (2026-10-31):
+one end of the bike lifted 10-25 mm about the other wheel's contact and
+released, the rebound read off the pitch rate against the same drop in the
+sim, for the contact's damping.
 """
 from __future__ import annotations
 
@@ -161,8 +171,45 @@ class AhrsStream:
         return len(rows)
 
 
+def record(port: str, tag: str, seconds: float | None) -> None:
+    """Every frame until Ctrl-C or `seconds`, then traces/ahrs/<stamp>_<tag>.csv."""
+    out = (Path(__file__).resolve().parents[1] / "traces" / "ahrs"
+           / f"{time.strftime('%y%m%d-%H%M%S')}_{tag}.csv")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    a = AhrsStream(port)
+    hz = a.wait_ready()
+    print(f"{port}: Combo at {hz:.0f} Hz, recording "
+          f"{f'{seconds:g} s' if seconds else 'until Ctrl-C'} -> {out}", flush=True)
+    t0 = time.perf_counter()
+    try:
+        while seconds is None or time.perf_counter() - t0 < seconds:
+            time.sleep(0.5)
+            if a.error:
+                print(f"reader stopped: {a.error}")
+                break
+            with a.lock:
+                last = dict(zip(COLUMNS, a.rows[-1]))
+            print(f"  {time.perf_counter() - t0:6.1f} s  pitch {last['pitch_deg']:+7.2f}  "
+                  f"roll {last['roll_deg']:+7.2f} deg", flush=True)
+    except KeyboardInterrupt:
+        pass
+    a.close()
+    n = a.write(out)
+    print(f"wrote {n} frames ({a.combo()} Combo, {a.crc_bad} CRC failures) to {out}")
+
+
 if __name__ == "__main__":
-    port = sys.argv[1] if len(sys.argv) > 1 else find_port()
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("port", nargs="?", default=None, help="default: the one STM32 port")
+    ap.add_argument("--record", metavar="TAG", default=None,
+                    help="keep every frame until Ctrl-C, to traces/ahrs/<stamp>_<TAG>.csv")
+    ap.add_argument("--seconds", type=float, default=None, help="--record: stop after this")
+    args = ap.parse_args()
+    port = args.port or find_port()
+    if args.record:
+        record(port, args.record, args.seconds)
+        sys.exit(0)
     a = AhrsStream(port)
     hz = a.wait_ready()
     time.sleep(1.5)

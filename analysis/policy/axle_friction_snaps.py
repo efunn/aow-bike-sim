@@ -24,6 +24,9 @@ the new heading, how long that took, and the heading error at the end; and
 the peak yaw rate in the turn's direction. `--play-from` flies the policy on
 another move's wheel play (or `none`), so two policies share one plant;
 `--floor-mu` / `--floor-timeconst` override the floor it stands on.
+`--contact-part PART TIMECONST DAMPRATIO` (repeatable) sets one ground part's
+solref, as run_drive --teleop does. `--com-y` moves the whole bike's centre of mass sideways (+ = left, the +90
+turn's side) by shifting the chassis body's own, from 0.5 mm left as built.
 """
 from __future__ import annotations
 
@@ -39,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def _episode(job):
-    name, mu, sign, seed, hold, after, config, play_from, floor = job
+    name, mu, sign, seed, hold, after, config, play_from, floor, com_y, parts = job
     from aow_sim.build_model import load_params
     from aow_sim.control.general_env import _load_rl_config
     from aow_sim.eval_general import _eval_cfg
@@ -49,6 +52,8 @@ def _episode(job):
     cfg["env"] = {**cfg["env"], "max_episode_s": hold + after + 1.0}
     p = copy.deepcopy(load_params())
     p["bike"]["front_wheel"]["axle_friction_nm"] = mu
+    if parts:
+        p["sim"]["contact_parts"] = {**(p["sim"].get("contact_parts") or {}), **parts}
     pol = load_general(name)
     if play_from == "none":
         pol.wheel_play = None
@@ -57,6 +62,9 @@ def _episode(job):
     if floor:
         pol.floor = {**(pol.floor or {}), **floor}
     env = env_for(pol, p, cfg)
+    if com_y:
+        m = env.model
+        m.body_ipos[1][1] += com_y * m.body_subtreemass[1] / m.body_mass[1]
     sc = np.array([pol.bounds.steer_rate_max, pol.bounds.hub_max, pol.bounds.diff_max])
     sc = np.where(sc == 0, 1, sc)
     obs, _ = env.reset(seed=seed, options={"v_cmd": (0.0, 0.0), "psi_cmd_rel": 0.0,
@@ -101,6 +109,11 @@ def main():
     ap.add_argument("--play-from", default=None, metavar="MOVE|none",
                     help="fly on ANOTHER move's wheel play (or none), so two "
                          "policies can share one plant")
+    ap.add_argument("--contact-part", nargs=3, action="append", default=None,
+                    metavar=("PART", "TIMECONST", "DAMPRATIO"),
+                    help="sim.contact_parts.<PART>.solref (front_tire, roller, righting)")
+    ap.add_argument("--com-y", type=float, default=0.0, metavar="MM",
+                    help="shift the bike's centre of mass sideways [mm], + = left")
     ap.add_argument("--floor-mu", type=float, default=None,
                     help="the floor's sliding friction (sim.friction_sliding)")
     ap.add_argument("--floor-timeconst", type=float, default=None, metavar="S",
@@ -114,7 +127,9 @@ def main():
         floor["friction_sliding"] = a.floor_mu
     if a.floor_timeconst is not None:
         floor["contact_solref"] = [a.floor_timeconst, 1.0]
-    jobs = [(name, mu, s, seed, a.hold, a.after, a.config, a.play_from, floor)
+    parts = {n: {"solref": [float(tc), float(dr)]} for n, tc, dr in (a.contact_part or [])}
+    jobs = [(name, mu, s, seed, a.hold, a.after, a.config, a.play_from, floor,
+             a.com_y / 1000, parts)
             for mu in a.friction for s in (1, -1) for seed in range(a.seeds)]
     with ProcessPoolExecutor(a.workers) as ex:
         res = list(ex.map(_episode, jobs))
@@ -122,7 +137,9 @@ def main():
     plant = {None: "its own", "none": "no"}.get(a.play_from) or f"{a.play_from}'s"
     print(f"{name} on {plant} wheel play: standing +-90 deg snaps after {a.hold} s "
           f"at rest, {a.seeds} seeds per direction, watched {a.after} s"
-          + (f", floor {floor}" if floor else ""))
+          + (f", floor {floor}" if floor else "")
+          + (f", CoM {a.com_y:+g} mm sideways" if a.com_y else "")
+          + (f", contacts {parts}" if parts else ""))
     print(f"{'axle N m':>9}  {'+90 fell':>8}  {'-90 fell':>8}  {'t to fall, s':>13}  "
           f"{'within 10 deg':>13}  {'t to 10 deg, med':>16}  {'final err, med':>14}  "
           f"{'peak yaw, med':>13}")

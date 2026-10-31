@@ -1,7 +1,8 @@
 #!/bin/bash
 # The tarball a GPU pod needs, from the repo root here:  bash analysis/gpu/bundle.sh OUT.tgz
 # Code, configs, v3_s0 (the checks fly it; in moves/archive/ since 10-16), general_puffer_fixes_52M
-# (bench_env's MinGRU driver) and the GPU scripts; never results,
+# (bench_env's MinGRU driver), the GPU scripts and the pivot drop that
+# check_contact_parts.py flies; never results,
 # caches or anything git-ignored. ~1.1 MB. On the pod: mkdir ~/aow && tar xzf
 # into it. Copy files, never a git remote: no token goes on a rented machine.
 set -e
@@ -12,5 +13,6 @@ COPYFILE_DISABLE=1 tar czf "$OUT" --no-xattrs \
     src config pyproject.toml \
     moves/archive/general_rl_v3_s0.npz moves/archive/general_rl_v3_s0.yaml \
     moves/general_puffer_fixes_52M.npz moves/general_puffer_fixes_52M.yaml \
+    analysis/contact/pivot_drop.py \
     analysis/gpu
 ls -la "$OUT" | awk '{print $5, $NF}'
