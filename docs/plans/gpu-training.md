@@ -1455,6 +1455,26 @@ on 2 seeds. s1 80M reads like v4 throughout (standstill 0.16-0.19 m/s,
 record (the NOTE above is fixed); v4 on its own plant: 0.12-0.19 m/s,
 0.05-0.11 m. Not yet: all four on ONE floor, `chatter.py`, the bike.
 
+**v6, the measured plant (configured 2026-10-31, NOT RUN)**.
+`rl_general_v6.yaml`: v5 s1's config on plant 46c263de -- `bike_params.yaml`
+now carries the wheel play (v5's), the tire's and rollers' own contacts
+(negative solref, damping from the pivot drops), floor mu 0.52 and the
+front axle's drag 0.015 N m -- with `friction_frac` 0.2 -> 0.3 (mu 0.36-0.68)
+and a new `axle_friction_range: [0.0, 0.035]`, ported to `gpu/reset.py`
+(per-world `dof_frictionloss`; on CPU Warp the GPU env draws it per world
+and steps finite). New on the pod: `step check_contacts`
+(`check_contact_parts.py`, in both run scripts) flies the pivot drop in
+MJWarp and C on the negative-solref wheels -- not a gate; read
+`results/check_contacts.log` (CPU Warp 10-31: rebound / fall 0.237 vs 0.261
+front, 0.497 vs 0.492 rear; the shipped pair's gap alike). Four seeds of one
+config, as v5:
+
+    scripts/gpu.sh up HOST PORT SEEDS=4 CONFIG=config/rl/rl_general_v6.yaml
+
+Untested on a card: the plant's cost (v5's plant ran 62-65k steps/s in all
+under MPS; the contact parts add no joints, the play none beyond v5's).
+Before it: `test_rest_stability` (`status.md` next #1).
+
 ### Phase 4 -- algorithm parity
 
 - **Network.** 5.0 has NO built-in MLP [read, `algo.cu` @ ea7f989]:

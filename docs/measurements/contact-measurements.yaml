@@ -81,13 +81,28 @@ p0b_pull:
   # (front through the spokes, rear by tightening the axle), rolling direction
   # only, pulled slowly and low. Rig as built goes in rig_notes. See the protocol.
   # Shipped guess 0.9.
-  rig_notes: ""               # str -- what the rig actually was, how it was steadied
-  surface: ""                 # str -- material, backing, clean?
-  pulls: []                   # [{wheel: front|rear, load_g, pull_g, kind: kinetic|static, lean_deg: 0}]
+  rig_notes: >
+    2026-10-31, user: no rig. The whole bike upright on the floor, held
+    upright by hand, a pull scale (25 g marks) hooked at axle height --
+    through the fork, or the spokes at axle height -- pulled SIDEWAYS, so the
+    tire slid without turning (the wheel was not locked; it did not roll).
+    One load: the bike's own share on the front, 4.72 N (481 g) from the
+    measured CoG (83.3 mm ahead of the rear axle, wheelbase 200.5).
+  surface: "the target floor, as driven on; rigid (no give, user)"
+  pulls:
+    - {wheel: front, load_g: 481, pull_g: 150, kind: static, lean_deg: 0, direction: lateral}
+    - {wheel: front, load_g: 481, pull_g: 250, kind: kinetic, lean_deg: 0, direction: lateral}
   notes: >
-    Not yet measured. The spread across pulls is not noise to average away
-    -- it is what sets randomization.friction_frac, currently 0.2 about a
-    nominal 0.9 (so every policy in moves/ has only seen mu 0.72-1.08).
+    mu 0.31 breaking away, 0.52 sliding (a steady slow slide needed MORE
+    than the breakaway -- unusual; rubber's friction can rise with sliding
+    speed, unverified), +-0.03 from the scale's marks. 0.52 went into
+    bike_params (sim.friction_sliding), the value standing 90 deg snaps
+    reproduce the bike's falls at (physical-bike-tests.md 11). One load and
+    no lock, so no slope: none is needed sideways (nothing turns, so no
+    constant drag to subtract). The rear's 150-250 g sideways is the
+    rollers' rolling drag, NOT grip (they roll that way). Rolling direction
+    and the rollers' mu: unmeasured. v6 randomizes friction_frac 0.3 about
+    0.52 (0.36-0.68).
 
 p0b_tread_print:
   # friction_torsional ~ (2/3..0.59) * mu * a, a = sqrt(print area / pi).
@@ -159,3 +174,34 @@ derived:
   friction_sliding: 0.0             # float — from p0b, = tan(mean angle)
   friction_frac_suggested: 0.0      # float — from the SPREAD of p0b, not the mean
   date: ""                          # str — YYYY-MM-DD the values were adopted
+
+pivot_drop_2026_10_31:
+  # The whole bike on the target floor, one end lifted about the other
+  # wheel's contact and let go by hand, read off its own TM151 at 200 Hz
+  # (bench/ahrs_stream.py --record; traces/ahrs/261031-134407_pivot_drops.csv,
+  # 169 s). Motors off, wings stowed. Fitted by analysis/contact/pivot_drop.py:
+  # each drop's lift from its held pitch (h0 = wheelbase x sin), the same drop
+  # flown in the sim, the damping matched on rebound / fall pitch rate.
+  drops: {front: 23, rear: 25}
+  lift_mm: [5.2, 30.0]
+  rebound_over_fall_median: {front: 0.22, rear: 0.48}   # pitch rate, 200 Hz; the rollers bounce visibly more (user)
+  fitted_damping_x_critical:        # stiffness held at the shipped [0.005, 1.0]'s, 44321
+    front_tire: {median: 0.59, iqr: [0.50, 0.84], drops_used: 18}
+    roller: {median: 0.27, iqr: [0.25, 0.29], drops_used: 13}
+  solref_negative: {front_tire: [-44321, -249], roller: [-44321, -115]}   # in bike_params
+  solref_positive: {front_tire: [0.00847, 0.59], roller: [0.0185, 0.27]}  # the same contacts
+  notes: >
+    The bike falls 10-50 deg/s slower than the sim: the hand's release
+    ("extremely hard to drop completely smoothly", user). Kept: drops whose
+    fall is within 30 % of the sim's; the ratio cancels a slow start. Not the
+    gyro: the 10-07 drop rig runs bound the TM151's own smoothing at ~3 ms
+    (impact peaks at or above free fall's 28-63 deg/s; 10 ms would cut them
+    by ~23). Cannot see stiffness (the contact is under one 200 Hz sample:
+    timeconst 0.005 vs 0.01 moved the sim's rebound 2 deg/s) nor solimp, so
+    both stay as shipped; the sink is unchanged. Refit with the other wheel
+    on its own fitted contact: 0.60 / 0.27. MJWarp agrees with C on these
+    contacts (analysis/gpu/phase3/check_contact_parts.py, CPU Warp: rebound /
+    fall 0.237 vs 0.261 front, 0.497 vs 0.492 rear). The drop rig's 10-03
+    fit (negative solref + solimp, analysis/contact/drop_rig_sim.py --fit)
+    read 2-4x softer than the hand drops and the dial on the same tire --
+    the rig's own give, probably -- and was not used.
