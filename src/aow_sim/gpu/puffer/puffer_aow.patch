@@ -1,5 +1,5 @@
 diff --git a/src/algo.cu b/src/algo.cu
-index 7d667ea6..3293b8e1 100644
+index 7d667ea..3293b8e 100644
 --- a/src/algo.cu
 +++ b/src/algo.cu
 @@ -1284,6 +1284,60 @@ enum LossIdx {
@@ -140,7 +140,7 @@ index 7d667ea6..3293b8e1 100644
  
      PPOKernelArgs args = {
 diff --git a/src/pufferl.cu b/src/pufferl.cu
-index 14be4eb2..d5f519b5 100644
+index 14be4eb..5f1fae6 100644
 --- a/src/pufferl.cu
 +++ b/src/pufferl.cu
 @@ -1537,6 +1537,10 @@ static void train_epoch_gpu(PuffeRL* pufferl, RolloutBuf src, int slot,
@@ -164,3 +164,38 @@ index 14be4eb2..d5f519b5 100644
      puf_stamp<<<1, 1, 0, stream>>>(st + TE_E);
  }
  
+@@ -3032,6 +3039,34 @@ TrainResult run_train(Ini* ini, TrainContext* ctx) {
+     }
+ 
+     PuffeRL* pufferl = create_pufferl(ini, ctx);
++    {   // AoW: warm start. base.load_model_path (a .bin, or "latest") replaces
++        // the seeded init with a checkpoint's weights; upstream reads it in
++        // eval only. Weights only: the optimizer, LR schedule and step count
++        // start fresh. The file must be exactly this net's size.
++        char load_buf[4096];
++        const char* load = puf_checkpoint_path_key(ini, "load_model_path",
++            load_buf, sizeof(load_buf));
++        if (load) {
++            Policy* pol = &pufferl->policies[0];
++            FILE* fp = fopen(load, "rb");
++            if (!fp) { fprintf(stderr, "load_model_path %s: cannot open\n", load); exit(1); }
++            fseek(fp, 0, SEEK_END);
++            long bytes = ftell(fp);
++            fclose(fp);
++            long want = (long)(numel(pol->master_weights.shape) * sizeof(float));
++            if (bytes != want) {
++                fprintf(stderr, "load_model_path %s: %ld bytes, this net is %ld\n",
++                    load, bytes, want);
++                exit(1);   // arch or obs width differs; not assert: NDEBUG drops it
++            }
++            pufferl_load_policy(pufferl, 0, load);
++            if (pufferl->hypers.async) {
++                puf_copy(&pufferl->actor_param, &pol->param, pufferl->default_stream);
++                cudaDeviceSynchronize();
++            }
++            printf("AOW warm start: %s (%ld bytes)\n", load, bytes);
++        }
++    }
+     Selfplay selfplay = {0};
+     if (use_selfplay) {
+         char initial_checkpoint[4096];

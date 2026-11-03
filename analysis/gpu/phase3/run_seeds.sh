@@ -71,12 +71,16 @@ wait $BUILD_PID || { echo "build failed: results/build.log"; exit 1; }
 if [ -n "${HORIZON:-}" ]; then
     sed -i "s/^horizon = .*/horizon = $HORIZON/" ~/puffer/config/aow_bike.ini
 fi
+# warm start / fine-tune (gpu.sh LOAD, LR, STEPS_M): the ini every run copies
+[ -z "${LOAD:-}" ] || sed -i "s#^load_model_path = .*#load_model_path = $LOAD#" ~/puffer/config/aow_bike.ini
+[ -z "${LR:-}" ] || sed -i "s/^learning_rate = .*/learning_rate = $LR/" ~/puffer/config/aow_bike.ini
+[ -z "${STEPS_M:-}" ] || sed -i "s/^total_timesteps = .*/total_timesteps = $(awk "BEGIN{printf \"%d\", $STEPS_M * 1000000}")/" ~/puffer/config/aow_bike.ini
 for k in $(seq 1 $SEEDS); do
     rm -rf ~/puffer_s$k && cp -r ~/puffer ~/puffer_s$k && rm -rf ~/puffer_s$k/checkpoints ~/puffer_s$k/logs
     sed -i -e "s#^graph = .*#graph = $(realpath graphs/aow_bike_${NW}_s$k)#" \
         -e "s/^seed = .*/seed = $((PUFFER_SEED + k - 1))/" ~/puffer_s$k/config/aow_bike.ini
     mkdir -p results/seed_$k
-    grep -n '^seed\|^horizon\|^total_agents\|^graph' ~/puffer_s$k/config/aow_bike.ini \
+    grep -n '^seed\|^horizon\|^total_agents\|^load_model_path\|^learning_rate\|^total_timesteps\|^graph' ~/puffer_s$k/config/aow_bike.ini \
         | tee results/seed_$k/ini.txt | tr '\n' ' ' >> results/build.log; echo >> results/build.log
 done
 if [ "$MPS" = 1 ] && [ "$SEEDS" -gt 1 ]; then

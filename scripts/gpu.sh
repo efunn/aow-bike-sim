@@ -24,6 +24,13 @@
 #   TRAIN_S is a wall cap (3600 s one run, 7200 several) that cuts a run
 #   short of the ini's 80M on a card under ~23k steps/s: an A40 on the v4
 #   plant needed TRAIN_S=5400 (2026-10-26)
+#   LOAD=<local .bin>  WARM START (fine-tune): every seed starts from this
+#                    checkpoint's weights instead of a random init -- same
+#                    net and obs width, or the trainer refuses (size check).
+#                    Weights only: optimizer, LR schedule, curriculum and step
+#                    count start fresh, so pair it with LR (learning_rate,
+#                    default 0.005; e.g. 0.001) and STEPS_M (total_timesteps
+#                    in millions, default 80; e.g. 20). Untried on a card.
 #
 # NOT here: creating and terminating the pod. That is the RunPod console or
 # its API (no key on this machine); see the runbook for the pod spec. Rules
@@ -38,9 +45,9 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 P3=analysis/gpu/phase3
-PASS="SEEDS CONFIG CONFIGS NW HORIZON CURRICULUM_LEAD ENV_SEED PUFFER_SEED TRAIN_S MPS SKIP_CHECKS"
+PASS="SEEDS CONFIG CONFIGS NW HORIZON CURRICULUM_LEAD ENV_SEED PUFFER_SEED TRAIN_S MPS SKIP_CHECKS LOAD LR STEPS_M"
 
-usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,/^set -e/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 1; }
 remote() {  # remote HOST PORT CMD
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
         -p "$2" root@"$1" "$3"
@@ -69,12 +76,20 @@ up)
         [[ " $PASS " == *" $k "* ]] || { echo "unknown VAR $k (one of: $PASS)"; exit 1; }
         ENVS="$ENVS $kv"
     done
+    LOADF=""
+    if [[ " $ENVS " == *" LOAD="* ]]; then   # the local .bin goes up beside the bundle
+        for kv in $ENVS; do [[ $kv == LOAD=* ]] && LOADF=${kv#LOAD=}; done
+        [ -f "$LOADF" ] || { echo "LOAD: no file $LOADF"; exit 1; }
+        ENVS=$(for kv in $ENVS; do [[ $kv == LOAD=* ]] || printf '%s ' "$kv"; done)
+        ENVS="$ENVS LOAD=/root/warm_start.bin"
+    fi
     TMP=$(mktemp -d)
     bash analysis/gpu/bundle.sh "$TMP/bundle.tgz"
     # the newest Warp kernel cache pulled from any run: a card of another
     # architecture just compiles once (~1 min)
     CACHE=$(ls -t $P3/results_*/warp-cache.tgz 2>/dev/null | head -1 || true)
     scp -q -o BatchMode=yes -P "$PORT" "$TMP/bundle.tgz" ${CACHE:+"$CACHE"} root@"$HOST":/root/
+    [ -z "$LOADF" ] || scp -q -o BatchMode=yes -P "$PORT" "$LOADF" root@"$HOST":/root/warm_start.bin
     [ -n "$CACHE" ] && [ "$(basename "$CACHE")" != warp-cache.tgz ] && \
         remote "$HOST" "$PORT" "mv ~/$(basename "$CACHE") ~/warp-cache.tgz"
     remote "$HOST" "$PORT" "[ ! -e ~/aow/results ] || { echo 'results/ exists: move it aside first'; exit 1; }
@@ -138,4 +153,7 @@ export)
     echo "       python analysis/gpu/phase3/standstill.py <names>"
     ;;
 *) usage ;;
-esac
+esac; exit $?   # same line as esac: bash reads a script as it runs, so
+                # without this an edit to this file during a long `watch`
+                # resumes at the old byte offset in the new text (2026-11-02:
+                # `R: unbound variable`, from the middle of `export`)

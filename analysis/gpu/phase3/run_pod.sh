@@ -74,7 +74,11 @@ fi
 if [ -n "${HORIZON:-}" ]; then
     sed -i "s/^horizon = .*/horizon = $HORIZON/" ~/puffer/config/aow_bike.ini
 fi
-grep -n '^seed\|^horizon\|^total_agents' ~/puffer/config/aow_bike.ini | tee -a results/build.log
+# warm start / fine-tune (gpu.sh LOAD, LR, STEPS_M): the ini every run copies
+[ -z "${LOAD:-}" ] || sed -i "s#^load_model_path = .*#load_model_path = $LOAD#" ~/puffer/config/aow_bike.ini
+[ -z "${LR:-}" ] || sed -i "s/^learning_rate = .*/learning_rate = $LR/" ~/puffer/config/aow_bike.ini
+[ -z "${STEPS_M:-}" ] || sed -i "s/^total_timesteps = .*/total_timesteps = $(awk "BEGIN{printf \"%d\", $STEPS_M * 1000000}")/" ~/puffer/config/aow_bike.ini
+grep -n '^seed\|^horizon\|^total_agents\|^load_model_path\|^learning_rate\|^total_timesteps' ~/puffer/config/aow_bike.ini | tee -a results/build.log
 # the trainer, headless, for a fixed wall time; its own log is the result
 ( cd ~/puffer && step_t0=$(date +%s.%N) && \
   timeout $TRAIN_S ./puffer train --headless > $OLDPWD/results/train.log 2>&1; \
