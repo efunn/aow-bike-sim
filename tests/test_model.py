@@ -170,14 +170,38 @@ def test_gearbox_mixing(params, testbed_model):
 
 @pytest.mark.contact
 def test_rest_stability(params):
-    """With training wheels, the bike stands still: no jitter, drift, or sinking."""
+    """With training wheels, the bike stands still: no jitter, drift, or sinking.
+
+    Speeds are the max over the last 0.5 s, in two groups. The bike (free
+    joint, steer, drivetrain, wings) must hold still. The rollers, the ring
+    they gear to and the wheel-play joints get a looser bound of their own:
+    since the rear axle's play (either its hinges or its slide, alone) went
+    into bike_params on 2026-10-31, the one roller on the floor chatters at
+    ~277 Hz, peak 0.53 rad/s (0.009 without play), the camber hinge 0.09 --
+    micrometres at that frequency, the chassis under 0.001. It shrinks with
+    the timestep (0.36 at 0.2 ms, 0.27 at 0.1 ms) and barely with hinge
+    damping, so it is the solver, not a mode of the bike. The bound is ~2x
+    what it is now: a growing chatter still fails here.
+    """
     m = build_model(params, variant="full", training_wheels=True)
     d = mujoco.MjData(m)
-    _step_for(m, d, 2.0)
+    names = [m.joint(m.dof_jntid[i]).name for i in range(m.nv)]
+    chatter = np.array([n.startswith("roller_spin") or n == "ring_spin" or "_play" in n
+                        for n in names])
+    _step_for(m, d, 1.5)
+    peak = np.zeros(m.nv)
+    for _ in range(int(0.5 / m.opt.timestep)):
+        mujoco.mj_step(m, d)
+        peak = np.maximum(peak, np.abs(d.qvel))
+    assert np.all(np.isfinite(d.qacc)), "simulation blew up"
     assert np.linalg.norm(d.qpos[:2]) < 0.005, "bike drifted at rest"
     r_rear = params["omni_wheel"]["outer_radius"]
     assert d.qpos[2] > r_rear - 0.002, "bike sank into the floor"
-    assert np.abs(d.qvel).max() < 0.05, "bike jitters at rest"
+    worst = lambda mask: max(np.flatnonzero(mask), key=lambda i: peak[i])
+    i = worst(~chatter)
+    assert peak[i] < 0.05, f"bike jitters at rest: {names[i] or 'free joint'} {peak[i]:.3f} rad/s"
+    i = worst(chatter)
+    assert peak[i] < 1.0, f"roller / wheel-play chatter grew: {names[i]} {peak[i]:.3f} rad/s"
 
 
 @pytest.mark.contact

@@ -25,10 +25,11 @@
 # Unchanged on purpose: the reward, the curriculum, the obs (20, with the
 # detent phase), the drivetrain overlay, every other randomization.
 #
-# Before it (outstanding): tests/test_model.py::test_rest_stability is red --
-# the play's rear camber hinge rattles at rest (0.09 rad/s, rollers to 0.55;
-# the chassis still), which every play-trained policy has seen at about half
-# that. Decide whether that is a bug before training on it.
+# The rest rattle (settled 2026-11-02): the rear axle's play, hinges or slide
+# alone, makes the roller on the floor chatter at ~277 Hz (0.53 rad/s, camber
+# hinge 0.09; the chassis under 0.001). It shrinks with the timestep and not
+# with damping: the solver, not the bike. test_rest_stability now bounds it
+# separately (1.0 rad/s) from the bike's own joints (0.05).
 #
 # Pod checks beyond gpu.sh's: analysis/gpu/phase3/check_contact_parts.py
 # (MJWarp against C on the negative-solref wheels; CPU Warp 10-31: rebound /
