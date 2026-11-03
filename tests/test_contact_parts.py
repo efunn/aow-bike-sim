@@ -172,8 +172,18 @@ def test_the_split_did_not_move_the_plant_digest():
                           1.0 mm total travel
         46c263de90495ac6  2026-10-31  bike.front_wheel.axle_friction_nm 0.015
                           measured (50 g at 30 mm, the loosened axle nut)
+        47f14be28a5d6232  2026-11-03  the bike as weighed, 1003 g: the rollcage's
+                          unfitted caps and sheet out (the 212 g `roof`
+                          capsule -> the two rings, 34.1 g each, their own
+                          contact, mass at the CAD centroid, + their 6-32s);
+                          cables 41 g as a part up high; the Pi's mass 10 mm
+                          to its port end; blades 38.8 -> 38.1 (slicer);
+                          wing_hub split (rocker + knuckle, steel pin, the
+                          slicer's stub, the wings' 6-32s); every other
+                          printed estimate x bike.printed_mass_scale 0.930.
+                          CoM 108.4 mm up against 108.9 +-0.5 hung
     """
-    assert plant_digest(load_params()) == "46c263de90495ac6"
+    assert plant_digest(load_params()) == "47f14be28a5d6232"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

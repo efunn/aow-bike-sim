@@ -253,23 +253,33 @@ bike:
   rake_deg: {value: 20.0, source: design}      # steering axis tilt back from vertical
   fork_offset: {value: 0.0, source: design}  # perpendicular distance steer axis -> front axle
   chassis:
-    # The residual: everything no entry below names, i.e. cables and fasteners.
+    # The residual: everything no entry below names, i.e. the fasteners.
     # Weighed by item 2026-10-21, times the count on the bike:
-    #   5 JST servo cables x 5 g = 25, 2 USB 6" cables x 8 g = 16,
     #   17 6-32 screws + nuts x 1.2 g = 20.4.
-    # Not in it: the 4-40 and M2 screws (not weighed, a few g), and the
-    # rollcage's and wings' 6-32s (not fitted yet).
+    # The cables, weighed with them, are their own part since 11-03
+    # (frame_parts.cables), up where they run.
+    # Not in it: the 4-40 and M2 screws (not weighed, a few g). The rollcage's
+    # and the wings' 6-32s are with their parts (righting.rollcage.mass.screws,
+    # righting.module.wing_screws).
     # Check: the bike without blades, battery or rollcage weighed 772 g; the model
     # reads 791 g for the same bike. About 11 g of that is the wing hubs' stubs
     # (in the CAD, not on the bike); the rest is presumably the printed parts,
     # still CAD estimates.
-    mass: {value: 0.061, source: measured}
+    mass: {value: 0.0204, source: measured}
     # true: spread over the frame parts in proportion to their mass, so it draws
     # as nothing of its own. false: its own box below. The box stays either way
     # (massless when spread) as the older studies' contact envelope.
     spread: true
     box_size: [0.20, 0.04, 0.10]         # inertia primitive (full extents): the rails' span
     com_pos: [0.10, 0.0, 0.08]           # chassis-frame position of that primitive (origin = rear axle)
+  # EVERY PRINTED PART'S CAD ESTIMATE times this (params.PRINTED_PARTS names
+  # them): the frame parts and the righting module's, not the rollcage rings
+  # or the blades (the slicer's) or the steel wing rod. Fitted so the model
+  # weighs what the whole bike did, 1003 g as driven (battery, blades, rings,
+  # no lead; user, 11-03). Near the slicer's own check: the estimates read
+  # 1.089x its total on the parts in traces/weigh_v2_printed.txt (1/1.089 =
+  # 0.918). It also absorbs what is not weighed (the 4-40 and M2 screws).
+  printed_mass_scale: {value: 0.930, source: estimate}
   # Every rigid part on the chassis: `mass` (or `servo:`, taking the mass from
   # `servos:`) and its `geoms`, each a box, cylinder or prism carrying `share` of
   # the mass (default: an equal split). `pos` [m]; `size` full extents
@@ -367,6 +377,15 @@ bike:
       mass: {value: 0.0077, source: estimate}
       geoms:
         - {type: box, pos: [0.0349, 0.0149, 0.1045], size: [0.0677, 0.0033, 0.0455], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    cables:      # 5 JST servo cables x 5 g + 2 short USB cables x 8 g, weighed 2026-10-21
+      # "Distributed but high" (user, 11-03): mostly over the drive, up by the
+      # Pi and U2D2 they run to, so a band under the rings' tops, not a point.
+      # The placement is an estimate; the mass is weighed. It takes none of the
+      # residual (the fasteners) that the other frame parts share.
+      mass: {value: 0.041, source: measured}
+      residual: false
+      geoms:
+        - {type: box, pos: [0.100, 0.0, 0.105], size: [0.120, 0.030, 0.020]}
   # The fork and front wheel weighed 86 g together (2026-09-30). The fork is
   # its CAD estimate, the wheel the rest (rounded).
   fork_mass: {value: 0.025, source: estimate}   # steerer + fork, without the wheel
@@ -426,7 +445,11 @@ bike:
       box_size: [0.022, 0.058, 0.030]
       quat: [0.65328, 0.2706, -0.2706, -0.65328]
     pi:                                       # Raspberry Pi 3B+, the stand-in
-      pos: [0.12035, 0.0, 0.11215]
+      # The CAD's box centre [0.12035, 0, 0.11215] moved 10 mm along the board
+      # toward its upper end, where its USB / Ethernet block and the heavier
+      # part are (user, 11-03): the box's long axis is up and back. The 10 mm
+      # is an estimate (a ~15 g port block ~35 mm off centre on a 50 g board).
+      pos: [0.11328, 0.0, 0.11922]
       mass: {value: 0.050, source: datasheet}   # approx.; Pi + U2D2 + carrier weighed 71 g together (model 71.6)
       box_size: [0.056, 0.020, 0.089]
       quat: [0.65328, 0.2706, -0.2706, -0.65328]
@@ -603,25 +626,23 @@ righting:
   # `rollcage`, its roof. The study mechanisms are
   # config/studies/righting_mechanisms.yaml.
   rollcage:
-    # The v2 rollcage (cad.bike_v2.rollcage): two 270 deg rings, outer radius
-    # 68.7 mm (the blades' widest at rest), axis 100 mm above the rear axle, with
-    # elliptical half-dome caps (50 deep, tips at x -50 and +250.5 mm) and a
-    # flexible sheet between them, modelled as one capsule. It sits 2.6 mm inside
-    # the rings at their own stations, and is closed across the rings' 90 deg
-    # opening at the bottom, which faces the floor only while the wheels carry
-    # the bike. The contact geom is named `roof`.
+    # The v2 rollcage as fitted (cad.bike_v2.rollcage): two 270 deg rings,
+    # outer radius 68.7 mm (the blades' widest at rest), axis 100 mm above the
+    # rear axle, open 90 deg at the bottom, the rear ring's outboard face on
+    # the rear axle's plane, the front's on the front axle's. The rings are
+    # the contact (build_model._add_rollcage). The CAD's end caps and the
+    # sheet between the rings will not be fitted (user, 11-03); until then the
+    # sim carried rings, caps and sheet as one 212 g capsule, `roof`.
     radius: {value: 0.0687, source: design}
     height: {value: 0.100, source: design}       # its axis, above the rear axle
-    x_start: {value: 0.0187, source: design}     # -0.050 + radius
-    x_end: {value: 0.1818, source: design}       # 0.2505 - radius
-    # A shell's inertia, not a solid's: the mass sits at the radius.
     mass:
-      cages: {value: 0.0685, source: estimate}   # 2 x 34.3, CAD printed estimate
-      caps: {value: 0.1085, source: estimate}    # 2 x 54.2, CAD printed estimate
-      # The caps will be lighter once designed (2026-10-21); the CAD's until then.
-      # The sheet is not in the CAD: 0.5 mm polycarbonate over 270 deg of a 66.2
-      # radius, ~185 long. Material and thickness both assumed.
-      sheet: {value: 0.035, source: GUESS}
+      cages: {value: 0.0682, source: estimate}   # 2 x 34.1, the slicer's (user, 11-03), ASA
+      screws: {value: 0.0048, source: measured}   # 4 x 6-32 + nut (one a side a ring), 1.2 g each (10-21)
+    # Each ring's centroid [m], rear then front, from the CAD eval of 10-19
+    # (traces/bike_v2_cad/mass_eval.txt), so before the hand finishing (71.5 ->
+    # 77.5 cm3 each). It includes the bar and tongue into the rail, which the
+    # drawn ring does not.
+    centroid: [[0.00519, 0.00046, 0.11051], [0.19531, -0.00046, 0.11051]]
   module:
     # The V2 righting module, built by default: the diamond four-bar as
     # aow_sim.cad.righting draws it (one crankpin, one wing rod), the blades of
@@ -645,9 +666,17 @@ righting:
       mass: {value: 0.0112, source: estimate}
     coupler:   # each
       mass: {value: 0.0023, source: estimate}
-    wing_hub:   # each: rocker + knuckle + 2 printed stubs + steel rocker pin
-      mass: {value: 0.0149, source: estimate}
-      at: [31.0, 17.1, -3.3]
+    # Each wing's body past its blade, as ONE point mass at `wing_hub.at`
+    # (params.wing_hub_mass sums the four entries; build_model puts it there).
+    # Split 11-03: the old single 14.9 g was the CAD of 10-07, with the CAD's
+    # two ~1 g placeholder stubs, before the hand finishing.
+    wing_hub:   # rocker + knuckle, printed: the CAD of 10-28 (traces/righting_check.txt)
+      mass: {value: 0.00558, source: estimate}   # 2.78 + 2.80 g by cad.servo_mount.printed_mass
+      at: [31.0, 17.1, -3.3]   # the 10-07 group's centroid, kept: the split moves it ~mm
+    wing_pin:   # the steel rocker pin: 0.543 cm3 (the same CAD) x 7.85 g/cm3
+      mass: {value: 0.00426, source: estimate}
+    wing_stub:   # the slicer's, blade + stub 42.74 g less the blade 38.10 / 38.09 (user, 11-03)
+      mass: {value: 0.00464, source: estimate}
     blade:   # each
       mass: {value: 0.0286, source: estimate}   # V2's; the blade file's own mass wins (V3: 38.8 g)
     # Fixed to the chassis, one entry per part from the v2 evals
@@ -665,7 +694,7 @@ righting:
       at: [0.0, 17.6, -44.2]
       size: [0.023, 0.020, 0.034]
     # LEAD BALLAST (6 mm lead), hung under that case (user, 11-03). In the
-    # sim, 30 g here lowers the CoM enough to help BOTH get-ups (least Goal
+    # sim (the 1157 g model, before the weighing), 30 g here lowers the CoM enough to help BOTH get-ups (least Goal
     # Current to get up 580 -> 560, slow-ramp peak 0.498 -> 0.473 N m), and
     # each mm of CoM moved sideways shifts ~10 mA between the sides' lifts
     # (scratch study, 11-03): `out` toward the right (+) evens a heavy left.

@@ -27,6 +27,7 @@ import warnings
 
 import numpy as np
 
+from ..params import wing_hub_mass
 from .balance import LQRBalance, extract_state, mix
 from .pivot import YawProfile
 from .steer import (advance_target, clamp_extended, nearest_multiple,
@@ -555,7 +556,7 @@ class DriveController(LQRBalance):
             if want_link and have is not None:
                 tip = float(getattr(self._gen, "swing_tip_mass_kg", 0.0))
                 mod = self.params["righting"].get("module") or {}
-                want = (float(mod["blade"]["mass"]) + float(mod["wing_hub"]["mass"])
+                want = (float(mod["blade"]["mass"]) + wing_hub_mass(mod)
                         if want_mod == "v2"
                         else float(self.params["righting"]["wings"]["mass"])) + tip
                 if abs(have - want) > 1e-6:

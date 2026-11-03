@@ -28,7 +28,7 @@ import yaml
 
 from . import drivetrain_model, gearbox_friction, geometry
 # Re-exported: params loading is MuJoCo-free so the Pi can use it (params.py).
-from .params import DEFAULT_PARAMS, _normalize, load_params  # noqa: F401
+from .params import DEFAULT_PARAMS, _normalize, load_params, wing_hub_mass  # noqa: F401
 
 
 FLOOR_CONTYPE, FLOOR_CONAFF = 1, 2
@@ -240,12 +240,12 @@ def _part_contact(sim: dict, part: str) -> dict:
     }
 
 
-# The print materials' TPU orange (#F57517): two quarters of the front
-# wheel's spoke cover, the rollcage rings, one swing wing. Viewing only: rgba
+# The print materials' ASA orange (#F57517; ASA, not TPU: user, 11-03): two
+# quarters of the front wheel's spoke cover, the rollcage rings, one swing wing. Viewing only: rgba
 # is in no digest.
-TPU_ORANGE = [0xF5 / 255, 0x75 / 255, 0x17 / 255, 1]
+ASA_ORANGE = [0xF5 / 255, 0x75 / 255, 0x17 / 255, 1]
 # The pop blue ASA (#008DC3): the spoke cover's other two quarters, the
-# other wing, the rollcage's shell.
+# other wing.
 POP_BLUE = [0x00 / 255, 0x8D / 255, 0xC3 / 255, 1]
 # The rear hub (2026-10-10, user: it was pop blue, and read as part of the
 # rollers' pattern).
@@ -262,28 +262,18 @@ TIRE_BLACK = [0.07, 0.07, 0.07, 1]
 # measurement: the band outside it is what reads as the tyre.
 SPOKE_COVER_FRAC = 0.70
 SPOKE_COVER_PROUD = 0.0003
-# The v2 rollcage as drawn (user, 2026-10-19). The rings: cad.bike_v2.rollcage's,
-# 15 deep along x and 10 thick radially, 270 deg with the opening at the
-# bottom (clear of the wheels), the two ends rounded. The shell: the CAD's
-# shape, a cylinder between the rings' outboard faces with an elliptical
-# half-dome (ROLLCAGE_DOME deep, the rings' radius across) on each end, a
-# SOLID cut flat across the bottom (a D in section, user) just under the
-# rings, its two bottom corners the rings' rounded ends. Viewing only, so these are
-# not params (bike_params moves plant_digest); config/cad/bike_v2_cad.yaml's
-# rollcage depth / wall / opening_deg / dome are the source.
+# The v2 rollcage's rings (user, 2026-10-19): cad.bike_v2.rollcage's, 15 deep
+# along x and 10 thick radially, 270 deg with the opening at the bottom
+# (clear of the wheels), the two ends rounded. The CAD's end caps and sheet
+# are not fitted (user, 11-03), so nothing is drawn between the rings.
+# config/cad/bike_v2_cad.yaml's rollcage depth / wall / opening_deg are the
+# source. They are the rings' contact and mass shape, but not params: the
+# CAD holds them, as it holds the frame parts' shapes.
 ROLLCAGE_DEPTH = 0.015
 ROLLCAGE_WALL = 0.010
 ROLLCAGE_OPENING_DEG = 90.0
-ROLLCAGE_DOME = 0.050
-# The shell stands this far proud of the rings (their outer face, which is
-# its radius, and their lowest point, which sets its flat), so the surfaces
-# never z-fight.
-ROLLCAGE_SHELL_PROUD = 0.0003
-# Shell (one pop-blue piece: two colours drew seams) and rings (TPU orange)
-# both see-through (user, 2026-10-19), so what is inside still shows; the
-# shell a little fainter, since it is the bigger surface.
+# See-through (user, 2026-10-19), so what is inside still shows.
 ROLLCAGE_ALPHA = 0.25
-ROLLCAGE_SHELL_ALPHA = 0.20
 # The hub as DRAWN (user, 2026-10-10): smaller than its inertia cylinder
 # (hub.body_radius 38 mm) but just covering every roller's inner corners
 # seen from the side -- the small end's inner edge, the farthest in from
@@ -531,7 +521,7 @@ def _add_tire_quarters(spec: mujoco.MjSpec, front, fw: dict, segments: int) -> N
             mass=0.0,
             contype=0,
             conaffinity=0,
-            rgba=TPU_ORANGE if k % 2 else POP_BLUE,
+            rgba=ASA_ORANGE if k % 2 else POP_BLUE,
         )
 
 
@@ -627,7 +617,7 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
                 contype=DYN_CONTYPE,
                 conaffinity=DYN_CONAFF,
                 **_part_contact(sim, "roller"),
-                rgba=[*TPU_ORANGE[:3], 0],      # drawn by its quarters
+                rgba=[*ASA_ORANGE[:3], 0],      # drawn by its quarters
             )
             _add_roller_quarters(spec, axle, i, side, roller, sim["mesh_segments"],
                                  side * s_center * tangent, _quat_z_to(z_dir), radial)
@@ -851,80 +841,48 @@ def _rollcage_ring_mesh(r_out: float, wall: float, depth: float,
     return verts, _wound_outward(verts, np.array(faces))
 
 
-def _d_section(rr: float, z_cut: float, rho: float, n: int) -> np.ndarray:
-    """A circle of radius rr about the origin, cut flat at z = z_cut (< 0)
-    with its two bottom corners rounded to `rho`: (y, z) points, the arc
-    above and the two fillets (the hull adds the flat between them). A
-    circle that does not reach z_cut + rho is returned whole."""
-    c, zc = rr - rho, z_cut + rho              # the fillets' centres
-    if c <= -zc:                               # too small for a corner
-        a_max = np.arccos(z_cut / rr) if rr > -z_cut else np.pi
-        a = np.linspace(-a_max, a_max, n + 1)
-        return np.column_stack([rr * np.sin(a), rr * np.cos(a)])
-    phi = np.arctan2(np.sqrt(c * c - zc * zc), zc)   # a centre, from +Z
-    a = np.linspace(-phi, phi, n + 1)
-    pts = [np.column_stack([rr * np.sin(a), rr * np.cos(a)])]
-    f = np.linspace(phi, np.pi, max(3, n // 8))
-    for sg in (1, -1):                         # fillet: tangent to arc, flat
-        pts.append(np.column_stack([sg * (c * np.sin(phi) + rho * np.sin(f)),
-                                    zc + rho * np.cos(f)]))
-    return np.vstack(pts)
+def _mesh_centroid(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """The volume centroid of a closed, outward-wound triangle mesh."""
+    a, b, c = (verts[faces[:, k]] for k in range(3))
+    vol = np.einsum("ij,ij->i", a, np.cross(b, c))     # 6x each tetrahedron's
+    return (vol[:, None] * (a + b + c)).sum(0) / (4.0 * vol.sum())
 
 
-def _rollcage_shell_vertices(radius: float, length: float, dome: float,
-                             z_cut: float, rho: float, segments: int) -> np.ndarray:
-    """The rollcage's shell about the X axis, as one solid: a cylinder x
-    0..length of `radius` and an elliptical half-dome `dome` deep on each
-    end, every section cut flat at z = z_cut with `rho` corners
-    (`_d_section`). Convex, so vertices alone define it. With z_cut <=
-    -radius it is the whole rounded shape, and the same vertices would make
-    a collider."""
-    n = max(16, segments)
-    f = np.linspace(0.0, np.pi / 2, max(6, n // 4))[:-1]   # equator -> tip
+def _add_rollcage(spec: mujoco.MjSpec, chassis, r: dict, wb: float,
+                  segments: int, sim: dict) -> None:
+    """The rollcage as fitted: two 270 deg rings at the bike's ends, the rear
+    ring's outboard face on the rear axle's plane, the front one's on the
+    front axle's (cad.bike_v2.rollcage builds the rear ring and turns it
+    about mid-wheelbase).
 
-    def station(x, rr):
-        yz = _d_section(rr, z_cut, rho, n)
-        return np.column_stack([np.full(len(yz), x), yz])
-    rear = [station(-dome * np.sin(a), radius * np.cos(a)) for a in f]
-    front = [station(length + dome * np.sin(a), radius * np.cos(a)) for a in f]
-    return np.vstack([*rear, *front, [[-dome, 0.0, 0.0], [length + dome, 0.0, 0.0]]])
-
-
-def _add_rollcage_drawing(spec: mujoco.MjSpec, chassis, r: dict, wb: float,
-                          segments: int) -> None:
-    """The rollcage as drawn: its shell -- solid, a D in section with the
-    rings' rounded corners, cut flat just under the rings, translucent
-    pop blue -- and two 270 deg
-    rings (translucent orange) at the bike's ends, the rear ring's outboard
-    face on the rear axle's plane, the front one's on the front axle's
-    (cad.bike_v2.rollcage builds the rear ring and turns it about
-    mid-wheelbase). Visual only, no mass, no contact: the `roof` capsule is
-    the contact and the inertia. They differ by up to 2.6 mm at the rings,
-    where the capsule's hemispherical ends have already started to close."""
-    # The shell's corners are the rings' rounded ends grown by PROUD: the
-    # same centre (half a wall in from the ring's tip), so the ring stays
-    # just inside the shell all round its end.
-    rm = r["radius"] - ROLLCAGE_WALL / 2
-    _, a_face = _rollcage_ends(r["radius"], ROLLCAGE_WALL, ROLLCAGE_OPENING_DEG)
-    rho = ROLLCAGE_WALL / 2 + ROLLCAGE_SHELL_PROUD
-    shell = spec.add_mesh(name="rollcage_shell")
-    shell.uservert = _rollcage_shell_vertices(
-        r["radius"] + ROLLCAGE_SHELL_PROUD, wb, ROLLCAGE_DOME,
-        rm * np.cos(a_face) - rho, rho, segments).flatten()
-    chassis.add_geom(name="rollcage_shell", type=mujoco.mjtGeom.mjGEOM_MESH,
-                     meshname="rollcage_shell", pos=[0.0, 0.0, r["height"]],
-                     mass=0.0, contype=0, conaffinity=0,
-                     rgba=[*POP_BLUE[:3], ROLLCAGE_SHELL_ALPHA])
+    Each ring is two geoms. Its CONTACT, the drawn ring: MuJoCo collides a
+    mesh as its convex hull, here the ring closed by a chord across its
+    opening, 49 mm under the axis -- clear of the floor while the wheels
+    carry the bike, the only time it faces it. Its MASS, half of `mass`, an
+    invisible copy of the same ring moved so its centroid lands on the CAD's
+    (`centroid`): the CAD's ring includes the bar and tongue that reach in to
+    the rail, which the drawn one leaves out, and puts it ~9 mm lower than
+    the drawn ring's own. The copy keeps a ring's inertia about it."""
     v, f = _rollcage_ring_mesh(r["radius"], ROLLCAGE_WALL, ROLLCAGE_DEPTH,
                                ROLLCAGE_OPENING_DEG, segments)
     mesh = spec.add_mesh(name="rollcage_ring")
     mesh.uservert = v.flatten()
     mesh.userface = f.flatten()
-    for name, x0 in (("rollcage_rear", 0.0), ("rollcage_front", wb - ROLLCAGE_DEPTH)):
+    mesh.inertia = mujoco.mjtMeshInertia.mjMESH_INERTIA_EXACT
+    own = _mesh_centroid(v, f)
+    m_ring = float(sum(r["mass"].values())) / 2
+    for name, x0, at in (("rollcage_rear", 0.0, r["centroid"][0]),
+                         ("rollcage_front", wb - ROLLCAGE_DEPTH, r["centroid"][1])):
         chassis.add_geom(name=name, type=mujoco.mjtGeom.mjGEOM_MESH,
                          meshname="rollcage_ring", pos=[x0, 0.0, r["height"]],
-                         mass=0.0, contype=0, conaffinity=0,
-                         rgba=[*TPU_ORANGE[:3], ROLLCAGE_ALPHA])
+                         mass=0.0,
+                         contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
+                         condim=sim["condim"], friction=_contact_friction(sim),
+                         rgba=[*ASA_ORANGE[:3], ROLLCAGE_ALPHA])
+        chassis.add_geom(name=name + "_mass", type=mujoco.mjtGeom.mjGEOM_MESH,
+                         meshname="rollcage_ring", pos=np.asarray(at) - own,
+                         mass=m_ring, contype=0, conaffinity=0,
+                         rgba=[*ASA_ORANGE[:3], 0])
 
 
 def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True,
@@ -946,26 +904,8 @@ def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True,
     rg, sim = p["righting"], p["sim"]
 
     if rollcage:
-        # The v2 bike's rollcages, caps and sheet as one capsule (see
-        # righting.rollcage), under the roof's name: same job. A SHELL's
-        # inertia, the mass out at the radius.
-        r = rg["rollcage"]
-        chassis.add_geom(
-            name="roof",
-            type=mujoco.mjtGeom.mjGEOM_CAPSULE,
-            size=[r["radius"], 0, 0],
-            fromto=[r["x_start"], 0.0, r["height"],
-                    r["x_end"], 0.0, r["height"]],
-            mass=float(sum(r["mass"].values())),
-            typeinertia=mujoco.mjtGeomInertia.mjINERTIA_SHELL,
-            contype=DYN_CONTYPE,
-            conaffinity=DYN_CONAFF,
-            condim=sim["condim"],
-            friction=_contact_friction(sim),
-            rgba=[*POP_BLUE[:3], 0],    # drawn as the CAD's shell, below
-        )
-        _add_rollcage_drawing(spec, chassis, r, p["bike"]["wheelbase"],
-                              sim["mesh_segments"])
+        _add_rollcage(spec, chassis, rg["rollcage"], p["bike"]["wheelbase"],
+                      sim["mesh_segments"], sim)
     elif "roof" in rg:
         # A capsule along +X: round in the ROLL plane, so an inverted bike
         # rolls off it instead of balancing on it, with hemispherical ends
@@ -2007,8 +1947,8 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         origin = (joint0 - pivot) + side * norm_off * n_hat
         z_min = float((ground_clear - pivot_z - origin[1]) / w_hat[1])
         lo_p, hi_p = origin + z_min * w_hat, origin + z_max * w_hat
-        # The print theme (TPU orange, pop blue ASA): right wing orange, left blue.
-        rgba = TPU_ORANGE if side < 0 else POP_BLUE
+        # The print theme (orange and pop blue ASA): right wing orange, left blue.
+        rgba = ASA_ORANGE if side < 0 else POP_BLUE
         if module is None:
             mid = 0.5 * (lo_p + hi_p)
             length = float(np.linalg.norm(hi_p - lo_p))
@@ -2061,15 +2001,16 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
                     mass=module["blade"]["mass"] * a / sum(areas),
                     contype=BLADE_CONTYPE, conaffinity=BLADE_CONAFF,
                     **_part_contact(sim, "righting"), rgba=rgba)
-            # The rest of the wing body -- rocker, knuckle, the printed stub,
-            # the steel rocker pin -- as one point mass at their centroid
-            # (module frame: out, up from the rod, fore).
+            # The rest of the wing body -- rocker, knuckle, the steel rocker
+            # pin, the stub and the wing's screws (params.wing_hub_mass) -- as
+            # one point mass at their centroid (module frame: out, up from
+            # the rod, fore).
             hub = np.asarray(module["wing_hub"]["at"], float) / 1000.0
             wing.add_geom(
                 name=f"swing_wing_{tag}_hub",
                 type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.006, 0, 0],
                 pos=[hub[2], side * hub[0], hub[1]],
-                mass=module["wing_hub"]["mass"], contype=0, conaffinity=0,
+                mass=wing_hub_mass(module), contype=0, conaffinity=0,
                 rgba=[0.5, 0.5, 0.5, 1])
             # The tip-mass study's "far end": the blade point farthest from
             # the rod.
@@ -2703,9 +2644,13 @@ def build_spec(
               for k, v in bike["frame_parts"].items()}
     # chassis.spread: the residual rides on the frame parts in proportion to
     # their mass, instead of as a box of its own (see bike.chassis).
-    spread = 1.0 + (ch["mass"] / sum(masses.values()) if ch.get("spread") else 0.0)
+    # A part marked `residual: false` (the cables) takes no share.
+    shares = sum(v for k, v in masses.items()
+                 if bike["frame_parts"][k].get("residual", True))
+    spread = 1.0 + (ch["mass"] / shares if ch.get("spread") else 0.0)
     for name, part in bike["frame_parts"].items():
         geoms = part["geoms"]
+        k_res = spread if part.get("residual", True) else 1.0
         for i, g in enumerate(geoms):
             share = g.get("share", 1.0 / len(geoms))
             gname = name if len(geoms) == 1 else f"{name}_{i}"
@@ -2721,7 +2666,7 @@ def build_spec(
             if kind != "prism":
                 extra.update(pos=g["pos"], quat=g.get("quat", [1.0, 0.0, 0.0, 0.0]))
             chassis.add_geom(
-                name=gname, mass=masses[name] * share * spread,
+                name=gname, mass=masses[name] * share * k_res,
                 contype=shell[0], conaffinity=shell[1],
                 condim=p["sim"]["condim"], friction=_contact_friction(p["sim"]),
                 rgba=part_rgba(name), **extra)
@@ -3026,11 +2971,11 @@ def tune_lighting(model: mujoco.MjModel) -> None:
 
 # What the "bare" look keeps drawn: the floors; the wheels -- the front tyre
 # and its spoke cover, the rollers' drawn quarters (their collision meshes are
-# already alpha 0), the rear hub and its roller lugs; the rollcage's shell
-# and rings (its contact, the `roof` capsule, is alpha 0); and the swing wings.
+# already alpha 0), the rear hub and its roller lugs; the rollcage's rings;
+# and the swing wings.
 # Every other bike geom is a mass shape or a drawing and is hidden.
 _BARE_KEEP = re.compile(r"^(floor.*|front_tire(_q\d+)?|roller_\d+_\w_q\d+|"
-                        r"hub_drawn|hub_(lug|boss)_\d+|rollcage_(rear|front|shell)|"
+                        r"hub_drawn|hub_(lug|boss)_\d+|rollcage_(rear|front)|"
                         r"swing_wing_(left|right)(_toe)?)$")
 
 

@@ -17,8 +17,9 @@ import numpy as np
 import pytest
 import yaml
 
-from aow_sim.params import (ONBOARD_PARAMS, STUDIES_DIR, STUDY_PATHS,
-                            load_params, load_raw_params, plant_digest)
+from aow_sim.params import (ONBOARD_PARAMS, PRINTED_PARTS, STUDIES_DIR,
+                            STUDY_PATHS, load_params, load_raw_params,
+                            plant_digest)
 
 pytestmark = pytest.mark.geometry
 
@@ -85,3 +86,51 @@ def test_the_default_bike_builds_from_bike_params_alone_and_identically():
     for f in ("body_mass", "body_inertia", "body_ipos", "geom_size", "geom_pos",
               "actuator_gainprm", "actuator_biasprm", "jnt_range", "geom_friction"):
         assert np.array_equal(getattr(a, f), getattr(b, f)), f
+
+
+def test_printed_parts_are_every_estimated_mass_but_the_steel():
+    """bike.printed_mass_scale reaches every `source: estimate` mass under
+    bike.frame_parts and righting.module -- a new printed part cannot quietly
+    escape it -- except the steel (the wing rod, the wings' screws), and the blade, whose file's mass
+    (the slicer's) replaces the entry here."""
+    raw = load_raw_params(studies=False)
+    est = {("bike", "frame_parts", k, "mass")
+           for k, v in raw["bike"]["frame_parts"].items()
+           if isinstance(v.get("mass"), dict) and v["mass"]["source"] == "estimate"}
+    mod = raw["righting"]["module"]
+    est |= {("righting", "module", k, "mass") for k, v in mod.items()
+            if isinstance(v, dict) and isinstance(v.get("mass"), dict)
+            and v["mass"]["source"] == "estimate"}
+    est |= {("righting", "module", "fixed", k, "mass")
+            for k, v in mod["fixed"].items() if v["mass"]["source"] == "estimate"}
+    est.discard(("righting", "module", "fixed", "wing_rod", "mass"))   # steel
+    est.discard(("righting", "module", "blade", "mass"))   # V2's; the file's wins
+    for k in ("wing_screws", "wing_pin"):                       # steel
+        est.discard(("righting", "module", k, "mass"))
+    est.discard(("righting", "module", "wing_stub", "mass"))    # the slicer's
+    assert est == set(PRINTED_PARTS)
+
+
+def test_the_printed_scale_multiplies_exactly_those_masses(tmp_path):
+    """The scale moves the PRINTED_PARTS masses by itself and nothing else."""
+    from aow_sim.params import DEFAULT_PARAMS
+    text = DEFAULT_PARAMS.read_text()
+    line = next(l for l in text.splitlines()
+                if l.strip().startswith("printed_mass_scale:"))
+    f = tmp_path / "bike_params.yaml"
+    f.write_text(text.replace(line, "  printed_mass_scale: {value: 1.0, source: estimate}"))
+    p, one = load_params(), load_params(f)
+    k = p["bike"]["printed_mass_scale"]
+    assert k != 1.0
+    for path in PRINTED_PARTS:
+        a, b = p, one
+        for key in path:
+            a, b = a[key], b[key]
+        assert a == pytest.approx(b * k), path
+    for path in (("righting", "module", "fixed", "wing_rod", "mass"),
+                 ("righting", "rollcage", "mass", "cages"), ("bike", "fork_mass"),
+                 ("bike", "frame_parts", "cables", "mass")):
+        a, b = p, one
+        for key in path:
+            a, b = a[key], b[key]
+        assert a == b, path

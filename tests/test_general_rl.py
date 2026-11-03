@@ -746,9 +746,10 @@ def _linkage_env(tip=0.1, touch=True):
 
 def test_linkage_env_builds_the_four_bar_with_tip_masses():
     from aow_sim.build_model import load_params
+    from aow_sim.params import wing_hub_mass
     e = _linkage_env()
     mod = load_params()["righting"]["module"]
-    m, w = e.model, mod["blade"]["mass"] + mod["wing_hub"]["mass"]
+    m, w = e.model, mod["blade"]["mass"] + wing_hub_mass(mod)
     assert e.righting_module == "v2"
     for side in ("right", "left"):
         assert m.body_mass[m.body(f"swing_wing_{side}").id] == \

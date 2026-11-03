@@ -22,7 +22,8 @@ import pytest
 import yaml
 
 from aow_sim.build_model import SWING_LINKAGE_CFG, build_model, load_params
-from aow_sim.params import ROOT, plant_digest, resolve_righting_module
+from aow_sim.params import (ROOT, plant_digest, resolve_righting_module,
+                            wing_hub_mass)
 
 pytestmark = pytest.mark.righting
 
@@ -60,7 +61,8 @@ def _stroke(params):
 def test_the_default_bike_carries_v2(params, model):
     names = {model.geom(g).name for g in range(model.ngeom)}
     assert {"swing_wing_right_toe", "swing_wing_left_toe",
-            "righting_fixed_bridge", "roof"} <= names
+            "righting_fixed_bridge", "rollcage_rear", "rollcage_front"} <= names
+    assert "roof" not in names      # the caps and sheet are not fitted (11-03)
     assert not {"bumper_left", "bumper_right"} & names   # user: no bumpers
     lo, hi = np.degrees(model.actuator_ctrlrange[model.actuator("swing").id])
     # the commanded stroke: the linkage's, or the blade file's own level point
@@ -170,11 +172,11 @@ def test_the_bare_actuator_holds_without_ringing(params):
 def test_the_module_adds_its_listed_mass(params, model):
     """Every gram of the module is a GUESS from CAD volumes; this pins that
     the builder puts exactly the listed ones on the bike (and its servo, and
-    the rollcage that is the v2 bike's roof)."""
+    the rollcage's two rings)."""
     mod, rg = params["righting"]["module"], params["righting"]
     bare = build_model(params, swing_linkage=False)
     listed = (mod["crank"]["mass"] + 2 * mod["coupler"]["mass"]
-              + 2 * (mod["wing_hub"]["mass"] + mod["blade"]["mass"])
+              + 2 * (wing_hub_mass(mod) + mod["blade"]["mass"])
               + sum(f["mass"] for f in mod["fixed"].values())
               + params["servos"][mod["servo"]]["mass"]
               + sum(rg["rollcage"]["mass"].values()))

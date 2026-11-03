@@ -305,6 +305,43 @@ def derive_servo_gains(p: dict) -> dict:
     return p
 
 
+# The printed parts whose mass is a CAD estimate (cad.servo_mount.printed_mass),
+# as paths to their `mass`: what bike.printed_mass_scale multiplies. Not the
+# rollcage rings or the blade (their files carry the slicer's), the steel wing
+# rod, or bike.fork_mass (its split of a weighed 86 g with the front wheel). tests/test_params_files.py pins this
+# against every `source: estimate` mass under those two blocks.
+PRINTED_PARTS = tuple(
+    [("bike", "frame_parts", k, "mass") for k in (
+        "drive_case_left", "drive_case_right", "drive_chainstay_left",
+        "drive_chainstay_right", "drive_pulley_left", "drive_pulley_right",
+        "steer_case_lower", "steer_case_upper", "pi_carrier", "power_holder")]
+    + [("righting", "module", k, "mass") for k in ("crank", "coupler", "wing_hub")]
+    + [("righting", "module", "fixed", k, "mass") for k in (
+        "bulkhead", "bridge", "lower_case", "upper_case")])
+
+
+def wing_hub_mass(mod: dict) -> float:
+    """Each wing's body past its blade, the one point mass at wing_hub.at:
+    rocker + knuckle, the steel pin, the stub and the wing's screws (each
+    absent: 0, as an older params file has only `wing_hub`)."""
+    return float(mod["wing_hub"]["mass"]) + sum(
+        float(mod.get(k, {}).get("mass", 0.0))
+        for k in ("wing_pin", "wing_stub", "wing_screws"))
+
+
+def scale_printed_masses(p: dict) -> dict:
+    """Every PRINTED_PARTS mass times bike.printed_mass_scale (absent: 1)."""
+    k = float(p["bike"].get("printed_mass_scale", 1.0))
+    if k == 1.0:
+        return p
+    for path in PRINTED_PARTS:
+        node = p
+        for key in path[:-1]:
+            node = node[key]
+        node[path[-1]] = node[path[-1]] * k
+    return p
+
+
 def load_params(path: str | Path | None = None,
                 blade: str | Path | None = None,
                 studies: bool = True) -> dict:
@@ -314,8 +351,8 @@ def load_params(path: str | Path | None = None,
     The onboard file is merged in at control.onboard and, unless
     `studies=False`, every config/studies/*.yaml at its own paths. False is
     the bike alone: what the default model must build from."""
-    return derive_servo_gains(resolve_righting_module(
-        derive_righting(_normalize(load_raw_params(path, studies))), blade))
+    return derive_servo_gains(scale_printed_masses(resolve_righting_module(
+        derive_righting(_normalize(load_raw_params(path, studies))), blade)))
 
 
 def with_wheel_play(params: dict, spec) -> dict:

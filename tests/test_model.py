@@ -583,7 +583,7 @@ def test_bare_look_hides_the_mass_shapes_and_leaves_the_physics(params):
              if bare.geom_rgba[g][3] > 0 and bare.geom_bodyid[g] != 0}
     assert {"servo_drive_left", "payload_battery", "fork", "ahrs_site"} <= hidden
     assert {"front_tire", "front_tire_q0", "roller_0_a_q0", "hub_drawn",
-            "rollcage_shell", "rollcage_rear", "rollcage_front",
+            "rollcage_rear", "rollcage_front",
             "swing_wing_left", "swing_wing_right_toe"} <= drawn
     assert not any(n.startswith(("servo_", "payload_", "drive_")) for n in drawn)
     qpos = []
