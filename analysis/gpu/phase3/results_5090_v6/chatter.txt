@@ -1,0 +1,178 @@
+# python analysis/policy/chatter.py --policies general_puffer_a40_v4_80M general_puffer_5090_v5floor_s1_80M general_puffer_5090_v6_s1_72M general_puffer_5090_v6_s1_80M general_puffer_5090_v6_s2_80M general_puffer_5090_v6_s3_80M general_puffer_5090_v6_s4_80M
+eval grid: 20 commands, identical seeds, randomization off, plant: own
+
+policy                                 score   surv  track_geo  vel_err  head_deg  drift_m steer_rest
+general_puffer_a40_v4_80M              0.149   0.55      0.270    0.301      18.4    0.225        3.0
+general_puffer_5090_v5floor_s1_80M     0.122   0.50      0.245    0.433      19.9    0.204        3.8
+general_puffer_5090_v6_s1_72M          0.719   1.00      0.719    0.136       8.8    0.397        4.1
+general_puffer_5090_v6_s1_80M          0.729   1.00      0.729    0.126       8.5    0.435        4.3
+general_puffer_5090_v6_s2_80M          0.699   1.00      0.699    0.166       7.2    0.353        6.0
+general_puffer_5090_v6_s3_80M          0.736   1.00      0.736    0.145       6.5    0.272        9.6
+general_puffer_5090_v6_s4_80M          0.751   1.00      0.751    0.175       5.5    0.185        8.4
+
+BY COMMAND FAMILY. surv is a RATE within the family; read it WITH t_head,
+because high survival means competence OR refusal -- a policy that declines a
+turn cannot fall doing it. t_head is seconds to first get inside 10 deg, over
+the family members that ask for a heading change (n_t of them).
+
+  hold  (n=1)
+  policy                                 surv   t_head  n_t  head_tail  vel_med  drift_m  overshoot
+  general_puffer_a40_v4_80M              1.00        -    -       7.7°    0.030    0.225      0.000
+  general_puffer_5090_v5floor_s1_80M     1.00        -    -       3.0°    0.036    0.204      0.000
+  general_puffer_5090_v6_s1_72M          1.00        -    -      17.2°    0.033    0.397      0.000
+  general_puffer_5090_v6_s1_80M          1.00        -    -      15.5°    0.039    0.435      0.000
+  general_puffer_5090_v6_s2_80M          1.00        -    -       4.5°    0.034    0.353      0.000
+  general_puffer_5090_v6_s3_80M          1.00        -    -       9.3°    0.022    0.272      0.000
+  general_puffer_5090_v6_s4_80M          1.00        -    -       4.7°    0.031    0.185      0.023
+
+  spin  (n=2)
+  policy                                 surv   t_head  n_t  head_tail  vel_med
+  general_puffer_a40_v4_80M              0.50    0.97s    2      48.2°    0.266
+  general_puffer_5090_v5floor_s1_80M     1.00    0.96s    2       4.2°    0.040
+  general_puffer_5090_v6_s1_72M          1.00    4.16s    2       7.5°    0.049
+  general_puffer_5090_v6_s1_80M          1.00    2.58s    2       8.5°    0.051
+  general_puffer_5090_v6_s2_80M          1.00    2.62s    2      10.0°    0.026
+  general_puffer_5090_v6_s3_80M          1.00    1.80s    2       4.3°    0.033
+  general_puffer_5090_v6_s4_80M          1.00    2.12s    2       6.1°    0.036
+
+  cruise  (n=9)
+  policy                                 surv   t_head  n_t  head_tail  vel_med
+  general_puffer_a40_v4_80M              0.89    0.69s    6       4.9°    0.051
+  general_puffer_5090_v5floor_s1_80M     0.56    0.52s    6      14.4°    0.121
+  general_puffer_5090_v6_s1_72M          1.00    1.33s    6       7.3°    0.051
+  general_puffer_5090_v6_s1_80M          1.00    0.99s    6       4.8°    0.051
+  general_puffer_5090_v6_s2_80M          1.00    1.02s    6       7.0°    0.078
+  general_puffer_5090_v6_s3_80M          1.00    0.91s    6       5.7°    0.074
+  general_puffer_5090_v6_s4_80M          1.00    1.02s    6       5.2°    0.040
+
+  crab  (n=2)
+  policy                                 surv   t_head  n_t  head_tail  vel_med
+  general_puffer_a40_v4_80M              0.50        -    -      15.6°    0.403
+  general_puffer_5090_v5floor_s1_80M     1.00        -    -      16.2°    0.395
+  general_puffer_5090_v6_s1_72M          1.00        -    -      18.2°    0.417
+  general_puffer_5090_v6_s1_80M          1.00        -    -      20.1°    0.410
+  general_puffer_5090_v6_s2_80M          1.00        -    -       7.7°    0.396
+  general_puffer_5090_v6_s3_80M          1.00        -    -      13.4°    0.398
+  general_puffer_5090_v6_s4_80M          1.00        -    -      11.4°    0.396
+
+  turn_big  (n=6)
+  policy                                 surv   t_head  n_t  head_tail  vel_med
+  general_puffer_a40_v4_80M              0.00    0.88s    6     179.9°    0.822
+  general_puffer_5090_v5floor_s1_80M     0.00    0.96s    6     179.9°    0.815
+  general_puffer_5090_v6_s1_72M          1.00   10.32s    6      13.5°    0.083
+  general_puffer_5090_v6_s1_80M          1.00    9.09s    6      15.5°    0.069
+  general_puffer_5090_v6_s2_80M          1.00    8.71s    6       7.3°    0.065
+  general_puffer_5090_v6_s3_80M          1.00    9.00s    6      10.7°    0.086
+  general_puffer_5090_v6_s4_80M          1.00    5.80s    6       9.4°    0.088
+
+  drift is hold-only and the grid has exactly one hold command, so it is ONE
+  episode. overshoot is peak minus final: 0 means it left and kept going,
+  > 0 means it wandered out and came back.
+
+mean squared per-step action change, by channel (fraction of bound)
+policy                                dsteer^2    dhub^2   ddiff^2   dwing^2    total     @0.05
+general_puffer_a40_v4_80M                0.017     0.004     0.017         -    0.038     0.002
+general_puffer_5090_v5floor_s1_80M       0.017     0.005     0.014         -    0.036     0.002
+general_puffer_5090_v6_s1_72M            0.018     0.006     0.022         -    0.046     0.002
+general_puffer_5090_v6_s1_80M            0.016     0.007     0.018         -    0.041     0.002
+general_puffer_5090_v6_s2_80M            0.020     0.006     0.016         -    0.042     0.002
+general_puffer_5090_v6_s3_80M            0.022     0.004     0.017         -    0.044     0.002
+general_puffer_5090_v6_s4_80M            0.015     0.005     0.011         -    0.031     0.002
+
+fraction of steps pinned to a bound (|a| > 0.98)
+policy                                   steer       hub      diff      wing      any
+general_puffer_a40_v4_80M                 1.0%      1.2%      4.1%         -     5.7%
+general_puffer_5090_v5floor_s1_80M        1.9%      7.4%      3.0%         -     9.7%
+general_puffer_5090_v6_s1_72M             0.2%      3.4%      3.4%         -     6.2%
+general_puffer_5090_v6_s1_80M             0.1%      4.1%      3.0%         -     5.9%
+general_puffer_5090_v6_s2_80M             0.3%      4.1%      1.7%         -     5.9%
+general_puffer_5090_v6_s3_80M             0.1%      4.9%      0.9%         -     5.9%
+general_puffer_5090_v6_s4_80M             0.2%      1.6%      1.1%         -     2.8%
+
+network mean BEFORE the clip, in bound units: % of steps |mu| > 1  /  |mu| > 2  /  p90 |mu|
+policy                                             steer                 hub                diff                wing
+general_puffer_a40_v4_80M                 1%    0%  0.43      1%    0%  0.65      4%    0%  0.60                   -
+general_puffer_5090_v5floor_s1_80M        2%    0%  0.41      7%    0%  0.92      3%    0%  0.54                   -
+general_puffer_5090_v6_s1_72M             0%    0%  0.36      3%    0%  0.64      3%    0%  0.63                   -
+general_puffer_5090_v6_s1_80M             0%    0%  0.31      3%    0%  0.66      3%    0%  0.61                   -
+general_puffer_5090_v6_s2_80M             0%    0%  0.37      4%    0%  0.65      2%    0%  0.51                   -
+general_puffer_5090_v6_s3_80M             0%    0%  0.33      5%    0%  0.68      1%    0%  0.69                   -
+general_puffer_5090_v6_s4_80M             0%    0%  0.32      1%    0%  0.62      1%    0%  0.51                   -
+
+action sign flips per second, by channel (ceiling is 50/s, a flip EVERY step; 25/s is every other step)
+policy                                   steer       hub      diff      wing
+general_puffer_a40_v4_80M                  9.8       3.0       7.2         -
+general_puffer_5090_v5floor_s1_80M         9.9       3.8       6.9         -
+general_puffer_5090_v6_s1_72M              9.6       4.9       6.5         -
+general_puffer_5090_v6_s1_80M             10.2       5.6       7.7         -
+general_puffer_5090_v6_s2_80M             10.0       6.1       8.2         -
+general_puffer_5090_v6_s3_80M             12.0       5.0       5.9         -
+general_puffer_5090_v6_s4_80M             10.3       4.8       6.9         -
+
+ACHIEVED steer joint rate, as a fraction of the XC330's no-load speed
+policy                                  median       p95
+general_puffer_a40_v4_80M                 4.0%     34.6%
+general_puffer_5090_v5floor_s1_80M        4.1%     35.1%
+general_puffer_5090_v6_s1_72M             4.3%     26.2%
+general_puffer_5090_v6_s1_80M             3.5%     22.1%
+general_puffer_5090_v6_s2_80M             4.3%     27.3%
+general_puffer_5090_v6_s3_80M             4.2%     22.2%
+general_puffer_5090_v6_s4_80M             3.4%     24.7%
+  A policy can saturate the steer RATE command while the joint barely moves:
+  the command alternates faster than the joint can follow, so the integral of
+  the rate stays small. Read this against the saturation and flips tables.
+
+sum-squared per-step action change, by command family
+policy                                   hold      fwd      rev     crab     turn
+general_puffer_a40_v4_80M               0.013    0.052    0.042    0.069    0.059
+general_puffer_5090_v5floor_s1_80M      0.015    0.043    0.041    0.037    0.038
+general_puffer_5090_v6_s1_72M           0.011    0.022    0.097    0.075    0.035
+general_puffer_5090_v6_s1_80M           0.020    0.019    0.063    0.071    0.034
+general_puffer_5090_v6_s2_80M           0.022    0.028    0.051    0.081    0.034
+general_puffer_5090_v6_s3_80M           0.030    0.031    0.067    0.049    0.042
+general_puffer_5090_v6_s4_80M           0.020    0.014    0.031    0.057    0.027
+
+REAR WHEEL JITTER, at physics rate: RMS of speed minus its centred 100 ms sliding-window mean
+policy                                  tread   roller  servo_a  servo_b   rev/s
+general_puffer_a40_v4_80M                33.8     32.7     25.0     25.6    1.43
+general_puffer_5090_v5floor_s1_80M       41.6     30.8     24.1     25.5    1.66
+general_puffer_5090_v6_s1_72M            32.0     30.5     23.4     24.6    1.78
+general_puffer_5090_v6_s1_80M            30.2     29.9     22.2     24.7    2.03
+general_puffer_5090_v6_s2_80M            32.6     26.1     22.1     21.3    2.59
+general_puffer_5090_v6_s3_80M            30.1     26.1     18.9     21.6    2.61
+general_puffer_5090_v6_s4_80M            32.6     25.0     21.0     21.8    2.59
+  tread and roller in mm/s at the surface, servo in deg/s at the XC430 output.
+  rev/s: tread direction reversals past +-2 mm/s. The 100 ms residual weights frequencies unevenly
+  (x0.36 at 5 Hz, x1.22 at 14 Hz): read the band table below for WHERE the energy is.
+
+tread speed RMS by frequency band [mm/s], raw speed, linear detrend per ~0.8 s window
+policy                                   2-8Hz    8-16Hz   16-32Hz   32-64Hz 64-1250Hz
+general_puffer_a40_v4_80M                 64.4      18.4      21.5      10.0       6.1
+general_puffer_5090_v5floor_s1_80M        70.6      17.7      22.5       9.7       5.7
+general_puffer_5090_v6_s1_72M             63.2      16.0      17.6       8.7       4.5
+general_puffer_5090_v6_s1_80M             60.6      15.1      17.3       8.6       4.3
+general_puffer_5090_v6_s2_80M             70.0      16.2      18.8       8.8       4.4
+general_puffer_5090_v6_s3_80M             60.6      15.0      18.6       7.7       4.0
+general_puffer_5090_v6_s4_80M             70.2      16.7      17.5       8.2       4.2
+  The action is held for 20 ms, so dither every step or every other step lands at
+  25-50 Hz; the bench put the XC430 loop's resonance near 20 Hz.
+
+cross-axis leakage in BEHAVIOUR [m/s]: motion on the axis that was not commanded
+policy                                fwd:v_lat  rev:v_lat  crab:v_lon
+general_puffer_a40_v4_80M                -0.014     -0.021      +0.288
+general_puffer_5090_v5floor_s1_80M       +0.045     +0.003      +0.349
+general_puffer_5090_v6_s1_72M            +0.013     +0.024      +0.469
+general_puffer_5090_v6_s1_80M            -0.003     -0.015      +0.473
+general_puffer_5090_v6_s2_80M            +0.053     -0.025      +0.539
+general_puffer_5090_v6_s3_80M            +0.028     -0.018      +0.408
+general_puffer_5090_v6_s4_80M            -0.022     +0.009      +0.421
+
+achieved / commanded speed, per direction and per crab side
+policy                                   fwd     rev   crabL   crabR  crab_hd  turn_asym
+general_puffer_a40_v4_80M               0.96    1.01    0.21    0.08     56.5      0.351
+general_puffer_5090_v5floor_s1_80M      1.01    1.03    0.17    0.57     32.5      0.388
+general_puffer_5090_v6_s1_72M           1.04    0.28    0.50    0.57     20.1      0.379
+general_puffer_5090_v6_s1_80M           1.05    0.78    0.58    0.51     22.2      0.298
+general_puffer_5090_v6_s2_80M           1.05    0.21    0.67    0.62     15.1      0.316
+general_puffer_5090_v6_s3_80M           0.98    0.42    0.28    0.47     14.5      0.355
+general_puffer_5090_v6_s4_80M           1.02    0.27    0.46    0.28     13.7      0.318

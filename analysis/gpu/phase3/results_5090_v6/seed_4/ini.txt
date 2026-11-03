@@ -1,0 +1,4 @@
+15:seed = 45
+22:total_agents = 4096
+27:graph = /root/aow/graphs/aow_bike_4096_s4
+57:horizon = 64

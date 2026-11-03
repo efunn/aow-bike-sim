@@ -1,10 +1,10 @@
-# Project status — 2026-10-31
+# Project status — 2026-11-02
 
 **How to read this.** The navigation layer: what is true now, what to do next,
 and where the detail lives. Rewritten, not appended to. **For the reasoning,
 follow the link — it is not repeated here.**
 
-Rewritten 2026-10-02, 10-16, 10-26 and 10-31. On 10-26 the dated logs that had
+Rewritten 2026-10-02, 10-16, 10-26 and 10-31; v6 updated 11-02. On 10-26 the dated logs that had
 collected here were moved, verbatim, to the doc that owns each (a section
 headed "from status.md" at its end): the 10-17 bring-up and first bench
 policy runs (`pi-bench-bringup.md`), the righting module's first powered
@@ -28,7 +28,9 @@ runs (`righting-servo-model.md`), the digest history to 10-21
    Warp + PufferLib, 72-80M steps in 12 min (5090) to 89 min (A40). The
    pointer is `general_puffer_a40_v4_80M` since 10-26 (was
    `general_puffer_fixes_72M`, 10-16). v5 (10-29) flown 10-30: s1 best,
-   softslip unstable (user). The next run, v6, is configured, not trained.
+   softslip unstable (user). v6 (11-02), the first trained on the measured
+   plant, never falls on it and is too cautious: slow in reverse and on big
+   turns, on the bike and in the sim alike.
    The analytic LQR is DEPRECATED (10-09).
 3. **The onboard path runs on the Pi**: 100 Hz loop, TM151, mirror,
    telemetry, recorder, fall/cut/re-arm, low-voltage cut, and the swing-sit
@@ -38,8 +40,11 @@ runs (`righting-servo-model.md`), the digest history to 10-21
    and the wheel play the floor runs fitted, cut the 9-10 Hz oscillation 4x
    in roll rate against the pointer flown minutes later
    (`physical-bike-tests.md`, test 9).
-5. **The goal is a functioning bike with sample videos, in weeks.** Ranked
-   against that; the showcase moves are in `wishlist.md`.
+5. **The first goal is met: a functioning bike with sample videos** (set
+   2026-09-08; the demo links went into the README 2026-10-30). Since then
+   there is no fixed goal: the work follows ideas as they come (user,
+   2026-11-02), so the table below is a menu, not a ranking. Showcase moves
+   are in `wishlist.md`.
 
 ---
 
@@ -47,7 +52,7 @@ runs (`righting-servo-model.md`), the digest history to 10-21
 
 | # | do | why now | doc |
 |---|---|---|---|
-| 1 | **Decide `test_rest_stability`, then train v6** | The only red test (10-31): on training wheels the wheel play's rear camber hinge rattles at rest (0.09 rad/s; the rollers turn at up to 0.55; the chassis is still, < 0.001), twice what the play alone gives with the shipped contacts -- a real rattle or the play's GUESS centring (4 N m/rad)? Then `config/rl/rl_general_v6.yaml`: v5 s1 on the measured plant (plant 46c263de), floor mu randomized 0.36-0.68 and the axle drag 0-0.035 N m (new axis, CPU and GPU). On the pod, after `gpu.sh check`: `analysis/gpu/phase3/check_contact_parts.py` (negative solref, MJWarp against C; passes on CPU Warp) | `rl_general_v6.yaml` header, `gpu-training.md` |
+| 1 | **v6's caution: which training change bought it** | v6 (11-02, `general_puffer_5090_v6_s{1..4}_{52,72,80}M`) falls 0/20 on the measured plant at every mu 0.36-0.68, where v5 s1 falls 10/20 and v4 9/20 -- but reverses at 0.44 of the command on the bike (v5 s1 0.76) and settles big heading changes in 2.3 s (v5 s1 1.3, v4 1.0); on the grid its big turns take 5.8-10.3 s to 10 deg (`chatter.py`), and it stands still (`standstill.py`). `analysis/policy/cmd_replay.py` flies a bike run's own commands in the sim and shows the same. Taking the axle drag or the play off the SIM's bike changes neither, so it is learned. New in v6's training against v5 s1: the wheels' bouncy contacts, mu 0.36-0.68 (was 0.72-1.08), the axle drag 0-0.035; the play is v5's. One warm-start fine-tune from v5 s1 per change (`gpu.sh up ... LOAD=`, untried on a real run) would separate them | `gpu-training.md` (v6), `results_5090_v6/cmd_replay.txt` |
 | 2 | **v4 is the pointer; the standing-snap falls are explained** | 10-31: left-turn snaps fell 7 / 11 after the 10-28 axle nut (3 / 41 before; right turns never), and 1 / 13 with the nut loosened. The sim on the measured plant gives 16 / 20, 1 / 20 and 0 / 20 for the same three axle drags, left only: the floor's grip and the axle's drag together, and v4's harder left turn. v5 s1 falls both ways on that plant (15 / 10 at the loosened axle) -- a prediction to fly. The reversing wobble and steer swing of 10-28 (test 10) stand; v4 at rest is unchanged | `physical-bike-tests.md` (tests 10, 11) |
 | 3 | **Queued plant changes**: `k_roller -2.4` with the `onboard.yaml` A/B swap reverted, in one change; the drivetrain Coulomb (0.15 kept; coast says 0.16-0.18) | Left out of v4 on purpose so old and new policies fly on one `onboard.yaml`; moves the plant digest | `physical-bike-tests.md` (item 8) |
 | 4 | **Blades and rollcage**: the lighter caps; then the sim's lying rest | The bike lies down and gets up from the mirror (10-26). The sim puts the lying rest at crank ~77 deg past centre, the bike 26.5-28; the cage's contact (one capsule closed across the rings' opening) is the first suspect, untested. The stepthrough's quasi-static V3 is within 5 deg of the bike's measured roll-vs-crank from crank 40 up, runs up to 10 deg ahead of it from 0 to 35, and rests at 76-81 deg roll where the bike lies at 74. The SIM flying the bike's own sequence (v4, right and left): its roll-vs-crank matches the bike's from crank 105 down to ~15 (within ~3 deg), then rolls on to 86 where the bike stops at 74; its lying crank sags to -80 (bike -26); its lift draws ~470 mA peak where the bike draws ~590; it reaches crank 110-111 where the bike stalls at 100-102 (left 96-101), props at 5 deg roll (bike 12), and on the right then tips over the top while propped, which the bike never has. The bike's lift TORQUE (Present Current through the servo model's k (|I| - i0)) is on the stepthrough's torque chart: 0.50-0.53 N m from crank 10 to 40 with the battery, 0.44-0.46 without, where the quasi-static V3 (battery in the model) needs 0.33-0.37 -- the model is ~0.15 N m light, part of it the lift's own acceleration | `righting-design.md`, `aow-bike-whole-v2-touchups.md` |
@@ -64,8 +69,8 @@ fixture (parked 09-24), the contact bench (a fallback).
 | workstream | state | blocker | doc |
 |---|---|---|---|
 | **Simulation & model** | The v2 bike since 10-19, plant digest **46c263de** (10-31; 6446d8fa from 10-21 to 10-31). In `bike_params.yaml` since 10-31: `wheel_play` (v5's: front axle 0.33 mm, headset 0.5, rear 2.5, rear sliding 1.0, total travel), `sim.contact_parts` (front tire and rollers, negative solref: shipped stiffness, damping 0.59 / 0.27 x critical from the pivot drops), `sim.friction_sliding` 0.52, `bike.front_wheel.axle_friction_nm` 0.015. Setting the global `contact_solref` (a `floor:` overlay, teleop `--solref`, the contact studies) also clears the wheels' own (`params.with_contact_solref`), so the soft-floor exports replay as trained. Optional on top, off in `bike_params.yaml`: the sawtooth detent and measured roller spring, carried by a policy's move yaml | Contact stiffness and `solimp`, masses; the sway and steer-servo gaps (`physical-bike-tests.md`) | `mujoco-modeling-decisions.md`, `drivetrain-model.md`, `physical-bike-tests.md`, `contact-measurements.yaml` |
-| **Control — RL** | **Pointer `general_puffer_a40_v4_80M`** (10-26, plant 54fdba72 = 6446d8fa + detent overlay + play, the Pi's steer rate, `tm151_filter` + odometry counts): 0/20 falls, 7/9 turns forward, 2/2 straight on its own plant, less standstill drift than the old pointer in the sim, the shake gone on the bike (next #1). Endurance minute (`-m prospective`, 18 x 60 s) passes; it flies the move's detent but not its play (the test does not read `wheel_play`). **v5 (10-29, not flown)**: `general_puffer_5090_v5floor_s{1..4}_{52,72,80}M`, the detent phase and diff rate observed, front play a third, the rear lateral slide, one floor per seed (s1 shipped, s2 soft, s3 slippery, s4 both); on their own floors all match v4 on the grid, s1 80M cleanest. On the bike (10-30, user): s1 the best of the four, softslip not stable, the detent phase's effect not visible; slip training gives a worse policy. **v6 (configured 10-31, not trained)**: v5's config on the measured plant, mu and axle drag randomized (next #1). The old pointer `general_puffer_fixes_72M` (10-16, plant bc66ca20, before the v2 bike, exact-joint steer rate): same grid, endurance 0/18 falls. `general_puffer_rake20_{52,72,80}M` (10-23, v2 plant, no play): as good on the grid, wobbles at 1.2 m/s, shook like the pointer on the bike. Style bit runs 1-2 (10-17/18): no pivot yet. CPU arms (`general_rl_v3_*`, MLP and MinGRU actor) trained before 10-17's plant; `v3_s1` shakes at 11.2 Hz on the bike | Crab never trained (`v_lat_frac` 0) | `gpu-training.md`, `general-rl-improvements.md`, `next-retrain.md` |
-| **GPU training** | Phases 1-3 done (10-14 to 10-16). `scripts/gpu.sh` runs the runbook; `SEEDS=N` runs N under MPS (4 on a 5090: 116k steps/s in total). Cards: 5090 12 min / $0.23 per 72M steps, 4090 17 min, A40 38 min at 4096 x 64 for the v2 plant; the v4 plant (play joints) ran 19.7 -> 16.0k steps/s on an A40, 80M in 89 min, ~$1.05 of pod (no 4090 / 5090 to be had 10-26). Runs are not bit-repeatable | Phase 4 (MLP / loss parity) and 5 (GPU vs CPU seeds) not started; per-world randomisation of the play not ported. Ported 10-31: `axle_friction_range` (per-world `dof_frictionloss`); the wheels' negative solref compiles and matches C on CPU Warp (`check_contact_parts.py`), not yet on a CUDA pod | `gpu-training.md` |
+| **Control — RL** | **Pointer `general_puffer_a40_v4_80M`** (10-26, plant 54fdba72 = 6446d8fa + detent overlay + play, the Pi's steer rate, `tm151_filter` + odometry counts): 0/20 falls, 7/9 turns forward, 2/2 straight on its own plant, less standstill drift than the old pointer in the sim, the shake gone on the bike (next #1). Endurance minute (`-m prospective`, 18 x 60 s) passes; it flies the move's detent but not its play (the test does not read `wheel_play`). **v5 (10-29, not flown)**: `general_puffer_5090_v5floor_s{1..4}_{52,72,80}M`, the detent phase and diff rate observed, front play a third, the rear lateral slide, one floor per seed (s1 shipped, s2 soft, s3 slippery, s4 both); on their own floors all match v4 on the grid, s1 80M cleanest. On the bike (10-30, user): s1 the best of the four, softslip not stable, the detent phase's effect not visible; slip training gives a worse policy. **v6 (11-02)**: v5 s1's config on the measured plant (move digest e4e2d636 = 46c263de + the detent overlay), mu 0.36-0.68 and axle drag 0-0.035 randomized; four seeds on a secure 5090, ~90 min, ~$1.90. On that plant 0/20 falls for every seed and every mu tried, 7-8/9 turns forward, straight speed tracked; slow in reverse (grid -0.5: s1 -0.39, s3 -0.21; on joystick commands s2-s4 hardly reverse) and on big turns. Flown 11-02 (s1, a standstill minute and a drive): acts like the sim, "way too cautious" (user); the training-side cause is next #1. The old pointer `general_puffer_fixes_72M` (10-16, plant bc66ca20, before the v2 bike, exact-joint steer rate): same grid, endurance 0/18 falls. `general_puffer_rake20_{52,72,80}M` (10-23, v2 plant, no play): as good on the grid, wobbles at 1.2 m/s, shook like the pointer on the bike. Style bit runs 1-2 (10-17/18): no pivot yet. CPU arms (`general_rl_v3_*`, MLP and MinGRU actor) trained before 10-17's plant; `v3_s1` shakes at 11.2 Hz on the bike | Crab never trained (`v_lat_frac` 0) | `gpu-training.md`, `general-rl-improvements.md`, `next-retrain.md` |
+| **GPU training** | Phases 1-3 done (10-14 to 10-16). `scripts/gpu.sh` runs the runbook; `SEEDS=N` runs N under MPS (4 on a 5090: 116k steps/s in total). Cards: 5090 12 min / $0.23 per 72M steps, 4090 17 min, A40 38 min at 4096 x 64 for the v2 plant; the v4 plant (play joints) ran 19.7 -> 16.0k steps/s on an A40, 80M in 89 min, ~$1.05 of pod (no 4090 / 5090 to be had 10-26). Runs are not bit-repeatable | Phase 4 (MLP / loss parity) and 5 (GPU vs CPU seeds) not started; per-world randomisation of the play not ported. `axle_friction_range` ported (10-31); the wheels' negative solref matches C on a CUDA 5090 too (11-02, rebound / fall 0.243 vs 0.260 front, 0.517 vs 0.520 rear; that pod installed Warp 1.19). **Warm start (11-02)**: `gpu.sh up ... LOAD=<.bin> LR= STEPS_M=` starts every seed from a checkpoint's weights (`puffer_aow.patch`; upstream loads only in eval); a 6.8M smoke run started at the trained entropy (0.45 against a fresh 4.24), moved the weights 2.1 %, and refused a truncated file -- weights only, the curriculum restarts | `gpu-training.md` |
 | **Sensor modelling** | Largely done. TM151 measured on the fixture: a complementary filter, tau 0.19 s at rest to ~1 s moving. `tm151_filter` is the training level since 10-09; unproven on sustained acceleration | The wave cams (sustained acceleration) | `sensor-workstream.md`, `ahrs-fixture.md` |
 | **Control — LQR** | **Deprecated 10-09.** `lqr` tests skipped unless named. The code stays: the bundle's gain schedule is built on it | none | `lqr-baseline.md` |
 | **Hardware / onboard** | Pi 3B+, tick jitter p99 < 1 ms with four servos. drive_a is servo 102 (right) in `onboard.yaml`, compensating `k_roller`'s sign until the swap is reverted with it. `run_bike` rides out up to 3 bad servo reads in a row. The preflight accepts the CAD-located AHRS mount (`source: design`, 10-25). The AHRS enumerates only on the ethernet-side USB sockets. `scripts/bike.sh` runs sync / bench / run / hold / mirror / status. **Link drops (10-27) were the Mac idle-sleeping on battery** (display off at 2 min, sleep 1 min later; pad input over raw USB is not user activity): every unexplained drop that afternoon matched pmset's log to the second. The mirror now holds `caffeinate -di` while it runs, reopens a pad that drops or is plugged in late, and reads a dropped pad as neutral. **The Pi's clock is wrong after a power-up** until timesyncd reaches a server (28.5 min slow 14 s after one boot, 10-27; ~10.6 min in run 261027-162626's `created`); each record now carries an SNTP check at start and close (`hw/clock.py`), and `mirror_replay --info` prints the corrected start | Chassis, pack, the SBC that ships | `pi-bench-bringup.md`, `untethered-setup.md` |
@@ -79,8 +84,12 @@ fixture (parked 09-24), the contact bench (a fallback).
 ## Health
 
 **Tests, 2026-10-31**: `pytest -n 10 --dist loadgroup`, 1162 passed, 58
-skipped, **1 newly red, not registered**: `test_model.py::test_rest_stability`
-(next #1; registering it is the user's call). Re-pointed, not loosened, for
+skipped, 1 red then: `test_model.py::test_rest_stability`, since split (11-02,
+`-m "contact or geometry or deploy"` 193 passed, nothing red): the bike's
+joints keep 0.05 rad/s at rest; the rollers, ring and play joints get 1.0 of
+their own -- the rear axle's play makes the roller on the floor chatter at
+~277 Hz (0.53 rad/s; 0.009 without play), shrinking with the timestep, so the
+solver's, not the bike's. Re-pointed, not loosened, for
 the plant change: the digest tripwire (two log lines), the contact-parts
 no-op test (now "a part without an override gets the globals"), DOF counts
 (full 25 -> 31, testbed 12 -> 15), the wheel-play tests' "default", the floor
@@ -99,9 +108,9 @@ Pi needs `scripts/bike.sh sync`** before `run_bike` starts.
 `config/ahrs_mount.yaml` is the CAD's 45 deg nose-down mount. History:
 `params-digest-split.md`.
 
-**Which exports carry today's plant**: none -- every export is
-provisional against 46c263de (mu 0.52 and the fitted wheel contacts reach
-them all). A move that records its own `wheel_play` (v4, v5) still flies
+**Which exports carry today's plant**: v6 only (e4e2d636 = 46c263de + its
+detent overlay); every earlier export is provisional against 46c263de (mu
+0.52 and the fitted wheel contacts reach them all). A move that records its own `wheel_play` (v4, v5) still flies
 it; one that records none now gets `bike_params`' play. The old pointer
 `fixes_72M` is older again (bc66ca20: old steer, old mass layout, exact
 steer rate). Read a move's own `plant_digest`, never its name.
@@ -158,7 +167,7 @@ checklist).
 | parameter | value | what is known | dies at |
 |---|---|---|---|
 | `contact_solimp` | MuJoCo stock | hand drops: the real contact is softer at first touch and stiffer at peak than any `solref` gives | the contact bench, if the bike needs it |
-| `wheel_play.*.centring_stiffness`, `rear_axle_lateral.damping` | 4 N m/rad, 2000 N/m, 1 N s/m | nothing measured; the rear camber hinge rattles at rest with it (next #1) | a pluck test of the play, if the rattle matters |
+| `wheel_play.*.centring_stiffness`, `rear_axle_lateral.damping` | 4 N m/rad, 2000 N/m, 1 N s/m | nothing measured; with the rear play the roller on the floor chatters at rest, the solver's (`test_rest_stability` bounds it) | a pluck test of the play, if it matters |
 | `friction_torsional` | 0.005 | nothing; the risk is setting it high | same |
 | `drivetrain_model.roller_slop.centring_stiffness` | 1e-3 | ~1e-2 from the flick video (10-24), carried by the sawtooth overlay that v4 trained on, not yet in bike_params. By hand, a released roller "springs back, not every time". Stiffness x10 drops `smooth_temporal`'s score 0.818 -> 0.598; x0.1 or no slop moves it <= 0.005 (`analysis/policy/slop_sensitivity.py`) | -- |
 | `righting.rollcage.mass.sheet` | 35 g | material and thickness assumed | the sheet |
@@ -233,9 +242,9 @@ Outstanding with the bench fit: the `contact_solimp` comment in
 
 ## Risks, ranked
 
-1. **No policy has trained on a contact that bounces.** Every export
-   trained on the shipped critically damped contact; the measured wheels
-   bounce (0.59 / 0.27 x critical). v6 is the first to train on them.
+1. **Only v6 has trained on a contact that bounces**, and it came out
+   cautious (next #1); every earlier export trained on the shipped
+   critically damped contact, and on the measured one v5 s1 falls 10/20.
    The old floor sweep's cliff (`[0.005, 0.30]` everywhere, survival 0.35)
    was a STIFFER contact; these keep the stiffness. Nothing trains over
    stiffness variation (`solref_frac` is not ported, and refuses a negative

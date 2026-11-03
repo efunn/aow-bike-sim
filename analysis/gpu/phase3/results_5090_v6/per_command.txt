@@ -1,0 +1,33 @@
+# python analysis/policy/per_command.py --summary --ahrs tm151_filter --tag _v6_judge --policies general_puffer_5090_v6_s{1,2,3,4}_80M general_puffer_5090_v5floor_s1_80M general_puffer_a40_v4_80M
+# 2026-11-02; every row on the measured plant 46c263de (mu 0.52, the wheels' contacts), its move's own play
+eval: 6 policies in parallel, one process each, --encoder counts --ahrs tm151_filter --ahrs-tau 2
+  general_puffer_5090_v6_s1_80M: 0/20 fell
+  general_puffer_5090_v6_s2_80M: 0/20 fell
+  general_puffer_5090_v6_s3_80M: 0/20 fell
+  general_puffer_5090_v6_s4_80M: 0/20 fell
+  general_puffer_5090_v5floor_s1_80M: 10/20 fell
+  general_puffer_a40_v4_80M: 9/20 fell
+
+  policy                        turns fwd  straight fwd   hold v   fell
+  ---------------------------------------------------------------------
+  general_puffer_5090_v6_s1_80        7/9           2/2    -0.02      0
+  general_puffer_5090_v6_s2_80        8/9           2/2    -0.02      0
+  general_puffer_5090_v6_s3_80        8/9           2/2     0.01      0
+  general_puffer_5090_v6_s4_80        8/9           2/2     0.02      0
+  general_puffer_5090_v5floor_        1/2           2/2    -0.02     10
+  general_puffer_a40_v4_80M           3/5           2/2    -0.02      9
+
+  turns fwd    = turning commands resolved body-FORWARD (character)
+  straight fwd = forward commands actually driven forward (competence)
+  hold v       = body velocity on the pure hold command, m/s
+  fell counts ALL 20; the two ratios exclude the commands it fell on.
+
+  wheel/yaw, in place            spin +90   spin -90  spin +170  spin -170  spin +180
+  -----------------------------------------------------------------------------------
+  general_puffer_5090_v6_s1_80       0.99       0.98       0.99       1.03       1.01
+  general_puffer_5090_v6_s2_80       0.99       0.97       1.08       0.94       1.02
+  general_puffer_5090_v6_s3_80       1.09       0.91       1.04       0.95       0.95
+  general_puffer_5090_v6_s4_80       1.00       0.95       0.96       0.87       0.96
+  general_puffer_5090_v5floor_       1.00       1.02       fell       fell       fell
+  general_puffer_a40_v4_80M          fell       0.97       fell       fell       fell
+  ~1 = steered spin (wheel turns with the chassis), ~0 = pivot

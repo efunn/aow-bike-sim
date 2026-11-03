@@ -1,0 +1,64 @@
+# analysis/policy/cmd_replay.py, 2026-11-02: bike runs' commands replayed open loop in the sim
+# (the eval grid's sim: measured plant, randomization off, tm151_filter). Each block's command line:
+
+$ python analysis/policy/cmd_replay.py traces/bike/261102-203829_run --policies general_puffer_5090_v6_s1_80M general_puffer_5090_v6_s2_80M general_puffer_5090_v6_s3_80M general_puffer_5090_v6_s4_80M general_puffer_5090_v5floor_s1_80M general_puffer_a40_v4_80M
+261102-203829_run: 131 s, flew general_puffer_5090_v6_s1_80M; sim: as shipped
+  bike (5090_v6_s1_80M)                    fwd  0.71 ( 23 s)  rev  0.44 ( 26 s)   turns 13/13 done, median 2.3 s 
+  sim  5090_v6_s1_80M                      fwd  0.75 ( 23 s)  rev  0.58 ( 26 s)   turns 8/13 done, median 2.3 s play 6 joints, axle 0.015 N m
+  sim  5090_v6_s2_80M                      fwd  1.00 ( 23 s)  rev  0.08 ( 26 s)   turns 11/13 done, median 2.0 s play 6 joints, axle 0.015 N m
+  sim  5090_v6_s3_80M                      fwd  0.90 ( 23 s)  rev  0.12 ( 26 s)   turns 12/13 done, median 1.4 s play 6 joints, axle 0.015 N m
+  sim  5090_v6_s4_80M                      fwd  0.83 ( 23 s)  rev  0.18 ( 26 s)   turns 10/13 done, median 1.9 s play 6 joints, axle 0.015 N m
+  sim  5090_v5floor_s1_80M                 fwd  0.96 (  9 s)  rev  1.02 ( 20 s)   turns 2/3 done, median 1.3 s play 6 joints, axle 0.015 N m, FELL at 59 s
+  sim  a40_v4_80M                          fwd  0.93 (  2 s)  rev  0.74 (  2 s)   turns no turns               play 5 joints, axle 0.015 N m, FELL at 10 s
+
+$ python analysis/policy/cmd_replay.py traces/bike/261029-130954_run_v5_s1 --policies general_puffer_5090_v6_s1_80M
+261029-130954_run_v5_s1: 261 s, flew general_puffer_5090_v5floor_s1_80M; sim: as shipped
+  bike (5090_v5floor_s1_80M)               fwd  0.81 ( 26 s)  rev  0.76 ( 20 s)   turns 7/7 done, median 1.3 s 
+  sim  5090_v6_s1_80M                      fwd  0.79 ( 26 s)  rev  0.28 ( 20 s)   turns 6/7 done, median 2.1 s play 6 joints, axle 0.015 N m
+
+$ python analysis/policy/cmd_replay.py traces/bike/261029-131450_run_v4_80M --policies general_puffer_5090_v6_s1_80M
+261029-131450_run_v4_80M: 111 s, flew general_puffer_a40_v4_80M; sim: as shipped
+  bike (a40_v4_80M)                        fwd  0.67 ( 27 s)  rev  0.46 (  8 s)   turns 11/19 done, median 1.7 s 
+  sim  5090_v6_s1_80M                      fwd  0.65 ( 27 s)  rev  0.37 (  8 s)   turns 5/19 done, median 2.7 s play 6 joints, axle 0.015 N m
+
+$ python analysis/policy/cmd_replay.py traces/bike/261031-111322_run --policies general_puffer_5090_v6_s1_80M
+261031-111322_run: 228 s, flew general_puffer_a40_v4_80M; sim: as shipped
+  bike (a40_v4_80M)                        fwd  0.77 (  3 s)  rev  0.64 ( 16 s)   turns 27/33 done, median 1.0 s 
+  sim  5090_v6_s1_80M                      fwd  0.55 (  3 s)  rev  0.42 ( 16 s)   turns 16/33 done, median 1.7 s play 6 joints, axle 0.015 N m
+
+$ python analysis/policy/cmd_replay.py traces/bike/261031-115626_run --policies general_puffer_5090_v6_s1_80M
+261031-115626_run: 188 s, flew general_puffer_a40_v4_80M; sim: as shipped
+  bike (a40_v4_80M)                        fwd  0.86 (  7 s)  rev  0.68 ( 27 s)   turns 25/28 done, median 1.0 s 
+  sim  5090_v6_s1_80M                      fwd  0.41 (  7 s)  rev  0.39 ( 27 s)   turns 18/28 done, median 1.9 s play 6 joints, axle 0.015 N m
+
+# ablation: the plant changed AFTER training (does the plant hold v6 back as it drives?)
+
+$ python analysis/policy/cmd_replay.py traces/bike/261031-115626_run --policies general_puffer_5090_v6_s1_80M general_puffer_5090_v6_s3_80M --set bike.front_wheel.axle_friction_nm=0
+261031-115626_run: 188 s, flew general_puffer_a40_v4_80M; sim: bike.front_wheel.axle_friction_nm=0
+  bike (a40_v4_80M)                        fwd  0.86 (  7 s)  rev  0.68 ( 27 s)   turns 25/28 done, median 1.0 s 
+  sim  5090_v6_s1_80M                      fwd  0.41 (  7 s)  rev  0.36 ( 27 s)   turns 19/28 done, median 1.9 s play 6 joints, axle 0.000 N m
+  sim  5090_v6_s3_80M                      fwd  0.95 (  7 s)  rev  0.02 ( 27 s)   turns 24/28 done, median 1.9 s play 6 joints, axle 0.000 N m
+
+$ python analysis/policy/cmd_replay.py traces/bike/261031-115626_run --policies general_puffer_5090_v6_s1_80M general_puffer_5090_v6_s3_80M --drop-play rear_axle_lateral
+261031-115626_run: 188 s, flew general_puffer_a40_v4_80M; sim: -rear_axle_lateral
+  bike (a40_v4_80M)                        fwd  0.86 (  7 s)  rev  0.68 ( 27 s)   turns 25/28 done, median 1.0 s 
+  sim  5090_v6_s1_80M                      fwd  0.36 (  7 s)  rev  0.42 ( 27 s)   turns 18/28 done, median 1.8 s play 5 joints, axle 0.015 N m
+  sim  5090_v6_s3_80M                      fwd  0.94 (  7 s)  rev -0.08 ( 27 s)   turns 24/28 done, median 1.7 s play 5 joints, axle 0.015 N m
+
+$ python analysis/policy/cmd_replay.py traces/bike/261031-115626_run --policies general_puffer_5090_v6_s1_80M general_puffer_5090_v6_s3_80M --set bike.front_wheel.axle_friction_nm=0 --drop-play rear_axle_lateral
+261031-115626_run: 188 s, flew general_puffer_a40_v4_80M; sim: bike.front_wheel.axle_friction_nm=0 -rear_axle_lateral
+  bike (a40_v4_80M)                        fwd  0.86 (  7 s)  rev  0.68 ( 27 s)   turns 25/28 done, median 1.0 s 
+  sim  5090_v6_s1_80M                      fwd  0.38 (  7 s)  rev  0.39 ( 27 s)   turns 19/28 done, median 1.8 s play 5 joints, axle 0.000 N m
+  sim  5090_v6_s3_80M                      fwd  0.96 (  7 s)  rev -0.03 ( 27 s)   turns 24/28 done, median 1.9 s play 5 joints, axle 0.000 N m
+
+$ python analysis/policy/cmd_replay.py traces/bike/261031-115626_run --policies general_puffer_5090_v6_s1_80M general_puffer_5090_v6_s3_80M --drop-play rear_axle --drop-play rear_axle_lateral
+261031-115626_run: 188 s, flew general_puffer_a40_v4_80M; sim: -rear_axle -rear_axle_lateral
+  bike (a40_v4_80M)                        fwd  0.86 (  7 s)  rev  0.68 ( 27 s)   turns 25/28 done, median 1.0 s 
+  sim  5090_v6_s1_80M                      fwd  0.39 (  7 s)  rev  0.52 ( 27 s)   turns 17/28 done, median 2.0 s play 3 joints, axle 0.015 N m
+  sim  5090_v6_s3_80M                      fwd  0.96 (  7 s)  rev  0.02 ( 27 s)   turns 23/28 done, median 1.9 s play 3 joints, axle 0.015 N m
+
+$ python analysis/policy/cmd_replay.py traces/bike/261031-115626_run --policies general_puffer_5090_v6_s1_80M general_puffer_5090_v6_s3_80M --set bike.front_wheel.axle_friction_nm=0 --drop-play rear_axle --drop-play rear_axle_lateral --drop-play front_axle --drop-play headset
+261031-115626_run: 188 s, flew general_puffer_a40_v4_80M; sim: bike.front_wheel.axle_friction_nm=0 -rear_axle -rear_axle_lateral -front_axle -headset
+  bike (a40_v4_80M)                        fwd  0.86 (  7 s)  rev  0.68 ( 27 s)   turns 25/28 done, median 1.0 s 
+  sim  5090_v6_s1_80M                      fwd  0.32 (  7 s)  rev  0.51 ( 27 s)   turns 18/28 done, median 2.0 s play 0 joints, axle 0.000 N m
+  sim  5090_v6_s3_80M                      fwd  0.97 (  7 s)  rev  0.04 ( 27 s)   turns 23/28 done, median 1.9 s play 0 joints, axle 0.000 N m

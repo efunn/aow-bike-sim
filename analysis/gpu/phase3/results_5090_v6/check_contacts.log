@@ -1,0 +1,49 @@
+Warp 1.19.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.2
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA GeForce RTX 5090" (31 GiB, sm_120, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.19.0
+MJWarp on cuda:0, pivot drop 15 mm, chassis pitch rate at 200 Hz
+Module mujoco_warp._src.smooth e32b4e8 load on device 'cuda:0' took 2.66 ms  (cached)
+Module _nxn_broadphase__locals__kernel_7c8bcc49 7c8bcc4 load on device 'cuda:0' took 0.35 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_f207fc4e f207fc4 load on device 'cuda:0' took 8389.64 ms  (compiled)
+Module ccd_kernel_builder__locals__ccd_kernel_f207fc4e d50ad6f load on device 'cuda:0' took 8223.69 ms  (compiled)
+Module _primitive_narrowphase__locals__primitive_narrowphase_b9c966bf b9c966b load on device 'cuda:0' took 0.45 ms  (cached)
+Module mujoco_warp._src.constraint d81df1c load on device 'cuda:0' took 0.30 ms  (cached)
+Module _equality_connect__locals__kernel_6b543442 6b54344 load on device 'cuda:0' took 221.74 ms  (compiled)
+Module _equality_joint__locals__kernel_8b278dfe 8b278df load on device 'cuda:0' took 0.44 ms  (cached)
+Module _equality_tendon__locals__kernel_cd2bd9d7 cd2bd9d load on device 'cuda:0' took 0.34 ms  (cached)
+Module _friction_dof__locals__kernel_065656e2 065656e load on device 'cuda:0' took 0.32 ms  (cached)
+Module _friction_tendon__locals__kernel_3df129d8 3df129d load on device 'cuda:0' took 0.32 ms  (cached)
+Module _limit_slide_hinge__locals__kernel_74e9c0be 74e9c0b load on device 'cuda:0' took 0.32 ms  (cached)
+Module _efc_contact_init__locals__kernel_2385c6a6 2385c6a load on device 'cuda:0' took 0.32 ms  (cached)
+Module _efc_contact_jac_dense__locals__kernel_97624035 a484797 load on device 'cuda:0' took 0.34 ms  (cached)
+Module _efc_contact_update__locals__kernel_82c97a5e 82c97a5 load on device 'cuda:0' took 0.31 ms  (cached)
+Module mujoco_warp._src.sensor 1732059 load on device 'cuda:0' took 0.48 ms  (cached)
+Module mujoco_warp._src.history 5007423 load on device 'cuda:0' took 0.34 ms  (cached)
+Module mujoco_warp._src.forward be54cd7 load on device 'cuda:0' took 1.33 ms  (cached)
+Module mujoco_warp._src.forward 1d3533c load on device 'cuda:0' took 0.35 ms  (cached)
+Module mujoco_warp._src.passive dc2a9f0 load on device 'cuda:0' took 0.37 ms  (cached)
+Module _qfrc_smooth__locals__kernel_5d93552d 5d93552 load on device 'cuda:0' took 0.30 ms  (cached)
+Module mujoco_warp._src.support 9814593 load on device 'cuda:0' took 0.28 ms  (cached)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_57130809 ad6de8a load on device 'cuda:0' took 3129.39 ms  (compiled)
+Module _solve_init_dof__locals__kernel_b169a5f9 b169a5f load on device 'cuda:0' took 0.40 ms  (cached)
+Module mujoco_warp._src.solver 339c2f5 load on device 'cuda:0' took 0.50 ms  (cached)
+Module _solve_init_jaref_kernel__locals__kernel_7e954ea9 7e954ea load on device 'cuda:0' took 96.47 ms  (compiled)
+Module mul_m_kernel__locals___mul_m_8a5b7d1c 8a5b7d1 load on device 'cuda:0' took 0.37 ms  (cached)
+Module _update_constraint_efc__locals__kernel_d21fab9c d21fab9 load on device 'cuda:0' took 0.34 ms  (cached)
+Module _update_constraint_init_qfrc_constraint_dense__locals__kernel_a8ee7da4 a8ee7da load on device 'cuda:0' took 0.32 ms  (cached)
+Module _update_gradient_zero_grad_dot__locals__kernel_090547dc 090547d load on device 'cuda:0' took 0.31 ms  (cached)
+Module _update_gradient_grad__locals__kernel_0cb08316 0cb0831 load on device 'cuda:0' took 0.30 ms  (cached)
+Module _update_gradient_JTDAJ_dense_tiled__locals__kernel_a7b0516c b53a6f6 load on device 'cuda:0' took 378.06 ms  (compiled)
+Module _update_gradient_cholesky__locals__kernel_888b401e 910b91b load on device 'cuda:0' took 2979.50 ms  (compiled)
+Module _linesearch_iterative_kernel__locals__kernel_cb24bb68 6c81b41 load on device 'cuda:0' took 0.56 ms  (cached)
+Module _contact_sort__locals__contact_sort_b958dcaa 395b789 load on device 'cuda:0' took 133.72 ms  (compiled)
+Module mujoco_warp._src.derivative 3dc8889 load on device 'cuda:0' took 0.44 ms  (cached)
+Module _next_time_builder__locals___next_time_cb92c004 cb92c00 load on device 'cuda:0' took 0.37 ms  (cached)
+  fitted (bike_params)             front: C fall/rebound  127.0/ 33.0 deg/s, Warp  136.0/ 33.1; rebound/fall C 0.260 Warp 0.243; max |diff| 11.5 deg/s
+  fitted (bike_params)             rear : C fall/rebound  151.0/ 78.5 deg/s, Warp  152.0/ 78.6; rebound/fall C 0.520 Warp 0.517; max |diff| 9.9 deg/s
+  shipped [0.005, 1.0] everywhere  front: C fall/rebound  127.3/ 16.8 deg/s, Warp  135.9/ 18.2; rebound/fall C 0.132 Warp 0.134; max |diff| 17.9 deg/s
+  shipped [0.005, 1.0] everywhere  rear : C fall/rebound  151.4/ 22.4 deg/s, Warp  153.0/ 21.7; rebound/fall C 0.148 Warp 0.142; max |diff| 8.3 deg/s

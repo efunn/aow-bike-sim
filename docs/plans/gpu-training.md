@@ -1455,7 +1455,8 @@ on 2 seeds. s1 80M reads like v4 throughout (standstill 0.16-0.19 m/s,
 record (the NOTE above is fixed); v4 on its own plant: 0.12-0.19 m/s,
 0.05-0.11 m. Not yet: all four on ONE floor, `chatter.py`, the bike.
 
-**v6, the measured plant (configured 2026-10-31, NOT RUN)**.
+**v6, the measured plant (configured 2026-10-31, launched 2026-11-02: four
+seeds, secure 5090, EU-RO-1)**.
 `rl_general_v6.yaml`: v5 s1's config on plant 46c263de -- `bike_params.yaml`
 now carries the wheel play (v5's), the tire's and rollers' own contacts
 (negative solref, damping from the pivot drops), floor mu 0.52 and the
@@ -1471,9 +1472,70 @@ config, as v5:
 
     scripts/gpu.sh up HOST PORT SEEDS=4 CONFIG=config/rl/rl_general_v6.yaml
 
-Untested on a card: the plant's cost (v5's plant ran 62-65k steps/s in all
-under MPS; the contact parts add no joints, the play none beyond v5's).
-Before it: `test_rest_stability` (`status.md` next #1).
+`test_rest_stability`, red at launch, was the solver's roller chatter on the
+rear play and is now bounded on its own (`status.md` tests).
+
+**v6 results (2026-11-02).** Secure 5090 on a CUDA 13.2 host (driver 595,
+Warp 1.19 installed), 01:45-03:21 UTC, ~$1.90 with the warm-start test.
+15.2-15.6k steps/s a seed, ~62k in all (v5's plant: 62-65k), 80M in 90 min.
+`check_contacts` on CUDA: rebound / fall C 0.260 / Warp 0.243 front, 0.520
+/ 0.517 rear (shipped pair 0.132 / 0.134, 0.148 / 0.142). End panels, all
+at difficulty 1.0: falls 0.44-0.48 and track 0.72-0.73 for every seed --
+the level of v5's slippery seeds (s3 / s4: 0.43 / 0.31, 0.78 / 0.75), not
+v5 s1's (0.04, 0.83). s4 ended KL HIGH (0.105). Converted 52 / 72 / 80M.
+Judged in C on the measured plant, one grid
+(`results_5090_v6/per_command.txt`):
+
+| | falls /20 | turns fwd | spin -90 | reverse -0.5 m/s held |
+|---|---|---|---|---|
+| v6 s1-s4 80M | 0, 0, 0, 0 | 7-8 / 9 | 0.91-0.98 | s1 -0.39, s3 -0.21 |
+| v5 s1 80M | 10 | 1 / 2 | 1.02 | -0.52 |
+| v4 80M (pointer) | 9 | 3 / 5 | 0.97 | -0.51 |
+
+v6 s1 falls 3, 1, 0, 0 / 20 at floor mu 0.36 / 0.45 / 0.52 / 0.68 (v5 s1:
+16, 14, 10, 2) and tracks forward speed at every one. From rest it is as
+quick as v5 and v4 (63 % of 0.8 m/s in 0.16-0.18 s). **On the bike (s1,
+11-02) and on the bike's own commands replayed in the sim
+(`analysis/policy/cmd_replay.py`, `results_5090_v6/cmd_replay.txt`) it is
+cautious**: reverse at 0.44 of the command on the bike (sim 0.58; s2-s4
+0.08-0.18 in the sim), big heading changes settled in 2.3 s median (v5 s1
+1.3, v4 1.0-1.7). The eval grid's one held reverse step and its turn
+ratios do not show it. Taking the axle drag, the rear play or all play off
+the SIM's bike leaves it as is (s1 reverse 0.36-0.52 against 0.39), so it
+is in the weights. `chatter.py` (`results_5090_v6/chatter.txt`): big turns
+take 5.8-10.3 s to reach 10 deg (v4, v5 s1: 0.9-1.0 s, and they fall on
+all six); chatter, saturation and steer flips as v4's. `standstill.py`:
+max |v| 0.12-0.27, never over 0.3 but one s4 seed (0.44 m/s, 0.48 m); s1
+ends 0.12-0.18 m out (v4 0.07-0.09). What the training changed against v5 s1: the wheels'
+own bouncy contacts, mu 0.36-0.68 (v5 s1 0.72-1.08), the axle drag; the
+play is v5's. Not separated; one warm-start fine-tune per change would.
+
+**Warm start / fine-tune (built 2026-11-02, NOT used for a run yet).**
+Upstream PufferLib reads `load_model_path` in eval and match only; `train`
+always starts from the seeded init. `puffer_aow.patch` loads it in
+`run_train` right after `create_pufferl` (and re-copies the async actor's
+weights), and refuses a file that is not exactly this net's size -- a
+checkpoint is `total_elems` fp32 floats, no header (52227 for obs 20 / A 3 /
+H 128; the v5 files are exactly that), so the check catches a different
+obs width or hidden size, NOT a same-size different layout. From
+`gpu.sh`:
+
+    scripts/gpu.sh up HOST PORT SEEDS=4 CONFIG=<new>.yaml \
+        LOAD=analysis/gpu/phase3/results_<tag>/seed_<k>/puffer_checkpoints/aow_bike/<run>/<step>.bin \
+        LR=0.001 STEPS_M=20
+
+`LOAD` goes up as `/root/warm_start.bin`; `LR` and `STEPS_M` set the ini's
+`learning_rate` and `total_timesteps`. Only the weights carry over: Muon's
+momentum, the cosine LR schedule (it restarts at `LR`, hence a lower one),
+the shared curriculum (from easy, at `CURRICULUM_LEAD`'s pace) and the step
+count (export names count from the restart) all start fresh. The last few
+MinGRU weights that `total_elems` leaves out of every dump (see
+`export_policy.py`) take the new seed's init. The trainer prints
+`AOW warm start: <path>` in `train.log`. Tested: the patch applies to
+ea7f989; the run scripts' ini edits on the pod's GNU sed; `gpu.sh`'s
+`LOAD` rewrite and missing-file refusal. The trainer itself is CUDA-only
+(its `--cpu` build is eval/play), so the load in `train` is untested until
+a pod runs it.
 
 ### Phase 4 -- algorithm parity
 
