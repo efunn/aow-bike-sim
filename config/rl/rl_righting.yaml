@@ -1,0 +1,82 @@
+# RL get-up on the swing module (train_righting_rl.py / control/righting_env.py).
+# From lying on a blade to a still prop inside the hand-off window, on the
+# crank (and optionally the rear differential); the general policy is off.
+# The 32-env CPU (SB3) version; buffer 32 x 512 = 16384 like every config here.
+
+algo:
+  algorithm: PPO
+  total_timesteps: 3000000
+  n_envs: 32
+  learning_rate: 3.0e-4
+  n_steps: 512
+  batch_size: 512
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005        # ball_rl's lesson: 0.0 collapsed exploration
+  net_arch: [64, 64]
+  log_std_init: -1.0     # action std 0.37 at the start, near the centred
+                         #   get-up; SB3's default 1.0 averages it away
+  seed: 0
+
+env:
+  control_rate_hz: 100
+  max_episode_s: 4.0     # the scripted lift is 1.25 s up at 120 deg/s
+  lead_deg: 40           # crank_lead.lead_goal, as the manual crank; null = off
+  engage_deg: 15         # run_bike PROP_ENGAGE_DEG: Enter's window
+  still_rate: 0.5        # |roll rate| [rad/s] to count as a prop
+  hold_s: 0.3
+  over_deg: 20           # past upright onto the other side = over
+  action_bounds:
+    goal_mid: 1.92       # rad, side frame, at a = 0: 110 deg, swing_sit's
+                         #   lean (a constant 110 at full current props 16/24)
+    goal_span: 1.22      # rad per unit a: 40 deg .. the stroke (clipped at
+                         #   116.9); lead_deg slews it
+    current_max: 785     # Goal Current at a >= 0; the bike's righting_current
+    diff_max: 0.0        # rad/s rear differential; 0 = crank only. Off:
+                         #   lying, it moved the roll by 0.0 deg in 0.6 s
+                         #   either way, and its mirror sign is unchecked
+  overload:              # MEASURED (B2, 11-03): t_trip = charge / (|I| - floor)
+    floor_a: 0.413       # A; never trips below (untested under 500 mA)
+    charge_as: 0.645     # A s; 730 mA -> 2.0 s, 600 -> 3.6, 500 -> 7.0
+    cool_s: 0.5          # drains a full trip in 0.5 s under the floor: B2b,
+                         #   and all 7 bike overloads replayed (see the env)
+  start:
+    n_per_side: 6        # drops per side, drawn once per env; crank limp /
+                         #   held at centre / held at rest_crank_deg in turn
+    kick_range: [2.0, 4.0]   # roll rate at the cut [rad/s]
+    v_max: 0.4           # forward speed at the cut, +- [m/s]; drives then held
+    drop_s: 2.0
+    takeover_deg: 60     # mid-fall states from here: the drive policy lets go
+    snap_dt_s: 0.05      #   ... one every this
+    fall_window_s: 0.6   #   ... for this long (through the landing bounce)
+    p_rest: 0.4          # episodes starting at rest; the rest start mid-fall
+    settle_s: 0.25       # rest starts only: on the randomized masses, limp
+    held_current: 785    # the centre-held crank's (riding, powered)
+    rest_crank_deg: 25   # run_bike LIE_REST_DEG
+    rest_current: 150
+    min_lying_deg: 50
+
+reward:
+  w_progress: 10.0       # x reduction in |roll| [rad]
+  near_deg: 30           # inside this ...
+  w_rate_near: 0.05      #   ... x roll_rate^2: arrive slow
+  w_current: 0.02        # x Present Current^2 [A^2]
+  w_heat: 0.05           # x overload proxy
+  w_smooth: 0.005
+  time_penalty: 0.01
+  w_prop: 1.0            # per step inside the window and still: the way in
+  bonus_success: 100.0
+  penalty_over: 10.0     # was 50: against ~+12 for a whole lift, going over
+  penalty_overload: 10.0 #   cost more than lying still, and the first run
+                         #   (3M, 11-03) learned to lie still
+
+randomization:
+  enabled: true
+  mass_frac: 0.1
+  friction_frac: 0.2
+  servo_strength: [0.6, 1.05]  # k and stall torque scale: the sim's crank is
+                               #   ~0.15 N m light against the bike's lift
+                               #   (status.md row 4), so mostly DOWN
+  supply: [0.92, 1.02]         # pack 11.3-12.2 V of 12

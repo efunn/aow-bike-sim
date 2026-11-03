@@ -27,16 +27,17 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
 CONDA_ENV="${CONDA_ENV:-aow-sim}"
-MOVES="general flick pivot ball"
+MOVES="general flick pivot ball righting"
 
 # Per-move dashboard port, so two moves can be watched at once.
-# Override with:  PORT=6010 ./scripts/rl.sh board general
+# Override with:  PORT=6011 ./scripts/rl.sh board general
 port_for() {
   case "$1" in
     general) echo 6006 ;;
     flick)   echo 6007 ;;
     pivot)   echo 6008 ;;
     ball)    echo 6009 ;;
+    righting) echo 6010 ;;
   esac
 }
 
@@ -264,6 +265,25 @@ cmd_board() {
       return 0
     fi
   fi
+  # The same move's board under ANOTHER RUN_TAG (or none) on this port: one
+  # board per move port, so it moves to this run, as a changed --run-dir
+  # does above. Without this, `RUN_TAG=v2 rl.sh up righting` after an
+  # untagged run fell through to the branch below, which calls an occupied
+  # port "probably fine" -- and the board kept showing the old run
+  # (2026-11-03).
+  local tag t opid ocmd
+  while IFS= read -r tag; do
+    [[ "$tag" == "${RUN_TAG:--}" ]] && continue
+    t="${tag#-}"
+    opid="$(RUN_TAG="$t" pid_of "$move" board)" || true
+    [[ -n "$opid" ]] || continue
+    ocmd="$(ps -o command= -p "$opid" 2>/dev/null)"
+    [[ "$(sed -n 's/.*--port[= ]\{1,\}\([0-9]*\).*/\1/p' <<< "$ocmd")" == "$port" ]] || continue
+    echo "tensorboard  -> port $port was the RUN_TAG=${tag} board, moving it to this run"
+    echo "                was: $(canon_dir "$(sed -n 's/.*--logdir[= ]\{1,\}\([^ ]*\).*/\1/p' <<< "$ocmd")")"
+    echo "                now: $want"
+    RUN_TAG="$t" stop "$move" board >/dev/null 2>&1 || true
+  done < <(tags_with_pids "$move")
   # Someone is on the port but this script has no pidfile for it -- usually a
   # board that outlived its pidfile (the file is removed as soon as a liveness
   # check fails, and never restored). Starting a second one just dies with
