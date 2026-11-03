@@ -1,0 +1,63 @@
+name: righting_rl_v2
+type: rl
+move: righting
+policy_file: righting_rl_v2.npz
+params_digest: 3c7c3c895ed1b695
+plant_digest: 46c263de90495ac6
+env:
+  control_rate_hz: 100
+  max_episode_s: 4.0
+  lead_deg: 40
+  engage_deg: 15
+  still_rate: 0.5
+  hold_s: 0.3
+  over_deg: 20
+  action_bounds:
+    goal_mid: 1.92
+    goal_span: 1.22
+    current_max: 785
+    diff_max: 0.0
+  overload:
+    high_a: 0.6
+    trip_high_s: 1.5
+    hot_a: 0.4
+    trip_hot_s: 5.0
+    cool_s: 10.0
+  start:
+    n_per_side: 6
+    kick_range:
+    - 2.0
+    - 4.0
+    drop_s: 2.0
+    settle_s: 0.25
+    rest_crank_deg: 25
+    rest_current: 150
+    min_lying_deg: 50
+randomization:
+  enabled: true
+  mass_frac: 0.1
+  friction_frac: 0.2
+  servo_strength:
+  - 0.6
+  - 1.05
+  supply:
+  - 0.92
+  - 1.02
+trained:
+  algo: PPO
+  timesteps: 3000000
+  net_arch:
+  - 64
+  - 64
+  seed: 0
+  export_max_diff: 1.4392224076398286e-07
+  eval:
+    strengths:
+    - 1.0
+    - 0.85
+    - 0.7
+    - 0.6
+    success: 18
+    over: 0
+    overload: 6
+    timeout: 0
