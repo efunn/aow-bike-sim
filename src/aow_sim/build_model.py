@@ -1930,6 +1930,16 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
                 pos=[px + at[2], -at[0], sl.pivot_z + at[1]],
                 mass=p["servos"][module.get("servo", "xc330_t181")]["mass"],
                 contype=0, conaffinity=0, rgba=[0.1, 0.1, 0.1, 1])
+        # Lead ballast under it; 0 g is not fitted, and adds no geom.
+        bl = module.get("ballast")
+        if bl is not None and bl["mass"] > 0.0:
+            at = np.asarray(bl["at"], float) / 1000.0
+            chassis.add_geom(
+                name="righting_ballast", type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=np.asarray(bl["size"], float) / 2.0,
+                pos=[px + at[2], -at[0], sl.pivot_z + at[1]],
+                mass=bl["mass"], contype=0, conaffinity=0,
+                rgba=[0.45, 0.45, 0.5, 1])
     crank = chassis.add_body(name="swing_crank", pos=[px, servo[0], servo[1]])
     # The servo's gearbox friction at its no-load static value, for loops that
     # step without the servo model; CurrentBasedPositionServo makes it

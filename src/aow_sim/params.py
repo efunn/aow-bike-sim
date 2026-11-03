@@ -449,6 +449,11 @@ def plant_digest(params: dict) -> str:
             else:                         # copy on the way down, never mutate
                 bike[path[0]] = node = {**bike[path[0]]}
                 node.pop(path[-1])
+    # A 0 g ballast is not fitted (build_model adds no geom): the same bike.
+    mod = bike.get("righting", {}).get("module", {})
+    if isinstance(mod, dict) and mod.get("ballast", {}).get("mass", None) == 0.0:
+        bike["righting"] = {**bike["righting"],
+                            "module": {k: v for k, v in mod.items() if k != "ballast"}}
     return _hash(bike)
 
 

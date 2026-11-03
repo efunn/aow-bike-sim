@@ -664,6 +664,17 @@ righting:
     servo_case:
       at: [0.0, 17.6, -44.2]
       size: [0.023, 0.020, 0.034]
+    # LEAD BALLAST (6 mm lead), hung under that case (user, 11-03). In the
+    # sim, 30 g here lowers the CoM enough to help BOTH get-ups (least Goal
+    # Current to get up 580 -> 560, slow-ramp peak 0.498 -> 0.473 N m), and
+    # each mm of CoM moved sideways shifts ~10 mA between the sides' lifts
+    # (scratch study, 11-03): `out` toward the right (+) evens a heavy left.
+    # mass 0 = not fitted: no geom, and plant_digest leaves a 0 g ballast
+    # out, so the bike is unchanged until it is weighed and placed.
+    ballast:
+      mass: {value: 0.0, source: design}
+      at: [0.0, -2.4, -44.2]      # [out, up from the rod, fore] mm: touching the case's underside
+      size: [0.030, 0.018, 0.006]   # chassis frame [fore, across, up]
     # The crank servo; the four-bar's own `limits.torque_nm` caps it
     # (build_model._add_swing_linkage).
     servo: xc330_t181

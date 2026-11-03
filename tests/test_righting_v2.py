@@ -368,3 +368,25 @@ def test_a_swapped_blade_is_another_plant(params):
     a, b = load_params(blade=other), load_params(blade=ROOT / other)
     assert plant_digest(a) == plant_digest(b) != plant_digest(params)
     assert plant_digest(load_params(blade=own)) == plant_digest(params)
+
+
+def test_a_zero_gram_ballast_is_not_fitted(params):
+    """righting.module.ballast at 0 g: no geom, and the same plant_digest as
+    no entry at all, so the bundle and every export still match. Weighed in,
+    it is a heavier bike under the servo case."""
+    import copy
+    assert params["righting"]["module"]["ballast"]["mass"] == 0.0
+    bare = copy.deepcopy(params)
+    del bare["righting"]["module"]["ballast"]
+    assert plant_digest(params) == plant_digest(bare)
+    m0 = build_model(params, variant="full")
+    with pytest.raises(KeyError):
+        m0.geom("righting_ballast")
+    lead = copy.deepcopy(params)
+    lead["righting"]["module"]["ballast"]["mass"] = 0.030
+    assert plant_digest(lead) != plant_digest(params)
+    m1 = build_model(lead, variant="full")
+    assert sum(m1.body_mass) == pytest.approx(sum(m0.body_mass) + 0.030)
+    d0, d1 = mujoco.MjData(m0), mujoco.MjData(m1)
+    mujoco.mj_forward(m0, d0), mujoco.mj_forward(m1, d1)
+    assert d1.subtree_com[1][2] < d0.subtree_com[1][2]      # lower: under the case
