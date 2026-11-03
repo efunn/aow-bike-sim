@@ -61,6 +61,7 @@ from ..control.flick import move_path
 from ..control.balance import mix
 from ..control.recovery import HANDOFF_RATE, RECOVER_DEG, ready_for_policy
 from ..control.swing_sit import SwingSit
+from ..control import crank_lead as _crank_lead
 from . import telemetry
 from .bench_log import RunRecorder, new_capture_dir
 from .ahrs import (QOS_LIMITED, QOS_MIN_SERVICE, QOS_NAMES, QOS_UNKNOWN,
@@ -163,6 +164,14 @@ PUMP_S = 0.0
 # 261026-041350 to -175020) -- once for 29.6 s -- with the overload a risk
 # the longer it sits. 1.0 holds it as before.
 PROP_CURRENT = 0.0
+# A MANUAL CRANK THAT STOPS MAKING PROGRESS (the station's 9/4 and triggers;
+# the sequence has its own `blocked`): Goal Current drops to
+# MANUAL_HOLD_CURRENT until the operator moves the goal or the crank moves on
+# toward it. The rule and its measurements are control/crank_lead.py's,
+# shared with teleop so the sim flies the same rule.
+MANUAL_STALL_S = _crank_lead.STALL_S
+MANUAL_STALL_ERR_DEG = _crank_lead.STALL_ERR_DEG
+MANUAL_HOLD_CURRENT = _crank_lead.HOLD_CURRENT
 # WHERE THE GET-UP'S LIFT AIMS, per side (SwingSit `lift_to_deg`): "stroke"
 # is the full stroke, a number a crank angle, None the 110 lean. HANDED
 # because the bike is. LEFT to the stroke: at 110 its push eased off over
@@ -705,6 +714,10 @@ class BikeRunner:
         self._bad_reads_total = 0
         self._read_ok = True              # this tick's read; the record's `ok`
         self._righting_current = None
+        # The manual stall rule (control/crank_lead.StallHold).
+        # `_righting_current` stays the operator's value throughout; the
+        # hold is written past it.
+        self._stall = _crank_lead.StallHold()
         # Torque on the righting servo. NOT at connect: in standby it stays
         # unpowered, free to back-drive by hand, until something uses it --
         # the station's wing goal, a sit press, the stow at an engage
@@ -878,6 +891,7 @@ class BikeRunner:
         if not self.bus.id_right:
             return
         if self._sit_owns():
+            self._stall_release()
             # The station drops its goal on a lie/up press, so a goal here
             # while LYING is the operator taking the wings back (9/4, the
             # triggers): teleop's pad_crank does the same. Mid-sequence the
@@ -901,7 +915,41 @@ class BikeRunner:
             self.bus.set_righting(c["righting_rad"])
         want = c.get("righting_current")
         if want is not None and want != self._righting_current:
-            self._righting_current = self.bus.set_righting_current(int(want))
+            self._righting_current = int(want)
+            if not self._stall.holding:
+                self._righting_current = self.bus.set_righting_current(int(want))
+        self._manual_stall()
+
+    def _manual_stall(self) -> None:
+        """The manual crank's stall rule (control/crank_lead.StallHold):
+        hold at MANUAL_HOLD_CURRENT while the goal sits out of reach, the
+        operator's Goal Current back the moment they act or it moves on."""
+        goal, crank = self.bus._righting_goal, self._righting_pos
+        if goal is None or crank is None or not self._right_armed \
+                or self._righting_current is None:
+            return
+        what = self._stall.step(self.data.time, goal, crank)
+        if what == "hold":
+            hold = min(MANUAL_HOLD_CURRENT, self._righting_current)
+            self.bus.set_righting_current(hold)
+            self._event("righting", f"crank stalled "
+                        f"{np.degrees(goal - crank):+.0f} deg short of its "
+                        f"goal for {MANUAL_STALL_S:g} s: Goal Current {hold} "
+                        "until the goal moves")
+        elif what is not None:
+            self._righting_current = self.bus.set_righting_current(
+                self._righting_current)
+            self._event("righting", f"stall hold off ({what}): Goal Current "
+                        f"{self._righting_current}")
+
+    def _stall_release(self) -> None:
+        """End a stall hold: the operator's Goal Current back on the servo,
+        and the progress timer restarted."""
+        was = self._stall.holding
+        self._stall.reset(self.data.time, self._righting_pos)
+        if was and self._righting_current is not None:
+            self._righting_current = self.bus.set_righting_current(
+                self._righting_current)
 
     def _arm_righting(self) -> None:
         """Torque on the righting servo, the first time anything drives it.
@@ -1028,6 +1076,7 @@ class BikeRunner:
         if crank is None:
             return
         self._sit_gc = int(self._righting_current)
+        self._stall_release()
         self.sit.prop_from(self.data.time, crank)
         self._sit_said = "propped"
         self._event("sit", f"resting on the blade (crank "
@@ -1141,6 +1190,7 @@ class BikeRunner:
             return
         if self._sit_gc is None:
             self._sit_gc = int(self._righting_current)
+        self._stall_release()
         self._arm_righting()
         t = self.data.time
         if self.guard.state != "engaged":
@@ -2029,6 +2079,9 @@ class BikeRunner:
             "righting_goal": (np.nan if self.bus._righting_goal is None
                               else self.bus._righting_goal),
             "righting_current": (np.nan if self._righting_current is None
+                                 else min(MANUAL_HOLD_CURRENT,
+                                          self._righting_current)
+                                 if self._stall.holding
                                  else self._righting_current),
             "volts": voltage,
             "controller": telemetry.CONTROLLERS.index(self.controller),

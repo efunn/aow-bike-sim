@@ -121,12 +121,23 @@ import threading
 import time
 from pathlib import Path
 
+from ..control.crank_lead import lead_goal
 from .telemetry import check_version, encode_command, new_messages
 
 V_STEP = 0.1                  # m/s per keypress
 PSI_STEP = math.radians(10.0)
 CURRENT_STEP = 20             # raw Goal Current counts per keypress
 SEND_HZ = 50.0
+# HOW FAR THE RIGHTING GOAL MAY LEAD THE CRANK [deg of servo shaft], and the
+# values the LEAD key steps through (None = no limit, as before 2026-11-02).
+# Without it the triggers wound the goal on to the stroke end while the crank
+# stalled 40-60 deg short, and taking it back down first had to unwind all of
+# that. The PWM saturates at ~16 deg of error (32 mA, 56 PWM per deg, held
+# props in runs 261102-204438 / -231204), so any lead past that still pushes
+# flat out; the overload itself is the bike's stall rule (run_bike
+# MANUAL_STALL_S), not this. 40 is a first feel, to tune on the pad (user).
+RIGHTING_LEAD_DEG = 40.0
+RIGHTING_LEAD_STEPS = (30.0, 45.0, 60.0, None)
 
 # Stow at mid-scale: 2048 counts on a 4096-count turn, so +-travel is reachable
 # without winding the servo into extended position.
@@ -210,7 +221,7 @@ class OperatorState:
     """
 
     def __init__(self, v_max: float = 1.2, stow_rad: float = STOW_RAD,
-                 travel_rad=None):
+                 travel_rad=None, lead_deg=RIGHTING_LEAD_DEG):
         self.v_max = float(v_max)
         self.v = 0.0                      # signed speed along the heading
         # None UNTIL THE BIKE HAS SAID WHERE IT POINTS. It was 0.0, which is
@@ -221,6 +232,12 @@ class OperatorState:
         self.psi = None
         self.righting = None              # None = never commanded; see set_righting
         self.righting_current = None
+        # The crank's measured angle (telemetry `righting_pos`, servo rad) and
+        # how far the goal may run ahead of it (None = no limit). `righting`
+        # stays the operator's TARGET -- a 9/4 stop holds -- and `packet`
+        # sends it clamped to within `lead` of the crank.
+        self.righting_pos = None
+        self.lead = None if lead_deg is None else math.radians(float(lead_deg))
         # THREE POSITIONS ON TWO KEYS, and the stow is mid-scale not zero.
         #
         # The swing linkage CO-ROTATES -- one wing swings down and out while the
@@ -301,6 +318,8 @@ class OperatorState:
         if telemetry.get("controller") is not None:
             self.controller_actual = str(telemetry["controller"])
         self.state_actual = telemetry.get("state", self.state_actual)
+        if telemetry.get("righting_pos") is not None:
+            self.righting_pos = float(telemetry["righting_pos"])
         if self.righting_current is None:
             got = telemetry.get("righting_current")
             if got is not None:
@@ -335,6 +354,13 @@ class OperatorState:
             base = 0 if self.righting_current is None else self.righting_current
             self.righting_current = base + (CURRENT_STEP if ch == "]"
                                             else -CURRENT_STEP)
+        elif ch == "LEAD":
+            # The next of RIGHTING_LEAD_STEPS after the current lead.
+            deg = None if self.lead is None else round(math.degrees(self.lead), 6)
+            steps = RIGHTING_LEAD_STEPS
+            i = steps.index(deg) + 1 if deg in steps else 0
+            nxt = steps[i % len(steps)]
+            self.lead = None if nxt is None else math.radians(nxt)
         elif ch == "l":
             self.controller = "lqr" if self.controller == "policy" else "policy"
         elif ch in ("r", "\n", "\r", "ENTER"):
@@ -373,11 +399,21 @@ class OperatorState:
         that is somewhere else does not snap it to the stow angle first."""
         if self.travel is None or self.sitting:
             return
+        if measured is not None:
+            self.righting_pos = float(measured)
         if self.righting is None:
             self.righting = self.stow if measured is None else float(measured)
         lo, hi = self.stow - self.travel, self.stow + self.travel
-        self.righting = min(hi, max(lo, self.righting + float(delta)))
+        # THE TARGET ITSELF is held within `lead` of the crank, so a stalled
+        # crank under a held trigger stops winding the goal on, and reversing
+        # acts at once rather than after unwinding the excess.
+        self.righting = self._led(min(hi, max(lo, self.righting + float(delta))))
         self.pos = (self.righting - self.stow) / self.travel
+
+    def _led(self, goal: float) -> float:
+        """`goal` clamped to within `lead` of the crank's measured angle;
+        unchanged with no limit or no reading."""
+        return lead_goal(goal, self.righting_pos, self.lead)
 
     def packet(self) -> dict:
         """The datagram. Every field is a LEVEL -- the current state of the
@@ -393,7 +429,9 @@ class OperatorState:
         if self.psi is not None:          # absent: the bike keeps its own
             out["psi_cmd"] = self.psi
         if self.righting is not None:
-            out["righting_rad"] = self.righting
+            # A 9/4 stop is a target past the lead: it goes out led, and
+            # follows the crank there.
+            out["righting_rad"] = self._led(self.righting)
         if self.righting_current is not None:
             out["righting_current"] = self.righting_current
         out["rearm_n"] = self.rearms

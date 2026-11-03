@@ -387,7 +387,8 @@ def test_the_viewer_and_the_terminal_share_one_command_model():
     from aow_sim.run_drive import MIRROR_KEYS
     from aow_sim.hw.ground import OperatorState
     handled = {"UP", "DOWN", "LEFT", "RIGHT", "/", " ", "9", "4", "[", "]",
-               "r", "q", "ENTER", "BACKSPACE", "LIE_DOWN", "GET_UP", "PARK"}
+               "r", "q", "ENTER", "BACKSPACE", "LIE_DOWN", "GET_UP", "PARK",
+               "LEAD"}
     assert set(MIRROR_KEYS.values()) <= handled, (
         f"unhandled: {set(MIRROR_KEYS.values()) - handled}")
     # and every one of them actually moves the state
@@ -395,10 +396,12 @@ def test_the_viewer_and_the_terminal_share_one_command_model():
         op = OperatorState(travel_rad=1.0)
         op.sync({"state": "engaged", "psi": 0.3})   # the bike has said where
         before = (op.v, op.psi, op.pos, op.righting_current, op.rearms,
-                  op.stops, op.lie_downs, op.get_ups, op.parks, op.quit)
+                  op.stops, op.lie_downs, op.get_ups, op.parks, op.quit,
+                  op.lead)
         op.key(name)
         after = (op.v, op.psi, op.pos, op.righting_current, op.rearms,
-                 op.stops, op.lie_downs, op.get_ups, op.parks, op.quit)
+                 op.stops, op.lie_downs, op.get_ups, op.parks, op.quit,
+                 op.lead)
         if name not in (" ", "/"):        # stop from a standstill is a no-op
             assert before != after, f"{name!r} changed nothing"
 

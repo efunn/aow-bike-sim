@@ -49,7 +49,7 @@ from .wheel_overlay import STRIPE_RADIUS_TELEOP, add_stripes
 from .control import DriveController, run
 from .control.balance import extract_state, mix
 from .control.linearize import settle_upright
-from .hw.ground import CURRENT_STEP as _CURRENT_STEP
+from .hw.ground import CURRENT_STEP as _CURRENT_STEP, RIGHTING_LEAD_DEG
 from . import geometry
 from .params import params_digest
 
@@ -399,6 +399,13 @@ def main() -> None:
                     help="the righting crank's slew rate at FULL trigger "
                          "(RT - LT), deg/s; analog below that "
                          f"(default {PAD_RIGHTING_DPS:.0f})")
+    ap.add_argument("--righting-lead-deg", type=float,
+                    default=RIGHTING_LEAD_DEG, metavar="DEG",
+                    help="--mirror / --teleop: how far the righting goal may "
+                         "run ahead of the crank's measured angle, deg; 0 = "
+                         "no limit. D-pad right (and End in the mirror) steps "
+                         "it through 30 / 45 / 60 / off while flying "
+                         f"(default {RIGHTING_LEAD_DEG:.0f})")
     ap.add_argument("--record", nargs="?", const="auto", default=None,
                     metavar="PATH",
                     help="log the teleop session to traces/teleop/<stamp>.npz "
@@ -985,6 +992,8 @@ def main() -> None:
                            if righting_module else None),
                 frame_stats=args.frame_stats, pad=not args.no_pad,
                 pad_righting_dps=args.pad_righting_dps,
+                righting_lead_deg=(None if args.righting_lead_deg <= 0
+                                   else args.righting_lead_deg),
                 heading_offset_deg=args.heading_offset)
         return
     if args.teleop:
@@ -1004,7 +1013,9 @@ def main() -> None:
                 crab_max_override=args.crab_max, verbose=args.verbose,
                 rig=rig_cfg, auto_up=not args.no_auto_up, plays=args.play,
                 style_ungated=args.style_ungated, pad=not args.no_pad,
-                pad_righting_dps=args.pad_righting_dps, bare=args.look == "bare")
+                pad_righting_dps=args.pad_righting_dps, bare=args.look == "bare",
+                righting_lead_deg=(None if args.righting_lead_deg <= 0
+                                   else args.righting_lead_deg))
         return
     if args.view:
         _view_demo(model, params, eq.qpos, hockey=args.hockey,
@@ -1868,7 +1879,10 @@ MIRROR_KEYS = {265: "UP", 264: "DOWN", 263: "LEFT", 262: "RIGHT",
                # (_KEY_LIE_DOWN, _KEY_GET_UP). The sequence runs on the bike.
                # PARK: Home (fn+left), the lie-down stopped propped on the
                # blade. Teleop's Home is its style bit; the mirror has none.
-               267: "LIE_DOWN", 266: "GET_UP", 268: "PARK"}
+               267: "LIE_DOWN", 266: "GET_UP", 268: "PARK",
+               # End (fn+right): step how far the righting goal may lead the
+               # crank (ground.RIGHTING_LEAD_STEPS).
+               269: "LEAD"}
 
 
 # macOS virtual keycodes for the arrows (Carbon kVK_* constants).
@@ -2089,6 +2103,10 @@ _KEY_PLAY = 269
 # one (general_spec.wheel_err) -- in-place turns go around a held front
 # wheel. Active only at a zero speed command, as in training.
 _KEY_STYLE = 268
+# Teleop's step of the crank's lead (ground.RIGHTING_LEAD_STEPS): the pad's
+# d-pad right only. Not a GLFW code -- the viewer owns F1-F5 and every letter,
+# and End is the plays' -- so no keyboard key reaches it.
+_KEY_LEAD = 1001
 _PLAY_ABORT_KEYS = (265, 264, 263, 262, ord("1"), ord("3"), ord("5"), ord("/"))
 # The same two keys step the righting servo's Goal Current under
 # --swing-linkage, in counts, by the ground station's step (_CURRENT_STEP).
@@ -2104,7 +2122,8 @@ _PLAY_ABORT_KEYS = (265, 264, 263, 262, ord("1"), ord("3"), ord("5"), ord("/"))
 TELEOP_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
                    "BACK": ord("8"), "X": _KEY_LIE_DOWN, "B": _KEY_GET_UP,
                    "START": 92, "Y": 259,      # BACKSPACE: reset / respawn
-                   "DPAD_UP": _KEY_PELT_UP, "DPAD_DOWN": _KEY_PELT_DOWN}
+                   "DPAD_UP": _KEY_PELT_UP, "DPAD_DOWN": _KEY_PELT_DOWN,
+                   "DPAD_RIGHT": _KEY_LEAD}
 MIRROR_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
                    "BACK": ord("8"), "Y": 257, "B": 259,   # engage / disengage
                    # X lies down as in teleop; B is taken (disengage), so
@@ -2113,7 +2132,8 @@ MIRROR_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
                    # a Mac); the righting current stays on `]` / `[`.
                    "X": _KEY_LIE_DOWN, "START": _KEY_GET_UP,
                    "DPAD_UP": _KEY_GET_UP, "DPAD_DOWN": _KEY_LIE_DOWN,
-                   "DPAD_LEFT": 268}                       # PARK
+                   "DPAD_LEFT": 268,                       # PARK
+                   "DPAD_RIGHT": 269}                      # the crank's LEAD
 _TRIGGER_DEAD = 0.05
 # Full trigger, deg/s: twice swing_sit's lift rate (user, 2026-10-19). Analog,
 # so a light pull is as slow as you like; this is only the ceiling.
@@ -2415,6 +2435,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
             v_max: float = 1.2, show_ui: bool = False, travel_deg=None,
             swing_cfg=None, frame_stats=None, pad: bool = False,
             pad_righting_dps: float = PAD_RIGHTING_DPS,
+            righting_lead_deg=RIGHTING_LEAD_DEG,
             heading_offset_deg: float = 0.0) -> None:
     """Drive the REAL bike, and watch a MuJoCo bike mirror it.
 
@@ -2488,7 +2509,8 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
     onb = params["control"].get("onboard", {})
     stow = np.deg2rad(float(onb.get("righting_stow_deg", 180.0)))
     r_sign = float(onb.get("righting_sign", 1))
-    op = OperatorState(v_max=v_max, stow_rad=stow, travel_rad=travel)
+    op = OperatorState(v_max=v_max, stow_rad=stow, travel_rad=travel,
+                       lead_deg=righting_lead_deg)
 
     # The four-bar solver, only when the model actually has the mechanism.
     # `apply_pose` is handed a callable rather than a config path so that
@@ -2686,6 +2708,10 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
                       if name == "PARK" else
                       "get up sent — the bike stops PROPPED on a blade, drives "
                       "limp; Enter / Y hands it to the policy")
+            if name == "LEAD":
+                print("righting goal lead: " + (
+                    "no limit" if op.lead is None
+                    else f"{np.degrees(op.lead):.0f}° ahead of the crank"))
             if name == "BACKSPACE":
                 print("DISENGAGE sent — policy out, its servos limp, righting "
                       "servo holding; Enter / Y engages again")
@@ -2918,7 +2944,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
              "  arrows drive (hold to ramp) · 1/3 crab · / stop and re-aim\n"
              "  6/7/8 snap heading +90/-90/180 · -/= zoom out/in\n"
              "  o re-centre · p pin at centre (and flatten the floor)\n"
-             "  9/4 righting servo · [ ] its current · q quit\n"
+             "  9/4 righting servo · [ ] its current · End its lead · q quit\n"
              "  ENTER engage (and re-arm) · BACKSPACE disengage — the bike "
              "starts in STANDBY\n"
              "  PageDown lie down · PageUp get up (fn+down / fn+up on a Mac)\n"
@@ -2926,7 +2952,7 @@ def _mirror(model, params, eq_qpos, host: str, port: int = 9910,
                 "L/R · Back 180\n       A re-aim · Y engage · B disengage · "
                 "X lie down · Start get up · RT-LT slew the "
                 "righting servo\n       d-pad up get up · down lie down · "
-                "left park\n"
+                "left park · right step the crank's lead\n"
                 if padin else "")
              + ("  wings DRAWN from the servo's measured angle — check "
                 "against the real\n  mechanism: righting_sign is still TBD "
@@ -3005,7 +3031,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             servo_gains=None, drivetrain_source="", frame_stats=None,
             start_lqr=False, rig=None, crab_max_override=None,
             verbose=False, auto_up=True, plays=(), style_ungated=False,
-            pad=False, pad_righting_dps=PAD_RIGHTING_DPS, bare=False):
+            pad=False, pad_righting_dps=PAD_RIGHTING_DPS, bare=False,
+            righting_lead_deg=RIGHTING_LEAD_DEG):
     from .interactive import FrameStats, teleop_loop
 
     from . import policy_menu
@@ -3470,6 +3497,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         if sit is None or c.rl_view is None:
             return
         roll = float(c.rl_view[0])
+        crank_stall_off(d)
         if sit_ctx["gc"] is None:
             sit_ctx["gc"] = crank_servo.goal_current
         wing["manual"] = True           # the sequence owns the crank now
@@ -3567,7 +3595,24 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             t, cmd = wing["target"], wing["cmd"]
             step = wing["rate"] * m.opt.timestep
             wing["cmd"] = (min(cmd + step, t) if t > cmd else max(cmd - step, t))
-            d.ctrl[wing["aid"]] = wing["cmd"]
+            out = wing["cmd"]
+            if crank_by_hand():
+                q = float(d.qpos[wing["jadr"]])
+                out = lead_goal(out, q, crank_lead[0])
+                what = crank_stall.step(d.time, out, q)
+                if what == "hold":
+                    crank_gc[0] = crank_servo.goal_current
+                    crank_servo.set_goal_current(min(HOLD_CURRENT, crank_gc[0]))
+                    print(f"crank stalled {np.degrees(out - q):+.0f}° short of "
+                          f"its goal for {crank_stall.stall_s:g} s: Goal Current "
+                          f"{crank_servo.goal_current} until the goal moves")
+                elif what is not None:
+                    crank_servo.set_goal_current(crank_gc[0])
+                    print(f"crank stall hold off ({what}): Goal Current "
+                          f"{crank_servo.goal_current}")
+            elif crank_stall.holding:
+                crank_stall_off(d)
+            d.ctrl[wing["aid"]] = out
         # The shove, if one is running. xfrc_applied PERSISTS, so it has to be
         # cleared on the step the pulse ends or the bike gets pushed forever.
         if wing["push_n"] > 0:
@@ -3624,10 +3669,34 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         if not wing["manual"]:
             wing["manual"] = True
             wing["cmd"] = wing["target"] = float(d.qpos[wing["jadr"]])
-        t = float(np.clip(wing["target"] + delta, -wing["deploy"],
-                          wing["deploy"]))
+        t = float(np.clip(lead_goal(wing["target"] + delta,
+                                    float(d.qpos[wing["jadr"]]), crank_lead[0]),
+                          -wing["deploy"], wing["deploy"]))
         wing["target"] = t
         wing["pos"] = t / wing["deploy"]
+
+    # THE BIKE'S MANUAL-CRANK LIMITS (control/crank_lead.py), the same code
+    # the station and run_bike fly: the goal held within `crank_lead` of the
+    # crank, and a stalled crank dropped to HOLD_CURRENT until the goal moves.
+    # Only while the operator has it -- 9/4, the triggers -- not a sequence
+    # or a play.
+    from .control.crank_lead import HOLD_CURRENT, StallHold, lead_goal
+    crank_lead = [None if righting_lead_deg is None
+                  else np.deg2rad(float(righting_lead_deg))]
+    crank_stall = StallHold()
+    crank_gc = [None]                 # the operator's Goal Current while held
+
+    def crank_by_hand() -> bool:
+        return (crank_servo is not None and wing.get("swing")
+                and wing["manual"] and play["cur"] is None
+                and not (sit is not None
+                         and (sit.active or sit.phase == "lying")))
+
+    def crank_stall_off(d):
+        """End a stall hold: the operator's Goal Current back."""
+        if crank_stall.holding:
+            crank_servo.set_goal_current(crank_gc[0])
+        crank_stall.reset(d.time, float(d.qpos[wing["jadr"]]))
 
     def zero_command(d):
         """Drop every residual command: speed intent, key state, and the
@@ -4360,7 +4429,18 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                       f"{mb * pelt_speed[0]:.3f} N.s)"
                       + ("   [0 = the ball just drops where it is]"
                          if pelt_speed[0] == 0.0 else ""))
+            elif k == _KEY_LEAD and wing is not None and wing.get("swing"):
+                from .hw.ground import RIGHTING_LEAD_STEPS
+                deg = (None if crank_lead[0] is None
+                       else round(float(np.degrees(crank_lead[0])), 6))
+                i = (RIGHTING_LEAD_STEPS.index(deg) + 1
+                     if deg in RIGHTING_LEAD_STEPS else 0)
+                nxt = RIGHTING_LEAD_STEPS[i % len(RIGHTING_LEAD_STEPS)]
+                crank_lead[0] = None if nxt is None else np.deg2rad(nxt)
+                print("righting goal lead: " + ("no limit" if nxt is None else
+                                                f"{nxt:.0f}° ahead of the crank"))
             elif k in (_KEY_PELT_DOWN, _KEY_PELT_UP) and crank_servo is not None:
+                crank_stall_off(d)
                 crank_servo.set_goal_current(crank_servo.goal_current + (
                     _CURRENT_STEP if k == _KEY_PELT_UP else -_CURRENT_STEP))
                 print(f"righting Goal Current: {crank_servo.goal_current} counts "

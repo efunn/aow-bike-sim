@@ -146,10 +146,50 @@ def test_the_trigger_slew_starts_from_the_servo_and_stays_in_the_stroke():
     start = math.pi + 0.3                         # the servo is not at stow
     op.slew_righting(0.01, measured=start)
     assert op.righting == pytest.approx(start + 0.01)
-    for _ in range(1000):
-        op.slew_righting(0.01)
+    for _ in range(1000):                         # the crank follows its goal
+        op.slew_righting(0.01, measured=op.righting)
     assert op.righting == pytest.approx(math.pi + op.travel)
     assert op.pos == pytest.approx(1.0)
+
+
+def test_the_slew_stops_winding_on_past_a_stalled_crank():
+    """A held trigger on a crank that is not moving leads it by `lead` and
+    no further, so reversing acts at once (runs 261102-204438, -231204: the
+    goal ran on to the stroke end, 40-60 deg past a stalled crank)."""
+    op = _op()
+    stuck = math.pi + 0.3
+    for _ in range(200):
+        op.slew_righting(0.01, measured=stuck)
+    assert op.righting == pytest.approx(stuck + op.lead)
+    op.slew_righting(-0.01, measured=stuck)       # one tick of the other trigger
+    assert op.righting == pytest.approx(stuck + op.lead - 0.01)
+
+
+def test_a_9_4_stop_goes_out_led_and_follows_the_crank():
+    """9/4 keep their stop as the target; the packet carries it led."""
+    op = _op()
+    op.sync({"righting_pos": math.pi})
+    op.key("9")
+    assert op.righting == pytest.approx(math.pi + op.travel)
+    assert op.packet()["righting_rad"] == pytest.approx(math.pi + op.lead)
+    op.sync({"righting_pos": math.pi + 1.0})
+    assert op.packet()["righting_rad"] == pytest.approx(
+        min(math.pi + op.travel, math.pi + 1.0 + op.lead))
+
+
+def test_the_lead_key_steps_through_its_values_and_off():
+    from aow_sim.hw.ground import RIGHTING_LEAD_STEPS
+    op = _op()
+    seen = []
+    for _ in range(len(RIGHTING_LEAD_STEPS)):
+        op.key("LEAD")
+        seen.append(None if op.lead is None else round(math.degrees(op.lead)))
+    assert set(seen) == set(RIGHTING_LEAD_STEPS)
+    while op.lead is not None:
+        op.key("LEAD")
+    op.sync({"righting_pos": math.pi})
+    op.key("9")                                   # off: the stop goes out whole
+    assert op.packet()["righting_rad"] == pytest.approx(math.pi + op.travel)
 
 
 def test_9_and_4_go_to_the_next_stop_after_a_slew():

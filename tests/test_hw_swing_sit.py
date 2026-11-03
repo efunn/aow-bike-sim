@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from aow_sim.control.crank_lead import StallHold
 from aow_sim.control.swing_sit import SwingSit
 from aow_sim.hw import run_bike as RB
 from aow_sim.hw import telemetry as T
@@ -118,7 +119,7 @@ def _runner(roll=0.0, state="engaged"):
         _sit_psi=0.0,
         _sit_said="riding", _lie_seen=None, _up_seen=None, _park_seen=None,
         _rearm_seen=None,
-        _sit_engage_pending=False, said=[], engaged=[])
+        _sit_engage_pending=False, _stall=StallHold(), said=[], engaged=[])
     r.guard.state = state
     r._event = lambda kind, text: r.said.append((kind, text))
     r._engage = lambda fresh_read=True: r.engaged.append(fresh_read)
@@ -127,7 +128,8 @@ def _runner(roll=0.0, state="engaged"):
                  "_sit_release", "_sit_step", "_sit_steer_step", "_sit_engage",
                  "_arm_righting", "_resting_crank", "_prop_if_resting",
                  "_rearm_from",
-                 "_hold_reason", "_watch_errors"):
+                 "_hold_reason", "_watch_errors", "_stall_release",
+                 "_manual_stall"):
         setattr(r, name, getattr(RB.BikeRunner, name).__get__(r))
     r._sit_from(0, 0, 0)                 # first contact: no press
     return r
@@ -645,3 +647,63 @@ def test_the_lift_pushes_to_its_sides_target_and_a_left_style_stall_still_props(
     assert max(goals) == pytest.approx(math.radians(to), abs=1e-6), \
         "left to the stroke, right to the lean (run 261027-145541)"
     assert r.sit.phase == "propped" and r.sit.failed is None
+
+
+# --- the manual crank's stall rule (run_bike MANUAL_STALL_S) -------------------
+
+def _manual(goal_deg, crank_deg):
+    """A runner with the station driving the crank: goal and crank set."""
+    r = _runner(state="standby")
+    r._right_armed = True
+    r.bus.goal = STOW + math.radians(goal_deg)
+    r._righting_pos = STOW + math.radians(crank_deg)
+    return r
+
+
+def _tick(r, s, crank_dps=0.0):
+    for _ in range(int(round(s / 0.01))):
+        r._manual_stall()
+        r._righting_pos += math.radians(crank_dps) * 0.01
+        r.data.time += 0.01
+
+
+def test_a_stalled_manual_crank_drops_to_the_hold_current():
+    """Runs 261102-204438 / -231204: the goal 40-60 deg past a crank that had
+    stopped, PWM pinned, OVERLOAD in 1.7 and 2.3 s."""
+    r = _manual(goal_deg=100.0, crank_deg=60.0)
+    _tick(r, RB.MANUAL_STALL_S - 0.05)
+    assert r.bus.calls == []
+    _tick(r, 0.1)
+    assert r.bus.calls == [("current", RB.MANUAL_HOLD_CURRENT)]
+    assert "stalled" in r.said[-1][1]
+    _tick(r, 2.0, crank_dps=-20.0)        # sagging back is not progress
+    assert r.bus.calls == [("current", RB.MANUAL_HOLD_CURRENT)]
+
+
+def test_moving_the_goal_gives_the_current_back_at_once():
+    r = _manual(goal_deg=100.0, crank_deg=60.0)
+    _tick(r, RB.MANUAL_STALL_S + 0.1)
+    r.bus.goal = STOW + math.radians(55.0)    # the other trigger: back down
+    _tick(r, 0.01)
+    assert r.bus.calls[-1] == ("current", 600)
+    assert not r._stall.holding
+
+
+def test_a_crank_still_moving_toward_its_goal_is_not_stalled():
+    r = _manual(goal_deg=100.0, crank_deg=40.0)
+    _tick(r, 1.0, crank_dps=30.0)            # slow, but getting there
+    assert r.bus.calls == []
+
+
+def test_a_goal_held_short_of_a_stopped_crank_is_a_stall_too():
+    """A prop held 10 deg short of the stroke end drew 0.31-0.34 A for 9-14 s
+    (same runs): a goal standing still can still pull current."""
+    r = _manual(goal_deg=116.9, crank_deg=106.9)
+    _tick(r, RB.MANUAL_STALL_S + 0.1)
+    assert r.bus.calls == [("current", RB.MANUAL_HOLD_CURRENT)]
+
+
+def test_a_crank_within_the_error_band_is_left_alone():
+    r = _manual(goal_deg=100.0, crank_deg=100.0 - RB.MANUAL_STALL_ERR_DEG + 1)
+    _tick(r, 2.0)
+    assert r.bus.calls == []
