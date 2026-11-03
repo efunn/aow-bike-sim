@@ -17,7 +17,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from aow_sim.control.crank_lead import StallHold
+from aow_sim.control import crank_lead as _crank_lead
+from aow_sim.control.crank_lead import StallHold, lead_goal
 from aow_sim.control.swing_sit import SwingSit
 from aow_sim.hw import run_bike as RB
 from aow_sim.hw import telemetry as T
@@ -677,7 +678,7 @@ def test_a_stalled_manual_crank_drops_to_the_hold_current():
     assert r.bus.calls == [("current", RB.MANUAL_HOLD_CURRENT)]
     assert "stalled" in r.said[-1][1]
     _tick(r, 2.0, crank_dps=-20.0)        # sagging back is not progress
-    assert r.bus.calls == [("current", RB.MANUAL_HOLD_CURRENT)]
+    assert r._stall.holding and r.bus.calls[-1] == ("current", 0)
 
 
 def test_moving_the_goal_gives_the_current_back_at_once():
@@ -701,6 +702,73 @@ def test_a_goal_held_short_of_a_stopped_crank_is_a_stall_too():
     r = _manual(goal_deg=116.9, crank_deg=106.9)
     _tick(r, RB.MANUAL_STALL_S + 0.1)
     assert r.bus.calls == [("current", RB.MANUAL_HOLD_CURRENT)]
+
+
+def test_a_stall_hold_ramps_to_zero_and_comes_back():
+    """Run 261103-114128: at 200 mA a failed left lift sat at roll -51 for
+    27.8 s. The hold ramps on to 0, so it lowers."""
+    r = _manual(goal_deg=100.0, crank_deg=60.0)
+    r._roll = math.radians(-51.0)
+    _tick(r, RB.MANUAL_STALL_S + 0.05)
+    assert r.bus.calls == [("current", RB.MANUAL_HOLD_CURRENT)]
+    assert "to 0" in r.said[-1][1]
+    _tick(r, RB.MANUAL_LET_GO_S + 0.05, crank_dps=-20.0)   # lowering
+    got = [c for _, c in r.bus.calls]
+    assert got[-1] == 0 and got == sorted(got, reverse=True)
+    assert len(got) <= _crank_lead.LET_GO_STEPS + 1
+    _tick(r, 1.0)
+    assert r.bus.calls[-1] == ("current", 0)                # stays let go
+    r.bus.goal = STOW + math.radians(30.0)                  # operator acts
+    _tick(r, 0.01)
+    assert r.bus.calls[-1] == ("current", 600) and not r._stall.holding
+
+
+def test_a_goal_dragged_by_the_lead_does_not_end_a_let_go():
+    """Run 261103-120130, 45.8 s: the let-go crank sagged, the station's
+    40 deg lead dragged the goal after it, the hold read that as the
+    operator and put 785 back mid-fall -- the lift pumped back up."""
+    h = StallHold()
+    lead = math.radians(40.0)
+    goal, crank = math.radians(110.4), math.radians(122.7)   # lift is -ve
+    t = 0.0
+    while not h.holding:
+        h.step(t, goal, crank, math.radians(-37.0))
+        t += 0.01
+    for _ in range(100):                     # sags 60 deg, goal led behind
+        crank += math.radians(0.6)
+        goal = lead_goal(goal, crank, lead)
+        assert h.step(t, goal, crank, math.radians(-50.0)) is None
+        t += 0.01
+    assert h.holding
+    # a link's lag: the goal a jump behind (gap 55), then caught up to the
+    # lead (40) -- the gap closing, which was the 45.77 s pump
+    for g in (crank - math.radians(55.0), crank - lead):
+        assert h.step(t, g, crank) is None
+        t += 0.01
+    goal = crank - lead
+    for _ in range(int(_crank_lead.SETTLE_S / 0.01) + 2):    # it lands
+        assert h.step(t, goal, crank) is None
+        t += 0.01
+    goal = lead_goal(goal - math.radians(10.0), crank, lead)  # pushing on:
+    assert h.step(t, goal, crank) is None                      # clamped
+    crank -= math.radians(8.0)                                 # a bounce
+    for _ in range(int(_crank_lead.SETTLE_S / 0.01) + 2):
+        assert h.step(t, goal, crank) is None
+        t += 0.01
+    goal += math.radians(10.0)               # backing off closes the gap
+    assert h.step(t, goal, crank) == "goal moved"
+
+
+def test_a_prop_lets_go_too_unless_under_the_roll_threshold():
+    """Props sit unpowered (the user's, and the sequence's since 10-27);
+    a let_go_roll_deg keeps holds that start under it at HOLD_CURRENT."""
+    for thresh, last in ((0.0, 0), (20.0, RB.MANUAL_HOLD_CURRENT)):
+        r = _manual(goal_deg=116.9, crank_deg=106.9)
+        r._roll = math.radians(9.0)
+        r._stall = StallHold(let_go_roll_deg=thresh)
+        _tick(r, RB.MANUAL_STALL_S + RB.MANUAL_LET_GO_S + 0.5)
+        assert r.bus.calls[0] == ("current", RB.MANUAL_HOLD_CURRENT)
+        assert r.bus.calls[-1] == ("current", last)
 
 
 def test_a_crank_within_the_error_band_is_left_alone():

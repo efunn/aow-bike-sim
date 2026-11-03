@@ -172,6 +172,11 @@ PROP_CURRENT = 0.0
 MANUAL_STALL_S = _crank_lead.STALL_S
 MANUAL_STALL_ERR_DEG = _crank_lead.STALL_ERR_DEG
 MANUAL_HOLD_CURRENT = _crank_lead.HOLD_CURRENT
+# ...then ramps on to 0 over MANUAL_LET_GO_S: a failed lift lowers, a prop
+# sits unpowered. Only holds starting at least MANUAL_LET_GO_ROLL_DEG over
+# do (0: all; None: none, they stay at MANUAL_HOLD_CURRENT).
+MANUAL_LET_GO_ROLL_DEG = _crank_lead.LET_GO_ROLL_DEG
+MANUAL_LET_GO_S = _crank_lead.LET_GO_S
 # WHERE THE GET-UP'S LIFT AIMS, per side (SwingSit `lift_to_deg`): "stroke"
 # is the full stroke, a number a crank angle, None the 110 lean. HANDED
 # because the bike is. LEFT to the stroke: at 110 its push eased off over
@@ -717,7 +722,8 @@ class BikeRunner:
         # The manual stall rule (control/crank_lead.StallHold).
         # `_righting_current` stays the operator's value throughout; the
         # hold is written past it.
-        self._stall = _crank_lead.StallHold()
+        self._stall = _crank_lead.StallHold(
+            let_go_roll_deg=MANUAL_LET_GO_ROLL_DEG, let_go_s=MANUAL_LET_GO_S)
         # Torque on the righting servo. NOT at connect: in standby it stays
         # unpowered, free to back-drive by hand, until something uses it --
         # the station's wing goal, a sit press, the stow at an engage
@@ -922,21 +928,29 @@ class BikeRunner:
 
     def _manual_stall(self) -> None:
         """The manual crank's stall rule (control/crank_lead.StallHold):
-        hold at MANUAL_HOLD_CURRENT while the goal sits out of reach, the
-        operator's Goal Current back the moment they act or it moves on."""
+        MANUAL_HOLD_CURRENT ramped to 0 while the goal sits out of reach,
+        the operator's Goal
+        Current back the moment they act or it moves on."""
         goal, crank = self.bus._righting_goal, self._righting_pos
         if goal is None or crank is None or not self._right_armed \
                 or self._righting_current is None:
             return
-        what = self._stall.step(self.data.time, goal, crank)
+        t = self.data.time
+        what = self._stall.step(t, goal, crank, self._roll)
         if what == "hold":
-            hold = min(MANUAL_HOLD_CURRENT, self._righting_current)
+            hold = self._stall.current(t, self._righting_current)
             self.bus.set_righting_current(hold)
             self._event("righting", f"crank stalled "
                         f"{np.degrees(goal - crank):+.0f} deg short of its "
-                        f"goal for {MANUAL_STALL_S:g} s: Goal Current {hold} "
-                        "until the goal moves")
-        elif what is not None:
+                        f"goal for {MANUAL_STALL_S:g} s: Goal Current {hold}"
+                        + (f", to 0 over {MANUAL_LET_GO_S:g} s"
+                           if self._stall.letting_go else "")
+                        + " until the goal moves")
+        elif what is None:
+            hold = self._stall.current(t, self._righting_current)
+            if hold is not None:
+                self.bus.set_righting_current(hold)
+        else:
             self._righting_current = self.bus.set_righting_current(
                 self._righting_current)
             self._event("righting", f"stall hold off ({what}): Goal Current "
@@ -2079,8 +2093,7 @@ class BikeRunner:
             "righting_goal": (np.nan if self.bus._righting_goal is None
                               else self.bus._righting_goal),
             "righting_current": (np.nan if self._righting_current is None
-                                 else min(MANUAL_HOLD_CURRENT,
-                                          self._righting_current)
+                                 else self._stall.gc
                                  if self._stall.holding
                                  else self._righting_current),
             "volts": voltage,

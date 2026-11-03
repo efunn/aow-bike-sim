@@ -3599,13 +3599,22 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             if crank_by_hand():
                 q = float(d.qpos[wing["jadr"]])
                 out = lead_goal(out, q, crank_lead[0])
-                what = crank_stall.step(d.time, out, q)
+                roll = None if c.rl_view is None else float(c.rl_view[0])
+                what = crank_stall.step(d.time, out, q, roll)
                 if what == "hold":
                     crank_gc[0] = crank_servo.goal_current
-                    crank_servo.set_goal_current(min(HOLD_CURRENT, crank_gc[0]))
+                    crank_servo.set_goal_current(
+                        crank_stall.current(d.time, crank_gc[0]))
                     print(f"crank stalled {np.degrees(out - q):+.0f}° short of "
                           f"its goal for {crank_stall.stall_s:g} s: Goal Current "
-                          f"{crank_servo.goal_current} until the goal moves")
+                          f"{crank_servo.goal_current}"
+                          + (f", to 0 over {crank_stall.let_go_s:g} s"
+                             if crank_stall.letting_go else "")
+                          + " until the goal moves")
+                elif what is None:
+                    gc = crank_stall.current(d.time, crank_gc[0] or 0)
+                    if gc is not None:
+                        crank_servo.set_goal_current(gc)
                 elif what is not None:
                     crank_servo.set_goal_current(crank_gc[0])
                     print(f"crank stall hold off ({what}): Goal Current "
@@ -3677,10 +3686,11 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
 
     # THE BIKE'S MANUAL-CRANK LIMITS (control/crank_lead.py), the same code
     # the station and run_bike fly: the goal held within `crank_lead` of the
-    # crank, and a stalled crank dropped to HOLD_CURRENT until the goal moves.
+    # crank, and a stalled crank dropped to HOLD_CURRENT until the goal moves
+    # (ramped on to 0).
     # Only while the operator has it -- 9/4, the triggers -- not a sequence
     # or a play.
-    from .control.crank_lead import HOLD_CURRENT, StallHold, lead_goal
+    from .control.crank_lead import StallHold, lead_goal
     crank_lead = [None if righting_lead_deg is None
                   else np.deg2rad(float(righting_lead_deg))]
     crank_stall = StallHold()
