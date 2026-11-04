@@ -334,6 +334,14 @@ def status_text(tel: dict, crank_ref: tuple | None = None) -> tuple[str, str]:
         # to read with the bike facing a camera, to choose that offset.
         import math
         row("heading", f"{math.degrees(float(tel['psi'])) % 360:5.1f} deg")
+    if tel.get("steer") is not None:
+        # From the nearer straight pose (0 or 180: the wheel is the same
+        # either way round, and the policy sees sin/cos 2 delta); + is left.
+        import math
+        d = math.degrees(float(tel["steer"]))
+        off = (d + 90.0) % 180.0 - 90.0
+        flipped = abs((d - off + 180.0) % 360.0 - 180.0) > 90.0
+        row("steer", f"{off:+6.1f} deg" + ("   (from 180)" if flipped else ""))
     row("record", tel.get("run") or "off")
     if tel.get("roll") is not None:
         import math

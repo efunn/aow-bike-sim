@@ -736,3 +736,14 @@ def test_the_readout_gives_roll_and_the_crank_from_stow_in_the_sits_frame():
     assert "crank +100.6 deg (goal +110.0)" in row["roll"]
     row = dict(zip(*(x.split("\n") for x in T.status_text(tel))))
     assert row["roll"] == " -12.3 deg", "no stow known: roll alone"
+
+
+@pytest.mark.parametrize("deg, want", [
+    (5.2, "  +5.2 deg"), (-12.0, " -12.0 deg"),
+    (183.0, "  +3.0 deg   (from 180)"), (-178.5, "  +1.5 deg   (from 180)"),
+    (-170.0, " +10.0 deg   (from 180)"), (95.0, " -85.0 deg   (from 180)")])
+def test_the_readout_gives_the_steer_from_the_nearer_straight_pose(deg, want):
+    """+ is left; a wheel turned near 180 reads from 180, as the policy
+    sees it (sin/cos 2 delta)."""
+    row = dict(zip(*(x.split("\n") for x in T.status_text(sample(steer=math.radians(deg))))))
+    assert row["steer"] == want
