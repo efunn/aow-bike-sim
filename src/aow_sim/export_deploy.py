@@ -52,8 +52,13 @@ STEER_JOINT = "steer_joint"
 DEFAULT_AHRS_MOUNT = "config/ahrs_mount.yaml"
 
 
-def load_ahrs_mount(path: str | None = None) -> tuple[np.ndarray, str]:
+def load_ahrs_mount(path: str | None = None, trim: bool = True) -> tuple[np.ndarray, str]:
     """Read the AHRS mounting quaternion -> (q_mount, source).
+
+    With `trim`, the file's `roll_trim_deg` turns the CAD's mount about
+    chassis x first: the part as built, sitting that much further right-side
+    down than the CAD has it, so the bike stops reading that much roll high.
+    `trim=False` is the CAD's alone, what the sim's `bike.ahrs.quat` matches.
 
     Deliberately NOT part of `bike_params.yaml`, and so not part of
     `params_digest`: this describes where the sensor sits on the chassis, not
@@ -74,7 +79,15 @@ def load_ahrs_mount(path: str | None = None) -> tuple[np.ndarray, str]:
     n = np.linalg.norm(q)
     if n == 0:
         raise ValueError(f"{p}: q_mount is the zero quaternion")
-    return q / n, str(d.get("source", "GUESS"))
+    q = q / n
+    trim_deg = float(d.get("roll_trim_deg", 0.0)) if trim else 0.0
+    if trim_deg:
+        h = np.radians(trim_deg) / 2
+        w0, x0, y0, z0 = np.cos(h), np.sin(h), 0.0, 0.0      # about chassis x
+        w1, x1, y1, z1 = q
+        q = np.array([w0*w1 - x0*x1 - y0*y1 - z0*z1, w0*x1 + x0*w1 + y0*z1 - z0*y1,
+                      w0*y1 - x0*z1 + y0*w1 + z0*x1, w0*z1 + x0*y1 - y0*x1 + z0*w1])
+    return q, str(d.get("source", "GUESS"))
 
 
 def build_bundle(params: dict, payload: bool = True,

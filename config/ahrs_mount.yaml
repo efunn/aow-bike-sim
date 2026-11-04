@@ -19,3 +19,13 @@
 
 q_mount: [0.9238795325, 0.0, 0.3826834324, 0.0]   # w, x, y, z
 source: design                                    # the v2 CAD
+
+# The part as built, turned about chassis x on top of the CAD's mount (+ =
+# right side down): the bike then reads this much LESS roll. 0.7 (2026-11-03,
+# estimate): the string hang from the ring apexes (+0.3 / +1.2 turned round)
+# against the riding reading (+0.5..+1.0) solves to the CoM centred and the
+# AHRS 0.7 +-0.3 high; in the sim a 1 deg high reading reproduces the bike's
+# left steer and left crab (docs/status.md, Self-righting). Not settled: the
+# phone level reads in 0.4 deg steps. Applied by export_deploy.load_ahrs_mount
+# into the bundle only; the sim's bike.ahrs.quat stays the CAD's.
+roll_trim_deg: 0.7

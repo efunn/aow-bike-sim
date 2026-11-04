@@ -91,7 +91,7 @@ def test_the_mount_file_is_the_sims_ahrs_orientation():
     (where the sim puts the part) are one fact in two files."""
     from aow_sim.export_deploy import load_ahrs_mount
     from aow_sim.params import load_params
-    q_file, _ = load_ahrs_mount()
+    q_file, _ = load_ahrs_mount(trim=False)
     q_sim = np.asarray(load_params()["bike"]["ahrs"]["quat"], float)
     q_sim /= np.linalg.norm(q_sim)
     assert np.allclose(q_file, q_sim, atol=1e-5) or np.allclose(q_file, -q_sim, atol=1e-5)
@@ -177,3 +177,23 @@ def test_push_is_the_default():
     assert AhrsReader("/dev/null").poll is False
     assert AhrsReader("/dev/null", poll=True).poll is True
     assert AhrsReader("/dev/null").requests == 0
+
+
+def test_the_roll_trim_takes_a_part_rolled_that_far_back_to_level(tmp_path):
+    """`roll_trim_deg` is the part's roll about chassis x on top of the CAD's
+    mount: a level chassis carrying a part rolled +0.7 reads +0.7 on the
+    CAD's mount and 0 with the trim, and the trim changes nothing else."""
+    import yaml
+    from aow_sim.export_deploy import load_ahrs_mount
+    q_cad, _ = load_ahrs_mount(trim=False)
+    h = np.deg2rad(0.7) / 2
+    q_part = quat_mul(np.array([np.cos(h), np.sin(h), 0.0, 0.0]), q_cad)
+    d = yaml.safe_load(open("config/ahrs_mount.yaml"))
+    d["roll_trim_deg"] = 0.7
+    f = tmp_path / "mount.yaml"
+    f.write_text(yaml.safe_dump(d))
+    q_trim, _ = load_ahrs_mount(str(f))
+    for q_mount, want in ((q_cad, 0.7), (q_trim, 0.0)):
+        R = quat_to_mat(MountCalibration(q_mount).to_chassis_quat(q_part))
+        assert np.isclose(np.degrees(np.arctan2(R[2, 1], R[2, 2])), want, atol=1e-9)
+        assert np.isclose(np.degrees(np.arctan2(R[1, 0], R[0, 0])), 0.0, atol=1e-9)
