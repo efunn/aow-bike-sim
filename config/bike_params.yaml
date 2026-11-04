@@ -74,13 +74,19 @@ sim:
       solref: {value: [-44321.0, -249.0], source: measured}
     roller:
       solref: {value: [-44321.0, -115.0], source: measured}
+    # The blades and rollcage rings (ASA). A pull scale on the bike lying on
+    # its side on the marmoleum (2026-11-03, user): ~100 g to slide it. Lying,
+    # the sim carries all 9.84 N on the wing and the rear ring, no wheel, so
+    # mu ~0.10 (+-0.013 from the scale's 25 g marks). It also turned at very
+    # little torque; the torsional term stays the global GUESS.
+    righting:
+      friction_sliding: {value: 0.10, source: measured}
   # Lateral pull on the front tire, the bike upright on the target floor
   # (2026-10-31, user): breakaway 150 g, steady slide 250 g at 4.72 N on the
   # front (the measured CoG), so mu 0.31 / 0.52, +-0.03 from the scale's 25 g
   # marks. The slide's 0.52 is the one standing 90 deg snaps reproduce the
   # bike's falls at (analysis/policy/axle_friction_snaps.py). One surface, one
-  # direction, the tire only: the rollers' and the righting parts' mu are
-  # unmeasured and take this too.
+  # direction, the tire only: the rollers' mu is unmeasured and takes this too.
   friction_sliding: {value: 0.52, source: measured}
   friction_torsional: {value: 0.005, source: GUESS}  # scales with contact patch size -> validation
   floor_size: 3.0

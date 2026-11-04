@@ -877,7 +877,7 @@ def _add_rollcage(spec: mujoco.MjSpec, chassis, r: dict, wb: float,
                          meshname="rollcage_ring", pos=[x0, 0.0, r["height"]],
                          mass=0.0,
                          contype=DYN_CONTYPE, conaffinity=DYN_CONAFF,
-                         condim=sim["condim"], friction=_contact_friction(sim),
+                         **_part_contact(sim, "righting"),
                          rgba=[*ASA_ORANGE[:3], ROLLCAGE_ALPHA])
         chassis.add_geom(name=name + "_mass", type=mujoco.mjtGeom.mjGEOM_MESH,
                          meshname="rollcage_ring", pos=np.asarray(at) - own,

@@ -51,19 +51,20 @@ def _ground_contacts(model, settle=500):
 def test_a_part_without_an_override_gets_the_globals_verbatim():
     """Every part the `sim.contact_parts` block leaves out resolves to the
     globals exactly, so a block with nothing in it is still the bit-exact no-op
-    the split shipped as. The shipped block overrides the wheels' solref only
-    (2026-10-31); their friction and the righting parts are the globals."""
+    the split shipped as. The shipped block overrides the wheels' solref
+    (2026-10-31) and the righting parts' sliding friction (2026-11-03, the
+    lying pull); everything else is the globals."""
     sim = load_params()["sim"]
     shipped = sim.get("contact_parts") or {}
-    assert set(shipped) == {"front_tire", "roller"}, (
+    assert set(shipped) == {"front_tire", "roller", "righting"}, (
         "bike_params.yaml's contact_parts block changed -- a deliberate physics "
         "change that moves plant_digest; update this test and re-export rather "
         "than deleting the assertion")
     for part in CONTACT_PARTS:
         kw = _part_contact(sim, part)
-        want = shipped.get(part, {}).get("solref", sim["contact_solref"])
-        assert kw["solref"] == list(want)
-        assert kw["friction"][0] == sim["friction_sliding"]
+        over = shipped.get(part, {})
+        assert kw["solref"] == list(over.get("solref", sim["contact_solref"]))
+        assert kw["friction"][0] == over.get("friction_sliding", sim["friction_sliding"])
         assert kw["friction"][1] == sim["friction_torsional"]
     bare = {**sim, "contact_parts": {}}
     for part in CONTACT_PARTS:
@@ -182,8 +183,12 @@ def test_the_split_did_not_move_the_plant_digest():
                           slicer's stub, the wings' 6-32s); every other
                           printed estimate x bike.printed_mass_scale 0.930.
                           CoM 108.4 mm up against 108.9 +-0.5 hung
+        d6e4355c56f3495c  2026-11-03  sim.contact_parts.righting.friction_sliding
+                          0.10 measured (the bike lying, ~100 g to slide it);
+                          the rollcage rings now take the righting part's
+                          contact (they had the globals)
     """
-    assert plant_digest(load_params()) == "47f14be28a5d6232"
+    assert plant_digest(load_params()) == "d6e4355c56f3495c"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():
@@ -279,8 +284,17 @@ def test_trajectory_is_BITWISE_identical_to_the_pre_split_model():
     Contact parameters agreeing is necessary but not sufficient -- what has to
     be unchanged is the TRAJECTORY. Compared against the same model with
     priorities zeroed, which is exactly the pre-split combination path.
+
+    Without the shipped FRICTION overrides: combination takes the larger
+    friction, so the righting parts' measured 0.10 (2026-11-03) cannot survive
+    the floor's 0.52 there -- that is what priority is for, and
+    test_an_override_actually_changes_the_trajectory covers it. The wheels'
+    negative solref does survive combination, and stays in.
     """
     p = load_params()
+    for over in (p["sim"].get("contact_parts") or {}).values():
+        over.pop("friction_sliding", None)
+        over.pop("friction_torsional", None)
     split = build_model(p)
     pre = build_model(p)
     pre.geom_priority[:] = 0

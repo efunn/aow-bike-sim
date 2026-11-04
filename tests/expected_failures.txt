@@ -236,3 +236,15 @@ tests/test_pivot.py::test_pivot_with_wound_steer           # 2026-10-05 new fron
 # THE NEW FRONT WHEEL case (2026-10-05, sensor mode at tau 0.19, 3 of 4
 # commands) went GREEN with the GeneralEnv observation fixes of 2026-10-14
 # (fresh prev_action, AHRS at reset): red at their parent, green at them.
+
+# ---------------------------------------------------------------------------
+# THE SCRIPTED GET-UP NO LONGER PROPS IN THE SIM, registered 2026-11-03.
+# The blades and rings went from the tire's mu 0.52 to their own measured 0.10
+# (the bike lying, ~100 g on a pull scale to slide it). Seed 0's scripted ramp
+# then props at no servo strength on both sides: 0.6 props the left and goes
+# over on the right, 0.62-1.0 go over on both, 0.55 and below overload. The
+# bike props (left at the stroke, right at 110), so this is the sim's prop gap
+# (docs/status.md, "What the righting sim lacks" (5)) made wider by a measured
+# value. ACCEPTED: the friction is measured; the test keeps saying the sim does
+# not prop the way the bike does until the prop is modelled.
+tests/test_righting_rl.py::test_the_scripted_ramp_props_weak_and_goes_over_strong[0.65-success]   # 2026-11-03 blades' mu 0.10: no strength props both sides
