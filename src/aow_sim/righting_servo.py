@@ -13,9 +13,13 @@ The firmware chain, per ROBOTIS's mode-5 block diagram:
                  -> current controller -> duty -> inverter -> motor
 
 SINCE 2026-11-05 THE LAW IS ROBOTIS's PERFORMANCE GRAPH, TRACED (`GraphLaw`,
-`servos.xc330_t181.performance_graph`): speed a cubic and bus current a
-quadratic in output torque, at full duty, taken to motor torque through the
-gearbox's running loss. The straight-line fits (`LineLaw`: k (|I| - I0) and
+`servos.xc330_t181.performance_graph`): speed a cubic in output torque, at
+full duty, taken to motor torque through the gearbox's running loss. Its
+CURRENT is `current_law` (later on 11-05): Present Current a cubic in motor
+torque through the bench lever, the bare shaft's no load and the graph near
+stall, where the graph's own current curve, drawn at full duty, read 60-110
+mA over the bench below ~0.3 N m (analysis/servo/current_law_fit.py). The
+straight-line fits (`LineLaw`: k (|I| - I0) and
 ts (s - x)) remain for a params file without the graph, the steer and the
 browser sim. The history below is how the line was reached.
 
@@ -155,22 +159,28 @@ class GraphLaw(LineLaw):
     """ROBOTIS's performance graph as traced (bike_params
     `servos.xc330_t181.performance_graph`), at full duty and 12 V: output
     torque T a cubic in speed (fitted with the graph rotated, so the model
-    reads it the way it needs it), bus current a quadratic in T. Taken to
-    motor torque through the gearbox's running loss, tau = (1 + c) T + f0,
-    as the line law was fitted.
+    reads it the way it needs it), taken to motor torque through the
+    gearbox's running loss, tau = (1 + c) T + f0, as the line law was fitted.
+    Current is `servos.xc330_t181.current_law`: Present Current a cubic in
+    MOTOR torque, fitted to the bench lever, the bare shaft's no load and the
+    graph near stall (analysis/servo/current_law_fit.py) -- the graph's own
+    current curve, drawn at full duty, reads 60-110 mA over the bench below
+    ~0.3 N m.
 
     Speed: the cubic from stall (n 0) to no load (its root), and past both
     ends on its end tangents (back-driven / overspeed). Other supplies scale
-    it as a DC motor does, tau(n, s) = s tau(n / s, 1). Current: the
-    quadratic's root within the traced range; below it, straight down to
-    `current_deadband`.
+    it as a DC motor does, tau(n, s) = s tau(n / s, 1). Current: no torque
+    below the cubic's intercept (`i0`, 24 mA; the lever's drive edge read
+    16.5), the cubic's inverse above it.
     """
 
     def __init__(self, srv: dict, r0: float, rc: float):
         super().__init__(srv)
         g = srv["performance_graph"]
         self.ct = [float(c) for c in g["torque_of_rpm"]]
-        self.ci = [float(c) for c in g["current_a"]]
+        self.cl = [float(c) for c in srv["current_law"]]
+        self.i0_line = self.i0          # the line's deadband (the browser sim's)
+        self.i0 = self.cl[0]
         self.r0, self.rc = float(r0), float(rc)
         c0, c1, c2, c3 = self.ct
         self.n_top = self._root(lambda n: c0 + n * (c1 + n * (c2 + n * c3)), 0.0, 500.0)
@@ -182,10 +192,12 @@ class GraphLaw(LineLaw):
         # browser sim, web/export.py, still runs the line law)
         self.t_stall = self._motor(c0)
         self.t_top = self._motor(0.0)
-        # current: traced low end, and the straight piece below it
-        tl = float(g["torque_traced"][0])
-        self.i_lo = self._quad(tl)
-        self.t_lo = self._motor(tl)
+        # the current law rises to its turning point; past it (well above the
+        # 910 mA Current Limit) torque is held there
+        a1, a2, a3 = self.cl[1:]
+        self.t_max = (-a2 - math.sqrt(a2 * a2 - 3.0 * a1 * a3)) / (3.0 * a3) if a3 < 0 else 10.0
+        self.i_max = self.current(self.t_max)
+        self._t_guess = 0.0
 
     @staticmethod
     def _root(f, lo, hi):
@@ -203,23 +215,39 @@ class GraphLaw(LineLaw):
     def _motor(self, T: float) -> float:
         return (1.0 + self.rc) * T + self.r0
 
-    def _quad(self, T: float) -> float:
-        c0, c1, c2 = self.ci
-        return c0 + c1 * T + c2 * T * T
-
     def torque(self, a: float) -> float:
+        """Motor torque for a current of magnitude `a` [A]: the current law's
+        inverse: Newton from the last answer, kept inside a bisection bracket
+        on [0, t_max] (a few steps per call in the step loop)."""
         if a <= self.i0:
             return 0.0
-        if a < self.i_lo:
-            return self.t_lo * (a - self.i0) / (self.i_lo - self.i0)
-        c0, c1, c2 = self.ci
-        T = (-c1 + math.sqrt(c1 * c1 - 4.0 * c2 * (c0 - a))) / (2.0 * c2)
-        return self._motor(T)
+        if a >= self.i_max:
+            return self.t_max
+        a0, a1, a2, a3 = self.cl
+        lo, hi = 0.0, self.t_max
+        t = self._t_guess if 0.0 < self._t_guess < hi else 0.5 * hi
+        for _ in range(60):
+            f = a0 + t * (a1 + t * (a2 + t * a3)) - a
+            if f > 0.0:
+                hi = t
+            else:
+                lo = t
+            d = a1 + t * (2.0 * a2 + t * 3.0 * a3)
+            tn = t - f / d if d > 0.0 else -1.0
+            if not lo < tn < hi:            # Newton left the bracket: bisect
+                tn = 0.5 * (lo + hi)
+            if -1e-13 < tn - t < 1e-13 or hi - lo < 1e-13:
+                t = tn
+                break
+            t = tn
+        self._t_guess = t
+        return t
 
     def current(self, t: float) -> float:
-        if t < self.t_lo:
-            return self.i0 + max(t, 0.0) * (self.i_lo - self.i0) / self.t_lo
-        return self._quad((t - self.r0) / (1.0 + self.rc))
+        """Present Current [A] that gives motor torque `t` >= 0."""
+        t = max(t, 0.0)
+        a0, a1, a2, a3 = self.cl
+        return a0 + t * (a1 + t * (a2 + t * a3))
 
     def full(self, n: float, s: float) -> float:
         if s <= 0.0:
@@ -239,6 +267,98 @@ class GraphLaw(LineLaw):
     @property
     def top_rpm(self) -> float:
         return self.n_top
+
+
+class LinkageLoad:
+    """The righting linkage's friction that grows with the load through its
+    bearings, referred to the crank [N m]:
+
+        mu x ( r_j |F_journal| + r_p sum_sides |F_c| (|w_cp| + |w_rp|) + |F_w| |w_w| )
+
+    with every bearing's relative rotation per unit crank rotation (w_cp the
+    crankpin, coupler on crank; w_rp the rocker pin, coupler on wing; w_w the
+    wing on the rod) -- the power each dissipates, at the crank. F are the
+    in-plane forces from the `<body>_load` sensors (build_model): the
+    chassis on the crank (its two journals, which straddle the couplers, so
+    their shares sum to it), the crank on each coupler (a two-force member:
+    the same force at both its pins), the chassis on each wing (two
+    sections of rod that straddle its coupler). One step old, as the
+    headset's. Radii are the CAD's (righting_cad: journal 14 mm, every rod 6
+    mm); mu is ONE lumped coefficient, fitted to what the bike's whole lift
+    costs in time and charge (analysis/mechanism/linkage_friction_fit.py). The ratios come from
+    the four-bar's geometry (kept per 0.03 deg of crank), so they hold at
+    rest too.
+
+    The unloaded friction (`linkage_friction_nm` + q2 theta^2, the bench
+    sweep with stubs) stays as the preload; the stubs' few newtons make this
+    term ~1 mN m there."""
+
+    BODIES = ("swing_crank", "swing_coupler_left", "swing_coupler_right",
+              "swing_wing_left", "swing_wing_right")
+
+    def __init__(self, model, mu: float, r_journal: float, r_pin: float):
+        self.mu, self.rj, self.rp = float(mu), float(r_journal), float(r_pin)
+        self.adr = {b: int(model.sensor(f"{b}_load").adr[0]) for b in self.BODIES}
+        self.crank = model.body("swing_crank").id
+        self.sides = [(model.body(f"swing_coupler_{t}").id,
+                       model.site(f"swing_coupler_{t}_end").id,
+                       model.body(f"swing_wing_{t}").id,
+                       self.adr[f"swing_coupler_{t}"], self.adr[f"swing_wing_{t}"])
+                      for t in ("left", "right")]
+        self.qadr = int(model.jnt_qposadr[model.joint("swing_crank_joint").id])
+        self.value = 0.0
+        self.ratios = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)]
+        # The rates depend on the crank angle alone (a one-DOF loop on the
+        # chassis): computed once per 1/2000 rad (0.03 deg) and kept.
+        self._cache = {}
+
+    @staticmethod
+    def _inplane(sd, a):
+        # site frame = body frame, x the hinge axis
+        y, z = sd[a + 1], sd[a + 2]
+        return math.sqrt(y * y + z * z)
+
+    def _rates(self, data):
+        """Per side, (crankpin, rocker pin, wing) rotation per unit crank."""
+        xp, sp, xm = data.xpos, data.site_xpos, data.xmat[self.crank]
+        e1 = (xm[1], xm[4], xm[7])          # the crank's own y, z: the plane
+        e2 = (xm[2], xm[5], xm[8])
+        o = xp[self.crank]
+
+        def pt(v):
+            dx, dy, dz = v[0] - o[0], v[1] - o[1], v[2] - o[2]
+            return (dx * e1[0] + dy * e1[1] + dz * e1[2],
+                    dx * e2[0] + dy * e2[1] + dz * e2[2])
+        out = []
+        for cb, site, wb, _, _ in self.sides:
+            a, b, pw = pt(xp[cb]), pt(sp[site]), pt(xp[wb])
+            # w4 perp(B - P) - w3 perp(B - A) = perp(A - O), crank w = 1;
+            # perp(x, y) = (-y, x)
+            bp = (b[0] - pw[0], b[1] - pw[1])
+            ba = (b[0] - a[0], b[1] - a[1])
+            m11, m12, m21, m22 = -bp[1], ba[1], bp[0], -ba[0]
+            r1, r2 = -a[1], a[0]
+            det = m11 * m22 - m12 * m21
+            if abs(det) < 1e-9:
+                out.append((0.0, 0.0, 0.0))      # toggle: leave this side out
+                continue
+            w4 = (r1 * m22 - m12 * r2) / det
+            w3 = (m11 * r2 - r1 * m21) / det
+            out.append((abs(w3 - 1.0), abs(w3 - w4), abs(w4)))
+        return out
+
+    def __call__(self, data) -> float:
+        sd = data.sensordata
+        key = int(data.qpos[self.qadr] * 2000.0)
+        r = self._cache.get(key)
+        if r is None:
+            r = self._cache[key] = self._rates(data)
+        self.ratios = r
+        L = self.rj * self._inplane(sd, self.adr["swing_crank"])
+        for (_, _, _, ac, aw), (cp, rp, ww) in zip(self.sides, self.ratios):
+            L += self.rp * (self._inplane(sd, ac) * (cp + rp) + self._inplane(sd, aw) * ww)
+        self.value = self.mu * L
+        return self.value
 
 
 class CurrentBasedPositionServo:
@@ -261,7 +381,8 @@ class CurrentBasedPositionServo:
         the gearbox's, growing with crank angle (bike_params
         `righting.module.linkage_friction_*`, 2026-10-17). On by default; False
         is the frictionless linkage every run before it had, kept so the two
-        can be compared (teleop's --no-linkage-friction)."""
+        can be compared (teleop's --no-linkage-friction). It also carries the
+        pins' LOAD term (`linkage_load_mu`, LinkageLoad, 2026-11-05)."""
         try:
             model.joint("swing_crank_joint")
         except KeyError:
@@ -273,6 +394,15 @@ class CurrentBasedPositionServo:
             q2 = float(mod["linkage_friction_q2"])
         srv = cls(model, params, torque_nm if not at_output else None,
                   friction_base=base, friction_base_q2=q2)
+        if linkage_friction and "linkage_load_mu" in mod:
+            try:
+                model.sensor("swing_crank_load")
+            except KeyError:
+                pass                    # a model built before the sensors
+            else:
+                srv.linkage_load = LinkageLoad(
+                    model, mod["linkage_load_mu"], mod["linkage_journal_radius"],
+                    mod["linkage_pin_radius"])
         if torque_nm is not None and at_output:
             srv.set_goal_current(srv.counts_for_output(torque_nm))
         return srv
@@ -315,6 +445,8 @@ class CurrentBasedPositionServo:
             model.actuator_biasprm[self.aid, :3] = 0.0
         self.friction = GearboxFriction(model, params, joint, base=friction_base,
                                         base_q2=friction_base_q2)
+        #: the linkage's pin-load friction (attach sets it), or None
+        self.linkage_load = None
         self.set_goal_current(
             goal_current if goal_current is not None
             else self.counts_for(torque_nm) if torque_nm is not None
@@ -391,6 +523,8 @@ class CurrentBasedPositionServo:
         self.current = (i_cmd if not sat else
                         math.copysign(self.law.current(abs(tau) / self.strength), tau)
                         if tau else 0.0)
+        if self.linkage_load is not None:
+            self.friction.extra = self.linkage_load(data)
         self.friction.update(data, tau)
         data.qfrc_applied[self.dadr] = tau
 

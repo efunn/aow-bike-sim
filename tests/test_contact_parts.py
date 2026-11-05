@@ -203,8 +203,14 @@ def test_the_split_did_not_move_the_plant_digest():
                           a quadratic), which the righting servo runs on; the
                           steer's line refitted over 0.08-0.28 N m (stall
                           0.559 -> 0.586) and its kp / kv / armature with it
+        50167a80282fff2e  2026-11-05  servos.xc330_t181.current_law (Present
+                          Current a cubic in motor torque through the bench
+                          and the graph near stall); the linkage's unloaded
+                          friction re-converted with it (0.051 + 0.0147 ->
+                          0.0554 + 0.0137) and its pin-load term
+                          (linkage_load_mu 0.22, journal / pin radii)
     """
-    assert plant_digest(load_params()) == "cb3c888c5fd58fa4"
+    assert plant_digest(load_params()) == "50167a80282fff2e"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

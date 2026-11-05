@@ -373,8 +373,10 @@ def config(env, pol, manifest: dict) -> dict:
         "crank": {
             "aid": cs.aid, "qadr": cs.qadr, "dadr": cs.dadr,
             # the LINE law (servos.xc330_t181's straight fits); the Python
-            # model runs the traced graph (righting_servo.GraphLaw)
-            "ts": cs.law.ts, "w0": cs.law.n0 / RPM, "k": cs.law.k, "i0": cs.law.i0,
+            # model runs the traced graph and current_law (GraphLaw), and the
+            # linkage's pin-load term, which the page has neither of
+            "ts": cs.law.ts, "w0": cs.law.n0 / RPM, "k": cs.law.k,
+            "i0": getattr(cs.law, "i0_line", cs.law.i0),
             "kp_a": cs.kp_a, "kd_a": cs.kd_a, "nc": cs.nc,
             "goal_current": cs.goal_current, "supply": cs.supply,
             "amps_per_count": AMPS_PER_COUNT,

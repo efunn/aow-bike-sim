@@ -276,4 +276,11 @@ tests/test_righting_rl.py::test_the_scripted_ramp_props_weak_and_goes_over_stron
 # falls on its training record's. The bike itself falls standing 90 deg
 # snaps (4 of 9 after 10-28; 0.52 is the mu that reproduces them).
 # ACCEPTED (user, 11-05): the policy falls on this snap; the test now says so.
-tests/test_teleop.py::test_pad_triggers_slew_the_swing_crank_and_lb_snaps_left   # 2026-11-05 v4 falls on LB's +90 snap (the test now checks it stays up)
+# LATER 11-05, the XC330 current law and the linkage's pin-load friction:
+# GREEN again, BY TIMING, not because anything got better. On teleop's own
+# plant (policy_params) the snap stands or falls on when it is pressed: the
+# test's 0.3 s settle stands at every linkage mu 0-0.3; 0.35 s falls at
+# every one; 0.5 and 1.0 s go both ways (scratch probe, 11-05). Entry
+# dropped because the test passes as written; expect it back with any
+# change to the plant's timing. The bike's own snaps fall about half the time.
+#tests/test_teleop.py::test_pad_triggers_slew_the_swing_crank_and_lb_snaps_left   # 2026-11-05 v4 falls on LB's +90 snap (the test now checks it stays up)

@@ -2166,6 +2166,21 @@ def _add_swing_linkage(spec: mujoco.MjSpec, chassis, p: dict, cfg: dict,
         sen.type = stype
         sen.objtype = mujoco.mjtObj.mjOBJ_JOINT
         sen.objname = "swing_crank_joint"
+    # The linkage's bearing loads, for the load term of its friction
+    # (righting_servo.LinkageLoad): what each body's parent applies to it, at
+    # its hinge -- the chassis on the crank (its two journals together), the
+    # crank on each coupler (its crankpin), the chassis on each wing (its
+    # rod). The coupler's other pin is the same force: a two-force member.
+    # Native FORCE sensors, from the cfrc_int the AHRS accelerometer already
+    # forces, as the headset's (no Python cost). Invisible (group 5).
+    for body in ("swing_crank", "swing_coupler_left", "swing_coupler_right",
+                 "swing_wing_left", "swing_wing_right"):
+        spec.body(body).add_site(name=f"{body}_hinge", pos=[0.0, 0.0, 0.0],
+                                 group=5, rgba=[0, 0, 0, 0])
+        sen = spec.add_sensor(name=f"{body}_load")
+        sen.type = mujoco.mjtSensor.mjSENS_FORCE
+        sen.objtype = mujoco.mjtObj.mjOBJ_SITE
+        sen.objname = f"{body}_hinge"
 
 
 SWING_CFG = Path(__file__).resolve().parents[2] / "config" / "linkage" / "swing_wings.yaml"

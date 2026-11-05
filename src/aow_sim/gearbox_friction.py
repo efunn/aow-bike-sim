@@ -118,6 +118,9 @@ class GearboxFriction:
         self.model = model
         self.base = float(base)
         self.base_q2 = float(base_q2)
+        #: a further bearing term set by the caller before each `update` [N m]
+        #: (the righting linkage's pin-load friction, righting_servo.LinkageLoad)
+        self.extra = 0.0
         c = constants(params, ratio)
         self.s0, self.sc = c["static_nm"], c["static_frac"]
         self.r0, self.rc = c["running_nm"], c["running_frac"]
@@ -197,6 +200,7 @@ class GearboxFriction:
             if self.base_q2:
                 q = self._qpos[self.qadr]
                 b += self.base_q2 * q * q
+            b += self.extra
             self._fl[self.dof] = b + F
         else:
             T = self._sd[self._touch]
