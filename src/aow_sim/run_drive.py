@@ -452,7 +452,8 @@ def main() -> None:
                          "fixed is the Current Limit plus the top P gain -- "
                          "rigid up to 0.8 N m. Implies --rig")
     ap.add_argument("--hockey", action="store_true",
-                    help="add the ball-shot stick panels + ball (teleop key 1 fires it)")
+                    help="add the road-hockey ball (teleop key 1 fires it); "
+                         "the ball move's stick panels stay its env's")
     ap.add_argument("--ahrs", choices=("none", "tm151_static", "tm151", "tm171",
                                        "tm151_filter"),
                     nargs="?", const="tm151", default="tm151_filter", metavar="LEVEL",
@@ -818,11 +819,12 @@ def main() -> None:
                     if not k.startswith("headset_friction")}
         params = {**params, "bike": {**params["bike"], "steering": steering}}
     if args.wheel_play:
-        import yaml
-        doc = yaml.safe_load(Path(args.wheel_play).read_text()) or {}
-        play = doc.get("wheel_play", doc)
-        print(f"WHEEL PLAY from {args.wheel_play} (in memory): {play}")
-        params = {**params, "wheel_play": play}
+        # with_wheel_play strips the {value:, source:} wrappers, so
+        # bike_params.yaml itself works here (a raw read crashed the build).
+        from .params import with_wheel_play
+        params = with_wheel_play(params, args.wheel_play)
+        print(f"WHEEL PLAY from {args.wheel_play} (in memory): "
+              f"{params['wheel_play']}")
     # Compile the spare floors so the spawn dial has something to switch to.
     # In-memory only -- `bike_params.yaml` is untouched, so neither digest
     # moves. The extras are inert until `activate_floor` picks one, and the
@@ -958,7 +960,9 @@ def main() -> None:
     # four-bar (--swing-linkage) or none (--no-righting) is asked for.
     righting_module = not (args.wings or args.linkage or args.swing
                            or args.swing_linkage or args.no_righting)
-    build_kw = dict(variant="full", hockey=args.hockey,
+    # --hockey here is the ball alone: the ball move's stick panels are its
+    # env's (control/ball_env.py), not the bike's.
+    build_kw = dict(variant="full", hockey="ball" if args.hockey else False,
                     righting=(args.wings or args.linkage or args.swing
                               or bool(args.swing_linkage)),
                     wings=args.wings and not args.linkage,
