@@ -41,6 +41,7 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+import yaml
 
 from .build_model import (FLOOR_CONAFF, FLOOR_CONTYPE, SWING_LINKAGE_CFG, _FLOOR_ALPHA,
                           build_model, load_params, strip_visuals,
@@ -883,9 +884,25 @@ def main() -> None:
             if len(fc) not in (1, 2) or min(fc) < 0:
                 raise SystemExit("--drive-friction takes A or A:B, N.m >= 0")
             drive_friction = fc[0] if len(fc) == 1 else fc
+        # A variant (config/variants/) is a different drive: fly ITS overlay,
+        # not the startup policy's record of the bike it trained on.
+        own = None
+        if args.params and "variant_of" in (yaml.safe_load(
+                Path(args.params).read_text()) or {}):
+            own = params.get(drivetrain_model.KEY)
+            if own is not None and args.drivetrain is None:
+                args.drivetrain = True
+                print(f"DRIVETRAIN from {args.params} (a variant), not the "
+                      "policy's training record")
+            # Its firmware gains too: they are its servo's (the XC430's
+            # P 100 / I 1920 chatter on an M077; mini-bike.md), so they do
+            # not follow the policy unless --servo-gains says otherwise.
+            if own is not None and servo_gains is None:
+                servo_gains = (int(own["servo"]["velocity_p_gain"]),
+                               int(own["servo"]["velocity_i_gain"]))
         drivetrain_base = drivetrain_model.teleop_base(
             record, args.drivetrain, args.drivetrain_without, servo_gains,
-            friction=drive_friction)
+            friction=drive_friction, own=own)
         # No base (a startup policy exported without a drivetrain record, and
         # no flag) is the IDEAL drive it trained on -- not bike_params'
         # default detailed one, which load_params() carries.
@@ -3133,7 +3150,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     plant = [params]
     drivetrain_said = [None]
     if KEY in params:
-        gains_rule = ("PINNED by --servo-gains" if servo_gains else
+        gains_rule = ("PINNED by --servo-gains or the --params variant"
+                      if servo_gains else
                       "follow the policy picked from the menu")
         print(f"DETAILED DRIVETRAIN {drivetrain_source}: {describe(params)}.\n"
               f"  Structure is compiled for the session; firmware gains "

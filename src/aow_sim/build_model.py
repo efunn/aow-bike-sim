@@ -28,7 +28,7 @@ import yaml
 
 from . import drivetrain_model, gearbox_friction, geometry
 # Re-exported: params loading is MuJoCo-free so the Pi can use it (params.py).
-from .params import DEFAULT_PARAMS, _normalize, load_params, wing_hub_mass  # noqa: F401
+from .params import DEFAULT_PARAMS, _normalize, drive_servo, load_params, wing_hub_mass  # noqa: F401
 
 
 FLOOR_CONTYPE, FLOOR_CONAFF = 1, 2
@@ -675,7 +675,7 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
 
     # Drive actuators: XC430 velocity mode through the belt (speed x belt_ratio,
     # torque / belt_ratio, both seen at the input shaft).
-    servo = p["servos"]["xc430_w150"]
+    servo = drive_servo(p)
     belt = dt["belt_ratio"]
     max_speed = servo["no_load_rpm"] * 2 * np.pi / 60 * belt
     max_torque = servo["stall_torque"] / belt

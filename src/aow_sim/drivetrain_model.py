@@ -274,12 +274,15 @@ def policy_params(params: dict, name: str, moves_dir=None) -> dict:
 
 
 def teleop_base(record, drivetrain=None, without=(), gains=None,
-                friction=None):
+                friction=None, own=None):
     """The overlay teleop COMPILES, before any gains follow a policy.
 
     `--drivetrain [PATH]` or `--drivetrain-without` pin the file; else the
     startup policy's own `record`; else `--servo-gains` or `--drive-friction`
     alone asks for the default file; else None, the ideal plant.
+
+    `own` is the loaded params' overlay (`--params`, e.g. a variant): where
+    "the default file" is asked for, it stands in for bike_params.yaml's.
 
     `friction` (--drive-friction) pins the servos' Coulomb friction, one
     number or [side a, side b] in N.m, over whichever overlay that picked --
@@ -287,11 +290,18 @@ def teleop_base(record, drivetrain=None, without=(), gains=None,
     """
     if drivetrain or without:
         path = None if drivetrain in (None, True) else drivetrain
-        base = with_drivetrain({}, path, without=tuple(without))[KEY]
+        if path is None and own is not None:
+            base = copy.deepcopy(own)
+            for part in without:
+                if part not in PARTS:
+                    raise ValueError(f"unknown drivetrain part {part!r}; one of {PARTS}")
+                base[part]["enabled"] = False
+        else:
+            base = with_drivetrain({}, path, without=tuple(without))[KEY]
     elif record:
         base = copy.deepcopy(record)
     elif gains is not None or friction is not None:
-        base = load()
+        base = copy.deepcopy(own) if own is not None else load()
     else:
         return None
     if friction is not None:
@@ -526,7 +536,8 @@ class DrivetrainSim:
         self.h_fw = self.h * self.every
         if self.servo:
             s = cfg["servo"]
-            srv = params["servos"]["xc430_w150"]
+            from .params import drive_servo
+            srv = drive_servo(params)
             self.stall = float(srv["stall_torque"])
             self.w0 = float(srv["no_load_rpm"]) * 2 * math.pi / 60
             self.kp = float(s["kp_per_unit"]) * float(s["velocity_p_gain"])

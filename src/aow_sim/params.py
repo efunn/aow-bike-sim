@@ -330,14 +330,18 @@ def wing_hub_mass(mod: dict) -> float:
 
 
 def scale_printed_masses(p: dict) -> dict:
-    """Every PRINTED_PARTS mass times bike.printed_mass_scale (absent: 1)."""
+    """Every PRINTED_PARTS mass times bike.printed_mass_scale (absent: 1).
+    A part the bike does not have (a variant's own layout, `!replace`) is
+    skipped: its masses are its own."""
     k = float(p["bike"].get("printed_mass_scale", 1.0))
     if k == 1.0:
         return p
     for path in PRINTED_PARTS:
         node = p
         for key in path[:-1]:
-            node = node[key]
+            node = node.get(key) if isinstance(node, dict) else None
+        if not isinstance(node, dict) or path[-1] not in node:
+            continue
         node[path[-1]] = node[path[-1]] * k
     return p
 
@@ -421,12 +425,79 @@ def with_floor(params: dict, spec) -> dict:
     return {**params, "sim": {**params["sim"], **spec}}
 
 
+# What a variant file may ADD rather than change: a new servo model's block
+# (any key under `servos`), and the key that picks the drive servo, absent
+# from bike_params.yaml so its digest stays where it was (drive_servo()).
+VARIANT_NEW_PARENTS = (("servos",),)
+VARIANT_NEW_KEYS = (("drivetrain", "drive_servo"),)
+
+
+class _Replace(dict):
+    """A variant block tagged `!replace`: it takes the base's block's place
+    whole instead of merging into it, so it may add and drop keys. For the
+    geometry a new layout owns (bike.frame_parts, bike.payload); everything
+    not replaced is still inherited."""
+
+
+class _VariantLoader(_Loader):
+    pass
+
+
+_VariantLoader.add_constructor(
+    "!replace", lambda loader, node: _Replace(loader.construct_mapping(node, deep=True)))
+
+
+def _plain(node):
+    """`node` with every _Replace turned back into a dict."""
+    if isinstance(node, dict):
+        return {k: _plain(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_plain(v) for v in node]
+    return node
+
+
+def _merge_variant(base: dict, extra: dict, where: str, at: tuple = ()) -> dict:
+    """_merge, but a key `base` does not already hold is an error -- a typo in
+    a variant would otherwise be a silent no-op -- except VARIANT_NEW_*.
+    A `!replace` block replaces the base's whole (which must exist)."""
+    for k, v in extra.items():
+        path = at + (k,)
+        if k not in base and at not in VARIANT_NEW_PARENTS \
+                and path not in VARIANT_NEW_KEYS:
+            raise KeyError(f"{where}: {'.'.join(path)} is not in its base; "
+                           "a variant changes keys, it does not add them")
+        if isinstance(v, _Replace):
+            base[k] = _plain(v)
+        elif isinstance(v, dict) and isinstance(base.get(k), dict):
+            _merge_variant(base[k], v, where, path)
+        else:
+            base[k] = v
+    return base
+
+
+def _read_bike(path: Path) -> dict:
+    """One bike file, as written. A file with a top-level `variant_of:` is the
+    differences from that file (relative to its own folder), laid over it;
+    a base may itself be a variant. config/variants/README.md."""
+    p = yaml.load(path.read_text(), Loader=_VariantLoader) or {}
+    base = p.pop("variant_of", None)
+    if base is None:
+        return _plain(p)
+    return _plain(_merge_variant(_read_bike((path.parent / base).resolve()), p,
+                                 str(path)))
+
+
+def drive_servo(p: dict) -> dict:
+    """The drive servos' `servos:` block: drivetrain.drive_servo names it,
+    XC430-W150 (the bike as built) when absent."""
+    return p["servos"][p["drivetrain"].get("drive_servo", "xc430_w150")]
+
+
 def load_raw_params(path: str | Path | None = None, studies: bool = True) -> dict:
     """The merged tree as written -- `{value:, source:}` wrappers kept, nothing
     derived -- for readers that want a parameter's provenance or the onboard
     registers verbatim."""
-    with open(path or DEFAULT_PARAMS) as f:
-        p = yaml.load(f, Loader=_Loader)
+    p = _read_bike(Path(path or DEFAULT_PARAMS))
     if ONBOARD_PARAMS.exists():
         p.setdefault("control", {})["onboard"] = yaml.load(
             ONBOARD_PARAMS.read_text(), Loader=_Loader)

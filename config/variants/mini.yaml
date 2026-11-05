@@ -1,0 +1,196 @@
+# The mini bike, stage A: TODAY'S BIKE with XL330-M288 drives.
+# docs/plans/mini-bike.md. Only what differs from bike_params.yaml; every key
+# here must already exist there (params._merge_variant), except a new servo
+# block and drivetrain.drive_servo.
+#
+#   mjpython -m aow_sim.run_drive --teleop --params config/variants/mini.yaml
+#   mjpython -m aow_sim.run_drive --teleop --params config/variants/mini_m077.yaml
+#
+# Same geometry, wheels, steer (XC330) and righting as the built bike; the two
+# drive servos, their pulleys and the drive's firmware-loop guesses change.
+# The servo boxes keep the XC430's shape, only their mass changes.
+#
+# Supply: the 6.0 V datasheet column, the highest ROBOTIS publishes. The mini
+# runs the servos straight off 2S (aow-bike-hw docs/requirements.md), so the
+# real servos likely run faster than this; nothing is published at 7.4 V.
+# set_supply's randomisation scales from this column, as it does from 12 V on
+# the XC430.
+variant_of: ../bike_params.yaml
+
+servos:
+  xl330_m288:   # 2x drive here; steer and righting later (values at 6.0 V)
+    stall_torque: {value: 0.60, source: datasheet}
+    stall_current: {value: 1.74, source: datasheet}
+    no_load_rpm: {value: 123.0, source: datasheet}
+    mass: {value: 0.018, source: datasheet}
+    box_size: [0.026, 0.020, 0.034]
+  xl330_m077:   # the faster drive option (values at 6.0 V)
+    stall_torque: {value: 0.228, source: datasheet}
+    stall_current: {value: 1.74, source: datasheet}
+    no_load_rpm: {value: 456.0, source: datasheet}
+    mass: {value: 0.018, source: datasheet}
+    box_size: [0.026, 0.020, 0.034]
+
+drivetrain:
+  drive_servo: xl330_m288
+  # 32T on the servo, 21T into the wheel (3M, 6 mm belt): a step-up, as the
+  # XC430's 45:15 is. The M077 flips the same pair.
+  belt_ratio: {value: 1.5238, source: tooth-count}   # 32/21
+
+# THE MINI'S OWN LAYOUT (11-04). frame_parts and payload are `!replace`:
+# this file owns them whole -- add, drop, rename and move parts here; nothing
+# of bike_params.yaml's lists is merged in. Seeded as today's parts with the
+# mini's masses, each where the part it replaces sits, so it starts as the
+# 748 g / 100.2 mm bike; analysis/mechanism/mass_table.py lists it.
+# A part named as one of params.PRINTED_PARTS is still times
+# bike.printed_mass_scale (0.930); a new or renamed part is not.
+# Positions are the chassis frame (origin the rear axle, +x forward, +z up);
+# see bike_params.yaml's frame_parts comment for the entry format.
+bike:
+  frame_parts: !replace
+    servo_drive_left:      # drive servo "A", horn on the left
+      servo: xl330_m288
+      geoms:
+        - {type: box, pos: [0.0768, -0.0, 0.0567], size: [0.0465, 0.034, 0.0285], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    servo_drive_right:      # drive servo "B", beside A across the drive
+      servo: xl330_m288
+      geoms:
+        - {type: box, pos: [0.0567, 0.0, 0.0768], size: [0.0465, 0.034, 0.0285], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    drive_case_left:      # the left side rail: its CAD outline pieces (cad.drive.rail_layout), extruded across the plate (x 16..20.6 mm), mass by area
+      mass: {value: 0.0207, source: estimate}
+      geoms:
+        - {type: prism, share: 0.3431, across: [0.0160, 0.0206],   # outline
+           outline: [[0.08256, 0.04190], [0.08600, 0.03860], [0.15000, 0.03860], [0.15554, 0.05632], [0.16635, 0.06025], [0.18500, 0.06704], [0.18500, 0.07480], [0.19950, 0.07480], [0.19950, 0.08350], [0.17900, 0.08350], [0.16206, 0.07204], [0.15000, 0.07160], [0.10511, 0.06304], [0.10440, 0.06375]]}
+        - {type: prism, share: 0.0541, across: [0.0160, 0.0206],   # rear arm
+           outline: [[0.02924, 0.06204], [0.01550, 0.06704], [0.01550, 0.07480], [0.00100, 0.07480], [0.00100, 0.08350], [0.02150, 0.08350], [0.03223, 0.07430], [0.02924, 0.07131]]}
+        - {type: prism, share: 0.5219, across: [0.0160, 0.0206],   # case side
+           outline: [[0.04741, 0.02924], [0.07131, 0.02924], [0.10511, 0.06304], [0.06304, 0.10511], [0.02924, 0.07131], [0.02924, 0.04741]]}
+        - {type: prism, share: 0.0615, across: [0.0160, 0.0206],   # front ear
+           outline: [[0.06993, 0.09821], [0.09192, 0.12021], [0.08238, 0.12975], [0.06038, 0.10776]]}
+        - {type: prism, share: 0.0194, across: [0.0160, 0.0206],   # back ear
+           outline: [[0.02471, 0.06679], [0.03285, 0.07492], [0.02471, 0.08305], [0.01658, 0.07492]]}
+    drive_case_right:      # the right side rail: its CAD outline pieces (cad.drive.rail_layout), extruded across the plate (x 16..20.6 mm), mass by area
+      mass: {value: 0.0195, source: estimate}
+      geoms:
+        - {type: prism, share: 0.3733, across: [-0.0206, -0.0160],   # outline
+           outline: [[0.08256, 0.04190], [0.08600, 0.03860], [0.15000, 0.03860], [0.15554, 0.05632], [0.16635, 0.06025], [0.18500, 0.06704], [0.18500, 0.07480], [0.19950, 0.07480], [0.19950, 0.08350], [0.17900, 0.08350], [0.16206, 0.07204], [0.15000, 0.07160], [0.10511, 0.06304], [0.10440, 0.06375]]}
+        - {type: prism, share: 0.0588, across: [-0.0206, -0.0160],   # rear arm
+           outline: [[0.02924, 0.06204], [0.01550, 0.06704], [0.01550, 0.07480], [0.00100, 0.07480], [0.00100, 0.08350], [0.02150, 0.08350], [0.03223, 0.07430], [0.02924, 0.07131]]}
+        - {type: prism, share: 0.5679, across: [-0.0206, -0.0160],   # case side
+           outline: [[0.04741, 0.02924], [0.07131, 0.02924], [0.10511, 0.06304], [0.06304, 0.10511], [0.02924, 0.07131], [0.02924, 0.04741]]}
+    drive_chainstay_left:
+      mass: {value: 0.0063, source: estimate}
+      geoms:
+        - {type: box, pos: [0.0235, 0.0323, 0.0235], size: [0.077, 0.0217, 0.019], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    drive_chainstay_right:
+      mass: {value: 0.0063, source: estimate}
+      geoms:
+        - {type: box, pos: [0.0235, -0.0323, 0.0235], size: [0.077, 0.0217, 0.019], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    drive_pulley_left:      # the servo's pulley, a disc across the bike: its MASS (its spin is in input_armature)
+      mass: {value: 0.004, source: GUESS}   # 32T 3M (PD 30.6) for 45T HTD 5M (PD 71.6)
+      geoms:
+        - {type: cylinder, pos: [0.0853, 0.0276, 0.0652], size: [0.0372, 0.0172], quat: [0.70711, -0.70711, 0.0, 0.0]}
+    drive_belt_left:      # GT2 belt as its two straight runs (wraps left out: CoM ~18 mm back of the CAD belt's)
+      mass: {value: 0.004, source: GUESS}   # 6 mm 3M, ~210 mm; the 9 mm 5M weighed 15 g
+      geoms:
+        - {type: box, pos: [0.0244, 0.0277, 0.0477], size: [0.1047, 0.009, 0.0015], quat: [0.90549, 0.0, -0.42437, 0.0], share: 0.5}
+        - {type: box, pos: [0.0525, 0.0277, 0.011], size: [0.1047, 0.009, 0.0015], quat: [0.97719, 0.0, -0.21236, 0.0], share: 0.5}
+    drive_pulley_right:      # the servo's pulley, a disc across the bike: its MASS (its spin is in input_armature)
+      mass: {value: 0.004, source: GUESS}   # 32T 3M (PD 30.6) for 45T HTD 5M (PD 71.6)
+      geoms:
+        - {type: cylinder, pos: [0.0652, -0.0276, 0.0853], size: [0.0372, 0.0172], quat: [0.70711, -0.70711, 0.0, 0.0]}
+    drive_belt_right:      # GT2 belt as its two straight runs (wraps left out: CoM ~18 mm back of the CAD belt's)
+      mass: {value: 0.004, source: GUESS}   # 6 mm 3M, ~210 mm; the 9 mm 5M weighed 15 g
+      geoms:
+        - {type: box, pos: [0.011, -0.0277, 0.0525], size: [0.1047, 0.009, 0.0015], quat: [0.84114, 0.0, -0.54082, 0.0], share: 0.5}
+        - {type: box, pos: [0.0477, -0.0277, 0.0244], size: [0.1047, 0.009, 0.0015], quat: [0.94035, 0.0, -0.3402, 0.0], share: 0.5}
+    servo_steer:      # shaft down the steering axis, case out the front. Its MASS only:
+      # the steer actuator is still the XC330's (stage B)
+      servo: xl330_m288
+      geoms:
+        - {type: box, pos: [0.1697, -0.0, 0.1067], size: [0.034, 0.02, 0.023], quat: [0.98481, 0.0, -0.17365, 0.0]}
+    steer_case_lower:      # the steering's STATIC half (cad.steering stages)
+      mass: {value: 0.0121, source: estimate}
+      geoms:
+        - {type: box, pos: [0.1752, -0.0, 0.084], size: [0.0499, 0.0344, 0.0425], quat: [0.98481, 0.0, -0.17365, 0.0]}
+    steer_case_upper:
+      mass: {value: 0.0079, source: estimate}
+      geoms:
+        - {type: box, pos: [0.1685, 0.0, 0.1136], size: [0.0516, 0.0281, 0.0223], quat: [0.98481, 0.0, -0.17365, 0.0]}
+    pi_carrier:      # still the Pi plate's place and shape: a mount for a thumb-sized board
+      mass: {value: 0.004, source: GUESS}
+      geoms:
+        - {type: box, pos: [0.1138, 0.0007, 0.0998], size: [0.0022, 0.056, 0.0953], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    power_holder:      # a panel on the left, between the battery and the rail
+      mass: {value: 0.0077, source: estimate}
+      geoms:
+        - {type: box, pos: [0.0349, 0.0149, 0.1045], size: [0.0677, 0.0033, 0.0455], quat: [0.92388, 0.0, -0.38268, 0.0]}
+    cables:      # 5 JST servo cables x 5 g + 2 short USB cables x 8 g, weighed 2026-10-21
+      # "Distributed but high" (user, 11-03): mostly over the drive, up by the
+      # Pi and U2D2 they run to, so a band under the rings' tops, not a point.
+      # The placement is an estimate; the mass is weighed. It takes none of the
+      # residual (the fasteners) that the other frame parts share.
+      mass: {value: 0.025, source: estimate}   # the weighed 41 g less the two 8 g USB cables
+      residual: false
+      geoms:
+        - {type: box, pos: [0.100, 0.0, 0.105], size: [0.120, 0.030, 0.020]}
+  ahrs:
+    # IMU + magnetometer breakouts (requirements.md) for the 19 g TM151. Its
+    # MASS only: the sensor model is still the TM151's.
+    mass: {value: 0.003, source: GUESS}
+  payload: !replace
+    # The untethered running gear (docs/plans/untethered-setup.md), entries as in
+    # frame_parts. build_model(payload=False) leaves it out (the tethered bike).
+    # Placements are the v2 CAD's, all in the drive frame (quat: box x across the
+    # bike, y up the belt, z up and back). The power board and its holder sit left
+    # of the centreline, a standing roll bias the policy trims out.
+    battery:                                  # the REN LONG 2S Li-ion, two ~18 x 50 mm cells side by side
+      pos: [0.02917, 0.0, 0.09387]
+      mass: {value: 0.063, source: measured}  # user, 11-04
+      box_size: [0.036, 0.050, 0.018]
+      quat: [0.65328, 0.2706, -0.2706, -0.65328]
+    pi:                                       # the ESP32-S3 board with the bus buffer, in the Pi's place
+      pos: [0.11328, 0.0, 0.11922]
+      mass: {value: 0.006, source: GUESS}
+      box_size: [0.018, 0.004, 0.024]
+      quat: [0.65328, 0.2706, -0.2706, -0.65328]
+    u2d2:                                     # nothing: the buffer is on the MCU board; 1 g keeps the body
+      pos: [0.11494, 0.0, 0.08807]
+      mass: {value: 0.001, source: GUESS}
+      box_size: [0.018, 0.0149, 0.048]
+      quat: [0.65328, 0.2706, -0.2706, -0.65328]
+    power_board:                              # the PCB with its components + the power switch
+      pos: [0.0440, 0.0274, 0.1094]
+      # Weighed 2026-10-19. Its printed holder is frame_parts.power_holder.
+      mass: {value: 0.016, source: measured}
+      box_size: [0.0126, 0.0265, 0.025]
+      quat: [0.65328, 0.2706, -0.2706, -0.65328]
+
+
+drivetrain_model:
+  servo:
+    # The M288's factory defaults (e-Manual control table), the XC430's being
+    # 100 / 1920. They are the servo's own: a register value means more loop
+    # gain on a faster servo, and the M077 at the XC430's gains chatters
+    # (mini-bike.md). Teleop holds these over a policy's record.
+    velocity_p_gain: 180
+    velocity_i_gain: 1600
+    # ROBOTIS's units are the same on both (0.229 rpm, 885 PWM counts), so the
+    # XC430's fitted scales are carried over; the XL330's firmware loop rate
+    # is not known, so ki may not carry. Delays and filter: inherited, also
+    # unmeasured here.
+    kp_per_unit: {value: 4.0e-4, source: GUESS}   # the XC430's fit
+    ki_per_unit: {value: 1.45e-3, source: GUESS}  # the XC430's fit
+    # Written to the servo at startup; set at the no-load speed so the
+    # register never clips before the motor does.
+    velocity_limit_rad_s: {value: 12.88, source: design}
+    # The XC430's loaded mechanical time constant, J w0 / stall = 15.3 ms,
+    # held: J = 0.0153 x 0.60 / 12.88. Measure by a PWM coast, as the XC430's.
+    rotor_inertia: {value: 7.1e-4, source: GUESS}
+    # The XC430's 0.15 is 9.4 % of its stall; the same fraction. Part of the
+    # XC430's figure is the hub and rollers, which do not shrink with the servo.
+    coulomb_friction: {value: 0.056, source: GUESS}
+
+actuators:
+  # The ideal plant's droop, stall / no_load_speed / belt^2 (see bike_params).
+  drive_kv: 0.020061

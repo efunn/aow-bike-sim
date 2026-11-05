@@ -1,0 +1,28 @@
+# mini.yaml with XL330-M077 drives: the same 32T/21T pair flipped, 21T on the
+# servo, so a reduction. docs/plans/mini-bike.md.
+variant_of: mini.yaml
+
+drivetrain:
+  drive_servo: xl330_m077
+  belt_ratio: {value: 0.65625, source: tooth-count}   # 21/32
+
+bike:
+  frame_parts:
+    servo_drive_left: {servo: xl330_m077}
+    servo_drive_right: {servo: xl330_m077}
+
+drivetrain_model:
+  servo:
+    # The M077's factory defaults (e-Manual). At the XC430's 100 / 1920 its
+    # duty chatters: 0.75 RMS step to step, 6 % saturated, under the pointer
+    # on the floor, against 0.07 here and 0.05 on the built bike.
+    velocity_p_gain: 40
+    velocity_i_gain: 400
+    # 456 rpm / 0.229 = 1991 register units; within the XL330's range.
+    velocity_limit_rad_s: {value: 47.75, source: design}
+    # As mini.yaml: the 15.3 ms time constant, 0.0153 x 0.228 / 47.75.
+    rotor_inertia: {value: 7.3e-5, source: GUESS}
+    coulomb_friction: {value: 0.021, source: GUESS}   # 9.4 % of stall
+
+actuators:
+  drive_kv: 0.011087   # 0.228 / 47.75 / 0.65625^2
