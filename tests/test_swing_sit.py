@@ -237,6 +237,34 @@ def test_engage_from_propped_eases_the_blade_and_folds_it():
     assert {"balance", "retract", "riding"} <= phases and crank == pytest.approx(0.0)
 
 
+def test_a_let_go_prop_moved_to_the_other_side_hands_off_from_there():
+    """Run 261105-142504: propped LEFT (crank -105) and let go, the blade set
+    to the RIGHT by hand (+103); Enter handed off as -side x 103 and the
+    blade whipped across before folding. The side now comes from the crank,
+    so the first goal is where the blade is and the fold never crosses."""
+    seq = SwingSit(DEPLOY, hand_off=False, prop_current=0.0)
+    seq.get_up(0.0, np.deg2rad(80.0))                 # lying on the left
+    t, crank = 0.0, 0.0
+    while seq.phase != "propped":
+        crank = seq.step(t, np.deg2rad(5.0), 0.0, crank).crank
+        t += DT
+    side = np.sign(crank)
+    moved = -side * np.deg2rad(103.0)                  # by hand, the other way
+    seq.engage(t, moved)
+    goals = []
+    for _ in range(int(6.0 / DT)):
+        t += DT
+        c = seq.step(t, 0.0, 0.0, moved)
+        goals.append(c.crank)
+        moved = c.crank
+        if seq.phase == "riding":
+            break
+    assert goals[0] == pytest.approx(-side * np.deg2rad(103.0),
+                                     abs=np.deg2rad(1.0))
+    assert max(side * g for g in goals) < 1e-6, "the blade crossed back over"
+    assert seq.phase == "riding"
+
+
 def test_engage_is_only_from_propped():
     seq = SwingSit(DEPLOY, hand_off=False)
     with pytest.raises(RuntimeError, match="propped"):

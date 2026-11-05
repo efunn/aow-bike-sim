@@ -305,8 +305,10 @@ class SwingSit:
         goal is, to bring a sagging prop inside the hand-off window."""
         if self.phase != "propped":
             raise RuntimeError(f"nudge from {self.phase}, not propped")
-        # From the crank when it was let go (it may have settled anywhere),
-        # from the held goal when it was not (the crank droops behind it).
+        # From the crank when it was let go (it may have settled anywhere,
+        # even on the other side, by hand), from the held goal when it was
+        # not (the crank droops behind it).
+        self._side_from_let_go(crank)
         self._nudge_from = (self.side * crank if self.prop_current < 1.0
                             else self._prop)
         self.nudged = False
@@ -392,9 +394,21 @@ class SwingSit:
         let go, so its goal says nothing about the blade."""
         if self.phase != "propped":
             raise RuntimeError(f"engage from {self.phase}, not propped")
+        self._side_from_let_go(crank)
         self._hold = (self.side * self._prop
                       if crank is None or self.prop_current >= 1.0 else crank)
         self._go("balance", t)
+
+    def _side_from_let_go(self, crank: float | None) -> None:
+        """A let-go prop's blade is where its crank IS, on the crank's side.
+        `balance` and `nudge` build their goals as side x magnitude, so a
+        crank moved to the other side by hand (run 261105-142504: propped
+        left at -105, set to +103 by hand) was handed off as -103 -- the
+        blade whipped across and back -- until the side came from it."""
+        if crank is None or self.prop_current >= 1.0 or crank == 0.0:
+            return
+        self.side = float(np.sign(crank))
+        self._prop = abs(float(crank))
 
     def _abort(self, t, crank):
         self.aborted = True
