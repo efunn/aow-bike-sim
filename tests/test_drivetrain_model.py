@@ -205,8 +205,11 @@ def _roller_dev_deg(m, d, k):
                         - k * d.qpos[m.joint("ring_spin").qposadr[0]])
 
 
-def test_roller_play_is_critically_damped(params):
-    """By hand a flicked roller returns to centre with no visible overshoot."""
+def test_roller_play_damping_is_the_films(params):
+    """The filmed release (traces/rollerslop.mp4, 240 fps, 2026-10-24) fits a
+    damping ratio of ~0.5-0.7. (Until 2026-11-04 this pinned CRITICAL
+    damping, from a by-hand "no visible overshoot" the film does not bear
+    out: it overshoots 4-17 %.)"""
     p = dm.with_drivetrain(params)
     m = build_model(p, variant="testbed")
     dm.DrivetrainSim.attach(m, p)            # the plant the play lives in
@@ -218,11 +221,13 @@ def test_roller_play_is_critically_damped(params):
     r = p[dm.KEY]["roller_slop"]
     c = r["damping"] + m.dof_damping[dof]
     zeta = c / (2 * math.sqrt(r["centring_stiffness"] * inertia))
-    assert 0.8 <= zeta <= 1.5, zeta
+    assert 0.45 <= zeta <= 0.75, zeta
 
 
 @pytest.mark.parametrize("start", ["flick", "release"])
-def test_roller_returns_to_centre_without_overshoot(params, start):
+def test_roller_returns_to_centre_as_filmed(params, start):
+    """Back to centre with one small overshoot: the film's 4-17 % (sim ~15 %),
+    90 % back within ~10-17 ms of the peak (film 12.5-17 from release)."""
     p, m, d, sim = _testbed(params)
     k = params["drivetrain"]["k_roller"]
     half = p[dm.KEY]["roller_slop"]["half_play_deg"]
@@ -237,9 +242,11 @@ def test_roller_returns_to_centre_without_overshoot(params, start):
         mujoco.mj_step(m, d)
         devs.append(_roller_dev_deg(m, d, k))
     devs = np.array(devs)
-    peak = devs.max()
-    assert peak > 0.5 * half, "the flick or release did not reach the play"
-    assert devs.min() > -0.1 * peak, f"overshoot {devs.min():.2f} deg"
+    peak, ip = devs.max(), int(devs.argmax())
+    assert peak > 1.0, "the flick or release did not move the roller"
+    assert 0.02 * peak < -devs.min() < 0.20 * peak, f"overshoot {devs.min():.2f} deg"
+    t90 = np.argmax(devs[ip:] < 0.1 * peak) * m.opt.timestep
+    assert 0.006 < t90 < 0.020, t90
     assert abs(devs[-1]) < 1.0
 
 
@@ -366,9 +373,22 @@ def test_drive_randomization_when_asked(params):
     assert sided, "the two sides are drawn independently"
 
 
+# The detent's options each tested on a plain bump of their own, not on
+# whatever the default detent is: the 09-13 bench's narrow friction bump,
+# nothing else (no hill, sliding = sticking, no speed drag). The default went
+# to the 10-24 sawtooth on 2026-11-04 and the mechanism tests did not move.
+PLAIN_BUMP = {"width_deg": 2.5, "friction": 0.096, "hill_nm": 0.0, "hill_shape": "sine",
+              "kinetic_fraction": 1.0, "viscous_nm_s": 0.0, "viscous_onset_rad_s": 0.0}
+
+
+def _plain(params, without=("roller_slop",)):
+    p = copy.deepcopy(dm.with_drivetrain(params, without=without))
+    p[dm.KEY]["detent"].update(PLAIN_BUMP)
+    return p
+
+
 def _with_hill(params, hill, phase_deg=0.0, without=("roller_slop",)):
-    p = dm.with_drivetrain(params, without=without)
-    p = copy.deepcopy(p)
+    p = _plain(params, without=without)
     p[dm.KEY]["detent"]["hill_nm"] = hill
     p[dm.KEY]["detent"]["hill_phase_deg"] = phase_deg
     return p
@@ -379,8 +399,10 @@ def test_a_zero_hill_is_the_detent_as_before(params):
     bit for bit."""
     v = 0.01 * 11.1 * params["drivetrain"]["belt_ratio"]
     runs = []
-    for p in (dm.with_drivetrain(params, without=("roller_slop",)),
-              _with_hill(params, 0.0)):
+    bare = _plain(params)
+    for k in ("hill_nm", "hill_shape"):
+        bare[dm.KEY]["detent"].pop(k)
+    for p in (bare, _with_hill(params, 0.0)):
         m = build_model(p, variant="testbed")
         d = mujoco.MjData(m)
         runs.append(_run(m, d, dm.DrivetrainSim.attach(m, p), v, -v, 1.0))

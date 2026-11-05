@@ -3,8 +3,8 @@ world: the XC430 velocity loop (command and measurement delays, the velocity
 filter, PI with back-calculation anti-windup), the sticking Coulomb friction
 on each input shaft, and the differential's detent: the friction bump, its
 kinetic fraction and handed scale, and the optional hill (sine or sawtooth,
-with its flip ramp and constant offset) -- every detent option the Python
-class has since 2026-10-25.
+with its flip ramp and constant offset), and the speed drag past an onset
+(2026-11-04) -- every detent option the Python class has.
 
 The Python class is the reference (analysis/gpu/phase2 checks this against a
 recorded GeneralEnv run); this mirrors it line for line, in float32.
@@ -49,6 +49,8 @@ class DriveConst:
     hill_offset: float  # N m
     kinetic: float      # sliding friction over sticking
     minus_scale: float  # friction against - motion over against +
+    visc: float         # detent.viscous_nm_s: drag on ring-vs-hub past the onset
+    visc_onset: float   # detent.viscous_onset_rad_s
     cmd_a: int        # ctrl index of drive_a (commanded input-shaft speed)
     cmd_b: int
     motor_a: int      # ctrl index of drive_a_motor (torque)
@@ -88,7 +90,8 @@ def const_from(sim) -> DriveConst:
     c = DriveConst()
     for k in ("h", "belt", "stall", "w0", "kp", "ki", "vlim", "alpha", "k_in",
               "c_in", "period", "width", "fmax", "k_stick", "c_stick", "ga", "gb",
-              "hill", "hill_phase", "hill_flip", "hill_offset", "kinetic", "minus_scale"):
+              "hill", "hill_phase", "hill_flip", "hill_offset", "kinetic", "minus_scale",
+              "visc", "visc_onset"):
         setattr(c, k, float(getattr(sim, k)))
     c.hill_saw = int(bool(sim.hill_saw))
     c.nc, c.nm = int(sim.nc), int(sim.nm)
@@ -252,6 +255,14 @@ def pre_step(c: DriveConst,
         else:
             q = q - c.hill * wp.sin(2.0 * wp.pi * (phi - phase[world]) / c.period + c.hill_phase)
     q = q + c.hill_offset
+    # speed drag past the onset (detent.viscous_nm_s, 2026-11-04)
+    vd = c.ga * va + c.gb * vb
+    over = wp.abs(vd) - c.visc_onset
+    if c.visc != 0.0 and over > 0.0:
+        if vd > 0.0:
+            q = q - c.visc * over
+        else:
+            q = q + c.visc * over
     qfrc_applied[world, c.da] = fa_ + c.ga * q
     qfrc_applied[world, c.db] = fb_ + c.gb * q
 

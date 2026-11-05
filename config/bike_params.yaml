@@ -213,14 +213,36 @@ drivetrain_model:
 
   detent:
     enabled: true
-    # A friction bump on ring-vs-hub, once per tooth: friction rather than a
-    # conservative hill, because at 1 % creep the extra push sits at the same
-    # phase in both directions (drivetrain_fit.py detent).
+    # The differential's resistance on ring-vs-hub, as re-measured on the
+    # rebuilt drive (2026-10-24, physical-bike-tests.md test 3 and "Next";
+    # traces/drivetrain/drivetrain_sawtooth_1024.yaml, which every policy
+    # since v4 trained on as an overlay; folded in here 2026-11-04). Was the
+    # 09-13 bench's narrow bump: width 2.5, friction 0.096, no hill.
     period_deg: {value: 7.5, source: tooth-count}   # ring-vs-hub, input shaft
-    width_deg: {value: 2.5, source: measured}       # raised cosine, full width
-    # Peak extra friction on ring_spin [N m]: ~0.09 duty per servo above the
-    # ~0.12 baseline, times stall torque / belt ratio, times 2 servos.
-    friction: {value: 0.096, source: measured}
+    # Flat across the notch: the P 4000 static map's friction does not dip
+    # (a raised cosine this wide is flat).
+    width_deg: 1000.0
+    # Static friction [N m on ring_spin]: the map's diff minus common
+    # breakaway, ~0.25 - ~0.115 duty, x 1.067 N m/duty.
+    friction: {value: 0.12, source: measured}
+    # The map's angle-only push, +-0.10 duty, as a stick-slip sawtooth.
+    hill_nm: {value: 0.12, source: measured}
+    hill_shape: sawtooth
+    # Sliding friction over static: fitted to the filmed creep's mix of
+    # single and double jumps (replay_jumps.py).
+    kinetic_fraction: {value: 0.15, source: GUESS}
+    # Speed drag on ring-vs-hub (2026-11-04): none up to the onset, then
+    # linear past it [N m s/rad]. Replaying 261024-202033_coast's recorded
+    # duty on the testbed, the rebuilt diff spins 1.73 rad/s (servo) on duty
+    # 0.4 where the model without it spins 3.18. A drag from 0 that matches
+    # it (0.028) also turns every double jump in the filmed creep
+    # (261024-221037) into a single; with the onset at 4 rad/s the creep
+    # keeps them (39/5 and 37/5 singles/doubles, 35/7 and 35/6 without; the
+    # bike 25/13 and 5/21). Torque-off coasts halve in 15 ms (bike 9), PWM 0
+    # ones in 10 (bike 8-10). One duty, one session: the onset and slope
+    # trade off, and only the onset's lower bound is set (by the creep).
+    viscous_nm_s: {value: 0.12, source: estimate}
+    viscous_onset_rad_s: {value: 4.0, source: estimate}
     # Phase is drawn per episode where there is an rng (training, the eval
     # env), else this. Nothing has measured where the wall sits.
     phase_deg: 0.0
@@ -236,14 +258,13 @@ drivetrain_model:
     # Per roller, in roller-angle units. The rigid roller coupling is replaced by
     # a tendon with a weak centring spring and hard limits at the ends of the play.
     half_play_deg: {value: 7.8, source: measured}      # 15.6 deg p-p by hand
-    # A roller often springs back to the middle of its play by hand, not every
-    # time; nothing has measured the spring. At 1e-3 it is a dead zone under load
-    # (1.4e-4 N m at the wall against ~0.05 N m of ground torque).
-    centring_stiffness: {value: 1.0e-3, source: GUESS}  # N.m/rad
-    # Critical damping against the roller's spin inertia (2.31e-7 kg m2):
-    # 2 sqrt(k J) = 3.0e-5. By hand, a flicked roller returns to centre with no
-    # visible overshoot. tests/test_drivetrain_model.py pins the ratio.
-    damping: {value: 2.9e-5, source: model}             # N.m.s/rad
+    # The centring spring and its damping from the filmed release
+    # (traces/rollerslop.mp4, 240 fps, 2026-10-24, physical-bike-tests.md):
+    # 90 % back in 12.5-17 ms, overshooting 4-17 %, a damping ratio ~0.5-0.7
+    # (this pair: 0.52). Was a 1e-3 GUESS, critically damped (2.9e-5) to a
+    # by-hand "no visible overshoot" the film does not bear out.
+    centring_stiffness: {value: 1.0e-2, source: measured}  # N.m/rad
+    damping: {value: 5.0e-5, source: measured}             # N.m.s/rad
     # How hard the ends of the play are: 0.001 holds them to ~1.5 deg under a
     # 20 rad/s dithered diff. Must stay >= 2 x sim.timestep.
     wall_timeconst_s: 0.001

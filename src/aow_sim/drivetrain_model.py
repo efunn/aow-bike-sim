@@ -588,6 +588,14 @@ class DrivetrainSim:
             self.hill_force = 0.0
             self.kinetic = float(d.get("kinetic_fraction", 1.0))
             self.minus_scale = float(d.get("friction_minus_scale", 1.0))
+            # Speed drag on ring-vs-hub [N m s/rad], i.e. in the differential
+            # only (common mode leaves ring-vs-hub still): zero up to
+            # `viscous_onset_rad_s`, then linear in the speed past it. The
+            # rebuilt diff's spin and coasts need a drag its friction lacks,
+            # and its slow creep's slip bursts do not (physical-bike-tests.md,
+            # test 3; status.md). 0 = none.
+            self.visc = float(d.get("viscous_nm_s", 0.0))
+            self.visc_onset = float(d.get("viscous_onset_rad_s", 0.0))
             self._sliding = False
             # ring-vs-hub = ring_abs - hub, both linear in the inputs; the
             # same coefficients map a force on it back onto the inputs.
@@ -782,6 +790,11 @@ class DrivetrainSim:
                 q += h
             if self.hill_offset:
                 q += self.hill_offset
+            if self.visc:
+                vphi = ga * float(qvel[self.in_d[0]]) + gb * float(qvel[self.in_d[1]])
+                over = abs(vphi) - self.visc_onset
+                if over > 0.0:
+                    q -= self.visc * over if vphi > 0.0 else -self.visc * over
             fric[0] += ga * q
             fric[1] += gb * q
         if self.servo or self.detent:
