@@ -771,7 +771,85 @@ def test_a_prop_lets_go_too_unless_under_the_roll_threshold():
         assert r.bus.calls[-1] == ("current", last)
 
 
-def test_a_crank_within_the_error_band_is_left_alone():
+def test_a_crank_within_the_error_band_is_not_a_stall():
+    """The STALL rule leaves it alone; the idle rule, off here, is the one
+    that lets an in-band crank go (test_a_crank_left_alone_...)."""
     r = _manual(goal_deg=100.0, crank_deg=100.0 - RB.MANUAL_STALL_ERR_DEG + 1)
+    r._stall = StallHold(idle_s=None)
     _tick(r, 2.0)
     assert r.bus.calls == []
+
+
+def test_a_lift_held_at_the_lead_is_the_stall_rules_not_idle():
+    """Goal and crank both still, 40 deg apart (a trigger held at the
+    lead's limit, the lift loading): not idle, whatever IDLE_S -- a lift may
+    sit 0.5 s there and then get up; the stall rule takes it at STALL_S."""
+    r = _manual(goal_deg=60.0, crank_deg=20.0)
+    _tick(r, RB.MANUAL_STALL_S - 0.05)
+    assert r.bus.calls == []
+    _tick(r, 0.1)
+    assert "stalled" in r.said[-1][1]
+
+
+def test_a_crank_left_alone_lets_go_after_the_idle_time():
+    """Run 261103-174457 (recorded 11-05), 29.5 s: lying, the crank held 5 deg
+    off its goal -- inside the stall band -- drew -156 mA for 7 s with
+    nothing moving. No input and no motion for MANUAL_IDLE_S: let go as a
+    stall does; any goal move gives the operator's current back."""
+    r = _manual(goal_deg=-2.4, crank_deg=2.5)
+    _tick(r, RB.MANUAL_IDLE_S - 0.05)
+    assert r.bus.calls == []
+    _tick(r, 0.1)
+    assert r.bus.calls == [("current", RB.MANUAL_HOLD_CURRENT)]
+    assert "idle" in r.said[-1][1]
+    _tick(r, RB.MANUAL_LET_GO_S + 0.5, crank_dps=10.0)    # back-driven: settles
+    _tick(r, 1.0)
+    assert r.bus.calls[-1] == ("current", 0) and r._stall.holding
+    r.bus.goal += math.radians(5.0)                       # the operator acts
+    _tick(r, 0.01)
+    assert r.bus.calls[-1] == ("current", 600) and not r._stall.holding
+
+
+def test_a_slowly_moving_goal_is_not_idle():
+    r = _manual(goal_deg=10.0, crank_deg=10.0)
+    for _ in range(40):                                   # a trigger, eased
+        r.bus.goal += math.radians(1.0)
+        _tick(r, 0.2, crank_dps=5.0)
+    assert r.bus.calls == []
+
+
+def test_riding_the_stowed_crank_lets_go_too():
+    """Universal (user, 11-05): current holding a crank nobody is moving is
+    wasted, riding included. The next goal from the station takes it back."""
+    r = _manual(goal_deg=0.0, crank_deg=0.0)
+    r.guard.state = "engaged"
+    _tick(r, RB.MANUAL_IDLE_S + RB.MANUAL_LET_GO_S + 0.5)
+    assert r.bus.calls[0] == ("current", RB.MANUAL_HOLD_CURRENT)
+    assert r.bus.calls[-1] == ("current", 0)
+    r.bus.goal += math.radians(10.0)
+    _tick(r, 0.01)
+    assert r.bus.calls[-1] == ("current", 600) and not r._stall.holding
+
+
+def test_a_let_go_goal_brought_onto_the_crank_is_not_input():
+    """The station's target follows a let-go crank (telemetry
+    `righting_let_go`): its goal jumping from the lead's limit onto the
+    crank must not read as the operator and put the current back. A pull
+    from there does."""
+    h = StallHold()
+    lead = math.radians(40.0)
+    goal, crank = math.radians(60.0), math.radians(20.0)
+    t = 0.0
+    while not h.holding:
+        h.step(t, goal, crank, math.radians(70.0)); t += 0.01
+    while h.current(t, 785) != 0 or h.gc != 0:
+        assert h.step(t, goal, crank) is None; t += 0.01
+    for _ in range(50):
+        assert h.step(t, goal, crank) is None; t += 0.01
+    goal = crank                                       # the station follows
+    for _ in range(50):
+        assert h.step(t, goal, crank) is None; t += 0.01
+    assert h.holding
+    goal = crank + math.radians(5.0)                   # the operator pulls
+    assert h.step(t, goal, crank) == "goal moved"
+    assert lead > 0

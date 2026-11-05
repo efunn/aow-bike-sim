@@ -145,7 +145,7 @@ def _capture(monkeypatch, model, params, eq_qpos, hockey=False, analytic=False,
         # detailed drivetrain's XC430 loop and the gearbox friction. Dropping
         # it left a detailed-drivetrain policy with no drive torque at all.
         g.update(model=m, data=d, step=step, on_key=on_key, draw=draw,
-                 pre_step=kw.get("pre_step"))
+                 pre_step=kw.get("pre_step"), on_start=kw.get("on_start"))
 
     monkeypatch.setattr("aow_sim.interactive.teleop_loop", fake_loop)
     from aow_sim.run_drive import _teleop
@@ -1284,6 +1284,154 @@ def test_swing_lie_down_get_up_and_auto_up(monkeypatch, params, policy):
     _idle(g, 6.0)
     assert abs(roll()) < 5 and c.mode == "general", (
         f"no auto-up: roll {roll():+.1f}, mode {c.mode}")
+
+
+def test_standby_drops_the_bike_limp_and_the_crank_lifts_it(monkeypatch, params):
+    """Delete (d-pad left) is STANDBY: policy off, steer straight, drives
+    torque off, the crank the operator's. The bike falls over; auto-up stays
+    out of it; 9/4 lift it by hand under the bike's lead and stall rules;
+    Delete again hands it back to the policy."""
+    _needs_general()
+    from aow_sim.control.righting import roll_pitch
+    from aow_sim.run_drive import _KEY_STANDBY
+    m = build_model(params, variant="full")
+    eq = settle_upright(m).qpos.copy()
+    g = _capture(monkeypatch, m, params, eq, swing=True)    # auto-up ON
+    c, d = g["c"], g["data"]
+    roll = lambda: roll_pitch(d.qpos[3:7])[0]      # noqa: E731
+    steer = m.joint(m.actuator_trnid[c.aid["steer"], 0]).qposadr[0]
+    motors = [m.actuator(f"drive_{k}_motor").id for k in "ab"]
+
+    _idle(g, 0.5)
+    _tap(g, _KEY_STANDBY, settle=0.0)
+    # 5 s: falls, lands, and the crank -- stalled at centre under the bike,
+    # so let go by the stall rule -- comes to rest. A goal set while it is
+    # still settling becomes the rule's new reference and does not re-arm it
+    # (crank_lead.StallHold, SETTLE_S): a held trigger would, a tap does not.
+    _tap(g, ord("."), settle=5.0)
+    lying = roll()
+    assert abs(lying) > 60, f"did not fall: roll {lying:+.1f}"
+    assert abs(np.degrees(d.qpos[steer])) < 3
+    assert all(d.ctrl[a] == 0.0 for a in motors), "drives not torque off"
+
+    # A tap steps the goal to the full stroke (the lead walks it there), and
+    # with nothing balancing it the bike goes on over onto its other side:
+    # so the lift is checked on the way, not at the end.
+    # Let go, the crank rests past centre under the bike and the target
+    # followed it there: 9/4 step to the NEXT stop, centre, then the stroke.
+    key = ord("9") if lying > 0 else ord("4")
+    _tap(g, key, settle=0.02)
+    _tap(g, key, settle=0.0)
+    least, steer_worst = 90.0, 0.0
+    for _ in range(30):
+        _idle(g, 0.05)
+        least = min(least, abs(roll()))
+        steer_worst = max(steer_worst, abs(np.degrees(d.qpos[steer])))
+    assert least < 15, f"the crank did not lift it: least roll {least:.1f}"
+    assert steer_worst < 3, f"steer not held straight: {steer_worst:.1f} deg"
+
+    # The righting readout, through a stand-in viewer handle.
+    texts = _hud_texts(g)
+    assert "STANDBY" in texts and "Goal Current" in texts and "crank" in texts
+
+    _tap(g, _KEY_STANDBY, settle=0.2)
+    assert c.mode == "general"
+    assert any(d.ctrl[a] != 0.0 for a in motors), "drives still off"
+
+
+def test_standby_lets_an_idle_crank_go_and_the_rock_dies(monkeypatch, params):
+    """Left alone in standby the bike falls left with the crank held ~4 deg
+    off centre -- inside the stall band -- and rocked +-4 deg for as long as
+    it was held (the bike's own rock died in ~2 s, run 261103-174457). The
+    idle rule (crank_lead.IDLE_S) lets the crank go, and the rock stops."""
+    _needs_general()
+    from aow_sim.control.crank_lead import IDLE_S, LET_GO_S
+    from aow_sim.control.righting import roll_pitch
+    from aow_sim.run_drive import _KEY_STANDBY
+    m = build_model(params, variant="full")
+    eq = settle_upright(m).qpos.copy()
+    g = _capture(monkeypatch, m, params, eq, swing=True)
+    d = g["data"]
+    _idle(g, 0.5)
+    _tap(g, _KEY_STANDBY, settle=IDLE_S + LET_GO_S + 2.0)
+    rolls = []
+    for _ in range(20):
+        _idle(g, 0.1)
+        rolls.append(roll_pitch(d.qpos[3:7])[0])
+    assert abs(rolls[-1]) > 60, "did not fall"
+    assert np.ptp(rolls) < 1.0, f"still rocking: {np.ptp(rolls):.1f} deg"
+    assert "IDLE" in _hud_texts(g)
+
+
+def test_a_reset_restores_the_crank_and_the_rules_run_again(monkeypatch,
+                                                            params):
+    """Backspace after an idle let-go: the respawned bike's crank gets its
+    Goal Current back (the let-go used to carry over, at 0, with timers in
+    the old clock), and the rules fire again on the next fall."""
+    _needs_general()
+    from aow_sim.control.crank_lead import IDLE_S, LET_GO_S
+    from aow_sim.run_drive import _KEY_STANDBY
+    m = build_model(params, variant="full")
+    eq = settle_upright(m).qpos.copy()
+    g = _capture(monkeypatch, m, params, eq, swing=True)
+    _idle(g, 0.5)
+    _tap(g, _KEY_STANDBY, settle=IDLE_S + LET_GO_S + 2.0)
+    assert "IDLE" in _hud_texts(g)
+    _tap(g, 259, settle=0.05)                       # Backspace: respawn
+    hud = _hud_texts(g)
+    assert "IDLE" not in hud and "Goal Current 910" in hud, hud
+    _idle(g, IDLE_S + LET_GO_S + 3.0)               # falls again, in standby
+    assert "IDLE" in _hud_texts(g)
+
+
+def test_a_let_go_crank_takes_the_target_with_it(monkeypatch, params):
+    """Let go at Goal Current 0, the crank is back-driven (here +4 -> ~+33
+    deg under the bike); the target follows it, as the station's does, so
+    the next input starts from the crank instead of from a goal it left."""
+    _needs_general()
+    import re
+    from aow_sim.control.crank_lead import IDLE_S, LET_GO_S
+    from aow_sim.run_drive import _KEY_STANDBY
+    m = build_model(params, variant="full")
+    eq = settle_upright(m).qpos.copy()
+    g = _capture(monkeypatch, m, params, eq, swing=True)
+    _idle(g, 0.5)
+    _tap(g, _KEY_STANDBY, settle=IDLE_S + LET_GO_S + 2.0)
+    hud = _hud_texts(g)
+    crank, goal, target = (float(x) for x in re.search(
+        r"crank\s+([-+\d.]+) deg\s+goal\s+([-+\d.]+)\s+target\s+([-+\d.]+)",
+        hud).groups())
+    assert "IDLE" in hud and abs(crank) > 15, hud
+    assert abs(target - crank) < 1.0 and abs(goal - crank) < 1.0, hud
+
+
+class _FakeView:
+    """Just enough of mujoco.viewer.Handle for teleop's on_start and texts."""
+
+    def __init__(self, m):
+        self.cam = mujoco.MjvCamera()
+        self.texts = None
+        self._m = m
+
+    def lock(self):
+        import contextlib
+        return contextlib.nullcontext()
+
+    def set_texts(self, texts):
+        self.texts = texts
+
+    def clear_texts(self):
+        self.texts = None
+
+
+def _hud_texts(g) -> str:
+    """Render one frame into a stand-in viewer; the overlay text it was sent."""
+    import time
+    v = _FakeView(g["model"])
+    g["on_start"](v)
+    time.sleep(0.3)                 # past the readout's 4 Hz throttle
+    g["draw"](mujoco.MjvScene(g["model"], maxgeom=20000), g["model"], g["data"])
+    return "\n".join(t[2] for t in (v.texts or []))
 
 
 # -- a physical pad, through the real teleop closures ---------------------

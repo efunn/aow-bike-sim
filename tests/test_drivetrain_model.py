@@ -167,6 +167,27 @@ def test_integral_holds_against_a_push(params):
     assert abs(hub_q) < 0.3
 
 
+def test_limp_is_torque_off_and_torque_on_starts_clean(params):
+    """`limp` (teleop's STANDBY, the bike's limp drives): the motor gives
+    nothing whatever the command, only the shafts' friction acts; back on,
+    the loop starts from the shafts as they are -- no integral wound up
+    while it was off, no step. (Speed cannot tell coast from brake on the
+    testbed: its bare shafts' own friction stops them about as fast.)"""
+    p, m, d, sim = _testbed(params, without=("detent", "roller_slop"))
+    motor = m.actuator("drive_a_motor").id
+    v = 0.2 * 11.1 * params["drivetrain"]["belt_ratio"]
+    _run(m, d, sim, v, v, 0.5)
+    sim.limp = True
+    _run(m, d, sim, -v, -v, 0.3)              # a command it must ignore
+    assert d.ctrl[motor] == 0.0 and sim.duty == [0.0, 0.0]
+    sim.limp = False
+    _run(m, d, sim, 0.0, 0.0, m.opt.timestep * sim.every)
+    assert not sim._was_limp
+    assert sim._ref[0] == pytest.approx(d.qpos[sim.qadr[0]] / sim.belt, abs=1e-3)
+    _run(m, d, sim, v, v, 1.0)
+    assert d.qvel[sim.dadr[0]] == pytest.approx(v, rel=0.03)
+
+
 def test_detent_makes_slow_diff_stick(params):
     """1 % diff creep: stalls with the detent, none without it."""
     v = 0.01 * 11.1 * params["drivetrain"]["belt_ratio"]

@@ -177,6 +177,25 @@ def test_a_9_4_stop_goes_out_led_and_follows_the_crank():
         min(math.pi + op.travel, math.pi + 1.0 + op.lead))
 
 
+def test_a_let_go_crank_takes_the_target_with_it():
+    """Telemetry `righting_let_go` (a stall or idle hold at Goal Current 0):
+    the target follows the crank, so the next pull moves it from there --
+    not from 37-40 deg away at the lead's limit, where pulls did nothing and
+    then lurched (runs 261105-133158, 261103-174457)."""
+    op = _op()
+    stuck = math.pi + 0.3
+    for _ in range(200):
+        op.slew_righting(0.01, measured=stuck)
+    assert op.righting == pytest.approx(stuck + op.lead)       # parked
+    fell = math.pi - 0.2
+    op.sync({"righting_pos": fell, "righting_let_go": True})
+    assert op.packet()["righting_rad"] == pytest.approx(fell)
+    op.slew_righting(0.01)                                       # one tick
+    assert op.packet()["righting_rad"] == pytest.approx(fell + 0.01)
+    op.sync({"righting_pos": fell, "righting_let_go": False})   # held again
+    assert op.righting == pytest.approx(fell + 0.01)
+
+
 def test_the_lead_key_steps_through_its_values_and_off():
     from aow_sim.hw.ground import RIGHTING_LEAD_STEPS
     op = _op()

@@ -177,6 +177,9 @@ MANUAL_HOLD_CURRENT = _crank_lead.HOLD_CURRENT
 # do (0: all; None: none, they stay at MANUAL_HOLD_CURRENT).
 MANUAL_LET_GO_ROLL_DEG = _crank_lead.LET_GO_ROLL_DEG
 MANUAL_LET_GO_S = _crank_lead.LET_GO_S
+# ...and a crank left alone -- no goal move, not moving -- for MANUAL_IDLE_S
+# lets go the same way, riding included (crank_lead.IDLE_S).
+MANUAL_IDLE_S = _crank_lead.IDLE_S
 # WHERE THE GET-UP'S LIFT AIMS, per side (SwingSit `lift_to_deg`): "stroke"
 # is the full stroke, a number a crank angle, None the 110 lean. HANDED
 # because the bike is. LEFT to the stroke: at 110 its push eased off over
@@ -937,7 +940,13 @@ class BikeRunner:
             return
         t = self.data.time
         what = self._stall.step(t, goal, crank, self._roll)
-        if what == "hold":
+        if what == "idle":
+            self.bus.set_righting_current(
+                self._stall.current(t, self._righting_current))
+            self._event("righting", f"crank idle {MANUAL_IDLE_S:g} s (no "
+                        f"input, not moving): Goal Current to 0 over "
+                        f"{MANUAL_LET_GO_S:g} s until the goal moves")
+        elif what == "hold":
             hold = self._stall.current(t, self._righting_current)
             self.bus.set_righting_current(hold)
             self._event("righting", f"crank stalled "
@@ -2030,6 +2039,8 @@ class BikeRunner:
                 # would step [ / ] from zero). The record keeps the live one.
                 righting_current=(self._sit_gc if self._sit_gc is not None
                                   else self._righting_current),
+                righting_let_go=(self._stall.holding
+                                 and self._stall.gc == 0),
                 servos=telemetry.servo_health(self._health,
                                               self._effort_unit),
                 run=self.run_id,

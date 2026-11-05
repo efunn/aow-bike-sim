@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import math
 import time
 import weakref
 from pathlib import Path
@@ -2124,6 +2125,11 @@ _KEY_PLAY = 269
 # one (general_spec.wheel_err) -- in-place turns go around a held front
 # wheel. Active only at a zero speed command, as in training.
 _KEY_STYLE = 268
+# GLFW Delete (fn+Backspace on a Mac), the pad's d-pad left: teleop's STANDBY
+# toggle -- policy off, steer held straight, drives torque off -- for righting
+# by hand on the triggers. Not the mirror's (Backspace there is the bike's
+# own DISENGAGE, whose steer goes limp too); here Backspace is the viewer's.
+_KEY_STANDBY = 261
 # Teleop's step of the crank's lead (ground.RIGHTING_LEAD_STEPS): the pad's
 # d-pad right only. Not a GLFW code -- the viewer owns F1-F5 and every letter,
 # and End is the plays' -- so no keyboard key reaches it.
@@ -2144,7 +2150,7 @@ TELEOP_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
                    "BACK": ord("8"), "X": _KEY_LIE_DOWN, "B": _KEY_GET_UP,
                    "START": 92, "Y": 259,      # BACKSPACE: reset / respawn
                    "DPAD_UP": _KEY_PELT_UP, "DPAD_DOWN": _KEY_PELT_DOWN,
-                   "DPAD_RIGHT": _KEY_LEAD}
+                   "DPAD_LEFT": _KEY_STANDBY, "DPAD_RIGHT": _KEY_LEAD}
 MIRROR_PAD_KEYS = {"A": ord("/"), "LB": ord("6"), "RB": ord("7"),
                    "BACK": ord("8"), "Y": 257, "B": 259,   # engage / disengage
                    # X lies down as in teleop; B is taken (disengage), so
@@ -3446,6 +3452,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         print("lie down / get up: PageDown / PageUp (fn+down / fn+up on a Mac)"
               + ("; gets up by itself after a fall" if auto_up else
                  "; auto-up OFF (--no-auto-up)"))
+        print("standby (policy off, steer straight, drives torque off; get "
+              "up by hand on RT-LT): Delete (fn+Backspace) / d-pad left")
 
     # TIMED COMMAND PLAYS (control/command_play.py): End plays the next one,
     # general mode only; any driving key hands the command back.
@@ -3519,6 +3527,8 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         if sit is None or c.rl_view is None:
             return
         roll = float(c.rl_view[0])
+        if standby[0]:
+            standby_set(d, False, reengage=False)   # the sequence owns it now
         crank_stall_off(d)
         if sit_ctx["gc"] is None:
             sit_ctx["gc"] = crank_servo.goal_current
@@ -3537,7 +3547,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         roll, rate = float(c.rl_view[0]), float(c.rl_view[1])
         crank = float(d.qpos[wing["jadr"]])
         if (auto_up and c.mode == "general" and sit.phase == "riding"
-                and sit.fallen(d.time, roll, rate)):
+                and not standby[0] and sit.fallen(d.time, roll, rate)):
             print("fallen -> getting up")
             sit_start(d, "up")
         if not (sit.active or sit.phase == "lying"):
@@ -3579,6 +3589,59 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         d.ctrl[c.aid["drive_a"]], d.ctrl[c.aid["drive_b"]] = a, b
         d.ctrl[c.aid["steer"]] = sit_ctx["steer"]
 
+    # STANDBY (Delete / d-pad left): the bike as it waits for a manual get-up
+    # -- policy off, steer held STRAIGHT, both drives TORQUE OFF (coasting on
+    # their friction and detent, as the bike's limp drives do) -- with the
+    # crank the operator's on the triggers and 9/4, under the bike's own
+    # lead and stall rules. The policy keeps stepping underneath, unheard;
+    # leaving standby re-engages it from a clean slate, as a get-up does.
+    standby = [False]
+
+    def standby_set(d, on: bool, reengage: bool = True) -> None:
+        if on == standby[0]:
+            return
+        standby[0] = on
+        if on:
+            zero_command(d)
+            if wing is not None and not wing["manual"]:
+                wing["manual"] = True          # the crank is the operator's
+                wing["cmd"] = wing["target"] = float(d.qpos[wing["jadr"]])
+            print("STANDBY: policy off, steer straight, drives torque off"
+                  + (" -- RT-LT / 9 4 move the crank" if wing is not None
+                     and wing.get("swing") else "")
+                  + "; Delete / d-pad left again re-engages")
+            return
+        if drive_sim[0] is not None:
+            drive_sim[0].limp = False
+        if reengage:
+            if c.mode == "general":
+                import contextlib
+                import io
+                with contextlib.redirect_stdout(io.StringIO()):
+                    engage(d, quiet=True)
+                if wing is not None:
+                    wing["manual"] = True      # engage() hands the wings back
+                    wing["cmd"] = wing["target"] = float(d.qpos[wing["jadr"]])
+            else:
+                zero_command(d)
+            print("STANDBY off: policy engaged")
+
+    def standby_override(m, d) -> None:
+        """After c.step, which writes the whole ctrl vector."""
+        if not standby[0]:
+            return
+        d.ctrl[c.aid["steer"]] = 0.0
+        ds = drive_sim[0]
+        if ds is not None and ds.servo:
+            ds.limp = True
+        else:
+            # The ideal plant's velocity actuators: a goal equal to the
+            # shaft's own speed gives no force.
+            for k in ("drive_a", "drive_b"):
+                a = c.aid[k]
+                d.ctrl[a] = (m.actuator_gear[a, 0]
+                             * d.qvel[m.jnt_dofadr[m.actuator_trnid[a, 0]]])
+
     def policy_owns_wings() -> bool:
         """True when the engaged general policy is DRIVING the wings itself.
 
@@ -3608,6 +3671,15 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         here -- see policy_owns_wings."""
         if wing is None:
             return
+        # ANY RESET rewinds the clock (Backspace's respawn, the viewer's own).
+        # The stall rule's timers and any hold it was in belong to the run
+        # before: a let-go carried across left the respawned bike's crank at
+        # Goal Current 0, and its timers, set in the old clock, never fired
+        # again until the new one caught up.
+        if crank_servo is not None:
+            if d.time < crank_t[0]:
+                crank_stall_off(d)
+            crank_t[0] = float(d.time)
         if policy_owns_wings():
             # Keep the latched target tracking the policy so that handing
             # control back (engage the analytic controller, or load a policy
@@ -3618,12 +3690,19 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             step = wing["rate"] * m.opt.timestep
             wing["cmd"] = (min(cmd + step, t) if t > cmd else max(cmd - step, t))
             out = wing["cmd"]
-            if crank_by_hand():
+            if crank_rules():
                 q = float(d.qpos[wing["jadr"]])
                 out = lead_goal(out, q, crank_lead[0])
                 roll = None if c.rl_view is None else float(c.rl_view[0])
                 what = crank_stall.step(d.time, out, q, roll)
-                if what == "hold":
+                if what == "idle":
+                    crank_gc[0] = crank_servo.goal_current
+                    crank_servo.set_goal_current(
+                        crank_stall.current(d.time, crank_gc[0]))
+                    print(f"crank idle {crank_stall.idle_s:g} s (no input, "
+                          f"not moving): Goal Current to 0 over "
+                          f"{crank_stall.let_go_s:g} s until the goal moves")
+                elif what == "hold":
                     crank_gc[0] = crank_servo.goal_current
                     crank_servo.set_goal_current(
                         crank_stall.current(d.time, crank_gc[0]))
@@ -3637,6 +3716,12 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                     gc = crank_stall.current(d.time, crank_gc[0] or 0)
                     if gc is not None:
                         crank_servo.set_goal_current(gc)
+                    if crank_stall.holding and crank_stall.gc == 0:
+                        # LET GO: the target follows the crank, as the
+                        # station's does (telemetry `righting_let_go`), so
+                        # the next input starts from where the crank is.
+                        wing["cmd"] = wing["target"] = q
+                        wing["pos"] = q / wing["deploy"]
                 elif what is not None:
                     crank_servo.set_goal_current(crank_gc[0])
                     print(f"crank stall hold off ({what}): Goal Current "
@@ -3716,11 +3801,22 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     crank_lead = [None if righting_lead_deg is None
                   else np.deg2rad(float(righting_lead_deg))]
     crank_stall = StallHold()
+    crank_t = [-np.inf]               # the last step's clock, for a rewind
     crank_gc = [None]                 # the operator's Goal Current while held
 
     def crank_by_hand() -> bool:
         return (crank_servo is not None and wing.get("swing")
                 and wing["manual"] and play["cur"] is None
+                and not (sit is not None
+                         and (sit.active or sit.phase == "lying")))
+
+    def crank_rules() -> bool:
+        """The bike's lead, stall and idle rules apply: as on the bike,
+        whenever the crank goal is the station's -- riding with it stowed
+        included -- and not a sequence's, a play's or a wing-driving
+        policy's (wing_step does not run for that one)."""
+        return (crank_servo is not None and wing.get("swing")
+                and play["cur"] is None
                 and not (sit is not None
                          and (sit.active or sit.phase == "lying")))
 
@@ -4479,6 +4575,11 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                       f"({crank_servo.cap_nm:.2f} N.m at the crank)")
             elif k == _KEY_PLAY and play["list"]:
                 play_start(d)
+            elif k == _KEY_STANDBY:
+                if sit is not None and sit.active:
+                    print(f"  busy ({sit.phase})")
+                else:
+                    standby_set(d, not standby[0])
             elif k == _KEY_STYLE:
                 if not c.style_supported:
                     print("style bit: this policy has none (obs_style)")
@@ -4531,8 +4632,16 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                     # walks left. Double-tapping either one crosses the whole
                     # range, which is what makes "swap sides" one gesture
                     # instead of needing a third key.
+                    # To the NEXT STOP that way, as the station does
+                    # (OperatorState.key): `pos` is fractional after a
+                    # trigger slew or a let-go crank, and int() of it
+                    # truncated toward 0 -- 9 from -0.27 went to centre
+                    # by accident of rounding, not by rule.
+                    eps = 1e-6
+                    p0 = float(wing["pos"])
                     wing["pos"] = int(np.clip(
-                        wing["pos"] + (1 if k == ord("9") else -1), -1, 1))
+                        math.floor(p0 + eps) + 1 if k == ord("9")
+                        else math.ceil(p0 - eps) - 1, -1, 1))
                     wing["target"] = wing["pos"] * wing["deploy"]
                     label = {-1: "LEFT down", 0: "CENTRE", 1: "RIGHT down"}[wing["pos"]]
                 else:
@@ -4635,6 +4744,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
                 with odo.estimated(d, m.opt.timestep):
                     c.step(m, d)
         sit_override(m, d, sit_cmd)
+        standby_override(m, d)
         wing_step(m, d)         # after c.step: it rewrites the whole ctrl vector
         if rig is not None:     # likewise: the rig motors' setpoints
             from .floor_rig import motor_step
@@ -4657,7 +4767,68 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
             active = gen_name[0] if c.mode == "general" else policy_menu.ANALYTIC
             policy_menu.draw(scn, view[0].cam, menu["entries"],
                              menu["cursor"], active)
-        _draw_slowmo_badge(view[0], slowmo[0], slowmo_shown)
+        if crank_servo is None:
+            _draw_slowmo_badge(view[0], slowmo[0], slowmo_shown)
+        else:
+            push_texts(d)
+
+    # THE RIGHTING READOUT, bottom-left, in STANDBY or while the operator has
+    # the crank (9/4, the triggers): what the servo is doing, which the
+    # terminal's stall lines alone cannot say. Shares the viewer's one text
+    # list with the slow-motion badge -- `clear_texts` wipes both -- so the
+    # two are pushed together, at most 4 Hz and only when they change.
+    texts_box = {"t": -1.0, "shown": None}
+
+    def righting_text(d) -> str | None:
+        if not (standby[0] or crank_by_hand() or crank_stall.holding):
+            return None
+        srv = crank_servo
+        q = float(np.degrees(d.qpos[wing["jadr"]]))
+        goal = float(np.degrees(d.ctrl[wing["aid"]]))
+        tgt = float(np.degrees(wing["target"]))
+        lead = ("off" if crank_lead[0] is None
+                else f"{np.degrees(crank_lead[0]):.0f} deg")
+        if crank_stall.holding:
+            hold = ("IDLE: letting go to 0" if crank_stall.idle
+                    else "STALL: letting go to 0" if crank_stall.letting_go
+                    else "STALL: held") + f" (max {crank_gc[0]})"
+        else:
+            hold = ""
+        roll = ("" if c.rl_view is None
+                else f"roll {np.degrees(float(c.rl_view[0])):+5.1f} deg\n")
+        return ((("STANDBY: policy off, steer straight, drives torque off\n")
+                 if standby[0] else "crank by hand\n" if crank_by_hand()
+                 else "crank\n")
+                + roll
+                + f"crank {q:+6.1f} deg   goal {goal:+6.1f}   target {tgt:+6.1f}"
+                + f"   lead {lead}\n"
+                + f"Goal Current {srv.goal_current}   {hold}\n"
+                + f"Present Current {srv.current * 1e3:+5.0f} mA   "
+                + f"PWM {srv.duty * 885:+4.0f}   "
+                + f"motor {srv.torque:+.3f} N.m")
+
+    def push_texts(d) -> None:
+        v = view[0]
+        now = time.monotonic()
+        if v is None or now - texts_box["t"] < 0.25:
+            return
+        texts_box["t"] = now
+        out = []
+        if slowmo[0] != 1.0:
+            out.append((mujoco.mjtFontScale.mjFONTSCALE_200,
+                        mujoco.mjtGridPos.mjGRID_TOPLEFT,
+                        f"{slowmo[0]:g}x slow", ""))
+        rt = righting_text(d)
+        if rt is not None:
+            out.append((mujoco.mjtFontScale.mjFONTSCALE_150,
+                        mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, rt, ""))
+        if out == texts_box["shown"]:
+            return
+        texts_box["shown"] = out
+        if out:
+            v.set_texts(out)
+        else:
+            v.clear_texts()
 
     # The viewer only ever reports a key going down, so how well "hold" works
     # depends on whether real key state is readable — say which one is live.

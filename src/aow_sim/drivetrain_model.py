@@ -570,6 +570,12 @@ class DrivetrainSim:
             self._fc_nominal = self.fc_in
             # Supply voltage over the 12 V the datasheet quotes; see set_supply.
             self.supply = 1.0
+            #: TORQUE OFF (the bike's limp drives): the motor gives nothing, so
+            #: the shafts coast on their friction and the detent; the loop's
+            #: memory is re-taken from the shafts when it comes back on, as a
+            #: Dynamixel's is at a torque-on. Set by the caller, held.
+            self.limp = False
+            self._was_limp = False
             self.k_in = float(s["friction_stick_stiffness"])
             self.c_in = float(s["friction_stick_damping"])
         if self.detent:
@@ -653,21 +659,7 @@ class DrivetrainSim:
         for i in self._rigid:
             data.eq_active[i] = 0
         if self.servo:
-            self._k_c = 0
-            self._k_m = 0
-            self._ref, self._wf = [0.0, 0.0], [0.0, 0.0]
-            self._cmd = [[0.0] * self.nc, [0.0] * self.nc]
-            self._th = [[0.0] * self.nm, [0.0] * self.nm]
-            self._w = [[0.0] * self.nm, [0.0] * self.nm]
-            for i in (0, 1):
-                th = float(data.qpos[self.qadr[i]]) / self.belt
-                w = float(data.qvel[self.dadr[i]]) / self.belt
-                self._ref[i] = th
-                self._wf[i] = w
-                self._th[i] = [th] * self.nm
-                self._w[i] = [w] * self.nm
-                data.ctrl[self.motor_id[i]] = 0.0
-                self.duty[i] = 0.0
+            self._recapture(data)
             self._fa = [float(data.qpos[q]) for q in self.in_q]
         if self.detent:
             if rng is not None:
@@ -682,6 +674,26 @@ class DrivetrainSim:
         self._ready = True
         self._n = self.every - 1        # the first pre_step updates
 
+    def _recapture(self, data) -> None:
+        """The servo loop's memory taken from the shafts as they are: no
+        integral error, no pending command, filters on the present speed."""
+        self._k_c = 0
+        self._k_m = 0
+        self._ref, self._wf = [0.0, 0.0], [0.0, 0.0]
+        self._cmd = [[0.0] * self.nc, [0.0] * self.nc]
+        self._th = [[0.0] * self.nm, [0.0] * self.nm]
+        self._w = [[0.0] * self.nm, [0.0] * self.nm]
+        for i in (0, 1):
+            th = float(data.qpos[self.qadr[i]]) / self.belt
+            w = float(data.qvel[self.dadr[i]]) / self.belt
+            self._ref[i] = th
+            self._wf[i] = w
+            self._th[i] = [th] * self.nm
+            self._w[i] = [w] * self.nm
+            data.ctrl[self.motor_id[i]] = 0.0
+            self.duty[i] = 0.0
+        self._was_limp = False
+
     def pre_step(self, data) -> None:
         t = data.time
         if not self._ready or t < self._t_last:
@@ -694,7 +706,14 @@ class DrivetrainSim:
         fric = [0.0, 0.0]
         if self.servo:
             qpos, qvel = data.qpos, data.qvel
-            if fw:
+            if fw and self.limp:
+                for i in (0, 1):
+                    data.ctrl[self.motor_id[i]] = 0.0
+                    self.duty[i] = 0.0
+                self._was_limp = True
+            elif fw:
+                if self._was_limp:
+                    self._recapture(data)
                 ctrl = data.ctrl
                 h, belt, vlim = self.h_fw, self.belt, self.vlim
                 kp, ki, alpha = self.kp, self.ki, self.alpha

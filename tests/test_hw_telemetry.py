@@ -564,7 +564,8 @@ POSE_FIELDS = {"quat", "gyro", "v_world", "pos", "steer", "w_shaft", "shaft",
                "righting", "righting_pos"}
 DISPLAY_FIELDS = {"v", "t", "state", "cmd_v_world", "cmd_psi", "psi", "roll",
                   "roll_rate", "volts", "vlat_conf", "qos", "jitter_ms",
-                  "dt_ms", "cuts", "righting_current", "servos", "run", "log",
+                  "dt_ms", "cuts", "righting_current", "righting_let_go",
+                  "servos", "run", "log",
                   "hold", "warn", "controller"}
 
 # A perturbation per pose field, big enough to be unmistakable.

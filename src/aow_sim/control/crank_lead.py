@@ -48,6 +48,24 @@ LET_GO_ROLL_DEG = 0.0
 LET_GO_S = 1.0
 LET_GO_STEPS = 10
 SETTLE_S = 0.3              # a let-go crank still this long has landed
+# IDLE: no input and nothing moving, so no current either (user, 2026-11-05).
+# Lying with the crank held near its goal -- inside STALL_ERR_DEG, so never a
+# stall -- the servo held -156 mA for 7 s with nothing moving (run
+# 261103-174457 at 29.5 s, recorded 11-05; the bike's rock had died in ~2 s),
+# and the sim's never dies (teleop STANDBY, ~4 % a cycle). So, ALWAYS --
+# lying, propped or riding with the blade stowed: current spent holding a
+# crank that is not being moved is wasted (user) -- a goal and a crank that
+# have not moved IDLE_MOVE_DEG for IDLE_S let go like a stall: any goal move
+# of IDLE_MOVE_DEG gives the operator's current back. ONLY INSIDE THE STALL BAND (goal within
+# STALL_ERR_DEG of the crank): outside it the stall rule decides, at its
+# longer STALL_S, because a lift held at the lead's limit has a still goal
+# and may sit 0.5 s loading before it gets up (above). The mechanism holds
+# itself by friction unloaded, and in some poses loaded (user). None: off.
+# "Not moved" is IDLE_MOVE_DEG, tighter than the stall's 3 deg: over 0.5 s
+# that is 2 deg/s, under any trigger anyone means (the lying rock moved the
+# crank 0.1 deg); the same 1 deg of goal gives the current back.
+IDLE_S = 0.5
+IDLE_MOVE_DEG = 1.0
 
 
 def lead_goal(goal: float, crank: float | None, lead: float | None) -> float:
@@ -78,13 +96,18 @@ class StallHold:
                  err_deg: float = STALL_ERR_DEG,
                  move_deg: float = STALL_MOVE_DEG,
                  let_go_roll_deg: float | None = LET_GO_ROLL_DEG,
-                 let_go_s: float = LET_GO_S):
+                 let_go_s: float = LET_GO_S,
+                 idle_s: float | None = IDLE_S):
         self.stall_s = float(stall_s)
         self.err = math.radians(err_deg)
         self.move = math.radians(move_deg)
         self.let_go = (None if let_go_roll_deg is None
                        else math.radians(let_go_roll_deg))
         self.let_go_s = float(let_go_s)
+        self.idle_s = None if idle_s is None else float(idle_s)
+        self.idle_move = math.radians(IDLE_MOVE_DEG)
+        self.idle = False           # this hold is the IDLE rule's
+        self._i0 = None             # (t, goal, crank) the idle window began
         self.at = None              # (goal, crank) while holding
         self.letting_go = False     # this hold ramps to 0
         self.gc = None              # the Goal Current last returned by `current`
@@ -100,6 +123,7 @@ class StallHold:
         self.at = None
         self.letting_go, self.gc = False, None
         self._t0, self._ref = t, crank
+        self.idle, self._i0 = False, None
 
     def current(self, t: float, base: int) -> int | None:
         """While holding, the Goal Current to write now -- min(HOLD_CURRENT,
@@ -119,9 +143,21 @@ class StallHold:
 
     def step(self, t: float, goal: float, crank: float,
              roll: float | None = None) -> str | None:
-        """-> "hold" when it starts holding, "goal moved" / "crank moving"
-        when it stops, else None. `roll` [rad], read at the hold's start,
-        decides whether it lets go."""
+        """-> "hold" when a stall starts holding, "idle" when the idle rule
+        lets go, "goal moved" / "crank moving" when either stops, else None.
+        `roll` [rad], read at a stall's start, decides whether it lets go."""
+        if self.at is not None and self.idle:
+            # The let-go crank settles (SETTLE_S, as below); then any goal
+            # move is the operator's -- there is no lift direction to read.
+            if abs(crank - self._still_at) > self.idle_move:
+                self._still_at, self._still_t = crank, t
+            if t - self._still_t < SETTLE_S or self._on_crank(goal, crank):
+                self._g_ref = goal
+                return None
+            if abs(goal - self._g_ref) > self.idle_move:
+                self.reset(t, crank)
+                return "goal moved"
+            return None
         if self.at is not None:
             g0, c0 = self.at
             side = math.copysign(1.0, g0 - c0)
@@ -136,7 +172,7 @@ class StallHold:
                 # and measured from there.
                 if abs(crank - self._still_at) > self.move:
                     self._still_at, self._still_t = crank, t
-                if t - self._still_t < SETTLE_S:
+                if t - self._still_t < SETTLE_S or self._on_crank(goal, crank):
                     self._g_ref, self._gap = goal, gap
                     return None
             self._gap = max(self._gap, gap)
@@ -156,6 +192,8 @@ class StallHold:
                 return None
             self.reset(t, crank)
             return why
+        if self._idle_step(t, goal, crank):
+            return "idle"
         err = goal - crank
         if abs(err) < self.err or self._ref is None \
                 or (crank - self._ref) * math.copysign(1.0, err) > self.move:
@@ -171,3 +209,29 @@ class StallHold:
         self.letting_go = (self.let_go is not None
                            and (roll is None or abs(roll) >= self.let_go))
         return "hold"
+
+    def _on_crank(self, goal: float, crank: float) -> bool:
+        """A let-go goal sitting on the crank is the station following it
+        (telemetry `righting_let_go`), not the operator: no input."""
+        return self.gc == 0 and abs(goal - crank) <= self.idle_move
+
+    def _idle_step(self, t: float, goal: float, crank: float) -> bool:
+        """True when the idle rule starts a let-go now."""
+        if self.idle_s is None:
+            self._i0 = None
+            return False
+        i0 = self._i0
+        if (i0 is None or abs(goal - crank) >= self.err
+                or abs(goal - i0[1]) > self.idle_move
+                or abs(crank - i0[2]) > self.idle_move):
+            self._i0 = (t, goal, crank)
+            return False
+        if t - i0[0] < self.idle_s:
+            return False
+        self.at = (goal, crank)
+        self._g_ref = goal
+        self._gap = abs(goal - crank)
+        self._still_at, self._still_t = crank, t - SETTLE_S
+        self._held_t, self.gc = t, None
+        self.letting_go, self.idle, self._i0 = True, True, None
+        return True

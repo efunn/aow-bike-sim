@@ -320,6 +320,15 @@ class OperatorState:
         self.state_actual = telemetry.get("state", self.state_actual)
         if telemetry.get("righting_pos") is not None:
             self.righting_pos = float(telemetry["righting_pos"])
+            # LET GO (a stall or idle hold at Goal Current 0): the target
+            # follows the crank, so the next input moves it from where the
+            # crank is -- not from a goal parked at the lead's limit, which
+            # took inputs that did nothing and then lurched.
+            if (telemetry.get("righting_let_go") and self.righting is not None
+                    and not self.sitting):
+                self.righting = self.righting_pos
+                if self.travel:
+                    self.pos = (self.righting - self.stow) / self.travel
         if self.righting_current is None:
             got = telemetry.get("righting_current")
             if got is not None:

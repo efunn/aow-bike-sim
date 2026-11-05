@@ -83,7 +83,8 @@ FIELDS = (
     "cmd_v_world", "cmd_psi", "psi",
     "roll", "roll_rate", "volts", "vlat_conf", "qos",
     "jitter_ms", "dt_ms", "cuts", "righting", "righting_pos",
-    "righting_current", "servos", "run", "log", "hold", "warn", "controller",
+    "righting_current", "righting_let_go", "servos", "run", "log", "hold",
+    "warn", "controller",
 )
 
 # The effort slot's key names ITS UNIT, because address 126 means different
@@ -119,7 +120,7 @@ def build(*, t, state, quat, gyro, v_world, pos, steer, w_shaft, shaft, psi,
           cmd_v_world, cmd_psi, roll, roll_rate, volts, vlat_conf, qos,
           jitter_ms, dt_ms, cuts, righting, righting_pos,
           righting_current, controller, servos=None, run=None, log=None,
-          hold=None, warn=None) -> dict:
+          hold=None, warn=None, righting_let_go=False) -> dict:
     """The packet. Pure, keyword-only, and rounded HERE rather than at the
     call site so the wire format is one decision in one place.
 
@@ -181,6 +182,13 @@ def build(*, t, state, quat, gyro, v_world, pos, steer, w_shaft, shaft, psi,
         "righting_pos": (None if righting_pos is None
                          else round(float(righting_pos), 4)),
         "righting_current": righting_current,
+        # THE CRANK IS LET GO: a stall or idle hold has ramped its Goal
+        # Current to 0. A level. The station's target follows the crank while
+        # it holds (OperatorState.sync), so the next input starts from where
+        # the crank IS: left 37-40 deg off at the lead, the first inputs did
+        # nothing and the current came back with a lurch (400-630 mA; runs
+        # 261105-133158, 261103-174457).
+        "righting_let_go": bool(righting_let_go),
         # -- per servo, every tick (see `servo_health`). Already rounded.
         "servos": servos or {},
         # The onboard record this tick is being written into -- the name of
