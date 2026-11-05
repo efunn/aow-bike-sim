@@ -86,18 +86,18 @@ def test_native_actuator_becomes_a_command_holder(params):
 
 
 def test_goal_current_caps_the_driving_torque(params):
-    """At stall the torque is exactly `cap_nm`, k (I - I0); while driving it
-    never exceeds it."""
+    """At stall the torque is exactly `cap_nm`, the current law at Goal
+    Current; while driving it never exceeds it."""
     m, d, servo = _floating(params)
     servo.set_goal_current(200)
     w, tau = _stroke(m, d, servo, goal=2.0, seconds=0.1)
     assert tau[0] == pytest.approx(servo.cap_nm, rel=1e-6)          # at stall
-    assert servo.cap_nm == pytest.approx(servo.k * (0.2 - servo.i0), rel=1e-9)
+    assert servo.cap_nm == pytest.approx(servo.law.torque(0.2), rel=1e-9)
     driving = np.sign(tau) == np.sign(w)
     assert np.abs(tau[driving]).max() <= servo.cap_nm + 1e-9
 
 
-def test_torque_is_linear_above_the_edge_and_off_below(params):
+def test_torque_follows_the_current_law_above_the_edge_and_off_below(params):
     m, d, servo = _floating(params)
     for i in (0.0, 0.5 * servo.i0, servo.i0, -servo.i0):
         assert servo.torque_for(i, 0.0)[0] == 0.0
@@ -105,14 +105,18 @@ def test_torque_is_linear_above_the_edge_and_off_below(params):
     for i in (0.05, 0.2, -0.3):
         tau, u, sat = servo.torque_for(i, 0.0)
         assert not sat
-        assert tau == pytest.approx(math.copysign(servo.k * (abs(i) - servo.i0), i))
+        assert tau == pytest.approx(math.copysign(servo.law.torque(abs(i)), i))
 
 
 def test_counts_for_inverts_cap(params):
     m, d, servo = _floating(params)
-    for nm in (0.05, 0.2, 0.55):
+    # 0.45, not 0.55: the graph's stall is 0.49 N m of motor torque, and
+    # cap_nm is clipped there (2026-11-05)
+    for nm in (0.05, 0.2, 0.45):
         servo.set_goal_current(servo.counts_for(nm))
-        assert servo.cap_nm == pytest.approx(nm, abs=servo.k * 1e-3)
+        i = servo.goal_current * rs.AMPS_PER_COUNT      # half a count either way
+        step = servo.law.torque(i + 0.5e-3) - servo.law.torque(i - 0.5e-3)
+        assert servo.cap_nm == pytest.approx(nm, abs=step)
 
 
 def test_present_current_reads_the_demand(params):
@@ -127,13 +131,14 @@ def test_present_current_reads_the_demand(params):
 
 def test_braking_plugs(params):
     """Measured: the bench servos brake with the duty REVERSED against the
-    motion. A braking torque larger than ts x needs exactly that, and gets
-    it; a smaller one keeps the duty's sign."""
+    motion. A braking torque larger than the motor's at zero duty needs
+    exactly that, and gets it; a smaller one keeps the duty's sign."""
     m, d, servo = _floating(params)
+    short = lambda w: servo.law.stall_nm * w * rs.RPM / servo.law.top_rpm
     tau, u, _ = servo.torque_for(-0.4, 3.0)
-    assert -tau > servo.ts * 3.0 / servo.w0 and u < 0.0
+    assert -tau > short(3.0) and u < 0.0
     tau, u, _ = servo.torque_for(-0.1, 8.0)
-    assert -tau < servo.ts * 8.0 / servo.w0 and u > 0.0
+    assert -tau < short(8.0) and u > 0.0
 
 
 def test_goal_current_clamps_to_current_limit(params):

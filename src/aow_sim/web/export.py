@@ -307,7 +307,7 @@ def config(env, pol, manifest: dict) -> dict:
     cs = env._crank
     from ..control.general_env import _PARKED
     from ..control.recovery import HANDOFF_RATE, RECOVER_DEG
-    from ..righting_servo import AMPS_PER_COUNT
+    from ..righting_servo import AMPS_PER_COUNT, RPM
     ball_r = float(m.geom_size[m.geom("ball").id, 0])
     from ..control.general_spec import obs_layout_for
     from ..control.steer import STEER_LEAD_MAX, XC330_COUNTS_PER_RAD
@@ -372,7 +372,9 @@ def config(env, pol, manifest: dict) -> dict:
         "sit": sit_config(),
         "crank": {
             "aid": cs.aid, "qadr": cs.qadr, "dadr": cs.dadr,
-            "ts": cs.ts, "w0": cs.w0, "k": cs.k, "i0": cs.i0,
+            # the LINE law (servos.xc330_t181's straight fits); the Python
+            # model runs the traced graph (righting_servo.GraphLaw)
+            "ts": cs.law.ts, "w0": cs.law.n0 / RPM, "k": cs.law.k, "i0": cs.law.i0,
             "kp_a": cs.kp_a, "kd_a": cs.kd_a, "nc": cs.nc,
             "goal_current": cs.goal_current, "supply": cs.supply,
             "amps_per_count": AMPS_PER_COUNT,

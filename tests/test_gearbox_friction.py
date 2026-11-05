@@ -119,12 +119,14 @@ def test_the_servo_lifts_and_drops_a_lever_where_the_params_say(params, mass):
     Current at the params' lift line +- a few mA lifts / does not, and at the
     fall line +- a few mA drops / holds. Current law, friction and the
     position loop together."""
-    srv_p = params["servos"]["xc330_t181"]
-    k, i0 = srv_p["current_torque_gain"], srv_p["current_deadband"]
     c = gf.constants(params)
     L = mass * G * 0.044
-    lift = i0 + ((1 + c["static_frac"]) * L + c["static_nm"]) / k
-    fall = i0 + ((1 - c["static_frac"]) * L - c["static_nm"]) / k
+    m, d = _hinge(motor=False, mass=mass)
+    law = rs.CurrentBasedPositionServo(m, params, joint="hinge", actuator=None,
+                                       goal_current=300).law
+    i0 = law.i0
+    lift = law.current((1 + c["static_frac"]) * L + c["static_nm"])
+    fall = law.current((1 - c["static_frac"]) * L - c["static_nm"])
     cases = [(lift + 0.004, 0.35, "up"), (lift - 0.004, 0.35, "not up")]
     if fall > i0 + 0.004:
         cases += [(fall - 0.004, 0.0, "down"), (fall + 0.004, 0.0, "not down")]

@@ -198,8 +198,13 @@ def test_the_split_did_not_move_the_plant_digest():
                           performance graph (stall 0.80 -> 0.559, current
                           law 0.83/0.0165 -> 0.736/0.0444) and the steer's
                           kp per unit, kv and armature rescaled with it
+        cb3c888c5fd58fa4  2026-11-05  servos.xc330_t181.performance_graph:
+                          the graph traced (torque a cubic in speed, current
+                          a quadratic), which the righting servo runs on; the
+                          steer's line refitted over 0.08-0.28 N m (stall
+                          0.559 -> 0.586) and its kp / kv / armature with it
     """
-    assert plant_digest(load_params()) == "3631d750142a6d60"
+    assert plant_digest(load_params()) == "cb3c888c5fd58fa4"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

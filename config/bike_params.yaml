@@ -520,22 +520,28 @@ servos:
     box_size: [0.034, 0.0285, 0.0465]   # D x W x H, axis along Y
     # placements: bike.frame_parts.servo_drive_left / _right
   xc330_t181:   # steering and righting (values at 12 V)
-    # The motor line fitted to ROBOTIS's PERFORMANCE GRAPH (docs/robotis/,
-    # 2026-11-04), not the rated stall torque (0.80 at 12 V): ROBOTIS's note
-    # says the rating is momentary and real-world output is "closer to the
-    # performance graph". The graph's output torque taken back through the
-    # gearbox's running loss (0.15 x load + 0.0057, below) and fitted with
-    # no-load held at 113 rpm (the bare shaft's 110-116 measured): 0.559,
-    # within 0.02 N m from 0.08 to 0.36 N m, 0.03 at 0.38. The graph does
-    # not state its voltage (the XC330's nominal is 11.1 V): read at 11.1 V
-    # the same fit gives 0.635 (rms 0.031 against 0.017). The bike decides
-    # for ~12 V: its lifts at full PWM run 17-19 rpm at ~640 mA on 11.6-11.8 V,
-    # where the voltage-free current law below gives 0.44 N m of motor torque
-    # and this line needs S 0.53-0.54 to match (0.635 would be 20 % over).
+    # The motor line fitted to ROBOTIS's PERFORMANCE GRAPH (docs/robotis/),
+    # not the rated stall torque (0.80 at 12 V): ROBOTIS's note says the
+    # rating is momentary and real-world output is "closer to the performance
+    # graph". THIS LINE IS THE STEER'S (and the studies'): the righting servo
+    # runs the traced curve below (performance_graph). Fitted 2026-11-05 over
+    # the output torques the steer works in, 0.08-0.28 N m (the graph
+    # bends down past them), the graph's torque taken back through the
+    # gearbox's running loss (0.15 x load + 0.0057, below), no-load held at
+    # the bare shaft's measured 113 rpm (110-116): 0.586, worst miss 10 mN m
+    # there (analysis/servo/perf_graph_fit.py). Where the steer works, from
+    # 89 engaged runs' Present PWM and speed (analysis/servo/steer_load.py):
+    # output torque while driving 0.025 median, 0.205 at the 99th percentile,
+    # 0.263 at the 99.9th; above 0.28 N m 0.04 % of samples; PWM limit 0.02 %.
+    # 11-04's fit over the whole
+    # graph gave 0.559. The graph does not state its voltage (the XC330's
+    # nominal is 11.1 V; read at 11.1 V the 11-04 fit gave 0.635, rms 0.031
+    # against 0.017). The bike reads ~12 V: its lifts at full PWM run 17-19
+    # rpm at ~640 mA on 11.6-11.8 V, where the graph's current law gives 0.44
+    # N m of motor torque and the curve at 12 V ~0.44 at 17-19 rpm.
     # AGAINST it all: the X330 fixture (2026-09-26) read 0.62-0.69 N m per
-    # unit duty, brief holds at low load; a lever and mass at 0.3-0.5 N m
-    # would settle it.
-    stall_torque: {value: 0.559, source: datasheet}
+    # unit duty, brief holds at low load.
+    stall_torque: {value: 0.586, source: datasheet}
     # kt = stall_torque / stall_current sets the current a given load draws and
     # does not depend on pack voltage (used for the power budget in
     # docs/plans/untethered-setup.md and `self_righting.py lift`).
@@ -550,6 +556,19 @@ servos:
     # output against the graph's ~0.37 (docs/plans/righting-servo-model.md).
     current_deadband: {value: 0.0444, source: datasheet}      # A
     current_torque_gain: {value: 0.736, source: datasheet}    # N m / A
+    # The SAME graph traced curve by curve (analysis/servo/perf_graph_fit.py,
+    # 2026-11-05), at full duty and 12 V, T the OUTPUT torque [N m], n rpm:
+    #   speed, fitted rotated  T = c0 + c1 n + c2 n^2 + c3 n^3  (rms 0.7, max 3.2 mN m)
+    #   current (bus)          A = c0 + c1 T + c2 T^2            (rms 2.4, max 8.7 mA)
+    # traced over n 16.1-92.5 rpm and T 0.076-0.379. The RIGHTING servo
+    # (righting_servo.py) runs on these when present; the steer and the
+    # studies keep the lines above. The cubic is carried to stall (0.413 N m
+    # at n 0) and no load (its root, 106.2 rpm); below the traced current
+    # (0.197 A) the current law runs straight down to current_deadband.
+    performance_graph:
+      torque_of_rpm: {value: [0.412698, -0.00146098, -2.69095e-05, 3.85077e-08], source: datasheet}
+      current_a: {value: [0.13528, 0.767908, 1.65406], source: datasheet}
+      torque_traced: {value: [0.076, 0.379], source: datasheet}   # N m, output (the current curve's)
     # Gearbox friction, both XC330s (righting crank and steer):
     # fraction x load + constant, load = the torque the gearbox passes on.
     # Static from mode 5's four loads, running from mode 3's four speed lines.
@@ -610,17 +629,18 @@ actuators:
     Position I Gain: 0
     Position D Gain: 0        # the back-EMF droop already damps the loop
   #
-  # RESCALED 2026-11-04 with the XC330's stall torque (0.80 -> 0.559, the
-  # performance graph): the sweeps fix kp / J and kv / J, not their scale, so
-  # kp per unit, kv (the droop, 0.559 / 11.833) and the armature all moved by
-  # 0.699. The bare servo's response is unchanged; against the tyre, headset
-  # and gearbox frictions (absolute N m) it is weaker. Were 2.5556e-3, 0.0676
-  # and 5.5e-4.
-  steer_kp_per_unit: {value: 1.7857e-3, source: measured}   # N m/rad per P unit: 1.61 at P 900
-  steer_kv: 0.0472
+  # RESCALED with the XC330's stall torque: the sweeps fix kp / J and kv / J,
+  # not their scale, so kp per unit, kv (the droop, stall / 11.833) and the
+  # armature move together. 2026-11-04: 0.80 -> 0.559 (the performance
+  # graph), x 0.699, from 2.5556e-3, 0.0676 and 5.5e-4. 2026-11-05: 0.559 ->
+  # 0.586 (the graph's line refitted over 0.08-0.28 N m, the steer's range),
+  # x 1.049. The bare servo's response is unchanged; against the tyre, headset
+  # and gearbox frictions (absolute N m) its strength moves with the stall.
+  steer_kp_per_unit: {value: 1.8732e-3, source: measured}   # N m/rad per P unit: 1.69 at P 900
+  steer_kv: 0.04956
   # The XC330's rotor + gearbox inertia at the steer joint [kg m2], from the
   # same sweeps: ~13x the fork and wheel about the axis.
-  steer_armature: {value: 3.843e-4, source: measured}
+  steer_armature: {value: 4.0314e-4, source: measured}
   # Where the torque limit sits. The firmware clips the duty, then the motor
   # subtracts its back-EMF:
   #   duty:  tau = clip(kp*err, +-stall) - kv*w   (the real servo, mode 4)

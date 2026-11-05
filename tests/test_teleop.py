@@ -1340,8 +1340,21 @@ def test_pad_triggers_slew_the_swing_crank_and_lb_snaps_left(monkeypatch, params
 
     psi0 = g["c"]._psi
     fake.p = ["LB"]
-    _idle(g, 2.0)
+    # The turn only counts UPRIGHT: until 11-05 this read the heading alone,
+    # and v4 passed or failed it lying on its side -- it falls ~0.6 s into
+    # the snap on the measured floor (sim.friction_sliding 0.52, 10-31) with
+    # either wheel play, with or without the crank stage. At the old 0.9 it
+    # stands with bike_params' play (scratch probe, 11-05). The bike falls
+    # standing 90 deg snaps too (bike_params' floor note).
+    from aow_sim.control.righting import roll_pitch
+    bid = m.body("chassis").id
+    worst = 0.0
+    for _ in range(int(2.0 / m.opt.timestep)):
+        g["step"](m, d)
+        _mj_step(g)
+        worst = max(worst, abs(roll_pitch(d.xquat[bid])[0]))
     turned = np.degrees(np.angle(np.exp(1j * (g["c"]._psi - psi0))))
+    assert worst < 30.0, f"LB: the bike fell (|roll| {worst:.0f} deg) turning {turned:+.0f}"
     assert turned > 45, f"LB turned the bike {turned:+.0f} deg"
 
     fake.p = ["Y"]                                  # Y is BACKSPACE: a reset

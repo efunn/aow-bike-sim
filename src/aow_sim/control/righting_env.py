@@ -91,7 +91,6 @@ class RightingEnv(gym.Env):
         self.srv = CurrentBasedPositionServo.attach(
             m, self.p, torque_nm=float(m.actuator_forcerange[self._swing, 1]),
             at_output=True)
-        self._k0, self._ts0 = self.srv.k, self.srv.ts
         self._ca = int(m.joint("swing_crank_joint").qposadr[0])
         self._cd = int(m.joint("swing_crank_joint").dofadr[0])
         self._stroke = float(m.actuator_ctrlrange[self._swing, 1])
@@ -199,7 +198,7 @@ class RightingEnv(gym.Env):
         m, d = self.model, self.data
         self._rand.apply(rng)
         f = rng.uniform(*r["servo_strength"]) if r["enabled"] else 1.0
-        self.srv.k, self.srv.ts = self._k0 * f, self._ts0 * f
+        self.srv.strength = f
         self.srv.set_supply(rng.uniform(*r["supply"]) if r["enabled"] else 1.0)
         self.strength = f
 

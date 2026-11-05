@@ -249,5 +249,31 @@ tests/test_pivot.py::test_pivot_with_wound_steer           # 2026-10-05 new fron
 # 43 deg (clamp band 35 + 2.9). status.md had the lead clamp passing or not run
 # to run on v4 already. ACCEPTED: the steer follows the vendor's measured
 # curve; these go green or move with a policy trained on it.
+# 11-05: the LB-snap test went green (3 of 3 runs) when the righting servo
+# moved to the traced graph -- the test slews the crank first, so the crank's
+# changed motion moves what follows; its margin was not measured.
 tests/test_teleop.py::test_lead_clamp_rearms_once_the_bike_catches_up   # 2026-11-04 XC330 graph fit: v4 turns slower
-tests/test_teleop.py::test_pad_triggers_slew_the_swing_crank_and_lb_snaps_left   # 2026-11-04 XC330 graph fit: LB snap 44.7 < 45 deg
+
+# 2026-11-05: the righting servo runs ROBOTIS's performance graph as traced
+# (cubic speed, quadratic current; servos.xc330_t181.performance_graph)
+# instead of its straight-line fits. Its stall is 0.49 N m of motor torque
+# against the line's 0.56 (the traced curve bends down over its last
+# 0.04 N m), so the scripted ramp's weak strength stalls: seed 0 overloads
+# both sides at 0.65-0.72, props one at 0.75 and goes over the other, and
+# 0.78 and up go over both. No strength props both sides, as on 11-03.
+# (The bike's own get-up flown in analysis/moves/swing_sit.py still props
+# both sides at strength 1.)
+tests/test_righting_rl.py::test_the_scripted_ramp_props_weak_and_goes_over_strong[0.7-success]   # 2026-11-05 graph-traced XC330: 0.7 overloads, nothing props both sides
+
+# 2026-11-05: the LB-snap teleop test now also requires the bike to stay up
+# (|roll| < 30 deg) through the 2 s it judges the turn. Before, it read the
+# heading alone, and v4 (control.general_move) passed or failed it LYING ON
+# ITS SIDE: in a scratch probe it falls ~0.6 s into the +90 snap with either
+# wheel play (bike_params' measured or v4's training record), with or
+# without the crank stage first, on today's steer and the pre-11-04 one.
+# It is the measured floor: at the old tire mu 0.9 (before 10-31's 0.52) it
+# stands with bike_params' play (max roll 6.7 deg, turned 91) and still
+# falls on its training record's. The bike itself falls standing 90 deg
+# snaps (4 of 9 after 10-28; 0.52 is the mu that reproduces them).
+# ACCEPTED (user, 11-05): the policy falls on this snap; the test now says so.
+tests/test_teleop.py::test_pad_triggers_slew_the_swing_crank_and_lb_snaps_left   # 2026-11-05 v4 falls on LB's +90 snap (the test now checks it stays up)

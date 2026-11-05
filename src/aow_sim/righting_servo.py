@@ -12,6 +12,13 @@ The firmware chain, per ROBOTIS's mode-5 block diagram:
     position PID -> current demand -> clip at Goal Current(102)
                  -> current controller -> duty -> inverter -> motor
 
+SINCE 2026-11-05 THE LAW IS ROBOTIS's PERFORMANCE GRAPH, TRACED (`GraphLaw`,
+`servos.xc330_t181.performance_graph`): speed a cubic and bus current a
+quadratic in output torque, at full duty, taken to motor torque through the
+gearbox's running loss. The straight-line fits (`LineLaw`: k (|I| - I0) and
+ts (s - x)) remain for a params file without the graph, the steer and the
+browser sim. The history below is how the line was reached.
+
 THE CURRENT LAW IS MEASURED (X330 fixture, 2026-09-26; the numbers and the
 captures are in docs/plans/righting-servo-model.md). Above a firmware drive
 edge the motor's torque is linear in the current demand:
@@ -99,6 +106,140 @@ CURRENT_LIMIT = 910
 #: true value lies in (2, 4] ms. The same figure as the steer and the XC430s.
 COMMAND_DELAY_S = 0.004
 
+RPM = 60.0 / (2.0 * math.pi)
+
+
+class LineLaw:
+    """The straight-line motor: current law k (|I| - I0) and motor line
+    ts (s - n/n0) at full duty. All torques are MOTOR torques (before the
+    gearbox's friction), currents bus amps, speeds rpm in the direction the
+    motor drives."""
+
+    def __init__(self, srv: dict):
+        self.ts = float(srv["stall_torque"])
+        self.n0 = float(srv["no_load_rpm"])
+        self.k = float(srv["current_torque_gain"])
+        self.i0 = float(srv["current_deadband"])
+
+    def torque(self, a: float) -> float:
+        """Motor torque for a current demand of magnitude `a` [A]."""
+        return self.k * (a - self.i0) if a > self.i0 else 0.0
+
+    def current(self, t: float) -> float:
+        """Bus current [A] that gives motor torque `t` >= 0."""
+        return t / self.k + self.i0
+
+    def full(self, n: float, s: float) -> float:
+        """Motor torque at full duty, speed `n` [rpm, + = the drive's way],
+        supply `s` (fraction of 12 V)."""
+        return self.ts * (s - n / self.n0)
+
+    @property
+    def stall_nm(self) -> float:
+        """Motor torque at stall, full duty, 12 V."""
+        return self.ts
+
+    @property
+    def top_rpm(self) -> float:
+        """No-load speed at full duty, 12 V."""
+        return self.n0
+
+    def duty(self, t: float, n: float, s: float) -> float:
+        """The duty (of the supply `s`) that gives `t` at `n`: exact for the
+        line; for the graph, the line through its stall and no load
+        (reporting only -- Present PWM in mode 5 is not the duty anyway)."""
+        return (t / self.stall_nm + n / self.top_rpm) / s
+
+
+class GraphLaw(LineLaw):
+    """ROBOTIS's performance graph as traced (bike_params
+    `servos.xc330_t181.performance_graph`), at full duty and 12 V: output
+    torque T a cubic in speed (fitted with the graph rotated, so the model
+    reads it the way it needs it), bus current a quadratic in T. Taken to
+    motor torque through the gearbox's running loss, tau = (1 + c) T + f0,
+    as the line law was fitted.
+
+    Speed: the cubic from stall (n 0) to no load (its root), and past both
+    ends on its end tangents (back-driven / overspeed). Other supplies scale
+    it as a DC motor does, tau(n, s) = s tau(n / s, 1). Current: the
+    quadratic's root within the traced range; below it, straight down to
+    `current_deadband`.
+    """
+
+    def __init__(self, srv: dict, r0: float, rc: float):
+        super().__init__(srv)
+        g = srv["performance_graph"]
+        self.ct = [float(c) for c in g["torque_of_rpm"]]
+        self.ci = [float(c) for c in g["current_a"]]
+        self.r0, self.rc = float(r0), float(rc)
+        c0, c1, c2, c3 = self.ct
+        self.n_top = self._root(lambda n: c0 + n * (c1 + n * (c2 + n * c3)), 0.0, 500.0)
+        dt = lambda n: c1 + n * (2.0 * c2 + n * 3.0 * c3)
+        # motor torque per rpm at the two ends
+        self.slope_stall = (1.0 + rc) * dt(0.0)
+        self.slope_top = (1.0 + rc) * dt(self.n_top)
+        # stall motor torque at 12 V on the graph (ts stays the line's: the
+        # browser sim, web/export.py, still runs the line law)
+        self.t_stall = self._motor(c0)
+        self.t_top = self._motor(0.0)
+        # current: traced low end, and the straight piece below it
+        tl = float(g["torque_traced"][0])
+        self.i_lo = self._quad(tl)
+        self.t_lo = self._motor(tl)
+
+    @staticmethod
+    def _root(f, lo, hi):
+        """Bisection for an f with one sign change on [lo, hi]."""
+        flo = f(lo)
+        for _ in range(60):
+            mid = 0.5 * (lo + hi)
+            fm = f(mid)
+            if (fm > 0.0) == (flo > 0.0):
+                lo, flo = mid, fm
+            else:
+                hi = mid
+        return 0.5 * (lo + hi)
+
+    def _motor(self, T: float) -> float:
+        return (1.0 + self.rc) * T + self.r0
+
+    def _quad(self, T: float) -> float:
+        c0, c1, c2 = self.ci
+        return c0 + c1 * T + c2 * T * T
+
+    def torque(self, a: float) -> float:
+        if a <= self.i0:
+            return 0.0
+        if a < self.i_lo:
+            return self.t_lo * (a - self.i0) / (self.i_lo - self.i0)
+        c0, c1, c2 = self.ci
+        T = (-c1 + math.sqrt(c1 * c1 - 4.0 * c2 * (c0 - a))) / (2.0 * c2)
+        return self._motor(T)
+
+    def current(self, t: float) -> float:
+        if t < self.t_lo:
+            return self.i0 + max(t, 0.0) * (self.i_lo - self.i0) / self.t_lo
+        return self._quad((t - self.r0) / (1.0 + self.rc))
+
+    def full(self, n: float, s: float) -> float:
+        if s <= 0.0:
+            return 0.0
+        x = n / s                        # the 12 V curve's speed
+        if x <= 0.0:
+            return s * (self.t_stall + self.slope_stall * x)
+        if x >= self.n_top:
+            return s * (self.t_top + self.slope_top * (x - self.n_top))
+        c0, c1, c2, c3 = self.ct
+        return s * self._motor(c0 + x * (c1 + x * (c2 + x * c3)))
+
+    @property
+    def stall_nm(self) -> float:
+        return self.t_stall
+
+    @property
+    def top_rpm(self) -> float:
+        return self.n_top
+
 
 class CurrentBasedPositionServo:
     """Per-step state for the swing crank's servo. Build with `attach`."""
@@ -149,10 +290,16 @@ class CurrentBasedPositionServo:
         gearbox's adds to; `friction_base_q2` [N m/rad^2] grows it with the
         joint's angle (GearboxFriction's `base_q2`)."""
         srv = params["servos"]["xc330_t181"]
-        self.ts = float(srv["stall_torque"])
-        self.w0 = float(srv["no_load_rpm"]) * 2 * math.pi / 60
-        self.k = float(srv["current_torque_gain"])
-        self.i0 = float(srv["current_deadband"])
+        if "performance_graph" in srv:
+            from .gearbox_friction import constants
+            fc = constants(params)
+            self.law = GraphLaw(srv, fc["running_nm"], fc["running_frac"])
+        else:
+            self.law = LineLaw(srv)
+        self.i0 = self.law.i0
+        #: scales the motor's torque at every current and speed (the righting
+        #: env's servo_strength randomisation); 1 is the servo as fitted
+        self.strength = 1.0
         g = {**params["righting"]["module"]["gains"], **(gains or {})}
         self.kp_a = float(g["Position P Gain"]) * K5            # A/rad
         self.kd_a = float(g["Position D Gain"]) * KD_PER_UNIT   # A.s/rad
@@ -180,7 +327,7 @@ class CurrentBasedPositionServo:
 
     def counts_for(self, torque_nm: float) -> int:
         """Goal Current [counts] whose stall motor torque is `torque_nm`."""
-        return round((self.i0 + float(torque_nm) / self.k) / AMPS_PER_COUNT)
+        return round(self.law.current(float(torque_nm) / self.strength) / AMPS_PER_COUNT)
 
     def counts_for_output(self, torque_nm: float) -> int:
         """Goal Current [counts] that delivers `torque_nm` at the output while
@@ -200,7 +347,7 @@ class CurrentBasedPositionServo:
         """Goal Current as the motor torque it gives at STALL, at the present
         supply, before gearbox friction."""
         i = self.goal_current * AMPS_PER_COUNT
-        return min(self.ts * self.supply, self.k * max(0.0, i - self.i0))
+        return self.strength * min(self.law.full(0.0, self.supply), self.law.torque(i))
 
     def set_goal_current(self, counts) -> int:
         """Goal Current(102) in counts, clamped to [0, Current Limit]."""
@@ -242,7 +389,8 @@ class CurrentBasedPositionServo:
         # meet it (at stall the bench read the goal to the mA, below the edge
         # too); what the torque implies once the duty saturates.
         self.current = (i_cmd if not sat else
-                        math.copysign(abs(tau) / self.k + self.i0, tau) if tau else 0.0)
+                        math.copysign(self.law.current(abs(tau) / self.strength), tau)
+                        if tau else 0.0)
         self.friction.update(data, tau)
         data.qfrc_applied[self.dadr] = tau
 
@@ -251,16 +399,21 @@ class CurrentBasedPositionServo:
 
     def torque_for(self, i_cmd: float, w: float) -> tuple[float, float, bool]:
         """(motor torque, duty, duty saturated) for a current demand `i_cmd`
-        [A] at shaft speed `w`: the measured law, inside the motor line."""
-        a = abs(i_cmd) - self.i0
-        if a <= 0.0:
+        [A] at shaft speed `w` [rad/s]: the current law, inside what full duty
+        can give either way at this speed (`self.law`)."""
+        td = self.law.torque(abs(i_cmd))
+        if td <= 0.0:
             # Below the edge the drive is OFF, not shorted: the release tests
             # found 0 mA and torque off indistinguishable, so no braking here.
             return 0.0, 0.0, False
-        tau = math.copysign(self.k * a, i_cmd)
-        s, x = self.supply, w / self.w0
-        u = (tau / self.ts + x) / s
-        if u > 1.0 or u < -1.0:
-            u = 1.0 if u > 0.0 else -1.0
-            return self.ts * (s * u - x), u, True
-        return tau, u, False
+        sg = 1.0 if i_cmd > 0.0 else -1.0
+        n = sg * w * RPM                 # rpm, + = the way the current drives
+        s, f = self.supply, self.strength
+        hi = f * self.law.full(n, s)     # full duty forward
+        lo = -f * self.law.full(-n, s)   # full duty reversed (plugging)
+        td *= f
+        if td > hi:
+            return sg * hi, sg, True
+        if td < lo:
+            return sg * lo, -sg, True
+        return sg * td, sg * self.law.duty(td / f, n, s), False
