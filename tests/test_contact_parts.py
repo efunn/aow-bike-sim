@@ -191,8 +191,11 @@ def test_the_split_did_not_move_the_plant_digest():
                           detent and filmed roller spring (the overlay every
                           policy since v4 trained on) folded in, and the
                           diff's speed drag past an onset (detent.viscous_*)
+        d3cbdf0a564d6a33  2026-11-04  bike.chainstay_contact: the chainstays'
+                          ends from the CAD, a contact in the jointed
+                          righting build (drawn stubs in every build)
     """
-    assert plant_digest(load_params()) == "c084bc8ede89f20a"
+    assert plant_digest(load_params()) == "d3cbdf0a564d6a33"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

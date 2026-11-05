@@ -18,6 +18,7 @@ Modeling scheme (see docs/plans/mujoco-modeling-decisions.md):
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import weakref
 from pathlib import Path
@@ -652,6 +653,9 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
             mass=0.005,
             contype=0,
             conaffinity=0,
+            # Hidden (group 3): a placeholder at a placeholder offset that
+            # pokes through the drawn chainstay stub; its mass stays.
+            group=3,
             rgba=[0.6, 0.6, 0.65, 1],
         )
 
@@ -725,7 +729,7 @@ def _add_aow(spec: mujoco.MjSpec, parent, p: dict) -> None:
             s.objname = f"input_{tag}_spin"
 
 
-def _add_hockey(spec: mujoco.MjSpec, chassis, p: dict) -> None:
+def _add_hockey(spec: mujoco.MjSpec, chassis, p: dict, sticks: bool = True) -> None:
     """Add the ball-shot extras (see docs/plans/ball-shot-move.md): a translucent
     'hockey stick' panel on each side of the chassis and a free road-hockey ball.
 
@@ -746,7 +750,9 @@ def _add_hockey(spec: mujoco.MjSpec, chassis, p: dict) -> None:
     # Falling back keeps bike_params.yaml, moves/ball_rl.npz and
     # tests/test_ball_rl.py working exactly as before, since that file has no
     # `case_*` keys.
-    if "case_thickness" not in p["righting"]["wings"]:
+    # `sticks=False` (build_model(..., hockey="ball"), teleop's --hockey):
+    # the ball alone, to knock about with the bike as it is.
+    if sticks and "case_thickness" not in p["righting"]["wings"]:
         st = hk["stick"]
         for side, tag in ((1, "left"), (-1, "right")):
             px, py, pz = st["pos"]
@@ -883,6 +889,56 @@ def _add_rollcage(spec: mujoco.MjSpec, chassis, r: dict, wb: float,
                          meshname="rollcage_ring", pos=np.asarray(at) - own,
                          mass=m_ring, contype=0, conaffinity=0,
                          rgba=[*ASA_ORANGE[:3], 0])
+
+
+def _ring_points(y: float, r: float, centre, n: int = 24) -> np.ndarray:
+    """n points on a circle of radius r about an axis along chassis y, at
+    lateral position y, centred (x, z) = centre."""
+    a = 2 * np.pi * np.arange(n) / n
+    return np.stack([centre[0] + r * np.cos(a), np.full(n, y),
+                     centre[1] + r * np.sin(a)], axis=1)
+
+
+# How the chainstay's end is DRAWN (user, 2026-11-04): a dia 26.587 mm
+# cylinder out of the rear hub to 34.2 mm from the centreline, then a cone to
+# a flat at dia 15 at 40.2 -- the CAD's taper continued (it passes dia 19 at
+# 38.2). In the hub's black. [distance out, radius] m, after the hub's face.
+CHAINSTAY_STUB = ((0.0342, 0.0265870 / 2), (0.0402, 0.0075))
+
+
+def _add_chainstays(spec: mujoco.MjSpec, chassis, cs: dict, hub_width: float,
+                    sim: dict, contact: bool) -> None:
+    """The chainstays' outer ends (bike.chainstay_contact). DRAWN in every
+    build: per side a stub coaxial with the rear axle from the hub's face,
+    CHAINSTAY_STUB. And per side one hidden mesh, the profile
+    swept along the arm, which MuJoCo collides as its convex hull -- the
+    stadium-shaped arm with its tapered rim, exactly, as one smooth body --
+    COLLIDING only with `contact` (off in a rigid module's build, as its
+    wings are, so the two builds keep the same geoms). Both massless (the
+    mass is frame_parts')."""
+    prof = [(float(y), float(r)) for y, r in cs["profile"]]
+    ang = math.radians(float(cs["arm_angle_deg"]))
+    y0 = float(hub_width) / 2 - 0.0005          # rooted just inside the hub
+    end = (float(cs["arm_length"]) * math.cos(ang), float(cs["arm_length"]) * math.sin(ang))
+    grey = [0.62, 0.66, 0.72, 1]
+    for sgn, tag in ((1, "left"), (-1, "right")):
+        stub = [(y0, CHAINSTAY_STUB[0][1])] + list(CHAINSTAY_STUB)
+        mesh = spec.add_mesh(name=f"chainstay_stub_{tag}")
+        mesh.uservert = np.concatenate(
+            [_ring_points(sgn * y, r, (0.0, 0.0), 48) for y, r in stub]).flatten()
+        chassis.add_geom(name=f"chainstay_stub_{tag}", type=mujoco.mjtGeom.mjGEOM_MESH,
+                         meshname=mesh.name, mass=0.0, contype=0, conaffinity=0,
+                         rgba=HUB_BLACK)
+        mesh = spec.add_mesh(name=f"chainstay_contact_{tag}")
+        mesh.uservert = np.concatenate(
+            [_ring_points(sgn * y, r, c) for y, r in prof for c in ((0.0, 0.0), end)]
+        ).flatten()
+        chassis.add_geom(name=f"chainstay_contact_{tag}", type=mujoco.mjtGeom.mjGEOM_MESH,
+                         meshname=mesh.name, mass=0.0,
+                         contype=DYN_CONTYPE if contact else 0,
+                         conaffinity=DYN_CONAFF if contact else 0,
+                         **_part_contact(sim, "righting"), group=3,
+                         rgba=[*grey[:3], 0.0])
 
 
 def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True,
@@ -2848,7 +2904,8 @@ def build_spec(
     s.objname = "headset_site"
 
     if hockey:
-        _add_hockey(spec, chassis, p)
+        # True: the ball move's sticks and ball; "ball": the ball alone.
+        _add_hockey(spec, chassis, p, sticks=hockey != "ball")
     # The linkage is an ALTERNATIVE to the geared pair, not an addition: it
     # brings its own wings, so building both would put four wings on the bike
     # and double-count the mass.
@@ -2899,6 +2956,12 @@ def build_spec(
             module["linkage"] if module is not None else yaml.safe_load(
                 Path(swing_linkage_cfg or SWING_LINKAGE_CFG).read_text()),
             tip_mass=swing_tip_mass, module=module, rigid=righting_rigid)
+        # The chainstays: drawn always, a contact only where the module
+        # moves (a rigid module never reaches the floor; drive training).
+        if "chainstay_contact" in p["bike"]:
+            _add_chainstays(spec, chassis, p["bike"]["chainstay_contact"],
+                            p["omni_wheel"]["hub"]["body_width"], p["sim"],
+                            contact=not righting_rigid)
     elif swing_tip_mass:
         raise ValueError("swing_tip_mass is a swing_linkage option")
     elif righting_rigid:
@@ -2972,11 +3035,12 @@ def tune_lighting(model: mujoco.MjModel) -> None:
 # What the "bare" look keeps drawn: the floors; the wheels -- the front tyre
 # and its spoke cover, the rollers' drawn quarters (their collision meshes are
 # already alpha 0), the rear hub and its roller lugs; the rollcage's rings;
-# and the swing wings.
+# the swing wings; and --hockey's ball. (The chainstays' drawn stubs are
+# hidden here for now, user 2026-11-04; --look full shows them.)
 # Every other bike geom is a mass shape or a drawing and is hidden.
 _BARE_KEEP = re.compile(r"^(floor.*|front_tire(_q\d+)?|roller_\d+_\w_q\d+|"
                         r"hub_drawn|hub_(lug|boss)_\d+|rollcage_(rear|front)|"
-                        r"swing_wing_(left|right)(_toe)?)$")
+                        r"swing_wing_(left|right)(_toe)?|ball)$")
 
 
 def strip_visuals(model: mujoco.MjModel) -> list[str]:

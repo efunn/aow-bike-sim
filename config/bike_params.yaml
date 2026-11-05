@@ -325,6 +325,19 @@ bike:
   # below plus the Pi spacers the estimate is 88.2 g against the slicer's 81
   # (traces/weigh_v2_printed.txt, which has a column for the scale).
   #
+  # The chainstays' outer ends as the bike lies on them (2026-11-04, the
+  # user from the CAD): coaxial with the rear axle, `profile` is [distance
+  # out from the centreline, radius] in m -- dia 19 from 35.2 to 38.2 mm,
+  # tapering to dia 15 at 40.2 -- swept `arm_length` toward the drives at
+  # `arm_angle_deg` above the axle's horizontal. Lying with the wing pulled
+  # in, the bike rests on the two rings and this (user). A contact in the
+  # jointed righting build only, at the blades' and rings' ASA friction
+  # (sim.contact_parts.righting); drawn as stubs from the wheel's face in
+  # every build. Massless: the mass is frame_parts.drive_chainstay_*.
+  chainstay_contact:
+    profile: [[0.0352, 0.0095], [0.0382, 0.0095], [0.0402, 0.0075]]   # design (CAD)
+    arm_length: {value: 0.051275, source: design}
+    arm_angle_deg: {value: 45.0, source: design}
   # Nothing that moves is here: the pulleys' spin is drivetrain.input_armature,
   # the steering's moving half fork_mass, the righting's righting.module.
   frame_parts:
