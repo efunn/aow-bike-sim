@@ -101,7 +101,14 @@ class Sim:
         self.srv = CurrentBasedPositionServo.attach(
             m, params, torque_nm=float(m.actuator_forcerange[self.aid, 1]), at_output=True)
         self.gc = self.srv.goal_current
-        self.hooks = drivetrain_model.attach_hooks(m, params)
+        # attach_hooks also attaches the NATIVE crank's gearbox friction, which
+        # ran after the servo's own and overwrote its limit every step: the
+        # crank flew with ~0.01 N m of friction, no load term and no linkage
+        # (found 2026-11-05). The servo carries its own, as in teleop and
+        # general_env, so the native one comes off.
+        crank_dof = m.joint("swing_crank_joint").dofadr[0]
+        self.hooks = [h for h in drivetrain_model.attach_hooks(m, params)
+                      if getattr(h, "dof", None) != crank_dof]
         self.ahrs = None
         if ahrs != "none":
             from aow_sim.sim_ahrs import SimAhrs, level_tau_orient_s
