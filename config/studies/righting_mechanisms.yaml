@@ -182,8 +182,8 @@ righting:
     # the manual's /16 is known. To settle it: step the goal in mode 5, log
     # Present Position and Present Current at ~500 Hz, and fit
     # I = a*e + b*edot; `a` should come back at 2.525e-3 as a check on the fit.
-    servo_kp: 1.48      # 1.62 with the datasheet kt; 30.0 as a tuning knob
-    servo_kv: 0.0473    # 0.0519 with the datasheet kt; 1.0 before that
+    servo_kp: 1.312     # k = 0.736 (the performance graph, 2026-11-04); 1.48 at the fixture's 0.83, 1.62 with the datasheet kt; 30.0 as a tuning knob
+    servo_kv: 0.0420    # 0.0473 at 0.83; 0.0519 with the datasheet kt; 1.0 before that
   wings:
     # The ALTERNATIVE to `arm`: a mirrored pair of wings, one per side, driven
     # by ONE servo through a gear train (meshed gears at the two pivots with a
@@ -306,5 +306,5 @@ righting:
     mirror: {value: -1.0, source: design}          # theta_left = mirror * theta_right
     # Same servo, same mode, same derivation as the arm's -- see the long note
     # there. At the servo shaft; the builder squares gear_ratio.
-    servo_kp: 1.48      # the arm's derivation, k = 0.83
-    servo_kv: 0.0473
+    servo_kp: 1.312     # the arm's derivation, k = 0.736
+    servo_kv: 0.0420

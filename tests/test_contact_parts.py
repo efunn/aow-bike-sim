@@ -194,8 +194,12 @@ def test_the_split_did_not_move_the_plant_digest():
         d3cbdf0a564d6a33  2026-11-04  bike.chainstay_contact: the chainstays'
                           ends from the CAD, a contact in the jointed
                           righting build (drawn stubs in every build)
+        3631d750142a6d60  2026-11-04  servos.xc330_t181 fitted to ROBOTIS's
+                          performance graph (stall 0.80 -> 0.559, current
+                          law 0.83/0.0165 -> 0.736/0.0444) and the steer's
+                          kp per unit, kv and armature rescaled with it
     """
-    assert plant_digest(load_params()) == "d3cbdf0a564d6a33"
+    assert plant_digest(load_params()) == "3631d750142a6d60"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

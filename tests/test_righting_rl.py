@@ -94,13 +94,15 @@ def test_starts_lie_on_their_side_and_a_limp_crank_stays_down():
 
 
 @pytest.mark.righting
-@pytest.mark.parametrize("strength, outcome", [(0.65, "success"), (1.0, "over")])
+@pytest.mark.parametrize("strength, outcome", [(0.7, "success"), (1.0, "over")])
 def test_the_scripted_ramp_props_weak_and_goes_over_strong(strength, outcome):
     """Weak was 0.7 until 11-03, when the bike lost its 144 g of unfitted caps
     and sheet and was weighed to 1003 g: seed 0 then props both sides at 0.6
     and 0.65, goes over on one at 0.7, and overloads at 0.55 and below. With
     the blades' measured mu 0.10 (also 11-03) no strength props both sides,
-    and the weak case is registered red (tests/expected_failures.txt)."""
+    and the weak case was registered red. With the XC330 fitted to its
+    performance graph (11-04: stall 0.80 -> 0.559, k 0.83 -> 0.736) 0.7
+    props both again; 0.65 overloads, 0.8 and up go over."""
     env = _env(strength)
     from aow_sim.control.righting_env import scripted_ramp
     ramp = scripted_ramp(env.cfg)

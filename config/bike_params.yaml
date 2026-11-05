@@ -519,24 +519,37 @@ servos:
     mass: {value: 0.065, source: datasheet}
     box_size: [0.034, 0.0285, 0.0465]   # D x W x H, axis along Y
     # placements: bike.frame_parts.servo_drive_left / _right
-  xc330_t181:   # steering (values at 12 V per datasheet)
-    # Kept at the datasheet, though the X330 fixture (2026-09-26,
-    # docs/plans/pre-assembly-bench-checklist.md) put the stall torque per unit
-    # duty at 0.62-0.69 N m in every estimate, while the torque-speed shape,
-    # no-load speed and P scaling all matched. The lever rig cannot separate
-    # friction from torque; measure it in place on the bike.
-    stall_torque: {value: 0.80, source: datasheet}
+  xc330_t181:   # steering and righting (values at 12 V)
+    # The motor line fitted to ROBOTIS's PERFORMANCE GRAPH (docs/robotis/,
+    # 2026-11-04), not the rated stall torque (0.80 at 12 V): ROBOTIS's note
+    # says the rating is momentary and real-world output is "closer to the
+    # performance graph". The graph's output torque taken back through the
+    # gearbox's running loss (0.15 x load + 0.0057, below) and fitted with
+    # no-load held at 113 rpm (the bare shaft's 110-116 measured): 0.559,
+    # within 0.02 N m from 0.08 to 0.36 N m, 0.03 at 0.38. The graph does
+    # not state its voltage (the XC330's nominal is 11.1 V): read at 11.1 V
+    # the same fit gives 0.635 (rms 0.031 against 0.017). The bike decides
+    # for ~12 V: its lifts at full PWM run 17-19 rpm at ~640 mA on 11.6-11.8 V,
+    # where the voltage-free current law below gives 0.44 N m of motor torque
+    # and this line needs S 0.53-0.54 to match (0.635 would be 20 % over).
+    # AGAINST it all: the X330 fixture (2026-09-26) read 0.62-0.69 N m per
+    # unit duty, brief holds at low load; a lever and mass at 0.3-0.5 N m
+    # would settle it.
+    stall_torque: {value: 0.559, source: datasheet}
     # kt = stall_torque / stall_current sets the current a given load draws and
     # does not depend on pack voltage (used for the power budget in
     # docs/plans/untethered-setup.md and `self_righting.py lift`).
     stall_current: {value: 0.88, source: datasheet}
     no_load_rpm: {value: 113.0, source: datasheet}
     # Current-based position mode (5), the righting servo's: motor torque
-    # k (|I| - I0) above a firmware deadband, from the X330 fixture
-    # (docs/plans/righting-servo-model.md). Fitted over 8-59 mN m / 35-129 mA;
-    # nothing is measured past ~200 mA. (The datasheet's kt is 0.91.)
-    current_deadband: {value: 0.0165, source: measured}      # A
-    current_torque_gain: {value: 0.83, source: measured}     # N m / A
+    # k (|I| - I0). From the performance graph's current line (0.20-0.67 A),
+    # its output torque taken back through the running gearbox loss, as for
+    # stall_torque: within 0.015 N m to 0.62 A, 0.022 at 0.67 (2026-11-04).
+    # Was the X330 fixture's 0.83 (I - 0.0165), fitted at 35-129 mA and
+    # extrapolated to the lift's ~640 mA, where it gave 0.45 N m at the
+    # output against the graph's ~0.37 (docs/plans/righting-servo-model.md).
+    current_deadband: {value: 0.0444, source: datasheet}      # A
+    current_torque_gain: {value: 0.736, source: datasheet}    # N m / A
     # Gearbox friction, both XC330s (righting crank and steer):
     # fraction x load + constant, load = the torque the gearbox passes on.
     # Static from mode 5's four loads, running from mode 3's four speed lines.
@@ -596,11 +609,18 @@ actuators:
     Position P Gain: 900      # factory default for mode 4
     Position I Gain: 0
     Position D Gain: 0        # the back-EMF droop already damps the loop
-  steer_kp_per_unit: {value: 2.5556e-3, source: measured}   # N m/rad per P unit: 2.3 at P 900
-  steer_kv: 0.0676
+  #
+  # RESCALED 2026-11-04 with the XC330's stall torque (0.80 -> 0.559, the
+  # performance graph): the sweeps fix kp / J and kv / J, not their scale, so
+  # kp per unit, kv (the droop, 0.559 / 11.833) and the armature all moved by
+  # 0.699. The bare servo's response is unchanged; against the tyre, headset
+  # and gearbox frictions (absolute N m) it is weaker. Were 2.5556e-3, 0.0676
+  # and 5.5e-4.
+  steer_kp_per_unit: {value: 1.7857e-3, source: measured}   # N m/rad per P unit: 1.61 at P 900
+  steer_kv: 0.0472
   # The XC330's rotor + gearbox inertia at the steer joint [kg m2], from the
   # same sweeps: ~13x the fork and wheel about the axis.
-  steer_armature: {value: 5.5e-4, source: measured}
+  steer_armature: {value: 3.843e-4, source: measured}
   # Where the torque limit sits. The firmware clips the duty, then the motor
   # subtracts its back-EMF:
   #   duty:  tau = clip(kp*err, +-stall) - kv*w   (the real servo, mode 4)
