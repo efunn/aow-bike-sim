@@ -15,6 +15,14 @@ torque, as a function of crank angle.
 --breakaway replaces the sweep with a static-friction test at each angle: a
 goal CREEP at --creep-dps from rest, never a step (see build_breakaway_plan).
 
+--launch replaces it with full-current starts from rest, both ways (see
+build_launch_plan): the crank parks at +A and at -A, then its goal jumps
+--launch-span further out at --launch-ma. Run with the bike held in the
+air, wings clear of everything but the bike itself:
+
+    python analysis/mechanism/righting_sweep.py --port $P --launch 0 10 20 30 \
+        --cap-ma 400 --tag launch_air_1 --note "held in the air"
+
 THE SCHEDULE, all in crank degrees from --stow-deg (servo degrees: the servo
 drives the crank directly, gear ratio 1):
 
@@ -182,9 +190,137 @@ def build_breakaway_plan(args, start: float, stow: float) -> list:
     return segs
 
 
+def build_launch_plan(args, start: float, stow: float) -> list:
+    """Full-current starts from rest at each crank angle, both ways.
+
+    THE QUESTION (2026-11-07): the left get-up (crank -) loads up past crank
+    -10 where the right does not, and the slow sweeps cannot see it: they
+    stopped at 10, at 30 deg/s. Here the servo starts from rest at +A or -A
+    the way a lift does: Goal Current at --launch-ma (785, the get-up's)
+    and the goal jumped --launch-span OUTWARD (away from stow, the lift's
+    direction; from 0, both ways). In the air nothing loads the crank but
+    the linkage and the wings' inertia, so at matched A a slower start, or
+    more current for the same speed, on one side is that side's mechanism
+    -- or the motor, if it is weaker one way. Sides alternate within each
+    angle so heat drifts both sides alike.
+
+    Between launches: --cap-ma and a ramp at --speed-dps, as the sweep's.
+    """
+    v = math.radians(args.speed_dps)
+    span = math.radians(args.launch_span)
+    hold = lambda g: (lambda t, s: {i: g for i in s} if s is not None else None)
+    segs = [Segment("hold where it is", 1.0, hold(start),
+                    enter=lambda bus: (set_current(args.cap_ma)(bus), bus.torque(True)),
+                    info={"kind": "hold"})]
+    here = start
+    for rep in range(args.reps):
+        for a_deg in args.launch:
+            for d in ((+1, -1) if rep % 2 == 0 else (-1, +1)):
+                a = stow + d * math.radians(a_deg)
+                cmd, T = ramp(here, a, v)
+                segs.append(Segment(f"{d * a_deg:+g}: to", T + 0.2, cmd,
+                                    info={"kind": "move"}))
+                # the warning before the throw: this label prints as the rest begins
+                segs.append(Segment(f"{d * a_deg:+g}: rest -- LAUNCH "
+                                    f"{'+-'[d < 0]} in {args.rest_s:g} s", args.rest_s,
+                                    hold(a), info={"kind": "rest"}))
+                end = a + d * span
+                segs.append(Segment(
+                    f"{d * a_deg:+g}: LAUNCH -> {d * (a_deg + args.launch_span):+g} "
+                    f"at {args.launch_ma:g} mA, rep {rep}", args.launch_s, hold(end),
+                    enter=set_current(args.launch_ma),
+                    info={"kind": "launch", "from_deg": d * a_deg, "dir": d, "rep": rep,
+                          "to_deg": d * (a_deg + args.launch_span)}))
+                segs.append(Segment(f"{d * a_deg:+g}: settle", 0.3, hold(end),
+                                    enter=set_current(args.cap_ma),
+                                    info={"kind": "settle"}))
+                here = end
+    cmd, T = ramp(here, stow, v)
+    segs.append(Segment("to stow", T + 0.5, cmd, info={"kind": "move"}))
+    segs.append(Segment("hold at stow", 1.0, hold(stow), info={"kind": "hold"}))
+    return segs
+
+
 # --------------------------------------------------------------------------
 # analysis
 # --------------------------------------------------------------------------
+
+LAUNCH_MARKS = (5.0, 10.0, 15.0, 20.0)
+
+
+def launch_trials(cap: Capture) -> list:
+    """[{from, dir, rep, t_at: {deg: s}, v_at: {deg: deg/s}, peak, i_mean, pwm}]
+    per launch, travel measured outward from where it started."""
+    stow = math.radians(cap.meta["stow_deg"])
+    i = int(cap.meta["ids"][0])
+    pos = np.degrees(cap.position_rad(i) - stow)
+    cur = cap.value("Present Current", i) * 1000
+    vel = np.degrees(cap.value("Present Velocity", i))
+    pwm = cap.value("Present PWM", i)
+    t_all = cap.time_s(i)
+    out = []
+    for s in cap.segments:
+        info = s["info"]
+        if info.get("kind") != "launch":
+            continue
+        sl = slice(s["start"], s["stop"])
+        ok = cap.ok[sl]
+        p, c, w, u, t = pos[sl][ok], cur[sl][ok], vel[sl][ok], pwm[sl][ok], t_all[sl][ok]
+        if len(p) < 5:
+            continue
+        d = info["dir"]
+        trav, t = (p - p[0]) * d, t - t[0]
+        # the crank parks short of a ramp's goal (P only, Position I 0: ~3.5
+        # deg at 400 mA in the air, 11-07), so a launch starts where it parked
+        row = dict(frm=info["from_deg"], dir=d, rep=info["rep"], t_at={}, v_at={},
+                   start=float(p[0]), dist=abs(info["to_deg"] - float(p[0])),
+                   peak=float(np.max(w * d)), temp=None)
+        for mk in LAUNCH_MARKS:
+            k = np.flatnonzero(trav >= mk)
+            row["t_at"][mk] = float(t[k[0]]) if len(k) else None
+            row["v_at"][mk] = float(w[k[0]] * d) if len(k) else None
+        k15 = np.flatnonzero(trav >= 15.0)
+        n = k15[0] + 1 if len(k15) else len(p)
+        row["i_mean"] = float(np.mean(c[:n] * d))
+        row["pwm"] = float(np.mean(np.abs(u[:n])))
+        out.append(row)
+    return out
+
+
+def summarize_launch(cap: Capture) -> None:
+    rows = launch_trials(cap)
+    if not rows:
+        print("\nno launches recorded")
+        return
+    span = cap.meta.get("launch_span")
+    print(f"\nLAUNCHES at {cap.meta.get('launch_ma'):g} mA from rest, {span:g} deg outward"
+          f"\n  (+ = right wing down / right get-up; - = left). Travel from the start.")
+    hdr = "  ".join(f"t{m:g}" for m in LAUNCH_MARKS)
+    print(f"  {'from':>5s} {'rep':>3s} {'start':>6s} {'to go':>5s}  {hdr}   v@10   v@20  peak  I(0-15)  PWM")
+    f = lambda x, fmt: (fmt % x) if x is not None else "   --"
+    for r in sorted(rows, key=lambda r: (abs(r["frm"]), -r["dir"], r["rep"])):
+        ts = "  ".join(f(None if r["t_at"][m] is None else r["t_at"][m] * 1000, "%3.0f")
+                       for m in LAUNCH_MARKS)
+        print(f"  {r['frm']:+5.0f} {r['rep']:3d} {r['start']:+6.1f} {r['dist']:5.1f}  {ts}  {f(r['v_at'][10], '%5.0f')}  "
+              f"{f(r['v_at'][20], '%5.0f')} {r['peak']:5.0f}  {r['i_mean']:+7.0f}  {r['pwm']:.2f}")
+    print("\n  t5..t20 = ms to 5..20 deg of travel; v@ = deg/s there; I = mean Present Current"
+          "\n  over the first 15 deg, in the direction of travel")
+    print("\nRIGHT - LEFT at matched start (median over reps; + = the left is slower / draws more)")
+    print(f"  {'|from|':>6s}  {'dt20 ms':>7s}  {'dv@10':>6s}  {'dv@20':>6s}  {'dI mA':>6s}")
+    for a in sorted({abs(r["frm"]) for r in rows}):
+        side = {d: [r for r in rows if abs(r["frm"]) == a and r["dir"] == d] for d in (1, -1)}
+        if not side[1] or not side[-1]:
+            continue
+        med = lambda rs, g: (float(np.median([g(r) for r in rs if g(r) is not None]))
+                             if any(g(r) is not None for r in rs) else None)
+        diff = []
+        for g, scale, sign in ((lambda r: r["t_at"][20.0], 1000, 1), (lambda r: r["v_at"][10.0], 1, -1),
+                               (lambda r: r["v_at"][20.0], 1, -1), (lambda r: r["i_mean"], 1, 1)):
+            R, L = med(side[1], g), med(side[-1], g)
+            diff.append(None if R is None or L is None else sign * (L - R) * scale)
+        print(f"  {a:6.0f}  " + "  ".join(f(x, "%+6.0f") for x in diff))
+    if cap.meta.get("shutdown", {}).get("stopped"):
+        print(f"\nSTOPPED EARLY: {cap.meta['shutdown']['stopped']}")
 
 def summarize_breakaway(cap: Capture, moved_deg: float = 0.5) -> None:
     stow = math.radians(cap.meta["stow_deg"])
@@ -256,6 +392,9 @@ def summarize_steps(cap: Capture) -> None:
 
 
 def summarize(cap: Capture, bin_deg: float = 15.0) -> None:
+    if cap.meta.get("launch"):
+        summarize_launch(cap)
+        return
     if cap.meta.get("breakaway"):
         summarize_breakaway(cap)
         return
@@ -345,6 +484,9 @@ def run(args) -> int:
             raise SystemExit(f"id {args.id} is in mode {mode}, not current-based "
                              f"position ({MODE_CURRENT_POSITION}); this script does not "
                              f"write the mode (EEPROM)")
+        if args.launch and args.launch_ma > orig[args.id]["Current Limit"]:
+            raise SystemExit(f"--launch-ma {args.launch_ma} > Current Limit "
+                             f"{orig[args.id]['Current Limit']}")
         if args.cap_ma > orig[args.id]["Current Limit"]:
             raise SystemExit(f"--cap-ma {args.cap_ma} > Current Limit "
                              f"{orig[args.id]['Current Limit']}")
@@ -363,7 +505,10 @@ def run(args) -> int:
         start = bus.read(args.id, "Present Position")
         stow = math.radians(args.stow_deg)
         bus.write_frame({args.id: start})     # torque-on drives to RAM's last goal
-        if args.breakaway:
+        if args.launch:
+            segs = build_launch_plan(args, start, stow)
+            reach = max(args.launch) + args.launch_span
+        elif args.breakaway:
             segs = build_breakaway_plan(args, start, stow)
             reach = max(abs(a) for a in args.breakaway) + max(args.creep_deg, args.approach_deg)
         else:
@@ -375,7 +520,7 @@ def run(args) -> int:
               f"cap {args.cap_ma:g} mA, {args.speed_dps:g} deg/s.\n"
               f"  now at servo {math.degrees(start):.1f} deg = crank "
               f"{math.degrees(start - stow):+.1f} from stow {args.stow_deg:g}; "
-              f"{'breakaway at ' + str(args.breakaway) if args.breakaway else 'amplitudes ' + str(args.amps)}"
+              f"{'launches from +-' + str(args.launch) + f' at {args.launch_ma:g} mA' if args.launch else 'breakaway at ' + str(args.breakaway) if args.breakaway else 'amplitudes ' + str(args.amps)}"
               f" deg; reach +-{reach:g}; {len(segs)} segments, {total:.0f} s; "
               f"speed guard {args.max_dps:g} deg/s.")
         if abs(math.degrees(start - stow)) > reach + 3:
@@ -394,7 +539,8 @@ def run(args) -> int:
         bus.bus_watchdog(WATCHDOG_MS)
         torque_on = True
 
-        lim = math.radians(reach + 3)
+        # a launch arrives at full speed and overshoots its goal by a few deg
+        lim = math.radians(reach + (args.launch_margin if args.launch else 3))
         vmax = math.radians(args.max_dps)
         lag = math.radians(args.lag_deg)
         runaway = math.radians(args.runaway_deg)
@@ -413,7 +559,8 @@ def run(args) -> int:
                     notes["stopped"] = f"{st['Present Temperature']:.0f} C"
                     raise RuntimeError(notes["stopped"])
                 p = st["Present Position"]
-                if abs(st["Present Velocity"]) > vmax:
+                free = seg.info.get("kind") in ("launch", "settle")
+                if abs(st["Present Velocity"]) > vmax and not free:
                     notes["stopped"] = (f"too fast in '{seg.label}': "
                                         f"{math.degrees(st['Present Velocity']):+.0f} deg/s at "
                                         f"crank {math.degrees(p - stow):+.1f}")
@@ -424,7 +571,7 @@ def run(args) -> int:
                     raise RuntimeError(notes["stopped"])
                 if goal:
                     e = abs(goal[args.id] - p)
-                    if e > runaway and seg.info.get("kind") != "step":
+                    if e > runaway and seg.info.get("kind") not in ("step", "launch", "settle"):
                         notes["stopped"] = (f"{math.degrees(e):.1f} deg behind in "
                                             f"'{seg.label}' at crank {math.degrees(p - stow):+.1f}")
                         raise RuntimeError(notes["stopped"])
@@ -474,6 +621,8 @@ def run(args) -> int:
                 test=TEST, note=args.note, argv=sys.argv, port=args.port, baud=args.baud,
                 stow_deg=args.stow_deg, amps=args.amps, speed_dps=args.speed_dps,
                 breakaway=args.breakaway, creep_dps=args.creep_dps, max_dps=args.max_dps,
+                launch=args.launch, launch_ma=args.launch_ma, launch_span=args.launch_span,
+                launch_s=args.launch_s,
                 step=args.step, step_s=args.step_s,
                 cap_ma=args.cap_ma, gains={"p": args.p_gain, "d": args.d_gain},
                 git=git_state(ROOT), python=sys.version.split()[0],
@@ -513,6 +662,16 @@ def main() -> int:
     ap.add_argument("--breakaway", type=float, nargs="+", default=None, metavar="DEG",
                     help="instead of sweeping: breakaway current at these crank angles, "
                          "both directions, by a goal CREEP (no steps)")
+    ap.add_argument("--launch", type=float, nargs="+", default=None, metavar="DEG",
+                    help="instead of sweeping: from rest at +DEG and -DEG, jump the goal "
+                         "--launch-span outward at --launch-ma (bike held in the air)")
+    ap.add_argument("--launch-ma", type=float, default=785.0,
+                    help="Goal Current for a launch: the get-up's 785 by default")
+    ap.add_argument("--launch-span", type=float, default=25.0,
+                    help="how far past its start a launch's goal is [crank deg]")
+    ap.add_argument("--launch-s", type=float, default=0.6, help="time per launch")
+    ap.add_argument("--launch-margin", type=float, default=10.0,
+                    help="overshoot allowed past the furthest launch goal before a stop")
     ap.add_argument("--step", action="store_true",
                     help="JUMP the goal instead of ramping it, as hw/ground.py does; "
                          "the current cap sets the speed")
