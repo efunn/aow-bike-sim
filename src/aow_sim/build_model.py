@@ -233,8 +233,14 @@ def _part_contact(sim: dict, part: str) -> dict:
         friction[0] = over["friction_sliding"]
     if "friction_torsional" in over:
         friction[1] = over["friction_torsional"]
+    condim = sim["condim"]
+    if "friction_rolling" in over:
+        # rolling resistance [m] needs the full cone; the part's priority
+        # makes its condim the contact's
+        friction[2] = over["friction_rolling"]
+        condim = 6
     return {
-        "condim": sim["condim"],
+        "condim": condim,
         "friction": friction,
         "solref": list(over.get("solref", sim["contact_solref"])),
         "priority": 1,

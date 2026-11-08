@@ -81,6 +81,14 @@ sim:
     # little torque; the torsional term stays the global GUESS.
     righting:
       friction_sliding: {value: 0.10, source: measured}
+      # Rolling resistance [m] (2026-11-08): with none (condim 4) the bike lying
+      # on a blade rolls on its segmented face like a rocker and rocks ~5 deg
+      # peak to peak for ever; the bike settles in a swing or two, held or
+      # limp. 2 mm stops it within a swing and best fits the right-side lifts
+      # before the ballast (roll rms 4.7 -> 2.9 deg; 3 mm fits best with it,
+      # 3.8; charge within 2 %). Sets condim 6 on these parts only. A stand-in
+      # for hysteresis and slop nobody has measured, fitted, not measured.
+      friction_rolling: {value: 0.002, source: model}
   # Lateral pull on the front tire, the bike upright on the target floor
   # (2026-10-31, user): breakaway 150 g, steady slide 250 g at 4.72 N on the
   # front (the measured CoG), so mu 0.31 / 0.52, +-0.03 from the scale's 25 g

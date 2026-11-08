@@ -217,8 +217,12 @@ def test_the_split_did_not_move_the_plant_digest():
         3fcb5c914b90f460  2026-11-07  omni_wheel.hub.frame_contact: the hub
                           frame's two printed rims (torus dia 78, tube 6,
                           at +-13.5 mm) a righting contact, jointed build
+        845030e3236384f8  2026-11-08  sim.contact_parts.righting.friction_rolling
+                          2 mm (condim 6 on the righting parts): the bike
+                          lying on a blade rocked for ever without it;
+                          fitted to the right-side lifts, `model`
     """
-    assert plant_digest(load_params()) == "3fcb5c914b90f460"
+    assert plant_digest(load_params()) == "845030e3236384f8"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():
