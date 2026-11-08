@@ -23,6 +23,26 @@ air, wings clear of everything but the bike itself:
     python analysis/mechanism/righting_sweep.py --port $P --launch 0 10 20 30 \
         --cap-ma 400 --tag launch_air_1 --note "held in the air"
 
+--give prop|lie --side right|left replaces it with THE CRANK'S GIVE under
+load (see build_give_plan): the bike sits still -- propped, or lying on
+--side -- and the servo pushes UP ONLY (the get-up's way) with a staircase of
+Goal Current, 0 -> --give-peak-ma -> 0, the goal parked --give-span ahead.
+The crank winds into the play and spring between servo and blade while the
+bike stays put; Present Position against current, up and down, is that
+curve. Run with run_bike stopped and the bike already in the pose:
+
+    python analysis/mechanism/righting_sweep.py --port $P --give prop --side right \
+        --tag give_prop_R --note "propped after a right get-up, run_bike quit"
+    python analysis/mechanism/righting_sweep.py --port $P --give lie --side right \
+        --tag give_lie_R --note "lying on the right, soft lowered"
+
+--wiggle DEG parks the crank at DEG and wiggles its goal +- each of
+--wiggle-amp (1 and 2 deg by default), holding each side --wiggle-dwell-s, to
+LOOK at what moves (see build_wiggle_plan):
+
+    python analysis/mechanism/righting_sweep.py --wiggle -15 --wiggle-amp 1 2 3 \
+        --cap-ma 300 --tag wiggle_m15 --note "bike in the air"
+
 THE SCHEDULE, all in crank degrees from --stow-deg (servo degrees: the servo
 drives the crank directly, gear ratio 1):
 
@@ -89,6 +109,15 @@ READ_BLOCK = ("Realtime Tick", "Present Position", "Present Velocity",
               "Present Current", "Present PWM", "Present Temperature",
               "Hardware Error Status")
 WATCHDOG_MS = 100
+
+
+def _onboard() -> dict:
+    """config/onboard.yaml (the Pi's devices), or {} if it will not load."""
+    try:
+        import yaml
+        return yaml.safe_load((ROOT / "config" / "onboard.yaml").read_text()) or {}
+    except Exception:                       # noqa: BLE001 -- only a default
+        return {}
 
 
 def set_current(ma: float):
@@ -241,9 +270,249 @@ def build_launch_plan(args, start: float, stow: float) -> list:
     return segs
 
 
+#: THE OVERLOAD TRIP LAW (B2, 2026-11-03, analysis/servo/righting_overload.py;
+#: config/rl/rl_righting.yaml `overload`): held above `floor` the servo trips
+#: after charge / (I - floor) s -- 730 mA 2.0 s, 600 3.6, 500 7.0 -- and
+#: below it a full charge drains in `cool` s. Replayed over every bike run it
+#: called all 7 real overloads 0.04-0.14 s early. Untested under 500 mA.
+TRIP_FLOOR_A, TRIP_CHARGE_AS, TRIP_COOL_S = 0.413, 0.645, 0.5
+
+
+#: Position P Gain -> mA per degree of error (the firmware's K5, params.XC330_K5)
+MA_PER_DEG_PER_P = 0.0025464790894703256 * 1000 * math.pi / 180
+#: --wiggle runs on the plant's gains (P 700 / D 1400), the only ones tried
+#: that never oscillated. Stiffer ones on the bike in the air, 11-08:
+#:   P 3000 / D 1400  +-1 deg tracked to 0.1, but an ~18 Hz limit cycle grew
+#:                    from the first step (261108-014840)
+#:   P 2000 / D 4000  quiet at +-1 deg for 5 poses, then a 23 Hz limit cycle,
+#:                    4.6 deg p2p, current cap to cap (261108-015053)
+#: Both over the user's ceiling for these servos, P 1500 / D 3000. So P 700
+#: sits ~1-3 deg short against the friction: ask more amplitude.
+#: No I gain ever: see run().
+
+
+def heat_step(h: float, amps: float, dt: float) -> float:
+    """The trip law's heat (1 = overload) after `dt` s at |`amps`|."""
+    a = abs(amps)
+    if a > TRIP_FLOOR_A:
+        return h + (a - TRIP_FLOOR_A) / TRIP_CHARGE_AS * dt
+    return max(0.0, h - dt / TRIP_COOL_S)
+
+
+def give_currents(args) -> list:
+    """The staircase, mA: 0 -> peak -> 0 in --give-step-ma, peak once."""
+    n = max(1, int(math.ceil(args.give_peak_ma / args.give_step_ma)))
+    up = [min(args.give_peak_ma, k * args.give_step_ma) for k in range(n + 1)]
+    return up + up[-2::-1]
+
+
+def build_give_plan(args, start: float, stow: float, side: int) -> list:
+    """The crank's give under load, pushing UP ONLY.
+
+    THE QUESTION (2026-11-08): when a hard-held prop let go (261027-143131,
+    ~400 mA ramped to 0), the crank came back ~3 deg with the roll
+    unchanged; at ~100 mA, 1-2. And a lift from lying moves the crank 2-3 deg
+    on ~100-190 mA before it takes the load. So something between the servo
+    and the blade gives: play, a spring, or both.
+
+    Here the bike sits still and the servo pushes the get-up's way only. The
+    goal is parked --give-span ahead of the start, UP (+ for a right get-up,
+    - for a left; lying on the right the crank rests near -24 and up is
+    still +), so Present Current is capped by Goal Current at every step
+    (P 700 asks ~31 mA/deg). Goal Current climbs 0 -> --give-peak-ma in
+    --give-step-ma and back, --give-step-s a step; the goal never moves
+    and never points down. At 0 mA the drive is off, not braking.
+    Between reps --rest-s at 0 mA lets the trip law's heat drain.
+
+    The crank's position against current, up then down, is the curve: the
+    gap between the legs at low current is the play, the slope the spring.
+    It STOPS (holds, then torque off) as soon as the bike itself moves:
+    the crank more than --give-max-deg up from its start, or the AHRS
+    orientation more than --max-tilt-deg from its start.
+    """
+    hold = lambda g: (lambda t, s: {i: g for i in s} if s is not None else None)
+    goal = start + side * math.radians(args.give_span)
+    assert side * (goal - start) > 0, "the goal must point up"
+    segs = [Segment("hold where it is, 0 mA", 1.0, hold(start),
+                    enter=lambda bus: (set_current(0)(bus), bus.torque(True)),
+                    info={"kind": "hold"})]
+    cur = give_currents(args)
+    peak = cur.index(max(cur))
+    for rep in range(args.reps):
+        if rep:
+            segs.append(Segment(f"rest at 0 mA before rep {rep}", args.rest_s, hold(goal),
+                                enter=set_current(0), info={"kind": "rest"}))
+        for k, ma in enumerate(cur):
+            leg = "up" if k <= peak else "down"
+            segs.append(Segment(f"rep {rep} {leg} {ma:4.0f} mA", args.give_step_s, hold(goal),
+                                enter=set_current(ma),
+                                info={"kind": "give", "ma": ma, "leg": leg, "rep": rep,
+                                      "side": side}))
+    segs.append(Segment("release, 0 mA", 0.5, hold(goal), enter=set_current(0),
+                        info={"kind": "rest"}))
+    return segs
+
+
+def build_wiggle_plan(args, start: float, stow: float) -> list:
+    """Park at --wiggle DEG, then wiggle the goal +-A about it, to WATCH.
+
+    THE QUESTION (2026-11-08): --give found ~1.8 deg of the crank's travel
+    taken on almost no current and a soft spring after it, and every pin
+    hole is reamed to a slip fit -- so where does it bend? Ramp to the angle
+    at --speed-dps, rest, then per amplitude in --wiggle-amp, --wiggle-cycles
+    cycles: `step` holds +A then -A for --wiggle-dwell-s each (a still pose
+    to look at; the cap sets the speed between them), `sine` sweeps
+    smoothly at --wiggle-hz. Back to the angle, then to where it started.
+    Goal Current is --cap-ma throughout: the load you can push against by
+    hand, or the bike's weight, shows as Present Position falling short.
+    """
+    v = math.radians(args.speed_dps)
+    hold = lambda g: (lambda t, s: {i: g for i in s} if s is not None else None)
+    at = stow + math.radians(args.wiggle)
+    segs = [Segment("hold where it is", 1.0, hold(start),
+                    enter=lambda bus: (set_current(args.cap_ma)(bus), bus.torque(True)),
+                    info={"kind": "hold"})]
+    # the moves get their own current: from a prop's end of stroke the left
+    # would not start back at 300 mA in the air (261108-013838)
+    cmd, T = ramp(start, at, v)
+    segs.append(Segment(f"to {args.wiggle:+g} at {args.wiggle_move_ma:g} mA", T + 0.3, cmd,
+                        enter=set_current(args.wiggle_move_ma), info={"kind": "move"}))
+    segs.append(Segment(f"rest at {args.wiggle:+g}, {args.cap_ma:g} mA", args.rest_s, hold(at),
+                        enter=set_current(args.cap_ma),
+                        info={"kind": "wiggle_rest", "amp_deg": 0.0}))
+    for A in args.wiggle_amp:
+        a = math.radians(A)
+        if args.wiggle_shape == "step":
+            for c in range(args.wiggle_cycles):
+                for sgn in (+1, -1):
+                    segs.append(Segment(f"{args.wiggle:+g} {'+-'[sgn < 0]}{A:g} (cycle {c})",
+                                        args.wiggle_dwell_s, hold(at + sgn * a),
+                                        info={"kind": "wiggle", "amp_deg": A, "dir": sgn,
+                                              "cycle": c}))
+        else:
+            w = 2.0 * math.pi * args.wiggle_hz
+
+            def sine(t, s, a=a, w=w):
+                return {i: at + a * math.sin(w * t) for i in s} if s is not None else None
+            segs.append(Segment(f"{args.wiggle:+g} sine +-{A:g} at {args.wiggle_hz:g} Hz",
+                                args.wiggle_cycles / args.wiggle_hz, sine,
+                                info={"kind": "wiggle_sine", "amp_deg": A}))
+        segs.append(Segment(f"back to {args.wiggle:+g}", 0.5, hold(at),
+                            info={"kind": "wiggle_rest", "amp_deg": A}))
+    cmd, T = ramp(at, start, v)
+    segs.append(Segment("back to the start", T + 0.3, cmd,
+                        enter=set_current(args.wiggle_move_ma), info={"kind": "move"}))
+    segs.append(Segment("hold", 0.5, hold(start), info={"kind": "hold"}))
+    return segs
+
+
+def summarize_wiggle(cap: Capture) -> None:
+    stow = math.radians(cap.meta["stow_deg"])
+    i = int(cap.meta["ids"][0])
+    pos = np.degrees(cap.position_rad(i) - stow)
+    cur = cap.value("Present Current", i) * 1000
+    at = cap.meta["wiggle"]
+    print(f"\nWIGGLE about crank {at:+g} at Goal Current {cap.meta['cap_ma']:g} mA"
+          f"\n  step: per held pose, the second half's median; sine: the extremes reached")
+    print(f"  {'pose':>14s} {'goal':>7s} {'crank':>8s} {'short by':>8s} {'I mA':>6s}")
+    for s in cap.segments:
+        info = s["info"]
+        sl = slice(s["start"], s["stop"])
+        ok = cap.ok[sl]
+        p, c = pos[sl][ok], cur[sl][ok]
+        if len(p) < 4:
+            continue
+        if info.get("kind") in ("wiggle", "wiggle_rest"):
+            g = at + info.get("dir", 0) * info["amp_deg"] if info["kind"] == "wiggle" else at
+            h = len(p) // 2
+            pm, cm = float(np.median(p[h:])), float(np.median(c[h:]))
+            tag = (f"{'+-'[info['dir'] < 0]}{info['amp_deg']:g} c{info['cycle']}"
+                   if info["kind"] == "wiggle" else "rest")
+            print(f"  {tag:>14s} {g:+7.2f} {pm:+8.2f} {abs(g - pm):8.2f} {cm:+6.0f}")
+        elif info.get("kind") == "wiggle_sine":
+            A = info["amp_deg"]
+            print(f"  {'sine +-' + format(A, 'g'):>14s} {'':7s} {p.min() - at:+8.2f}.."
+                  f"{p.max() - at:+.2f} about {at:+g} (asked +-{A:g}); I {c.min():+.0f}..{c.max():+.0f}")
+    gp = cap.meta.get("gains", {})
+    print(f"\n  short by = goal - crank: where a load holds the crank back "
+          f"(P {gp.get('p')}: ~{gp.get('p', 0) * MA_PER_DEG_PER_P:.0f} mA/deg)")
+    if cap.meta.get("give_heat_peak") is not None:
+        print(f"  trip-law heat peak {cap.meta['give_heat_peak']:.2f} (1 = overload)")
+    if cap.meta.get("shutdown", {}).get("stopped"):
+        print(f"\nSTOPPED EARLY: {cap.meta['shutdown']['stopped']}")
+
+
+def give_heat_plan(segs) -> float:
+    """Worst-case peak heat: every give step drawing its full Goal Current."""
+    h = peak = 0.0
+    for s in segs:
+        ma = s.info.get("ma", 0.0) if s.info.get("kind") == "give" else 0.0
+        h = heat_step(h, ma / 1000.0, s.seconds)
+        peak = max(peak, h)
+    return peak
+
+
 # --------------------------------------------------------------------------
 # analysis
 # --------------------------------------------------------------------------
+
+def summarize_give(cap: Capture, out_dir: Path | None = None) -> None:
+    stow = math.radians(cap.meta["stow_deg"])
+    i = int(cap.meta["ids"][0])
+    side = int(cap.meta.get("give_side", 1))
+    pos = np.degrees(cap.position_rad(i) - stow)
+    cur = cap.value("Present Current", i) * 1000
+    tilt = None
+    if out_dir is not None and (Path(out_dir) / "ahrs.npz").exists():
+        z = np.load(Path(out_dir) / "ahrs.npz")
+        tilt = (z["frame"], z["tilt_deg"])
+    p0 = None
+    rows = {}
+    for s in cap.segments:
+        info = s["info"]
+        sl = slice(s["start"], s["stop"])
+        ok = cap.ok[sl]
+        if info.get("kind") == "hold" and p0 is None and ok.any():
+            p0 = float(np.median(pos[sl][ok]))
+        if info.get("kind") != "give":
+            continue
+        idx = np.arange(s["start"], s["stop"])[ok]
+        if len(idx) < 4:
+            continue
+        last = idx[len(idx) // 2:]            # the step's second half: settled
+        tl = None
+        if tilt is not None:
+            m = np.isin(tilt[0], last)
+            tl = float(np.median(tilt[1][m])) if m.any() else None
+        rows[(info["rep"], info["leg"], info["ma"])] = (
+            float(np.median(pos[last])), float(np.median(cur[last] * side)), tl)
+    if not rows or p0 is None:
+        print("\nno give steps recorded")
+        return
+    print(f"\nGIVE -- {cap.meta.get('give')}, {'right' if side > 0 else 'left'} side; "
+          f"crank at the start {p0:+.1f} deg from stow.\n"
+          f"  per step, the second half's median: crank UP from the start [deg], "
+          f"Present Current [mA], AHRS tilt from the start [deg]")
+    for rep in sorted({r for r, _, _ in rows}):
+        steps = sorted({ma for r, _, ma in rows if r == rep})
+        print(f"\n  rep {rep}   {'Goal mA':>7s}  {'up: crank':>9s} {'I':>5s} {'tilt':>5s}"
+              f"   {'down: crank':>11s} {'I':>5s} {'tilt':>5s}")
+        f = lambda v, fmt: fmt % v if v is not None else " " * (len(fmt % 0.0))
+        for ma in steps:
+            u, d = rows.get((rep, "up", ma)), rows.get((rep, "down", ma))
+            cell = lambda x: ((f"{side * (x[0] - p0):+9.2f}", f"{x[1]:5.0f}", f(x[2], "%5.2f"))
+                              if x else (" " * 9, " " * 5, " " * 5))
+            a, b = cell(u), cell(d)
+            print(f"          {ma:7.0f}  {a[0]} {a[1]} {a[2]}   {b[0]:>11s} {b[1]} {b[2]}")
+    print("\n  play ~ the gap between up and down at the same Goal Current near 0;"
+          "\n  spring ~ the up leg's slope, deg per 100 mA. Present Current is the"
+          "\n  servo's own (bus) reading; Goal Current is its cap.")
+    if cap.meta.get("shutdown", {}).get("stopped"):
+        print(f"\nSTOPPED EARLY: {cap.meta['shutdown']['stopped']}")
+    if cap.meta.get("give_heat_peak") is not None:
+        print(f"\ntrip-law heat: planned worst case {cap.meta.get('give_heat_plan', 0):.2f}, "
+              f"measured peak {cap.meta['give_heat_peak']:.2f} (1 = overload)")
+
 
 LAUNCH_MARKS = (5.0, 10.0, 15.0, 20.0)
 
@@ -391,7 +660,13 @@ def summarize_steps(cap: Capture) -> None:
         print(f"\nSTOPPED EARLY: {cap.meta['shutdown']['stopped']}")
 
 
-def summarize(cap: Capture, bin_deg: float = 15.0) -> None:
+def summarize(cap: Capture, bin_deg: float = 15.0, out_dir: Path | None = None) -> None:
+    if cap.meta.get("give"):
+        summarize_give(cap, out_dir)
+        return
+    if cap.meta.get("wiggle") is not None:
+        summarize_wiggle(cap)
+        return
     if cap.meta.get("launch"):
         summarize_launch(cap)
         return
@@ -464,9 +739,15 @@ def summarize(cap: Capture, bin_deg: float = 15.0) -> None:
 def run(args) -> int:
     tee = Tee(sys.stdout)
     sys.stdout = tee
-    bus = cap = orig = before = after = None
+    bus = cap = orig = before = after = ahrs = None
     torque_on, notes = False, {}
+    side = {"right": 1, "left": -1}.get(args.side or "", 0)
+    tilt_log = {"frame": [], "tilt_deg": [], "t": []}
+    heat = {"h": 0.0, "peak": 0.0, "plan": None}
     try:
+        if args.give and not side:
+            raise SystemExit("--give needs --side right|left: the side the bike is "
+                             "propped up from, or lying on")
         if not args.port:
             raise SystemExit("no --port given and AOW_DXL_PORT is unset")
         bus = DynamixelBus(args.port, baud=args.baud, ids=(args.id,)).open()
@@ -487,6 +768,9 @@ def run(args) -> int:
         if args.launch and args.launch_ma > orig[args.id]["Current Limit"]:
             raise SystemExit(f"--launch-ma {args.launch_ma} > Current Limit "
                              f"{orig[args.id]['Current Limit']}")
+        if args.give and args.give_peak_ma > orig[args.id]["Current Limit"]:
+            raise SystemExit(f"--give-peak-ma {args.give_peak_ma} > Current Limit "
+                             f"{orig[args.id]['Current Limit']}")
         if args.cap_ma > orig[args.id]["Current Limit"]:
             raise SystemExit(f"--cap-ma {args.cap_ma} > Current Limit "
                              f"{orig[args.id]['Current Limit']}")
@@ -494,6 +778,9 @@ def run(args) -> int:
         bus.prepare()                           # torque off, Return Delay 0, profiles 0
         bus.write_raw(args.id, "Position P Gain", args.p_gain)
         bus.write_raw(args.id, "Position D Gain", args.d_gain)
+        # NEVER anything but 0: on this firmware writing I back to 0 does not
+        # clear the accumulated error (ROBOTIS; their V54 fix is XL330 only,
+        # unconfirmed for the XC330), so a nonzero I leaves windup until reboot
         bus.write_raw(args.id, "Position I Gain", 0)
         imap = IndirectMap(bus.tables)
         for n in READ_BLOCK:
@@ -505,7 +792,42 @@ def run(args) -> int:
         start = bus.read(args.id, "Present Position")
         stow = math.radians(args.stow_deg)
         bus.write_frame({args.id: start})     # torque-on drives to RAM's last goal
-        if args.launch:
+        if args.give:
+            # the pose must match: propped, the crank is well up on its side;
+            # lying, it rests past centre the OTHER way (right: ~ -24)
+            up = side * math.degrees(start - stow)
+            lo, hi = (55.0, 125.0) if args.give == "prop" else (-60.0, 5.0)
+            if not lo <= up <= hi:
+                raise SystemExit(
+                    f"--give {args.give} --side {args.side}: the crank is at "
+                    f"{math.degrees(start - stow):+.1f} from stow ({up:+.1f} the get-up's "
+                    f"way), outside {lo:+.0f}..{hi:+.0f} for that pose. Wrong --side, "
+                    f"or the bike is not in the pose.")
+            segs = build_give_plan(args, start, stow, side)
+            reach = abs(math.degrees(start - stow)) + args.give_span
+            heat["plan"] = give_heat_plan(segs)
+            if heat["plan"] > args.heat_max:
+                raise SystemExit(
+                    f"the staircase could reach {heat['plan']:.2f} of an overload trip if "
+                    f"every step stalled at its Goal Current (limit --heat-max "
+                    f"{args.heat_max:g}): lower --give-peak-ma or --give-step-s")
+        elif args.wiggle is not None:
+            segs = build_wiggle_plan(args, start, stow)
+            reach = max(abs(args.wiggle) + max(args.wiggle_amp), abs(math.degrees(start - stow)))
+            # The wiggle can sit against a load by design: refuse a --cap-ma
+            # whose whole wiggle, stalled, would trip. The moves at
+            # --wiggle-move-ma are guarded live instead -- the stall guard
+            # (0.3 s stuck) and the trip law on Present Current (--heat-stop).
+            wig = sum(s.seconds for s in segs if s.info.get("kind", "").startswith("wiggle"))
+            worst = max(0.0, args.cap_ma / 1000 - TRIP_FLOOR_A) / TRIP_CHARGE_AS * wig
+            heat["plan"] = worst
+            if worst > args.heat_max:
+                raise SystemExit(f"--cap-ma {args.cap_ma:g} held stalled through the wiggle "
+                                 f"could reach {worst:.2f} of an overload trip (limit "
+                                 f"--heat-max {args.heat_max:g}): keep it under ~410 mA")
+            if args.wiggle_move_ma > orig[args.id]["Current Limit"]:
+                raise SystemExit(f"--wiggle-move-ma {args.wiggle_move_ma} > Current Limit")
+        elif args.launch:
             segs = build_launch_plan(args, start, stow)
             reach = max(args.launch) + args.launch_span
         elif args.breakaway:
@@ -516,13 +838,19 @@ def run(args) -> int:
             reach = max(args.amps)
         total = sum(s.seconds for s in segs)
         volts = before[args.id]["Present Input Voltage"] * 0.1
-        print(f"\n{TEST}: id {args.id}, supply {volts:.1f} V, P/D {args.p_gain}/{args.d_gain}, "
+        print(f"\n{TEST}: id {args.id}, supply {volts:.1f} V, P/D {args.p_gain}/{args.d_gain} ({args.p_gain * MA_PER_DEG_PER_P:.0f} mA/deg), "
               f"cap {args.cap_ma:g} mA, {args.speed_dps:g} deg/s.\n"
               f"  now at servo {math.degrees(start):.1f} deg = crank "
               f"{math.degrees(start - stow):+.1f} from stow {args.stow_deg:g}; "
-              f"{'launches from +-' + str(args.launch) + f' at {args.launch_ma:g} mA' if args.launch else 'breakaway at ' + str(args.breakaway) if args.breakaway else 'amplitudes ' + str(args.amps)}"
+              f"{('wiggle about ' + format(args.wiggle, '+g') + ' by +-' + str(args.wiggle_amp)) if args.wiggle is not None else 'give, ' + args.give + ' on the ' + args.side + f', 0 -> {args.give_peak_ma:g} -> 0 mA, goal +{args.give_span:g}' if args.give else 'launches from +-' + str(args.launch) + f' at {args.launch_ma:g} mA' if args.launch else 'breakaway at ' + str(args.breakaway) if args.breakaway else 'amplitudes ' + str(args.amps)}"
               f" deg; reach +-{reach:g}; {len(segs)} segments, {total:.0f} s; "
               f"speed guard {args.max_dps:g} deg/s.")
+        if args.give:
+            print(f"  give: goal parked {args.give_span:g} deg UP; steps of "
+                  f"{args.give_step_ma:g} mA, {args.give_step_s:g} s each, {args.reps} rep(s); "
+                  f"stops if the crank goes {args.give_max_deg:g} deg up or the bike tilts "
+                  f"{args.max_tilt_deg:g} deg. Overload: worst case {heat['plan']:.2f} of a trip "
+                  f"(stops at {args.heat_stop:g}).")
         if abs(math.degrees(start - stow)) > reach + 3:
             raise SystemExit("it starts outside the planned range; check --stow-deg")
         if args.dry_run:
@@ -530,12 +858,20 @@ def run(args) -> int:
                 print(f"  {s.label:30s} {s.seconds:5.1f} s")
             print("  --dry-run: torque never enabled.")
             return 0
+        if args.give and not args.no_ahrs:
+            from aow_sim.hw.ahrs import AhrsReader
+            ahrs = AhrsReader(args.ahrs_port)
+            ahrs.start()
+            ahrs.wait_ready(2.0)
+            heat["q0"] = np.asarray(ahrs.latest(0.1).quat, float)
         if not args.yes:
             try:
                 input(f"\nTorque ON for id {args.id}: the crank moves within "
                       f"+-{reach:g} deg of stow. Enter to start (Ctrl-C aborts): ")
             except EOFError:
                 raise SystemExit("no terminal to confirm on; pass --yes") from None
+            if ahrs is not None:           # the reference is the pose at the go
+                heat["q0"] = np.asarray(ahrs.latest(0.1).quat, float)
         bus.bus_watchdog(WATCHDOG_MS)
         torque_on = True
 
@@ -545,21 +881,71 @@ def run(args) -> int:
         lag = math.radians(args.lag_deg)
         runaway = math.radians(args.runaway_deg)
         stall_v = math.radians(args.stall_dps)
-        state = {"since": None}
+        state = {"since": None, "frame": -1, "clock": None, "stale": 0}
+        give_max = math.radians(args.give_max_deg)
+        import time as _time
+
+        def heat_check(seg, st):
+            """The trip law run on Present Current; stop before an overload."""
+            now = _time.perf_counter()
+            dt = 0.0 if state["clock"] is None else now - state["clock"]
+            state["clock"] = now
+            heat["h"] = heat_step(heat["h"], st["Present Current"], dt)
+            heat["peak"] = max(heat["peak"], heat["h"])
+            if heat["h"] > args.heat_stop:
+                notes["stopped"] = (f"overload risk: trip-law heat {heat['h']:.2f} in "
+                                    f"'{seg.label}'")
+                raise RuntimeError(notes["stopped"])
+
+        def give_checks(seg, st):
+            """--give only: the crank's travel up, the tilt."""
+            now = _time.perf_counter()
+            moved = side * (st["Present Position"] - start)
+            if moved > give_max:
+                notes["stopped"] = (f"the crank went {math.degrees(moved):.1f} deg up in "
+                                    f"'{seg.label}' (--give-max-deg {args.give_max_deg:g}): "
+                                    f"the bike is moving")
+                raise RuntimeError(notes["stopped"])
+            if ahrs is None:
+                return
+            try:
+                q = np.asarray(ahrs.latest(0.1).quat, float)
+                state["stale"] = 0
+            except RuntimeError:
+                state["stale"] += 1
+                if state["stale"] > 40:
+                    notes["stopped"] = "AHRS stale for 0.2 s"
+                    raise RuntimeError(notes["stopped"]) from None
+                return
+            c = abs(float(np.dot(q, heat["q0"]))) / (np.linalg.norm(q) * np.linalg.norm(heat["q0"]))
+            tilt = math.degrees(2.0 * math.acos(min(1.0, c)))
+            tilt_log["frame"].append(state["frame"])
+            tilt_log["tilt_deg"].append(tilt)
+            tilt_log["t"].append(now)
+            if tilt > args.max_tilt_deg:
+                notes["stopped"] = (f"the bike tilted {tilt:.1f} deg in '{seg.label}' "
+                                    f"(--max-tilt-deg {args.max_tilt_deg:g}): it is moving")
+                raise RuntimeError(notes["stopped"])
 
         def guard(seg):
             inner = seg.command
 
             def cmd(t, s):
+                state["frame"] += 1           # one call per captured frame
                 goal = inner(t, s) if inner else None
                 if s is None:
                     return goal
                 st = s[args.id]
+                if args.give or args.wiggle is not None:
+                    heat_check(seg, st)
+                if args.give:
+                    give_checks(seg, st)
                 if st["Present Temperature"] >= args.max_temp:
                     notes["stopped"] = f"{st['Present Temperature']:.0f} C"
                     raise RuntimeError(notes["stopped"])
                 p = st["Present Position"]
-                free = seg.info.get("kind") in ("launch", "settle")
+                # a launch and a wiggle step move fast by design
+                free = seg.info.get("kind") in ("launch", "settle", "wiggle", "wiggle_sine")
                 if abs(st["Present Velocity"]) > vmax and not free:
                     notes["stopped"] = (f"too fast in '{seg.label}': "
                                         f"{math.degrees(st['Present Velocity']):+.0f} deg/s at "
@@ -571,7 +957,10 @@ def run(args) -> int:
                     raise RuntimeError(notes["stopped"])
                 if goal:
                     e = abs(goal[args.id] - p)
-                    if e > runaway and seg.info.get("kind") not in ("step", "launch", "settle"):
+                    # a give parks its goal --give-span ahead on purpose
+                    parked = ("give", "rest") if args.give else ()
+                    if e > runaway and seg.info.get("kind") not in ("step", "launch", "settle",
+                                                                   *parked):
                         notes["stopped"] = (f"{math.degrees(e):.1f} deg behind in "
                                             f"'{seg.label}' at crank {math.degrees(p - stow):+.1f}")
                         raise RuntimeError(notes["stopped"])
@@ -615,6 +1004,8 @@ def run(args) -> int:
                 notes["restored"] = True
             after = _try(bus.snapshot)
             bus.close()
+        if ahrs is not None:
+            _try(ahrs.stop)
         sys.stdout = tee.stream
         if cap is not None:
             cap.meta.update(
@@ -623,6 +1014,16 @@ def run(args) -> int:
                 breakaway=args.breakaway, creep_dps=args.creep_dps, max_dps=args.max_dps,
                 launch=args.launch, launch_ma=args.launch_ma, launch_span=args.launch_span,
                 launch_s=args.launch_s,
+                wiggle=args.wiggle, wiggle_amp=args.wiggle_amp,
+                wiggle_shape=args.wiggle_shape, wiggle_cycles=args.wiggle_cycles,
+                wiggle_dwell_s=args.wiggle_dwell_s, wiggle_hz=args.wiggle_hz,
+                wiggle_move_ma=args.wiggle_move_ma,
+                give=args.give, give_side=side, give_span=args.give_span,
+                give_peak_ma=args.give_peak_ma, give_step_ma=args.give_step_ma,
+                give_step_s=args.give_step_s, give_max_deg=args.give_max_deg,
+                max_tilt_deg=args.max_tilt_deg, give_ahrs=ahrs is not None,
+                give_heat_plan=heat["plan"],
+                give_heat_peak=heat["peak"] if (args.give or args.wiggle is not None) else None,
                 step=args.step, step_s=args.step_s,
                 cap_ma=args.cap_ma, gains={"p": args.p_gain, "d": args.d_gain},
                 git=git_state(ROOT), python=sys.version.split()[0],
@@ -631,10 +1032,13 @@ def run(args) -> int:
                 snapshot_after=None if after is _FAILED else after, shutdown=notes)
             out = new_capture_dir(Path(args.out), TEST, args.tag)
             cap.save(out)
+            if tilt_log["frame"]:
+                # AHRS orientation change from the start, by captured frame
+                np.savez(out / "ahrs.npz", **{k: np.asarray(v) for k, v in tilt_log.items()})
             sys.stdout = tee
             print(f"\nsaved -> {out.relative_to(ROOT) if out.is_relative_to(ROOT) else out}")
             try:
-                summarize(cap)
+                summarize(cap, out_dir=out)
             except Exception as e:              # noqa: BLE001 -- the capture is saved
                 print(f"\n(summary failed: {type(e).__name__}: {e}; the capture is intact)")
             sys.stdout = tee.stream
@@ -644,12 +1048,13 @@ def run(args) -> int:
 
 def main() -> int:
     if len(sys.argv) > 2 and sys.argv[1] == "summary":
-        summarize(Capture.load(sys.argv[2]))
+        summarize(Capture.load(sys.argv[2]), out_dir=Path(sys.argv[2]))
         return 0
     g = righting_gains()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", default=os.environ.get("AOW_DXL_PORT"))
+    # AOW_DXL_PORT (a bench adapter), else the bike's own (onboard.yaml dxl_port)
+    ap.add_argument("--port", default=os.environ.get("AOW_DXL_PORT") or _onboard().get("dxl_port"))
     ap.add_argument("--baud", type=int, default=3_000_000)
     ap.add_argument("--id", type=int, default=104)
     ap.add_argument("--stow-deg", type=float, default=180.0,
@@ -672,6 +1077,48 @@ def main() -> int:
     ap.add_argument("--launch-s", type=float, default=0.6, help="time per launch")
     ap.add_argument("--launch-margin", type=float, default=10.0,
                     help="overshoot allowed past the furthest launch goal before a stop")
+    ap.add_argument("--wiggle", type=float, default=None, metavar="DEG",
+                    help="instead of sweeping: park at crank DEG and wiggle +- "
+                         "--wiggle-amp about it, to watch what moves")
+    ap.add_argument("--wiggle-amp", type=float, nargs="+", default=[2.0, 4.0],
+                    help="wiggle amplitudes [crank deg], in order. At P 700 the crank "
+                         "sits ~1-3 deg short of each pose against the friction")
+    ap.add_argument("--wiggle-shape", choices=("step", "sine"), default="step",
+                    help="step: hold +A then -A (a still pose to look at); sine: smooth")
+    ap.add_argument("--wiggle-cycles", type=int, default=3)
+    ap.add_argument("--wiggle-dwell-s", type=float, default=1.5,
+                    help="step: how long each pose is held")
+    ap.add_argument("--wiggle-hz", type=float, default=0.5, help="sine: frequency")
+    ap.add_argument("--wiggle-move-ma", type=float, default=785.0,
+                    help="Goal Current for the ramps to the angle and back: the get-up's "
+                         "785, so the goal ramp sets the motion, not the cap (the wiggle "
+                         "itself runs at --cap-ma). Guarded live by the stall guard and "
+                         "the trip law")
+    ap.add_argument("--give", choices=("prop", "lie"), default=None,
+                    help="instead of sweeping: the crank's give with the bike propped or "
+                         "lying on --side, pushing UP only (see build_give_plan)")
+    ap.add_argument("--side", choices=("right", "left"), default=None,
+                    help="--give: the side propped up from / lying on")
+    ap.add_argument("--give-span", type=float, default=20.0,
+                    help="how far UP the goal is parked [crank deg]; ~31 mA/deg, so 20 "
+                         "keeps Goal Current the cap up to ~620 mA")
+    ap.add_argument("--give-peak-ma", type=float, default=400.0,
+                    help="top of the staircase. 261027-143131 held props at ~400-430 mA "
+                         "without moving; a lift from lying moved at ~400-460")
+    ap.add_argument("--give-step-ma", type=float, default=25.0)
+    ap.add_argument("--give-step-s", type=float, default=0.4)
+    ap.add_argument("--give-max-deg", type=float, default=8.0,
+                    help="stop if the crank goes this far up from its start")
+    ap.add_argument("--max-tilt-deg", type=float, default=2.0,
+                    help="stop if the AHRS orientation moves this far from the start")
+    ap.add_argument("--ahrs-port", default=_onboard().get("ahrs_port", "/dev/serial0"))
+    ap.add_argument("--no-ahrs", action="store_true",
+                    help="--give without the AHRS: no tilt log or tilt stop")
+    ap.add_argument("--heat-max", type=float, default=0.5,
+                    help="refuse a staircase whose worst case (every step stalled at its "
+                         "Goal Current) reaches this fraction of an overload trip")
+    ap.add_argument("--heat-stop", type=float, default=0.8,
+                    help="stop when the trip law, run on Present Current, reaches this")
     ap.add_argument("--step", action="store_true",
                     help="JUMP the goal instead of ramping it, as hw/ground.py does; "
                          "the current cap sets the speed")
@@ -686,14 +1133,20 @@ def main() -> int:
     ap.add_argument("--dwell-s", type=float, default=0.5)
     ap.add_argument("--cap-ma", type=float, default=150.0,
                     help="Goal Current cap. The bare servo moves at ~25 mA")
-    ap.add_argument("--lag-deg", type=float, default=6.0)
+    ap.add_argument("--lag-deg", type=float, default=None,
+                    help="stall: this far behind a moving goal and not moving "
+                         "(default 6; --wiggle 15, so its move can build the current to "
+                         "break free of a prop's end at P 700)")
     ap.add_argument("--lag-s", type=float, default=0.3)
     ap.add_argument("--stall-dps", type=float, default=3.0,
                     help="below this speed, lag > --lag-deg on a moving leg is a stall")
     ap.add_argument("--runaway-deg", type=float, default=20.0,
                     help="stop on this much lag anywhere, moving or not")
-    ap.add_argument("--p-gain", type=int, default=g["p"])
-    ap.add_argument("--d-gain", type=int, default=g["d"])
+    ap.add_argument("--p-gain", type=int, default=None,
+                    help="Position P Gain (default: the plant's, 700 = ~31 mA/deg). "
+                         "Stiffer oscillated on the bike: see the note by MA_PER_DEG_PER_P")
+    ap.add_argument("--d-gain", type=int, default=None,
+                    help="Position D Gain (default: the plant's, 1400)")
     ap.add_argument("--rate", type=float, default=200.0)
     ap.add_argument("--max-temp", type=int, default=45)
     ap.add_argument("--out", default=str(ROOT / "traces" / TEST))
@@ -702,7 +1155,16 @@ def main() -> int:
     ap.add_argument("--yes", action="store_true", help="skip the Enter prompt")
     ap.add_argument("--dry-run", action="store_true",
                     help="open the bus, print the schedule, never enable torque")
-    return run(ap.parse_args())
+    args = ap.parse_args()
+    base = {"p": g["p"], "d": g["d"]}
+    for k in ("p", "d"):
+        if getattr(args, f"{k}_gain") is None:
+            setattr(args, f"{k}_gain", base[k])
+    if args.lag_deg is None:
+        # --wiggle's move off a prop's end needs ~10-13 deg of lag at P 700
+        # to break free (261108-013838); 15 is ~470 mA, under --runaway-deg
+        args.lag_deg = 15.0 if args.wiggle is not None else 6.0
+    return run(args)
 
 
 if __name__ == "__main__":
