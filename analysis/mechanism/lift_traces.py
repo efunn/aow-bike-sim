@@ -20,8 +20,12 @@ lifting side, so both sides read lying ~+74 deg and propped ~+12.
 Present PWM in mode 5 is not the duty (status.md: ~2x the model at stall);
 it is drawn beside the sim's duty for its shape only.
 
-BALLAST_RUNS names the runs flown with the 72 g ballast, by name, because
-the Pi's clock names some runs for the wrong day.
+With the 72 g ballast: every run from 261107 on (the Pi's clock was synced for
+all of them, meta.json `clock`), plus BALLAST_RUNS, flown on 11-07 but named
+for 11-05 by an unsynced clock (47 h early). The other 261105 runs are 11-05's
+own (their clocks 3 and 28 min off), before the ballast. It once took
+BALLAST_RUNS alone, which counted 261107-162115, -162439 and -175827 (36
+lifts, pulled after the first figures) as before the ballast.
 
     python analysis/mechanism/lift_traces.py
 """
@@ -50,6 +54,11 @@ import linkage_friction_fit as F  # noqa: E402
 from aow_sim.build_model import load_params  # noqa: E402
 
 BALLAST_RUNS = {"261105-143426"}          # recorded 11-07, the ballast's first
+BALLAST_FROM = "261107"                    # every run named from this day on
+
+
+def has_ballast(name: str) -> bool:
+    return name in BALLAST_RUNS or name[:6] >= BALLAST_FROM
 PLOTS = ROOT / "analysis" / "mechanism" / "plots"
 T = np.arange(-0.3, 2.6, 0.01)            # s from the crank passing -20 deg
 STATES = ["engaged", "cut", "standby", "sit", "lying", "propped"]
@@ -98,7 +107,7 @@ def bike_lifts():
             tt = t[sl] - t0
             ch = F._charge(t[a:b], u, np.abs(cur[a:b]) / 1000.0)
             out.append(dict(
-                run=name, ballast=name in BALLAST_RUNS, side=int(side),
+                run=name, ballast=has_ballast(name), side=int(side),
                 ok=b < len(st) and STATES[st[b]] == "propped", temp=int(temp[a]),
                 volt=float(volt[a]), i2t60=float(i2t[a] - np.interp(t[a] - 60.0, t, i2t)),
                 charge=ch, t0=float(t0),
@@ -188,8 +197,8 @@ def _legend(fig, axes):
 
 
 def plot_traces(bike, sims, out, ok):
-    """`ok` True: the lifts that propped, before as median + IQR and with
-    the ballast one by one. False: every lift that did not prop, one by one
+    """`ok` True: the lifts that propped, before and with the ballast each
+    as median + IQR. False: every lift that did not prop, one by one
     (before grey, with the ballast orange), the sim's (propping) lifts for
     reference."""
     fig, axes = plt.subplots(len(ROWS), 2, figsize=(12, 14), sharex=True)
@@ -200,21 +209,29 @@ def plot_traces(bike, sims, out, ok):
         for row, (key, label) in enumerate(ROWS):
             ax = axes[row, col]
             if ok:
-                A = np.array([x[key] for x in pre])
-                with np.errstate(all="ignore"), warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    med = np.nanmedian(A, 0)
-                    lo, hi = np.nanpercentile(A, 25, 0), np.nanpercentile(A, 75, 0)
-                ax.fill_between(T, lo, hi, color=GREY, alpha=0.25, lw=0)
-                ax.plot(T, med, color=GREY, lw=2, label="bike before the ballast: median, band 25-75 %")
+                # both groups as median + IQR now that the ballast has 16-21
+                # propped lifts a side (four runs, 11-07)
+                for grp, colour, lab in ((pre, GREY, "before the ballast"),
+                                         (new, ORANGE, "with the ballast")):
+                    if not grp:
+                        continue
+                    A = np.array([x[key] for x in grp])
+                    with np.errstate(all="ignore"), warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        med = np.nanmedian(A, 0)
+                        lo, hi = np.nanpercentile(A, 25, 0), np.nanpercentile(A, 75, 0)
+                    ax.fill_between(T, lo, hi, color=colour, alpha=0.22, lw=0)
+                    ax.plot(T, med, color=colour, lw=2,
+                            label=f"bike {lab}: median, band 25-75 %")
             else:
                 for i, x in enumerate(pre):
                     ax.plot(T, x[key], color=GREY, alpha=0.35, lw=0.8,
                             label="bike before the ballast, one line a lift" if i == 0 else None)
-            for i, x in enumerate(new):
-                shade = 0.35 + 0.65 * (i / max(len(new) - 1, 1))
-                ax.plot(T, x[key], color=ORANGE, alpha=shade, lw=1.3,
-                        label="bike with the ballast, light to dark in run order" if i == 0 else None)
+                for i, x in enumerate(new):
+                    shade = 0.35 + 0.65 * (i / max(len(new) - 1, 1))
+                    ax.plot(T, x[key], color=ORANGE, alpha=shade, lw=1.3,
+                            label="bike with the ballast, light to dark in run order"
+                            if i == 0 else None)
             ax.plot(T, sims["before"][side][key], color=BLUE, lw=1.6, ls=":",
                     label="sim before the ballast" + ("" if ok else " (propped, for reference)"))
             ax.plot(T, sims["ballast"][side][key], color=BLUE, lw=1.8,
@@ -281,9 +298,9 @@ def heat_tables(bike):
               f"   >={q[1]:.2f} {rate([x for x in xs if x['i2t60'] >= q[1]])}")
         print(f"  {nm} supply     <11.7 V {rate([x for x in xs if x['volt'] < 11.7])}"
               f"   >=11.7 {rate([x for x in xs if x['volt'] >= 11.7])}")
-    print("\nTHE BALLAST RUN, in order")
-    for x in sorted((x for x in bike if x["ballast"]), key=lambda x: x["t0"]):
-        print(f"  {'R' if x['side'] > 0 else 'L'} {x['t0']:6.1f} s  {x['temp']} C  I2t60 {x['i2t60']:4.2f} A2s  "
+    print("\nTHE BALLAST RUNS, each in order (s into the run)")
+    for x in sorted((x for x in bike if x["ballast"]), key=lambda x: (x["run"], x["t0"])):
+        print(f"  {x['run']}  {'R' if x['side'] > 0 else 'L'} {x['t0']:6.1f} s  {x['temp']} C  I2t60 {x['i2t60']:4.2f} A2s  "
               f"{x['volt']:.1f} V  " + ("propped " if x["ok"] else "FAILED  ")
               + ("" if x["charge"] is None else f"{1000 * x['charge'][1]:.0f} mA s"))
 
