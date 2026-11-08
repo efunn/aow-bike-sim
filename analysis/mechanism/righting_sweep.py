@@ -43,6 +43,16 @@ LOOK at what moves (see build_wiggle_plan):
     python analysis/mechanism/righting_sweep.py --wiggle -15 --wiggle-amp 1 2 3 \
         --cap-ma 300 --tag wiggle_m15 --note "bike in the air"
 
+--wiggle here wiggles about wherever the crank IS when you press Enter: set the
+mechanism by hand (torque is off until then), press Enter, and it reads Present
+Position, takes that as the centre and holds it, with no move before or after.
+Two poses compared this way have no approach direction between them (the
+11-08 -66 / +66 pair came in from opposite sides). The crank is left torqued
+at the centre at the end, then released.
+
+    python analysis/mechanism/righting_sweep.py --wiggle here --tag wiggle_here_m66 \
+        --note "set by hand to ~-66, from stow"
+
 THE SCHEDULE, all in crank degrees from --stow-deg (servo degrees: the servo
 drives the crank directly, gear ratio 1):
 
@@ -353,6 +363,11 @@ def build_give_plan(args, start: float, stow: float, side: int) -> list:
     return segs
 
 
+def _wiggle_arg(v: str):
+    """--wiggle: a crank angle [deg], or `here`."""
+    return "here" if v.strip().lower() == "here" else float(v)
+
+
 def build_wiggle_plan(args, start: float, stow: float) -> list:
     """Park at --wiggle DEG, then wiggle the goal +-A about it, to WATCH.
 
@@ -368,15 +383,19 @@ def build_wiggle_plan(args, start: float, stow: float) -> list:
     """
     v = math.radians(args.speed_dps)
     hold = lambda g: (lambda t, s: {i: g for i in s} if s is not None else None)
-    at = stow + math.radians(args.wiggle)
+    here = getattr(args, "wiggle_here", False)
+    # --wiggle here: the centre IS where it was set by hand (start), and the
+    # plan never moves the crank anywhere else
+    at = start if here else stow + math.radians(args.wiggle)
     segs = [Segment("hold where it is", 1.0, hold(start),
                     enter=lambda bus: (set_current(args.cap_ma)(bus), bus.torque(True)),
                     info={"kind": "hold"})]
-    # the moves get their own current: from a prop's end of stroke the left
-    # would not start back at 300 mA in the air (261108-013838)
-    cmd, T = ramp(start, at, v)
-    segs.append(Segment(f"to {args.wiggle:+g} at {args.wiggle_move_ma:g} mA", T + 0.3, cmd,
-                        enter=set_current(args.wiggle_move_ma), info={"kind": "move"}))
+    if not here:
+        # the moves get their own current: from a prop's end of stroke the left
+        # would not start back at 300 mA in the air (261108-013838)
+        cmd, T = ramp(start, at, v)
+        segs.append(Segment(f"to {args.wiggle:+g} at {args.wiggle_move_ma:g} mA", T + 0.3, cmd,
+                            enter=set_current(args.wiggle_move_ma), info={"kind": "move"}))
     segs.append(Segment(f"rest at {args.wiggle:+g}, {args.cap_ma:g} mA", args.rest_s, hold(at),
                         enter=set_current(args.cap_ma),
                         info={"kind": "wiggle_rest", "amp_deg": 0.0}))
@@ -399,6 +418,9 @@ def build_wiggle_plan(args, start: float, stow: float) -> list:
                                 info={"kind": "wiggle_sine", "amp_deg": A}))
         segs.append(Segment(f"back to {args.wiggle:+g}", 0.5, hold(at),
                             info={"kind": "wiggle_rest", "amp_deg": A}))
+    if here:
+        segs.append(Segment("hold", 0.5, hold(at), info={"kind": "hold"}))
+        return segs
     cmd, T = ramp(at, start, v)
     segs.append(Segment("back to the start", T + 0.3, cmd,
                         enter=set_current(args.wiggle_move_ma), info={"kind": "move"}))
@@ -792,6 +814,26 @@ def run(args) -> int:
         start = bus.read(args.id, "Present Position")
         stow = math.radians(args.stow_deg)
         bus.write_frame({args.id: start})     # torque-on drives to RAM's last goal
+        def plan_wiggle(start):
+            """The wiggle's segments and reach from `start`; for --wiggle here
+            the centre is `start` itself."""
+            if args.wiggle_here:
+                args.wiggle = round(math.degrees(start - stow), 2)
+            segs = build_wiggle_plan(args, start, stow)
+            reach = max(abs(args.wiggle) + max(args.wiggle_amp), abs(math.degrees(start - stow)))
+            # The wiggle can sit against a load by design: refuse a --cap-ma
+            # whose whole wiggle, stalled, would trip. The moves at
+            # --wiggle-move-ma are guarded live instead -- the stall guard
+            # (0.3 s stuck) and the trip law on Present Current (--heat-stop).
+            wig = sum(s.seconds for s in segs if s.info.get("kind", "").startswith("wiggle"))
+            worst = max(0.0, args.cap_ma / 1000 - TRIP_FLOOR_A) / TRIP_CHARGE_AS * wig
+            heat["plan"] = worst
+            if worst > args.heat_max:
+                raise SystemExit(f"--cap-ma {args.cap_ma:g} held stalled through the wiggle "
+                                 f"could reach {worst:.2f} of an overload trip (limit "
+                                 f"--heat-max {args.heat_max:g}): keep it under ~410 mA")
+            return segs, reach
+
         if args.give:
             # the pose must match: propped, the crank is well up on its side;
             # lying, it rests past centre the OTHER way (right: ~ -24)
@@ -812,19 +854,7 @@ def run(args) -> int:
                     f"every step stalled at its Goal Current (limit --heat-max "
                     f"{args.heat_max:g}): lower --give-peak-ma or --give-step-s")
         elif args.wiggle is not None:
-            segs = build_wiggle_plan(args, start, stow)
-            reach = max(abs(args.wiggle) + max(args.wiggle_amp), abs(math.degrees(start - stow)))
-            # The wiggle can sit against a load by design: refuse a --cap-ma
-            # whose whole wiggle, stalled, would trip. The moves at
-            # --wiggle-move-ma are guarded live instead -- the stall guard
-            # (0.3 s stuck) and the trip law on Present Current (--heat-stop).
-            wig = sum(s.seconds for s in segs if s.info.get("kind", "").startswith("wiggle"))
-            worst = max(0.0, args.cap_ma / 1000 - TRIP_FLOOR_A) / TRIP_CHARGE_AS * wig
-            heat["plan"] = worst
-            if worst > args.heat_max:
-                raise SystemExit(f"--cap-ma {args.cap_ma:g} held stalled through the wiggle "
-                                 f"could reach {worst:.2f} of an overload trip (limit "
-                                 f"--heat-max {args.heat_max:g}): keep it under ~410 mA")
+            segs, reach = plan_wiggle(start)
             if args.wiggle_move_ma > orig[args.id]["Current Limit"]:
                 raise SystemExit(f"--wiggle-move-ma {args.wiggle_move_ma} > Current Limit")
         elif args.launch:
@@ -842,7 +872,7 @@ def run(args) -> int:
               f"cap {args.cap_ma:g} mA, {args.speed_dps:g} deg/s.\n"
               f"  now at servo {math.degrees(start):.1f} deg = crank "
               f"{math.degrees(start - stow):+.1f} from stow {args.stow_deg:g}; "
-              f"{('wiggle about ' + format(args.wiggle, '+g') + ' by +-' + str(args.wiggle_amp)) if args.wiggle is not None else 'give, ' + args.give + ' on the ' + args.side + f', 0 -> {args.give_peak_ma:g} -> 0 mA, goal +{args.give_span:g}' if args.give else 'launches from +-' + str(args.launch) + f' at {args.launch_ma:g} mA' if args.launch else 'breakaway at ' + str(args.breakaway) if args.breakaway else 'amplitudes ' + str(args.amps)}"
+              f"{('wiggle about where the crank is at the Enter by +-' + str(args.wiggle_amp)) if args.wiggle_here else ('wiggle about ' + format(args.wiggle, '+g') + ' by +-' + str(args.wiggle_amp)) if args.wiggle is not None else 'give, ' + args.give + ' on the ' + args.side + f', 0 -> {args.give_peak_ma:g} -> 0 mA, goal +{args.give_span:g}' if args.give else 'launches from +-' + str(args.launch) + f' at {args.launch_ma:g} mA' if args.launch else 'breakaway at ' + str(args.breakaway) if args.breakaway else 'amplitudes ' + str(args.amps)}"
               f" deg; reach +-{reach:g}; {len(segs)} segments, {total:.0f} s; "
               f"speed guard {args.max_dps:g} deg/s.")
         if args.give:
@@ -866,12 +896,22 @@ def run(args) -> int:
             heat["q0"] = np.asarray(ahrs.latest(0.1).quat, float)
         if not args.yes:
             try:
-                input(f"\nTorque ON for id {args.id}: the crank moves within "
-                      f"+-{reach:g} deg of stow. Enter to start (Ctrl-C aborts): ")
+                input(f"\nTorque ON for id {args.id}: " + (
+                      f"set the crank by hand now; it holds where it is at the Enter and "
+                      f"moves +-{max(args.wiggle_amp):g} deg about it" if args.wiggle_here else
+                      f"the crank moves within +-{reach:g} deg of stow") +
+                      ". Enter to start (Ctrl-C aborts): ")
             except EOFError:
                 raise SystemExit("no terminal to confirm on; pass --yes") from None
             if ahrs is not None:           # the reference is the pose at the go
                 heat["q0"] = np.asarray(ahrs.latest(0.1).quat, float)
+        if args.wiggle_here:
+            # set by hand while the prompt waited: the centre is where it is NOW
+            start = bus.read(args.id, "Present Position")
+            bus.write_frame({args.id: start})
+            segs, reach = plan_wiggle(start)
+            print(f"  wiggle here: centre crank {args.wiggle:+.2f} (servo "
+                  f"{math.degrees(start):.2f}), read at the Enter")
         bus.bus_watchdog(WATCHDOG_MS)
         torque_on = True
 
@@ -1017,7 +1057,7 @@ def run(args) -> int:
                 wiggle=args.wiggle, wiggle_amp=args.wiggle_amp,
                 wiggle_shape=args.wiggle_shape, wiggle_cycles=args.wiggle_cycles,
                 wiggle_dwell_s=args.wiggle_dwell_s, wiggle_hz=args.wiggle_hz,
-                wiggle_move_ma=args.wiggle_move_ma,
+                wiggle_move_ma=args.wiggle_move_ma, wiggle_here=args.wiggle_here,
                 give=args.give, give_side=side, give_span=args.give_span,
                 give_peak_ma=args.give_peak_ma, give_step_ma=args.give_step_ma,
                 give_step_s=args.give_step_s, give_max_deg=args.give_max_deg,
@@ -1077,9 +1117,10 @@ def main() -> int:
     ap.add_argument("--launch-s", type=float, default=0.6, help="time per launch")
     ap.add_argument("--launch-margin", type=float, default=10.0,
                     help="overshoot allowed past the furthest launch goal before a stop")
-    ap.add_argument("--wiggle", type=float, default=None, metavar="DEG",
+    ap.add_argument("--wiggle", type=_wiggle_arg, default=None, metavar="DEG|here",
                     help="instead of sweeping: park at crank DEG and wiggle +- "
-                         "--wiggle-amp about it, to watch what moves")
+                         "--wiggle-amp about it, to watch what moves. `here`: about "
+                         "wherever the crank is at the Enter (set it by hand), no moves")
     ap.add_argument("--wiggle-amp", type=float, nargs="+", default=[2.0, 4.0],
                     help="wiggle amplitudes [crank deg], in order. At P 700 the crank "
                          "sits ~1-3 deg short of each pose against the friction")
@@ -1156,6 +1197,9 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="open the bus, print the schedule, never enable torque")
     args = ap.parse_args()
+    args.wiggle_here = args.wiggle == "here"
+    if args.wiggle_here:
+        args.wiggle = 0.0                    # replaced by the crank's angle at setup
     base = {"p": g["p"], "d": g["d"]}
     for k in ("p", "d"):
         if getattr(args, f"{k}_gain") is None:
