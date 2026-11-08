@@ -432,6 +432,12 @@ class CurrentBasedPositionServo:
                     coupler_preload_nm=mod.get("coupler_preload_nm"),
                     wing_mu_scale=mod.get("wing_mu_scale"),
                     wing_preload_nm=mod.get("wing_preload_nm"))
+        if "crank_play_deg" in mod or "crank_spring_nm_per_rad" in mod:
+            # study knobs, absent from bike_params (see set_give)
+            srv.set_give(float(mod.get("crank_play_deg", 0.0)),
+                         float(mod.get("crank_spring_nm_per_rad", 0.0)),
+                         float(mod.get("crank_give_band_nm", 0.0)),
+                         float(mod.get("crank_give_band_frac", 0.0)))
         if torque_nm is not None and at_output:
             srv.set_goal_current(srv.counts_for_output(torque_nm))
         return srv
@@ -483,8 +489,65 @@ class CurrentBasedPositionServo:
         self.supply = 1.0
         self.nc = max(0, round(COMMAND_DELAY_S / float(model.opt.timestep))) + 1
         self.torque = self.current = self.duty = 0.0
+        #: the crank's give (set_give): None is a rigid horn, as fitted
+        self.give = None
+        #: the horn's angle less the crank's [rad]: what Present Position
+        #: reads above the crank, 0 with a rigid horn
+        self.slack = 0.0
         self._ready = False
         self._t_last = -math.inf
+
+    def set_give(self, play_deg: float, spring_nm_per_rad: float, band_nm: float,
+                 band_frac: float = 0.0) -> None:
+        """THE CRANK'S GIVE, a study knob (2026-11-08). Not in bike_params.
+
+        Measured on the bike (analysis/mechanism/righting_sweep.py --give,
+        traces/righting_sweep/261108-*_give_*): with the bike held still,
+        Present Position winds out ~1.8 deg on the first 25 mA lying (~0.2-0.7
+        propped), then ~0.3-0.7 deg per 100 mA, and on the way down stays put
+        until ~100-150 mA before springing part way back.
+
+        THE 1.8 DEG IS NOT PLAY. In the air (--wiggle, 261108-0154/0156, plant
+        gains) every reversal needs the current to build before the crank
+        moves -- no free travel -- and the user sees crank and wings move on
+        every command; the pin holes are reamed to a slip fit and nothing
+        feels loose. Lying, the 1.8 deg went in ~0.1 s at ~40 deg/s on 25 mA
+        (PWM 0.06), which cannot push the crank through the 40-90 mA it takes
+        in the air: stored deflection let go, the bike's weight holding the
+        flex wound and friction locking it. So a dead zone (`play_deg`) is a
+        stand-in for that release, not a gap; the spring and band are the
+        better-founded part. Keep `play_deg` 0 unless reproducing the lying
+        start on purpose.
+
+        Modelled as a massless HORN (the servo's side, which Present Position
+        reads) joined to the crank by a dead zone `play_deg` wide (full width,
+        crank deg) and, past it, a spring `spring_nm_per_rad`; the horn moves
+        only when the motor's torque and the spring's differ by more than
+        `band_nm` + `band_frac` x the spring's torque -- friction that grows
+        with the load, as a pin's does: through the play (no load) the horn
+        moves on almost nothing, as the bike's did on 25 mA, while at 400 mA
+        it held until the current fell by ~250-300. The motor drives the
+        horn, the spring the crank; the P/D
+        loop sees the horn. The gearbox and linkage friction stay on the
+        crank's dof, so inside the play the horn moves with no gearbox
+        friction -- an approximation. A spring of 0 with play > 0 is pure play
+        ending in a rigid stop (`HARD_STOP` N m/rad)."""
+        play = math.radians(max(0.0, play_deg))
+        k = float(spring_nm_per_rad) if spring_nm_per_rad > 0 else self.HARD_STOP
+        self.give = (0.5 * play, k, max(0.0, float(band_nm)), min(0.9, max(0.0, float(band_frac))))
+        self.slack = 0.0
+
+    #: the end of the play when no spring is given [N m/rad]
+    HARD_STOP = 500.0
+
+    def _spring(self, s: float) -> float:
+        half, k = self.give[:2]
+        if s > half:
+            return k * (s - half)
+        if s < -half:
+            return k * (s + half)
+        return 0.0
+
 
     def counts_for(self, torque_nm: float) -> int:
         """Goal Current [counts] whose stall motor torque is `torque_nm`."""
@@ -525,6 +588,7 @@ class CurrentBasedPositionServo:
         self._cmd = [self._goal_now(data)] * self.nc
         self._k = 0
         self.torque = self.current = self.duty = 0.0
+        self.slack = 0.0
         data.qfrc_applied[self.dadr] = 0.0
         self.friction.reset(data)
         self._t_last = float(data.time)
@@ -544,18 +608,50 @@ class CurrentBasedPositionServo:
         i_cmd = self.kp_a * (goal - q) - self.kd_a * w
         i_cmd = max(-i_goal, min(i_goal, i_cmd))
         tau, u, sat = self.torque_for(i_cmd, w)
+        tau_motor = tau
+        if self.give is not None:
+            # the motor turns the horn; the crank gets the spring's torque
+            i_cmd, tau, u, sat, tau_motor = self._give_step(goal, q, w, i_goal)
         self.duty = u
         self.torque = tau
         # What Present Current reads: the demand, exactly, while the loop can
         # meet it (at stall the bench read the goal to the mA, below the edge
         # too); what the torque implies once the duty saturates.
         self.current = (i_cmd if not sat else
-                        math.copysign(self.law.current(abs(tau) / self.strength), tau)
-                        if tau else 0.0)
+                        math.copysign(self.law.current(abs(tau_motor) / self.strength), tau_motor)
+                        if tau_motor else 0.0)
         if self.linkage_load is not None:
             self.friction.extra = self.linkage_load(data)
         self.friction.update(data, tau)
         data.qfrc_applied[self.dadr] = tau
+
+    def _give_step(self, goal: float, q: float, w: float, i_goal: float):
+        """set_give's horn, one step: settle the slack against the motor, and
+        return (i_cmd, the torque that reaches the CRANK, duty, saturated,
+        the motor's torque).
+        Massless, so it moves to where the spring answers the motor to within
+        the band -- a few fixed-point passes, the P loop's pull on the horn
+        (~1 N m/rad) being well under any spring here."""
+        half, k, band0, frac = self.give
+        s = self.slack
+        for _ in range(6):
+            i_cmd = self.kp_a * (goal - (q + s)) - self.kd_a * w
+            i_cmd = max(-i_goal, min(i_goal, i_cmd))
+            tau_m, u, sat = self.torque_for(i_cmd, w)
+            sp = self._spring(s)
+            diff = tau_m - sp
+            if abs(diff) <= band0 + frac * abs(sp):
+                break
+            # moving, the band grows with the spring torque it ends at:
+            # spring = tau_m - sign(diff) (band0 + frac |spring|)
+            d_ = math.copysign(1.0, diff)
+            a_ = tau_m - d_ * band0
+            target = a_ / (1.0 + d_ * frac * math.copysign(1.0, a_))
+            s = (half + target / k if target > 0.0
+                 else -half + target / k if target < 0.0
+                 else max(-half, min(half, s)))
+        self.slack = s
+        return i_cmd, self._spring(s), u, sat, tau_m
 
     def _goal_now(self, data) -> float:
         return self.goal if self.aid is None else float(data.ctrl[self.aid])

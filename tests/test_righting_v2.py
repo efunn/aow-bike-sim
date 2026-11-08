@@ -428,3 +428,29 @@ def test_the_per_side_linkage_knobs_load_one_side_and_default_off():
     assert ll.ratios[0][2] > 0.1
     assert LinkageLoad(*args, wing_preload_nm={"right": 0.0})(d) == base
     assert LinkageLoad(*args, coupler_mu_scale={"left": 3.0})(d) >= base
+
+
+def test_the_crank_give_knobs_default_off_and_loop_like_the_bench():
+    """righting_servo's crank give (set_give, 11-08 study knobs): absent from
+    bike_params, so attach builds a rigid horn. Set, a horn pushed against a
+    crank that cannot move runs through the play on little torque, winds the
+    spring as Goal Current climbs, and on the way down HOLDS its angle until
+    the current has fallen well below the peak -- the --give bench loop."""
+    from aow_sim.righting_servo import CurrentBasedPositionServo
+    p = load_params()
+    m = build_model(p, variant="full")
+    d = mujoco.MjData(m)
+    srv = CurrentBasedPositionServo.attach(m, p)
+    assert srv.give is None and "crank_play_deg" not in p["righting"]["module"]
+    srv.set_give(2.0, 7.0, 0.003, 0.5)
+    half = np.radians(1.0)
+    srv.slack = -half                         # the play left on the in side
+    goal = np.radians(20.0)                   # parked up; the crank held at 0
+    hold = lambda ma: (srv._give_step(goal, 0.0, 0.0, ma / 1000.0), srv.slack)[1]
+    up = [hold(ma) for ma in (100, 200, 300, 400)]
+    assert up[0] > half                       # through the play at 100 mA
+    assert all(b > a for a, b in zip(up, up[1:]))      # then the spring winds
+    top = up[-1]
+    assert hold(300) == pytest.approx(top) and hold(200) == pytest.approx(top)
+    assert hold(0) < top                      # it lets go only near 0
+    assert hold(0) >= half - 1e-12            # and stays out of the play
