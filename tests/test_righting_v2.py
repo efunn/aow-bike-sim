@@ -171,14 +171,15 @@ def test_the_bare_actuator_holds_without_ringing(params):
 
 def test_the_module_adds_its_listed_mass(params, model):
     """Every gram of the module is a GUESS from CAD volumes; this pins that
-    the builder puts exactly the listed ones on the bike (and its servo, and
-    the rollcage's two rings)."""
+    the builder puts exactly the listed ones on the bike (and its servo, its
+    ballast, and the rollcage's two rings)."""
     mod, rg = params["righting"]["module"], params["righting"]
     bare = build_model(params, swing_linkage=False)
     listed = (mod["crank"]["mass"] + 2 * mod["coupler"]["mass"]
               + 2 * (wing_hub_mass(mod) + mod["blade"]["mass"])
               + sum(f["mass"] for f in mod["fixed"].values())
               + params["servos"][mod["servo"]]["mass"]
+              + mod.get("ballast", {}).get("mass", 0.0)
               + sum(rg["rollcage"]["mass"].values()))
     assert model.body_subtreemass[1] - bare.body_subtreemass[1] == \
         pytest.approx(listed, abs=1e-9)
@@ -374,21 +375,31 @@ def test_a_swapped_blade_is_another_plant(params):
 
 def test_a_zero_gram_ballast_is_not_fitted(params):
     """righting.module.ballast at 0 g: no geom, and the same plant_digest as
-    no entry at all, so the bundle and every export still match. Weighed in,
-    it is a heavier bike under the servo case."""
+    no entry at all. Fitted (72 g since 11-07), it is a heavier bike under
+    the servo case."""
     import copy
-    assert params["righting"]["module"]["ballast"]["mass"] == 0.0
+    unfit = copy.deepcopy(params)
+    unfit["righting"]["module"]["ballast"]["mass"] = 0.0
     bare = copy.deepcopy(params)
     del bare["righting"]["module"]["ballast"]
-    assert plant_digest(params) == plant_digest(bare)
-    m0 = build_model(params, variant="full")
+    assert plant_digest(unfit) == plant_digest(bare) != plant_digest(params)
+    m0 = build_model(unfit, variant="full")
     with pytest.raises(KeyError):
         m0.geom("righting_ballast")
-    lead = copy.deepcopy(params)
-    lead["righting"]["module"]["ballast"]["mass"] = 0.030
-    assert plant_digest(lead) != plant_digest(params)
-    m1 = build_model(lead, variant="full")
-    assert sum(m1.body_mass) == pytest.approx(sum(m0.body_mass) + 0.030)
+    m1 = build_model(params, variant="full")
+    ballast = params["righting"]["module"]["ballast"]["mass"]
+    assert ballast == pytest.approx(0.072)
+    assert sum(m1.body_mass) == pytest.approx(sum(m0.body_mass) + ballast)
     d0, d1 = mujoco.MjData(m0), mujoco.MjData(m1)
     mujoco.mj_forward(m0, d0), mujoco.mj_forward(m1, d1)
     assert d1.subtree_com[1][2] < d0.subtree_com[1][2]      # lower: under the case
+
+
+def test_the_ballast_sits_where_the_cad_puts_it(params):
+    """The module-frame `at` is the user's CAD centre, 11-07: 78.3 mm ahead
+    of the rear axle, 20.259 mm below it, centred across."""
+    m = build_model(params, variant="full")
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    rel = d.geom("righting_ballast").xpos - d.body("chassis").xpos
+    assert rel * 1000 == pytest.approx([78.3, 0.0, -20.259], abs=0.01)

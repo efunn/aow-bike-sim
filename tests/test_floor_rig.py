@@ -152,13 +152,19 @@ def test_skids_stay_on_the_roll_member_when_the_bike_wheelies():
     from aow_sim.drivetrain_model import DrivetrainSim
     drive = DrivetrainSim.attach(m, p)   # the drives only move with it
     d.ctrl[[m.actuator("drive_a").id, m.actuator("drive_b").id]] = 5.0
+    # "It did wheelie" is the run's PEAK pitch: since 11-07 the hub frame's
+    # rims (omni_wheel.hub.frame_contact) catch the floor as the wheelie rolls
+    # the bike to ~41 deg, and it drops back by the end (-20.6 deg at 0.68 s,
+    # -1.6 at 1 s). The skids are checked at every step, not only the last.
+    peak = 0.0
     for _ in range(int(1.0 / m.opt.timestep)):
         if drive is not None:
             drive.pre_step(d)
         mujoco.mj_step(m, d)
-    assert abs(np.degrees(d.joint("rig_pitch").qpos[0])) > 10.0   # it did wheelie
-    for g, b in zip(gs, before):
-        assert np.linalg.norm(local(g) - b) < 1e-6
+        peak = max(peak, abs(np.degrees(d.joint("rig_pitch").qpos[0])))
+        for g, b in zip(gs, before):
+            assert np.linalg.norm(local(g) - b) < 1e-6
+    assert peak > 10.0   # it did wheelie
 
 
 def test_link_masses_friction_and_damping_reach_the_model():

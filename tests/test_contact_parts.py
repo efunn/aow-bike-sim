@@ -209,8 +209,16 @@ def test_the_split_did_not_move_the_plant_digest():
                           friction re-converted with it (0.051 + 0.0147 ->
                           0.0554 + 0.0137) and its pin-load term
                           (linkage_load_mu 0.22, journal / pin radii)
+        85c710436332732e  2026-11-07  righting.module.ballast fitted, 72 g
+                          (CAD y 78.3, z -20.259 from the rear axle) and
+                          fixed.upper_case weighed 12 g, out of the printed
+                          scale, at the hand-edited part's CAD centroid:
+                          1003 -> 1080 g, CoM 108.4 -> 102.9 mm up
+        3fcb5c914b90f460  2026-11-07  omni_wheel.hub.frame_contact: the hub
+                          frame's two printed rims (torus dia 78, tube 6,
+                          at +-13.5 mm) a righting contact, jointed build
     """
-    assert plant_digest(load_params()) == "50167a80282fff2e"
+    assert plant_digest(load_params()) == "3fcb5c914b90f460"
 
 
 def test_every_part_gets_priority_so_it_dictates_its_contact():

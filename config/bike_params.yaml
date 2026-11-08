@@ -110,6 +110,15 @@ omni_wheel:
     mass: {value: 0.07563, source: measured}
     body_radius: 0.038      # inertia/visual cylinder (non-contact)
     body_width: 0.020
+    # The frame's two printed rims, one each side of the rollers' mid-plane:
+    # a 33 mm wide frame whose rims run from dia 72 to 84, i.e. a torus of
+    # tube dia 6 on a dia 78 circle at x +-13.5 mm (user, 11-07, from the
+    # CAD). A righting contact in the jointed build: lying, the bike's left
+    # seems to touch it first as it rises off its cage (user, filmed).
+    frame_contact:
+      torus_radius: {value: 0.039, source: design}
+      tube_radius: {value: 0.003, source: design}
+      offset: {value: 0.0135, source: design}
   ring:
     mass: {value: 0.00457, source: measured}      # ring gear 1 only (input-A side gear)
     body_radius: 0.030
@@ -781,24 +790,35 @@ righting:
       bulkhead: {mass: {value: 0.0054, source: estimate}, at: [0.0, 22.6, 18.5], size: [0.01, 0.0247, 0.0588]}
       bridge: {mass: {value: 0.0066, source: estimate}, at: [0.0, 53.6, 0.0], size: [0.047, 0.0344, 0.01]}
       lower_case: {mass: {value: 0.0116, source: estimate}, at: [0.0, 20.0, -24.7], size: [0.0307, 0.0247, 0.0588]}
-      upper_case: {mass: {value: 0.0078, source: estimate}, at: [0.0, 19.0, -51.2], size: [0.0223, 0.0281, 0.051]}
+      # upper_case WEIGHED 12 g (user, 11-07), the reprint that extends down to
+      # hold the ballast; was 7.8 g by CAD volume. `at`/`size` from one eval of
+      # aow-bike-whole-v2's hand-edited `upper case` (11-07; scratch, not kept):
+      # centroid y 73.30, z -3.28 from the rear axle, tight box 35.0 x 28.1 x
+      # 66.6 mm, 17.26 cm3. Was [0, 19.0, -51.2], 22.3 x 28.1 x 51.0.
+      upper_case: {mass: {value: 0.012, source: measured}, at: [0.0, 6.72, -47.2], size: [0.0350, 0.0281, 0.0666]}
       wing_rod: {mass: {value: 0.0104, source: estimate}, at: [0.0, 0.0, 0.0], size: [0.003, 0.047], type: cylinder}
     # The crank's XC330 case (its mass from servos.xc330_t181). `at` in the
     # module frame (mm); `size` in the chassis frame, shaft forward.
     servo_case:
       at: [0.0, 17.6, -44.2]
       size: [0.023, 0.020, 0.034]
-    # LEAD BALLAST (6 mm lead), hung under that case (user, 11-03). In the
-    # sim (the 1157 g model, before the weighing), 30 g here lowers the CoM enough to help BOTH get-ups (least Goal
-    # Current to get up 580 -> 560, slow-ramp peak 0.498 -> 0.473 N m), and
-    # each mm of CoM moved sideways shifts ~10 mA between the sides' lifts
-    # (scratch study, 11-03): `out` toward the right (+) evens a heavy left.
-    # mass 0 = not fitted: no geom, and plant_digest leaves a 0 g ballast
-    # out, so the bike is unchanged until it is weighed and placed.
+    # LEAD BALLAST, FITTED 11-07 (user): six 0.25 in lead rods, each a little
+    # under 35 mm long, lying fore-aft under the servo case in a 3 x 2 grid
+    # (across -7.25 / 0 / +7.25 mm, up +/-3.625 mm), 72 g weighed together
+    # without the case. Centred in the CAD (origin the rear axle, y fore, z
+    # up) at y 78.3, z -20.259, across 0 -> the module frame [out, up from
+    # the rod, fore] by the rod 10.0 mm under the axle and station_x 120.5.
+    # One box with the six rods' second moments (rod radius included): across
+    # sqrt(12 x 37.6 mm2) = 21.2, up sqrt(12 x 15.7) = 13.7, fore their length.
+    # Before the fit (the 1157 g model), 30 g here helped both get-ups (least
+    # Goal Current 580 -> 560, slow-ramp peak 0.498 -> 0.473 N m), and each mm
+    # of CoM moved sideways shifts ~10 mA between the sides' lifts (scratch
+    # study, 11-03). mass 0 = not fitted: no geom, and plant_digest leaves a
+    # 0 g ballast out.
     ballast:
-      mass: {value: 0.0, source: design}
-      at: [0.0, -2.4, -44.2]      # [out, up from the rod, fore] mm: touching the case's underside
-      size: [0.030, 0.018, 0.006]   # chassis frame [fore, across, up]
+      mass: {value: 0.072, source: measured}
+      at: [0.0, -10.259, -42.2]   # [out, up from the rod, fore] mm: CAD y 78.3, z -20.259
+      size: [0.035, 0.0212, 0.0137]   # chassis frame [fore, across, up]; inertia-equivalent box
     # The crank servo; the four-bar's own `limits.torque_nm` caps it
     # (build_model._add_swing_linkage).
     servo: xc330_t181

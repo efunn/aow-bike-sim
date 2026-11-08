@@ -316,8 +316,10 @@ PRINTED_PARTS = tuple(
         "drive_chainstay_right", "drive_pulley_left", "drive_pulley_right",
         "steer_case_lower", "steer_case_upper", "pi_carrier", "power_holder")]
     + [("righting", "module", k, "mass") for k in ("crank", "coupler", "wing_hub")]
+    # upper_case left out since it was weighed (12 g, 11-07): a scale fitted
+    # to estimates must not move a measured mass.
     + [("righting", "module", "fixed", k, "mass") for k in (
-        "bulkhead", "bridge", "lower_case", "upper_case")])
+        "bulkhead", "bridge", "lower_case")])
 
 
 def wing_hub_mass(mod: dict) -> float:

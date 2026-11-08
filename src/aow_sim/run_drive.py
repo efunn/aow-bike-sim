@@ -45,7 +45,7 @@ import numpy as np
 import yaml
 
 from .build_model import (FLOOR_CONAFF, FLOOR_CONTYPE, SWING_LINKAGE_CFG, _FLOOR_ALPHA,
-                          build_model, load_params, strip_visuals,
+                          build_model, load_params, show_colliders, strip_visuals,
                           tune_lighting)
 from .wheel_overlay import STRIPE_RADIUS_TELEOP, add_stripes
 from .control import DriveController, run
@@ -627,13 +627,16 @@ def main() -> None:
                          "SYNC is the column a headless profile cannot "
                          "produce, and a healthy loop shows a large sleep. "
                          "Works in --teleop and --mirror")
-    ap.add_argument("--look", choices=("full", "bare"), default=None,
+    ap.add_argument("--look", choices=("full", "bare", "contacts"), default=None,
                     help="bare (the default for --teleop and --mirror): "
                          "draw the floor, the wheels, the wings and the "
                          "rollcage, and hide every mass shape and marker; "
                          "teleop's dial is then only the commanded-heading "
                          "arc, with no dashed rim. full: "
-                         "every geom, the default elsewhere. Viewing only: "
+                         "every geom, the default elsewhere. contacts: only "
+                         "what can touch the floor, the collision shapes "
+                         "themselves (chainstays and hub rims included, which "
+                         "full cannot show), righting parts orange. Viewing only: "
                          "the physics and both digests are untouched")
     ap.add_argument("--ui", action="store_true",
                     help="restore the viewer's side panels (off by default: "
@@ -1000,6 +1003,9 @@ def main() -> None:
     if args.look == "bare":
         print(f"look bare: {len(strip_visuals(model))} shapes and markers "
               "hidden (--look full shows them)")
+    elif args.look == "contacts":
+        print(f"look contacts: {len(show_colliders(model))} collision shapes drawn, "
+              "everything else hidden")
     eq = settle_upright(model)
 
     if args.mirror:
@@ -4780,7 +4786,10 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
     texts_box = {"t": -1.0, "shown": None}
 
     def righting_text(d) -> str | None:
-        if not (standby[0] or crank_by_hand() or crank_stall.holding):
+        # Not on a hold alone: since 11-05 the idle rule runs riding too, and
+        # every idle let-go of the stowed crank brought the readout up (user,
+        # 11-07). A stall needs a goal off the crank, i.e. the operator's.
+        if not (standby[0] or crank_by_hand()):
             return None
         srv = crank_servo
         q = float(np.degrees(d.qpos[wing["jadr"]]))
@@ -4797,8 +4806,7 @@ def _teleop(model, params, eq_qpos, hockey=False, general=None,
         roll = ("" if c.rl_view is None
                 else f"roll {np.degrees(float(c.rl_view[0])):+5.1f} deg\n")
         return ((("STANDBY: policy off, steer straight, drives torque off\n")
-                 if standby[0] else "crank by hand\n" if crank_by_hand()
-                 else "crank\n")
+                 if standby[0] else "crank by hand\n")
                 + roll
                 + f"crank {q:+6.1f} deg   goal {goal:+6.1f}   target {tgt:+6.1f}"
                 + f"   lead {lead}\n"

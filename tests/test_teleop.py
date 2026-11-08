@@ -1405,6 +1405,22 @@ def test_a_let_go_crank_takes_the_target_with_it(monkeypatch, params):
     assert abs(target - crank) < 1.0 and abs(goal - crank) < 1.0, hud
 
 
+def test_riding_an_idle_let_go_does_not_bring_up_the_readout(monkeypatch, params):
+    """The idle rule runs riding too (11-05): standing on the policy, the
+    stowed crank is let go after IDLE_S. That alone must not put the crank
+    readout up -- it brought it up on every idle let-go (user, 11-07); the
+    readout is for standby and the crank by hand."""
+    _needs_general()
+    from aow_sim.control.crank_lead import IDLE_S, LET_GO_S
+    m = build_model(params, variant="full")
+    eq = settle_upright(m).qpos.copy()
+    g = _capture(monkeypatch, m, params, eq, swing=True)
+    _idle(g, IDLE_S + LET_GO_S + 1.0)
+    assert _hud_texts(g) == ""
+    _tap(g, ord("9"), settle=0.3)                   # the crank by hand: it shows
+    assert "crank by hand" in _hud_texts(g)
+
+
 class _FakeView:
     """Just enough of mujoco.viewer.Handle for teleop's on_start and texts."""
 

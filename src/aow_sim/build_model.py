@@ -941,6 +941,35 @@ def _add_chainstays(spec: mujoco.MjSpec, chassis, cs: dict, hub_width: float,
                          rgba=[*grey[:3], 0.0])
 
 
+def _add_hub_frame_contact(spec: mujoco.MjSpec, hf: dict, sim: dict,
+                           contact: bool) -> None:
+    """The rear hub's frame rims (omni_wheel.hub.frame_contact): per side a
+    printed ring, a torus of radius `torus_radius` and tube `tube_radius`
+    at `offset` either side of the wheel's mid-plane, between the hub and
+    the rollers. Lying, the bike reaches the floor with it (user, 11-07: the
+    left side seems to touch it first as it rises off its cage). On the hub
+    body, so it turns with the wheel. Against the floor a torus touches
+    where its convex hull does, so each side is one hidden mesh, the hull
+    of the torus's points, COLLIDING only with `contact` (as the
+    chainstays). Massless: the hub's measured mass already holds it."""
+    R, r = float(hf["torus_radius"]), float(hf["tube_radius"])
+    off = float(hf["offset"])
+    hub = spec.body("aow_hub")
+    phi = 2 * np.pi * np.arange(12) / 12            # round the tube
+    for sgn, tag in ((1, "left"), (-1, "right")):
+        pts = np.concatenate([
+            _ring_points(sgn * off + r * math.sin(f), R + r * math.cos(f), (0.0, 0.0), 64)
+            for f in phi])
+        mesh = spec.add_mesh(name=f"hub_frame_contact_{tag}")
+        mesh.uservert = pts.flatten()
+        hub.add_geom(name=f"hub_frame_contact_{tag}", type=mujoco.mjtGeom.mjGEOM_MESH,
+                     meshname=mesh.name, mass=0.0,
+                     contype=DYN_CONTYPE if contact else 0,
+                     conaffinity=DYN_CONAFF if contact else 0,
+                     **_part_contact(sim, "righting"), group=3,
+                     rgba=[*HUB_BLACK[:3], 0.0])
+
+
 def _add_righting(spec: mujoco.MjSpec, chassis, p: dict, arm: bool = True,
                   bumper: bool = True, rollcage: bool = False) -> None:
     """Self-righting study extras (build_model(..., righting=True)); see
@@ -2977,6 +3006,10 @@ def build_spec(
             _add_chainstays(spec, chassis, p["bike"]["chainstay_contact"],
                             p["omni_wheel"]["hub"]["body_width"], p["sim"],
                             contact=not righting_rigid)
+        # The hub frame's rims: the same rule.
+        if "frame_contact" in p["omni_wheel"]["hub"]:
+            _add_hub_frame_contact(spec, p["omni_wheel"]["hub"]["frame_contact"],
+                                   p["sim"], contact=not righting_rigid)
     elif swing_tip_mass:
         raise ValueError("swing_tip_mass is a swing_linkage option")
     elif righting_rigid:
@@ -3056,6 +3089,35 @@ def tune_lighting(model: mujoco.MjModel) -> None:
 _BARE_KEEP = re.compile(r"^(floor.*|front_tire(_q\d+)?|roller_\d+_\w_q\d+|"
                         r"hub_drawn|hub_(lug|boss)_\d+|rollcage_(rear|front)|"
                         r"swing_wing_(left|right)(_toe)?|ball)$")
+
+
+def show_colliders(model: mujoco.MjModel) -> list[str]:
+    """Draw exactly what can touch the floor: every bike geom that collides
+    (contype or conaffinity set), opaque, in group 0, and hide the rest.
+
+    Viewing only, like `strip_visuals`: rgba and group on the compiled model,
+    which no physics reads (collision is contype/conaffinity) and no digest
+    hashes. The collision-only shapes -- the chainstays, the hub rims, the
+    rollcage rings' hulls -- are drawn with alpha 0 in group 3 otherwise, so
+    `--look full` cannot show them. Colours: the righting parts (wings,
+    rings, chainstays, rims) orange, everything else grey. Returns the names
+    drawn."""
+    drawn = []
+    righting = re.compile(r"^(swing_wing|rollcage|chainstay_contact|hub_frame_contact)")
+    for g in range(model.ngeom):
+        if model.geom_bodyid[g] == 0:
+            continue
+        name = model.geom(g).name
+        if model.geom_contype[g] or model.geom_conaffinity[g]:
+            model.geom_rgba[g] = ([0.95, 0.55, 0.1, 0.85] if righting.match(name)
+                                  else [0.55, 0.55, 0.6, 0.85])
+            model.geom_group[g] = 0
+            drawn.append(name)
+        else:
+            model.geom_rgba[g][3] = 0.0
+    for i in range(model.nsite):
+        model.site_rgba[i][3] = 0.0
+    return drawn
 
 
 def strip_visuals(model: mujoco.MjModel) -> list[str]:
