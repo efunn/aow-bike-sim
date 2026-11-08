@@ -296,8 +296,27 @@ class LinkageLoad:
     BODIES = ("swing_crank", "swing_coupler_left", "swing_coupler_right",
               "swing_wing_left", "swing_wing_right")
 
-    def __init__(self, model, mu: float, r_journal: float, r_pin: float):
+    def __init__(self, model, mu: float, r_journal: float, r_pin: float,
+                 coupler_mu_scale: dict | None = None,
+                 coupler_preload_nm: dict | None = None,
+                 wing_mu_scale: dict | None = None,
+                 wing_preload_nm: dict | None = None):
+        """Per-side study knobs, all absent by default (one mu, no preload:
+        the module as fitted), for a side that is stiffer than its mirror
+        (the left, 11-07) -- not measured properties of the bike:
+        `coupler_mu_scale` {side: k} multiplies mu at that side's two coupler
+        pins (crankpin and rocker pin), `wing_mu_scale` {side: k} at its wing
+        on the rod; `coupler_preload_nm` {side: [crankpin, rocker pin]} and
+        `wing_preload_nm` {side: T} add a load-free friction torque there, a
+        tight joint."""
         self.mu, self.rj, self.rp = float(mu), float(r_journal), float(r_pin)
+        k = coupler_mu_scale or {}
+        pre = coupler_preload_nm or {}
+        # in self.sides' order, left then right
+        self.k_side = [float(k.get(t, 1.0)) for t in ("left", "right")]
+        self.pre_side = [tuple(float(x) for x in pre.get(t, (0.0, 0.0))) for t in ("left", "right")]
+        self.kw_side = [float((wing_mu_scale or {}).get(t, 1.0)) for t in ("left", "right")]
+        self.prew_side = [float((wing_preload_nm or {}).get(t, 0.0)) for t in ("left", "right")]
         self.adr = {b: int(model.sensor(f"{b}_load").adr[0]) for b in self.BODIES}
         self.crank = model.body("swing_crank").id
         self.sides = [(model.body(f"swing_coupler_{t}").id,
@@ -355,9 +374,14 @@ class LinkageLoad:
             r = self._cache[key] = self._rates(data)
         self.ratios = r
         L = self.rj * self._inplane(sd, self.adr["swing_crank"])
-        for (_, _, _, ac, aw), (cp, rp, ww) in zip(self.sides, self.ratios):
-            L += self.rp * (self._inplane(sd, ac) * (cp + rp) + self._inplane(sd, aw) * ww)
-        self.value = self.mu * L
+        pre = 0.0
+        for (_, _, _, ac, aw), (cp, rp, ww), k, (tc, tr), kw, tw in zip(
+                self.sides, self.ratios, self.k_side, self.pre_side, self.kw_side,
+                self.prew_side):
+            L += self.rp * (self._inplane(sd, ac) * (cp + rp) * k
+                            + self._inplane(sd, aw) * ww * kw)
+            pre += tc * cp + tr * rp + tw * ww
+        self.value = self.mu * L + pre
         return self.value
 
 
@@ -402,7 +426,12 @@ class CurrentBasedPositionServo:
             else:
                 srv.linkage_load = LinkageLoad(
                     model, mod["linkage_load_mu"], mod["linkage_journal_radius"],
-                    mod["linkage_pin_radius"])
+                    mod["linkage_pin_radius"],
+                    # study knobs, absent from bike_params (see LinkageLoad)
+                    coupler_mu_scale=mod.get("coupler_mu_scale"),
+                    coupler_preload_nm=mod.get("coupler_preload_nm"),
+                    wing_mu_scale=mod.get("wing_mu_scale"),
+                    wing_preload_nm=mod.get("wing_preload_nm"))
         if torque_nm is not None and at_output:
             srv.set_goal_current(srv.counts_for_output(torque_nm))
         return srv

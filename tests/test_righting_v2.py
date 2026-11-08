@@ -403,3 +403,28 @@ def test_the_ballast_sits_where_the_cad_puts_it(params):
     mujoco.mj_forward(m, d)
     rel = d.geom("righting_ballast").xpos - d.body("chassis").xpos
     assert rel * 1000 == pytest.approx([78.3, 0.0, -20.259], abs=0.01)
+
+
+def test_the_per_side_linkage_knobs_load_one_side_and_default_off():
+    """righting_servo.LinkageLoad's study knobs (11-07, the left stiffer than
+    its mirror): absent, the term is the fitted one; a left wing preload adds
+    T x the left wing's rotation per crank and nothing for the right; a mu
+    scale on the left coupler only ever adds."""
+    from aow_sim.righting_servo import LinkageLoad
+    p = load_params()
+    mod = p["righting"]["module"]
+    m = build_model(p, variant="full")
+    d = mujoco.MjData(m)
+    d.qpos[m.joint("swing_crank_joint").qposadr[0]] = np.radians(-30.0)
+    mujoco.mj_forward(m, d)
+    mujoco.mj_step(m, d)                 # the load sensors need a step
+    args = (m, mod["linkage_load_mu"], mod["linkage_journal_radius"],
+            mod["linkage_pin_radius"])
+    base = LinkageLoad(*args)(d)
+    assert LinkageLoad(*args, coupler_mu_scale={}, wing_preload_nm={})(d) == base
+    ll = LinkageLoad(*args, wing_preload_nm={"left": 0.05})
+    v = ll(d)
+    assert v - base == pytest.approx(0.05 * ll.ratios[0][2], rel=1e-9)
+    assert ll.ratios[0][2] > 0.1
+    assert LinkageLoad(*args, wing_preload_nm={"right": 0.0})(d) == base
+    assert LinkageLoad(*args, coupler_mu_scale={"left": 3.0})(d) >= base
