@@ -204,7 +204,10 @@ case "$cmd" in
   pull)
     sub="${1:-}"; sub="${sub%/}"
     mkdir -p "traces/$sub"
-    rsync -a --update --itemize-changes "$PI:$PI_REPO/traces/$sub/" "traces/$sub/" \
+    # --min-size=1: an EMPTY file on the Pi (a run cut off before it saved;
+    # 8 of them, 11-07) never lands here; one, 261021-181828_run_tilt_steer90,
+    # is empty there and whole here, and listed itself on every pull.
+    rsync -a --update --min-size=1 --itemize-changes "$PI:$PI_REPO/traces/$sub/" "traces/$sub/" \
       | grep -v '^\.d' | awk '{print $2}' \
       | awk -F/ -v d="$([[ -n $sub ]] && echo 1 || echo 2)" 'NF>d{o=$1; for(i=2;i<=d;i++) o=o"/"$i; print o; next}{print}' \
       | sort -u | sed 's/^/pulled:   /'
