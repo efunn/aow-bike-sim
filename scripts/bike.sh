@@ -8,6 +8,15 @@
 #   ./scripts/bike.sh run [run_bike args]  # run_bike with whatever flags you give it
 #   ./scripts/bike.sh mirror [args]        # the MuJoCo station, here (run in your own Terminal)
 #   ./scripts/bike.sh status               # is run_bike up, which ports, is the bundle in step
+#   ./scripts/bike.sh pull [subdir]        # the Pi's traces/ (or traces/<subdir>) back here
+#
+# `pull` copies what is new or newer on the Pi into traces/, deleting and
+# overwriting nothing newer here (--update, no --delete), then lists the
+# newest run directories BY MODIFICATION TIME: the Pi has no clock battery,
+# and a run started before timesyncd's first sync is named for the clock
+# restored from the last shutdown (261105-143426_run started 15 s after
+# boot, synced at 42 s; recorded 11-07). The record's own SNTP check
+# (meta.json `clock`, hw/clock.py) holds the true offset.
 #
 # Typical bench session, two terminals:
 #   ./scripts/bike.sh sync && ./scripts/bike.sh bench
@@ -45,6 +54,11 @@
 # known_hosts key for aowbike.local still has to match, so a stale address
 # now held by some other machine fails loudly rather than connecting.
 #
+# WAITING FOR THE CLOCK. Then `bench`/`run` wait (up to 60 s) for timesyncd's
+# first sync: a run started before it is named for the clock restored from
+# the last shutdown. On stock timesyncd that sync lands ~30 s after the
+# wifi (its 30 s retry); scripts/pi_timesync.sh makes it ~seconds.
+#
 # `sync` is the runbook's rsync (pi-bench-bringup.md section 7) WITHOUT
 # --delete: the Pi's tree has policy files and bench logs that exist only
 # there, and --delete would remove them. Stale files left on the Pi are
@@ -61,7 +75,7 @@ SSH_OPTS=()
 PI_REPO="aow-bike-sim"          # relative to the Pi's home
 PI_PY="~/venv/bin/python"       # NOT the system python
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 has_port_arg() {
   for a in "$@"; do [[ "$a" == --port || "$a" == --port=* ]] && return 0; done
@@ -167,7 +181,14 @@ run_bike() {
   local extra=""
   if ! has_port_arg "$@"; then extra="$(port_fallback)"; fi
   local args; args="$(printf ' %q' "$@")"
-  exec ssh -t "${SSH_OPTS[@]}" "$PI" "cd ~/$PI_REPO && $PI_PY -m aow_sim.hw.run_bike $extra$args"
+  # The clock first (see WAITING FOR THE CLOCK): up to 60 s for timesyncd's
+  # first sync, so the run's directory is named for the right time. Past
+  # that it starts anyway; the record's own SNTP check still holds the offset.
+  local wait_sync='for i in $(seq 1 240); do [ -e /run/systemd/timesync/synchronized ] && break;
+    [ $i = 1 ] && echo "waiting for the Pi clock to sync..." >&2; sleep 0.25; done;
+    [ -e /run/systemd/timesync/synchronized ] && { [ $i -gt 1 ] && echo "clock synced after $(( i / 4 )) s" >&2; true; } \
+      || echo "warning: clock NOT synced after 60 s; this run is named for the wrong time" >&2'
+  exec ssh -t "${SSH_OPTS[@]}" "$PI" "$wait_sync; cd ~/$PI_REPO && $PI_PY -m aow_sim.hw.run_bike $extra$args"
 }
 
 cmd="${1:-}"; [[ $# -gt 0 ]] && shift
@@ -179,6 +200,17 @@ case "$cmd" in
     [[ -f deploy/bundle.npz ]] || echo "warning: no local deploy/bundle.npz --" \
       "run python -m aow_sim.export_deploy" >&2
     "$0" status
+    ;;
+  pull)
+    sub="${1:-}"; sub="${sub%/}"
+    mkdir -p "traces/$sub"
+    rsync -a --update --itemize-changes "$PI:$PI_REPO/traces/$sub/" "traces/$sub/" \
+      | grep -v '^\.d' | awk '{print $2}' \
+      | awk -F/ -v d="$([[ -n $sub ]] && echo 1 || echo 2)" 'NF>d{o=$1; for(i=2;i<=d;i++) o=o"/"$i; print o; next}{print}' \
+      | sort -u | sed 's/^/pulled:   /'
+    echo "newest on the Pi (by mtime; names follow the Pi's clock):"
+    ssh "$PI" "cd ~/$PI_REPO/traces/$sub && ls -dlt --time-style=+'%m-%d %H:%M' */ */*/ 2>/dev/null \
+      | head -5 | awk '{print \"          \" \$6, \$7, \$8}'"
     ;;
   bench) run_bike --bench "$@" ;;
   on)    run_bike --bench --torque "$@" ;;
